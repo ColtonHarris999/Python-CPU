@@ -1,0 +1,10 @@
+services:
+  sim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: python-cpu-sim:latest
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    command: make sim
