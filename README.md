@@ -44,6 +44,25 @@ return x*y + 2
 
 Expected return value is `44`.
 
+## How the test works
+
+Current verification is an end-to-end functional check:
+
+1. `tools/gen_bytecode_assets.py` loads a real Python source file (`programs/demo_program.py`)
+   and compiles/disassembles `managed_entry`.
+2. The script validates opcodes are within the CPU's supported subset, then emits:
+   - `programs/demo_prog.hex` (instruction words)
+   - `programs/demo_consts.hex` (constant memory image)
+   - `programs/demo_expected.txt` (expected return value from executing the Python function)
+3. Verilator runs `tb/tb_pycpu.cpp`, which:
+   - clocks and resets the CPU
+   - waits for `halted`
+   - fails on `trap_valid`
+   - compares `ret_value` with `demo_expected.txt`
+
+That means the expected result is derived directly from the Python function, and the
+testbench checks the CPU behavior against that reference result.
+
 ## Run locally with Verilator
 
 Requirements:
@@ -52,7 +71,7 @@ Requirements:
 - C++ compiler (g++)
 - make
 
-Build and run:
+Build and run (this also regenerates bytecode assets from Python source):
 
 ```bash
 make sim
@@ -87,6 +106,7 @@ docker compose run --rm sim
 
 - Ubuntu base image
 - Verilator
+- Python 3 (for bytecode asset generation)
 - build-essential (g++, make)
 
 No local Verilator install is required when using Docker.

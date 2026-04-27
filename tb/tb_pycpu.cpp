@@ -3,9 +3,37 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
+
+namespace {
+
+int32_t load_expected_result(const char* path) {
+    std::ifstream in(path);
+    if (!in) {
+        std::fprintf(stderr, "FAIL: unable to open expected result file: %s\n", path);
+        std::exit(1);
+    }
+
+    long long value = 0;
+    in >> value;
+    if (!in.good() && !in.eof()) {
+        std::fprintf(stderr, "FAIL: invalid integer in expected result file: %s\n", path);
+        std::exit(1);
+    }
+    if (value < INT32_MIN || value > INT32_MAX) {
+        std::fprintf(stderr, "FAIL: expected result out of int32 range: %lld\n", value);
+        std::exit(1);
+    }
+    return static_cast<int32_t>(value);
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
+    const int32_t expected = load_expected_result("programs/demo_expected.txt");
+
     Vpycpu_core dut;
 
     dut.clk = 0;
@@ -37,8 +65,8 @@ int main(int argc, char** argv) {
             }
 
             std::printf("PASS: returned %d at cycle %d\n", static_cast<int32_t>(dut.ret_value), cycle);
-            if (static_cast<int32_t>(dut.ret_value) != 44) {
-                std::printf("FAIL: expected return value 44\n");
+            if (static_cast<int32_t>(dut.ret_value) != expected) {
+                std::printf("FAIL: expected return value %d\n", expected);
                 return 1;
             }
             return 0;
