@@ -44,7 +44,7 @@ return x*y + 2
 
 Expected return value is `44`.
 
-## Run with Verilator
+## Run locally with Verilator
 
 Requirements:
 
@@ -63,3 +63,30 @@ You should see:
 ```text
 PASS: returned 44 ...
 ```
+
+## Run in Docker (recommended for teams)
+
+Docker keeps the toolchain consistent across contributors and CI.
+
+### Option 1: Makefile wrappers
+
+```bash
+make docker-build
+make docker-sim
+```
+
+`docker-sim` mounts the current repository into the container and runs `make sim`.
+
+### Option 2: Docker Compose
+
+```bash
+docker compose run --rm sim
+```
+
+### What is inside the container
+
+- Ubuntu base image
+- Verilator
+- build-essential (g++, make)
+
+No local Verilator install is required when using Docker.
