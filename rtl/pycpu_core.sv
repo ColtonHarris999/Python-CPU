@@ -16,13 +16,17 @@ module pycpu_core #(
 );
 
     typedef logic [7:0] opcode_t;
-    localparam opcode_t OP_NOP          = 8'd9;
-    localparam opcode_t OP_RETURN_VALUE = 8'd83;
-    localparam opcode_t OP_LOAD_CONST   = 8'd100;
-    localparam opcode_t OP_BINARY_OP    = 8'd122;
-    localparam opcode_t OP_LOAD_FAST    = 8'd124;
-    localparam opcode_t OP_STORE_FAST   = 8'd125;
-    localparam opcode_t OP_RESUME       = 8'd151;
+    // Opcode numbering tracks CPython 3.14 (strict). Verified against
+    // opcode.opmap on Python 3.14.3.
+    localparam opcode_t OP_NOP              = 8'd27;
+    localparam opcode_t OP_RETURN_VALUE     = 8'd35;
+    localparam opcode_t OP_BINARY_OP        = 8'd44;
+    localparam opcode_t OP_LOAD_CONST       = 8'd82;
+    localparam opcode_t OP_LOAD_FAST        = 8'd84;
+    localparam opcode_t OP_LOAD_FAST_BORROW = 8'd86;
+    localparam opcode_t OP_LOAD_SMALL_INT   = 8'd94;
+    localparam opcode_t OP_STORE_FAST       = 8'd112;
+    localparam opcode_t OP_RESUME           = 8'd128;
 
     localparam logic [7:0] BINARY_ADD = 8'd0;
     localparam logic [7:0] BINARY_MUL = 8'd5;
@@ -130,7 +134,7 @@ module pycpu_core #(
 
             if (wb_valid && !halted) begin
                 unique case (wb_opcode)
-                    OP_LOAD_CONST, OP_LOAD_FAST: begin
+                    OP_LOAD_CONST, OP_LOAD_FAST, OP_LOAD_FAST_BORROW, OP_LOAD_SMALL_INT: begin
                         if (sp < STACK_DEPTH) begin
                             stack_mem[sp] <= wb_result;
                             sp <= sp + 1'b1;
@@ -210,12 +214,16 @@ module pycpu_core #(
                         end
                     end
 
-                    OP_LOAD_FAST: begin
+                    OP_LOAD_FAST, OP_LOAD_FAST_BORROW: begin
                         if (ex_oparg < LOCAL_COUNT) begin
                             mem_result <= local_mem[ex_oparg];
                         end else begin
                             execute_fault = 1'b1;
                         end
+                    end
+
+                    OP_LOAD_SMALL_INT: begin
+                        mem_result <= {{(WORD_W-8){1'b0}}, ex_oparg};
                     end
 
                     OP_STORE_FAST: begin

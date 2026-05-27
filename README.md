@@ -9,18 +9,32 @@ stack-based subset of CPython bytecode using a 5-stage pipeline:
 4. **Memory (MEM)**: stage register for load/constant values and ALU outputs.
 5. **Writeback (WB)**: commits results to stack/locals and handles return/trap.
 
+## Python version
+
+**Requires Python 3.14 (strict).** The CPU's ISA, the asset generator, and the
+container all pin to CPython 3.14's bytecode numbering. The generator raises if
+invoked under any other interpreter (3.12, 3.13, future 3.15, etc.) rather than
+silently miscompile.
+
 ## Supported bytecode subset
 
-- `RESUME (151)`
-- `NOP (9)`
-- `LOAD_CONST (100)`
-- `LOAD_FAST (124)`
-- `STORE_FAST (125)`
-- `BINARY_OP (122)` with oparg:
+Opcode numbers below are CPython 3.14 values (verified against
+`opcode.opmap`).
+
+- `RESUME (128)`
+- `NOP (27)`
+- `LOAD_CONST (82)`
+- `LOAD_SMALL_INT (94)` — oparg is the literal int (0..255)
+- `LOAD_FAST (84)`
+- `LOAD_FAST_BORROW (86)` — treated as `LOAD_FAST` by the CPU
+- `LOAD_FAST_LOAD_FAST (89)` — lowered to two `LOAD_FAST` words by the generator
+- `LOAD_FAST_BORROW_LOAD_FAST_BORROW (87)` — lowered to two `LOAD_FAST_BORROW` words by the generator
+- `STORE_FAST (112)`
+- `BINARY_OP (44)` with oparg:
   - `0` = add
   - `10` = subtract
   - `5` = multiply
-- `RETURN_VALUE (83)`
+- `RETURN_VALUE (35)`
 
 Instruction encoding in program memory uses one 16-bit word:
 
@@ -67,6 +81,7 @@ testbench checks the CPU behavior against that reference result.
 
 Requirements:
 
+- Python 3.14 (strict; see "Python version" above)
 - Verilator (v5+ recommended)
 - C++ compiler (g++)
 - make
@@ -104,9 +119,8 @@ docker compose run --rm sim
 
 ### What is inside the container
 
-- Ubuntu base image
+- `python:3.14-slim` base image (`python3` resolves to 3.14)
 - Verilator
-- Python 3 (for bytecode asset generation)
 - build-essential (g++, make)
 
 No local Verilator install is required when using Docker.

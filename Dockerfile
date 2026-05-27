@@ -1,14 +1,10 @@
-FROM ubuntu:24.04
+FROM python:3.14-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    make \
-    ca-certificates \
-    python3 \
-    verilator \
-    && rm -rf /var/lib/apt/lists/*
+        build-essential make verilator \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
 
