@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <string>
 
 namespace {
@@ -45,6 +46,32 @@ int parse_env_flag(const char* name, int default_value) {
     std::exit(1);
 }
 
+int parse_env_int(const char* name, int default_value, int min_value) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || *raw == '\0') {
+        return default_value;
+    }
+
+    char* end = nullptr;
+    const long long parsed = std::strtoll(raw, &end, 10);
+    if (end == raw || *end != '\0') {
+        std::fprintf(stderr, "FAIL: invalid integer value for %s: %s\n", name, raw);
+        std::exit(1);
+    }
+    if (parsed < min_value || parsed > std::numeric_limits<int>::max()) {
+        std::fprintf(
+            stderr,
+            "FAIL: out-of-range value for %s: %s (expected %d..%d)\n",
+            name,
+            raw,
+            min_value,
+            std::numeric_limits<int>::max()
+        );
+        std::exit(1);
+    }
+    return static_cast<int>(parsed);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -70,7 +97,7 @@ int main(int argc, char** argv) {
 
     dut.rst_n = 1;
 
-    const int max_cycles = 200;
+    const int max_cycles = parse_env_int("MAX_CYCLES", 2000, 1);
     for (int cycle = 0; cycle < max_cycles; ++cycle) {
         dut.clk = 0;
         dut.eval();
