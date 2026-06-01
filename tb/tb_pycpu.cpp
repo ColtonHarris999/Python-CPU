@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <string>
 
 namespace {
 
@@ -28,11 +29,33 @@ int32_t load_expected_result(const char* path) {
     return static_cast<int32_t>(value);
 }
 
+int parse_env_flag(const char* name, int default_value) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || *raw == '\0') {
+        return default_value;
+    }
+    const std::string value(raw);
+    if (value == "1" || value == "true" || value == "TRUE" || value == "yes" || value == "YES") {
+        return 1;
+    }
+    if (value == "0" || value == "false" || value == "FALSE" || value == "no" || value == "NO") {
+        return 0;
+    }
+    std::fprintf(stderr, "FAIL: invalid boolean value for %s: %s\n", name, raw);
+    std::exit(1);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
-    const int32_t expected = load_expected_result("programs/demo_expected.txt");
+    const int expect_trap = parse_env_flag("EXPECT_TRAP", 0);
+    const int expect_illegal = parse_env_flag("EXPECT_ILLEGAL", 0);
+    const char* expected_path = std::getenv("EXPECTED_TXT");
+    if (expected_path == nullptr || *expected_path == '\0') {
+        expected_path = "programs/demo_expected.txt";
+    }
+    const int32_t expected = expect_trap ? 0 : load_expected_result(expected_path);
 
     Vpycpu_core dut;
 
@@ -55,8 +78,34 @@ int main(int argc, char** argv) {
         dut.eval();
 
         if (dut.halted) {
+            if (expect_trap) {
+                if (!dut.trap_valid) {
+                    std::printf("FAIL: expected trap but halted without trap at cycle %d\n", cycle);
+                    return 1;
+                }
+                if (static_cast<int>(dut.illegal_instr_valid) != expect_illegal) {
+                    std::printf(
+                        "FAIL: expected illegal_instr_valid=%d but got %d at cycle %d\n",
+                        expect_illegal,
+                        static_cast<int>(dut.illegal_instr_valid),
+                        cycle
+                    );
+                    return 1;
+                }
+                std::printf(
+                    "PASS: trapped as expected at cycle %d (illegal_instr_valid=%d)\n",
+                    cycle,
+                    static_cast<int>(dut.illegal_instr_valid)
+                );
+                return 0;
+            }
+
             if (dut.trap_valid) {
-                std::printf("FAIL: processor trapped at cycle %d\n", cycle);
+                std::printf(
+                    "FAIL: processor trapped at cycle %d (illegal_instr_valid=%d)\n",
+                    cycle,
+                    static_cast<int>(dut.illegal_instr_valid)
+                );
                 return 1;
             }
             if (!dut.ret_valid) {
