@@ -136,3 +136,24 @@ docker compose run --rm sim
 - build-essential (g++, make)
 
 No local Verilator install is required when using Docker.
+
+## PyCore minimum-spec path (new)
+
+This repository now also includes a **PyCore** experimental path aligned to the
+uploaded minimum int/bool hardware spec:
+
+- RTL modules in `rtl/pycore_*.sv`
+- preprocessing tooling in `tools/preprocess.py`
+- basic SV testbenches in `tb/tb_pycore.sv` and `tb/tb_alu.sv`
+- design report in `docs/architecture.md`
+
+Quick commands:
+
+```bash
+make pycore-preprocess
+make pycore-alu-sim
+make pycore-sim
+```
+
+Note: the PyCore preprocessor intentionally targets CPython 3.11 bytecode.
+
