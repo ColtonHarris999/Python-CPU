@@ -101,6 +101,12 @@ SUPPORTED_BINARY_ARGS = {
 SUPPORTED_COMPARE_ARGS = {0, 1, 2, 3, 4, 5}
 
 
+def _normalize_compare_arg(arg: int) -> int:
+    # CPython 3.14 may encode compare kind in low nibble while using
+    # upper bits for internal flags. Keep only the compare selector.
+    return arg & 0x0F
+
+
 @dataclass
 class FoldedInstruction:
     opname: str
@@ -172,8 +178,13 @@ def _fold_extended_args(fn) -> list[FoldedInstruction]:
 
         if canonical == "BINARY_OP" and arg not in SUPPORTED_BINARY_ARGS:
             raise ValueError(f"Unsupported BINARY_OP arg {arg} at offset {ins.offset}")
-        if canonical == "COMPARE_OP" and arg not in SUPPORTED_COMPARE_ARGS:
-            raise ValueError(f"Unsupported COMPARE_OP arg {arg} at offset {ins.offset}")
+        if canonical == "COMPARE_OP":
+            raw_arg = arg
+            arg = _normalize_compare_arg(arg)
+            if arg not in SUPPORTED_COMPARE_ARGS:
+                raise ValueError(
+                    f"Unsupported COMPARE_OP arg {raw_arg} (normalized={arg}) at offset {ins.offset}"
+                )
 
         _emit_canonical(out, canonical, arg, ins.offset)
     return out
