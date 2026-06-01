@@ -64,6 +64,28 @@ module pycore_branch (
                 end
             end
 
+            OP_POP_JUMP_BACKWARD_IF_TRUE: begin
+                pop_tos = 1'b1;
+                if (tos_valid_truth) begin
+                    take_branch = tos_truthy;
+                    branch_target = pc - arg;
+                end else begin
+                    trap = 1'b1;
+                    trap_code = TRAP_TYPE;
+                end
+            end
+
+            OP_POP_JUMP_BACKWARD_IF_FALSE: begin
+                pop_tos = 1'b1;
+                if (tos_valid_truth) begin
+                    take_branch = !tos_truthy;
+                    branch_target = pc - arg;
+                end else begin
+                    trap = 1'b1;
+                    trap_code = TRAP_TYPE;
+                end
+            end
+
             OP_JUMP_IF_TRUE_OR_POP: begin
                 if (tos_valid_truth) begin
                     take_branch = tos_truthy;

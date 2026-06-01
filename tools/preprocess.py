@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Preprocess CPython 3.11 bytecode into PyCore images."""
+"""Preprocess CPython 3.14 bytecode into PyCore images.
+
+The emitted program stream uses PyCore's internal canonical opcode numbering so
+RTL decode stays stable even if CPython renumbers opcodes in future releases.
+"""
 
 from __future__ import annotations
 
@@ -11,18 +15,21 @@ import sys
 from dataclasses import dataclass
 
 
-REQUIRED_PY = (3, 11)
+REQUIRED_PY = (3, 14)
 
 TAG_UNINIT = 0
 TAG_INT = 1
 TAG_BOOL = 2
 TAG_REF = 3
 
-SUPPORTED_OPS = {
+RAW_SUPPORTED_OPS = {
     "RESUME",
     "NOP",
     "LOAD_CONST",
     "LOAD_FAST",
+    "LOAD_FAST_BORROW",
+    "LOAD_FAST_LOAD_FAST",
+    "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
     "STORE_FAST",
     "POP_TOP",
     "COPY",
@@ -35,13 +42,53 @@ SUPPORTED_OPS = {
     "UNARY_INVERT",
     "JUMP_FORWARD",
     "JUMP_BACKWARD",
+    "JUMP_BACKWARD_NO_INTERRUPT",
     "POP_JUMP_FORWARD_IF_TRUE",
     "POP_JUMP_FORWARD_IF_FALSE",
+    "POP_JUMP_BACKWARD_IF_TRUE",
+    "POP_JUMP_BACKWARD_IF_FALSE",
+    "POP_JUMP_IF_TRUE",
+    "POP_JUMP_IF_FALSE",
     "JUMP_IF_TRUE_OR_POP",
     "JUMP_IF_FALSE_OR_POP",
     "CALL",
     "RETURN_VALUE",
     "EXTENDED_ARG",
+}
+
+OPNAME_ALIAS = {
+    "LOAD_FAST_BORROW": "LOAD_FAST",
+    "POP_JUMP_IF_TRUE": "POP_JUMP_FORWARD_IF_TRUE",
+    "POP_JUMP_IF_FALSE": "POP_JUMP_FORWARD_IF_FALSE",
+    "JUMP_BACKWARD_NO_INTERRUPT": "JUMP_BACKWARD",
+}
+
+OPCODE_ENCODING = {
+    "POP_TOP": 1,
+    "NOP": 9,
+    "UNARY_POSITIVE": 10,
+    "UNARY_NEGATIVE": 11,
+    "UNARY_NOT": 12,
+    "UNARY_INVERT": 15,
+    "RETURN_VALUE": 83,
+    "SWAP": 99,
+    "LOAD_CONST": 100,
+    "COMPARE_OP": 107,
+    "JUMP_FORWARD": 110,
+    "JUMP_IF_FALSE_OR_POP": 111,
+    "JUMP_IF_TRUE_OR_POP": 112,
+    "POP_JUMP_FORWARD_IF_FALSE": 114,
+    "POP_JUMP_FORWARD_IF_TRUE": 115,
+    "POP_JUMP_BACKWARD_IF_FALSE": 116,
+    "POP_JUMP_BACKWARD_IF_TRUE": 117,
+    "COPY": 120,
+    "BINARY_OP": 122,
+    "LOAD_FAST": 124,
+    "STORE_FAST": 125,
+    "JUMP_BACKWARD": 140,
+    "EXTENDED_ARG": 144,
+    "RESUME": 151,
+    "CALL": 171,
 }
 
 SUPPORTED_BINARY_ARGS = {
@@ -60,7 +107,7 @@ class FoldedInstruction:
     offset: int
 
 
-def _require_python_3_11() -> None:
+def _require_python_3_14() -> None:
     if sys.version_info[:2] != REQUIRED_PY:
         raise RuntimeError(
             f"tools/preprocess.py is pinned to Python {REQUIRED_PY[0]}.{REQUIRED_PY[1]} "
@@ -76,6 +123,16 @@ def _load_function(path: pathlib.Path, function_name: str):
     return fn
 
 
+def _canonicalize_opname(opname: str) -> str:
+    return OPNAME_ALIAS.get(opname, opname)
+
+
+def _emit_canonical(out: list[FoldedInstruction], opname: str, arg: int, offset: int) -> None:
+    if opname not in OPCODE_ENCODING:
+        raise ValueError(f"Opcode '{opname}' has no canonical encoding")
+    out.append(FoldedInstruction(opname=opname, opcode=OPCODE_ENCODING[opname], arg=arg, offset=offset))
+
+
 def _fold_extended_args(fn) -> list[FoldedInstruction]:
     out: list[FoldedInstruction] = []
     ext_accum = 0
@@ -83,7 +140,7 @@ def _fold_extended_args(fn) -> list[FoldedInstruction]:
         if ins.opname == "CACHE":
             continue
 
-        if ins.opname not in SUPPORTED_OPS:
+        if ins.opname not in RAW_SUPPORTED_OPS:
             raise ValueError(f"Unsupported opcode {ins.opname} at offset {ins.offset}")
 
         arg = 0 if ins.arg is None else int(ins.arg)
@@ -95,12 +152,28 @@ def _fold_extended_args(fn) -> list[FoldedInstruction]:
             arg = (ext_accum << 8) | arg
             ext_accum = 0
 
-        if ins.opname == "BINARY_OP" and arg not in SUPPORTED_BINARY_ARGS:
+        canonical = _canonicalize_opname(ins.opname)
+
+        if canonical == "LOAD_FAST_LOAD_FAST":
+            hi = (arg >> 4) & 0xF
+            lo = arg & 0xF
+            _emit_canonical(out, "LOAD_FAST", hi, ins.offset)
+            _emit_canonical(out, "LOAD_FAST", lo, ins.offset)
+            continue
+
+        if canonical == "LOAD_FAST_BORROW_LOAD_FAST_BORROW":
+            hi = (arg >> 4) & 0xF
+            lo = arg & 0xF
+            _emit_canonical(out, "LOAD_FAST", hi, ins.offset)
+            _emit_canonical(out, "LOAD_FAST", lo, ins.offset)
+            continue
+
+        if canonical == "BINARY_OP" and arg not in SUPPORTED_BINARY_ARGS:
             raise ValueError(f"Unsupported BINARY_OP arg {arg} at offset {ins.offset}")
-        if ins.opname == "COMPARE_OP" and arg not in SUPPORTED_COMPARE_ARGS:
+        if canonical == "COMPARE_OP" and arg not in SUPPORTED_COMPARE_ARGS:
             raise ValueError(f"Unsupported COMPARE_OP arg {arg} at offset {ins.offset}")
 
-        out.append(FoldedInstruction(opname=ins.opname, opcode=ins.opcode, arg=arg, offset=ins.offset))
+        _emit_canonical(out, canonical, arg, ins.offset)
     return out
 
 
@@ -120,7 +193,7 @@ def _emit_program_hex(instructions: list[FoldedInstruction], out_path: pathlib.P
         word = ((ins.arg & 0xFFFFFFFF) << 8) | (ins.opcode & 0xFF)
         lines.append(f"{word:010x}")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("\\n".join(lines) + "\\n", encoding="ascii")
+    out_path.write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
 def _emit_const_hex(fn, out_path: pathlib.Path) -> None:
@@ -132,7 +205,7 @@ def _emit_const_hex(fn, out_path: pathlib.Path) -> None:
     if not lines:
         lines = [f"{0:017x}"]
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("\\n".join(lines) + "\\n", encoding="ascii")
+    out_path.write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
 def _infer_types(fn, instructions: list[FoldedInstruction]) -> dict[str, str]:
@@ -191,6 +264,8 @@ def _infer_types(fn, instructions: list[FoldedInstruction]) -> dict[str, str]:
         elif ins.opname in {
             "POP_JUMP_FORWARD_IF_TRUE",
             "POP_JUMP_FORWARD_IF_FALSE",
+            "POP_JUMP_BACKWARD_IF_TRUE",
+            "POP_JUMP_BACKWARD_IF_FALSE",
             "RETURN_VALUE",
         }:
             _ = pop_type()
@@ -201,11 +276,11 @@ def _infer_types(fn, instructions: list[FoldedInstruction]) -> dict[str, str]:
 def _emit_types(path: pathlib.Path, inferred: dict[str, str]) -> None:
     lines = [f"{name}: {typ}" for name, typ in sorted(inferred.items())]
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\\n".join(lines) + ("\\n" if lines else ""), encoding="ascii")
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="ascii")
 
 
 def main() -> None:
-    _require_python_3_11()
+    _require_python_3_14()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default="programs/bool_kernel.py")
     parser.add_argument("--function", default="managed_entry")
@@ -223,7 +298,6 @@ def main() -> None:
     _emit_const_hex(fn, pathlib.Path(args.const_hex))
     _emit_types(pathlib.Path(args.types_out), inferred)
 
-    # Overflow warning heuristic: only static constant check in this baseline.
     for c in fn.__code__.co_consts:
         if isinstance(c, int) and not (-(1 << 63) <= c <= (1 << 63) - 1):
             print(f"WARNING: constant {c} exceeds signed 64-bit range and will wrap")

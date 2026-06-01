@@ -26,6 +26,8 @@ package pycore_types_pkg;
     localparam logic [7:0] OP_JUMP_IF_TRUE_OR_POP      = 8'd112;
     localparam logic [7:0] OP_POP_JUMP_FORWARD_IF_FALSE = 8'd114;
     localparam logic [7:0] OP_POP_JUMP_FORWARD_IF_TRUE = 8'd115;
+    localparam logic [7:0] OP_POP_JUMP_BACKWARD_IF_FALSE = 8'd116;
+    localparam logic [7:0] OP_POP_JUMP_BACKWARD_IF_TRUE = 8'd117;
     localparam logic [7:0] OP_COPY                     = 8'd120;
     localparam logic [7:0] OP_BINARY_OP                = 8'd122;
     localparam logic [7:0] OP_LOAD_FAST                = 8'd124;

@@ -17,7 +17,7 @@ This branch adds a new **PyCore** architecture path next to the existing `pycpu`
   - `pycore_frame.sv`
   - `pycore_const_table.sv`
   - `pycore_types_pkg.sv`
-- A CPython 3.11-oriented preprocessing tool was added:
+- A CPython 3.14-oriented preprocessing tool was added:
   - `tools/preprocess.py`
   - emits:
     - `pycore_prog.hex` (`{arg[31:0], opcode[7:0]}`)
@@ -101,7 +101,7 @@ Common branch patterns (`if x`, `if a < b`) stay in the same datapath and can ex
 
 ## Architectural notes and deviations
 
-- **Pinned semantics target:** CPython 3.11 opcode model in `tools/preprocess.py`.
+- **Pinned semantics target:** CPython 3.14 opcode model in `tools/preprocess.py`.
 - **Integer overflow:** defined 64-bit wrap behavior (documented semantic deviation vs Python bigint behavior).
 - **CALL support:** current minimum baseline traps unresolved calls; frame infrastructure module is provided for extension.
 - **Scope boundaries:** non-int/bool rich-object features remain out of hardware fast path and trap by design.

@@ -155,5 +155,5 @@ make pycore-alu-sim
 make pycore-sim
 ```
 
-Note: the PyCore preprocessor intentionally targets CPython 3.11 bytecode.
+Note: the PyCore preprocessor intentionally targets CPython 3.14 bytecode.
 

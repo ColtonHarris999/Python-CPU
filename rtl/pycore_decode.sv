@@ -57,6 +57,7 @@ module pycore_decode (
             end
             OP_JUMP_FORWARD, OP_JUMP_BACKWARD,
             OP_POP_JUMP_FORWARD_IF_TRUE, OP_POP_JUMP_FORWARD_IF_FALSE,
+            OP_POP_JUMP_BACKWARD_IF_TRUE, OP_POP_JUMP_BACKWARD_IF_FALSE,
             OP_JUMP_IF_TRUE_OR_POP, OP_JUMP_IF_FALSE_OR_POP: begin
                 is_branch = 1'b1;
             end
