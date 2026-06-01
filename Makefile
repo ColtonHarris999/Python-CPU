@@ -11,6 +11,7 @@ CONST_HEX ?= programs/demo_consts.hex
 EXPECTED_TXT ?= programs/demo_expected.txt
 EXPECT_TRAP ?= 0
 EXPECT_ILLEGAL ?= 0
+MAX_CYCLES ?= 2000
 
 RTL_SRCS := rtl/pycpu_core.sv
 TB_SRC := tb/tb_pycpu.cpp
@@ -36,6 +37,7 @@ build-sim:
 	EXPECTED_TXT=$(EXPECTED_TXT) \
 	EXPECT_TRAP=$(EXPECT_TRAP) \
 	EXPECT_ILLEGAL=$(EXPECT_ILLEGAL) \
+	MAX_CYCLES=$(MAX_CYCLES) \
 	./$(BUILD_DIR)/V$(TOP)
 
 sim: gen-bytecode build-sim
