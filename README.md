@@ -31,9 +31,13 @@ Opcode numbers below are CPython 3.14 values (verified against
 - `LOAD_FAST_BORROW_LOAD_FAST_BORROW (87)` — lowered to two `LOAD_FAST_BORROW` words by the generator
 - `STORE_FAST (112)`
 - `BINARY_OP (44)` with oparg:
-  - `0` = add
-  - `10` = subtract
-  - `5` = multiply
+  - arithmetic: `0`/`13` add (`+`, `+=`), `10`/`23` subtract (`-`, `-=`),
+    `5`/`18` multiply (`*`, `*=`), `2`/`15` floor divide (`//`, `//=`)
+    with Python floor semantics for signed ints, `6`/`19` modulo (`%`, `%=`)
+    with Python remainder semantics, `8`/`21` power (`**`, `**=`, non-negative exponent)
+  - bitwise: `1`/`14` and, `7`/`20` or, `12`/`25` xor
+  - shifts: `3`/`16` left shift, `9`/`22` arithmetic right shift
+  - non-integer variants (`@`, `/` and in-place forms) are trapped as illegal instructions
 - `RETURN_VALUE (35)`
 
 Instruction encoding in program memory uses one 16-bit word:
@@ -71,7 +75,8 @@ Current verification is an end-to-end functional check:
 3. Verilator runs `tb/tb_pycpu.cpp`, which:
    - clocks and resets the CPU
    - waits for `halted`
-   - fails on `trap_valid`
+   - fails on `trap_valid` unless the test explicitly expects a trap
+   - checks `illegal_instr_valid` for expected illegal-instruction trap cases
    - compares `ret_value` with `demo_expected.txt`
 
 That means the expected result is derived directly from the Python function, and the
@@ -96,6 +101,13 @@ You should see:
 
 ```text
 PASS: returned 44 ...
+```
+
+Run the full test-program suite (normal arithmetic/bitwise ops, in-place ops, and
+an explicit invalid-opcode trap case):
+
+```bash
+make test-programs
 ```
 
 ## Run in Docker (recommended for teams)

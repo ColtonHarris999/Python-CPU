@@ -11,6 +11,7 @@ module pycpu_core #(
     input  logic                     rst_n,
     output logic                     halted,
     output logic                     trap_valid,
+    output logic                     illegal_instr_valid,
     output logic                     ret_valid,
     output logic signed [WORD_W-1:0] ret_value
 );
@@ -28,9 +29,32 @@ module pycpu_core #(
     localparam opcode_t OP_STORE_FAST       = 8'd112;
     localparam opcode_t OP_RESUME           = 8'd128;
 
-    localparam logic [7:0] BINARY_ADD = 8'd0;
-    localparam logic [7:0] BINARY_MUL = 8'd5;
-    localparam logic [7:0] BINARY_SUB = 8'd10;
+    localparam logic [7:0] BINARY_ADD             = 8'd0;
+    localparam logic [7:0] BINARY_AND             = 8'd1;
+    localparam logic [7:0] BINARY_FLOOR_DIV       = 8'd2;
+    localparam logic [7:0] BINARY_LSHIFT          = 8'd3;
+    localparam logic [7:0] BINARY_MATRIX_MUL      = 8'd4;
+    localparam logic [7:0] BINARY_MUL             = 8'd5;
+    localparam logic [7:0] BINARY_MOD             = 8'd6;
+    localparam logic [7:0] BINARY_OR              = 8'd7;
+    localparam logic [7:0] BINARY_POW             = 8'd8;
+    localparam logic [7:0] BINARY_RSHIFT          = 8'd9;
+    localparam logic [7:0] BINARY_SUB             = 8'd10;
+    localparam logic [7:0] BINARY_TRUE_DIV        = 8'd11;
+    localparam logic [7:0] BINARY_XOR             = 8'd12;
+    localparam logic [7:0] BINARY_INPLACE_ADD     = 8'd13;
+    localparam logic [7:0] BINARY_INPLACE_AND     = 8'd14;
+    localparam logic [7:0] BINARY_INPLACE_FLOOR_DIV = 8'd15;
+    localparam logic [7:0] BINARY_INPLACE_LSHIFT  = 8'd16;
+    localparam logic [7:0] BINARY_INPLACE_MATRIX_MUL = 8'd17;
+    localparam logic [7:0] BINARY_INPLACE_MUL     = 8'd18;
+    localparam logic [7:0] BINARY_INPLACE_MOD     = 8'd19;
+    localparam logic [7:0] BINARY_INPLACE_OR      = 8'd20;
+    localparam logic [7:0] BINARY_INPLACE_POW     = 8'd21;
+    localparam logic [7:0] BINARY_INPLACE_RSHIFT  = 8'd22;
+    localparam logic [7:0] BINARY_INPLACE_SUB     = 8'd23;
+    localparam logic [7:0] BINARY_INPLACE_TRUE_DIV = 8'd24;
+    localparam logic [7:0] BINARY_INPLACE_XOR     = 8'd25;
 
     localparam int PC_W = $clog2(PROG_DEPTH);
     localparam int SP_W = $clog2(STACK_DEPTH + 1);
@@ -71,6 +95,33 @@ module pycpu_core #(
     logic [7:0]                      wb_oparg;
     logic signed [WORD_W-1:0]        wb_result;
 
+    function automatic logic signed [WORD_W-1:0] py_floor_div(
+        input logic signed [WORD_W-1:0] lhs,
+        input logic signed [WORD_W-1:0] rhs
+    );
+        logic signed [WORD_W-1:0] q;
+        logic signed [WORD_W-1:0] r;
+        begin
+            q = lhs / rhs;
+            r = lhs % rhs;
+            if ((r != 0) && ((r > 0 && rhs < 0) || (r < 0 && rhs > 0))) begin
+                q = q - 1;
+            end
+            py_floor_div = q;
+        end
+    endfunction
+
+    function automatic logic signed [WORD_W-1:0] py_floor_mod(
+        input logic signed [WORD_W-1:0] lhs,
+        input logic signed [WORD_W-1:0] rhs
+    );
+        logic signed [WORD_W-1:0] q;
+        begin
+            q = py_floor_div(lhs, rhs);
+            py_floor_mod = lhs - (q * rhs);
+        end
+    endfunction
+
     initial begin
         $readmemh(PROG_HEX, instr_mem);
         $readmemh(CONST_HEX, const_mem);
@@ -87,6 +138,7 @@ module pycpu_core #(
             sp        <= '0;
             halted    <= 1'b0;
             trap_valid <= 1'b0;
+            illegal_instr_valid <= 1'b0;
             ret_valid <= 1'b0;
             ret_value <= '0;
 
@@ -131,6 +183,7 @@ module pycpu_core #(
 
             ret_valid  <= 1'b0;
             trap_valid <= 1'b0;
+            illegal_instr_valid <= 1'b0;
 
             if (wb_valid && !halted) begin
                 unique case (wb_opcode)
@@ -187,6 +240,7 @@ module pycpu_core #(
                     default: begin
                         halted <= 1'b1;
                         trap_valid <= 1'b1;
+                        illegal_instr_valid <= 1'b1;
                         squash_pipe = 1'b1;
                     end
                 endcase
@@ -232,10 +286,76 @@ module pycpu_core #(
 
                     OP_BINARY_OP: begin
                         unique case (ex_oparg)
-                            BINARY_ADD: mem_result <= ex_a + ex_b;
-                            BINARY_SUB: mem_result <= ex_a - ex_b;
-                            BINARY_MUL: mem_result <= ex_a * ex_b;
-                            default: execute_fault = 1'b1;
+                            BINARY_ADD, BINARY_INPLACE_ADD: begin
+                                mem_result <= ex_a + ex_b;
+                            end
+                            BINARY_SUB, BINARY_INPLACE_SUB: begin
+                                mem_result <= ex_a - ex_b;
+                            end
+                            BINARY_MUL, BINARY_INPLACE_MUL: begin
+                                mem_result <= ex_a * ex_b;
+                            end
+                            BINARY_AND, BINARY_INPLACE_AND: begin
+                                mem_result <= ex_a & ex_b;
+                            end
+                            BINARY_OR, BINARY_INPLACE_OR: begin
+                                mem_result <= ex_a | ex_b;
+                            end
+                            BINARY_XOR, BINARY_INPLACE_XOR: begin
+                                mem_result <= ex_a ^ ex_b;
+                            end
+                            BINARY_FLOOR_DIV, BINARY_INPLACE_FLOOR_DIV: begin
+                                if (ex_b != 0) begin
+                                    mem_result <= py_floor_div(ex_a, ex_b);
+                                end else begin
+                                    execute_fault = 1'b1;
+                                end
+                            end
+                            BINARY_MOD, BINARY_INPLACE_MOD: begin
+                                if (ex_b != 0) begin
+                                    mem_result <= py_floor_mod(ex_a, ex_b);
+                                end else begin
+                                    execute_fault = 1'b1;
+                                end
+                            end
+                            BINARY_POW, BINARY_INPLACE_POW: begin
+                                if (ex_b >= 0) begin
+                                    mem_result <= ex_a ** ex_b;
+                                end else begin
+                                    execute_fault = 1'b1;
+                                end
+                            end
+                            BINARY_LSHIFT, BINARY_INPLACE_LSHIFT: begin
+                                if (ex_b >= 0) begin
+                                    if (ex_b >= WORD_W) begin
+                                        mem_result <= '0;
+                                    end else begin
+                                        mem_result <= ex_a <<< ex_b;
+                                    end
+                                end else begin
+                                    execute_fault = 1'b1;
+                                end
+                            end
+                            BINARY_RSHIFT, BINARY_INPLACE_RSHIFT: begin
+                                if (ex_b >= 0) begin
+                                    if (ex_b >= WORD_W) begin
+                                        mem_result <= ex_a[WORD_W-1] ? '1 : '0;
+                                    end else begin
+                                        mem_result <= ex_a >>> ex_b;
+                                    end
+                                end else begin
+                                    execute_fault = 1'b1;
+                                end
+                            end
+                            BINARY_MATRIX_MUL, BINARY_INPLACE_MATRIX_MUL,
+                            BINARY_TRUE_DIV, BINARY_INPLACE_TRUE_DIV: begin
+                                execute_fault = 1'b1;
+                                illegal_instr_valid <= 1'b1;
+                            end
+                            default: begin
+                                execute_fault = 1'b1;
+                                illegal_instr_valid <= 1'b1;
+                            end
                         endcase
                     end
 
@@ -248,6 +368,7 @@ module pycpu_core #(
 
                     default: begin
                         execute_fault = 1'b1;
+                        illegal_instr_valid <= 1'b1;
                     end
                 endcase
             end

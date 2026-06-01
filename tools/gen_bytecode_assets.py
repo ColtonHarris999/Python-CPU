@@ -34,6 +34,33 @@ SUPPORTED_OPS = {
     "RETURN_VALUE",
 }
 
+# Integer-only BINARY_OP opargs supported by the CPU. CPython 3.14 numbering:
+# 0:+ 1:& 2:// 3:<< 5:* 6:% 7:| 8:** 9:>> 10:- 12:^ and in-place forms.
+SUPPORTED_BINARY_OP_ARGS = {
+    0,   # NB_ADD
+    1,   # NB_AND
+    2,   # NB_FLOOR_DIVIDE
+    3,   # NB_LSHIFT
+    5,   # NB_MULTIPLY
+    6,   # NB_REMAINDER
+    7,   # NB_OR
+    8,   # NB_POWER
+    9,   # NB_RSHIFT
+    10,  # NB_SUBTRACT
+    12,  # NB_XOR
+    13,  # NB_INPLACE_ADD
+    14,  # NB_INPLACE_AND
+    15,  # NB_INPLACE_FLOOR_DIVIDE
+    16,  # NB_INPLACE_LSHIFT
+    18,  # NB_INPLACE_MULTIPLY
+    19,  # NB_INPLACE_REMAINDER
+    20,  # NB_INPLACE_OR
+    21,  # NB_INPLACE_POWER
+    22,  # NB_INPLACE_RSHIFT
+    23,  # NB_INPLACE_SUBTRACT
+    25,  # NB_INPLACE_XOR
+}
+
 
 # Opcode numbers used directly when synthesizing the lowered halves of fused
 # dual-load instructions. Pinned to 3.14; checked at import-time via the
@@ -70,6 +97,13 @@ def _iter_supported_instructions(fn) -> Iterable[dis.Instruction]:
                 f"Unsupported opcode '{ins.opname}' at offset {ins.offset}. "
                 f"Supported: {sorted(SUPPORTED_OPS)}"
             )
+        if ins.opname == "BINARY_OP":
+            arg = 0 if ins.arg is None else ins.arg
+            if arg not in SUPPORTED_BINARY_OP_ARGS:
+                raise ValueError(
+                    f"Unsupported BINARY_OP oparg {arg} at offset {ins.offset}. "
+                    f"Supported integer args: {sorted(SUPPORTED_BINARY_OP_ARGS)}"
+                )
         yield ins
 
 
