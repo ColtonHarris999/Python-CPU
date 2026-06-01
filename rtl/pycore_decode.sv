@@ -5,6 +5,7 @@ module pycore_decode (
     input  logic [31:0] arg,
     output logic        valid_opcode,
     output logic        is_load_const,
+    output logic        is_load_small_int,
     output logic        is_load_fast,
     output logic        is_store_fast,
     output logic        is_pop_top,
@@ -21,6 +22,7 @@ module pycore_decode (
     always_comb begin
         valid_opcode = 1'b1;
         is_load_const = 1'b0;
+        is_load_small_int = 1'b0;
         is_load_fast  = 1'b0;
         is_store_fast = 1'b0;
         is_pop_top    = 1'b0;
@@ -39,6 +41,9 @@ module pycore_decode (
             end
             OP_LOAD_CONST: begin
                 is_load_const = 1'b1;
+            end
+            OP_LOAD_SMALL_INT: begin
+                is_load_small_int = 1'b1;
             end
             OP_LOAD_FAST: begin
                 is_load_fast = 1'b1;

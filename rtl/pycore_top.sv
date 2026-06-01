@@ -44,6 +44,7 @@ module pycore_top #(
 
     logic        dec_valid_opcode;
     logic        dec_load_const;
+    logic        dec_load_small_int;
     logic        dec_load_fast;
     logic        dec_store_fast;
     logic        dec_pop_top;
@@ -145,6 +146,7 @@ module pycore_top #(
         .arg(fetch_arg),
         .valid_opcode(dec_valid_opcode),
         .is_load_const(dec_load_const),
+        .is_load_small_int(dec_load_small_int),
         .is_load_fast(dec_load_fast),
         .is_store_fast(dec_store_fast),
         .is_pop_top(dec_pop_top),
@@ -302,6 +304,15 @@ module pycore_top #(
                             pc <= next_pc;
                         end else if (!dec_valid_opcode) begin
                             stage_illegal_opcode <= 1'b1;
+                        end else if (dec_load_small_int) begin
+                            if (tos_ptr < STACK_DEPTH) begin
+                                rf_tag[STACK_BASE + tos_ptr] <= TAG_INT;
+                                rf_val[STACK_BASE + tos_ptr] <= {{56{1'b0}}, fetch_arg[7:0]};
+                                tos_ptr <= tos_ptr + 1'b1;
+                                pc <= next_pc;
+                            end else begin
+                                stage_stack_fault <= 1'b1;
+                            end
                         end else if (dec_load_const) begin
                             if (tos_ptr < STACK_DEPTH) begin
                                 rf_tag[STACK_BASE + tos_ptr] <= const_entry[65:64];

@@ -19,6 +19,7 @@ package pycore_types_pkg;
     localparam logic [7:0] OP_UNARY_INVERT             = 8'd15;
     localparam logic [7:0] OP_RETURN_VALUE             = 8'd83;
     localparam logic [7:0] OP_SWAP                     = 8'd99;
+    localparam logic [7:0] OP_LOAD_SMALL_INT           = 8'd94;
     localparam logic [7:0] OP_LOAD_CONST               = 8'd100;
     localparam logic [7:0] OP_COMPARE_OP               = 8'd107;
     localparam logic [7:0] OP_JUMP_FORWARD             = 8'd110;

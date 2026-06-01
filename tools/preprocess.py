@@ -26,6 +26,7 @@ RAW_SUPPORTED_OPS = {
     "RESUME",
     "NOP",
     "LOAD_CONST",
+    "LOAD_SMALL_INT",
     "LOAD_FAST",
     "LOAD_FAST_BORROW",
     "LOAD_FAST_LOAD_FAST",
@@ -72,6 +73,7 @@ OPCODE_ENCODING = {
     "UNARY_INVERT": 15,
     "RETURN_VALUE": 83,
     "SWAP": 99,
+    "LOAD_SMALL_INT": 94,
     "LOAD_CONST": 100,
     "COMPARE_OP": 107,
     "JUMP_FORWARD": 110,
@@ -225,6 +227,8 @@ def _infer_types(fn, instructions: list[FoldedInstruction]) -> dict[str, str]:
                 stack.append("INT")
             else:
                 stack.append("REF")
+        elif ins.opname == "LOAD_SMALL_INT":
+            stack.append("INT")
         elif ins.opname == "LOAD_FAST":
             name = varnames[ins.arg] if ins.arg < len(varnames) else f"var_{ins.arg}"
             stack.append(inferred.get(name, "UNKNOWN"))
