@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+"""Preprocess CPython 3.14 bytecode for the PyCore hardware prototype."""
+
+from __future__ import annotations
+
+import argparse
+import dis
+import importlib.util
+import pathlib
+import struct
+import sys
+from dataclasses import dataclass
+from typing import Iterable
+
+
+REQUIRED_PY = (3, 14)
+
+TAG_UNINITIALIZED = 0b000
+TAG_INT = 0b001
+TAG_FLOAT = 0b010
+TAG_BOOL = 0b011
+TAG_PTR = 0b100
+TAG_OBJECT = 0b101
+
+SUPPORTED_OPS = {
+    "RESUME",
+    "CACHE",
+    "EXTENDED_ARG",
+    "LOAD_FAST",
+    "LOAD_FAST_BORROW",
+    "STORE_FAST",
+    "LOAD_SMALL_INT",
+    "LOAD_CONST",
+    "POP_TOP",
+    "COPY",
+    "SWAP",
+    "BINARY_OP",
+    "UNARY_NEGATIVE",
+    "UNARY_POSITIVE",
+    "UNARY_INVERT",
+    "UNARY_NOT",
+    "COMPARE_OP",
+    "JUMP_FORWARD",
+    "JUMP_BACKWARD",
+    "POP_JUMP_IF_TRUE",
+    "POP_JUMP_IF_FALSE",
+    "JUMP_IF_TRUE_OR_POP",
+    "JUMP_IF_FALSE_OR_POP",
+    "NOT_TAKEN",
+    "POP_ITER",
+    "CALL",
+    "RETURN_VALUE",
+}
+
+SUPPORTED_BINARY_ARGS = {
+    0, 13,   # add
+    1, 14,   # and
+    2, 15,   # floor divide
+    3, 16,   # left shift
+    5, 18,   # multiply
+    6, 19,   # remainder
+    7, 20,   # or
+    8, 21,   # power
+    9, 22,   # right shift
+    10, 23,  # subtract
+    11, 24,  # true divide
+    12, 25,  # xor
+}
+
+
+@dataclass(frozen=True)
+class EmittedInstruction:
+    opcode: int
+    arg: int
+    source_offset: int
+    opname: str
+
+
+def require_python_3_14() -> None:
+    if sys.version_info[:2] != REQUIRED_PY:
+        raise RuntimeError(
+            "PyCore preprocessing is pinned to CPython "
+            f"{REQUIRED_PY[0]}.{REQUIRED_PY[1]}; running "
+            f"{sys.version_info.major}.{sys.version_info.minor}"
+        )
+
+
+def load_function(source: pathlib.Path, function_name: str):
+    spec = importlib.util.spec_from_file_location("_pycore_input", source)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"Unable to import {source}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    fn = getattr(module, function_name, None)
+    if not callable(fn):
+        raise ValueError(f"Function '{function_name}' not found in {source}")
+    return fn
+
+
+def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
+    for ins in dis.get_instructions(fn, show_caches=True):
+        if ins.opname == "CACHE":
+            continue
+        if ins.opname == "EXTENDED_ARG":
+            # CPython's disassembler has already folded the prefix into the
+            # following Instruction.arg; the fetch stage also supports raw
+            # EXTENDED_ARG for hand-written streams.
+            continue
+        if ins.opname not in SUPPORTED_OPS:
+            raise ValueError(
+                f"Unsupported opcode {ins.opname!r} at bytecode offset {ins.offset}"
+            )
+        if ins.opname == "BINARY_OP" and (ins.arg or 0) not in SUPPORTED_BINARY_ARGS:
+            raise ValueError(
+                f"Unsupported BINARY_OP oparg {ins.arg} at bytecode offset {ins.offset}"
+            )
+        yield ins
+
+
+def opcode_number(name: str) -> int:
+    try:
+        return dis.opmap[name]
+    except KeyError as exc:
+        raise RuntimeError(f"Opcode {name!r} is not present in this Python build") from exc
+
+
+def emit_instruction_words(instructions: Iterable[dis.Instruction]) -> list[EmittedInstruction]:
+    emitted: list[EmittedInstruction] = []
+    for ins in instructions:
+        arg = ins.arg or 0
+        if not 0 <= arg < (1 << 32):
+            raise ValueError(f"Instruction argument exceeds 32 bits: {ins}")
+        emitted.append(
+            EmittedInstruction(
+                opcode=ins.opcode,
+                arg=arg,
+                source_offset=ins.offset,
+                opname=ins.opname,
+            )
+        )
+    return emitted
+
+
+def float_bits(value: float) -> int:
+    return struct.unpack(">Q", struct.pack(">d", value))[0]
+
+
+def tag_constant(value: object) -> tuple[int, int]:
+    if isinstance(value, bool):
+        return TAG_BOOL, int(value)
+    if isinstance(value, int):
+        return TAG_INT, value & ((1 << 64) - 1)
+    if isinstance(value, float):
+        return TAG_FLOAT, float_bits(value)
+    return TAG_OBJECT, 0
+
+
+def format_entry(tag: int, value: int) -> str:
+    entry = ((tag & 0x7) << 64) | (value & ((1 << 64) - 1))
+    return f"{entry:017x}"
+
+
+def write_text(path: pathlib.Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="ascii")
+
+
+def write_program_hex(path: pathlib.Path, instructions: Iterable[EmittedInstruction]) -> None:
+    lines = [f"{((ins.arg & 0xffffffff) << 8) | ins.opcode:010x}" for ins in instructions]
+    write_text(path, "\n".join(lines) + ("\n" if lines else ""))
+
+
+def write_const_hex(path: pathlib.Path, consts: tuple[object, ...]) -> None:
+    lines = [format_entry(*tag_constant(value)) for value in consts]
+    if not lines:
+        lines = [format_entry(TAG_UNINITIALIZED, 0)]
+    write_text(path, "\n".join(lines) + "\n")
+
+
+def inline_cache_entries() -> list[int]:
+    entries = getattr(dis, "_inline_cache_entries", None)
+    if entries is None:
+        return [0] * 256
+    return [int(entries[i]) if i < len(entries) else 0 for i in range(256)]
+
+
+def write_cache_map(path: pathlib.Path) -> None:
+    lines = [f"{count:x}" for count in inline_cache_entries()]
+    write_text(path, "\n".join(lines) + "\n")
+
+
+def merge_numeric(tag_a: int, tag_b: int, op_arg: int) -> int:
+    if tag_a in (TAG_UNINITIALIZED, TAG_OBJECT) or tag_b in (TAG_UNINITIALIZED, TAG_OBJECT):
+        return TAG_OBJECT
+    if op_arg in (11, 24):
+        return TAG_FLOAT
+    if tag_a == TAG_FLOAT or tag_b == TAG_FLOAT:
+        return TAG_FLOAT
+    if tag_a == TAG_BOOL and tag_b == TAG_BOOL and op_arg in (1, 7, 12, 14, 20, 25):
+        return TAG_BOOL
+    return TAG_INT
+
+
+def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, int], list[str]]:
+    local_names = list(fn.__code__.co_varnames)
+    var_tags = {name: TAG_UNINITIALIZED for name in local_names}
+    stack: list[int] = []
+    warnings: list[str] = []
+
+    for ins in instructions:
+        if ins.opname == "LOAD_CONST":
+            tag, _ = tag_constant(fn.__code__.co_consts[ins.arg])
+            stack.append(tag)
+        elif ins.opname == "LOAD_SMALL_INT":
+            stack.append(TAG_INT)
+        elif ins.opname in ("LOAD_FAST", "LOAD_FAST_BORROW"):
+            name = local_names[ins.arg] if ins.arg < len(local_names) else f"local_{ins.arg}"
+            stack.append(var_tags.get(name, TAG_OBJECT))
+        elif ins.opname == "STORE_FAST":
+            name = local_names[ins.arg] if ins.arg < len(local_names) else f"local_{ins.arg}"
+            var_tags[name] = stack.pop() if stack else TAG_OBJECT
+        elif ins.opname == "POP_TOP" or ins.opname == "POP_ITER":
+            if stack:
+                stack.pop()
+        elif ins.opname == "COPY":
+            idx = ins.arg or 0
+            stack.append(stack[-idx] if 0 < idx <= len(stack) else TAG_OBJECT)
+        elif ins.opname == "SWAP":
+            idx = ins.arg or 0
+            if 0 < idx <= len(stack):
+                stack[-1], stack[-idx] = stack[-idx], stack[-1]
+        elif ins.opname == "BINARY_OP":
+            rhs = stack.pop() if stack else TAG_OBJECT
+            lhs = stack.pop() if stack else TAG_OBJECT
+            result_tag = merge_numeric(lhs, rhs, ins.arg)
+            if result_tag == TAG_OBJECT:
+                warnings.append(
+                    f"OBJECT-typed value feeds BINARY_OP at bytecode offset {ins.source_offset}"
+                )
+            stack.append(result_tag)
+        elif ins.opname == "COMPARE_OP":
+            if stack:
+                stack.pop()
+            if stack:
+                stack.pop()
+            stack.append(TAG_BOOL)
+        elif ins.opname in ("UNARY_NEGATIVE", "UNARY_POSITIVE", "UNARY_INVERT", "UNARY_NOT"):
+            operand = stack.pop() if stack else TAG_OBJECT
+            stack.append(TAG_BOOL if ins.opname == "UNARY_NOT" else operand)
+        elif ins.opname.startswith("POP_JUMP"):
+            if stack:
+                stack.pop()
+        elif ins.opname == "CALL":
+            argc = ins.arg or 0
+            for _ in range(min(argc, len(stack))):
+                stack.pop()
+            stack.append(TAG_OBJECT)
+
+    return var_tags, warnings
+
+
+def write_types(path: pathlib.Path, var_tags: dict[str, int], warnings: list[str]) -> None:
+    tag_names = {
+        TAG_UNINITIALIZED: "UNINITIALIZED",
+        TAG_INT: "INT",
+        TAG_FLOAT: "FLOAT",
+        TAG_BOOL: "BOOL",
+        TAG_PTR: "PTR",
+        TAG_OBJECT: "OBJECT",
+    }
+    lines = [f"{name}: {tag_names.get(tag, 'RESERVED')}" for name, tag in sorted(var_tags.items())]
+    if warnings:
+        lines.append("")
+        lines.append("# warnings")
+        lines.extend(warnings)
+    write_text(path, "\n".join(lines) + "\n")
+
+
+def preprocess(
+    source: pathlib.Path,
+    function_name: str,
+    program_hex: pathlib.Path,
+    const_hex: pathlib.Path,
+    types_path: pathlib.Path,
+    cache_map: pathlib.Path,
+) -> None:
+    require_python_3_14()
+    fn = load_function(source, function_name)
+    instructions = emit_instruction_words(iter_filtered_instructions(fn))
+    var_tags, warnings = infer_types(fn, instructions)
+    write_program_hex(program_hex, instructions)
+    write_const_hex(const_hex, fn.__code__.co_consts)
+    write_types(types_path, var_tags, warnings)
+    write_cache_map(cache_map)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", default="pycore/programs/fib_iterative.py")
+    parser.add_argument("--function", default="managed_entry")
+    parser.add_argument("--program-hex", default="pycore/programs/program.hex")
+    parser.add_argument("--const-hex", default="pycore/programs/consts.hex")
+    parser.add_argument("--types", default="pycore/programs/program.types")
+    parser.add_argument("--cache-map", default="pycore/programs/cache_map.hex")
+    args = parser.parse_args()
+    preprocess(
+        source=pathlib.Path(args.source),
+        function_name=args.function,
+        program_hex=pathlib.Path(args.program_hex),
+        const_hex=pathlib.Path(args.const_hex),
+        types_path=pathlib.Path(args.types),
+        cache_map=pathlib.Path(args.cache_map),
+    )
+
+
+if __name__ == "__main__":
+    main()

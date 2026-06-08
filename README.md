@@ -136,3 +136,34 @@ docker compose run --rm sim
 - build-essential (g++, make)
 
 No local Verilator install is required when using Docker.
+
+## PyCore tagged architecture prototype
+
+This repository also contains `pycore/`, a new tagged-register-file CPU
+architecture targeting a CPython 3.14 bytecode subset. PyCore carries a 3-bit
+type tag with every 64-bit value (`{tag[2:0], value[63:0]}`), routes execution
+through tag-conditioned integer/FPU/bool/trap paths, and isolates the register
+file, multiplier, divider, and FPU for later ASIC macro replacement.
+
+Key files:
+
+- `pycore/rtl/pycore_regfile.sv`: 96-entry, 67-bit register file with locals
+  and operand-stack regions.
+- `pycore/rtl/pycore_tag_decode.sv`: combinational type-dispatch logic.
+- `pycore/rtl/pycore_exec.sv`: tag-routed execute fabric.
+- `pycore/tools/preprocess.py`: Python 3.14 bytecode-to-hex preprocessor.
+- `pycore/docs/architecture.md`: design rationale and semantic deviations.
+
+Run the PyCore smoke tests with:
+
+```bash
+make pycore-test
+```
+
+The preprocessor is intentionally strict about Python 3.14:
+
+```bash
+python3.14 pycore/tools/preprocess.py \
+  --source pycore/programs/mixed_arith.py \
+  --function managed_entry
+```

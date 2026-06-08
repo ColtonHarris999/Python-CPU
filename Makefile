@@ -15,8 +15,24 @@ MAX_CYCLES ?= 2000
 
 RTL_SRCS := rtl/pycpu_core.sv
 TB_SRC := tb/tb_pycpu.cpp
+PYCORE_RTL_SRCS := \
+	pycore/rtl/pycore_tag_decode.sv \
+	pycore/rtl/pycore_promote.sv \
+	pycore/rtl/pycore_int_alu.sv \
+	pycore/rtl/pycore_mul.sv \
+	pycore/rtl/pycore_div.sv \
+	pycore/rtl/pycore_fpu.sv \
+	pycore/rtl/pycore_exec.sv \
+	pycore/rtl/pycore_regfile.sv \
+	pycore/rtl/pycore_fetch.sv \
+	pycore/rtl/pycore_decode.sv \
+	pycore/rtl/pycore_branch.sv \
+	pycore/rtl/pycore_trap.sv \
+	pycore/rtl/pycore_frame.sv \
+	pycore/rtl/pycore_const_table.sv \
+	pycore/rtl/pycore_top.sv
 
-.PHONY: gen-bytecode sim sim-raw build-sim test-programs clean docker-build docker-sim
+.PHONY: gen-bytecode sim sim-raw build-sim test-programs pycore-test pycore-tag-decode pycore-exec pycore-top clean docker-build docker-sim
 
 gen-bytecode:
 	$(PYTHON) tools/gen_bytecode_assets.py \
@@ -65,6 +81,42 @@ test-programs:
 		CONST_HEX=programs/invalid_opcode_consts.hex \
 		EXPECT_TRAP=1 \
 		EXPECT_ILLEGAL=1
+
+pycore-tag-decode:
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_tag_decode \
+		--Mdir $(BUILD_DIR)/pycore_tag_decode \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_tag_decode.sv pycore/tb/tb_tag_decode.sv
+	./$(BUILD_DIR)/pycore_tag_decode/Vtb_tag_decode
+
+pycore-exec:
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_exec \
+		--Mdir $(BUILD_DIR)/pycore_exec \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_tag_decode.sv \
+		pycore/rtl/pycore_promote.sv \
+		pycore/rtl/pycore_int_alu.sv \
+		pycore/rtl/pycore_mul.sv \
+		pycore/rtl/pycore_div.sv \
+		pycore/rtl/pycore_fpu.sv \
+		pycore/rtl/pycore_exec.sv \
+		pycore/tb/tb_exec.sv
+	./$(BUILD_DIR)/pycore_exec/Vtb_exec
+
+pycore-top:
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_pycore \
+		--Mdir $(BUILD_DIR)/pycore_top \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_pycore.sv
+	./$(BUILD_DIR)/pycore_top/Vtb_pycore
+
+pycore-test: pycore-tag-decode pycore-exec pycore-top
 
 docker-build:
 	docker build -t $(DOCKER_IMAGE) .
