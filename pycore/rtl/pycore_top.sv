@@ -39,9 +39,14 @@ module pycore_top (
     logic [6:0]  tos_ptr;
     logic [6:0]  locals_base;
     logic        freeze_pipeline;
+    logic        exec_valid;
 
     assign tos_ptr_small = tos_ptr[5:0];
     assign locals_base_small = locals_base[5:0];
+    assign exec_valid = decoded_valid && !illegal_opcode &&
+                        (fetch_opcode == PY_OP_BINARY_OP ||
+                         fetch_opcode == PY_OP_COMPARE_OP ||
+                         fetch_opcode == PY_OP_RETURN_VALUE);
 
     pycore_fetch fetch (
         .clk(clk),
@@ -103,7 +108,7 @@ module pycore_top (
     pycore_exec exec (
         .clk(clk),
         .rst_n(rst_n),
-        .valid(decoded_valid && !illegal_opcode && mem_op == PY_MEM_NONE),
+        .valid(exec_valid && mem_op == PY_MEM_NONE),
         .alu_op(alu_op),
         .rs1(rs1_entry),
         .rs2(rs2_entry),

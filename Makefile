@@ -83,6 +83,7 @@ test-programs:
 		EXPECT_ILLEGAL=1
 
 pycore-tag-decode:
+	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
 		+incdir+pycore/rtl \
 		--top-module tb_tag_decode \
@@ -92,6 +93,7 @@ pycore-tag-decode:
 	./$(BUILD_DIR)/pycore_tag_decode/Vtb_tag_decode
 
 pycore-exec:
+	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
 		+incdir+pycore/rtl \
 		--top-module tb_exec \
@@ -108,6 +110,7 @@ pycore-exec:
 	./$(BUILD_DIR)/pycore_exec/Vtb_exec
 
 pycore-top:
+	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
 		+incdir+pycore/rtl \
 		--top-module tb_pycore \

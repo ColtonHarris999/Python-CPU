@@ -53,7 +53,7 @@ module pycore_regfile #(
         if (!rst_n) begin
             int i;
             for (i = 0; i < RF_DEPTH; i++) begin
-                rf[i] <= uninitialized_entry();
+                rf[i] = uninitialized_entry();
             end
             tos_q <= STACK_BASE[ADDR_W-1:0];
             locals_base_q <= '0;
@@ -69,7 +69,7 @@ module pycore_regfile #(
                 int j;
                 for (j = 0; j < LOCAL_COUNT; j++) begin
                     if ((new_locals_base + j) < RF_DEPTH) begin
-                        rf[new_locals_base + j] <= uninitialized_entry();
+                        rf[new_locals_base + j] = uninitialized_entry();
                     end else begin
                         stack_fault_q <= 1'b1;
                     end

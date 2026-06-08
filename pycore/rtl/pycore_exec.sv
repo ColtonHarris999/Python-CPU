@@ -156,22 +156,25 @@ module pycore_exec #(
         base = unit_a;
         exp = unit_b;
         accum = 64'sd1;
+        wide = 128'sd0;
+        pow_result = 64'd1;
         pow_trap = 1'b0;
         if (exp < 0) begin
             pow_trap = 1'b1;
+        end else if (exp > 63) begin
+            pow_trap = 1'b1;
         end else begin
             for (i = 0; i < 64; i++) begin
-                if (i < exp) begin
+                if (i < exp[31:0]) begin
                     wide = accum * base;
-                    if (wide > 127'sh0000_0000_0000_0000_7fff_ffff_ffff_ffff ||
-                        wide < -127'sh0000_0000_0000_0000_8000_0000_0000_0000) begin
+                    if (wide[127:64] != {64{wide[63]}}) begin
                         pow_trap = 1'b1;
                     end
                     accum = wide[63:0];
                 end
             end
+            pow_result = accum;
         end
-        pow_result = accum;
     end
 
     always_comb begin
