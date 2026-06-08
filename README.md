@@ -160,6 +160,19 @@ Run the PyCore smoke tests with:
 make pycore-test
 ```
 
+Or run the same suite in Docker:
+
+```bash
+make docker-pycore-test
+```
+
+If your Docker daemon requires host networking during builds, pass flags through
+the Makefile:
+
+```bash
+make docker-pycore-test DOCKER_BUILD_FLAGS=--network=host DOCKER_RUN_FLAGS=--network=host
+```
+
 The preprocessor is intentionally strict about Python 3.14:
 
 ```bash
