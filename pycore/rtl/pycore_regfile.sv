@@ -2,8 +2,8 @@
 
 module pycore_regfile #(
     parameter int RF_DEPTH = 96,
-    parameter int VAL_WIDTH = 64,
-    parameter int TAG_WIDTH = 3,
+    parameter int VAL_WIDTH = PYCORE_VAL_WIDTH,
+    parameter int TAG_WIDTH = PYCORE_TAG_WIDTH,
     parameter int LOCAL_COUNT = 32,
     parameter int STACK_BASE = 32
 ) (

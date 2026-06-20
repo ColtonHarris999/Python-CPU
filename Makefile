@@ -32,9 +32,19 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_trap.sv \
 	pycore/rtl/pycore_frame.sv \
 	pycore/rtl/pycore_const_table.sv \
-	pycore/rtl/pycore_top.sv
+	pycore/rtl/pycore_mem_block.sv \
+	pycore/rtl/pycore_mem_bank.sv \
+	pycore/rtl/pycore_imem.sv \
+	pycore/rtl/pycore_dmem.sv \
+	pycore/rtl/pycore_mem_stage.sv \
+	pycore/rtl/pycore_core.sv \
+	pycore/rtl/pycore_system.sv
 
-.PHONY: gen-bytecode sim sim-raw build-sim test-programs pycore-test pycore-tag-decode pycore-exec pycore-type-pairs pycore-python-tests pycore-top clean docker-build docker-sim docker-pycore-test
+PYCORE_MEM_SRCS := \
+	pycore/rtl/pycore_mem_block.sv \
+	pycore/rtl/pycore_mem_bank.sv
+
+.PHONY: gen-bytecode sim sim-raw build-sim test-programs pycore-test pycore-tag-decode pycore-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-top clean docker-build docker-sim docker-pycore-test
 
 gen-bytecode:
 	$(PYTHON) tools/gen_bytecode_assets.py \
@@ -128,6 +138,16 @@ pycore-type-pairs:
 		pycore/tb/tb_type_pairs.sv
 	./$(BUILD_DIR)/pycore_type_pairs/Vtb_type_pairs
 
+pycore-mem:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_mem_bank \
+		--Mdir $(BUILD_DIR)/pycore_mem \
+		-Wall -Wno-fatal \
+		$(PYCORE_MEM_SRCS) pycore/tb/tb_mem_bank.sv
+	./$(BUILD_DIR)/pycore_mem/Vtb_mem_bank
+
 pycore-python-tests:
 	$(PYTHON) -m unittest pycore.tests.test_type_pair_programs
 
@@ -141,7 +161,7 @@ pycore-top:
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_pycore.sv
 	./$(BUILD_DIR)/pycore_top/Vtb_pycore
 
-pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-type-pairs pycore-top
+pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-type-pairs pycore-mem pycore-top
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .

@@ -5,9 +5,9 @@ module tb_type_pairs;
     logic rst_n;
     logic valid;
     logic [4:0] alu_op;
-    logic [66:0] rs1;
-    logic [66:0] rs2;
-    logic [66:0] result;
+    logic [PYCORE_ENTRY_WIDTH-1:0] rs1;
+    logic [PYCORE_ENTRY_WIDTH-1:0] rs2;
+    logic [PYCORE_ENTRY_WIDTH-1:0] result;
     logic stall;
     logic trap;
     logic [3:0] trap_code;
@@ -37,9 +37,11 @@ module tb_type_pairs;
         end
     endtask
 
-    function automatic logic [66:0] entry(input logic [2:0] tag, input logic [63:0] value);
+    function automatic logic [PYCORE_ENTRY_WIDTH-1:0] entry(
+        input logic [2:0] tag, input logic [63:0] value
+    );
         begin
-            entry = {tag, value};
+            entry = pycore_make_entry(tag, {64'b0, value});
         end
     endfunction
 
@@ -175,7 +177,7 @@ module tb_type_pairs;
                 check(trap_code == PY_TRAP_TYPE, {label, " should raise TYPE_TRAP"});
             end else begin
                 check(!trap, {label, " should not trap"});
-                check(result[66:64] == expected_tag(tag_a, tag_b), {label, " result tag mismatch"});
+                check(pycore_get_tag(result) == expected_tag(tag_a, tag_b), {label, " result tag mismatch"});
                 check(result[63:0] == expected_value(op, tag_a, tag_b), {label, " result value mismatch"});
             end
         end
@@ -186,8 +188,8 @@ module tb_type_pairs;
         rst_n = 1'b0;
         valid = 1'b0;
         alu_op = PY_ALU_ADD;
-        rs1 = 67'b0;
-        rs2 = 67'b0;
+        rs1 = '0;
+        rs2 = '0;
         tests_run = 0;
         #12;
         rst_n = 1'b1;

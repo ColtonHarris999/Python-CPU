@@ -1,9 +1,26 @@
 `ifndef PYCORE_DEFS_SVH
 `define PYCORE_DEFS_SVH
 
-localparam int PYCORE_VAL_WIDTH   = 64;
+localparam int PYCORE_VAL_WIDTH   = 128;
 localparam int PYCORE_TAG_WIDTH   = 3;
 localparam int PYCORE_ENTRY_WIDTH = PYCORE_TAG_WIDTH + PYCORE_VAL_WIDTH;
+
+// Tagged-entry slice indices. Centralized here so RTL never hardcodes [130:128]
+// or [127:0] when carving a {tag, value} entry apart.
+localparam int PYCORE_TAG_MSB = PYCORE_ENTRY_WIDTH - 1;          // 130
+localparam int PYCORE_TAG_LSB = PYCORE_VAL_WIDTH;               // 128
+localparam int PYCORE_VAL_MSB = PYCORE_VAL_WIDTH - 1;          // 127
+localparam int PYCORE_VAL_LSB = 0;                            // 0
+
+// Memory subsystem reference parameters. Memory modules expose these as their
+// own parameters; the localparams here document the defaults and let the core
+// derive port widths without magic numbers.
+localparam int PYCORE_ADDR_WIDTH       = 32;
+localparam int PYCORE_BLOCK_SHIFT      = 12;   // 4096 bytes / block
+localparam int PYCORE_IMEM_BLOCK_COUNT = 4;    // 16 KB instruction memory
+localparam int PYCORE_DMEM_BLOCK_COUNT = 4;    // 16 KB data memory
+localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
+localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot
 
 localparam logic [2:0] PY_TAG_UNINIT = 3'b000;
 localparam logic [2:0] PY_TAG_INT    = 3'b001;
@@ -29,6 +46,8 @@ localparam logic [3:0] PY_TRAP_DIV_ZERO       = 4'd3;
 localparam logic [3:0] PY_TRAP_FPU_EXCEPTION  = 4'd4;
 localparam logic [3:0] PY_TRAP_ILLEGAL_OPCODE = 4'd5;
 localparam logic [3:0] PY_TRAP_CALL_FILTER    = 4'd6;
+localparam logic [3:0] PY_TRAP_MEM_FAULT      = 4'd7;
+localparam logic [3:0] PY_TRAP_ADDR_ALIGN     = 4'd8;
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;
@@ -75,10 +94,56 @@ localparam logic [7:0] PY_OP_EXTENDED_ARG     = 8'd144;
 localparam logic [7:0] PY_OP_JUMP_FORWARD     = 8'd110;
 localparam logic [7:0] PY_OP_JUMP_BACKWARD    = 8'd140;
 
+// Internal-only memory opcodes. These are not part of the CPython 3.14 opcode
+// space and are never emitted by preprocess.py; they exist so hand-written test
+// streams can exercise the dmem datapath through the real MEM stage. The values
+// are chosen above the CPython opcode range to avoid collisions.
+localparam logic [7:0] PY_OP_MEM_LOAD_PTR     = 8'd200;
+localparam logic [7:0] PY_OP_MEM_STORE_PTR    = 8'd201;
+
 localparam logic [2:0] PY_MEM_NONE       = 3'd0;
 localparam logic [2:0] PY_MEM_LOAD_FAST  = 3'd1;
 localparam logic [2:0] PY_MEM_STORE_FAST = 3'd2;
 localparam logic [2:0] PY_MEM_LOAD_CONST = 3'd3;
+localparam logic [2:0] PY_MEM_LOAD_PTR   = 3'd4;
+localparam logic [2:0] PY_MEM_STORE_PTR  = 3'd5;
+
+// Entry accessors. Fixed to PYCORE_ENTRY_WIDTH so callers do not scatter slice
+// indices through the RTL.
+function automatic logic [PYCORE_TAG_WIDTH-1:0] pycore_get_tag(
+    input logic [PYCORE_ENTRY_WIDTH-1:0] entry
+);
+    begin
+        pycore_get_tag = entry[PYCORE_TAG_MSB:PYCORE_TAG_LSB];
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_get_val(
+    input logic [PYCORE_ENTRY_WIDTH-1:0] entry
+);
+    begin
+        pycore_get_val = entry[PYCORE_VAL_MSB:PYCORE_VAL_LSB];
+    end
+endfunction
+
+function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_entry(
+    input logic [PYCORE_TAG_WIDTH-1:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_make_entry = {tag, value};
+    end
+endfunction
+
+// Build an INT entry from a 64-bit operand, sign-extending into value[127:64]
+// per the documented 128-bit INT fast-path semantics.
+function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_int_entry(
+    input logic [63:0] value64
+);
+    begin
+        pycore_int_entry = {PY_TAG_INT, {64{value64[63]}}, value64};
+    end
+endfunction
 
 function automatic logic pycore_is_numeric_tag(input logic [2:0] tag);
     begin

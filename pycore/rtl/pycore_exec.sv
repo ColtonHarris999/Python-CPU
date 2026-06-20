@@ -9,9 +9,9 @@ module pycore_exec #(
     input  logic        rst_n,
     input  logic        valid,
     input  logic [4:0]  alu_op,
-    input  logic [66:0] rs1,
-    input  logic [66:0] rs2,
-    output logic [66:0] result,
+    input  logic [PYCORE_ENTRY_WIDTH-1:0] rs1,
+    input  logic [PYCORE_ENTRY_WIDTH-1:0] rs2,
+    output logic [PYCORE_ENTRY_WIDTH-1:0] result,
     output logic        stall,
     output logic        trap,
     output logic [3:0]  trap_code
@@ -51,8 +51,10 @@ module pycore_exec #(
     logic [63:0] pow_result;
     logic        pow_trap;
 
-    assign rs1_tag = rs1[66:64];
-    assign rs2_tag = rs2[66:64];
+    // 128-bit INT keeps a 64-bit signed fast path: the math leaves operate on
+    // value[63:0] and the result is sign-/zero-extended back to 128 bits below.
+    assign rs1_tag = pycore_get_tag(rs1);
+    assign rs2_tag = pycore_get_tag(rs2);
     assign rs1_value = rs1[63:0];
     assign rs2_value = rs2[63:0];
 
@@ -179,6 +181,7 @@ module pycore_exec #(
 
     always_comb begin
         logic [63:0] selected_value;
+        logic [PYCORE_VAL_WIDTH-1:0] wide_value;
 
         selected_value = 64'b0;
         stall = mul_stall || div_stall || fpu_stall;
@@ -223,7 +226,16 @@ module pycore_exec #(
             endcase
         end
 
-        result = {result_tag, selected_value};
+        // Extend the 64-bit unit result up to the 128-bit value field. INT is
+        // sign-extended so the architectural upper bits stay consistent with the
+        // documented fast-path semantics; every other tag zero-extends.
+        if (result_tag == PY_TAG_INT) begin
+            wide_value = {{64{selected_value[63]}}, selected_value};
+        end else begin
+            wide_value = {64'b0, selected_value};
+        end
+
+        result = pycore_make_entry(result_tag, wide_value);
     end
 
 endmodule

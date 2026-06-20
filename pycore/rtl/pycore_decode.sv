@@ -137,6 +137,23 @@ module pycore_decode (
                 is_call = 1'b1;
             end
 
+            // Internal-only data-memory ops (not emitted by preprocess.py).
+            // LOAD_PTR: pop an address from TOS, push the loaded value back
+            // (net stack effect zero -> destination reuses the TOS-1 slot).
+            PY_OP_MEM_LOAD_PTR: begin
+                rs1_sel = {1'b0, tos_index - 6'd1};
+                rd_sel  = {1'b0, tos_index - 6'd1};
+                mem_op  = PY_MEM_LOAD_PTR;
+            end
+
+            // STORE_PTR: TOS is store data, TOS-1 is the address; both pop.
+            PY_OP_MEM_STORE_PTR: begin
+                rs1_sel = {1'b0, tos_index - 6'd1};
+                rs2_sel = {1'b0, tos_index - 6'd2};
+                pop_stack = 1'b1;
+                mem_op  = PY_MEM_STORE_PTR;
+            end
+
             default: begin
                 illegal_opcode = 1'b1;
                 alu_op = PY_ALU_ILLEGAL;

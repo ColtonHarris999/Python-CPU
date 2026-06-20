@@ -145,19 +145,32 @@ def float_bits(value: float) -> int:
     return struct.unpack(">Q", struct.pack(">d", value))[0]
 
 
+# Architectural value is now a 128-bit field carrying a 3-bit tag, i.e. a
+# 131-bit entry. INT keeps a 64-bit signed fast path sign-extended into the
+# upper 64 bits; FLOAT/BOOL live in the low 64 bits with the rest zero.
+VAL_WIDTH = 128
+VAL_MASK = (1 << VAL_WIDTH) - 1
+ENTRY_HEX_DIGITS = (3 + VAL_WIDTH + 3) // 4  # ceil(131/4) == 33
+
+# Instruction memory slot: 40-bit folded word, zero-padded to one 8-byte slot.
+IMEM_SLOT_BITS = 64
+IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
+
+
 def tag_constant(value: object) -> tuple[int, int]:
     if isinstance(value, bool):
         return TAG_BOOL, int(value)
     if isinstance(value, int):
-        return TAG_INT, value & ((1 << 64) - 1)
+        # Two's-complement masked to 128 bits sign-extends negatives correctly.
+        return TAG_INT, value & VAL_MASK
     if isinstance(value, float):
         return TAG_FLOAT, float_bits(value)
     return TAG_OBJECT, 0
 
 
 def format_entry(tag: int, value: int) -> str:
-    entry = ((tag & 0x7) << 64) | (value & ((1 << 64) - 1))
-    return f"{entry:017x}"
+    entry = ((tag & 0x7) << VAL_WIDTH) | (value & VAL_MASK)
+    return f"{entry:0{ENTRY_HEX_DIGITS}x}"
 
 
 def write_text(path: pathlib.Path, text: str) -> None:
@@ -166,7 +179,10 @@ def write_text(path: pathlib.Path, text: str) -> None:
 
 
 def write_program_hex(path: pathlib.Path, instructions: Iterable[EmittedInstruction]) -> None:
-    lines = [f"{((ins.arg & 0xffffffff) << 8) | ins.opcode:010x}" for ins in instructions]
+    lines = [
+        f"{((ins.arg & 0xffffffff) << 8) | ins.opcode:0{IMEM_SLOT_HEX_DIGITS}x}"
+        for ins in instructions
+    ]
     write_text(path, "\n".join(lines) + ("\n" if lines else ""))
 
 

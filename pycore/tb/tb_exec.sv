@@ -5,9 +5,9 @@ module tb_exec;
     logic rst_n;
     logic valid;
     logic [4:0] alu_op;
-    logic [66:0] rs1;
-    logic [66:0] rs2;
-    logic [66:0] result;
+    logic [PYCORE_ENTRY_WIDTH-1:0] rs1;
+    logic [PYCORE_ENTRY_WIDTH-1:0] rs2;
+    logic [PYCORE_ENTRY_WIDTH-1:0] result;
     logic stall;
     logic trap;
     logic [3:0] trap_code;
@@ -36,9 +36,13 @@ module tb_exec;
         end
     endtask
 
-    function automatic logic [66:0] entry(input logic [2:0] tag, input logic [63:0] value);
+    function automatic logic [PYCORE_ENTRY_WIDTH-1:0] entry(
+        input logic [2:0] tag, input logic [63:0] value
+    );
         begin
-            entry = {tag, value};
+            // The exec fast path only consumes value[63:0]; zero-extend the
+            // 64-bit stimulus into the 128-bit value field.
+            entry = pycore_make_entry(tag, {64'b0, value});
         end
     endfunction
 
@@ -47,8 +51,8 @@ module tb_exec;
         rst_n = 1'b0;
         valid = 1'b0;
         alu_op = PY_ALU_ADD;
-        rs1 = 67'b0;
-        rs2 = 67'b0;
+        rs1 = '0;
+        rs2 = '0;
         #12;
         rst_n = 1'b1;
         valid = 1'b1;
@@ -58,15 +62,16 @@ module tb_exec;
         alu_op = PY_ALU_ADD;
         #1;
         check(!trap, "INT add should not trap");
-        check(result[66:64] == PY_TAG_INT, "INT add should tag INT");
+        check(pycore_get_tag(result) == PY_TAG_INT, "INT add should tag INT");
         check(result[63:0] == 64'd42, "INT add value mismatch");
+        check(result[PYCORE_VAL_MSB:64] == 64'b0, "INT add upper bits should sign-extend to zero");
 
         rs1 = entry(PY_TAG_BOOL, 64'd1);
         rs2 = entry(PY_TAG_BOOL, 64'd0);
         alu_op = PY_ALU_AND;
         #1;
         check(!trap, "BOOL and should not trap");
-        check(result[66:64] == PY_TAG_BOOL, "BOOL and should tag BOOL");
+        check(pycore_get_tag(result) == PY_TAG_BOOL, "BOOL and should tag BOOL");
         check(result[63:0] == 64'd0, "BOOL and value mismatch");
 
         rs1 = entry(PY_TAG_INT, 64'd3);
@@ -74,7 +79,7 @@ module tb_exec;
         alu_op = PY_ALU_TRUE_DIV;
         #1;
         check(!trap, "INT true divide should not trap");
-        check(result[66:64] == PY_TAG_FLOAT, "INT true divide should tag FLOAT");
+        check(pycore_get_tag(result) == PY_TAG_FLOAT, "INT true divide should tag FLOAT");
         check($bitstoreal(result[63:0]) == 1.5, "INT true divide value mismatch");
 
         rs1 = entry(PY_TAG_PTR, 64'h1000);

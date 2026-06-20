@@ -12,13 +12,13 @@ module pycore_frame #(
     input  logic [$clog2(RF_DEPTH)-1:0]  tos_base_in,
     input  logic [$clog2(RF_DEPTH)-1:0]  locals_base_in,
     input  logic [$clog2(RF_DEPTH)-1:0]  new_locals_base_in,
-    input  logic [66:0]                  return_value_in,
+    input  logic [PYCORE_ENTRY_WIDTH-1:0] return_value_in,
     output logic [31:0]                  pc_return_out,
     output logic [$clog2(RF_DEPTH)-1:0]  tos_base_out,
     output logic [$clog2(RF_DEPTH)-1:0]  locals_base_out,
     output logic [$clog2(RF_DEPTH)-1:0]  next_locals_base,
     output logic                         init_new_frame,
-    output logic [66:0]                  return_value_out,
+    output logic [PYCORE_ENTRY_WIDTH-1:0] return_value_out,
     output logic                         frame_fault
 );
 

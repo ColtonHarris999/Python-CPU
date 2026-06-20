@@ -4,7 +4,7 @@ module pycore_branch (
     input  logic [7:0]  opcode,
     input  logic [31:0] pc,
     input  logic [31:0] arg,
-    input  logic [66:0] tos_entry,
+    input  logic [PYCORE_ENTRY_WIDTH-1:0] tos_entry,
     output logic        take_branch,
     output logic [31:0] branch_target,
     output logic        trap,
@@ -12,11 +12,11 @@ module pycore_branch (
 );
 
     logic [2:0] tag;
-    logic [63:0] value;
+    logic [PYCORE_VAL_WIDTH-1:0] value;
     logic truthy;
 
-    assign tag = tos_entry[66:64];
-    assign value = tos_entry[63:0];
+    assign tag = pycore_get_tag(tos_entry);
+    assign value = pycore_get_val(tos_entry);
 
     always_comb begin
         truthy = 1'b0;
