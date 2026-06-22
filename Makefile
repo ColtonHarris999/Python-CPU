@@ -44,7 +44,7 @@ PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv
 
-.PHONY: gen-bytecode sim sim-raw build-sim test-programs pycore-test pycore-tag-decode pycore-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-top clean docker-build docker-sim docker-pycore-test
+.PHONY: gen-bytecode sim sim-raw build-sim test-programs pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-top clean docker-build docker-sim docker-pycore-test
 
 gen-bytecode:
 	$(PYTHON) tools/gen_bytecode_assets.py \
@@ -121,6 +121,23 @@ pycore-exec:
 		pycore/tb/tb_exec.sv
 	./$(BUILD_DIR)/pycore_exec/Vtb_exec
 
+pycore-string-exec:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_string_exec \
+		--Mdir $(BUILD_DIR)/pycore_string_exec \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_tag_decode.sv \
+		pycore/rtl/pycore_promote.sv \
+		pycore/rtl/pycore_int_alu.sv \
+		pycore/rtl/pycore_mul.sv \
+		pycore/rtl/pycore_div.sv \
+		pycore/rtl/pycore_fpu.sv \
+		pycore/rtl/pycore_exec.sv \
+		pycore/tb/tb_string_exec.sv
+	./$(BUILD_DIR)/pycore_string_exec/Vtb_string_exec
+
 pycore-type-pairs:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
@@ -160,7 +177,7 @@ pycore-frame:
 	./$(BUILD_DIR)/pycore_frame/Vtb_frame
 
 pycore-python-tests:
-	$(PYTHON) -m unittest pycore.tests.test_type_pair_programs
+	$(PYTHON) -m unittest pycore.tests.test_type_pair_programs pycore.tests.test_preprocess_strings
 
 pycore-top:
 	mkdir -p $(BUILD_DIR)
@@ -172,7 +189,7 @@ pycore-top:
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_pycore.sv
 	./$(BUILD_DIR)/pycore_top/Vtb_pycore
 
-pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-type-pairs pycore-mem pycore-frame pycore-top
+pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-top
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .

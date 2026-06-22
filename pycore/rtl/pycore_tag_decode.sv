@@ -137,7 +137,27 @@ module pycore_tag_decode (
                     end
                 end
 
-                PY_ALU_ADD, PY_ALU_SUB, PY_ALU_MUL, PY_ALU_FLOOR_DIV, PY_ALU_MOD, PY_ALU_POWER: begin
+                PY_ALU_ADD: begin
+                    if (pycore_is_string_tag(rs1_tag) && pycore_is_string_tag(rs2_tag)) begin
+                        // String concatenation runs in pycore_exec's string path.
+                        exec_unit_sel = PY_EXEC_INT;
+                        result_tag = PY_TAG_SHORT_STR;
+                    end else if (rs1_tag == PY_TAG_FLOAT || rs2_tag == PY_TAG_FLOAT) begin
+                        if (pycore_is_numeric_tag(rs1_tag) && pycore_is_numeric_tag(rs2_tag)) begin
+                            `PYCORE_ROUTE_FLOAT_BINARY(PY_TAG_FLOAT)
+                        end else begin
+                            `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
+                        end
+                    end else if (rs1_tag == PY_TAG_BOOL && rs2_tag == PY_TAG_BOOL) begin
+                        `PYCORE_ROUTE_INT_BINARY(PY_TAG_INT)
+                    end else if (pycore_is_numeric_tag(rs1_tag) && pycore_is_numeric_tag(rs2_tag)) begin
+                        `PYCORE_ROUTE_INT_BINARY(PY_TAG_INT)
+                    end else begin
+                        `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
+                    end
+                end
+
+                PY_ALU_SUB, PY_ALU_MUL, PY_ALU_FLOOR_DIV, PY_ALU_MOD, PY_ALU_POWER: begin
                     if (rs1_tag == PY_TAG_FLOAT || rs2_tag == PY_TAG_FLOAT) begin
                         if (pycore_is_numeric_tag(rs1_tag) && pycore_is_numeric_tag(rs2_tag)) begin
                             `PYCORE_ROUTE_FLOAT_BINARY(PY_TAG_FLOAT)
