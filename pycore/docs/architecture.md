@@ -191,12 +191,31 @@ RF[0..31]  frame locals
 RF[32..95] operand stack
 ```
 
-Function calls use a locals-base window instead of copying frame contents.
-All live frames must fit inside the physical RF; this is a sizing constraint of
-the prototype and a capacity/performance knob for a future macro.
+Function calls are managed by `pycore_frame.sv`, which now treats the RF stack
+window as a **ring buffer with memory spill** rather than a hard depth limit.
+Each call allocates a frame node containing:
 
-`pycore_frame.sv` stores `{pc_return, tos_base, locals_base}` for calls and
-requests that new-frame locals be tagged `UNINITIALIZED`.
+- `{pc_return, tos_base, locals_base}` bookkeeping
+- linked-list pointers (`prev`, `next`) for active-frame traversal
+- a per-slot mapping table where `0` means "resident in RF" and nonzero is the
+  spill memory address
+- an allocation pointer target used to identify the oldest frame that still owns
+  resident RF data
+
+The RF residency policy is FIFO by age: when a new frame needs registers and
+the resident ring is full, the oldest resident slot is spilled to memory and
+its mapping table entry flips from `0` to the spill address. This allows call
+depth and total logical register demand to scale with memory capacity rather
+than RF depth.
+
+Two explicit memory regions are reserved for runtime frame storage:
+
+- **stack-frame metadata region**: frame linked-list nodes
+- **frame spill region**: spilled register payloads for non-resident slots
+
+Spill slots are reclaimed on return, so deep but finite recursion can continue
+as long as free spill capacity remains. A separate heap region remains reserved
+for future object/string support.
 
 ## CPython 3.14 preprocessing
 

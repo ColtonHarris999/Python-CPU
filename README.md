@@ -160,6 +160,10 @@ Run the PyCore smoke tests with:
 make pycore-test
 ```
 
+This suite now includes a dedicated frame-manager stress test
+(`make pycore-frame`) that verifies linked-list frame tracking, RF ring-buffer
+allocation, spill/reclaim behavior, and frame fault handling.
+
 Or run the same suite in Docker:
 
 ```bash
