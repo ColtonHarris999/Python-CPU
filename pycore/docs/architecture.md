@@ -32,11 +32,10 @@ The tag encoding is:
 | `011` | `BOOL`, with `value[0]` significant, upper bits zero |
 | `100` | raw `PTR`, 128-bit byte address for data memory |
 | `101` | opaque `OBJECT` |
-| `11x` | reserved, treated as `OBJECT` |
+| `110` | `SHORT_STR` inline string: `size[3:0]`, `bytes[119:0]`, `flags[3:0]` |
+| `111` | `LONG_STR` descriptor: `size[63:0]`, `addr[63:0]` |
 
-Three bits leave room for `PTR` and future numeric types while making
-`UNINITIALIZED` a real architectural state. Undefined local reads trap instead
-of returning a garbage value.
+Undefined local reads still trap instead of returning a garbage value.
 
 ### 128-bit value semantics
 
@@ -55,6 +54,11 @@ single-cycle math leaves rather than widening every unit:
 - `PTR` is architecturally a 128-bit byte address. In v1 only `value[31:0]` is
   decoded onto the data bus (`ADDR_WIDTH = 32`); a nonzero upper PTR field
   raises `MEM_FAULT`.
+- `SHORT_STR` uses 15 UTF-8 bytes inline in the value field plus a 4-bit size.
+  The low 4 flag bits are reserved for future use and currently written zero.
+- `LONG_STR` uses `{size, addr}` and stores byte payloads in string memory.
+  `BINARY_OP (+)` concatenates `SHORT_STR`/`LONG_STR` pairs, producing short or
+  long output based on result length; oversized results trap with `MEM_FAULT`.
 - `UNINITIALIZED` and `OBJECT` retain their trap semantics unchanged.
 
 ## Trap policy

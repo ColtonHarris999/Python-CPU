@@ -14,7 +14,8 @@ module pycore_system #(
     parameter int    CONST_DEPTH      = 256,
     parameter int    CONST_IDX_W      = 8,
     parameter string PROG_HEX         = "pycore/programs/program.hex",
-    parameter string CONST_HEX        = "pycore/programs/consts.hex"
+    parameter string CONST_HEX        = "pycore/programs/consts.hex",
+    parameter string STRING_HEX       = "pycore/programs/string_mem.hex"
 ) (
     input  logic        clk,
     input  logic        rst_n,
@@ -52,7 +53,8 @@ module pycore_system #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .IMEM_DATA_W(IMEM_DATA_W),
         .DMEM_DATA_W(DMEM_DATA_W),
-        .CONST_IDX_W(CONST_IDX_W)
+        .CONST_IDX_W(CONST_IDX_W),
+        .STRING_HEX(STRING_HEX)
     ) core (
         .clk(clk),
         .rst_n(rst_n),
