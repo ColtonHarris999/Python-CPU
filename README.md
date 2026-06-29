@@ -95,7 +95,7 @@ make all-tests
 
 ```bash
 make run-file \
-  RUN_SOURCE=pycore/programs/fib_iterative.py \
+  RUN_SOURCE=pycore/programs/smoke_return.py \
   RUN_FUNCTION=managed_entry
 ```
 
@@ -110,7 +110,7 @@ Optional output-path overrides:
 
 ```bash
 make run-file \
-  RUN_SOURCE=pycore/programs/fib_iterative.py \
+  RUN_SOURCE=pycore/programs/smoke_return.py \
   RUN_FUNCTION=managed_entry \
   RUN_PROGRAM_HEX=pycore/programs/my_program.hex \
   RUN_CONST_HEX=pycore/programs/my_consts.hex \
@@ -122,7 +122,7 @@ make run-file \
 ```bash
 make docker-pycore-test
 make docker-all-tests
-make docker-run-file RUN_SOURCE=pycore/programs/fib_iterative.py RUN_FUNCTION=managed_entry
+make docker-run-file RUN_SOURCE=pycore/programs/smoke_return.py RUN_FUNCTION=managed_entry
 ```
 
 If needed, you can pass host-network flags:

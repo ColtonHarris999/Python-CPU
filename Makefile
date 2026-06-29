@@ -6,7 +6,7 @@ DOCKER_BUILD_FLAGS ?=
 DOCKER_RUN_FLAGS ?=
 PYTHON ?= python3
 
-PYCORE_SOURCE ?= pycore/programs/fib_iterative.py
+PYCORE_SOURCE ?= pycore/programs/smoke_return.py
 PYCORE_FUNCTION ?= managed_entry
 PYCORE_PROGRAM_HEX ?= pycore/programs/program.hex
 PYCORE_CONST_HEX ?= pycore/programs/consts.hex
@@ -14,7 +14,7 @@ PYCORE_STRING_HEX ?= pycore/programs/string_mem.hex
 PYCORE_TYPES ?= pycore/programs/program.types
 PYCORE_CACHE_MAP ?= pycore/programs/cache_map.hex
 
-RUN_SOURCE ?= pycore/programs/fib_iterative.py
+RUN_SOURCE ?= pycore/programs/smoke_return.py
 RUN_FUNCTION ?= managed_entry
 RUN_PROGRAM_HEX ?= pycore/programs/run_program.hex
 RUN_CONST_HEX ?= pycore/programs/run_consts.hex
