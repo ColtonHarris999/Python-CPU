@@ -183,24 +183,6 @@ make docker-all-tests DOCKER_BUILD_FLAGS=--network=host DOCKER_RUN_FLAGS=--netwo
 
 ---
 
-## GitHub merge gate for `main`
-
-CI workflow `.github/workflows/all-tests.yml` publishes a required-friendly
-status check named:
-
-- `all-tests`
-
-To enforce "tests must pass before merging to main", enable branch protection on
-`main` and require that status check:
-
-1. GitHub repository `Settings -> Branches -> Branch protection rules -> main`
-2. Enable **Require status checks to pass before merging**
-3. Select check: **all-tests**
-4. (Recommended) Enable **Require a pull request before merging** to block
-   direct commits to `main` unless policy allows them.
-
----
-
 ## Legacy core quick reference
 
 `make sim` compiles/disassembles a Python function, emits:
