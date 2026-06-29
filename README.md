@@ -198,6 +198,8 @@ To enforce "tests must pass before merging to main", enable branch protection on
 3. Select check: **all-tests**
 4. (Recommended) Enable **Require a pull request before merging** to block
    direct commits to `main` unless policy allows them.
+5. Verify by pushing a small PR update and confirming `all-tests` appears in the
+   PR checks list.
 
 ---
 
