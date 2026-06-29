@@ -1,38 +1,26 @@
-# Python-CPU / PyCore
+# PyCore
 
-SystemVerilog research CPU project with two execution paths:
+SystemVerilog multi-cycle Python-bytecode core using tagged 131-bit entries:
 
-- `rtl/pycpu_core.sv`: original managed-bytecode core.
-- `pycore/`: tagged-value (`{tag[2:0], value[127:0]}`) PyCore prototype.
+```text
+{ tag[2:0], value[127:0] }
+```
 
-Both flows are pinned to **CPython 3.14 bytecode numbering**.
+The repository now contains a single active implementation path under `pycore/`.
 
----
-
-## Register layout and tag system (PyCore)
+## Register layout and tag system
 
 ### Register layout
 
 PyCore uses a 96-entry architectural register file:
 
 - `RF[0..31]`: frame-local window
-- `RF[32..95]`: operand-stack / runtime allocation window
+- `RF[32..95]`: operand-stack / runtime-allocation window
 
-Call frames are managed by `pycore_frame.sv` as a ring-buffer + spill system:
+Function-call frames are managed by `pycore/rtl/pycore_frame.sv` as a ring-buffer
+with spill-to-memory.
 
-- resident frame slots live in the physical RF window
-- when resident capacity is full, oldest frame slots spill to memory
-- spilled entries are tracked by per-frame mapping tables
-
-### Tagged entry format
-
-Each register entry is 131 bits:
-
-```text
-{ tag[2:0], value[127:0] }
-```
-
-Current tag map:
+### Tag map
 
 - `000`: `UNINITIALIZED`
 - `001`: `INT`
@@ -40,72 +28,52 @@ Current tag map:
 - `011`: `BOOL`
 - `100`: `PTR`
 - `101`: `OBJECT`
-- `110`: `SHORT_STR` (inline string)
-- `111`: `LONG_STR` (`size[63:0]`, `addr[63:0]`)
+- `110`: `SHORT_STR`
+- `111`: `LONG_STR`
 
-String-specific value layouts:
+String value layouts:
 
 - `SHORT_STR`: `size[3:0]`, `payload[119:0]`, `flags[3:0]`
 - `LONG_STR`: `size[63:0]`, `addr[63:0]`
 
-For full architecture rationale, see:
+Additional design detail is documented in `pycore/docs/architecture.md`.
 
-- `pycore/docs/architecture.md`
+## Python version
 
----
+`pycore/tools/preprocess.py` is strict and must run on **Python 3.14**.
 
-## Python version (strict)
+## Docs
 
-Tooling is intentionally strict:
-
-- `tools/gen_bytecode_assets.py` requires Python 3.14.
-- `pycore/tools/preprocess.py` requires Python 3.14.
-
-If you run those scripts under any other interpreter, they fail fast by design.
-
----
-
-## Preprocessing and bytecode support docs
-
-- preprocessing breakdown and budget: `pycore/docs/preprocessing_breakdown.md`
-- bytecode support lists (full / partial / unsupported): `pycore/docs/bytecode_support.md`
-
----
+- Preprocessing breakdown: `pycore/docs/preprocessing_breakdown.md`
+- Bytecode support matrix: `pycore/docs/bytecode_support.md`
 
 ## Quick setup after clone
 
-### Option A: Local Linux (Ubuntu/Debian)
+### Local Linux (Ubuntu/Debian)
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y make g++ verilator python3.14 python3.14-venv docker.io
 ```
 
-If `python3.14` is not available from your distro packages, install Python 3.14
-via your preferred method (for example pyenv) and run make with
-`PYTHON=python3.14`.
+If your distro does not package `python3.14`, install Python 3.14 via pyenv (or
+equivalent) and run make with `PYTHON=python3.14`.
 
-### Option B: Local Windows (recommended via WSL2)
+### Local Windows
 
-Use WSL2 Ubuntu and run the same Linux commands above inside WSL.
+Use WSL2 Ubuntu and run the same Linux setup commands inside WSL.
 
-### Option C: Docker (no local Verilator/Python setup needed)
+### Docker
 
 ```bash
 make docker-build
 ```
 
----
-
 ## Testing workflows
 
-You can run **individual tests**, **all tests**, or **a custom Python file**.
-
-### Individual test targets (local)
+### Run an individual test target (local)
 
 ```bash
-make sim
-make test-programs
 make pycore-tag-decode
 make pycore-exec
 make pycore-string-exec
@@ -114,68 +82,50 @@ make pycore-mem
 make pycore-frame
 make pycore-frame-fib
 make pycore-top
-make pycore-test
+make pycore-python-tests
 ```
 
-### All tests (local)
+### Run all tests (local)
 
 ```bash
 make all-tests
 ```
 
-### Run any provided file and print memory artifacts (local)
+### Run any provided Python file (local)
 
 ```bash
 make run-file \
-  RUN_SOURCE=programs/demo_program.py \
+  RUN_SOURCE=pycore/programs/smoke_return.py \
   RUN_FUNCTION=managed_entry
 ```
 
-This command:
+This flow:
 
-1. generates bytecode assets from the given file/function;
-2. runs simulation;
-3. dumps program/constant memory image contents;
-4. reports expected-return artifact path and simulator result.
+1. preprocesses the requested function into program/const/string memory images;
+2. runs PyCore simulation with those generated images;
+3. prints return entry information from the retired `RETURN_VALUE`;
+4. dumps memory image files (`program`, `const`, `string`) for inspection.
 
-You can override artifact output paths:
+Optional output-path overrides:
 
 ```bash
 make run-file \
-  RUN_SOURCE=programs/demo_program.py \
+  RUN_SOURCE=pycore/programs/smoke_return.py \
   RUN_FUNCTION=managed_entry \
-  RUN_PROGRAM_HEX=programs/my_prog.hex \
-  RUN_CONST_HEX=programs/my_consts.hex \
-  RUN_EXPECTED_TXT=programs/my_expected.txt
+  RUN_PROGRAM_HEX=pycore/programs/my_program.hex \
+  RUN_CONST_HEX=pycore/programs/my_consts.hex \
+  RUN_STRING_HEX=pycore/programs/my_string_mem.hex
 ```
-
----
 
 ## Docker equivalents
 
-### Individual targets
-
 ```bash
-make docker-sim
-make docker-test-programs
 make docker-pycore-test
-```
-
-### All tests
-
-```bash
 make docker-all-tests
+make docker-run-file RUN_SOURCE=pycore/programs/smoke_return.py RUN_FUNCTION=managed_entry
 ```
 
-### Custom-file run (memory dump + return artifacts)
-
-```bash
-make docker-run-file \
-  RUN_SOURCE=programs/demo_program.py \
-  RUN_FUNCTION=managed_entry
-```
-
-If your environment needs host networking:
+If needed, you can pass host-network flags:
 
 ```bash
 make docker-all-tests DOCKER_BUILD_FLAGS=--network=host DOCKER_RUN_FLAGS=--network=host

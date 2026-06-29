@@ -262,6 +262,8 @@ def inline_cache_entries() -> list[int]:
     entries = getattr(dis, "_inline_cache_entries", None)
     if entries is None:
         return [0] * 256
+    if isinstance(entries, dict):
+        return [int(entries.get(i, 0)) for i in range(256)]
     return [int(entries[i]) if i < len(entries) else 0 for i in range(256)]
 
 
@@ -390,7 +392,7 @@ def preprocess(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", default="pycore/programs/fib_iterative.py")
+    parser.add_argument("--source", default="pycore/programs/smoke_return.py")
     parser.add_argument("--function", default="managed_entry")
     parser.add_argument("--program-hex", default="pycore/programs/program.hex")
     parser.add_argument("--const-hex", default="pycore/programs/consts.hex")
