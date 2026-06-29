@@ -28,6 +28,16 @@ localparam logic [2:0] PY_TAG_FLOAT  = 3'b010;
 localparam logic [2:0] PY_TAG_BOOL   = 3'b011;
 localparam logic [2:0] PY_TAG_PTR    = 3'b100;
 localparam logic [2:0] PY_TAG_OBJECT = 3'b101;
+localparam logic [2:0] PY_TAG_SHORT_STR = 3'b110;
+localparam logic [2:0] PY_TAG_LONG_STR  = 3'b111;
+
+localparam int PYCORE_SHORT_STR_MAX_BYTES = 15;
+localparam int PYCORE_SHORT_STR_SIZE_MSB  = 127;
+localparam int PYCORE_SHORT_STR_SIZE_LSB  = 124;
+localparam int PYCORE_SHORT_STR_DATA_MSB  = 123;
+localparam int PYCORE_SHORT_STR_DATA_LSB  = 4;
+localparam int PYCORE_SHORT_STR_FLAG_MSB  = 3;
+localparam int PYCORE_SHORT_STR_FLAG_LSB  = 0;
 
 localparam logic [1:0] PY_EXEC_INT   = 2'd0;
 localparam logic [1:0] PY_EXEC_FLOAT = 2'd1;
@@ -151,10 +161,84 @@ function automatic logic pycore_is_numeric_tag(input logic [2:0] tag);
     end
 endfunction
 
+function automatic logic pycore_is_string_tag(input logic [2:0] tag);
+    begin
+        pycore_is_string_tag = (tag == PY_TAG_SHORT_STR) || (tag == PY_TAG_LONG_STR);
+    end
+endfunction
+
 function automatic logic pycore_is_trapping_tag(input logic [2:0] tag);
     begin
         pycore_is_trapping_tag = (tag == PY_TAG_UNINIT) || (tag == PY_TAG_PTR) ||
-                                 (tag == PY_TAG_OBJECT) || tag[2:1] == 2'b11;
+                                 (tag == PY_TAG_OBJECT);
+    end
+endfunction
+
+function automatic logic [3:0] pycore_short_str_size(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_short_str_size = value[PYCORE_SHORT_STR_SIZE_MSB:PYCORE_SHORT_STR_SIZE_LSB];
+    end
+endfunction
+
+function automatic logic [119:0] pycore_short_str_payload(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_short_str_payload = value[PYCORE_SHORT_STR_DATA_MSB:PYCORE_SHORT_STR_DATA_LSB];
+    end
+endfunction
+
+function automatic logic [7:0] pycore_short_str_byte(
+    input logic [PYCORE_VAL_WIDTH-1:0] value,
+    input int unsigned idx
+);
+    logic [119:0] payload;
+    begin
+        payload = pycore_short_str_payload(value);
+        if (idx < PYCORE_SHORT_STR_MAX_BYTES) begin
+            pycore_short_str_byte = payload[119-(idx*8)-:8];
+        end else begin
+            pycore_short_str_byte = 8'h00;
+        end
+    end
+endfunction
+
+function automatic logic [63:0] pycore_long_str_size(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_long_str_size = value[127:64];
+    end
+endfunction
+
+function automatic logic [63:0] pycore_long_str_addr(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_long_str_addr = value[63:0];
+    end
+endfunction
+
+function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_short_str_entry(
+    input logic [3:0] size,
+    input logic [119:0] payload
+);
+    begin
+        pycore_make_short_str_entry = pycore_make_entry(
+            PY_TAG_SHORT_STR,
+            {size, payload, 4'b0000}
+        );
+    end
+endfunction
+
+function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_long_str_entry(
+    input logic [63:0] size,
+    input logic [63:0] addr
+);
+    begin
+        pycore_make_long_str_entry = pycore_make_entry(PY_TAG_LONG_STR, {size, addr});
     end
 endfunction
 

@@ -78,6 +78,18 @@ module tb_tag_decode;
         check(exec_unit_sel == PY_EXEC_BOOL, "BOOL and BOOL should route to BOOL logic");
         check(result_tag == PY_TAG_BOOL, "BOOL and BOOL should produce BOOL");
 
+        rs1_tag = PY_TAG_SHORT_STR;
+        rs2_tag = PY_TAG_LONG_STR;
+        alu_op = PY_ALU_ADD;
+        #1;
+        check(!is_trap, "STR + STR should not trap");
+
+        rs1_tag = PY_TAG_SHORT_STR;
+        rs2_tag = PY_TAG_LONG_STR;
+        alu_op = PY_ALU_MUL;
+        #1;
+        check(is_trap && trap_code == PY_TRAP_TYPE, "STR * STR should type trap");
+
         rs1_tag = PY_TAG_PTR;
         rs2_tag = PY_TAG_INT;
         alu_op = PY_ALU_EQ;
