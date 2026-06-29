@@ -131,3 +131,30 @@ If needed, you can pass host-network flags:
 make docker-all-tests DOCKER_BUILD_FLAGS=--network=host DOCKER_RUN_FLAGS=--network=host
 ```
 
+---
+
+## Legacy core quick reference
+
+`make sim` compiles/disassembles a Python function, emits:
+
+- program image (`programs/*_prog.hex`)
+- constant image (`programs/*_consts.hex`)
+- expected return (`programs/*_expected.txt`)
+
+and then runs Verilator (`tb/tb_pycpu.cpp`) to validate final behavior.
+
+---
+
+## PyCore quick reference
+
+Primary regression entrypoint:
+
+```bash
+make pycore-test
+```
+
+PyCore docs:
+
+- architecture: `pycore/docs/architecture.md`
+- preprocessing breakdown: `pycore/docs/preprocessing_breakdown.md`
+- bytecode support matrix: `pycore/docs/bytecode_support.md`
