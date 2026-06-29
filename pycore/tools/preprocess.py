@@ -21,6 +21,14 @@ TAG_FLOAT = 0b010
 TAG_BOOL = 0b011
 TAG_PTR = 0b100
 TAG_OBJECT = 0b101
+TAG_SHORT_STR = 0b110
+TAG_LONG_STR = 0b111
+
+SHORT_STR_MAX_BYTES = 15
+SHORT_STR_SIZE_SHIFT = 124
+SHORT_STR_DATA_SHIFT = 4
+STRING_MEM_BYTES = 65536
+STRING_RUNTIME_BASE = 16384
 
 SUPPORTED_OPS = {
     "RESUME",
@@ -117,13 +125,6 @@ def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
         yield ins
 
 
-def opcode_number(name: str) -> int:
-    try:
-        return dis.opmap[name]
-    except KeyError as exc:
-        raise RuntimeError(f"Opcode {name!r} is not present in this Python build") from exc
-
-
 def emit_instruction_words(instructions: Iterable[dis.Instruction]) -> list[EmittedInstruction]:
     emitted: list[EmittedInstruction] = []
     for ins in instructions:
@@ -145,6 +146,31 @@ def float_bits(value: float) -> int:
     return struct.unpack(">Q", struct.pack(">d", value))[0]
 
 
+class StringHeapBuilder:
+    """Builds an initialized long-string memory image for hardware."""
+
+    def __init__(self) -> None:
+        self.next_addr = 0
+        self.image: dict[int, int] = {}
+
+    def allocate(self, data: bytes) -> int:
+        if not data:
+            return 0
+
+        addr = self.next_addr
+        end = addr + len(data)
+        if end > STRING_RUNTIME_BASE:
+            raise ValueError(
+                "Long-string constants exceed reserved string-constant memory "
+                f"region (used {end} bytes, limit {STRING_RUNTIME_BASE})"
+            )
+
+        for offset, byte in enumerate(data):
+            self.image[addr + offset] = byte
+        self.next_addr = end
+        return addr
+
+
 # Architectural value is now a 128-bit field carrying a 3-bit tag, i.e. a
 # 131-bit entry. INT keeps a 64-bit signed fast path sign-extended into the
 # upper 64 bits; FLOAT/BOOL live in the low 64 bits with the rest zero.
@@ -157,7 +183,16 @@ IMEM_SLOT_BITS = 64
 IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
 
 
-def tag_constant(value: object) -> tuple[int, int]:
+def _encode_short_string(data: bytes) -> int:
+    payload = 0
+    for idx, byte in enumerate(data):
+        shift = SHORT_STR_DATA_SHIFT + (SHORT_STR_MAX_BYTES - 1 - idx) * 8
+        payload |= int(byte) << shift
+    payload |= (len(data) & 0xF) << SHORT_STR_SIZE_SHIFT
+    return payload
+
+
+def tag_constant(value: object, string_heap: StringHeapBuilder) -> tuple[int, int]:
     if isinstance(value, bool):
         return TAG_BOOL, int(value)
     if isinstance(value, int):
@@ -165,6 +200,14 @@ def tag_constant(value: object) -> tuple[int, int]:
         return TAG_INT, value & VAL_MASK
     if isinstance(value, float):
         return TAG_FLOAT, float_bits(value)
+    if isinstance(value, str):
+        encoded = value.encode("utf-8")
+        if len(encoded) <= SHORT_STR_MAX_BYTES:
+            return TAG_SHORT_STR, _encode_short_string(encoded)
+        if len(encoded) > ((1 << 64) - 1):
+            raise ValueError("String constant exceeds 64-bit length field")
+        addr = string_heap.allocate(encoded)
+        return TAG_LONG_STR, ((len(encoded) & ((1 << 64) - 1)) << 64) | (addr & ((1 << 64) - 1))
     return TAG_OBJECT, 0
 
 
@@ -186,10 +229,32 @@ def write_program_hex(path: pathlib.Path, instructions: Iterable[EmittedInstruct
     write_text(path, "\n".join(lines) + ("\n" if lines else ""))
 
 
-def write_const_hex(path: pathlib.Path, consts: tuple[object, ...]) -> None:
-    lines = [format_entry(*tag_constant(value)) for value in consts]
+def write_const_hex(
+    path: pathlib.Path,
+    consts: tuple[object, ...],
+    string_heap: StringHeapBuilder,
+) -> None:
+    lines = [format_entry(*tag_constant(value, string_heap)) for value in consts]
     if not lines:
         lines = [format_entry(TAG_UNINITIALIZED, 0)]
+    write_text(path, "\n".join(lines) + "\n")
+
+
+def write_string_hex(path: pathlib.Path, string_heap: StringHeapBuilder) -> None:
+    if not string_heap.image:
+        write_text(path, "00\n")
+        return
+
+    lines: list[str] = []
+    current_addr = -1
+    for addr in sorted(string_heap.image.keys()):
+        if addr < 0 or addr >= STRING_MEM_BYTES:
+            raise ValueError(f"String address {addr} is outside string memory")
+        if addr != current_addr + 1:
+            lines.append(f"@{addr:x}")
+        lines.append(f"{string_heap.image[addr]:02x}")
+        current_addr = addr
+
     write_text(path, "\n".join(lines) + "\n")
 
 
@@ -206,6 +271,9 @@ def write_cache_map(path: pathlib.Path) -> None:
 
 
 def merge_numeric(tag_a: int, tag_b: int, op_arg: int) -> int:
+    if op_arg in (0, 13) and tag_a in (TAG_SHORT_STR, TAG_LONG_STR) and tag_b in (TAG_SHORT_STR, TAG_LONG_STR):
+        # Hardware resolves short-vs-long at runtime from operand sizes.
+        return TAG_LONG_STR
     if tag_a in (TAG_UNINITIALIZED, TAG_OBJECT) or tag_b in (TAG_UNINITIALIZED, TAG_OBJECT):
         return TAG_OBJECT
     if op_arg in (11, 24):
@@ -225,7 +293,12 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
 
     for ins in instructions:
         if ins.opname == "LOAD_CONST":
-            tag, _ = tag_constant(fn.__code__.co_consts[ins.arg])
+            const_value = fn.__code__.co_consts[ins.arg]
+            if isinstance(const_value, str):
+                encoded = const_value.encode("utf-8")
+                tag = TAG_SHORT_STR if len(encoded) <= SHORT_STR_MAX_BYTES else TAG_LONG_STR
+            else:
+                tag, _ = tag_constant(const_value, StringHeapBuilder())
             stack.append(tag)
         elif ins.opname == "LOAD_SMALL_INT":
             stack.append(TAG_INT)
@@ -283,6 +356,8 @@ def write_types(path: pathlib.Path, var_tags: dict[str, int], warnings: list[str
         TAG_BOOL: "BOOL",
         TAG_PTR: "PTR",
         TAG_OBJECT: "OBJECT",
+        TAG_SHORT_STR: "SHORT_STR",
+        TAG_LONG_STR: "LONG_STR",
     }
     lines = [f"{name}: {tag_names.get(tag, 'RESERVED')}" for name, tag in sorted(var_tags.items())]
     if warnings:
@@ -297,6 +372,7 @@ def preprocess(
     function_name: str,
     program_hex: pathlib.Path,
     const_hex: pathlib.Path,
+    string_hex: pathlib.Path,
     types_path: pathlib.Path,
     cache_map: pathlib.Path,
 ) -> None:
@@ -304,8 +380,10 @@ def preprocess(
     fn = load_function(source, function_name)
     instructions = emit_instruction_words(iter_filtered_instructions(fn))
     var_tags, warnings = infer_types(fn, instructions)
+    string_heap = StringHeapBuilder()
     write_program_hex(program_hex, instructions)
-    write_const_hex(const_hex, fn.__code__.co_consts)
+    write_const_hex(const_hex, fn.__code__.co_consts, string_heap)
+    write_string_hex(string_hex, string_heap)
     write_types(types_path, var_tags, warnings)
     write_cache_map(cache_map)
 
@@ -316,6 +394,7 @@ def main() -> None:
     parser.add_argument("--function", default="managed_entry")
     parser.add_argument("--program-hex", default="pycore/programs/program.hex")
     parser.add_argument("--const-hex", default="pycore/programs/consts.hex")
+    parser.add_argument("--string-hex", default="pycore/programs/string_mem.hex")
     parser.add_argument("--types", default="pycore/programs/program.types")
     parser.add_argument("--cache-map", default="pycore/programs/cache_map.hex")
     args = parser.parse_args()
@@ -324,6 +403,7 @@ def main() -> None:
         function_name=args.function,
         program_hex=pathlib.Path(args.program_hex),
         const_hex=pathlib.Path(args.const_hex),
+        string_hex=pathlib.Path(args.string_hex),
         types_path=pathlib.Path(args.types),
         cache_map=pathlib.Path(args.cache_map),
     )

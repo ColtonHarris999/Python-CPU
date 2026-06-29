@@ -30,7 +30,8 @@ module pycore_core #(
     parameter int CONST_IDX_W   = 8,
     parameter int RF_DEPTH      = 96,
     parameter int STACK_BASE    = 32,
-    parameter int STACK_TOP_MAX = 96
+    parameter int STACK_TOP_MAX = 96,
+    parameter string STRING_HEX = "pycore/programs/string_mem.hex"
 ) (
     input  logic                          clk,
     input  logic                          rst_n,
@@ -229,7 +230,9 @@ module pycore_core #(
     logic                          exec_trap;
     logic [3:0]                    exec_trap_code;
 
-    pycore_exec exec (
+    pycore_exec #(
+        .STRING_HEX(STRING_HEX)
+    ) exec (
         .clk(clk),
         .rst_n(rst_n),
         .valid((state == S_EXEC) && is_alu),
@@ -345,9 +348,11 @@ module pycore_core #(
     assign fpu_exc_sig    = exec_in && exec_trap && (exec_trap_code == PY_TRAP_FPU_EXCEPTION);
     assign illegal_sig    = (exec_in && dec_illegal) ||
                             (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ILLEGAL_OPCODE));
-    assign mem_fault_sig  = (mem_in && mem_trap && (mem_trap_code == PY_TRAP_MEM_FAULT)) ||
+    assign mem_fault_sig  = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_MEM_FAULT)) ||
+                            (mem_in && mem_trap && (mem_trap_code == PY_TRAP_MEM_FAULT)) ||
                             imem_fault;
-    assign addr_align_sig = mem_in && mem_trap && (mem_trap_code == PY_TRAP_ADDR_ALIGN);
+    assign addr_align_sig = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ADDR_ALIGN)) ||
+                            (mem_in && mem_trap && (mem_trap_code == PY_TRAP_ADDR_ALIGN));
 
     logic [31:0]                   fault_pc;
     logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs1;
