@@ -7,4 +7,4 @@ services:
     working_dir: /workspace
     volumes:
       - .:/workspace
-    command: make sim
+    command: make all-tests

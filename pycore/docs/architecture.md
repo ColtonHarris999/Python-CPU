@@ -5,6 +5,10 @@ subset. The prototype is written as portable SystemVerilog. FPGA use is only a
 functional vehicle; FPGA-specific inference hints and resource pragmas are
 intentionally absent.
 
+Bytecode support status (fully supported / partially supported / unsupported) is
+tracked separately in `pycore/docs/bytecode_support.md` so decode and
+preprocessing changes can be reviewed against one explicit matrix.
+
 ## Tagged value invariant
 
 Every architectural value is a 131-bit register-file entry:

@@ -2,7 +2,7 @@
 
 module pycore_const_table #(
     parameter int CONST_DEPTH = 256,
-    parameter string CONST_HEX = "pycore/programs/demo_consts.hex"
+    parameter string CONST_HEX = "pycore/programs/consts.hex"
 ) (
     input  logic [$clog2(CONST_DEPTH)-1:0] const_idx,
     output logic [PYCORE_ENTRY_WIDTH-1:0] const_entry

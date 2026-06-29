@@ -1,22 +1,28 @@
 VERILATOR ?= verilator
 BUILD_DIR ?= build
-TOP ?= pycpu_core
 DOCKER_IMAGE ?= python-cpu-sim
 DOCKER_CONTAINER_WORKDIR ?= /work
 DOCKER_BUILD_FLAGS ?=
 DOCKER_RUN_FLAGS ?=
 PYTHON ?= python3
-PROGRAM_SOURCE ?= programs/demo_program.py
-PROGRAM_FUNCTION ?= managed_entry
-PROGRAM_HEX ?= programs/demo_prog.hex
-CONST_HEX ?= programs/demo_consts.hex
-EXPECTED_TXT ?= programs/demo_expected.txt
-EXPECT_TRAP ?= 0
-EXPECT_ILLEGAL ?= 0
-MAX_CYCLES ?= 2000
 
-RTL_SRCS := rtl/pycpu_core.sv
-TB_SRC := tb/tb_pycpu.cpp
+PYCORE_SOURCE ?= pycore/programs/smoke_return.py
+PYCORE_FUNCTION ?= managed_entry
+PYCORE_PROGRAM_HEX ?= pycore/programs/program.hex
+PYCORE_CONST_HEX ?= pycore/programs/consts.hex
+PYCORE_STRING_HEX ?= pycore/programs/string_mem.hex
+PYCORE_TYPES ?= pycore/programs/program.types
+PYCORE_CACHE_MAP ?= pycore/programs/cache_map.hex
+
+RUN_SOURCE ?= pycore/programs/smoke_return.py
+RUN_FUNCTION ?= managed_entry
+RUN_PROGRAM_HEX ?= pycore/programs/run_program.hex
+RUN_CONST_HEX ?= pycore/programs/run_consts.hex
+RUN_STRING_HEX ?= pycore/programs/run_string_mem.hex
+RUN_TYPES ?= pycore/programs/run_program.types
+RUN_CACHE_MAP ?= pycore/programs/run_cache_map.hex
+RUN_MAX_CYCLES ?= 2000
+
 PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_tag_decode.sv \
 	pycore/rtl/pycore_promote.sv \
@@ -44,55 +50,48 @@ PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv
 
-.PHONY: gen-bytecode sim sim-raw build-sim test-programs pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-top clean docker-build docker-sim docker-pycore-test
+.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-frame-fib pycore-top clean docker-build docker-run-file docker-pycore-test docker-all-tests
 
-gen-bytecode:
-	$(PYTHON) tools/gen_bytecode_assets.py \
-		--source $(PROGRAM_SOURCE) \
-		--function $(PROGRAM_FUNCTION) \
-		--program-hex $(PROGRAM_HEX) \
-		--const-hex $(CONST_HEX) \
-		--expected $(EXPECTED_TXT)
+pycore-preprocess:
+	$(PYTHON) pycore/tools/preprocess.py \
+		--source "$(PYCORE_SOURCE)" \
+		--function "$(PYCORE_FUNCTION)" \
+		--program-hex "$(PYCORE_PROGRAM_HEX)" \
+		--const-hex "$(PYCORE_CONST_HEX)" \
+		--string-hex "$(PYCORE_STRING_HEX)" \
+		--types "$(PYCORE_TYPES)" \
+		--cache-map "$(PYCORE_CACHE_MAP)"
 
-build-sim:
-	$(VERILATOR) --cc --exe --build \
-		--top-module $(TOP) \
-		-GPROG_HEX=\"$(PROGRAM_HEX)\" \
-		-GCONST_HEX=\"$(CONST_HEX)\" \
+run-file: pycore-run-file
+
+pycore-run-file:
+	$(PYTHON) pycore/tools/preprocess.py \
+		--source "$(RUN_SOURCE)" \
+		--function "$(RUN_FUNCTION)" \
+		--program-hex "$(RUN_PROGRAM_HEX)" \
+		--const-hex "$(RUN_CONST_HEX)" \
+		--string-hex "$(RUN_STRING_HEX)" \
+		--types "$(RUN_TYPES)" \
+		--cache-map "$(RUN_CACHE_MAP)"
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_pycore_runfile \
+		-GPROG_HEX=\"$(RUN_PROGRAM_HEX)\" \
+		-GCONST_HEX=\"$(RUN_CONST_HEX)\" \
+		-GSTRING_HEX=\"$(RUN_STRING_HEX)\" \
+		-GMAX_CYCLES=$(RUN_MAX_CYCLES) \
+		--Mdir $(BUILD_DIR)/pycore_runfile \
 		-Wall -Wno-fatal \
-		--Mdir $(BUILD_DIR) \
-		$(RTL_SRCS) $(TB_SRC)
-	EXPECTED_TXT=$(EXPECTED_TXT) \
-	EXPECT_TRAP=$(EXPECT_TRAP) \
-	EXPECT_ILLEGAL=$(EXPECT_ILLEGAL) \
-	MAX_CYCLES=$(MAX_CYCLES) \
-	./$(BUILD_DIR)/V$(TOP)
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_pycore_runfile.sv
+	./$(BUILD_DIR)/pycore_runfile/Vtb_pycore_runfile
+	$(PYTHON) tools/dump_hex.py --path "$(RUN_PROGRAM_HEX)" --label "Program memory image"
+	$(PYTHON) tools/dump_hex.py --path "$(RUN_CONST_HEX)" --label "Constant memory image"
+	$(PYTHON) tools/dump_hex.py --path "$(RUN_STRING_HEX)" --label "String memory image"
+	@echo "Type sketch file: $(RUN_TYPES)"
+	@echo "Cache map file: $(RUN_CACHE_MAP)"
 
-sim: gen-bytecode build-sim
-
-sim-raw: build-sim
-
-test-programs:
-	$(MAKE) sim \
-		PROGRAM_SOURCE=programs/demo_program.py \
-		PROGRAM_HEX=programs/demo_prog.hex \
-		CONST_HEX=programs/demo_consts.hex \
-		EXPECTED_TXT=programs/demo_expected.txt
-	$(MAKE) sim \
-		PROGRAM_SOURCE=programs/int_ops_program.py \
-		PROGRAM_HEX=programs/int_ops_prog.hex \
-		CONST_HEX=programs/int_ops_consts.hex \
-		EXPECTED_TXT=programs/int_ops_expected.txt
-	$(MAKE) sim \
-		PROGRAM_SOURCE=programs/int_ops_inplace_program.py \
-		PROGRAM_HEX=programs/int_ops_inplace_prog.hex \
-		CONST_HEX=programs/int_ops_inplace_consts.hex \
-		EXPECTED_TXT=programs/int_ops_inplace_expected.txt
-	$(MAKE) sim-raw \
-		PROGRAM_HEX=programs/invalid_opcode_prog.hex \
-		CONST_HEX=programs/invalid_opcode_consts.hex \
-		EXPECT_TRAP=1 \
-		EXPECT_ILLEGAL=1
+all-tests: pycore-test
 
 pycore-tag-decode:
 	mkdir -p $(BUILD_DIR)
@@ -176,8 +175,19 @@ pycore-frame:
 		pycore/tb/tb_frame.sv
 	./$(BUILD_DIR)/pycore_frame/Vtb_frame
 
+pycore-frame-fib:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_frame_fib_recursion \
+		--Mdir $(BUILD_DIR)/pycore_frame_fib \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_frame.sv \
+		pycore/tb/tb_frame_fib_recursion.sv
+	./$(BUILD_DIR)/pycore_frame_fib/Vtb_frame_fib_recursion
+
 pycore-python-tests:
-	$(PYTHON) -m unittest pycore.tests.test_type_pair_programs pycore.tests.test_preprocess_strings
+	$(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
 
 pycore-top:
 	mkdir -p $(BUILD_DIR)
@@ -189,16 +199,28 @@ pycore-top:
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_pycore.sv
 	./$(BUILD_DIR)/pycore_top/Vtb_pycore
 
-pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-top
+pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .
 
-docker-sim: docker-build
-	docker run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" $(DOCKER_IMAGE) make sim
+docker-run-file: docker-build
+	docker run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" \
+		$(DOCKER_IMAGE) make run-file \
+		RUN_SOURCE="$(RUN_SOURCE)" \
+		RUN_FUNCTION="$(RUN_FUNCTION)" \
+		RUN_PROGRAM_HEX="$(RUN_PROGRAM_HEX)" \
+		RUN_CONST_HEX="$(RUN_CONST_HEX)" \
+		RUN_STRING_HEX="$(RUN_STRING_HEX)" \
+		RUN_TYPES="$(RUN_TYPES)" \
+		RUN_CACHE_MAP="$(RUN_CACHE_MAP)" \
+		RUN_MAX_CYCLES="$(RUN_MAX_CYCLES)"
 
 docker-pycore-test: docker-build
 	docker run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" $(DOCKER_IMAGE) make pycore-test
+
+docker-all-tests: docker-build
+	docker run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" $(DOCKER_IMAGE) make all-tests
 
 clean:
 	rm -rf $(BUILD_DIR)

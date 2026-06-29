@@ -8,4 +8,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /work
 
-CMD ["make", "sim"]
+CMD ["make", "all-tests"]
