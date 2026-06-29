@@ -1,102 +1,70 @@
 # Preprocessing Breakdown and Design Budget
 
-This document explains exactly what preprocessing currently happens before RTL
-simulation, what is strictly required, and what should eventually move on-core.
+This document defines the active preprocessing flow for the current PyCore
+implementation and clarifies what should remain host-side versus on-core.
 
-## 1) Legacy core preprocessing (`tools/gen_bytecode_assets.py`)
-
-Input: Python source file + function name.
-
-Output:
-
-- instruction memory image (`programs/*_prog.hex`)
-- constant memory image (`programs/*_consts.hex`)
-- expected return value file (`programs/*_expected.txt`)
-
-Steps:
-
-1. **Version gate**: hard-fails unless running on Python 3.14.
-2. **Bytecode extraction**: disassembles the function and filters unsupported
-   opcodes.
-3. **Opcode validation**: checks `BINARY_OP` opargs against the supported
-   integer subset.
-4. **Lowering pass**: splits fused dual-load opcodes into two single-load words
-   because the hardware writes back one value per cycle.
-5. **Constant compaction**: builds a compact const table for `LOAD_CONST`.
-6. **Artifact emission**: writes program/const hex files.
-7. **Reference result**: executes the Python function and writes expected return.
-
-## 2) PyCore preprocessing (`pycore/tools/preprocess.py`)
+## 1) Active preprocessing flow (`pycore/tools/preprocess.py`)
 
 Input: Python source file + function name.
 
-Output:
+Outputs:
 
-- instruction memory image (`pycore/programs/program.hex`)
-- tagged constant image (`pycore/programs/consts.hex`)
-- inferred type annotation (`pycore/programs/program.types`)
-- inline cache map (`pycore/programs/cache_map.hex`)
+- instruction memory image (`pycore/programs/*.hex`)
+- tagged constant memory image (`pycore/programs/*.hex`)
+- string heap image for long strings (`pycore/programs/*.hex`)
+- inferred type sketch (`pycore/programs/*.types`)
+- inline-cache count map (`pycore/programs/*.hex`)
 
 Steps:
 
-1. **Version gate**: hard-fails unless running on Python 3.14.
+1. **Version gate**: hard-fails unless running Python 3.14.
 2. **Instruction filtering**: strips `CACHE`/`EXTENDED_ARG` and rejects unknown
    opcodes.
 3. **Sub-op validation**: validates supported `BINARY_OP` opargs.
-4. **Instruction folding**: emits one 64-bit slot per instruction word.
-5. **Tagged constant encoding**: emits `{tag,value}` entries for constants.
-6. **Type inference pass**: computes a lightweight variable/stack type sketch.
-7. **Cache metadata dump**: emits CPython inline-cache counts for observability.
+4. **Instruction encoding**: emits one 64-bit slot per instruction word.
+5. **Tagged constant encoding**: emits `{tag,value}` constants.
+6. **String heap packing**: emits short inline strings or long-string heap data.
+7. **Type sketch pass**: emits lightweight variable/stack type metadata.
+8. **Cache-map export**: emits CPython inline-cache entry counts.
 
-## 3) Which steps are essential vs optional
+## 2) Essential versus optional preprocessing
 
-### Strictly essential (must exist somewhere)
+### Essential
 
-- Version-safe opcode decoding (`3.14` mapping agreement).
+- Version-safe opcode decoding aligned to CPython 3.14.
 - Unsupported-opcode rejection.
-- Instruction formatting into hardware memory images.
-- Constant formatting into hardware memory images.
+- Program image formatting for instruction memory.
+- Constant/string image formatting for data memories.
 
-### Optional / tooling convenience
+### Optional tooling extras
 
-- Running the function on host Python to compute expected return.
-- Emitting `.types` for diagnostics.
-- Emitting inline cache metadata.
-- Compacting constants for smaller memory files (helps, but not fundamental).
+- Type sketch (`.types`) for debugging visibility.
+- Cache-map export for observability.
 
-## 4) Preprocessing budget rule for PyCore
+## 3) Preprocessing budget rule
 
-Preprocessing should remain a **thin translation pass**, not a software runtime.
+Preprocessing should remain a thin translation/validation layer, not a hidden
+runtime.
 
-Use this budget rule:
+Allowed:
 
-- preprocessing may **re-encode** program representation;
-- preprocessing may **validate** unsupported constructs early;
-- preprocessing should **not** perform heavyweight semantic lowering that hides
-  hardware complexity.
+- Re-encoding bytecode and constants into hardware memory images.
+- Rejecting unsupported constructs early.
 
-If a transform becomes large enough that it meaningfully changes execution model
-(e.g., frame construction, object protocol emulation, or deep control-flow
-rewrites), that work should be moved into hardware/firmware instead.
+Disallowed direction:
 
-## 5) What should be runnable on-core later
+- Heavy semantic lowering that changes execution model (for example,
+  software-emulated frame semantics or object protocol rewrites).
 
-To preserve the point of a dedicated Python core, these should be considered
-on-core or near-core responsibilities over time:
+If a transform materially changes program semantics, it should move into
+hardware/firmware instead.
 
-- bytecode stream decoding and immediate extraction;
-- frame/stack management policy;
-- runtime type checks and promotion behavior;
-- branch and call semantics.
+## 4) On-core migration targets
 
-Host preprocessing should ideally converge toward:
+To keep PyCore true to purpose, future work should continue moving these
+behaviors on-core:
 
-- packaging code/data into memory images;
-- quick static validation;
-- test harness convenience metadata.
-
-## 6) Practical current recommendation
-
-Short term, keep both preprocessors because they reduce bring-up friction.
-Long term, prioritize shrinking preprocessing by moving semantic logic into RTL
-and treating preprocessing as a loader-format conversion stage.
+- bytecode decode and immediate extraction;
+- frame/stack policy and spill strategy;
+- runtime type checks/promotion;
+- branch/call execution semantics.
