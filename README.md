@@ -131,13 +131,3 @@ If needed, you can pass host-network flags:
 make docker-all-tests DOCKER_BUILD_FLAGS=--network=host DOCKER_RUN_FLAGS=--network=host
 ```
 
-## GitHub merge gate for `main`
-
-`.github/workflows/all-tests.yml` publishes the required status check `all-tests`.
-
-To enforce this check on `main`:
-
-1. `Settings -> Branches -> Branch protection rules -> main`
-2. Enable **Require status checks to pass before merging**
-3. Require check: **all-tests**
-4. (Recommended) Enable **Require a pull request before merging**
