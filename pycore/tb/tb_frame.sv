@@ -36,6 +36,13 @@ module tb_frame;
     logic [$clog2(MAX_CALL_DEPTH+1)-1:0] active_frames_out;
     logic [$clog2(RF_DEPTH-RF_BASE+1)-1:0] resident_regs_out;
     logic frame_fault;
+    // New spill-handshake ports.  spill_ack is tied to 1 so that the
+    // frame module processes each spill in a single clock cycle, keeping
+    // the testbench's per-call loop responsive without real dmem backing.
+    logic                        frame_busy;
+    logic                        spill_req;
+    logic [$clog2(RF_DEPTH)-1:0] spill_rf_idx_out;
+    logic [31:0]                 spill_addr_out;
 
     pycore_frame #(
         .MAX_CALL_DEPTH(MAX_CALL_DEPTH),
@@ -70,7 +77,12 @@ module tb_frame;
         .alloc_ptr_out(alloc_ptr_out),
         .active_frames_out(active_frames_out),
         .resident_regs_out(resident_regs_out),
-        .frame_fault(frame_fault)
+        .frame_fault(frame_fault),
+        .frame_busy(frame_busy),
+        .spill_req(spill_req),
+        .spill_rf_idx_out(spill_rf_idx_out),
+        .spill_addr_out(spill_addr_out),
+        .spill_ack(1'b1)   // instant ack — no real dmem backing in this TB
     );
 
     always #5 clk = ~clk;
@@ -91,20 +103,47 @@ module tb_frame;
         input int locals,
         input bit expect_fault
     );
+        // Maximum wait: FRAME_MAX_SLOTS slots * 2 cycles each (alloc + possible
+        // spill) + a small margin.  With spill_ack tied high each spill ack
+        // takes one extra cycle.
+        localparam int CALL_TIMEOUT = FRAME_MAX_SLOTS * 2 + 8;
+        int wait_cycles;
         begin
+            // Drive inputs on the negedge, then allow the frame module to
+            // sample call_valid on the following posedge.
             @(negedge clk);
-            call_valid = 1'b1;
-            return_valid = 1'b0;
+            call_valid     = 1'b1;
+            return_valid   = 1'b0;
             frame_slots_in = slots[$clog2(FRAME_MAX_SLOTS+1)-1:0];
-            pc_return_in = pc_ret[31:0];
-            tos_base_in = tos[$clog2(RF_DEPTH)-1:0];
+            pc_return_in   = pc_ret[31:0];
+            tos_base_in    = tos[$clog2(RF_DEPTH)-1:0];
             locals_base_in = locals[$clog2(RF_DEPTH)-1:0];
+
+            // Let the frame module latch call_valid on this posedge, then
+            // immediately clear it so that when the module later returns to
+            // FS_IDLE it does not mistake the still-high call_valid for a
+            // second call.
             @(posedge clk);
-            #1;
-            check(frame_fault == expect_fault, "call fault expectation mismatch");
-            check(init_new_frame == !expect_fault, "call acceptance pulse mismatch");
             @(negedge clk);
             call_valid = 1'b0;
+
+            // Wait for init_new_frame or frame_fault.  Latency is variable:
+            // each evicted slot requires an extra FS_CALL_SPILL cycle.
+            // Check is done synchronously at the posedge (no #1 delay) so
+            // that the read sees the NBA values from the PREVIOUS posedge
+            // rather than the NBA values being scheduled for the current
+            // posedge which would clear init_new_frame_q back to 0.
+            wait_cycles = 0;
+            while (!init_new_frame && !frame_fault) begin
+                if (wait_cycles >= CALL_TIMEOUT) begin
+                    $error("do_call timeout: frame module did not respond");
+                    $finish;
+                end
+                wait_cycles = wait_cycles + 1;
+                @(posedge clk);
+            end
+            check(frame_fault == expect_fault, "call fault expectation mismatch");
+            check(init_new_frame == !expect_fault, "call acceptance pulse mismatch");
         end
     endtask
 
