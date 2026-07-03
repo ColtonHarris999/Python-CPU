@@ -13,9 +13,6 @@ module pycore_regfile #(
     input  logic [$clog2(RF_DEPTH)-1:0]  rs2_addr,
     output logic [TAG_WIDTH+VAL_WIDTH-1:0] rs1,
     output logic [TAG_WIDTH+VAL_WIDTH-1:0] rs2,
-    // Extra read port used by the core to fetch a slot's value for spilling.
-    input  logic [$clog2(RF_DEPTH)-1:0]  rx_addr,
-    output logic [TAG_WIDTH+VAL_WIDTH-1:0] rx,
     input  logic                         rd_we,
     input  logic [$clog2(RF_DEPTH)-1:0]  rd_addr,
     input  logic [TAG_WIDTH+VAL_WIDTH-1:0] rd,
@@ -46,7 +43,6 @@ module pycore_regfile #(
 
     assign rs1 = rf[rs1_addr];
     assign rs2 = rf[rs2_addr];
-    assign rx  = rf[rx_addr];
     assign tos_ptr = tos_q;
     assign locals_base = locals_base_q;
     assign stack_fault = stack_fault_q ||

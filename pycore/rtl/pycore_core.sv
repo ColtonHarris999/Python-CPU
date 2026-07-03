@@ -104,12 +104,11 @@ module pycore_core #(
 
     // S_CALL management.
     logic                          call_sent_q;   // call_valid was pulsed
-    logic                          spill_pending_q; // waiting for dmem write ack
+    logic                          frame_dmem_pending_q; // frame push or pop in flight
 
     // One-cycle pulse outputs to frame manager (registered).
     logic                          frame_call_valid_q;
     logic                          frame_return_valid_q;
-    logic                          spill_ack_q;
 
     // locals_base tracked by the frame module (drives decode).
     logic [RF_AW-1:0]              cur_locals_base;
@@ -344,34 +343,42 @@ module pycore_core #(
 
     // ---------------------------------------------------------------------
     // Frame manager (pycore_frame).
-    // frame_slots_in is the callee's local-variable count.  We use the CALL
-    // instruction's argument (number of positional args passed) as a proxy;
-    // a function-table lookup is needed for the complete implementation.
+    // On CALL the current frame descriptor {pc_return, tos_base, locals_base}
+    // is pushed to a DRAM stack in one 128-bit write.  On RETURN it is
+    // popped back via a 128-bit read.  The core mediates both dmem
+    // transactions through the push/pop handshake.
     // ---------------------------------------------------------------------
-    localparam int FRAME_MAX_SLOTS_CORE = 64;
-    localparam int RF_BASE_CORE         = STACK_BASE;
-
+    localparam int RF_BASE_CORE        = STACK_BASE;
     localparam int MAX_CALL_DEPTH_CORE = 64;
 
     logic [RF_AW-1:0]      frame_next_locals_base;
     logic                  frame_init_new_frame;
+    logic                  frame_return_done;
     logic                  frame_fault_sig;
     logic                  frame_busy;
-    logic                  frame_spill_req;
-    logic [RF_AW-1:0]      frame_spill_rf_idx;
-    logic [ADDR_WIDTH-1:0] frame_spill_addr;
     logic [31:0]           frame_pc_return_out;
     logic [RF_AW-1:0]      frame_tos_base_out;
     logic [RF_AW-1:0]      frame_locals_base_out;
     logic [$clog2(MAX_CALL_DEPTH_CORE+1)-1:0] frame_active_depth;
 
-    // Spill-read data from the RF (combinational via rx port).
-    logic [PYCORE_ENTRY_WIDTH-1:0] rf_rx;
+    // Push handshake (CALL path).
+    logic                         frame_push_req;
+    logic [ADDR_WIDTH-1:0]        frame_push_addr;
+    logic [DMEM_DATA_W-1:0]       frame_push_data;
+    // Pop handshake (RETURN path).
+    logic                         frame_pop_req;
+    logic [ADDR_WIDTH-1:0]        frame_pop_addr;
+
+    // Combinational acks: asserted to the frame module the same cycle
+    // dmem_ack fires, keeping pop_data = dmem_rdata valid at that posedge.
+    logic frame_push_ack;
+    logic frame_pop_ack;
+    assign frame_push_ack = (state == S_CALL)   && frame_dmem_pending_q && dmem_ack;
+    assign frame_pop_ack  = (state == S_RETURN) && frame_dmem_pending_q && dmem_ack;
 
     pycore_frame #(
         .RF_DEPTH(RF_DEPTH),
         .RF_BASE(RF_BASE_CORE),
-        .FRAME_MAX_SLOTS(FRAME_MAX_SLOTS_CORE),
         .MAX_CALL_DEPTH(MAX_CALL_DEPTH_CORE)
     ) frame_mgr (
         .clk(clk),
@@ -382,31 +389,29 @@ module pycore_core #(
         .tos_base_in(tos_q[RF_AW-1:0]),
         .locals_base_in(cur_locals_base),
         .new_locals_base_in(RF_BASE_CORE[RF_AW-1:0]),
-        .frame_slots_in(cur_arg[$clog2(FRAME_MAX_SLOTS_CORE+1)-1:0]),
-        .return_value_in(rs1_q),
         .pc_return_out(frame_pc_return_out),
         .tos_base_out(frame_tos_base_out),
         .locals_base_out(frame_locals_base_out),
         .next_locals_base(frame_next_locals_base),
         .init_new_frame(frame_init_new_frame),
-        .return_value_out(),
+        .return_done(frame_return_done),
+        .active_frames_out(frame_active_depth),
         .head_ptr_out(),
         .tail_ptr_out(),
-        .alloc_ptr_out(),
-        .active_frames_out(frame_active_depth),
-        .resident_regs_out(),
         .frame_fault(frame_fault_sig),
         .frame_busy(frame_busy),
-        .spill_req(frame_spill_req),
-        .spill_rf_idx_out(frame_spill_rf_idx),
-        .spill_addr_out(frame_spill_addr),
-        .spill_ack(spill_ack_q)
+        .push_req(frame_push_req),
+        .push_addr(frame_push_addr),
+        .push_data(frame_push_data),
+        .push_ack(frame_push_ack),
+        .pop_req(frame_pop_req),
+        .pop_addr(frame_pop_addr),
+        .pop_data(dmem_rdata[DMEM_DATA_W-1:0]),
+        .pop_ack(frame_pop_ack)
     );
 
     // ---------------------------------------------------------------------
-    // Register file.
-    // The stack pointer (tos) is managed by the core; push_stack/pop_stack
-    // are left idle.  rx_addr/rx provide a dedicated read port for spill.
+    // Register file.  push_stack / pop_stack are left idle.
     // ---------------------------------------------------------------------
     logic rf_we;
     assign rf_we        = (state == S_WB) && wb_we_q && !freeze_pipeline;
@@ -423,8 +428,6 @@ module pycore_core #(
         .rs2_addr(dec_rs2_sel[RF_AW-1:0]),
         .rs1(rf_rs1),
         .rs2(rf_rs2),
-        .rx_addr(frame_spill_rf_idx),
-        .rx(rf_rx),
         .rd_we(rf_we),
         .rd_addr(dec_rd_sel[RF_AW-1:0]),
         .rd(wb_entry_q),
@@ -439,16 +442,21 @@ module pycore_core #(
     );
 
     // ---------------------------------------------------------------------
-    // Dmem mux: S_CALL spill writes take priority over mem_stage (which
-    // deasserts ms_dmem_req when state != S_MEM, so there is no contention).
+    // Dmem mux: frame push/pop transactions take priority over mem_stage
+    // (which deasserts ms_dmem_req when state != S_MEM — no contention).
+    // push: state == S_CALL,   dmem_we = 1
+    // pop:  state == S_RETURN, dmem_we = 0
     // ---------------------------------------------------------------------
-    logic spill_dmem_active;
-    assign spill_dmem_active = (state == S_CALL) && spill_pending_q;
+    logic frame_dmem_active;
+    assign frame_dmem_active = frame_dmem_pending_q &&
+                               ((state == S_CALL) || (state == S_RETURN));
 
-    assign dmem_req   = spill_dmem_active ? 1'b1                      : ms_dmem_req;
-    assign dmem_we    = spill_dmem_active ? 1'b1                      : ms_dmem_we;
-    assign dmem_addr  = spill_dmem_active ? frame_spill_addr           : ms_dmem_addr;
-    assign dmem_wdata = spill_dmem_active ? rf_rx[DMEM_DATA_W-1:0]    : ms_dmem_wdata;
+    assign dmem_req   = frame_dmem_active ? 1'b1          : ms_dmem_req;
+    assign dmem_we    = frame_dmem_active ? (state==S_CALL): ms_dmem_we;
+    assign dmem_addr  = frame_dmem_active ?
+                        ((state == S_CALL) ? frame_push_addr : frame_pop_addr)
+                                          : ms_dmem_addr;
+    assign dmem_wdata = frame_dmem_active ? frame_push_data : ms_dmem_wdata;
 
     // ---------------------------------------------------------------------
     // Trap aggregation (single in-flight instruction).
@@ -485,7 +493,8 @@ module pycore_core #(
     assign addr_align_sig = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ADDR_ALIGN)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_ADDR_ALIGN));
     // Frame faults use the PY_TRAP_CALL_FILTER code (existing placeholder).
-    assign frame_fault_trap_sig = (state == S_CALL) && frame_fault_sig;
+    assign frame_fault_trap_sig = (state == S_CALL || state == S_RETURN) &&
+                                  frame_fault_sig;
 
     logic [31:0]                   fault_pc;
     logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs1;
@@ -539,10 +548,9 @@ module pycore_core #(
             cycle_count          <= 64'b0;
             cur_locals_base      <= '0;  // base frame locals live in RF[0..31]
             call_sent_q          <= 1'b0;
-            spill_pending_q      <= 1'b0;
+            frame_dmem_pending_q <= 1'b0;
             frame_call_valid_q   <= 1'b0;
             frame_return_valid_q <= 1'b0;
-            spill_ack_q          <= 1'b0;
             rf_set_locals_q      <= 1'b0;
             rf_new_locals_q      <= '0;
             rf_init_frame_q      <= 1'b0;
@@ -554,7 +562,6 @@ module pycore_core #(
             // Clear one-cycle pulses by default.
             frame_call_valid_q   <= 1'b0;
             frame_return_valid_q <= 1'b0;
-            spill_ack_q          <= 1'b0;
             rf_set_locals_q      <= 1'b0;
             rf_init_frame_q      <= 1'b0;
 
@@ -617,10 +624,10 @@ module pycore_core #(
 
                     end else if (dec_is_call) begin
                         // CALL: move to frame-management state.
-                        call_sent_q   <= 1'b0;
-                        spill_pending_q <= 1'b0;
-                        fetch_skip_q  <= 1'b1;
-                        state         <= S_CALL;
+                        call_sent_q          <= 1'b0;
+                        frame_dmem_pending_q <= 1'b0;
+                        fetch_skip_q         <= 1'b1;
+                        state                <= S_CALL;
 
                     end else begin
                         // RETURN_VALUE.
@@ -642,75 +649,93 @@ module pycore_core #(
                 end
 
                 // ----------------------------------------------------------
-                // S_CALL:
-                //   1. When !call_sent_q && !frame_busy: pulse call_valid.
-                //   2. While frame is busy allocating slots:
-                //        a. If spill_req fires and no dmem write is pending:
-                //           issue the dmem write (spill_pending_q = 1).
-                //        b. If dmem_ack with spill pending: pulse spill_ack.
-                //   3. When frame_init_new_frame: commit the frame,
-                //      rotate locals_base, and return to S_FETCH.
+                // S_CALL: push the current frame descriptor to DRAM, then
+                // commit the new frame once the write completes.
+                //
+                //   Cycle 1: pulse call_valid (frame → FS_PUSHING).
+                //   Cycle 2: push_req asserted; start one 128-bit dmem write.
+                //   Cycle 3: dmem_ack → push_ack (combinational); frame
+                //            records the push and fires init_new_frame.
+                //   Cycle 4: init_new_frame seen; rotate locals_base, go
+                //            to S_FETCH.
                 // ----------------------------------------------------------
                 S_CALL: begin
-                    // Step 1: send call_valid once when the frame manager
-                    //         is idle (has processed any previous operation).
+                    // Step 1: send call_valid once when frame module is idle.
                     if (!call_sent_q && !frame_busy) begin
-                        frame_call_valid_q <= 1'b1;
-                        call_sent_q        <= 1'b1;
+                        frame_call_valid_q   <= 1'b1;
+                        call_sent_q          <= 1'b1;
                     end
 
-                    // Step 2a: start a dmem write for an evicted slot.
-                    if (call_sent_q && frame_spill_req && !spill_pending_q) begin
-                        spill_pending_q <= 1'b1;
-                        // dmem_req / dmem_we / dmem_addr / dmem_wdata are
-                        // driven combinationally by spill_dmem_active.
+                    // Step 2: when frame asserts push_req, start the dmem write.
+                    if (call_sent_q && frame_push_req && !frame_dmem_pending_q) begin
+                        frame_dmem_pending_q <= 1'b1;
                     end
 
-                    // Step 2b: dmem write acknowledged → pulse spill_ack.
-                    if (spill_pending_q && dmem_ack) begin
-                        spill_ack_q     <= 1'b1;
-                        spill_pending_q <= 1'b0;
+                    // Step 3: dmem_ack clears the pending flag; push_ack is
+                    // driven combinationally in the same cycle.
+                    if (frame_dmem_pending_q && dmem_ack) begin
+                        frame_dmem_pending_q <= 1'b0;
                     end
 
-                    // Step 3: frame manager has finished allocating all slots.
+                    // Step 4: push committed — new frame ready.
                     if (frame_init_new_frame) begin
-                        cur_locals_base  <= frame_next_locals_base;
-                        rf_set_locals_q  <= 1'b1;
-                        rf_new_locals_q  <= frame_next_locals_base;
-                        rf_init_frame_q  <= 1'b1;
-                        call_sent_q      <= 1'b0;
-                        spill_pending_q  <= 1'b0;
-                        // Redirect to the instruction after CALL.
-                        // Full callee dispatch (CALL → callee entry-point PC)
-                        // requires a function-address table and is a future
-                        // enhancement.  For now the processor resumes at PC+8.
-                        redirect_pending_q <= 1'b1;
-                        redirect_tgt_q     <= cur_pc + 32'd8;
-                        state              <= S_FETCH;
+                        cur_locals_base      <= frame_next_locals_base;
+                        rf_set_locals_q      <= 1'b1;
+                        rf_new_locals_q      <= frame_next_locals_base;
+                        rf_init_frame_q      <= 1'b1;
+                        call_sent_q          <= 1'b0;
+                        frame_dmem_pending_q <= 1'b0;
+                        redirect_pending_q   <= 1'b1;
+                        redirect_tgt_q       <= cur_pc + 32'd8;
+                        state                <= S_FETCH;
                     end
                 end
 
                 // ----------------------------------------------------------
-                // S_RETURN: issue return_valid for one cycle.
+                // S_RETURN: pop the previous frame descriptor from DRAM and
+                // restore the caller's context.
                 //
-                // The frame module's return path is single-cycle: on the
-                // posedge that return_valid is seen, it updates sp and
-                // all frame metadata.  The combinational outputs
-                // (frame_pc_return_out, frame_locals_base_out,
-                // frame_tos_base_out) still reflect the pre-decrement values
-                // at that posedge (registered signals update after the NBA
-                // phase), so it is safe to read them in the same cycle.
+                //   Cycle 1: pulse return_valid (frame → FS_POPPING).
+                //   Cycle 2: pop_req asserted; start one 128-bit dmem read.
+                //   Cycle 3: dmem_ack → pop_ack (combinational) with
+                //            pop_data = dmem_rdata; frame latches the
+                //            restored state and fires return_done.
+                //   Cycle 4: return_done seen; read frame outputs and
+                //            redirect fetch to the saved return PC.
                 // ----------------------------------------------------------
                 S_RETURN: begin
-                    frame_return_valid_q <= 1'b1;
-                    // Read return context NOW (pre-decrement values are valid).
-                    redirect_pending_q <= 1'b1;
-                    redirect_tgt_q     <= frame_pc_return_out;
-                    cur_locals_base    <= frame_locals_base_out;
-                    rf_set_locals_q    <= 1'b1;
-                    rf_new_locals_q    <= frame_locals_base_out;
-                    tos_q              <= frame_tos_base_out;
-                    state              <= S_FETCH;
+                    // Step 1: send return_valid once.
+                    if (!call_sent_q && !frame_busy) begin
+                        frame_return_valid_q <= 1'b1;
+                        call_sent_q          <= 1'b1;
+                    end
+
+                    // Step 2: when frame asserts pop_req, start the dmem read.
+                    if (call_sent_q && frame_pop_req && !frame_dmem_pending_q) begin
+                        frame_dmem_pending_q <= 1'b1;
+                    end
+
+                    // Step 3: dmem_ack clears pending; pop_ack is combinational.
+                    if (frame_dmem_pending_q && dmem_ack) begin
+                        frame_dmem_pending_q <= 1'b0;
+                    end
+
+                    // Step 4: frame restored — redirect to saved return PC.
+                    // return_done and the frame outputs are valid because they
+                    // use the same NBA-visibility window as init_new_frame: the
+                    // core reads them before the current cycle's default-clear
+                    // NBA can overwrite them (no #1 delay here).
+                    if (frame_return_done) begin
+                        redirect_pending_q   <= 1'b1;
+                        redirect_tgt_q       <= frame_pc_return_out;
+                        cur_locals_base      <= frame_locals_base_out;
+                        rf_set_locals_q      <= 1'b1;
+                        rf_new_locals_q      <= frame_locals_base_out;
+                        tos_q                <= frame_tos_base_out;
+                        call_sent_q          <= 1'b0;
+                        frame_dmem_pending_q <= 1'b0;
+                        state                <= S_FETCH;
+                    end
                 end
 
                 // ----------------------------------------------------------
