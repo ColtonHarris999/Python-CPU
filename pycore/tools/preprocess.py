@@ -9,7 +9,7 @@ import importlib.util
 import pathlib
 import struct
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 
@@ -82,6 +82,10 @@ class EmittedInstruction:
     arg: int
     source_offset: int
     opname: str
+    # For LOAD_CONST only: the pre-encoded 3-bit tag and 128-bit value that will
+    # be embedded inline in the instruction stream.  None for all other opcodes.
+    const_tag: int | None = None
+    const_value: int | None = None
 
 
 def require_python_3_14() -> None:
@@ -125,18 +129,43 @@ def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
         yield ins
 
 
-def emit_instruction_words(instructions: Iterable[dis.Instruction]) -> list[EmittedInstruction]:
+def emit_instruction_words(
+    instructions: Iterable[dis.Instruction],
+    co_consts: tuple[object, ...] | None = None,
+    string_heap: "StringHeapBuilder | None" = None,
+) -> list[EmittedInstruction]:
+    """Convert filtered dis.Instruction objects to EmittedInstruction records.
+
+    For LOAD_CONST instructions the constant value is eagerly encoded using
+    tag_constant so that write_program_hex can embed it inline in the
+    instruction stream.  co_consts and string_heap must be provided when
+    LOAD_CONST instructions are present.
+    """
     emitted: list[EmittedInstruction] = []
     for ins in instructions:
         arg = ins.arg or 0
         if not 0 <= arg < (1 << 32):
             raise ValueError(f"Instruction argument exceeds 32 bits: {ins}")
+
+        const_tag = None
+        const_value = None
+        if ins.opname == "LOAD_CONST":
+            if co_consts is None or string_heap is None:
+                raise ValueError(
+                    "co_consts and string_heap are required when LOAD_CONST "
+                    "instructions are present"
+                )
+            const_obj = co_consts[arg]
+            const_tag, const_value = tag_constant(const_obj, string_heap)
+
         emitted.append(
             EmittedInstruction(
                 opcode=ins.opcode,
                 arg=arg,
                 source_offset=ins.offset,
                 opname=ins.opname,
+                const_tag=const_tag,
+                const_value=const_value,
             )
         )
     return emitted
@@ -221,23 +250,106 @@ def write_text(path: pathlib.Path, text: str) -> None:
     path.write_text(text, encoding="ascii")
 
 
+def compute_slot_map(instructions: list[EmittedInstruction]) -> dict[int, int]:
+    """Map each instruction index to its starting imem slot index.
+
+    LOAD_CONST instructions occupy 3 consecutive slots (one header word plus
+    two value words); every other instruction occupies exactly 1 slot.  The
+    returned dict also includes an entry at index len(instructions) that gives
+    the slot address one past the last instruction.
+    """
+    slot_map: dict[int, int] = {}
+    slot = 0
+    for i, ins in enumerate(instructions):
+        slot_map[i] = slot
+        slot += 3 if ins.opname == "LOAD_CONST" else 1
+    slot_map[len(instructions)] = slot
+    return slot_map
+
+
+def remap_branch_args(instructions: list[EmittedInstruction]) -> list[EmittedInstruction]:
+    """Rewrite jump arguments from instruction-index units to slot-index units.
+
+    The hardware branch unit operates on slot addresses, so any jump argument
+    that was expressed as an instruction count must be converted to the
+    equivalent slot offset or slot address now that LOAD_CONST instructions are
+    3 slots wide instead of 1.
+
+    Semantics matched to the pycore_branch.sv implementation:
+      JUMP_FORWARD  arg=N  ->  branch_target = pc + N  (relative, N slots forward)
+      JUMP_BACKWARD arg=N  ->  branch_target = pc - N  (relative, N slots back)
+      POP_JUMP_IF_TRUE/FALSE arg=N  ->  branch_target = N  (absolute slot address)
+
+    With 1:1 instruction-to-slot mapping these pass through unchanged.  When
+    LOAD_CONST instructions are present the offsets grow to account for the
+    extra slots they occupy.
+    """
+    slot_map = compute_slot_map(instructions)
+    remapped: list[EmittedInstruction] = []
+
+    for i, ins in enumerate(instructions):
+        arg = ins.arg
+        if ins.opname == "JUMP_FORWARD":
+            # Relative: target is arg instruction-indices ahead of instruction i.
+            # In slot space: slot_map[i + arg] - slot_map[i].
+            target_idx = i + arg
+            new_arg = slot_map[target_idx] - slot_map[i]
+        elif ins.opname == "JUMP_BACKWARD":
+            # Relative: target is arg instruction-indices behind instruction i.
+            target_idx = i - arg
+            new_arg = slot_map[i] - slot_map[target_idx]
+        elif ins.opname in ("POP_JUMP_IF_TRUE", "POP_JUMP_IF_FALSE",
+                            "JUMP_IF_TRUE_OR_POP", "JUMP_IF_FALSE_OR_POP"):
+            # Absolute: arg is the target instruction index; convert to slot.
+            new_arg = slot_map[arg]
+        else:
+            new_arg = arg
+
+        if new_arg != arg:
+            ins = EmittedInstruction(
+                opcode=ins.opcode,
+                arg=new_arg,
+                source_offset=ins.source_offset,
+                opname=ins.opname,
+                const_tag=ins.const_tag,
+                const_value=ins.const_value,
+            )
+        remapped.append(ins)
+
+    return remapped
+
+
 def write_program_hex(path: pathlib.Path, instructions: Iterable[EmittedInstruction]) -> None:
-    lines = [
-        f"{((ins.arg & 0xffffffff) << 8) | ins.opcode:0{IMEM_SLOT_HEX_DIGITS}x}"
-        for ins in instructions
-    ]
+    """Write the instruction memory image.
+
+    LOAD_CONST instructions expand to three 64-bit slots:
+      Slot 0  bits[63:61] = tag[2:0],  bits[7:0] = opcode
+      Slot 1  value[127:64]
+      Slot 2  value[63:0]
+
+    All other instructions remain a single 64-bit slot:
+      bits[39:8] = arg[31:0],  bits[7:0] = opcode
+    """
+    lines: list[str] = []
+    for ins in instructions:
+        if ins.opname == "LOAD_CONST":
+            assert ins.const_tag is not None and ins.const_value is not None
+            tag = ins.const_tag
+            val = ins.const_value
+            # Slot 0: tag in the three MSBs, opcode in the eight LSBs.
+            word0 = ((tag & 0x7) << 61) | ins.opcode
+            # Slot 1: value[127:64]
+            word1 = (val >> 64) & 0xFFFF_FFFF_FFFF_FFFF
+            # Slot 2: value[63:0]
+            word2 = val & 0xFFFF_FFFF_FFFF_FFFF
+            lines.append(f"{word0:0{IMEM_SLOT_HEX_DIGITS}x}")
+            lines.append(f"{word1:0{IMEM_SLOT_HEX_DIGITS}x}")
+            lines.append(f"{word2:0{IMEM_SLOT_HEX_DIGITS}x}")
+        else:
+            lines.append(
+                f"{((ins.arg & 0xffffffff) << 8) | ins.opcode:0{IMEM_SLOT_HEX_DIGITS}x}"
+            )
     write_text(path, "\n".join(lines) + ("\n" if lines else ""))
-
-
-def write_const_hex(
-    path: pathlib.Path,
-    consts: tuple[object, ...],
-    string_heap: StringHeapBuilder,
-) -> None:
-    lines = [format_entry(*tag_constant(value, string_heap)) for value in consts]
-    if not lines:
-        lines = [format_entry(TAG_UNINITIALIZED, 0)]
-    write_text(path, "\n".join(lines) + "\n")
 
 
 def write_string_hex(path: pathlib.Path, string_heap: StringHeapBuilder) -> None:
@@ -288,6 +400,11 @@ def merge_numeric(tag_a: int, tag_b: int, op_arg: int) -> int:
 
 
 def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, int], list[str]]:
+    """Infer the tag of each local variable from the instruction stream.
+
+    Must be called on the original (pre-remapping) instruction list so that
+    LOAD_CONST entries still carry const_tag (set by emit_instruction_words).
+    """
     local_names = list(fn.__code__.co_varnames)
     var_tags = {name: TAG_UNINITIALIZED for name in local_names}
     stack: list[int] = []
@@ -295,12 +412,8 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
 
     for ins in instructions:
         if ins.opname == "LOAD_CONST":
-            const_value = fn.__code__.co_consts[ins.arg]
-            if isinstance(const_value, str):
-                encoded = const_value.encode("utf-8")
-                tag = TAG_SHORT_STR if len(encoded) <= SHORT_STR_MAX_BYTES else TAG_LONG_STR
-            else:
-                tag, _ = tag_constant(const_value, StringHeapBuilder())
+            # Use the pre-encoded tag stored in the EmittedInstruction.
+            tag = ins.const_tag if ins.const_tag is not None else TAG_OBJECT
             stack.append(tag)
         elif ins.opname == "LOAD_SMALL_INT":
             stack.append(TAG_INT)
@@ -373,18 +486,21 @@ def preprocess(
     source: pathlib.Path,
     function_name: str,
     program_hex: pathlib.Path,
-    const_hex: pathlib.Path,
     string_hex: pathlib.Path,
     types_path: pathlib.Path,
     cache_map: pathlib.Path,
 ) -> None:
     require_python_3_14()
     fn = load_function(source, function_name)
-    instructions = emit_instruction_words(iter_filtered_instructions(fn))
-    var_tags, warnings = infer_types(fn, instructions)
     string_heap = StringHeapBuilder()
+    instructions = emit_instruction_words(
+        iter_filtered_instructions(fn),
+        co_consts=fn.__code__.co_consts,
+        string_heap=string_heap,
+    )
+    var_tags, warnings = infer_types(fn, instructions)
+    instructions = remap_branch_args(instructions)
     write_program_hex(program_hex, instructions)
-    write_const_hex(const_hex, fn.__code__.co_consts, string_heap)
     write_string_hex(string_hex, string_heap)
     write_types(types_path, var_tags, warnings)
     write_cache_map(cache_map)
@@ -395,7 +511,6 @@ def main() -> None:
     parser.add_argument("--source", default="pycore/programs/smoke_return.py")
     parser.add_argument("--function", default="managed_entry")
     parser.add_argument("--program-hex", default="pycore/programs/program.hex")
-    parser.add_argument("--const-hex", default="pycore/programs/consts.hex")
     parser.add_argument("--string-hex", default="pycore/programs/string_mem.hex")
     parser.add_argument("--types", default="pycore/programs/program.types")
     parser.add_argument("--cache-map", default="pycore/programs/cache_map.hex")
@@ -404,7 +519,6 @@ def main() -> None:
         source=pathlib.Path(args.source),
         function_name=args.function,
         program_hex=pathlib.Path(args.program_hex),
-        const_hex=pathlib.Path(args.const_hex),
         string_hex=pathlib.Path(args.string_hex),
         types_path=pathlib.Path(args.types),
         cache_map=pathlib.Path(args.cache_map),

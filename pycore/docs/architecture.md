@@ -172,12 +172,11 @@ block_off = addr[BLOCK_SHIFT-1:0]
 word_idx  = block_off >> log2(DATA_WIDTH/8)
 ```
 
-- `pycore_imem.sv`: read-only, `IMEM_DATA_WIDTH = 64`. Each instruction is one
-  8-byte slot (the 40-bit folded word zero-padded). Fetch drives `pc << 3`.
+- `pycore_imem.sv`: read-only, `IMEM_DATA_WIDTH = 64`. Most instructions are one
+  8-byte slot (the 40-bit folded word zero-padded). `LOAD_CONST` is a 3-slot
+  variable-length instruction (see below). Fetch drives `pc << 3`.
 - `pycore_dmem.sv`: read/write, `DMEM_DATA_WIDTH = 128`. Access is one 128-bit
   value per transaction, 16-byte aligned in v1.
-- `pycore_const_table.sv`: a 131-bit constant ROM read by the MEM stage so that
-  `LOAD_CONST` writeback flows through MEM -> WB like any other value.
 
 Default memory map (all parameters in `pycore_defs.svh`): `ADDR_WIDTH = 32`,
 `BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 4` (16 KB), `DMEM_BLOCK_COUNT = 4`
@@ -225,15 +224,55 @@ Spill slots are reclaimed on return, so deep but finite recursion can continue
 as long as free spill capacity remains. A separate heap region remains reserved
 for future object/string support.
 
+## LOAD_CONST: inline literal encoding
+
+`LOAD_CONST` constants are embedded directly in the instruction stream rather
+than in a separate constant ROM. This removes the single-function limitation and
+the fixed-depth table.
+
+Each `LOAD_CONST` occupies **three consecutive 8-byte imem slots**:
+
+```text
+Slot 0  bits[63:61] = tag[2:0]   bits[7:0] = opcode (PY_OP_LOAD_CONST)
+Slot 1  value[127:64]
+Slot 2  value[63:0]
+```
+
+The fetch unit (`pycore_fetch.sv`) detects `PY_OP_LOAD_CONST` in the FS_NORMAL
+sub-state, then issues two more imem reads (sub-states FS_CONST_W1,
+FS_CONST_W2) to assemble the complete 131-bit tagged entry. It reports the
+instruction to the rest of the pipeline only after all three slots have been
+consumed, presenting the entry in the `inline_const` output alongside the usual
+`instr_valid`/`opcode`/`pc` signals. The core latches `inline_const` and
+delivers it directly to the MEM stage, which forwards it to writeback without
+any ROM lookup.
+
+Because `LOAD_CONST` instructions are three slots wide rather than one,
+`preprocess.py` rewrites all jump arguments from instruction-index units to
+slot-index units (`remap_branch_args`) so that the hardware branch unit
+(`pycore_branch.sv`) continues to compute correct targets from the raw `arg`
+field.
+
+### Benefits over the fixed const ROM
+
+- **Multi-function programs**: each function's constants travel with its code
+  in imem; no shared or conflicting index space exists.
+- **Unbounded constants**: the only limit is total imem capacity; no 256-entry
+  ceiling applies.
+- **No startup loading**: constants are part of the instruction image loaded
+  once at elaboration; no separate ROM hex file is needed.
+- **Simpler integration**: `pycore_system.sv` no longer instantiates
+  `pycore_const_table.sv`; the `CONST_HEX`, `CONST_DEPTH`, and `CONST_IDX_W`
+  parameters are gone.
+
 ## CPython 3.14 preprocessing
 
 `pycore/tools/preprocess.py` must run on Python 3.14. It compiles a host Python
 function, rejects unsupported opcodes, strips `CACHE`, emits folded 40-bit
-instruction words zero-padded to one 8-byte imem slot, writes 131-bit tagged
-constants (33 hex digits), and produces a `.types`
-annotation file. `LOAD_FAST_BORROW`, `LOAD_SMALL_INT`, `NOT_TAKEN`, and
-`POP_ITER` are modeled as CPython 3.14 features; removed 3.13 opcodes are not
-assumed.
+instruction words zero-padded to one 8-byte imem slot (three slots for
+`LOAD_CONST`), and produces a `.types` annotation file. `LOAD_FAST_BORROW`,
+`LOAD_SMALL_INT`, `NOT_TAKEN`, and `POP_ITER` are modeled as CPython 3.14
+features; removed 3.13 opcodes are not assumed.
 
 ## Metrics
 

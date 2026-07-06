@@ -18,8 +18,7 @@ module tb_pycore;
     logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry;
 
     pycore_system #(
-        .PROG_HEX("pycore/programs/mem_demo_prog.hex"),
-        .CONST_HEX("pycore/programs/mem_demo_consts.hex")
+        .PROG_HEX("pycore/programs/mem_demo_prog.hex")
     ) dut (
         .clk(clk),
         .rst_n(rst_n),
