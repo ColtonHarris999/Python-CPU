@@ -2,375 +2,240 @@
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
-/* verilator lint_off BLKSEQ */
-/* verilator lint_off UNUSEDSIGNAL */
+// pycore_frame: simple call-frame manager for the PyCore CPU.
+//
+// Design philosophy (PPA-first):
+//   Rather than maintaining a complex ring-buffer with per-slot RF
+//   residency tracking, this module implements the minimal hardware
+//   needed for a correct hardware call stack:
+//
+//     CALL  →  push current frame descriptor to DRAM, signal core
+//     RETURN → pop  previous frame descriptor from DRAM, restore state
+//
+//   A frame descriptor is exactly one 128-bit DRAM transaction:
+//
+//     bits [127:96]         pc_return[31:0]
+//     bits [127-32 : 127-32-RF_AW+1]  tos_base[RF_AW-1:0]
+//     bits [127-32-RF_AW : 127-32-2*RF_AW+1]  locals_base[RF_AW-1:0]
+//     remaining bits         zero (reserved)
+//
+//   The stack grows upward from STACK_BASE_ADDR; sp_q always points to
+//   the NEXT free slot.  Stack depth is bounded by MAX_CALL_DEPTH.
+//
+// FSM:
+//   FS_IDLE    – accept call_valid or return_valid
+//   FS_PUSHING – one 128-bit dmem write (CALL path); signals
+//                init_new_frame on push_ack
+//   FS_POPPING – one 128-bit dmem read  (RETURN path); signals
+//                return_done on pop_ack, latches restored frame state
+//
+// Handshake with the core:
+//   call_valid / return_valid – one-cycle pulse, sampled only in FS_IDLE
+//   push_req / push_addr / push_data – the core drives dmem_we=1 to
+//     push_addr with push_data; asserts push_ack when dmem_ack fires
+//   pop_req  / pop_addr / pop_data   – the core drives dmem_we=0 to
+//     pop_addr; asserts pop_ack when dmem_ack fires, with pop_data=dmem_rdata
+//   frame_busy – high while FSM ≠ FS_IDLE; core must not issue a new
+//     call_valid/return_valid during this time
+//
+// Return-path timing:
+//   pc_return_out, tos_base_out, locals_base_out are registered outputs
+//   updated from pop_data on the posedge that pop_ack fires.  They are
+//   valid combinationally from the NEXT cycle onward.  The core reads
+//   them on the same cycle that return_done pulses (the cycle after
+//   pop_ack) because return_done uses the same NBA-visibility window as
+//   init_new_frame — the core checks for return_done without a #1 delay
+//   to read the values before the current cycle's default-clear NBA can
+//   apply.
 module pycore_frame #(
     parameter int MAX_CALL_DEPTH   = 64,
-    parameter int FRAME_MAX_SLOTS  = 64,
     parameter int RF_DEPTH         = 96,
     parameter int RF_BASE          = 32,
     parameter int ADDR_WIDTH       = PYCORE_ADDR_WIDTH,
     parameter logic [ADDR_WIDTH-1:0] STACK_BASE_ADDR  = 32'h0001_0000,
     parameter int STACK_SIZE_BYTES = 32'h0001_0000,
-    parameter int FRAME_NODE_BYTES = 32'd256,
-    parameter logic [ADDR_WIDTH-1:0] SPILL_BASE_ADDR  = 32'h0002_0000,
-    parameter int SPILL_SIZE_BYTES  = 32'h0008_0000,
-    parameter int SPILL_SLOT_BYTES  = 16
+    // Bytes per frame entry (must equal DMEM_DATA_W/8 = 16 for 128-bit dmem).
+    parameter int FRAME_ENTRY_BYTES = 16
 ) (
     input  logic                         clk,
     input  logic                         rst_n,
+    // Call/return control – one-cycle pulses, sampled only in FS_IDLE.
     input  logic                         call_valid,
     input  logic                         return_valid,
+    // Caller context supplied by the core on call_valid.
     input  logic [31:0]                  pc_return_in,
     input  logic [$clog2(RF_DEPTH)-1:0]  tos_base_in,
     input  logic [$clog2(RF_DEPTH)-1:0]  locals_base_in,
+    // Pass-through: callee locals_base chosen by the core.
     input  logic [$clog2(RF_DEPTH)-1:0]  new_locals_base_in,
-    input  logic [$clog2(FRAME_MAX_SLOTS+1)-1:0] frame_slots_in,
-    input  logic [PYCORE_ENTRY_WIDTH-1:0] return_value_in,
+    // Restored caller context (valid from the cycle return_done pulses).
     output logic [31:0]                  pc_return_out,
     output logic [$clog2(RF_DEPTH)-1:0]  tos_base_out,
     output logic [$clog2(RF_DEPTH)-1:0]  locals_base_out,
     output logic [$clog2(RF_DEPTH)-1:0]  next_locals_base,
-    output logic                         init_new_frame,
-    output logic [PYCORE_ENTRY_WIDTH-1:0] return_value_out,
+    // Completion pulses (one cycle each).
+    output logic                         init_new_frame,   // CALL committed
+    output logic                         return_done,      // RETURN committed
+    // Status.
+    output logic [$clog2(MAX_CALL_DEPTH+1)-1:0] active_frames_out,
     output logic [ADDR_WIDTH-1:0]        head_ptr_out,
     output logic [ADDR_WIDTH-1:0]        tail_ptr_out,
-    output logic [ADDR_WIDTH-1:0]        alloc_ptr_out,
-    output logic [$clog2(MAX_CALL_DEPTH+1)-1:0] active_frames_out,
-    output logic [$clog2(RF_DEPTH-RF_BASE+1)-1:0] resident_regs_out,
-    output logic                         frame_fault
+    output logic                         frame_fault,
+    output logic                         frame_busy,
+    // Push handshake (CALL): core writes push_data to push_addr in dmem.
+    output logic                         push_req,
+    output logic [ADDR_WIDTH-1:0]        push_addr,
+    output logic [PYCORE_DMEM_DATA_WIDTH-1:0] push_data,
+    input  logic                         push_ack,
+    // Pop handshake (RETURN): core reads from pop_addr; provides pop_data.
+    output logic                         pop_req,
+    output logic [ADDR_WIDTH-1:0]        pop_addr,
+    input  logic [PYCORE_DMEM_DATA_WIDTH-1:0] pop_data,
+    input  logic                         pop_ack
 );
 
-    localparam int DEPTH_W     = $clog2(MAX_CALL_DEPTH + 1);
-    localparam int FRAME_IDX_W = (MAX_CALL_DEPTH > 1) ? $clog2(MAX_CALL_DEPTH) : 1;
-    localparam int SLOT_W      = (FRAME_MAX_SLOTS > 1) ? $clog2(FRAME_MAX_SLOTS) : 1;
-    localparam int SLOT_CNT_W  = $clog2(FRAME_MAX_SLOTS + 1);
-    localparam int RF_AW       = $clog2(RF_DEPTH);
-    localparam int REG_CAP     = RF_DEPTH - RF_BASE;
-    localparam int REG_CAP_W   = $clog2(REG_CAP + 1);
-    localparam int QIDX_W      = (REG_CAP > 1) ? $clog2(REG_CAP) : 1;
-    localparam int SPILL_SLOTS = SPILL_SIZE_BYTES / SPILL_SLOT_BYTES;
-    localparam int SPILL_W     = (SPILL_SLOTS > 1) ? $clog2(SPILL_SLOTS) : 1;
-    localparam int SPILL_CNT_W = $clog2(SPILL_SLOTS + 1);
+    localparam int DEPTH_W = $clog2(MAX_CALL_DEPTH + 1);
+    localparam int RF_AW   = $clog2(RF_DEPTH);
 
-    logic [31:0] frame_pc [0:MAX_CALL_DEPTH-1];
-    logic [RF_AW-1:0] frame_tos [0:MAX_CALL_DEPTH-1];
-    logic [RF_AW-1:0] frame_locals [0:MAX_CALL_DEPTH-1];
-    logic [ADDR_WIDTH-1:0] frame_node_addr [0:MAX_CALL_DEPTH-1];
-    logic [ADDR_WIDTH-1:0] frame_prev_ptr [0:MAX_CALL_DEPTH-1];
-    logic [ADDR_WIDTH-1:0] frame_next_ptr [0:MAX_CALL_DEPTH-1];
-    logic [SLOT_CNT_W-1:0] frame_slot_count [0:MAX_CALL_DEPTH-1];
-    logic [SLOT_CNT_W-1:0] frame_resident_count [0:MAX_CALL_DEPTH-1];
-    logic [SLOT_CNT_W-1:0] frame_spill_count [0:MAX_CALL_DEPTH-1];
-    logic frame_active [0:MAX_CALL_DEPTH-1];
+    // Frame descriptor bit layout inside the 128-bit dmem word.
+    localparam int PC_MSB  = PYCORE_DMEM_DATA_WIDTH - 1;              // 127
+    localparam int PC_LSB  = PYCORE_DMEM_DATA_WIDTH - 32;             // 96
+    localparam int TOS_MSB = PYCORE_DMEM_DATA_WIDTH - 32 - 1;         // 95
+    localparam int TOS_LSB = PYCORE_DMEM_DATA_WIDTH - 32 - RF_AW;     // 89
+    localparam int LOC_MSB = PYCORE_DMEM_DATA_WIDTH - 32 - RF_AW - 1; // 88
+    localparam int LOC_LSB = PYCORE_DMEM_DATA_WIDTH - 32 - 2*RF_AW;   // 82
 
-    logic slot_resident [0:MAX_CALL_DEPTH-1][0:FRAME_MAX_SLOTS-1];
-    logic [RF_AW-1:0] slot_reg_idx [0:MAX_CALL_DEPTH-1][0:FRAME_MAX_SLOTS-1];
-    logic [ADDR_WIDTH-1:0] slot_map_addr [0:MAX_CALL_DEPTH-1][0:FRAME_MAX_SLOTS-1];
+    // FSM states.
+    localparam logic [1:0] FS_IDLE    = 2'd0;
+    localparam logic [1:0] FS_PUSHING = 2'd1;
+    localparam logic [1:0] FS_POPPING = 2'd2;
 
-    logic [FRAME_IDX_W-1:0] resident_frame_q [0:REG_CAP-1];
-    logic [SLOT_W-1:0] resident_slot_q [0:REG_CAP-1];
-    logic [RF_AW-1:0] resident_reg_q [0:REG_CAP-1];
-    logic [QIDX_W-1:0] resident_head_q;
-    logic [REG_CAP_W-1:0] resident_count_q;
+    logic [1:0]           ffsm_q;
+    logic [DEPTH_W-1:0]   depth_q;
+    logic [ADDR_WIDTH-1:0] sp_q;        // next-free stack slot address
+    logic [ADDR_WIDTH-1:0] pop_addr_q;  // pop address latched at return_valid
 
-    logic reg_in_use [0:RF_DEPTH-1];
-    logic spill_slot_used [0:SPILL_SLOTS-1];
-    logic [SPILL_W-1:0] next_spill_slot_q;
-    logic [SPILL_CNT_W-1:0] spill_used_count_q;
-    logic [RF_AW-1:0] next_reg_q;
-    logic [ADDR_WIDTH-1:0] next_node_addr_q;
-    logic [DEPTH_W-1:0] sp;
-    logic frame_fault_q;
+    // Restored frame state latched from pop_data.
+    logic [31:0]          pc_return_q;
+    logic [RF_AW-1:0]     tos_base_q;
+    logic [RF_AW-1:0]     locals_base_q;
+
+    // One-cycle output pulses.
     logic init_new_frame_q;
+    logic return_done_q;
+    logic frame_fault_q;
 
-    function automatic logic [RF_AW-1:0] wrap_reg(input logic [RF_AW-1:0] reg_idx);
-        begin
-            if (reg_idx == RF_DEPTH-1) begin
-                wrap_reg = RF_BASE[RF_AW-1:0];
-            end else begin
-                wrap_reg = reg_idx + 1'b1;
-            end
-        end
-    endfunction
+    // --------------------------------------------------------
+    // Combinational outputs
+    // --------------------------------------------------------
+    assign next_locals_base  = new_locals_base_in;
+    assign init_new_frame    = init_new_frame_q;
+    assign return_done       = return_done_q;
+    assign frame_fault       = frame_fault_q;
+    assign frame_busy        = (ffsm_q != FS_IDLE);
+    assign active_frames_out = depth_q;
+    assign pc_return_out     = pc_return_q;
+    assign tos_base_out      = tos_base_q;
+    assign locals_base_out   = locals_base_q;
+    assign head_ptr_out      = (depth_q > 0) ? STACK_BASE_ADDR : '0;
+    assign tail_ptr_out      = (depth_q > 0) ?
+                               (sp_q - FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0]) : '0;
 
-    assign pc_return_out = (sp > 0) ? frame_pc[sp-1] : 32'b0;
-    assign tos_base_out = (sp > 0) ? frame_tos[sp-1] : '0;
-    assign locals_base_out = (sp > 0) ? frame_locals[sp-1] : '0;
-    assign next_locals_base = new_locals_base_in;
-    assign init_new_frame = init_new_frame_q;
-    assign return_value_out = return_value_in;
-    assign head_ptr_out = (sp > 0) ? frame_node_addr[0] : '0;
-    assign tail_ptr_out = (sp > 0) ? frame_node_addr[sp-1] : '0;
-    assign alloc_ptr_out = (resident_count_q > 0) ? frame_node_addr[resident_frame_q[resident_head_q]] : '0;
-    assign active_frames_out = sp;
-    assign resident_regs_out = resident_count_q;
-    assign frame_fault = frame_fault_q;
+    // Push address is always sp_q (the current next-free slot).
+    assign push_req  = (ffsm_q == FS_PUSHING);
+    assign push_addr = sp_q;
+    assign push_data = {pc_return_in,
+                        tos_base_in,
+                        locals_base_in,
+                        {(PYCORE_DMEM_DATA_WIDTH - 32 - 2*RF_AW){1'b0}}};
 
+    // Pop address is latched before decrementing sp_q.
+    assign pop_req  = (ffsm_q == FS_POPPING);
+    assign pop_addr = pop_addr_q;
+
+    // --------------------------------------------------------
+    // Sequential logic
+    // --------------------------------------------------------
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            int i;
-            int j;
-
-            sp = '0;
-            frame_fault_q = 1'b0;
-            init_new_frame_q = 1'b0;
-            resident_head_q = '0;
-            resident_count_q = '0;
-            next_reg_q = RF_BASE[RF_AW-1:0];
-            next_node_addr_q = STACK_BASE_ADDR;
-            next_spill_slot_q = '0;
-            spill_used_count_q = '0;
-
-            for (i = 0; i < MAX_CALL_DEPTH; i++) begin
-                frame_pc[i] = 32'b0;
-                frame_tos[i] = '0;
-                frame_locals[i] = '0;
-                frame_node_addr[i] = '0;
-                frame_prev_ptr[i] = '0;
-                frame_next_ptr[i] = '0;
-                frame_slot_count[i] = '0;
-                frame_resident_count[i] = '0;
-                frame_spill_count[i] = '0;
-                frame_active[i] = 1'b0;
-                for (j = 0; j < FRAME_MAX_SLOTS; j++) begin
-                    slot_resident[i][j] = 1'b0;
-                    slot_reg_idx[i][j] = RF_BASE[RF_AW-1:0];
-                    slot_map_addr[i][j] = '0;
-                end
-            end
-
-            for (i = 0; i < REG_CAP; i++) begin
-                resident_frame_q[i] = '0;
-                resident_slot_q[i] = '0;
-                resident_reg_q[i] = RF_BASE[RF_AW-1:0];
-            end
-
-            for (i = 0; i < RF_DEPTH; i++) begin
-                reg_in_use[i] = 1'b0;
-            end
-
-            for (i = 0; i < SPILL_SLOTS; i++) begin
-                spill_slot_used[i] = 1'b0;
-            end
+            ffsm_q           <= FS_IDLE;
+            depth_q          <= '0;
+            sp_q             <= STACK_BASE_ADDR;
+            pop_addr_q       <= STACK_BASE_ADDR;
+            pc_return_q      <= 32'b0;
+            tos_base_q       <= '0;
+            locals_base_q    <= '0;
+            init_new_frame_q <= 1'b0;
+            return_done_q    <= 1'b0;
+            frame_fault_q    <= 1'b0;
         end else begin
-            int frame_idx;
-            int slot_idx;
-            int q_idx;
-            int scan_idx;
-            int spill_slot_idx;
-            int available_regs;
-            int spill_needed;
-            int spill_free;
-            int old_frame_idx;
-            int old_slot_idx;
-            int old_reg_idx;
-            int tail_idx;
-            int scan_reg_idx;
-            int alloc_reg_idx;
-            bit found_free_reg;
-            bit alloc_fault;
+            // Clear one-cycle pulses by default.
+            init_new_frame_q <= 1'b0;
+            return_done_q    <= 1'b0;
+            frame_fault_q    <= 1'b0;
 
-            frame_fault_q = 1'b0;
-            init_new_frame_q = 1'b0;
+            unique case (ffsm_q)
 
-            if (call_valid && return_valid) begin
-                frame_fault_q = 1'b1;
-            end else if (call_valid) begin
-                if (REG_CAP <= 0 || SPILL_SLOTS <= 0) begin
-                    frame_fault_q = 1'b1;
-                end else if (sp >= MAX_CALL_DEPTH) begin
-                    frame_fault_q = 1'b1;
-                end else if (frame_slots_in > FRAME_MAX_SLOTS) begin
-                    frame_fault_q = 1'b1;
-                end else if ((next_node_addr_q + FRAME_NODE_BYTES) > (STACK_BASE_ADDR + STACK_SIZE_BYTES)) begin
-                    frame_fault_q = 1'b1;
-                end else begin
-                    available_regs = REG_CAP - resident_count_q;
-                    spill_needed = (frame_slots_in > available_regs) ? (frame_slots_in - available_regs) : 0;
-                    spill_free = SPILL_SLOTS - spill_used_count_q;
+                // -------------------------------------------------------
+                // FS_IDLE: accept call_valid or return_valid
+                // -------------------------------------------------------
+                FS_IDLE: begin
+                    if (call_valid && return_valid) begin
+                        frame_fault_q <= 1'b1;
 
-                    if (spill_needed > spill_free) begin
-                        frame_fault_q = 1'b1;
-                    end else begin
-                        frame_idx = sp;
-                        frame_pc[frame_idx] = pc_return_in;
-                        frame_tos[frame_idx] = tos_base_in;
-                        frame_locals[frame_idx] = locals_base_in;
-                        frame_node_addr[frame_idx] = next_node_addr_q;
-                        frame_prev_ptr[frame_idx] = (frame_idx > 0) ? frame_node_addr[frame_idx-1] : '0;
-                        frame_next_ptr[frame_idx] = '0;
-                        frame_slot_count[frame_idx] = frame_slots_in;
-                        frame_resident_count[frame_idx] = '0;
-                        frame_spill_count[frame_idx] = '0;
-                        frame_active[frame_idx] = 1'b1;
-
-                        if (frame_idx > 0) begin
-                            frame_next_ptr[frame_idx-1] = next_node_addr_q;
-                        end
-
-                        next_node_addr_q = next_node_addr_q + FRAME_NODE_BYTES;
-                        alloc_fault = 1'b0;
-
-                        for (slot_idx = 0; slot_idx < FRAME_MAX_SLOTS; slot_idx++) begin
-                            slot_resident[frame_idx][slot_idx] = 1'b0;
-                            slot_reg_idx[frame_idx][slot_idx] = RF_BASE[RF_AW-1:0];
-                            slot_map_addr[frame_idx][slot_idx] = '0;
-                        end
-
-                        for (slot_idx = 0; slot_idx < frame_slots_in; slot_idx++) begin
-                            if (resident_count_q >= REG_CAP) begin
-                                q_idx = resident_head_q;
-                                old_frame_idx = resident_frame_q[q_idx];
-                                old_slot_idx = resident_slot_q[q_idx];
-                                old_reg_idx = resident_reg_q[q_idx];
-
-                                spill_slot_idx = -1;
-                                for (scan_idx = 0; scan_idx < SPILL_SLOTS; scan_idx++) begin
-                                    q_idx = next_spill_slot_q + scan_idx;
-                                    if (q_idx >= SPILL_SLOTS) begin
-                                        q_idx = q_idx - SPILL_SLOTS;
-                                    end
-                                    if (!spill_slot_used[q_idx] && spill_slot_idx < 0) begin
-                                        spill_slot_idx = q_idx;
-                                    end
-                                end
-
-                                if (spill_slot_idx < 0) begin
-                                    alloc_fault = 1'b1;
-                                end else begin
-                                    spill_slot_used[spill_slot_idx] = 1'b1;
-                                    spill_used_count_q = spill_used_count_q + 1'b1;
-                                    next_spill_slot_q = (spill_slot_idx == SPILL_SLOTS-1) ? '0 :
-                                                        spill_slot_idx + 1'b1;
-                                    slot_map_addr[old_frame_idx][old_slot_idx] =
-                                        SPILL_BASE_ADDR + (spill_slot_idx * SPILL_SLOT_BYTES);
-                                    slot_resident[old_frame_idx][old_slot_idx] = 1'b0;
-                                    reg_in_use[old_reg_idx] = 1'b0;
-                                    if (frame_resident_count[old_frame_idx] > 0) begin
-                                        frame_resident_count[old_frame_idx] =
-                                            frame_resident_count[old_frame_idx] - 1'b1;
-                                    end
-                                    frame_spill_count[old_frame_idx] =
-                                        frame_spill_count[old_frame_idx] + 1'b1;
-                                    resident_head_q = (resident_head_q == REG_CAP-1) ? '0 :
-                                                      resident_head_q + 1'b1;
-                                    resident_count_q = resident_count_q - 1'b1;
-                                end
-                            end
-
-                            found_free_reg = 1'b0;
-                            alloc_reg_idx = RF_BASE;
-                            for (scan_idx = 0; scan_idx < REG_CAP; scan_idx++) begin
-                                scan_reg_idx = next_reg_q + scan_idx;
-                                if (scan_reg_idx > RF_DEPTH-1) begin
-                                    scan_reg_idx = scan_reg_idx - REG_CAP;
-                                end
-                                if (!reg_in_use[scan_reg_idx] && !found_free_reg) begin
-                                    alloc_reg_idx = scan_reg_idx;
-                                    found_free_reg = 1'b1;
-                                end
-                            end
-
-                            if (!found_free_reg) begin
-                                alloc_fault = 1'b1;
-                            end else begin
-                                reg_in_use[alloc_reg_idx] = 1'b1;
-                                slot_resident[frame_idx][slot_idx] = 1'b1;
-                                slot_reg_idx[frame_idx][slot_idx] = alloc_reg_idx[RF_AW-1:0];
-                                slot_map_addr[frame_idx][slot_idx] = '0;
-                                frame_resident_count[frame_idx] =
-                                    frame_resident_count[frame_idx] + 1'b1;
-                                next_reg_q = wrap_reg(alloc_reg_idx[RF_AW-1:0]);
-
-                                tail_idx = resident_head_q + resident_count_q;
-                                if (tail_idx >= REG_CAP) begin
-                                    tail_idx = tail_idx - REG_CAP;
-                                end
-                                resident_frame_q[tail_idx] = frame_idx[FRAME_IDX_W-1:0];
-                                resident_slot_q[tail_idx] = slot_idx[SLOT_W-1:0];
-                                resident_reg_q[tail_idx] = alloc_reg_idx[RF_AW-1:0];
-                                resident_count_q = resident_count_q + 1'b1;
-                            end
-                        end
-
-                        if (alloc_fault) begin
-                            frame_fault_q = 1'b1;
+                    end else if (call_valid) begin
+                        if (depth_q >= MAX_CALL_DEPTH) begin
+                            frame_fault_q <= 1'b1;
+                        end else if ((sp_q + FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0]) >
+                                     (STACK_BASE_ADDR +
+                                      STACK_SIZE_BYTES[ADDR_WIDTH-1:0])) begin
+                            frame_fault_q <= 1'b1;
                         end else begin
-                            sp = sp + 1'b1;
-                            init_new_frame_q = 1'b1;
+                            ffsm_q <= FS_PUSHING;
+                        end
+
+                    end else if (return_valid) begin
+                        if (depth_q == 0) begin
+                            frame_fault_q <= 1'b1;
+                        end else begin
+                            pop_addr_q <= sp_q - FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0];
+                            ffsm_q     <= FS_POPPING;
                         end
                     end
                 end
-            end else if (return_valid) begin
-                if (sp > 0) begin
-                    frame_idx = sp - 1'b1;
 
-                    // Pop this frame's resident slots from queue tail and release regs.
-                    while (resident_count_q > 0) begin
-                        tail_idx = resident_head_q + resident_count_q - 1;
-                        if (tail_idx >= REG_CAP) begin
-                            tail_idx = tail_idx - REG_CAP;
-                        end
-                        if (resident_frame_q[tail_idx] == frame_idx[FRAME_IDX_W-1:0]) begin
-                            reg_in_use[resident_reg_q[tail_idx]] = 1'b0;
-                            resident_count_q = resident_count_q - 1'b1;
-                        end else begin
-                            break;
-                        end
+                // -------------------------------------------------------
+                // FS_PUSHING: wait for core to complete the dmem write
+                // -------------------------------------------------------
+                FS_PUSHING: begin
+                    if (push_ack) begin
+                        sp_q             <= sp_q + FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0];
+                        depth_q          <= depth_q + 1'b1;
+                        init_new_frame_q <= 1'b1;
+                        ffsm_q           <= FS_IDLE;
                     end
-
-                    // Free any spill storage owned by the frame.
-                    for (slot_idx = 0; slot_idx < frame_slot_count[frame_idx]; slot_idx++) begin
-                        if (slot_map_addr[frame_idx][slot_idx] != 0) begin
-                            spill_slot_idx = (slot_map_addr[frame_idx][slot_idx] - SPILL_BASE_ADDR) /
-                                             SPILL_SLOT_BYTES;
-                            if ((spill_slot_idx >= 0) && (spill_slot_idx < SPILL_SLOTS) &&
-                                spill_slot_used[spill_slot_idx]) begin
-                                spill_slot_used[spill_slot_idx] = 1'b0;
-                                if (spill_used_count_q > 0) begin
-                                    spill_used_count_q = spill_used_count_q - 1'b1;
-                                end
-                            end
-                        end
-                    end
-
-                    frame_pc[frame_idx] = 32'b0;
-                    frame_tos[frame_idx] = '0;
-                    frame_locals[frame_idx] = '0;
-                    frame_node_addr[frame_idx] = '0;
-                    frame_prev_ptr[frame_idx] = '0;
-                    frame_next_ptr[frame_idx] = '0;
-                    frame_slot_count[frame_idx] = '0;
-                    frame_resident_count[frame_idx] = '0;
-                    frame_spill_count[frame_idx] = '0;
-                    frame_active[frame_idx] = 1'b0;
-                    for (slot_idx = 0; slot_idx < FRAME_MAX_SLOTS; slot_idx++) begin
-                        slot_resident[frame_idx][slot_idx] = 1'b0;
-                        slot_reg_idx[frame_idx][slot_idx] = RF_BASE[RF_AW-1:0];
-                        slot_map_addr[frame_idx][slot_idx] = '0;
-                    end
-
-                    if (frame_idx > 0) begin
-                        frame_next_ptr[frame_idx-1] = '0;
-                    end
-
-                    sp = sp - 1'b1;
-                    if (next_node_addr_q >= (STACK_BASE_ADDR + FRAME_NODE_BYTES)) begin
-                        next_node_addr_q = next_node_addr_q - FRAME_NODE_BYTES;
-                    end
-                    if (resident_count_q == 0) begin
-                        resident_head_q = '0;
-                    end
-                end else begin
-                    frame_fault_q = 1'b1;
                 end
-            end
+
+                // -------------------------------------------------------
+                // FS_POPPING: wait for core to complete the dmem read
+                // -------------------------------------------------------
+                FS_POPPING: begin
+                    if (pop_ack) begin
+                        sp_q          <= sp_q - FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0];
+                        depth_q       <= depth_q - 1'b1;
+                        pc_return_q   <= pop_data[PC_MSB:PC_LSB];
+                        tos_base_q    <= pop_data[TOS_MSB:TOS_LSB];
+                        locals_base_q <= pop_data[LOC_MSB:LOC_LSB];
+                        return_done_q <= 1'b1;
+                        ffsm_q        <= FS_IDLE;
+                    end
+                end
+
+                default: ffsm_q <= FS_IDLE;
+            endcase
         end
     end
 
 endmodule
-/* verilator lint_on UNUSEDSIGNAL */
-/* verilator lint_on BLKSEQ */
 /* verilator lint_on WIDTHTRUNC */
 /* verilator lint_on WIDTHEXPAND */
