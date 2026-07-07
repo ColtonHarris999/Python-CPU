@@ -3,9 +3,11 @@
 // MEM pipeline stage. Operates on the EX/MEM register contents presented by the
 // core and produces the writeback entry consumed by the MEM/WB register.
 //
-//   - Pass-through ops (NONE/LOAD_FAST/STORE_FAST/LOAD_SMALL_INT): forward the
-//     EX result entry to writeback.
-//   - LOAD_CONST: read the constant ROM and forward it to writeback.
+//   - Pass-through ops (NONE/LOAD_FAST/STORE_FAST): forward the EX result entry
+//     to writeback.
+//   - LOAD_CONST: forward the inline_const assembled by the fetch unit directly
+//     to writeback. No separate ROM lookup is required because the constant value
+//     was already embedded in the instruction stream and reconstructed by fetch.
 //   - LOAD_PTR / STORE_PTR: drive a real dmem transaction over the req/ack
 //     handshake, stalling the pipeline until the access completes; a load tags
 //     the result INT.
@@ -13,9 +15,8 @@
 // Memory faults (misaligned, address out of the 32-bit window, or a bank
 // out-of-range fault) raise a trap rather than corrupting state.
 module pycore_mem_stage #(
-    parameter int ADDR_WIDTH    = PYCORE_ADDR_WIDTH,
-    parameter int DMEM_DATA_W   = PYCORE_DMEM_DATA_WIDTH,
-    parameter int CONST_IDX_W   = 8
+    parameter int ADDR_WIDTH  = PYCORE_ADDR_WIDTH,
+    parameter int DMEM_DATA_W = PYCORE_DMEM_DATA_WIDTH
 ) (
     input  logic                          clk,
     input  logic                          rst_n,
@@ -24,8 +25,8 @@ module pycore_mem_stage #(
     input  logic                          rd_we_in,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] alu_entry,    // store data / pass value
     input  logic [PYCORE_ENTRY_WIDTH-1:0] addr_entry,   // PTR base address
-    input  logic [CONST_IDX_W-1:0]        const_idx,
-    input  logic [PYCORE_ENTRY_WIDTH-1:0] const_entry,
+    // Inline constant assembled by the fetch unit for LOAD_CONST instructions.
+    input  logic [PYCORE_ENTRY_WIDTH-1:0] inline_const,
     // dmem master port
     output logic                          dmem_req,
     output logic                          dmem_we,
@@ -34,8 +35,6 @@ module pycore_mem_stage #(
     input  logic                          dmem_ack,
     input  logic [DMEM_DATA_W-1:0]        dmem_rdata,
     input  logic                          dmem_fault,
-    // const ROM port
-    output logic [CONST_IDX_W-1:0]        const_idx_out,
     // writeback outputs
     output logic                          wb_we,
     output logic [PYCORE_ENTRY_WIDTH-1:0] wb_entry,
@@ -53,8 +52,6 @@ module pycore_mem_stage #(
     logic                          pre_trap;
     logic                          req_sent_q;
     logic                          access_done;
-
-    assign const_idx_out = const_idx;
 
     assign is_load_ptr  = valid && (mem_op == PY_MEM_LOAD_PTR);
     assign is_store_ptr = valid && (mem_op == PY_MEM_STORE_PTR);
@@ -94,7 +91,8 @@ module pycore_mem_stage #(
         mem_trap_code = PY_TRAP_NONE;
 
         if (valid && mem_op == PY_MEM_LOAD_CONST) begin
-            wb_entry = const_entry;
+            // The constant was assembled inline by the fetch unit; forward it.
+            wb_entry = inline_const;
             wb_we    = rd_we_in;
         end else if (is_ptr_op) begin
             if (pre_trap) begin

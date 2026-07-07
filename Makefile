@@ -9,7 +9,6 @@ PYTHON ?= python3
 PYCORE_SOURCE ?= pycore/programs/smoke_return.py
 PYCORE_FUNCTION ?= managed_entry
 PYCORE_PROGRAM_HEX ?= pycore/programs/program.hex
-PYCORE_CONST_HEX ?= pycore/programs/consts.hex
 PYCORE_STRING_HEX ?= pycore/programs/string_mem.hex
 PYCORE_TYPES ?= pycore/programs/program.types
 PYCORE_CACHE_MAP ?= pycore/programs/cache_map.hex
@@ -17,7 +16,6 @@ PYCORE_CACHE_MAP ?= pycore/programs/cache_map.hex
 RUN_SOURCE ?= pycore/programs/smoke_return.py
 RUN_FUNCTION ?= managed_entry
 RUN_PROGRAM_HEX ?= pycore/programs/run_program.hex
-RUN_CONST_HEX ?= pycore/programs/run_consts.hex
 RUN_STRING_HEX ?= pycore/programs/run_string_mem.hex
 RUN_TYPES ?= pycore/programs/run_program.types
 RUN_CACHE_MAP ?= pycore/programs/run_cache_map.hex
@@ -37,7 +35,6 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_branch.sv \
 	pycore/rtl/pycore_trap.sv \
 	pycore/rtl/pycore_frame.sv \
-	pycore/rtl/pycore_const_table.sv \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv \
 	pycore/rtl/pycore_imem.sv \
@@ -57,7 +54,6 @@ pycore-preprocess:
 		--source "$(PYCORE_SOURCE)" \
 		--function "$(PYCORE_FUNCTION)" \
 		--program-hex "$(PYCORE_PROGRAM_HEX)" \
-		--const-hex "$(PYCORE_CONST_HEX)" \
 		--string-hex "$(PYCORE_STRING_HEX)" \
 		--types "$(PYCORE_TYPES)" \
 		--cache-map "$(PYCORE_CACHE_MAP)"
@@ -69,7 +65,6 @@ pycore-run-file:
 		--source "$(RUN_SOURCE)" \
 		--function "$(RUN_FUNCTION)" \
 		--program-hex "$(RUN_PROGRAM_HEX)" \
-		--const-hex "$(RUN_CONST_HEX)" \
 		--string-hex "$(RUN_STRING_HEX)" \
 		--types "$(RUN_TYPES)" \
 		--cache-map "$(RUN_CACHE_MAP)"
@@ -78,7 +73,6 @@ pycore-run-file:
 		+incdir+pycore/rtl \
 		--top-module tb_pycore_runfile \
 		-GPROG_HEX=\"$(RUN_PROGRAM_HEX)\" \
-		-GCONST_HEX=\"$(RUN_CONST_HEX)\" \
 		-GSTRING_HEX=\"$(RUN_STRING_HEX)\" \
 		-GMAX_CYCLES=$(RUN_MAX_CYCLES) \
 		--Mdir $(BUILD_DIR)/pycore_runfile \
@@ -86,7 +80,6 @@ pycore-run-file:
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_pycore_runfile.sv
 	./$(BUILD_DIR)/pycore_runfile/Vtb_pycore_runfile
 	$(PYTHON) tools/dump_hex.py --path "$(RUN_PROGRAM_HEX)" --label "Program memory image"
-	$(PYTHON) tools/dump_hex.py --path "$(RUN_CONST_HEX)" --label "Constant memory image"
 	$(PYTHON) tools/dump_hex.py --path "$(RUN_STRING_HEX)" --label "String memory image"
 	@echo "Type sketch file: $(RUN_TYPES)"
 	@echo "Cache map file: $(RUN_CACHE_MAP)"
@@ -210,7 +203,6 @@ docker-run-file: docker-build
 		RUN_SOURCE="$(RUN_SOURCE)" \
 		RUN_FUNCTION="$(RUN_FUNCTION)" \
 		RUN_PROGRAM_HEX="$(RUN_PROGRAM_HEX)" \
-		RUN_CONST_HEX="$(RUN_CONST_HEX)" \
 		RUN_STRING_HEX="$(RUN_STRING_HEX)" \
 		RUN_TYPES="$(RUN_TYPES)" \
 		RUN_CACHE_MAP="$(RUN_CACHE_MAP)" \

@@ -1,8 +1,7 @@
 `include "pycore_defs.svh"
 
 module tb_pycore_runfile #(
-    parameter string PROG_HEX = "pycore/programs/run_program.hex",
-    parameter string CONST_HEX = "pycore/programs/run_consts.hex",
+    parameter string PROG_HEX   = "pycore/programs/run_program.hex",
     parameter string STRING_HEX = "pycore/programs/run_string_mem.hex",
     parameter int MAX_CYCLES = 2000
 );
@@ -19,7 +18,6 @@ module tb_pycore_runfile #(
 
     pycore_system #(
         .PROG_HEX(PROG_HEX),
-        .CONST_HEX(CONST_HEX),
         .STRING_HEX(STRING_HEX)
     ) dut (
         .clk(clk),

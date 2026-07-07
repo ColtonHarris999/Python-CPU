@@ -1,9 +1,13 @@
 `include "pycore_defs.svh"
 
 // Simulation/integration top: the CPU core wired to its instruction and data
-// memory banks and the constant ROM. The testbench instantiates this module, not
-// the core directly, so memory lives outside the core as real master/slave
-// connections instead of a loopback wire.
+// memory banks. The testbench instantiates this module, not the core directly,
+// so memory lives outside the core as real master/slave connections instead of
+// a loopback wire.
+//
+// The constant ROM has been removed. LOAD_CONST constants are now embedded
+// directly in the instruction stream as 3-slot variable-length instructions
+// and are reconstructed by the fetch unit, so no separate ROM is needed.
 module pycore_system #(
     parameter int    ADDR_WIDTH       = PYCORE_ADDR_WIDTH,
     parameter int    IMEM_DATA_W      = PYCORE_IMEM_DATA_WIDTH,
@@ -11,10 +15,7 @@ module pycore_system #(
     parameter int    BLOCK_SHIFT      = PYCORE_BLOCK_SHIFT,
     parameter int    IMEM_BLOCK_COUNT = PYCORE_IMEM_BLOCK_COUNT,
     parameter int    DMEM_BLOCK_COUNT = PYCORE_DMEM_BLOCK_COUNT,
-    parameter int    CONST_DEPTH      = 256,
-    parameter int    CONST_IDX_W      = 8,
     parameter string PROG_HEX         = "pycore/programs/program.hex",
-    parameter string CONST_HEX        = "pycore/programs/consts.hex",
     parameter string STRING_HEX       = "pycore/programs/string_mem.hex"
 ) (
     input  logic        clk,
@@ -45,15 +46,10 @@ module pycore_system #(
     logic [DMEM_DATA_W-1:0] dmem_rdata;
     logic                   dmem_fault;
 
-    // const ROM
-    logic [CONST_IDX_W-1:0]        const_idx;
-    logic [PYCORE_ENTRY_WIDTH-1:0] const_entry;
-
     pycore_core #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .IMEM_DATA_W(IMEM_DATA_W),
         .DMEM_DATA_W(DMEM_DATA_W),
-        .CONST_IDX_W(CONST_IDX_W),
         .STRING_HEX(STRING_HEX)
     ) core (
         .clk(clk),
@@ -72,8 +68,6 @@ module pycore_system #(
         .dmem_ack(dmem_ack),
         .dmem_rdata(dmem_rdata),
         .dmem_fault(dmem_fault),
-        .const_idx(const_idx),
-        .const_entry(const_entry),
         .trap_out(trap_out),
         .trap_code(trap_code),
         .cycle_count(cycle_count),
@@ -115,14 +109,6 @@ module pycore_system #(
         .ack(dmem_ack),
         .rdata(dmem_rdata),
         .fault(dmem_fault)
-    );
-
-    pycore_const_table #(
-        .CONST_DEPTH(CONST_DEPTH),
-        .CONST_HEX(CONST_HEX)
-    ) const_rom (
-        .const_idx(const_idx),
-        .const_entry(const_entry)
     );
 
 endmodule

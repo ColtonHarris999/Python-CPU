@@ -32,7 +32,6 @@ module pycore_core #(
     parameter int ADDR_WIDTH    = PYCORE_ADDR_WIDTH,
     parameter int IMEM_DATA_W   = PYCORE_IMEM_DATA_WIDTH,
     parameter int DMEM_DATA_W   = PYCORE_DMEM_DATA_WIDTH,
-    parameter int CONST_IDX_W   = 8,
     parameter int RF_DEPTH      = 96,
     parameter int STACK_BASE    = 32,
     parameter int STACK_TOP_MAX = 96,
@@ -56,9 +55,6 @@ module pycore_core #(
     input  logic                          dmem_ack,
     input  logic [DMEM_DATA_W-1:0]        dmem_rdata,
     input  logic                          dmem_fault,
-    // const ROM
-    output logic [CONST_IDX_W-1:0]        const_idx,
-    input  logic [PYCORE_ENTRY_WIDTH-1:0] const_entry,
     // status
     output logic                          trap_out,
     output logic [3:0]                    trap_code,
@@ -121,10 +117,14 @@ module pycore_core #(
     // ---------------------------------------------------------------------
     // IF: instruction fetch
     // ---------------------------------------------------------------------
-    logic        if_instr_valid;
-    logic [7:0]  if_opcode;
-    logic [31:0] if_arg;
-    logic [31:0] if_pc;
+    logic                          if_instr_valid;
+    logic [7:0]                    if_opcode;
+    logic [31:0]                   if_arg;
+    logic [31:0]                   if_pc;
+    logic [PYCORE_ENTRY_WIDTH-1:0] if_inline_const;
+
+    // Inline constant latched alongside the instruction for LOAD_CONST.
+    logic [PYCORE_ENTRY_WIDTH-1:0] cur_inline_const;
 
     logic latch_instr;
     logic fetch_stall;
@@ -150,7 +150,8 @@ module pycore_core #(
         .instr_valid(if_instr_valid),
         .opcode(if_opcode),
         .arg(if_arg),
-        .pc(if_pc)
+        .pc(if_pc),
+        .inline_const(if_inline_const)
     );
 
     // ---------------------------------------------------------------------
@@ -314,8 +315,7 @@ module pycore_core #(
 
     pycore_mem_stage #(
         .ADDR_WIDTH(ADDR_WIDTH),
-        .DMEM_DATA_W(DMEM_DATA_W),
-        .CONST_IDX_W(CONST_IDX_W)
+        .DMEM_DATA_W(DMEM_DATA_W)
     ) mem_stage (
         .clk(clk),
         .rst_n(rst_n),
@@ -324,8 +324,7 @@ module pycore_core #(
         .rd_we_in(id_rd_we),
         .alu_entry(ex_entry_q),
         .addr_entry(ex_addr_entry_q),
-        .const_idx(cur_arg[CONST_IDX_W-1:0]),
-        .const_entry(const_entry),
+        .inline_const(cur_inline_const),
         .dmem_req(ms_dmem_req),
         .dmem_we(ms_dmem_we),
         .dmem_addr(ms_dmem_addr),
@@ -333,7 +332,6 @@ module pycore_core #(
         .dmem_ack(dmem_ack),
         .dmem_rdata(dmem_rdata),
         .dmem_fault(dmem_fault),
-        .const_idx_out(const_idx),
         .wb_we(mem_wb_we),
         .wb_entry(mem_wb_entry),
         .mem_stall(mem_stall),
@@ -533,6 +531,7 @@ module pycore_core #(
             cur_opcode           <= 8'b0;
             cur_arg              <= 32'b0;
             cur_pc               <= 32'b0;
+            cur_inline_const     <= '0;
             rs1_q                <= '0;
             rs2_q                <= '0;
             ex_entry_q           <= '0;
@@ -574,10 +573,11 @@ module pycore_core #(
                 // ----------------------------------------------------------
                 S_FETCH: begin
                     if (latch_instr) begin
-                        cur_opcode <= if_opcode;
-                        cur_arg    <= if_arg;
-                        cur_pc     <= if_pc;
-                        state      <= S_DECODE;
+                        cur_opcode       <= if_opcode;
+                        cur_arg          <= if_arg;
+                        cur_pc           <= if_pc;
+                        cur_inline_const <= if_inline_const;
+                        state            <= S_DECODE;
                     end else if (!if_instr_valid) begin
                         fetch_skip_q <= 1'b0;
                     end
