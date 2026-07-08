@@ -18,14 +18,14 @@ module pycore_system #(
     parameter string PROG_HEX         = "pycore/programs/program.hex",
     parameter string STRING_HEX       = "pycore/programs/string_mem.hex"
 ) (
-    input  logic        clk,
-    input  logic        rst_n,
-    output logic        trap_out,
-    output logic [3:0]  trap_code,
-    output logic [63:0] cycle_count,
-    output logic                          dbg_wb_we,
-    output logic [6:0]                    dbg_wb_addr,
-    output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry
+    input  logic        clk_i,
+    input  logic        rst_n_i,
+    output logic        trap_out_o,
+    output logic [3:0]  trap_code_o,
+    output logic [63:0] cycle_count_o,
+    output logic                          dbg_wb_we_o,
+    output logic [6:0]                    dbg_wb_addr_o,
+    output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry_o
 );
 
     // imem master <-> bank
@@ -52,28 +52,28 @@ module pycore_system #(
         .DMEM_DATA_W(DMEM_DATA_W),
         .STRING_HEX(STRING_HEX)
     ) core (
-        .clk(clk),
-        .rst_n(rst_n),
-        .imem_req(imem_req),
-        .imem_we(imem_we),
-        .imem_addr(imem_addr),
-        .imem_wdata(imem_wdata),
-        .imem_ack(imem_ack),
-        .imem_rdata(imem_rdata),
-        .imem_fault(imem_fault),
-        .dmem_req(dmem_req),
-        .dmem_we(dmem_we),
-        .dmem_addr(dmem_addr),
-        .dmem_wdata(dmem_wdata),
-        .dmem_ack(dmem_ack),
-        .dmem_rdata(dmem_rdata),
-        .dmem_fault(dmem_fault),
-        .trap_out(trap_out),
-        .trap_code(trap_code),
-        .cycle_count(cycle_count),
-        .dbg_wb_we(dbg_wb_we),
-        .dbg_wb_addr(dbg_wb_addr),
-        .dbg_wb_entry(dbg_wb_entry)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .imem_req_o(imem_req),
+        .imem_we_o(imem_we),
+        .imem_addr_o(imem_addr),
+        .imem_wdata_o(imem_wdata),
+        .imem_ack_i(imem_ack),
+        .imem_rdata_i(imem_rdata),
+        .imem_fault_i(imem_fault),
+        .dmem_req_o(dmem_req),
+        .dmem_we_o(dmem_we),
+        .dmem_addr_o(dmem_addr),
+        .dmem_wdata_o(dmem_wdata),
+        .dmem_ack_i(dmem_ack),
+        .dmem_rdata_i(dmem_rdata),
+        .dmem_fault_i(dmem_fault),
+        .trap_out_o(trap_out_o),
+        .trap_code_o(trap_code_o),
+        .cycle_count_o(cycle_count_o),
+        .dbg_wb_we_o(dbg_wb_we_o),
+        .dbg_wb_addr_o(dbg_wb_addr_o),
+        .dbg_wb_entry_o(dbg_wb_entry_o)
     );
 
     pycore_imem #(
@@ -83,15 +83,15 @@ module pycore_system #(
         .BLOCK_COUNT(IMEM_BLOCK_COUNT),
         .INIT_HEX(PROG_HEX)
     ) imem (
-        .clk(clk),
-        .rst_n(rst_n),
-        .req(imem_req),
-        .we(imem_we),
-        .addr(imem_addr),
-        .wdata(imem_wdata),
-        .ack(imem_ack),
-        .rdata(imem_rdata),
-        .fault(imem_fault)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .req_i(imem_req),
+        .we_i(imem_we),
+        .addr_i(imem_addr),
+        .wdata_i(imem_wdata),
+        .ack_o(imem_ack),
+        .rdata_o(imem_rdata),
+        .fault_o(imem_fault)
     );
 
     pycore_dmem #(
@@ -100,15 +100,15 @@ module pycore_system #(
         .BLOCK_SHIFT(BLOCK_SHIFT),
         .BLOCK_COUNT(DMEM_BLOCK_COUNT)
     ) dmem (
-        .clk(clk),
-        .rst_n(rst_n),
-        .req(dmem_req),
-        .we(dmem_we),
-        .addr(dmem_addr),
-        .wdata(dmem_wdata),
-        .ack(dmem_ack),
-        .rdata(dmem_rdata),
-        .fault(dmem_fault)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .req_i(dmem_req),
+        .we_i(dmem_we),
+        .addr_i(dmem_addr),
+        .wdata_i(dmem_wdata),
+        .ack_o(dmem_ack),
+        .rdata_o(dmem_rdata),
+        .fault_o(dmem_fault)
     );
 
 endmodule

@@ -14,17 +14,17 @@ module tb_tag_decode;
     logic [3:0] trap_code;
 
     pycore_tag_decode dut (
-        .rs1_tag(rs1_tag),
-        .rs2_tag(rs2_tag),
-        .alu_op(alu_op),
-        .exec_unit_sel(exec_unit_sel),
-        .promote_rs1(promote_rs1),
-        .promote_rs2(promote_rs2),
-        .promote_rs1_mode(promote_rs1_mode),
-        .promote_rs2_mode(promote_rs2_mode),
-        .result_tag(result_tag),
-        .is_trap(is_trap),
-        .trap_code(trap_code)
+        .rs1_tag_i(rs1_tag),
+        .rs2_tag_i(rs2_tag),
+        .alu_op_i(alu_op),
+        .exec_unit_sel_o(exec_unit_sel),
+        .promote_rs1_o(promote_rs1),
+        .promote_rs2_o(promote_rs2),
+        .promote_rs1_mode_o(promote_rs1_mode),
+        .promote_rs2_mode_o(promote_rs2_mode),
+        .result_tag_o(result_tag),
+        .is_trap_o(is_trap),
+        .trap_code_o(trap_code)
     );
 
     task automatic check(input bit condition, input string message);

@@ -25,14 +25,14 @@ module tb_multifn #(
         .PROG_HEX  (PROG_HEX),
         .STRING_HEX(STRING_HEX)
     ) dut (
-        .clk        (clk),
-        .rst_n      (rst_n),
-        .trap_out   (trap_out),
-        .trap_code  (trap_code),
-        .cycle_count(cycle_count),
-        .dbg_wb_we  (dbg_wb_we),
-        .dbg_wb_addr(dbg_wb_addr),
-        .dbg_wb_entry(dbg_wb_entry)
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .trap_out_o(trap_out),
+        .trap_code_o(trap_code),
+        .cycle_count_o(cycle_count),
+        .dbg_wb_we_o(dbg_wb_we),
+        .dbg_wb_addr_o(dbg_wb_addr),
+        .dbg_wb_entry_o(dbg_wb_entry)
     );
 
     always #5 clk = ~clk;
@@ -70,11 +70,11 @@ module tb_multifn #(
             end
 
             // Detect base-frame RETURN_VALUE: no active frames and opcode matches.
-            if ((dut.core.state == CORE_S_WB) &&
-                (dut.core.cur_opcode == PY_OP_RETURN_VALUE) &&
+            if ((dut.core.state_r == CORE_S_WB) &&
+                (dut.core.cur_opcode_r == PY_OP_RETURN_VALUE) &&
                 (dut.core.frame_active_depth == 0)) begin
                 return_seen  = 1;
-                return_entry = dut.core.rs1_q;
+                return_entry = dut.core.rs1_r;
                 break;
             end
         end

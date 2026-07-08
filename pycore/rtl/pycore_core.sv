@@ -7,7 +7,7 @@
 // is no operand forwarding, no load-use hazard, and no branch flush: the
 // register file is always coherent by the time the next instruction reads it.
 //
-// The core remains a memory master. There is no imem_rdata loopback into the
+// The core remains a memory master. There is no imem_rdata_i loopback into the
 // datapath; instruction fetch and the MEM stage drive synchronous req/ack
 // master ports with a one-cycle access latency.
 //
@@ -27,7 +27,7 @@
 //              (one write per evicted slot), then waits for init_new_frame.
 //   S_RETURN : interact with pycore_frame for RETURN_VALUE.  Issues
 //              return_valid in one cycle and redirects fetch to the saved PC.
-//   S_HALT   : terminal state entered on any trap; the machine freezes.
+//   S_HALT   : terminal state_r entered on any trap; the machine freezes.
 module pycore_core #(
     parameter int ADDR_WIDTH    = PYCORE_ADDR_WIDTH,
     parameter int IMEM_DATA_W   = PYCORE_IMEM_DATA_WIDTH,
@@ -37,32 +37,32 @@ module pycore_core #(
     parameter int STACK_TOP_MAX = 96,
     parameter string STRING_HEX = "pycore/programs/string_mem.hex"
 ) (
-    input  logic                          clk,
-    input  logic                          rst_n,
+    input  logic                          clk_i,
+    input  logic                          rst_n_i,
     // imem master
-    output logic                          imem_req,
-    output logic                          imem_we,
-    output logic [ADDR_WIDTH-1:0]         imem_addr,
-    output logic [IMEM_DATA_W-1:0]        imem_wdata,
-    input  logic                          imem_ack,
-    input  logic [IMEM_DATA_W-1:0]        imem_rdata,
-    input  logic                          imem_fault,
+    output logic                          imem_req_o,
+    output logic                          imem_we_o,
+    output logic [ADDR_WIDTH-1:0]         imem_addr_o,
+    output logic [IMEM_DATA_W-1:0]        imem_wdata_o,
+    input  logic                          imem_ack_i,
+    input  logic [IMEM_DATA_W-1:0]        imem_rdata_i,
+    input  logic                          imem_fault_i,
     // dmem master
-    output logic                          dmem_req,
-    output logic                          dmem_we,
-    output logic [ADDR_WIDTH-1:0]         dmem_addr,
-    output logic [DMEM_DATA_W-1:0]        dmem_wdata,
-    input  logic                          dmem_ack,
-    input  logic [DMEM_DATA_W-1:0]        dmem_rdata,
-    input  logic                          dmem_fault,
+    output logic                          dmem_req_o,
+    output logic                          dmem_we_o,
+    output logic [ADDR_WIDTH-1:0]         dmem_addr_o,
+    output logic [DMEM_DATA_W-1:0]        dmem_wdata_o,
+    input  logic                          dmem_ack_i,
+    input  logic [DMEM_DATA_W-1:0]        dmem_rdata_i,
+    input  logic                          dmem_fault_i,
     // status
-    output logic                          trap_out,
-    output logic [3:0]                    trap_code,
-    output logic [63:0]                   cycle_count,
+    output logic                          trap_out_o,
+    output logic [3:0]                    trap_code_o,
+    output logic [63:0]                   cycle_count_o,
     // debug writeback snoop (for verification; mirrors the RF write port)
-    output logic                          dbg_wb_we,
-    output logic [6:0]                    dbg_wb_addr,
-    output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry
+    output logic                          dbg_wb_we_o,
+    output logic [6:0]                    dbg_wb_addr_o,
+    output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry_o
 );
 
     localparam int RF_AW = $clog2(RF_DEPTH);
@@ -77,21 +77,21 @@ module pycore_core #(
     localparam logic [2:0] S_CALL   = 3'd6;
     localparam logic [2:0] S_RETURN = 3'd7;
 
-    logic [2:0] state;
+    logic [2:0] state_r;
 
     // Per-instruction registers.
-    logic [7:0]                    cur_opcode;
-    logic [31:0]                   cur_arg;
-    logic [31:0]                   cur_pc;
-    logic [PYCORE_ENTRY_WIDTH-1:0] rs1_q;
-    logic [PYCORE_ENTRY_WIDTH-1:0] rs2_q;
-    logic [PYCORE_ENTRY_WIDTH-1:0] ex_entry_q;
-    logic [PYCORE_ENTRY_WIDTH-1:0] ex_addr_entry_q;
-    logic                          branch_take_q;
-    logic [31:0]                   branch_tgt_q;
-    logic [PYCORE_ENTRY_WIDTH-1:0] wb_entry_q;
-    logic                          wb_we_q;
-    logic [6:0]                    tos_q;
+    logic [7:0]                    cur_opcode_r;
+    logic [31:0]                   cur_arg_r;
+    logic [31:0]                   cur_pc_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] rs1_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] rs2_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] ex_entry_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] ex_addr_entry_r;
+    logic                          branch_take_r;
+    logic [31:0]                   branch_tgt_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] wb_entry_r;
+    logic                          wb_we_r;
+    logic [6:0]                    tos_r;
 
     // CALL arg encoding: arg[15:0] = callee entry slot, arg[31:16] = argc.
     // call_base is the RF slot of the first argument pushed by the caller, which
@@ -100,35 +100,35 @@ module pycore_core #(
     logic [15:0]      call_target;
     logic [RF_AW-1:0] call_argc_rf;
     logic [RF_AW-1:0] call_base;
-    assign call_target   = cur_arg[15:0];
-    assign call_argc_rf  = cur_arg[RF_AW-1+16:16];
-    assign call_base     = tos_q[RF_AW-1:0] - call_argc_rf;
+    assign call_target   = cur_arg_r[15:0];
+    assign call_argc_rf  = cur_arg_r[RF_AW-1+16:16];
+    assign call_base     = tos_r[RF_AW-1:0] - call_argc_rf;
 
     // One-cycle RF write issued from S_RETURN to deposit the callee's return
     // value at call_base on the caller's stack before resuming fetch.
-    logic             return_wb_we_q;
-    logic [RF_AW-1:0] return_wb_addr_q;
+    logic             return_wb_we_r;
+    logic [RF_AW-1:0] return_wb_addr_r;
 
     // Fetch handshake bookkeeping.
-    logic                          fetch_skip_q;
-    logic                          redirect_pending_q;
-    logic [31:0]                   redirect_tgt_q;
+    logic                          fetch_skip_r;
+    logic                          redirect_pending_r;
+    logic [31:0]                   redirect_tgt_r;
 
     // S_CALL management.
-    logic                          call_sent_q;   // call_valid was pulsed
-    logic                          frame_dmem_pending_q; // frame push or pop in flight
+    logic                          call_sent_r;   // call_valid was pulsed
+    logic                          frame_dmem_pending_r; // frame push or pop in flight
 
     // One-cycle pulse outputs to frame manager (registered).
-    logic                          frame_call_valid_q;
-    logic                          frame_return_valid_q;
+    logic                          frame_call_valid_r;
+    logic                          frame_return_valid_r;
 
     // locals_base tracked by the frame module (drives decode).
-    logic [RF_AW-1:0]              cur_locals_base;
+    logic [RF_AW-1:0]              cur_locals_base_r;
 
     // One-cycle RF control pulses for frame transitions.
-    logic                          rf_set_locals_q;
-    logic [RF_AW-1:0]              rf_new_locals_q;
-    logic                          rf_init_frame_q;
+    logic                          rf_set_locals_r;
+    logic [RF_AW-1:0]              rf_new_locals_r;
+    logic                          rf_init_frame_r;
 
     // ---------------------------------------------------------------------
     // IF: instruction fetch
@@ -140,34 +140,34 @@ module pycore_core #(
     logic [PYCORE_ENTRY_WIDTH-1:0] if_inline_const;
 
     // Inline constant latched alongside the instruction for LOAD_CONST.
-    logic [PYCORE_ENTRY_WIDTH-1:0] cur_inline_const;
+    logic [PYCORE_ENTRY_WIDTH-1:0] cur_inline_const_r;
 
     logic latch_instr;
     logic fetch_stall;
-    assign latch_instr  = (state == S_FETCH) && if_instr_valid && !fetch_skip_q;
-    assign fetch_stall  = (state != S_FETCH) || latch_instr;
+    assign latch_instr  = (state_r == S_FETCH) && if_instr_valid && !fetch_skip_r;
+    assign fetch_stall  = (state_r != S_FETCH) || latch_instr;
 
     pycore_fetch #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .DATA_WIDTH(IMEM_DATA_W)
     ) fetch (
-        .clk(clk),
-        .rst_n(rst_n),
-        .stall(fetch_stall),
-        .flush(1'b0),
-        .branch_taken(redirect_pending_q),
-        .branch_target(redirect_tgt_q),
-        .imem_req(imem_req),
-        .imem_we(imem_we),
-        .imem_addr(imem_addr),
-        .imem_wdata(imem_wdata),
-        .imem_ack(imem_ack),
-        .imem_rdata(imem_rdata),
-        .instr_valid(if_instr_valid),
-        .opcode(if_opcode),
-        .arg(if_arg),
-        .pc(if_pc),
-        .inline_const(if_inline_const)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .stall_i(fetch_stall),
+        .flush_i(1'b0),
+        .branch_taken_i(redirect_pending_r),
+        .branch_target_i(redirect_tgt_r),
+        .imem_req_o(imem_req_o),
+        .imem_we_o(imem_we_o),
+        .imem_addr_o(imem_addr_o),
+        .imem_wdata_o(imem_wdata_o),
+        .imem_ack_i(imem_ack_i),
+        .imem_rdata_i(imem_rdata_i),
+        .instr_valid_o(if_instr_valid),
+        .opcode_o(if_opcode),
+        .arg_o(if_arg),
+        .pc_o(if_pc),
+        .inline_const_o(if_inline_const)
     );
 
     // ---------------------------------------------------------------------
@@ -187,25 +187,25 @@ module pycore_core #(
     logic [31:0] dec_pc;
 
     pycore_decode decode (
-        .instr_valid(1'b1),
-        .opcode(cur_opcode),
-        .arg(cur_arg),
-        .pc(cur_pc),
-        .tos_index(tos_q[5:0]),
-        .locals_base(cur_locals_base[5:0]),
-        .decoded_valid(),
-        .alu_op(dec_alu_op),
-        .rs1_sel(dec_rs1_sel),
-        .rs2_sel(dec_rs2_sel),
-        .rd_sel(dec_rd_sel),
-        .is_branch(dec_is_branch),
-        .is_call(dec_is_call),
-        .is_return(dec_is_return),
-        .push_stack(dec_push),
-        .pop_stack(dec_pop),
-        .mem_op(dec_mem_op),
-        .illegal_opcode(dec_illegal),
-        .decoded_pc(dec_pc)
+        .instr_valid_i(1'b1),
+        .opcode_i(cur_opcode_r),
+        .arg_i(cur_arg_r),
+        .pc_i(cur_pc_r),
+        .tos_index_i(tos_r[5:0]),
+        .locals_base_i(cur_locals_base_r[5:0]),
+        .decoded_valid_o(),
+        .alu_op_o(dec_alu_op),
+        .rs1_sel_o(dec_rs1_sel),
+        .rs2_sel_o(dec_rs2_sel),
+        .rd_sel_o(dec_rd_sel),
+        .is_branch_o(dec_is_branch),
+        .is_call_o(dec_is_call),
+        .is_return_o(dec_is_return),
+        .push_stack_o(dec_push),
+        .pop_stack_o(dec_pop),
+        .mem_op_o(dec_mem_op),
+        .illegal_opcode_o(dec_illegal),
+        .decoded_pc_o(dec_pc)
     );
 
     // Per-opcode writeback-enable and stack-pointer delta.
@@ -214,7 +214,7 @@ module pycore_core #(
     always_comb begin
         id_rd_we     = 1'b0;
         id_tos_delta = 3'sd0;
-        unique case (cur_opcode)
+        unique case (cur_opcode_r)
             PY_OP_LOAD_FAST, PY_OP_LOAD_FAST_BORROW: begin
                 id_rd_we = 1'b1; id_tos_delta = 3'sd1;
             end
@@ -255,7 +255,7 @@ module pycore_core #(
     // EX: execute fabric + branch unit
     // ---------------------------------------------------------------------
     logic is_alu;
-    assign is_alu = (cur_opcode == PY_OP_BINARY_OP) || (cur_opcode == PY_OP_COMPARE_OP);
+    assign is_alu = (cur_opcode_r == PY_OP_BINARY_OP) || (cur_opcode_r == PY_OP_COMPARE_OP);
 
     logic [PYCORE_ENTRY_WIDTH-1:0] exec_result;
     logic                          exec_stall;
@@ -265,16 +265,16 @@ module pycore_core #(
     pycore_exec #(
         .STRING_HEX(STRING_HEX)
     ) exec (
-        .clk(clk),
-        .rst_n(rst_n),
-        .valid((state == S_EXEC) && is_alu),
-        .alu_op(dec_alu_op),
-        .rs1(rs1_q),
-        .rs2(rs2_q),
-        .result(exec_result),
-        .stall(exec_stall),
-        .trap(exec_trap),
-        .trap_code(exec_trap_code)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .valid_i((state_r == S_EXEC) && is_alu),
+        .alu_op_i(dec_alu_op),
+        .rs1_i(rs1_r),
+        .rs2_i(rs2_r),
+        .result_o(exec_result),
+        .stall_o(exec_stall),
+        .trap_o(exec_trap),
+        .trap_code_o(exec_trap_code)
     );
 
     logic        branch_take;
@@ -283,33 +283,33 @@ module pycore_core #(
     logic [3:0]  branch_trap_code;
 
     pycore_branch branch (
-        .opcode(cur_opcode),
-        .pc(cur_pc),
-        .arg(cur_arg),
-        .tos_entry(rs1_q),
-        .take_branch(branch_take),
-        .branch_target(branch_tgt),
-        .trap(branch_trap),
-        .trap_code(branch_trap_code)
+        .opcode_i(cur_opcode_r),
+        .pc_i(cur_pc_r),
+        .arg_i(cur_arg_r),
+        .tos_entry_i(rs1_r),
+        .take_branch_o(branch_take),
+        .branch_target_o(branch_tgt),
+        .trap_o(branch_trap),
+        .trap_code_o(branch_trap_code)
     );
 
     logic [PYCORE_ENTRY_WIDTH-1:0] ex_entry;
     logic [PYCORE_ENTRY_WIDTH-1:0] ex_addr_entry;
     always_comb begin
-        ex_entry      = rs1_q;
+        ex_entry      = rs1_r;
         ex_addr_entry = '0;
-        unique case (cur_opcode)
-            PY_OP_LOAD_SMALL_INT: ex_entry = pycore_int_entry({32'b0, cur_arg});
+        unique case (cur_opcode_r)
+            PY_OP_LOAD_SMALL_INT: ex_entry = pycore_int_entry({32'b0, cur_arg_r});
             PY_OP_BINARY_OP, PY_OP_COMPARE_OP: ex_entry = exec_result;
             PY_OP_MEM_LOAD_PTR: begin
-                ex_entry      = rs1_q;
-                ex_addr_entry = rs1_q;
+                ex_entry      = rs1_r;
+                ex_addr_entry = rs1_r;
             end
             PY_OP_MEM_STORE_PTR: begin
-                ex_entry      = rs1_q;
-                ex_addr_entry = rs2_q;
+                ex_entry      = rs1_r;
+                ex_addr_entry = rs2_r;
             end
-            default: ex_entry = rs1_q;
+            default: ex_entry = rs1_r;
         endcase
     end
 
@@ -333,26 +333,26 @@ module pycore_core #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .DMEM_DATA_W(DMEM_DATA_W)
     ) mem_stage (
-        .clk(clk),
-        .rst_n(rst_n),
-        .valid(state == S_MEM),
-        .mem_op(dec_mem_op),
-        .rd_we_in(id_rd_we),
-        .alu_entry(ex_entry_q),
-        .addr_entry(ex_addr_entry_q),
-        .inline_const(cur_inline_const),
-        .dmem_req(ms_dmem_req),
-        .dmem_we(ms_dmem_we),
-        .dmem_addr(ms_dmem_addr),
-        .dmem_wdata(ms_dmem_wdata),
-        .dmem_ack(dmem_ack),
-        .dmem_rdata(dmem_rdata),
-        .dmem_fault(dmem_fault),
-        .wb_we(mem_wb_we),
-        .wb_entry(mem_wb_entry),
-        .mem_stall(mem_stall),
-        .mem_trap(mem_trap),
-        .mem_trap_code(mem_trap_code)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .valid_i(state_r == S_MEM),
+        .mem_op_i(dec_mem_op),
+        .rd_we_in_i(id_rd_we),
+        .alu_entry_i(ex_entry_r),
+        .addr_entry_i(ex_addr_entry_r),
+        .inline_const_i(cur_inline_const_r),
+        .dmem_req_o(ms_dmem_req),
+        .dmem_we_o(ms_dmem_we),
+        .dmem_addr_o(ms_dmem_addr),
+        .dmem_wdata_o(ms_dmem_wdata),
+        .dmem_ack_i(dmem_ack_i),
+        .dmem_rdata_i(dmem_rdata_i),
+        .dmem_fault_i(dmem_fault_i),
+        .wb_we_o(mem_wb_we),
+        .wb_entry_o(mem_wb_entry),
+        .mem_stall_o(mem_stall),
+        .mem_trap_o(mem_trap),
+        .mem_trap_code_o(mem_trap_code)
     );
 
     // ---------------------------------------------------------------------
@@ -391,11 +391,11 @@ module pycore_core #(
     logic [ADDR_WIDTH-1:0]        frame_pop_addr;
 
     // Combinational acks: asserted to the frame module the same cycle
-    // dmem_ack fires, keeping pop_data = dmem_rdata valid at that posedge.
+    // dmem_ack_i fires, keeping pop_data = dmem_rdata_i valid at that posedge.
     logic frame_push_ack;
     logic frame_pop_ack;
-    assign frame_push_ack = (state == S_CALL)   && frame_dmem_pending_q && dmem_ack;
-    assign frame_pop_ack  = (state == S_RETURN) && frame_dmem_pending_q && dmem_ack;
+    assign frame_push_ack = (state_r == S_CALL)   && frame_dmem_pending_r && dmem_ack_i;
+    assign frame_pop_ack  = (state_r == S_RETURN) && frame_dmem_pending_r && dmem_ack_i;
 
     pycore_frame #(
         .RF_DEPTH(RF_DEPTH),
@@ -404,33 +404,33 @@ module pycore_core #(
         .STACK_BASE_ADDR(FRAME_STACK_BASE),
         .STACK_SIZE_BYTES(FRAME_STACK_BYTES)
     ) frame_mgr (
-        .clk(clk),
-        .rst_n(rst_n),
-        .call_valid(frame_call_valid_q),
-        .return_valid(frame_return_valid_q),
-        .pc_return_in(cur_pc + 32'd1),
-        .tos_base_in(call_base),
-        .locals_base_in(cur_locals_base),
-        .new_locals_base_in(call_base),
-        .pc_return_out(frame_pc_return_out),
-        .tos_base_out(frame_tos_base_out),
-        .locals_base_out(frame_locals_base_out),
-        .next_locals_base(frame_next_locals_base),
-        .init_new_frame(frame_init_new_frame),
-        .return_done(frame_return_done),
-        .active_frames_out(frame_active_depth),
-        .head_ptr_out(),
-        .tail_ptr_out(),
-        .frame_fault(frame_fault_sig),
-        .frame_busy(frame_busy),
-        .push_req(frame_push_req),
-        .push_addr(frame_push_addr),
-        .push_data(frame_push_data),
-        .push_ack(frame_push_ack),
-        .pop_req(frame_pop_req),
-        .pop_addr(frame_pop_addr),
-        .pop_data(dmem_rdata[DMEM_DATA_W-1:0]),
-        .pop_ack(frame_pop_ack)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .call_valid_i(frame_call_valid_r),
+        .return_valid_i(frame_return_valid_r),
+        .pc_return_in_i(cur_pc_r + 32'd1),
+        .tos_base_in_i(call_base),
+        .locals_base_in_i(cur_locals_base_r),
+        .new_locals_base_in_i(call_base),
+        .pc_return_out_o(frame_pc_return_out),
+        .tos_base_out_o(frame_tos_base_out),
+        .locals_base_out_o(frame_locals_base_out),
+        .next_locals_base_o(frame_next_locals_base),
+        .init_new_frame_o(frame_init_new_frame),
+        .return_done_o(frame_return_done),
+        .active_frames_out_o(frame_active_depth),
+        .head_ptr_out_o(),
+        .tail_ptr_out_o(),
+        .frame_fault_o(frame_fault_sig),
+        .frame_busy_o(frame_busy),
+        .push_req_o(frame_push_req),
+        .push_addr_o(frame_push_addr),
+        .push_data_o(frame_push_data),
+        .push_ack_i(frame_push_ack),
+        .pop_req_o(frame_pop_req),
+        .pop_addr_o(frame_pop_addr),
+        .pop_data_i(dmem_rdata_i[DMEM_DATA_W-1:0]),
+        .pop_ack_i(frame_pop_ack)
     );
 
     // ---------------------------------------------------------------------
@@ -441,59 +441,59 @@ module pycore_core #(
     logic [RF_AW-1:0]              rf_rd_addr_mux;
     logic [PYCORE_ENTRY_WIDTH-1:0] rf_rd_data_mux;
     logic rf_we;
-    assign rf_we          = ((state == S_WB) && wb_we_q && !freeze_pipeline) ||
-                            return_wb_we_q;
-    assign rf_rd_addr_mux = return_wb_we_q ? return_wb_addr_q  : dec_rd_sel[RF_AW-1:0];
-    assign rf_rd_data_mux = return_wb_we_q ? rs1_q             : wb_entry_q;
-    assign dbg_wb_we    = rf_we;
-    assign dbg_wb_addr  = {1'b0, rf_rd_addr_mux};
-    assign dbg_wb_entry = rf_rd_data_mux;
+    assign rf_we          = ((state_r == S_WB) && wb_we_r && !freeze_pipeline) ||
+                            return_wb_we_r;
+    assign rf_rd_addr_mux = return_wb_we_r ? return_wb_addr_r  : dec_rd_sel[RF_AW-1:0];
+    assign rf_rd_data_mux = return_wb_we_r ? rs1_r             : wb_entry_r;
+    assign dbg_wb_we_o    = rf_we;
+    assign dbg_wb_addr_o  = {1'b0, rf_rd_addr_mux};
+    assign dbg_wb_entry_o = rf_rd_data_mux;
 
     pycore_regfile #(
         .RF_DEPTH(RF_DEPTH)
     ) regfile (
-        .clk(clk),
-        .rst_n(rst_n),
-        .rs1_addr(dec_rs1_sel[RF_AW-1:0]),
-        .rs2_addr(dec_rs2_sel[RF_AW-1:0]),
-        .rs1(rf_rs1),
-        .rs2(rf_rs2),
-        .rd_we(rf_we),
-        .rd_addr(rf_rd_addr_mux),
-        .rd(rf_rd_data_mux),
-        .set_locals_base(rf_set_locals_q),
-        .new_locals_base(rf_new_locals_q),
-        .init_frame(rf_init_frame_q),
-        .push_stack(1'b0),
-        .pop_stack(1'b0),
-        .tos_ptr(),
-        .locals_base(),
-        .stack_fault()
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .rs1_addr_i(dec_rs1_sel[RF_AW-1:0]),
+        .rs2_addr_i(dec_rs2_sel[RF_AW-1:0]),
+        .rs1_o(rf_rs1),
+        .rs2_o(rf_rs2),
+        .rd_we_i(rf_we),
+        .rd_addr_i(rf_rd_addr_mux),
+        .rd_i(rf_rd_data_mux),
+        .set_locals_base_i(rf_set_locals_r),
+        .new_locals_base_i(rf_new_locals_r),
+        .init_frame_i(rf_init_frame_r),
+        .push_stack_i(1'b0),
+        .pop_stack_i(1'b0),
+        .tos_ptr_o(),
+        .locals_base_o(),
+        .stack_fault_o()
     );
 
     // ---------------------------------------------------------------------
     // Dmem mux: frame push/pop transactions take priority over mem_stage
-    // (which deasserts ms_dmem_req when state != S_MEM — no contention).
-    // push: state == S_CALL,   dmem_we = 1
-    // pop:  state == S_RETURN, dmem_we = 0
+    // (which deasserts ms_dmem_req when state_r != S_MEM — no contention).
+    // push: state_r == S_CALL,   dmem_we_o = 1
+    // pop:  state_r == S_RETURN, dmem_we_o = 0
     // ---------------------------------------------------------------------
     logic frame_dmem_active;
-    assign frame_dmem_active = frame_dmem_pending_q &&
-                               ((state == S_CALL) || (state == S_RETURN));
+    assign frame_dmem_active = frame_dmem_pending_r &&
+                               ((state_r == S_CALL) || (state_r == S_RETURN));
 
-    assign dmem_req   = frame_dmem_active ? 1'b1          : ms_dmem_req;
-    assign dmem_we    = frame_dmem_active ? (state==S_CALL): ms_dmem_we;
-    assign dmem_addr  = frame_dmem_active ?
-                        ((state == S_CALL) ? frame_push_addr : frame_pop_addr)
+    assign dmem_req_o   = frame_dmem_active ? 1'b1          : ms_dmem_req;
+    assign dmem_we_o    = frame_dmem_active ? (state_r==S_CALL): ms_dmem_we;
+    assign dmem_addr_o  = frame_dmem_active ?
+                        ((state_r == S_CALL) ? frame_push_addr : frame_pop_addr)
                                           : ms_dmem_addr;
-    assign dmem_wdata = frame_dmem_active ? frame_push_data : ms_dmem_wdata;
+    assign dmem_wdata_o = frame_dmem_active ? frame_push_data : ms_dmem_wdata;
 
     // ---------------------------------------------------------------------
     // Trap aggregation (single in-flight instruction).
     // ---------------------------------------------------------------------
     logic        freeze_pipeline;
     logic signed [8:0] next_tos;
-    assign next_tos = $signed({2'b0, tos_q}) + id_tos_delta;
+    assign next_tos = $signed({2'b0, tos_r}) + id_tos_delta;
 
     logic type_trap_sig;
     logic stack_fault_sig;
@@ -506,12 +506,12 @@ module pycore_core #(
 
     logic exec_in;
     logic mem_in;
-    assign exec_in = (state == S_EXEC);
-    assign mem_in  = (state == S_MEM);
+    assign exec_in = (state_r == S_EXEC);
+    assign mem_in  = (state_r == S_MEM);
 
     assign type_trap_sig  = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_TYPE)) ||
                             (exec_in && dec_is_branch && branch_trap);
-    assign stack_fault_sig = (state == S_WB) && !dec_is_call && !dec_is_return &&
+    assign stack_fault_sig = (state_r == S_WB) && !dec_is_call && !dec_is_return &&
                              ((next_tos < STACK_BASE) || (next_tos > STACK_TOP_MAX));
     assign div_zero_sig   = exec_in && exec_trap && (exec_trap_code == PY_TRAP_DIV_ZERO);
     assign fpu_exc_sig    = exec_in && exec_trap && (exec_trap_code == PY_TRAP_FPU_EXCEPTION);
@@ -519,129 +519,180 @@ module pycore_core #(
                             (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ILLEGAL_OPCODE));
     assign mem_fault_sig  = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_MEM_FAULT)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_MEM_FAULT)) ||
-                            imem_fault;
+                            imem_fault_i;
     assign addr_align_sig = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ADDR_ALIGN)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_ADDR_ALIGN));
     // Frame faults use the PY_TRAP_CALL_FILTER code (existing placeholder).
-    assign frame_fault_trap_sig = (state == S_CALL || state == S_RETURN) &&
+    assign frame_fault_trap_sig = (state_r == S_CALL || state_r == S_RETURN) &&
                                   frame_fault_sig;
 
     logic [31:0]                   fault_pc;
     logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs1;
     logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs2;
-    assign fault_pc  = cur_pc;
-    assign fault_rs1 = (state == S_MEM) ? ex_addr_entry_q : rs1_q;
-    assign fault_rs2 = (state == S_MEM) ? ex_entry_q : rs2_q;
+    assign fault_pc  = cur_pc_r;
+    assign fault_rs1 = (state_r == S_MEM) ? ex_addr_entry_r : rs1_r;
+    assign fault_rs2 = (state_r == S_MEM) ? ex_entry_r : rs2_r;
 
     pycore_trap trap_block (
-        .clk(clk),
-        .rst_n(rst_n),
-        .type_trap(type_trap_sig),
-        .stack_fault(stack_fault_sig),
-        .div_zero(div_zero_sig),
-        .fpu_exception(fpu_exc_sig),
-        .illegal_opcode(illegal_sig || frame_fault_trap_sig),
-        .mem_fault(mem_fault_sig),
-        .addr_align(addr_align_sig),
-        .fault_pc(fault_pc),
-        .fault_rs1(fault_rs1),
-        .fault_rs2(fault_rs2),
-        .trap_out(trap_out),
-        .trap_code(trap_code),
-        .trap_pc(),
-        .trap_rs1(),
-        .trap_rs2(),
-        .freeze_pipeline(freeze_pipeline)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .type_trap_i(type_trap_sig),
+        .stack_fault_i(stack_fault_sig),
+        .div_zero_i(div_zero_sig),
+        .fpu_exception_i(fpu_exc_sig),
+        .illegal_opcode_i(illegal_sig || frame_fault_trap_sig),
+        .mem_fault_i(mem_fault_sig),
+        .addr_align_i(addr_align_sig),
+        .fault_pc_i(fault_pc),
+        .fault_rs1_i(fault_rs1),
+        .fault_rs2_i(fault_rs2),
+        .trap_out_o(trap_out_o),
+        .trap_code_o(trap_code_o),
+        .trap_pc_o(),
+        .trap_rs1_o(),
+        .trap_rs2_o(),
+        .freeze_pipeline_o(freeze_pipeline)
     );
 
     // ---------------------------------------------------------------------
-    // Control FSM.
+    // Control FSM — next-state combinational logic.
+    // state_r is the registered current state; state_next is the combinational
+    // next state, computed every cycle and sampled on the next rising edge.
     // ---------------------------------------------------------------------
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            state                <= S_FETCH;
-            cur_opcode           <= 8'b0;
-            cur_arg              <= 32'b0;
-            cur_pc               <= 32'b0;
-            cur_inline_const     <= '0;
-            rs1_q                <= '0;
-            rs2_q                <= '0;
-            ex_entry_q           <= '0;
-            ex_addr_entry_q      <= '0;
-            branch_take_q        <= 1'b0;
-            branch_tgt_q         <= 32'b0;
-            wb_entry_q           <= '0;
-            wb_we_q              <= 1'b0;
-            tos_q                <= STACK_BASE[6:0];
-            fetch_skip_q         <= 1'b0;
-            redirect_pending_q   <= 1'b0;
-            redirect_tgt_q       <= 32'b0;
-            cycle_count          <= 64'b0;
-            cur_locals_base      <= '0;  // base frame locals live in RF[0..31]
-            call_sent_q          <= 1'b0;
-            frame_dmem_pending_q <= 1'b0;
-            frame_call_valid_q   <= 1'b0;
-            frame_return_valid_q <= 1'b0;
-            rf_set_locals_q      <= 1'b0;
-            rf_new_locals_q      <= '0;
-            rf_init_frame_q      <= 1'b0;
-            return_wb_we_q       <= 1'b0;
-            return_wb_addr_q     <= '0;
-        end else if (freeze_pipeline) begin
-            state <= S_HALT;
+    logic [2:0] state_next;
+
+    always_comb begin
+        state_next = state_r;  // default: hold current state
+
+        if (freeze_pipeline) begin
+            state_next = S_HALT;
         end else begin
-            cycle_count          <= cycle_count + 1'b1;
+            unique case (state_r)
+                S_FETCH: begin
+                    if (latch_instr) state_next = S_DECODE;
+                end
+                S_DECODE: begin
+                    state_next = S_EXEC;
+                end
+                S_EXEC: begin
+                    if (!exec_stall) state_next = S_MEM;
+                end
+                S_MEM: begin
+                    if (!mem_stall) state_next = S_WB;
+                end
+                S_WB: begin
+                    if (!dec_is_call && !dec_is_return) begin
+                        state_next = S_FETCH;
+                    end else if (dec_is_call) begin
+                        state_next = S_CALL;
+                    end else if (frame_active_depth > 0) begin
+                        state_next = S_RETURN;
+                    end else begin
+                        state_next = S_FETCH;  // base-frame return
+                    end
+                end
+                S_CALL: begin
+                    if (frame_init_new_frame) state_next = S_FETCH;
+                end
+                S_RETURN: begin
+                    if (frame_return_done) state_next = S_FETCH;
+                end
+                S_HALT: begin
+                    state_next = S_HALT;
+                end
+                default: state_next = S_FETCH;
+            endcase
+        end
+    end
+
+    // ---------------------------------------------------------------------
+    // Control FSM — sequential: register state_next and update data regs.
+    // ---------------------------------------------------------------------
+    always_ff @(posedge clk_i or negedge rst_n_i) begin
+        if (!rst_n_i) begin
+            state_r                <= S_FETCH;
+            cur_opcode_r           <= 8'b0;
+            cur_arg_r              <= 32'b0;
+            cur_pc_r               <= 32'b0;
+            cur_inline_const_r     <= '0;
+            rs1_r                <= '0;
+            rs2_r                <= '0;
+            ex_entry_r           <= '0;
+            ex_addr_entry_r      <= '0;
+            branch_take_r        <= 1'b0;
+            branch_tgt_r         <= 32'b0;
+            wb_entry_r           <= '0;
+            wb_we_r              <= 1'b0;
+            tos_r                <= STACK_BASE[6:0];
+            fetch_skip_r         <= 1'b0;
+            redirect_pending_r   <= 1'b0;
+            redirect_tgt_r       <= 32'b0;
+            cycle_count_o          <= 64'b0;
+            cur_locals_base_r      <= '0;  // base frame locals live in RF[0..31]
+            call_sent_r          <= 1'b0;
+            frame_dmem_pending_r <= 1'b0;
+            frame_call_valid_r   <= 1'b0;
+            frame_return_valid_r <= 1'b0;
+            rf_set_locals_r      <= 1'b0;
+            rf_new_locals_r      <= '0;
+            rf_init_frame_r      <= 1'b0;
+            return_wb_we_r       <= 1'b0;
+            return_wb_addr_r     <= '0;
+        end else begin
+            state_r <= state_next;  // register next state (computed in always_comb)
+
+            cycle_count_o        <= cycle_count_o + 1'b1;
 
             // Clear one-cycle pulses by default.
-            frame_call_valid_q   <= 1'b0;
-            frame_return_valid_q <= 1'b0;
-            rf_set_locals_q      <= 1'b0;
-            rf_init_frame_q      <= 1'b0;
-            return_wb_we_q       <= 1'b0;
+            frame_call_valid_r   <= 1'b0;
+            frame_return_valid_r <= 1'b0;
+            rf_set_locals_r      <= 1'b0;
+            rf_init_frame_r      <= 1'b0;
+            return_wb_we_r       <= 1'b0;
 
-            if (state == S_FETCH) begin
-                redirect_pending_q <= 1'b0;
+            if (state_r == S_FETCH) begin
+                redirect_pending_r <= 1'b0;
             end
 
-            unique case (state)
+            unique case (state_r)
 
                 // ----------------------------------------------------------
                 S_FETCH: begin
                     if (latch_instr) begin
-                        cur_opcode       <= if_opcode;
-                        cur_arg          <= if_arg;
-                        cur_pc           <= if_pc;
-                        cur_inline_const <= if_inline_const;
-                        state            <= S_DECODE;
+                        cur_opcode_r       <= if_opcode;
+                        cur_arg_r          <= if_arg;
+                        cur_pc_r           <= if_pc;
+                        cur_inline_const_r <= if_inline_const;
+                        // state_next = S_DECODE (from always_comb)
                     end else if (!if_instr_valid) begin
-                        fetch_skip_q <= 1'b0;
+                        fetch_skip_r <= 1'b0;
                     end
                 end
 
                 // ----------------------------------------------------------
                 S_DECODE: begin
-                    rs1_q <= rf_rs1;
-                    rs2_q <= rf_rs2;
-                    state <= S_EXEC;
+                    rs1_r <= rf_rs1;
+                    rs2_r <= rf_rs2;
+                    // state_next = S_EXEC (from always_comb)
                 end
 
                 // ----------------------------------------------------------
                 S_EXEC: begin
                     if (!exec_stall) begin
-                        ex_entry_q      <= ex_entry;
-                        ex_addr_entry_q <= ex_addr_entry;
-                        branch_take_q   <= branch_take;
-                        branch_tgt_q    <= branch_tgt;
-                        state           <= S_MEM;
+                        ex_entry_r      <= ex_entry;
+                        ex_addr_entry_r <= ex_addr_entry;
+                        branch_take_r   <= branch_take;
+                        branch_tgt_r    <= branch_tgt;
+                        // state_next = S_MEM (from always_comb)
                     end
                 end
 
                 // ----------------------------------------------------------
                 S_MEM: begin
                     if (!mem_stall) begin
-                        wb_entry_q <= mem_wb_entry;
-                        wb_we_q    <= mem_wb_we;
-                        state      <= S_WB;
+                        wb_entry_r <= mem_wb_entry;
+                        wb_we_r    <= mem_wb_we;
+                        // state_next = S_WB (from always_comb)
                     end
                 end
 
@@ -649,36 +700,34 @@ module pycore_core #(
                 S_WB: begin
                     if (!dec_is_call && !dec_is_return) begin
                         // Normal instruction writeback.
-                        tos_q <= next_tos[6:0];
-                        if (dec_is_branch && branch_take_q) begin
-                            redirect_pending_q <= 1'b1;
-                            redirect_tgt_q     <= branch_tgt_q;
+                        tos_r <= next_tos[6:0];
+                        if (dec_is_branch && branch_take_r) begin
+                            redirect_pending_r <= 1'b1;
+                            redirect_tgt_r     <= branch_tgt_r;
                         end
-                        fetch_skip_q <= 1'b1;
-                        state        <= S_FETCH;
+                        fetch_skip_r <= 1'b1;
+                        // state_next = S_FETCH (from always_comb)
 
                     end else if (dec_is_call) begin
                         // CALL: move to frame-management state.
-                        call_sent_q          <= 1'b0;
-                        frame_dmem_pending_q <= 1'b0;
-                        fetch_skip_q         <= 1'b1;
-                        state                <= S_CALL;
+                        call_sent_r          <= 1'b0;
+                        frame_dmem_pending_r <= 1'b0;
+                        fetch_skip_r         <= 1'b1;
+                        // state_next = S_CALL (from always_comb)
 
                     end else begin
                         // RETURN_VALUE.
                         if (frame_active_depth > 0) begin
                             // There is a calling frame: restore caller's PC,
                             // locals_base, and TOS via the frame manager.
-                            fetch_skip_q <= 1'b1;
-                            state        <= S_RETURN;
+                            fetch_skip_r <= 1'b1;
+                            // state_next = S_RETURN (from always_comb)
                         end else begin
                             // Base-frame return: no caller exists.  Just pop
-                            // the TOS and resume fetching.  The program image
-                            // ends here; the fetch unit will silently filter the
-                            // subsequent CACHE/zero opcodes without trapping.
-                            tos_q        <= next_tos[6:0];
-                            fetch_skip_q <= 1'b1;
-                            state        <= S_FETCH;
+                            // the TOS and resume fetching.
+                            tos_r        <= next_tos[6:0];
+                            fetch_skip_r <= 1'b1;
+                            // state_next = S_FETCH (from always_comb)
                         end
                     end
                 end
@@ -688,44 +737,44 @@ module pycore_core #(
                 // commit the new frame once the write completes.
                 //
                 //   Cycle 1: pulse call_valid (frame → FS_PUSHING).
-                //   Cycle 2: push_req asserted; start one 128-bit dmem write.
-                //   Cycle 3: dmem_ack → push_ack (combinational); frame
-                //            records the push and fires init_new_frame.
-                //   Cycle 4: init_new_frame seen; rotate locals_base, go
-                //            to S_FETCH.
+                //   Cycle 2: push_req_o asserted; start one 128-bit dmem write.
+                //   Cycle 3: dmem_ack_i → push_ack (combinational); frame
+                //            records the push and fires init_new_frame_o.
+                //   Cycle 4: init_new_frame_o seen; rotate locals_base, go
+                //            to S_FETCH. (state_next = S_FETCH from always_comb)
                 // ----------------------------------------------------------
                 S_CALL: begin
                     // Step 1: send call_valid once when frame module is idle.
-                    if (!call_sent_q && !frame_busy) begin
-                        frame_call_valid_q   <= 1'b1;
-                        call_sent_q          <= 1'b1;
+                    if (!call_sent_r && !frame_busy) begin
+                        frame_call_valid_r   <= 1'b1;
+                        call_sent_r          <= 1'b1;
                     end
 
-                    // Step 2: when frame asserts push_req, start the dmem write.
-                    if (call_sent_q && frame_push_req && !frame_dmem_pending_q) begin
-                        frame_dmem_pending_q <= 1'b1;
+                    // Step 2: when frame asserts push_req_o, start the dmem write.
+                    if (call_sent_r && frame_push_req && !frame_dmem_pending_r) begin
+                        frame_dmem_pending_r <= 1'b1;
                     end
 
-                    // Step 3: dmem_ack clears the pending flag; push_ack is
+                    // Step 3: dmem_ack_i clears the pending flag; push_ack is
                     // driven combinationally in the same cycle.
-                    if (frame_dmem_pending_q && dmem_ack) begin
-                        frame_dmem_pending_q <= 1'b0;
+                    if (frame_dmem_pending_r && dmem_ack_i) begin
+                        frame_dmem_pending_r <= 1'b0;
                     end
 
                     // Step 4: push committed — new frame ready.
                     if (frame_init_new_frame) begin
-                        cur_locals_base      <= frame_next_locals_base;
-                        rf_set_locals_q      <= 1'b1;
-                        rf_new_locals_q      <= frame_next_locals_base;
+                        cur_locals_base_r    <= frame_next_locals_base;
+                        rf_set_locals_r      <= 1'b1;
+                        rf_new_locals_r      <= frame_next_locals_base;
                         // Only zero-init the callee's locals when no arguments
                         // were passed; arguments already live in RF[call_base..]
                         // and rf_init_frame would overwrite them.
-                        rf_init_frame_q      <= (call_argc_rf == '0);
-                        call_sent_q          <= 1'b0;
-                        frame_dmem_pending_q <= 1'b0;
-                        redirect_pending_q   <= 1'b1;
-                        redirect_tgt_q       <= {16'b0, call_target};
-                        state                <= S_FETCH;
+                        rf_init_frame_r      <= (call_argc_rf == '0);
+                        call_sent_r          <= 1'b0;
+                        frame_dmem_pending_r <= 1'b0;
+                        redirect_pending_r   <= 1'b1;
+                        redirect_tgt_r       <= {16'b0, call_target};
+                        // state_next = S_FETCH (from always_comb)
                     end
                 end
 
@@ -734,62 +783,55 @@ module pycore_core #(
                 // restore the caller's context.
                 //
                 //   Cycle 1: pulse return_valid (frame → FS_POPPING).
-                //   Cycle 2: pop_req asserted; start one 128-bit dmem read.
-                //   Cycle 3: dmem_ack → pop_ack (combinational) with
-                //            pop_data = dmem_rdata; frame latches the
-                //            restored state and fires return_done.
-                //   Cycle 4: return_done seen; read frame outputs and
-                //            redirect fetch to the saved return PC.
+                //   Cycle 2: pop_req_o asserted; start one 128-bit dmem read.
+                //   Cycle 3: dmem_ack_i → pop_ack (combinational) with
+                //            pop_data_i = dmem_rdata_i; frame latches the
+                //            restored state and fires return_done_o.
+                //   Cycle 4: return_done_o seen; redirect fetch to saved PC.
+                //            (state_next = S_FETCH from always_comb)
                 // ----------------------------------------------------------
                 S_RETURN: begin
                     // Step 1: send return_valid once.
-                    if (!call_sent_q && !frame_busy) begin
-                        frame_return_valid_q <= 1'b1;
-                        call_sent_q          <= 1'b1;
+                    if (!call_sent_r && !frame_busy) begin
+                        frame_return_valid_r <= 1'b1;
+                        call_sent_r          <= 1'b1;
                     end
 
-                    // Step 2: when frame asserts pop_req, start the dmem read.
-                    if (call_sent_q && frame_pop_req && !frame_dmem_pending_q) begin
-                        frame_dmem_pending_q <= 1'b1;
+                    // Step 2: when frame asserts pop_req_o, start the dmem read.
+                    if (call_sent_r && frame_pop_req && !frame_dmem_pending_r) begin
+                        frame_dmem_pending_r <= 1'b1;
                     end
 
-                    // Step 3: dmem_ack clears pending; pop_ack is combinational.
-                    if (frame_dmem_pending_q && dmem_ack) begin
-                        frame_dmem_pending_q <= 1'b0;
+                    // Step 3: dmem_ack_i clears pending; pop_ack is combinational.
+                    if (frame_dmem_pending_r && dmem_ack_i) begin
+                        frame_dmem_pending_r <= 1'b0;
                     end
 
                     // Step 4: frame restored — redirect to saved return PC.
-                    // return_done and the frame outputs are valid because they
-                    // use the same NBA-visibility window as init_new_frame: the
-                    // core reads them before the current cycle's default-clear
-                    // NBA can overwrite them (no #1 delay here).
+                    // return_done_o and the frame outputs are valid in the same
+                    // NBA-visibility window as init_new_frame_o.
                     if (frame_return_done) begin
-                        redirect_pending_q   <= 1'b1;
-                        redirect_tgt_q       <= frame_pc_return_out;
-                        cur_locals_base      <= frame_locals_base_out;
-                        rf_set_locals_q      <= 1'b1;
-                        rf_new_locals_q      <= frame_locals_base_out;
-                        // Place the callee's return value (still in rs1_q from
-                        // RETURN_VALUE decode) at call_base on the caller's stack.
-                        // The actual RF write fires next cycle via return_wb_we_q.
-                        return_wb_we_q       <= 1'b1;
-                        return_wb_addr_q     <= frame_tos_base_out;
-                        // Advance TOS past the written return value slot.
-                        tos_q                <= frame_tos_base_out + 7'd1;
-                        call_sent_q          <= 1'b0;
-                        frame_dmem_pending_q <= 1'b0;
-                        state                <= S_FETCH;
+                        redirect_pending_r   <= 1'b1;
+                        redirect_tgt_r       <= frame_pc_return_out;
+                        cur_locals_base_r    <= frame_locals_base_out;
+                        rf_set_locals_r      <= 1'b1;
+                        rf_new_locals_r      <= frame_locals_base_out;
+                        // Place the callee's return value at call_base on the
+                        // caller's stack. The actual RF write fires next cycle.
+                        return_wb_we_r       <= 1'b1;
+                        return_wb_addr_r     <= frame_tos_base_out;
+                        tos_r                <= frame_tos_base_out + 7'd1;
+                        call_sent_r          <= 1'b0;
+                        frame_dmem_pending_r <= 1'b0;
+                        // state_next = S_FETCH (from always_comb)
                     end
                 end
 
                 // ----------------------------------------------------------
-                S_HALT: begin
-                    state <= S_HALT;
-                end
+                S_HALT: ;  // state_next = S_HALT (from always_comb)
 
-                default: begin
-                    state <= S_FETCH;
-                end
+                default: ;  // state_next = S_FETCH (from always_comb)
+
             endcase
         end
     end

@@ -27,15 +27,15 @@ module tb_mem_bank;
         .READ_ONLY(0),
         .INIT_HEX("")
     ) dut (
-        .clk(clk),
-        .rst_n(rst_n),
-        .req(req),
-        .we(we),
-        .addr(addr),
-        .wdata(wdata),
-        .ack(ack),
-        .rdata(rdata),
-        .fault(fault)
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .req_i(req),
+        .we_i(we),
+        .addr_i(addr),
+        .wdata_i(wdata),
+        .ack_o(ack),
+        .rdata_o(rdata),
+        .fault_o(fault)
     );
 
     always #5 clk = ~clk;

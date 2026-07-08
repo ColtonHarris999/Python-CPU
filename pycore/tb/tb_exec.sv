@@ -13,16 +13,16 @@ module tb_exec;
     logic [3:0] trap_code;
 
     pycore_exec dut (
-        .clk(clk),
-        .rst_n(rst_n),
-        .valid(valid),
-        .alu_op(alu_op),
-        .rs1(rs1),
-        .rs2(rs2),
-        .result(result),
-        .stall(stall),
-        .trap(trap),
-        .trap_code(trap_code)
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .valid_i(valid),
+        .alu_op_i(alu_op),
+        .rs1_i(rs1),
+        .rs2_i(rs2),
+        .result_o(result),
+        .stall_o(stall),
+        .trap_o(trap),
+        .trap_code_o(trap_code)
     );
 
     always #5 clk = ~clk;
