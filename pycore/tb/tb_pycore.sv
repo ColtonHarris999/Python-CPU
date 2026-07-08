@@ -20,14 +20,14 @@ module tb_pycore;
     pycore_system #(
         .PROG_HEX("pycore/programs/mem_demo_prog.hex")
     ) dut (
-        .clk(clk),
-        .rst_n(rst_n),
-        .trap_out(trap_out),
-        .trap_code(trap_code),
-        .cycle_count(cycle_count),
-        .dbg_wb_we(dbg_wb_we),
-        .dbg_wb_addr(dbg_wb_addr),
-        .dbg_wb_entry(dbg_wb_entry)
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .trap_out_o(trap_out),
+        .trap_code_o(trap_code),
+        .cycle_count_o(cycle_count),
+        .dbg_wb_we_o(dbg_wb_we),
+        .dbg_wb_addr_o(dbg_wb_addr),
+        .dbg_wb_entry_o(dbg_wb_entry)
     );
 
     always #5 clk = ~clk;
