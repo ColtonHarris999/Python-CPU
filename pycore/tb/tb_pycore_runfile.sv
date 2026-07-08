@@ -65,9 +65,9 @@ module tb_pycore_runfile #(
                 $finish;
             end
 
-            if ((dut.core.state == CORE_S_WB) && (dut.core.cur_opcode == PY_OP_RETURN_VALUE)) begin
+            if ((dut.core.state_r == CORE_S_WB) && (dut.core.cur_opcode_r == PY_OP_RETURN_VALUE)) begin
                 return_seen = 1'b1;
-                return_entry = dut.core.rs1_q;
+                return_entry = dut.core.rs1_r;
                 break;
             end
         end

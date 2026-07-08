@@ -19,7 +19,7 @@ RUN_PROGRAM_HEX ?= pycore/programs/run_program.hex
 RUN_STRING_HEX ?= pycore/programs/run_string_mem.hex
 RUN_TYPES ?= pycore/programs/run_program.types
 RUN_CACHE_MAP ?= pycore/programs/run_cache_map.hex
-RUN_MAX_CYCLES ?= 2000
+RUN_MAX_CYCLES ?= 4000
 
 PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_tag_decode.sv \
@@ -47,7 +47,7 @@ PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv
 
-.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-multifn-simple pycore-multifn-const pycore-multifn-arg pycore-multifn-chain pycore-multifn-stress clean docker-build docker-run-file docker-pycore-test docker-all-tests
+.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-multifn-simple pycore-multifn-const pycore-multifn-arg pycore-multifn-chain pycore-multifn-stress pycore-build-runfile pycore-programs-test clean docker-build docker-run-file docker-pycore-test docker-all-tests
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -261,7 +261,22 @@ pycore-multifn-stress:
 
 pycore-multifn: pycore-multifn-simple pycore-multifn-const pycore-multifn-arg pycore-multifn-chain pycore-multifn-stress
 
-pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn
+pycore-build-runfile:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_pycore_runfile \
+		-GPROG_HEX=\"$(RUN_PROGRAM_HEX)\" \
+		-GSTRING_HEX=\"$(RUN_STRING_HEX)\" \
+		-GMAX_CYCLES=$(RUN_MAX_CYCLES) \
+		--Mdir $(BUILD_DIR)/pycore_runfile \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_pycore_runfile.sv
+
+pycore-programs-test: pycore-build-runfile
+	$(PYTHON) -m unittest discover -s pycore/tests -p "test_programs.py" -v
+
+pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-programs-test
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .
