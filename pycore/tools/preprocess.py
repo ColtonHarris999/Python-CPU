@@ -5,22 +5,32 @@ from __future__ import annotations
 
 import argparse
 import dis
-import importlib.util
+import os
 import pathlib
-import struct
-import sys
 from dataclasses import dataclass
 from typing import Iterable
 
+# Allow ``python pycore/tools/preprocess.py`` (script dir on sys.path) and
+# ``import pycore.tools.preprocess`` (full path) to both find the sibling module.
+import sys as _sys
 
-REQUIRED_PY = (3, 14)
+_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-TAG_UNINITIALIZED = 0b000
-TAG_INT = 0b001
-TAG_FLOAT = 0b010
-TAG_BOOL = 0b011
-TAG_PTR = 0b100
-TAG_OBJECT = 0b101
+from bytecode_common import (  # noqa: E402  (re-exported for backwards compat)
+    REQUIRED_PY,
+    TAG_BOOL,
+    TAG_FLOAT,
+    TAG_INT,
+    TAG_OBJECT,
+    TAG_PTR,
+    TAG_UNINITIALIZED,
+    VAL_MASK,
+    VAL_WIDTH,
+    float_bits,
+    load_function,
+    require_python_3_14,
+)
+
 TAG_SHORT_STR = 0b110
 TAG_LONG_STR = 0b111
 
@@ -84,27 +94,6 @@ class EmittedInstruction:
     opname: str
 
 
-def require_python_3_14() -> None:
-    if sys.version_info[:2] != REQUIRED_PY:
-        raise RuntimeError(
-            "PyCore preprocessing is pinned to CPython "
-            f"{REQUIRED_PY[0]}.{REQUIRED_PY[1]}; running "
-            f"{sys.version_info.major}.{sys.version_info.minor}"
-        )
-
-
-def load_function(source: pathlib.Path, function_name: str):
-    spec = importlib.util.spec_from_file_location("_pycore_input", source)
-    if spec is None or spec.loader is None:
-        raise ValueError(f"Unable to import {source}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    fn = getattr(module, function_name, None)
-    if not callable(fn):
-        raise ValueError(f"Function '{function_name}' not found in {source}")
-    return fn
-
-
 def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
     for ins in dis.get_instructions(fn, show_caches=True):
         if ins.opname == "CACHE":
@@ -142,10 +131,6 @@ def emit_instruction_words(instructions: Iterable[dis.Instruction]) -> list[Emit
     return emitted
 
 
-def float_bits(value: float) -> int:
-    return struct.unpack(">Q", struct.pack(">d", value))[0]
-
-
 class StringHeapBuilder:
     """Builds an initialized long-string memory image for hardware."""
 
@@ -171,11 +156,6 @@ class StringHeapBuilder:
         return addr
 
 
-# Architectural value is now a 128-bit field carrying a 3-bit tag, i.e. a
-# 131-bit entry. INT keeps a 64-bit signed fast path sign-extended into the
-# upper 64 bits; FLOAT/BOOL live in the low 64 bits with the rest zero.
-VAL_WIDTH = 128
-VAL_MASK = (1 << VAL_WIDTH) - 1
 ENTRY_HEX_DIGITS = (3 + VAL_WIDTH + 3) // 4  # ceil(131/4) == 33
 
 # Instruction memory slot: 40-bit folded word, zero-padded to one 8-byte slot.
