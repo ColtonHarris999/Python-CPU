@@ -47,7 +47,7 @@ PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv
 
-.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-frame-fib pycore-top clean docker-build docker-run-file docker-pycore-test docker-all-tests
+.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-multifn-simple pycore-multifn-const pycore-multifn-arg pycore-multifn-chain pycore-multifn-stress clean docker-build docker-run-file docker-pycore-test docker-all-tests
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -192,7 +192,76 @@ pycore-top:
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_pycore.sv
 	./$(BUILD_DIR)/pycore_top/Vtb_pycore
 
-pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top
+MULTIFN_BUILD := $(BUILD_DIR)/pycore_multifn
+
+pycore-multifn-simple:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_multifn \
+		-GPROG_HEX=\"pycore/programs/multifn_simple.hex\" \
+		-GEXPECTED_TAG=3\'b001 \
+		"-GEXPECTED_VALUE=128\'d42" \
+		--Mdir $(BUILD_DIR)/pycore_multifn_simple \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_multifn.sv
+	./$(BUILD_DIR)/pycore_multifn_simple/Vtb_multifn
+
+pycore-multifn-const:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_multifn \
+		-GPROG_HEX=\"pycore/programs/multifn_const.hex\" \
+		-GEXPECTED_TAG=3\'b001 \
+		"-GEXPECTED_VALUE=128\'d1337" \
+		--Mdir $(BUILD_DIR)/pycore_multifn_const \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_multifn.sv
+	./$(BUILD_DIR)/pycore_multifn_const/Vtb_multifn
+
+pycore-multifn-arg:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_multifn \
+		-GPROG_HEX=\"pycore/programs/multifn_arg.hex\" \
+		-GEXPECTED_TAG=3\'b001 \
+		"-GEXPECTED_VALUE=128\'d42" \
+		--Mdir $(BUILD_DIR)/pycore_multifn_arg \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_multifn.sv
+	./$(BUILD_DIR)/pycore_multifn_arg/Vtb_multifn
+
+pycore-multifn-chain:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_multifn \
+		-GPROG_HEX=\"pycore/programs/multifn_chain.hex\" \
+		-GEXPECTED_TAG=3\'b001 \
+		"-GEXPECTED_VALUE=128\'d42" \
+		--Mdir $(BUILD_DIR)/pycore_multifn_chain \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_multifn.sv
+	./$(BUILD_DIR)/pycore_multifn_chain/Vtb_multifn
+
+pycore-multifn-stress:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_multifn \
+		-GPROG_HEX=\"pycore/programs/multifn_stress.hex\" \
+		-GEXPECTED_TAG=3\'b001 \
+		"-GEXPECTED_VALUE=128\'d202" \
+		--Mdir $(BUILD_DIR)/pycore_multifn_stress \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_multifn.sv
+	./$(BUILD_DIR)/pycore_multifn_stress/Vtb_multifn
+
+pycore-multifn: pycore-multifn-simple pycore-multifn-const pycore-multifn-arg pycore-multifn-chain pycore-multifn-stress
+
+pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .

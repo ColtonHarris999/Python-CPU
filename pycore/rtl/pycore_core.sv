@@ -93,6 +93,22 @@ module pycore_core #(
     logic                          wb_we_q;
     logic [6:0]                    tos_q;
 
+    // CALL arg encoding: arg[15:0] = callee entry slot, arg[31:16] = argc.
+    // call_base is the RF slot of the first argument pushed by the caller, which
+    // becomes the callee's locals_base AND the slot where S_RETURN places the
+    // return value so the caller sees it at TOS after the call completes.
+    logic [15:0]      call_target;
+    logic [RF_AW-1:0] call_argc_rf;
+    logic [RF_AW-1:0] call_base;
+    assign call_target   = cur_arg[15:0];
+    assign call_argc_rf  = cur_arg[RF_AW-1+16:16];
+    assign call_base     = tos_q[RF_AW-1:0] - call_argc_rf;
+
+    // One-cycle RF write issued from S_RETURN to deposit the callee's return
+    // value at call_base on the caller's stack before resuming fetch.
+    logic             return_wb_we_q;
+    logic [RF_AW-1:0] return_wb_addr_q;
+
     // Fetch handshake bookkeeping.
     logic                          fetch_skip_q;
     logic                          redirect_pending_q;
@@ -345,9 +361,16 @@ module pycore_core #(
     // is pushed to a DRAM stack in one 128-bit write.  On RETURN it is
     // popped back via a 128-bit read.  The core mediates both dmem
     // transactions through the push/pop handshake.
+    //
+    // The frame stack lives in the upper half of the 16 KB data memory
+    // (byte addresses 0x2000–0x3FFF), leaving the lower 8 KB for user-level
+    // pointer data.  STACK_BASE_ADDR must be within the dmem address window
+    // (BLOCK_COUNT × 2^BLOCK_SHIFT = 4 × 4 KB = 16 KB).
     // ---------------------------------------------------------------------
-    localparam int RF_BASE_CORE        = STACK_BASE;
-    localparam int MAX_CALL_DEPTH_CORE = 64;
+    localparam int    RF_BASE_CORE          = STACK_BASE;
+    localparam int    MAX_CALL_DEPTH_CORE   = 64;
+    localparam logic [ADDR_WIDTH-1:0] FRAME_STACK_BASE = 32'h0000_2000;
+    localparam int    FRAME_STACK_BYTES     = 32'h0000_2000;  // 8 KB, 512 frames
 
     logic [RF_AW-1:0]      frame_next_locals_base;
     logic                  frame_init_new_frame;
@@ -377,16 +400,18 @@ module pycore_core #(
     pycore_frame #(
         .RF_DEPTH(RF_DEPTH),
         .RF_BASE(RF_BASE_CORE),
-        .MAX_CALL_DEPTH(MAX_CALL_DEPTH_CORE)
+        .MAX_CALL_DEPTH(MAX_CALL_DEPTH_CORE),
+        .STACK_BASE_ADDR(FRAME_STACK_BASE),
+        .STACK_SIZE_BYTES(FRAME_STACK_BYTES)
     ) frame_mgr (
         .clk(clk),
         .rst_n(rst_n),
         .call_valid(frame_call_valid_q),
         .return_valid(frame_return_valid_q),
-        .pc_return_in(cur_pc + 32'd8),
-        .tos_base_in(tos_q[RF_AW-1:0]),
+        .pc_return_in(cur_pc + 32'd1),
+        .tos_base_in(call_base),
         .locals_base_in(cur_locals_base),
-        .new_locals_base_in(RF_BASE_CORE[RF_AW-1:0]),
+        .new_locals_base_in(call_base),
         .pc_return_out(frame_pc_return_out),
         .tos_base_out(frame_tos_base_out),
         .locals_base_out(frame_locals_base_out),
@@ -410,12 +435,19 @@ module pycore_core #(
 
     // ---------------------------------------------------------------------
     // Register file.  push_stack / pop_stack are left idle.
+    // The return_wb path lets S_RETURN place the callee's return value
+    // onto the caller's stack in the cycle after frame_return_done fires.
     // ---------------------------------------------------------------------
+    logic [RF_AW-1:0]              rf_rd_addr_mux;
+    logic [PYCORE_ENTRY_WIDTH-1:0] rf_rd_data_mux;
     logic rf_we;
-    assign rf_we        = (state == S_WB) && wb_we_q && !freeze_pipeline;
+    assign rf_we          = ((state == S_WB) && wb_we_q && !freeze_pipeline) ||
+                            return_wb_we_q;
+    assign rf_rd_addr_mux = return_wb_we_q ? return_wb_addr_q  : dec_rd_sel[RF_AW-1:0];
+    assign rf_rd_data_mux = return_wb_we_q ? rs1_q             : wb_entry_q;
     assign dbg_wb_we    = rf_we;
-    assign dbg_wb_addr  = dec_rd_sel;
-    assign dbg_wb_entry = wb_entry_q;
+    assign dbg_wb_addr  = {1'b0, rf_rd_addr_mux};
+    assign dbg_wb_entry = rf_rd_data_mux;
 
     pycore_regfile #(
         .RF_DEPTH(RF_DEPTH)
@@ -427,8 +459,8 @@ module pycore_core #(
         .rs1(rf_rs1),
         .rs2(rf_rs2),
         .rd_we(rf_we),
-        .rd_addr(dec_rd_sel[RF_AW-1:0]),
-        .rd(wb_entry_q),
+        .rd_addr(rf_rd_addr_mux),
+        .rd(rf_rd_data_mux),
         .set_locals_base(rf_set_locals_q),
         .new_locals_base(rf_new_locals_q),
         .init_frame(rf_init_frame_q),
@@ -553,6 +585,8 @@ module pycore_core #(
             rf_set_locals_q      <= 1'b0;
             rf_new_locals_q      <= '0;
             rf_init_frame_q      <= 1'b0;
+            return_wb_we_q       <= 1'b0;
+            return_wb_addr_q     <= '0;
         end else if (freeze_pipeline) begin
             state <= S_HALT;
         end else begin
@@ -563,6 +597,7 @@ module pycore_core #(
             frame_return_valid_q <= 1'b0;
             rf_set_locals_q      <= 1'b0;
             rf_init_frame_q      <= 1'b0;
+            return_wb_we_q       <= 1'b0;
 
             if (state == S_FETCH) begin
                 redirect_pending_q <= 1'b0;
@@ -682,11 +717,14 @@ module pycore_core #(
                         cur_locals_base      <= frame_next_locals_base;
                         rf_set_locals_q      <= 1'b1;
                         rf_new_locals_q      <= frame_next_locals_base;
-                        rf_init_frame_q      <= 1'b1;
+                        // Only zero-init the callee's locals when no arguments
+                        // were passed; arguments already live in RF[call_base..]
+                        // and rf_init_frame would overwrite them.
+                        rf_init_frame_q      <= (call_argc_rf == '0);
                         call_sent_q          <= 1'b0;
                         frame_dmem_pending_q <= 1'b0;
                         redirect_pending_q   <= 1'b1;
-                        redirect_tgt_q       <= cur_pc + 32'd8;
+                        redirect_tgt_q       <= {16'b0, call_target};
                         state                <= S_FETCH;
                     end
                 end
@@ -731,7 +769,13 @@ module pycore_core #(
                         cur_locals_base      <= frame_locals_base_out;
                         rf_set_locals_q      <= 1'b1;
                         rf_new_locals_q      <= frame_locals_base_out;
-                        tos_q                <= frame_tos_base_out;
+                        // Place the callee's return value (still in rs1_q from
+                        // RETURN_VALUE decode) at call_base on the caller's stack.
+                        // The actual RF write fires next cycle via return_wb_we_q.
+                        return_wb_we_q       <= 1'b1;
+                        return_wb_addr_q     <= frame_tos_base_out;
+                        // Advance TOS past the written return value slot.
+                        tos_q                <= frame_tos_base_out + 7'd1;
                         call_sent_q          <= 1'b0;
                         frame_dmem_pending_q <= 1'b0;
                         state                <= S_FETCH;
