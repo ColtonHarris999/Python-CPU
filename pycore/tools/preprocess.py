@@ -89,6 +89,25 @@ _COMPOUND_EXPANSIONS: dict[str, tuple[str, str]] = {
     "LOAD_FAST_LOAD_FAST_BORROW":        ("LOAD_FAST",        "LOAD_FAST_BORROW"),
 }
 
+# Jump instructions whose dis.Instruction.argval carries the absolute byte
+# offset of the branch target.  These must have their arg pre-translated to
+# filtered-instruction-index space before reaching remap_branch_args.
+_BACKWARD_JUMP_OPS: frozenset[str] = frozenset({"JUMP_BACKWARD"})
+_FORWARD_JUMP_OPS: frozenset[str] = frozenset({"JUMP_FORWARD"})
+_ABSOLUTE_JUMP_OPS: frozenset[str] = frozenset({
+    "POP_JUMP_IF_TRUE", "POP_JUMP_IF_FALSE",
+    "JUMP_IF_TRUE_OR_POP", "JUMP_IF_FALSE_OR_POP",
+})
+_ALL_JUMP_OPS: frozenset[str] = (
+    _BACKWARD_JUMP_OPS | _FORWARD_JUMP_OPS | _ABSOLUTE_JUMP_OPS
+)
+
+# Instructions that are consumed / discarded by iter_filtered_instructions
+# and therefore do NOT contribute to the filtered instruction stream.
+_SKIP_OPS: frozenset[str] = frozenset({
+    "CACHE", "EXTENDED_ARG", "PUSH_NULL", "LOAD_GLOBAL",
+})
+
 
 @dataclass(frozen=True)
 class EmittedInstruction:
@@ -157,6 +176,38 @@ def load_all_functions(
     return entry + others
 
 
+def _build_offset_to_filtered_idx(fn: Any) -> dict[int, int]:
+    """
+    Pre-scan *fn*'s bytecode and return a mapping
+    ``original_byte_offset → filtered_instruction_index``.
+
+    The filtered stream is what ``iter_filtered_instructions`` will ultimately
+    yield: CACHE / EXTENDED_ARG / PUSH_NULL / LOAD_GLOBAL are absent; compound
+    pair instructions (one bytecode word) contribute two entries.
+
+    This map lets ``iter_filtered_instructions`` translate each jump
+    instruction's ``argval`` (an absolute byte offset in the *original*
+    bytecode) into the corresponding index in the *filtered* stream.  Without
+    this translation, skipped CACHE words and compound-instruction expansions
+    would corrupt every jump arg, causing KeyErrors or silent misbehaviour in
+    ``remap_branch_args``.
+    """
+    idx = 0
+    offset_map: dict[int, int] = {}
+    for ins in dis.get_instructions(fn, show_caches=True):
+        if ins.opname in _SKIP_OPS:
+            continue
+        offset_map[ins.offset] = idx
+        if ins.opname in _COMPOUND_EXPANSIONS:
+            # Both synthetic component instructions will be emitted; reserve
+            # the second slot's (offset+2) entry too.
+            offset_map[ins.offset + 2] = idx + 1
+            idx += 2
+        else:
+            idx += 1
+    return offset_map
+
+
 def iter_filtered_instructions(
     fn: Any,
     callee_slots: dict[str, int],
@@ -164,22 +215,41 @@ def iter_filtered_instructions(
     """
     Yield hardware instruction objects for *fn*'s bytecode.
 
-    Multi-function call sequences are transformed:
+    Jump-arg pre-translation
+    ~~~~~~~~~~~~~~~~~~~~~~~~
+    Python 3.14 encodes all jump operands as word counts measured against the
+    *original* bytecode (including CACHE slots and non-expanded compounds).
+    Because we skip CACHE words and expand compound instructions, our filtered
+    stream's instruction indices diverge from the original word count.
 
-    * ``PUSH_NULL`` — skipped (no hardware equivalent; the call-frame
-      mechanism does not use a null sentinel).
-    * ``LOAD_GLOBAL name`` — silently consumed; *name* is remembered as the
-      pending callee.  The function must be present in *callee_slots*.
-    * ``CALL argc`` — emitted as a hardware CALL with arg encoded as
-      ``(argc << 16) | callee_slot``, matching the field layout expected by
-      ``pycore_core``'s ``S_CALL`` handler.
+    To compensate, a pre-scan builds ``offset_to_filtered`` — a map from each
+    instruction's *original* byte offset to its *filtered* index — before the
+    main iteration begins.  Every jump instruction's ``argval`` (the absolute
+    byte offset of its target, as resolved by ``dis``) is then looked up in
+    this map, and the arg is replaced with a value expressed in
+    filtered-instruction-index units.  ``remap_branch_args`` then converts
+    those filtered-index counts to slot counts, which is its only job.
 
-    Python 3.14 compound ("macro") instructions that fuse two adjacent
-    ``LOAD_FAST`` / ``LOAD_FAST_BORROW`` ops are expanded back into their
-    two component instructions.
+    Multi-function call-sequence transformation
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    * ``PUSH_NULL`` — discarded (no hardware equivalent).
+    * ``LOAD_GLOBAL name`` — consumed; *name* is remembered as the pending
+      callee.  The function must be present in *callee_slots*.
+    * ``CALL argc`` — emitted as ``CALL (argc << 16) | callee_slot``.
+
+    Python 3.14 compound pair instructions
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Fused ``LOAD_FAST_BORROW_LOAD_FAST_BORROW`` (and similar) are expanded
+    back into their two component ``LOAD_FAST_BORROW`` / ``LOAD_FAST``
+    instructions.
     """
     varnames = fn.__code__.co_varnames
     pending_callee: str | None = None
+
+    # Build offset → filtered-index map once, before the main pass.
+    offset_to_filtered = _build_offset_to_filtered_idx(fn)
+
+    filtered_idx = 0
 
     for ins in dis.get_instructions(fn, show_caches=True):
         if ins.opname == "CACHE":
@@ -218,18 +288,14 @@ def iter_filtered_instructions(
                 opcode=dis.opmap[op2_name], opname=op2_name,
                 arg=a2, offset=ins.offset + 2,
             )
+            filtered_idx += 2
             continue
 
         # ── Calling-convention instructions ────────────────────────────────
 
-        # PUSH_NULL is a calling-convention marker; the hardware call-frame
-        # mechanism does not use it, so it is simply discarded.
         if ins.opname == "PUSH_NULL":
             continue
 
-        # LOAD_GLOBAL loads the callee function object in Python's model; in
-        # hardware the callee is addressed directly by slot, so we just
-        # record the callee name for the subsequent CALL.
         if ins.opname == "LOAD_GLOBAL":
             name = getattr(ins, "argval", None)
             if not isinstance(name, str):
@@ -246,8 +312,6 @@ def iter_filtered_instructions(
             pending_callee = name
             continue
 
-        # CALL: encode as (argc << 16) | callee_slot so the hardware can
-        # find the callee's first instruction slot and know the argument count.
         if ins.opname == "CALL":
             if pending_callee is None:
                 raise ValueError(
@@ -263,6 +327,41 @@ def iter_filtered_instructions(
                 arg=hw_arg,
                 offset=ins.offset,
             )
+            filtered_idx += 1
+            continue
+
+        # ── Jump instructions: pre-translate arg to filtered-index space ──
+        # Python's jump args are word counts measured against the *original*
+        # bytecode (including CACHE slots).  We replace them with counts /
+        # indices in the *filtered* stream so that remap_branch_args can
+        # convert correctly to slot units without needing to know about
+        # skipped words or compound expansions.
+        if ins.opname in _ALL_JUMP_OPS:
+            target_byte = getattr(ins, "argval", None)
+            if isinstance(target_byte, int):
+                target_fidx = offset_to_filtered.get(target_byte)
+                if target_fidx is None:
+                    raise ValueError(
+                        f"{ins.opname} at bytecode offset {ins.offset}: "
+                        f"branch target byte offset {target_byte} not found "
+                        f"in filtered instruction stream"
+                    )
+                if ins.opname in _BACKWARD_JUMP_OPS:
+                    # remap_branch_args expects: arg = steps backward from i
+                    new_arg = filtered_idx - target_fidx
+                elif ins.opname in _FORWARD_JUMP_OPS:
+                    # remap_branch_args expects: arg = steps forward from i
+                    new_arg = target_fidx - filtered_idx
+                else:
+                    # Absolute jumps: remap_branch_args expects absolute index
+                    new_arg = target_fidx
+            else:
+                new_arg = ins.arg or 0  # fallback: no argval available
+            yield SimpleNamespace(
+                opcode=ins.opcode, opname=ins.opname,
+                arg=new_arg, offset=ins.offset,
+            )
+            filtered_idx += 1
             continue
 
         if ins.opname not in SUPPORTED_OPS:
@@ -274,6 +373,7 @@ def iter_filtered_instructions(
                 f"Unsupported BINARY_OP oparg {ins.arg} at bytecode offset {ins.offset}"
             )
         yield ins
+        filtered_idx += 1
 
 
 def emit_instruction_words(
