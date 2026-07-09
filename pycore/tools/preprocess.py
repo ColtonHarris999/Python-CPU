@@ -10,6 +10,7 @@ import pathlib
 import struct
 import sys
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Iterable
 
 
@@ -75,6 +76,19 @@ SUPPORTED_BINARY_ARGS = {
     12, 25,  # xor
 }
 
+# Python 3.14 introduced compound ("macro") instructions that fuse two
+# consecutive LOAD_FAST / LOAD_FAST_BORROW opcodes into a single wordcode
+# instruction.  The combined oparg packs both variable indices in 4 bits each:
+#   combined_arg = (second_variable_index << 4) | first_variable_index
+# where "first" is the instruction that executes first (pushed to stack first).
+# Both variable indices must be < 16 for the pair to be emitted by the compiler.
+_COMPOUND_EXPANSIONS: dict[str, tuple[str, str]] = {
+    "LOAD_FAST_BORROW_LOAD_FAST_BORROW": ("LOAD_FAST_BORROW", "LOAD_FAST_BORROW"),
+    "LOAD_FAST_LOAD_FAST":               ("LOAD_FAST",        "LOAD_FAST"),
+    "LOAD_FAST_BORROW_LOAD_FAST":        ("LOAD_FAST_BORROW", "LOAD_FAST"),
+    "LOAD_FAST_LOAD_FAST_BORROW":        ("LOAD_FAST",        "LOAD_FAST_BORROW"),
+}
+
 
 @dataclass(frozen=True)
 class EmittedInstruction:
@@ -110,6 +124,8 @@ def load_function(source: pathlib.Path, function_name: str):
 
 
 def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
+    varnames = fn.__code__.co_varnames
+
     for ins in dis.get_instructions(fn, show_caches=True):
         if ins.opname == "CACHE":
             continue
@@ -118,6 +134,40 @@ def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
             # following Instruction.arg; the fetch stage also supports raw
             # EXTENDED_ARG for hand-written streams.
             continue
+
+        # Expand Python 3.14+ compound instructions that fuse two consecutive
+        # LOAD_FAST / LOAD_FAST_BORROW opcodes into a single wordcode instruction.
+        if ins.opname in _COMPOUND_EXPANSIONS:
+            op1_name, op2_name = _COMPOUND_EXPANSIONS[ins.opname]
+            combined = ins.arg or 0
+
+            # Prefer resolving variable indices from argval (a tuple of variable
+            # names when available) to avoid depending on bit-packing convention.
+            argval = getattr(ins, "argval", None)
+            if isinstance(argval, (tuple, list)) and len(argval) >= 2:
+                try:
+                    a1 = list(varnames).index(argval[0])
+                    a2 = list(varnames).index(argval[1])
+                except (ValueError, TypeError):
+                    # Fall back to CPython 3.14 bit-packing:
+                    # first_idx in low 4 bits, second_idx in upper 4 bits.
+                    a1 = combined & 0xF
+                    a2 = (combined >> 4) & 0xF
+            else:
+                # CPython 3.14 pair encoding: first variable index in low 4 bits.
+                a1 = combined & 0xF
+                a2 = (combined >> 4) & 0xF
+
+            yield SimpleNamespace(
+                opcode=dis.opmap[op1_name], opname=op1_name,
+                arg=a1, offset=ins.offset,
+            )
+            yield SimpleNamespace(
+                opcode=dis.opmap[op2_name], opname=op2_name,
+                arg=a2, offset=ins.offset + 2,
+            )
+            continue
+
         if ins.opname not in SUPPORTED_OPS:
             raise ValueError(
                 f"Unsupported opcode {ins.opname!r} at bytecode offset {ins.offset}"
