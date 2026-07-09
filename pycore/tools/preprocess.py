@@ -10,8 +10,8 @@ import pathlib
 import struct
 import sys
 from dataclasses import dataclass, field
-from types import SimpleNamespace
-from typing import Iterable
+from types import FunctionType, SimpleNamespace
+from typing import Any, Iterable
 
 
 REQUIRED_PY = (3, 14)
@@ -111,7 +111,7 @@ def require_python_3_14() -> None:
         )
 
 
-def load_function(source: pathlib.Path, function_name: str):
+def load_function(source: pathlib.Path, function_name: str) -> Any:
     spec = importlib.util.spec_from_file_location("_pycore_input", source)
     if spec is None or spec.loader is None:
         raise ValueError(f"Unable to import {source}")
@@ -123,8 +123,63 @@ def load_function(source: pathlib.Path, function_name: str):
     return fn
 
 
-def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
+def load_all_functions(
+    source: pathlib.Path, entry_name: str
+) -> list[tuple[str, Any]]:
+    """
+    Load every module-level Python function from *source*.
+
+    The entry function (*entry_name*, always ``managed_entry``) is placed
+    first so the preprocessor puts it at instruction-memory slot 0.  All
+    other functions follow in source-definition order (ascending first-line
+    number).  This ordering must be stable so that the two-pass slot-address
+    computation and the final code-generation pass agree.
+    """
+    spec = importlib.util.spec_from_file_location("_pycore_input", source)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"Unable to import {source}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    all_fns = [
+        (name, obj)
+        for name, obj in vars(module).items()
+        if isinstance(obj, FunctionType)
+    ]
+
+    entry = [(n, f) for n, f in all_fns if n == entry_name]
+    others = [(n, f) for n, f in all_fns if n != entry_name]
+
+    if not entry:
+        raise ValueError(f"Function '{entry_name}' not found in {source}")
+
+    others.sort(key=lambda x: x[1].__code__.co_firstlineno)
+    return entry + others
+
+
+def iter_filtered_instructions(
+    fn: Any,
+    callee_slots: dict[str, int],
+) -> Iterable[Any]:
+    """
+    Yield hardware instruction objects for *fn*'s bytecode.
+
+    Multi-function call sequences are transformed:
+
+    * ``PUSH_NULL`` — skipped (no hardware equivalent; the call-frame
+      mechanism does not use a null sentinel).
+    * ``LOAD_GLOBAL name`` — silently consumed; *name* is remembered as the
+      pending callee.  The function must be present in *callee_slots*.
+    * ``CALL argc`` — emitted as a hardware CALL with arg encoded as
+      ``(argc << 16) | callee_slot``, matching the field layout expected by
+      ``pycore_core``'s ``S_CALL`` handler.
+
+    Python 3.14 compound ("macro") instructions that fuse two adjacent
+    ``LOAD_FAST`` / ``LOAD_FAST_BORROW`` ops are expanded back into their
+    two component instructions.
+    """
     varnames = fn.__code__.co_varnames
+    pending_callee: str | None = None
 
     for ins in dis.get_instructions(fn, show_caches=True):
         if ins.opname == "CACHE":
@@ -135,22 +190,19 @@ def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
             # EXTENDED_ARG for hand-written streams.
             continue
 
-        # Expand Python 3.14+ compound instructions that fuse two consecutive
-        # LOAD_FAST / LOAD_FAST_BORROW opcodes into a single wordcode instruction.
+        # ── Expand Python 3.14+ compound (pair) instructions ──────────────
         if ins.opname in _COMPOUND_EXPANSIONS:
             op1_name, op2_name = _COMPOUND_EXPANSIONS[ins.opname]
             combined = ins.arg or 0
 
-            # Prefer resolving variable indices from argval (a tuple of variable
-            # names when available) to avoid depending on bit-packing convention.
+            # Prefer argval (tuple of variable names) when available to avoid
+            # depending on the exact bit-packing convention used by CPython 3.14.
             argval = getattr(ins, "argval", None)
             if isinstance(argval, (tuple, list)) and len(argval) >= 2:
                 try:
                     a1 = list(varnames).index(argval[0])
                     a2 = list(varnames).index(argval[1])
                 except (ValueError, TypeError):
-                    # Fall back to CPython 3.14 bit-packing:
-                    # first_idx in low 4 bits, second_idx in upper 4 bits.
                     a1 = combined & 0xF
                     a2 = (combined >> 4) & 0xF
             else:
@@ -165,6 +217,51 @@ def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
             yield SimpleNamespace(
                 opcode=dis.opmap[op2_name], opname=op2_name,
                 arg=a2, offset=ins.offset + 2,
+            )
+            continue
+
+        # ── Calling-convention instructions ────────────────────────────────
+
+        # PUSH_NULL is a calling-convention marker; the hardware call-frame
+        # mechanism does not use it, so it is simply discarded.
+        if ins.opname == "PUSH_NULL":
+            continue
+
+        # LOAD_GLOBAL loads the callee function object in Python's model; in
+        # hardware the callee is addressed directly by slot, so we just
+        # record the callee name for the subsequent CALL.
+        if ins.opname == "LOAD_GLOBAL":
+            name = getattr(ins, "argval", None)
+            if not isinstance(name, str):
+                raise ValueError(
+                    f"LOAD_GLOBAL with non-string argval {name!r} "
+                    f"at bytecode offset {ins.offset}"
+                )
+            if name not in callee_slots:
+                raise ValueError(
+                    f"LOAD_GLOBAL '{name}' at bytecode offset {ins.offset}: "
+                    f"not a function defined in this source file. "
+                    f"Known functions: {sorted(callee_slots)}"
+                )
+            pending_callee = name
+            continue
+
+        # CALL: encode as (argc << 16) | callee_slot so the hardware can
+        # find the callee's first instruction slot and know the argument count.
+        if ins.opname == "CALL":
+            if pending_callee is None:
+                raise ValueError(
+                    f"CALL at bytecode offset {ins.offset} without "
+                    f"a preceding LOAD_GLOBAL"
+                )
+            argc = ins.arg or 0
+            hw_arg = (argc << 16) | callee_slots[pending_callee]
+            pending_callee = None
+            yield SimpleNamespace(
+                opcode=dis.opmap["CALL"],
+                opname="CALL",
+                arg=hw_arg,
+                offset=ins.offset,
             )
             continue
 
@@ -505,7 +602,10 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             if stack:
                 stack.pop()
         elif ins.opname == "CALL":
-            argc = ins.arg or 0
+            # Hardware CALL arg = (argc << 16) | callee_slot; argc is in
+            # the upper 16 bits.  For argc=0 the upper bits are 0, so the
+            # right-shift still gives 0 regardless of the slot address.
+            argc = (ins.arg or 0) >> 16
             for _ in range(min(argc, len(stack))):
                 stack.pop()
             stack.append(TAG_OBJECT)
@@ -532,6 +632,46 @@ def write_types(path: pathlib.Path, var_tags: dict[str, int], warnings: list[str
     write_text(path, "\n".join(lines) + "\n")
 
 
+def _adjust_absolute_jumps(
+    instructions: list[EmittedInstruction],
+    slot_offset: int,
+) -> list[EmittedInstruction]:
+    """
+    Add *slot_offset* to every absolute branch-target argument.
+
+    ``remap_branch_args`` converts intra-function branch targets to slot
+    indices relative to the function's own slot 0.  When multiple functions
+    are laid out sequentially in instruction memory the absolute targets
+    (``POP_JUMP_IF_*``, ``JUMP_IF_*_OR_POP``) must be shifted by the
+    function's starting slot address to become program-absolute.
+
+    Relative jumps (``JUMP_FORWARD`` / ``JUMP_BACKWARD``) are unaffected.
+    """
+    if slot_offset == 0:
+        return instructions
+    result: list[EmittedInstruction] = []
+    for ins in instructions:
+        if ins.opname in (
+            "POP_JUMP_IF_TRUE", "POP_JUMP_IF_FALSE",
+            "JUMP_IF_TRUE_OR_POP", "JUMP_IF_FALSE_OR_POP",
+        ):
+            ins = EmittedInstruction(
+                opcode=ins.opcode,
+                arg=ins.arg + slot_offset,
+                source_offset=ins.source_offset,
+                opname=ins.opname,
+                const_tag=ins.const_tag,
+                const_value=ins.const_value,
+            )
+        result.append(ins)
+    return result
+
+
+def _count_slots(instructions: Iterable[EmittedInstruction]) -> int:
+    """Return the total instruction-memory slots occupied by *instructions*."""
+    return sum(3 if ins.opname == "LOAD_CONST" else 1 for ins in instructions)
+
+
 def preprocess(
     source: pathlib.Path,
     function_name: str,
@@ -540,17 +680,69 @@ def preprocess(
     types_path: pathlib.Path,
     cache_map: pathlib.Path,
 ) -> None:
+    """
+    Compile *function_name* (and all other module-level functions) from
+    *source* into PyCore instruction-memory and string-memory images.
+
+    Multi-function programs are supported via a two-pass strategy:
+
+    Pass 1 — compute each function's slot address by doing a dry run
+    (callee addresses temporarily set to 0 just to determine instruction
+    count; slot count is invariant under the callee value).
+
+    Pass 2 — compile each function for real using the resolved callee_slots,
+    remap intra-function branch targets, and shift absolute jump targets by
+    the function's starting slot offset.
+    """
     require_python_3_14()
-    fn = load_function(source, function_name)
+
+    all_fns = load_all_functions(source, function_name)
+
+    # ── Pass 1: dry-run each function to compute slot counts / addresses ──
+    # CALL's slot count (1) is independent of its argument value, so
+    # callee_slots=0 placeholders give the same counts as real values.
+    dummy_slots: dict[str, int] = {fname: 0 for fname, _ in all_fns}
+    fn_slot_counts: dict[str, int] = {}
+    for fname, fn in all_fns:
+        dry = list(emit_instruction_words(
+            iter_filtered_instructions(fn, dummy_slots),
+            co_consts=fn.__code__.co_consts,
+            string_heap=StringHeapBuilder(),
+        ))
+        fn_slot_counts[fname] = _count_slots(dry)
+
+    # Build the definitive callee_slots map.
+    callee_slots: dict[str, int] = {}
+    cur = 0
+    for fname, _ in all_fns:
+        callee_slots[fname] = cur
+        cur += fn_slot_counts[fname]
+
+    # ── Pass 2: compile each function with resolved callee addresses ──────
     string_heap = StringHeapBuilder()
-    instructions = emit_instruction_words(
-        iter_filtered_instructions(fn),
-        co_consts=fn.__code__.co_consts,
-        string_heap=string_heap,
-    )
-    var_tags, warnings = infer_types(fn, instructions)
-    instructions = remap_branch_args(instructions)
-    write_program_hex(program_hex, instructions)
+    all_instructions: list[EmittedInstruction] = []
+
+    for fname, fn in all_fns:
+        fn_start_slot = callee_slots[fname]
+        instrs = list(emit_instruction_words(
+            iter_filtered_instructions(fn, callee_slots),
+            co_consts=fn.__code__.co_consts,
+            string_heap=string_heap,
+        ))
+        remapped = remap_branch_args(instrs)
+        adjusted = _adjust_absolute_jumps(remapped, fn_start_slot)
+        all_instructions.extend(adjusted)
+
+    # Type inference operates on the entry function only.
+    entry_fn = all_fns[0][1]
+    entry_instrs_typed = list(emit_instruction_words(
+        iter_filtered_instructions(entry_fn, callee_slots),
+        co_consts=entry_fn.__code__.co_consts,
+        string_heap=StringHeapBuilder(),
+    ))
+    var_tags, warnings = infer_types(entry_fn, entry_instrs_typed)
+
+    write_program_hex(program_hex, all_instructions)
     write_string_hex(string_hex, string_heap)
     write_types(types_path, var_tags, warnings)
     write_cache_map(cache_map)

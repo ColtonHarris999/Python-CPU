@@ -11,20 +11,36 @@ native Python.
 
 ---
 
+## Multi-function support
+
+`preprocess.py` supports files with multiple function definitions.  The
+compiler uses a two-pass strategy:
+
+1. **Pass 1** — dry-run each function to count its instruction-memory slots
+   and assign each function a start slot address.
+2. **Pass 2** — compile each function with resolved callee addresses; the
+   `CALL` instruction arg is encoded as `(argc << 16) | callee_slot`.
+
+The calling convention in hardware:
+
+* `PUSH_NULL` — discarded (no hardware equivalent).
+* `LOAD_GLOBAL name` — consumed silently; the function name is looked up in
+  the module's function table.
+* `CALL argc` — emitted as a hardware `CALL` with `(argc << 16) | callee_slot`.
+
+---
+
 ## Constraints
 
-All programs must be compilable by `pycore/tools/preprocess.py`, which has two
-key limitations:
+All programs must be compilable by `pycore/tools/preprocess.py`:
 
-1. **Single-function scope** — `preprocess.py` compiles only the named entry
-   function (`managed_entry`).  Calling other Python functions defined in the
-   same file would require `LOAD_GLOBAL` bytecode, which the hardware does not
-   support.  Multi-function call/return is tested separately via the
-   `pycore-multifn-*` Makefile targets that use pre-compiled hex images.
-
-2. **Supported bytecodes** — only the opcodes listed in `SUPPORTED_OPS` in
-   `preprocess.py` are accepted.  Avoid Python constructs that emit unsupported
-   opcodes (e.g. `for` loops need `GET_ITER`/`FOR_ITER`; use `while` instead).
+* Only bytecodes listed in `SUPPORTED_OPS` (or handled explicitly: `PUSH_NULL`,
+  `LOAD_GLOBAL`, `CALL`) are accepted.
+* `LOAD_GLOBAL` may only refer to other Python functions defined in the same
+  source file — not to builtins, imported modules, or module-level constants.
+* Avoid `for` loops (need `GET_ITER`/`FOR_ITER`); use `while` instead.
+* Type annotations (`: int`, `-> int`) are fine — they appear only in
+  `co_annotations`, not in bytecode.
 
 ---
 
@@ -53,3 +69,7 @@ key limitations:
 | `inline_computation.py` | Multi-step arithmetic sequence |
 | `string_concat_short.py` | Short-string (≤15 bytes) concatenation |
 | `string_concat_chain.py` | Chained string concatenation |
+| `function_no_args.py` | Function call, zero arguments |
+| `function_with_args.py` | Function call, multiple arguments |
+| `nested_calls.py` | Functions calling functions (3 levels deep) |
+| `recursive_factorial.py` | Recursive function (6 levels) |
