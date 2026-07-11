@@ -15,14 +15,22 @@ from typing import Iterable
 
 REQUIRED_PY = (3, 14)
 
-TAG_UNINITIALIZED = 0b000
-TAG_INT = 0b001
-TAG_FLOAT = 0b010
-TAG_BOOL = 0b011
-TAG_PTR = 0b100
-TAG_OBJECT = 0b101
-TAG_SHORT_STR = 0b110
-TAG_LONG_STR = 0b111
+TAG_INT           = 0b0000
+TAG_UNINITIALIZED = 0b0001
+TAG_FLOAT         = 0b0010
+TAG_BOOL          = 0b0011
+TAG_PTR           = 0b0100
+TAG_TUPLE         = 0b0101
+TAG_SHORT_STR     = 0b0110
+TAG_LONG_STR      = 0b0111
+TAG_OBJECT        = 0b1000
+TAG_DICT          = 0b1001
+TAG_LIST          = 0b1010
+TAG_SET           = 0b1011
+TAG_CODE_OBJECT   = 0b1100
+TAG_FRAME_OBJECT  = 0b1101
+TAG_UNUSED        = 0b1110
+TAG_NONE          = 0b1111
 
 SHORT_STR_MAX_BYTES = 15
 SHORT_STR_SIZE_SHIFT = 124
@@ -82,7 +90,7 @@ class EmittedInstruction:
     arg: int
     source_offset: int
     opname: str
-    # For LOAD_CONST only: the pre-encoded 3-bit tag and 128-bit value that will
+    # For LOAD_CONST only: the pre-encoded 4-bit tag and 128-bit value that will
     # be embedded inline in the instruction stream.  None for all other opcodes.
     const_tag: int | None = None
     const_value: int | None = None
@@ -200,12 +208,13 @@ class StringHeapBuilder:
         return addr
 
 
-# Architectural value is now a 128-bit field carrying a 3-bit tag, i.e. a
-# 131-bit entry. INT keeps a 64-bit signed fast path sign-extended into the
+# Architectural value is now a 128-bit field carrying a 4-bit tag, i.e. a
+# 132-bit entry. INT keeps a 64-bit signed fast path sign-extended into the
 # upper 64 bits; FLOAT/BOOL live in the low 64 bits with the rest zero.
 VAL_WIDTH = 128
 VAL_MASK = (1 << VAL_WIDTH) - 1
-ENTRY_HEX_DIGITS = (3 + VAL_WIDTH + 3) // 4  # ceil(131/4) == 33
+TAG_WIDTH = 4
+ENTRY_HEX_DIGITS = (TAG_WIDTH + VAL_WIDTH + 3) // 4  # ceil(132/4) == 33
 
 # Instruction memory slot: 40-bit folded word, zero-padded to one 8-byte slot.
 IMEM_SLOT_BITS = 64
@@ -241,7 +250,7 @@ def tag_constant(value: object, string_heap: StringHeapBuilder) -> tuple[int, in
 
 
 def format_entry(tag: int, value: int) -> str:
-    entry = ((tag & 0x7) << VAL_WIDTH) | (value & VAL_MASK)
+    entry = ((tag & 0xF) << VAL_WIDTH) | (value & VAL_MASK)
     return f"{entry:0{ENTRY_HEX_DIGITS}x}"
 
 
@@ -323,7 +332,7 @@ def write_program_hex(path: pathlib.Path, instructions: Iterable[EmittedInstruct
     """Write the instruction memory image.
 
     LOAD_CONST instructions expand to three 64-bit slots:
-      Slot 0  bits[63:61] = tag[2:0],  bits[7:0] = opcode
+      Slot 0  bits[63:60] = tag[3:0],  bits[7:0] = opcode
       Slot 1  value[127:64]
       Slot 2  value[63:0]
 
@@ -336,8 +345,8 @@ def write_program_hex(path: pathlib.Path, instructions: Iterable[EmittedInstruct
             assert ins.const_tag is not None and ins.const_value is not None
             tag = ins.const_tag
             val = ins.const_value
-            # Slot 0: tag in the three MSBs, opcode in the eight LSBs.
-            word0 = ((tag & 0x7) << 61) | ins.opcode
+            # Slot 0: tag in the four MSBs, opcode in the eight LSBs.
+            word0 = ((tag & 0xF) << 60) | ins.opcode
             # Slot 1: value[127:64]
             word1 = (val >> 64) & 0xFFFF_FFFF_FFFF_FFFF
             # Slot 2: value[63:0]
@@ -465,14 +474,22 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
 
 def write_types(path: pathlib.Path, var_tags: dict[str, int], warnings: list[str]) -> None:
     tag_names = {
-        TAG_UNINITIALIZED: "UNINITIALIZED",
         TAG_INT: "INT",
+        TAG_UNINITIALIZED: "UNINITIALIZED",
         TAG_FLOAT: "FLOAT",
         TAG_BOOL: "BOOL",
         TAG_PTR: "PTR",
-        TAG_OBJECT: "OBJECT",
+        TAG_TUPLE: "TUPLE",
         TAG_SHORT_STR: "SHORT_STR",
         TAG_LONG_STR: "LONG_STR",
+        TAG_OBJECT: "OBJECT",
+        TAG_DICT: "DICT",
+        TAG_LIST: "LIST",
+        TAG_SET: "SET",
+        TAG_CODE_OBJECT: "CODE_OBJECT",
+        TAG_FRAME_OBJECT: "FRAME_OBJECT",
+        TAG_UNUSED: "UNUSED",
+        TAG_NONE: "NONE",
     }
     lines = [f"{name}: {tag_names.get(tag, 'RESERVED')}" for name, tag in sorted(var_tags.items())]
     if warnings:

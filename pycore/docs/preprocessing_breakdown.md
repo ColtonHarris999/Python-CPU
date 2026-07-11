@@ -22,7 +22,7 @@ Steps:
    opcodes.
 3. **Sub-op validation**: validates supported `BINARY_OP` opargs.
 4. **Constant encoding**: for each `LOAD_CONST`, eagerly encodes `co_consts[N]`
-   into a `{tag[2:0], value[127:0]}` tagged entry and stores it in the
+   into a `{tag[3:0], value[127:0]}` tagged entry and stores it in the
    `EmittedInstruction`.
 5. **Type sketch pass**: infers variable/stack types from the encoded
    instruction stream (uses `const_tag` directly, not the const index).

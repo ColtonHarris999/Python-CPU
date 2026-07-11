@@ -11,7 +11,7 @@ module pycore_branch (
     output logic [3:0]  trap_code_o
 );
 
-    logic [2:0] tag;
+    logic [3:0] tag;
     logic [PYCORE_VAL_WIDTH-1:0] value;
     logic truthy;
 

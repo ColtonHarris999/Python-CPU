@@ -102,7 +102,7 @@ module tb_string_exec;
         input string expected_value
     );
         int i;
-        logic [2:0] out_tag;
+        logic [3:0] out_tag;
         logic [PYCORE_VAL_WIDTH-1:0] out_val;
         longint unsigned out_len;
         longint unsigned out_addr;

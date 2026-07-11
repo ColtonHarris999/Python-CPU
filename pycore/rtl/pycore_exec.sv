@@ -21,8 +21,8 @@ module pycore_exec #(
     output logic [3:0]  trap_code_o
 );
 
-    logic [2:0] rs1_tag;
-    logic [2:0] rs2_tag;
+    logic [3:0] rs1_tag;
+    logic [3:0] rs2_tag;
     logic [63:0] rs1_value;
     logic [63:0] rs2_value;
     logic [PYCORE_VAL_WIDTH-1:0] rs1_value_wide;
@@ -32,7 +32,7 @@ module pycore_exec #(
     logic       promote_rs2;
     logic [1:0] promote_rs1_mode;
     logic [1:0] promote_rs2_mode;
-    logic [2:0] result_tag;
+    logic [3:0] result_tag;
     logic       tag_trap;
     logic [3:0] tag_trap_code;
 
@@ -93,7 +93,7 @@ module pycore_exec #(
     end
 
     function automatic logic [7:0] string_operand_byte(
-        input logic [2:0] tag,
+        input logic [3:0] tag,
         input logic [PYCORE_VAL_WIDTH-1:0] value,
         input longint unsigned idx
     );

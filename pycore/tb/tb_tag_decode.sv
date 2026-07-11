@@ -1,15 +1,15 @@
 `include "pycore_defs.svh"
 
 module tb_tag_decode;
-    logic [2:0] rs1_tag;
-    logic [2:0] rs2_tag;
+    logic [3:0] rs1_tag;
+    logic [3:0] rs2_tag;
     logic [4:0] alu_op;
     logic [1:0] exec_unit_sel;
     logic promote_rs1;
     logic promote_rs2;
     logic [1:0] promote_rs1_mode;
     logic [1:0] promote_rs2_mode;
-    logic [2:0] result_tag;
+    logic [3:0] result_tag;
     logic is_trap;
     logic [3:0] trap_code;
 
@@ -37,11 +37,11 @@ module tb_tag_decode;
     endtask
 
     initial begin
-        for (int tag_a = 0; tag_a < 8; tag_a++) begin
-            for (int tag_b = 0; tag_b < 8; tag_b++) begin
+        for (int tag_a = 0; tag_a < 16; tag_a++) begin
+            for (int tag_b = 0; tag_b < 16; tag_b++) begin
                 for (int op = 0; op <= PY_ALU_GE; op++) begin
-                    rs1_tag = tag_a[2:0];
-                    rs2_tag = tag_b[2:0];
+                    rs1_tag = tag_a[3:0];
+                    rs2_tag = tag_b[3:0];
                     alu_op = op[4:0];
                     #1;
                     check(!$isunknown(exec_unit_sel), "exec_unit_sel must be known");

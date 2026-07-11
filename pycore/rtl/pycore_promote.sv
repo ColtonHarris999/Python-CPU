@@ -1,7 +1,7 @@
 `include "pycore_defs.svh"
 
 module pycore_promote (
-    input  logic [2:0] entry_tag_i,
+    input  logic [3:0] entry_tag_i,
     input  logic [63:0] entry_value_i,
     input  logic [1:0] promote_mode_i,
     output logic [63:0] value_out_o

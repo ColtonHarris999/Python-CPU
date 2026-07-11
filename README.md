@@ -1,9 +1,9 @@
 # PyCore
 
-SystemVerilog multi-cycle Python-bytecode core using tagged 131-bit entries:
+SystemVerilog multi-cycle Python-bytecode core using tagged 132-bit entries:
 
 ```text
-{ tag[2:0], value[127:0] }
+{ tag[3:0], value[127:0] }
 ```
 
 The repository now contains a single active implementation path under `pycore/`.
@@ -22,14 +22,24 @@ with spill-to-memory.
 
 ### Tag map
 
-- `000`: `UNINITIALIZED`
-- `001`: `INT`
-- `010`: `FLOAT`
-- `011`: `BOOL`
-- `100`: `PTR`
-- `101`: `OBJECT`
-- `110`: `SHORT_STR`
-- `111`: `LONG_STR`
+| Tag | Meaning |
+| --- | --- |
+| `0000` | `INT` signed (64-bit fast path, sign-extended to 128) |
+| `0001` | `UNINITIALIZED` |
+| `0010` | `FLOAT` IEEE 754 double in `value[63:0]`, upper bits zero |
+| `0011` | `BOOL` with `value[0]` significant, upper bits zero |
+| `0100` | `PTR` raw 128-bit byte address for data memory |
+| `0101` | `TUPLE` `size[63:0]`, `addr[63:0]` |
+| `0110` | `SHORT_STR` inline string: `size[3:0]`, `bytes[119:0]`, `flags[3:0]` |
+| `0111` | `LONG_STR` descriptor: `size[63:0]`, `addr[63:0]` |
+| `1000` | `OBJECT` opaque `addr[63:0]` |
+| `1001` | `DICT` python dictionary: `addr[63:0]` |
+| `1010` | `LIST` python list: `addr[63:0]` |
+| `1011` | `SET` python set: `addr[63:0]` |
+| `1100` | `CODE_OBJECT` PythonCodeObject: `addr[63:0]` |
+| `1101` | `FRAME_OBJECT` PythonFrameObject: `addr[63:0]` |
+| `1110` | `UNUSED` |
+| `1111` | `NONE` python None type |
 
 String value layouts:
 

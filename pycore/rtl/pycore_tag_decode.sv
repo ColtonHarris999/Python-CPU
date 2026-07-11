@@ -1,15 +1,15 @@
 `include "pycore_defs.svh"
 
 module pycore_tag_decode (
-    input  logic [2:0] rs1_tag_i,
-    input  logic [2:0] rs2_tag_i,
+    input  logic [3:0] rs1_tag_i,
+    input  logic [3:0] rs2_tag_i,
     input  logic [4:0] alu_op_i,
     output logic [1:0] exec_unit_sel_o,
     output logic       promote_rs1_o,
     output logic       promote_rs2_o,
     output logic [1:0] promote_rs1_mode_o,
     output logic [1:0] promote_rs2_mode_o,
-    output logic [2:0] result_tag_o,
+    output logic [3:0] result_tag_o,
     output logic       is_trap_o,
     output logic [3:0] trap_code_o
 );

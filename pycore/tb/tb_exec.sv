@@ -37,7 +37,7 @@ module tb_exec;
     endtask
 
     function automatic logic [PYCORE_ENTRY_WIDTH-1:0] entry(
-        input logic [2:0] tag, input logic [63:0] value
+        input logic [3:0] tag, input logic [63:0] value
     );
         begin
             // The exec fast path only consumes value[63:0]; zero-extend the
