@@ -7,7 +7,7 @@ module tb_multifn #(
     parameter string PROG_HEX       = "pycore/programs/multifn_simple.hex",
     parameter string STRING_HEX     = "pycore/programs/string_mem.hex",
     parameter int    MAX_CYCLES     = 4000,
-    parameter logic [2:0]                      EXPECTED_TAG   = PY_TAG_INT,
+    parameter logic [3:0]                      EXPECTED_TAG   = PY_TAG_INT,
     parameter logic [PYCORE_VAL_WIDTH-1:0]     EXPECTED_VALUE = 128'd42
 );
     localparam logic [2:0] CORE_S_WB = 3'd4;
@@ -50,7 +50,7 @@ module tb_multifn #(
         int i;
         bit return_seen;
         logic [PYCORE_ENTRY_WIDTH-1:0] return_entry;
-        logic [2:0]                    got_tag;
+        logic [3:0]                    got_tag;
         logic [PYCORE_VAL_WIDTH-1:0]   got_val;
 
         clk = 1'b0;

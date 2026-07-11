@@ -200,7 +200,7 @@ pycore-multifn-simple:
 		+incdir+pycore/rtl \
 		--top-module tb_multifn \
 		-GPROG_HEX=\"pycore/programs/multifn_simple.hex\" \
-		-GEXPECTED_TAG=3\'b001 \
+		-GEXPECTED_TAG=4\'b0001 \
 		"-GEXPECTED_VALUE=128\'d42" \
 		--Mdir $(BUILD_DIR)/pycore_multifn_simple \
 		-Wall -Wno-fatal \
@@ -213,7 +213,7 @@ pycore-multifn-const:
 		+incdir+pycore/rtl \
 		--top-module tb_multifn \
 		-GPROG_HEX=\"pycore/programs/multifn_const.hex\" \
-		-GEXPECTED_TAG=3\'b001 \
+		-GEXPECTED_TAG=4\'b0001 \
 		"-GEXPECTED_VALUE=128\'d1337" \
 		--Mdir $(BUILD_DIR)/pycore_multifn_const \
 		-Wall -Wno-fatal \
@@ -226,7 +226,7 @@ pycore-multifn-arg:
 		+incdir+pycore/rtl \
 		--top-module tb_multifn \
 		-GPROG_HEX=\"pycore/programs/multifn_arg.hex\" \
-		-GEXPECTED_TAG=3\'b001 \
+		-GEXPECTED_TAG=4\'b0001 \
 		"-GEXPECTED_VALUE=128\'d42" \
 		--Mdir $(BUILD_DIR)/pycore_multifn_arg \
 		-Wall -Wno-fatal \
@@ -239,7 +239,7 @@ pycore-multifn-chain:
 		+incdir+pycore/rtl \
 		--top-module tb_multifn \
 		-GPROG_HEX=\"pycore/programs/multifn_chain.hex\" \
-		-GEXPECTED_TAG=3\'b001 \
+		-GEXPECTED_TAG=4\'b0001 \
 		"-GEXPECTED_VALUE=128\'d42" \
 		--Mdir $(BUILD_DIR)/pycore_multifn_chain \
 		-Wall -Wno-fatal \
@@ -252,7 +252,7 @@ pycore-multifn-stress:
 		+incdir+pycore/rtl \
 		--top-module tb_multifn \
 		-GPROG_HEX=\"pycore/programs/multifn_stress.hex\" \
-		-GEXPECTED_TAG=3\'b001 \
+		-GEXPECTED_TAG=4\'b0001 \
 		"-GEXPECTED_VALUE=128\'d202" \
 		--Mdir $(BUILD_DIR)/pycore_multifn_stress \
 		-Wall -Wno-fatal \

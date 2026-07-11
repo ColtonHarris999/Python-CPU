@@ -2,12 +2,12 @@
 `define PYCORE_DEFS_SVH
 
 localparam int PYCORE_VAL_WIDTH   = 128;
-localparam int PYCORE_TAG_WIDTH   = 3;
+localparam int PYCORE_TAG_WIDTH   = 4;
 localparam int PYCORE_ENTRY_WIDTH = PYCORE_TAG_WIDTH + PYCORE_VAL_WIDTH;
 
-// Tagged-entry slice indices. Centralized here so RTL never hardcodes [130:128]
+// Tagged-entry slice indices. Centralized here so RTL never hardcodes [131:128]
 // or [127:0] when carving a {tag, value} entry apart.
-localparam int PYCORE_TAG_MSB = PYCORE_ENTRY_WIDTH - 1;          // 130
+localparam int PYCORE_TAG_MSB = PYCORE_ENTRY_WIDTH - 1;          // 131
 localparam int PYCORE_TAG_LSB = PYCORE_VAL_WIDTH;               // 128
 localparam int PYCORE_VAL_MSB = PYCORE_VAL_WIDTH - 1;          // 127
 localparam int PYCORE_VAL_LSB = 0;                            // 0
@@ -22,14 +22,22 @@ localparam int PYCORE_DMEM_BLOCK_COUNT = 4;    // 16 KB data memory
 localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
 localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot
 
-localparam logic [2:0] PY_TAG_UNINIT = 3'b000;
-localparam logic [2:0] PY_TAG_INT    = 3'b001;
-localparam logic [2:0] PY_TAG_FLOAT  = 3'b010;
-localparam logic [2:0] PY_TAG_BOOL   = 3'b011;
-localparam logic [2:0] PY_TAG_PTR    = 3'b100;
-localparam logic [2:0] PY_TAG_OBJECT = 3'b101;
-localparam logic [2:0] PY_TAG_SHORT_STR = 3'b110;
-localparam logic [2:0] PY_TAG_LONG_STR  = 3'b111;
+localparam logic [3:0] PY_TAG_UNINIT       = 4'b0000;
+localparam logic [3:0] PY_TAG_INT          = 4'b0001;
+localparam logic [3:0] PY_TAG_FLOAT        = 4'b0010;
+localparam logic [3:0] PY_TAG_BOOL         = 4'b0011;
+localparam logic [3:0] PY_TAG_PTR          = 4'b0100;
+localparam logic [3:0] PY_TAG_TUPLE        = 4'b0101;
+localparam logic [3:0] PY_TAG_SHORT_STR    = 4'b0110;
+localparam logic [3:0] PY_TAG_LONG_STR     = 4'b0111;
+localparam logic [3:0] PY_TAG_OBJECT       = 4'b1000;
+localparam logic [3:0] PY_TAG_DICT         = 4'b1001;
+localparam logic [3:0] PY_TAG_LIST         = 4'b1010;
+localparam logic [3:0] PY_TAG_SET          = 4'b1011;
+localparam logic [3:0] PY_TAG_CODE_OBJECT  = 4'b1100;
+localparam logic [3:0] PY_TAG_FRAME_OBJECT = 4'b1101;
+localparam logic [3:0] PY_TAG_UNUSED       = 4'b1110;
+localparam logic [3:0] PY_TAG_NONE         = 4'b1111;
 
 localparam int PYCORE_SHORT_STR_MAX_BYTES = 15;
 localparam int PYCORE_SHORT_STR_SIZE_MSB  = 127;
@@ -155,22 +163,22 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_int_entry(
     end
 endfunction
 
-function automatic logic pycore_is_numeric_tag(input logic [2:0] tag);
+function automatic logic pycore_is_numeric_tag(input logic [3:0] tag);
     begin
         pycore_is_numeric_tag = (tag == PY_TAG_INT) || (tag == PY_TAG_FLOAT) || (tag == PY_TAG_BOOL);
     end
 endfunction
 
-function automatic logic pycore_is_string_tag(input logic [2:0] tag);
+function automatic logic pycore_is_string_tag(input logic [3:0] tag);
     begin
         pycore_is_string_tag = (tag == PY_TAG_SHORT_STR) || (tag == PY_TAG_LONG_STR);
     end
 endfunction
 
-function automatic logic pycore_is_trapping_tag(input logic [2:0] tag);
+// Traps on any tag that is not a directly computable numeric or string type.
+function automatic logic pycore_is_trapping_tag(input logic [3:0] tag);
     begin
-        pycore_is_trapping_tag = (tag == PY_TAG_UNINIT) || (tag == PY_TAG_PTR) ||
-                                 (tag == PY_TAG_OBJECT);
+        pycore_is_trapping_tag = !pycore_is_numeric_tag(tag) && !pycore_is_string_tag(tag);
     end
 endfunction
 

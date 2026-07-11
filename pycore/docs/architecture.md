@@ -11,10 +11,10 @@ preprocessing changes can be reviewed against one explicit matrix.
 
 ## Tagged value invariant
 
-Every architectural value is a 131-bit register-file entry:
+Every architectural value is a 132-bit register-file entry:
 
 ```text
-{ tag[2:0], value[127:0] }
+{ tag[3:0], value[127:0] }
 ```
 
 The tag is co-located with the value and is read on every access. This avoids a
@@ -30,14 +30,22 @@ The tag encoding is:
 
 | Tag | Meaning |
 | --- | --- |
-| `000` | `UNINITIALIZED` |
-| `001` | signed `INT` (64-bit fast path, sign-extended to 128) |
-| `010` | IEEE 754 double `FLOAT` in `value[63:0]`, upper bits zero |
-| `011` | `BOOL`, with `value[0]` significant, upper bits zero |
-| `100` | raw `PTR`, 128-bit byte address for data memory |
-| `101` | opaque `OBJECT` |
-| `110` | `SHORT_STR` inline string: `size[3:0]`, `bytes[119:0]`, `flags[3:0]` |
-| `111` | `LONG_STR` descriptor: `size[63:0]`, `addr[63:0]` |
+| `0000` | `UNINITIALIZED` |
+| `0001` | signed `INT` (64-bit fast path, sign-extended to 128) |
+| `0010` | IEEE 754 double `FLOAT` in `value[63:0]`, upper bits zero |
+| `0011` | `BOOL`, with `value[0]` significant, upper bits zero |
+| `0100` | raw `PTR`, 128-bit byte address for data memory |
+| `0101` | `TUPLE`: `size[63:0]`, `addr[63:0]` |
+| `0110` | `SHORT_STR` inline string: `size[3:0]`, `bytes[119:0]`, `flags[3:0]` |
+| `0111` | `LONG_STR` descriptor: `size[63:0]`, `addr[63:0]` |
+| `1000` | opaque `OBJECT`: `addr[63:0]` |
+| `1001` | `DICT` python dictionary: `addr[63:0]` |
+| `1010` | `LIST` python list: `addr[63:0]` |
+| `1011` | `SET` python set: `addr[63:0]` |
+| `1100` | `CODE_OBJECT` PythonCodeObject: `addr[63:0]` |
+| `1101` | `FRAME_OBJECT` PythonFrameObject: `addr[63:0]` |
+| `1110` | `UNUSED` |
+| `1111` | `NONE` python None type |
 
 Undefined local reads still trap instead of returning a garbage value.
 
@@ -233,14 +241,14 @@ the fixed-depth table.
 Each `LOAD_CONST` occupies **three consecutive 8-byte imem slots**:
 
 ```text
-Slot 0  bits[63:61] = tag[2:0]   bits[7:0] = opcode (PY_OP_LOAD_CONST)
+Slot 0  bits[63:60] = tag[3:0]   bits[7:0] = opcode (PY_OP_LOAD_CONST)
 Slot 1  value[127:64]
 Slot 2  value[63:0]
 ```
 
 The fetch unit (`pycore_fetch.sv`) detects `PY_OP_LOAD_CONST` in the FS_NORMAL
 sub-state, then issues two more imem reads (sub-states FS_CONST_W1,
-FS_CONST_W2) to assemble the complete 131-bit tagged entry. It reports the
+FS_CONST_W2) to assemble the complete 132-bit tagged entry. It reports the
 instruction to the rest of the pipeline only after all three slots have been
 consumed, presenting the entry in the `inline_const` output alongside the usual
 `instr_valid`/`opcode`/`pc` signals. The core latches `inline_const` and

@@ -6,11 +6,11 @@
 // skipping are preserved. There is no combinational use of imem_rdata_i.
 //
 // LOAD_CONST is a variable-length instruction that spans 3 consecutive imem
-// slots. The first slot carries the opcode_o and the 3-bit tag in bits [63:61];
+// slots. The first slot carries the opcode_o and the 4-bit tag in bits [63:60];
 // the second and third slots carry value[127:64] and value[63:0] respectively.
 // The fetch unit transparently assembles all three reads before asserting
 // instr_valid_o, so the rest of the pipeline sees a single-cycle LOAD_CONST
-// completion carrying the full 131-bit tagged constant in inline_const_o.
+// completion carrying the full 132-bit tagged constant in inline_const_o.
 module pycore_fetch #(
     parameter int ADDR_WIDTH = PYCORE_ADDR_WIDTH,
     parameter int DATA_WIDTH = PYCORE_IMEM_DATA_WIDTH
@@ -52,7 +52,7 @@ module pycore_fetch #(
     logic [1:0]  fetch_state_r;
     logic [1:0]  fetch_state_next;
 
-    logic [2:0]  lc_tag_r;     // tag[2:0] captured from LOAD_CONST slot 0 bits[63:61]
+    logic [3:0]  lc_tag_r;     // tag[3:0] captured from LOAD_CONST slot 0 bits[63:60]
     logic [63:0] lc_hi_r;      // value[127:64] captured from LOAD_CONST slot 1
 
     // Issue a fetch only when not stalled and not already waiting on an ack.
@@ -102,7 +102,7 @@ module pycore_fetch #(
             have_prefix_r   <= 1'b0;
             awaiting_r      <= 1'b0;
             fetch_state_r   <= FS_NORMAL;
-            lc_tag_r        <= 3'b0;
+            lc_tag_r        <= 4'b0;
             lc_hi_r         <= 64'b0;
             instr_valid_o   <= 1'b0;
             opcode_o        <= 8'b0;
@@ -155,9 +155,9 @@ module pycore_fetch #(
                                 pc_r          <= pc_r + 1;
 
                             end else if (fetched_opcode == PY_OP_LOAD_CONST) begin
-                                // LOAD_CONST slot 0: tag lives in bits [63:61].
+                                // LOAD_CONST slot 0: tag lives in bits [63:60].
                                 // fetch_state_next = FS_CONST_W1 (set in always_comb).
-                                lc_tag_r      <= imem_rdata_i[63:61];
+                                lc_tag_r      <= imem_rdata_i[63:60];
                                 have_prefix_r <= 1'b0;
                                 arg_prefix_r  <= 32'b0;
                                 pc_r          <= pc_r + 1;
@@ -184,7 +184,7 @@ module pycore_fetch #(
 
                         // ----------------------------------------------------------
                         // FS_CONST_W2: third slot holds value[63:0]. Assemble the
-                        // complete 131-bit tagged entry and present the instruction.
+                        // complete 132-bit tagged entry and present the instruction.
                         // The reported PC is the slot address of the first word (word 0),
                         // which is two slots behind the current pc_r.
                         // ----------------------------------------------------------
