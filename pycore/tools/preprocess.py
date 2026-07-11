@@ -15,8 +15,8 @@ from typing import Iterable
 
 REQUIRED_PY = (3, 14)
 
-TAG_INT           = 0b0000
-TAG_UNINITIALIZED = 0b0001
+TAG_UNINITIALIZED = 0b0000
+TAG_INT           = 0b0001
 TAG_FLOAT         = 0b0010
 TAG_BOOL          = 0b0011
 TAG_PTR           = 0b0100

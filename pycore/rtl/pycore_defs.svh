@@ -22,8 +22,8 @@ localparam int PYCORE_DMEM_BLOCK_COUNT = 4;    // 16 KB data memory
 localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
 localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot
 
-localparam logic [3:0] PY_TAG_INT          = 4'b0000;
-localparam logic [3:0] PY_TAG_UNINIT       = 4'b0001;
+localparam logic [3:0] PY_TAG_UNINIT       = 4'b0000;
+localparam logic [3:0] PY_TAG_INT          = 4'b0001;
 localparam logic [3:0] PY_TAG_FLOAT        = 4'b0010;
 localparam logic [3:0] PY_TAG_BOOL         = 4'b0011;
 localparam logic [3:0] PY_TAG_PTR          = 4'b0100;

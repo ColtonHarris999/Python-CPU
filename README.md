@@ -24,8 +24,8 @@ with spill-to-memory.
 
 | Tag | Meaning |
 | --- | --- |
-| `0000` | `INT` signed (64-bit fast path, sign-extended to 128) |
-| `0001` | `UNINITIALIZED` |
+| `0000` | `UNINITIALIZED` |
+| `0001` | `INT` signed (64-bit fast path, sign-extended to 128) |
 | `0010` | `FLOAT` IEEE 754 double in `value[63:0]`, upper bits zero |
 | `0011` | `BOOL` with `value[0]` significant, upper bits zero |
 | `0100` | `PTR` raw 128-bit byte address for data memory |

@@ -30,8 +30,8 @@ The tag encoding is:
 
 | Tag | Meaning |
 | --- | --- |
-| `0000` | signed `INT` (64-bit fast path, sign-extended to 128) |
-| `0001` | `UNINITIALIZED` |
+| `0000` | `UNINITIALIZED` |
+| `0001` | signed `INT` (64-bit fast path, sign-extended to 128) |
 | `0010` | IEEE 754 double `FLOAT` in `value[63:0]`, upper bits zero |
 | `0011` | `BOOL`, with `value[0]` significant, upper bits zero |
 | `0100` | raw `PTR`, 128-bit byte address for data memory |
