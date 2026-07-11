@@ -10,7 +10,7 @@ module tb_multifn #(
     parameter logic [3:0]                      EXPECTED_TAG   = PY_TAG_INT,
     parameter logic [PYCORE_VAL_WIDTH-1:0]     EXPECTED_VALUE = 128'd42
 );
-    localparam logic [2:0] CORE_S_WB = 3'd4;
+    localparam logic [3:0] CORE_S_WB = 4'd4;
 
     logic clk;
     logic rst_n;

@@ -15,6 +15,10 @@ module pycore_decode (
     output logic        is_branch_o,
     output logic        is_call_o,
     output logic        is_return_o,
+    // Asserted for BUILD_LIST, BUILD_MAP, STORE_SUBSCR, and BINARY_OP/NB_SUBSCR.
+    // These instructions are multi-cycle container operations handled entirely
+    // by the core's S_CONTAINER state; they bypass S_MEM and S_WB.
+    output logic        is_container_o,
     output logic        push_stack_o,
     output logic        pop_stack_o,
     output logic [2:0]  mem_op_o,
@@ -37,6 +41,9 @@ module pycore_decode (
                 8'd10, 8'd23: decode_binary_op = PY_ALU_SUB;
                 8'd11, 8'd24: decode_binary_op = PY_ALU_TRUE_DIV;
                 8'd12, 8'd25: decode_binary_op = PY_ALU_XOR;
+                // NB_SUBSCR (oparg=26): subscript read x[k].  Routes to the
+                // S_CONTAINER multi-cycle path rather than the execute fabric.
+                PY_NBARG_SUBSCR: decode_binary_op = PY_ALU_SUBSCR;
                 default:      decode_binary_op = PY_ALU_ILLEGAL;
             endcase
         end
@@ -65,6 +72,7 @@ module pycore_decode (
         is_branch_o = 1'b0;
         is_call_o = 1'b0;
         is_return_o = 1'b0;
+        is_container_o = 1'b0;
         push_stack_o = 1'b0;
         pop_stack_o = 1'b0;
         mem_op_o = PY_MEM_NONE;
@@ -103,9 +111,15 @@ module pycore_decode (
                 rs1_sel_o = {1'b0, tos_index_i - 6'd2};
                 rs2_sel_o = {1'b0, tos_index_i - 6'd1};
                 rd_sel_o = {1'b0, tos_index_i - 6'd2};
-                pop_stack_o = 1'b1;
                 alu_op_o = decode_binary_op(arg_i[7:0]);
-                illegal_opcode_o = alu_op_o == PY_ALU_ILLEGAL;
+                if (alu_op_o == PY_ALU_SUBSCR) begin
+                    // NB_SUBSCR: container=rs1 (tos-2), key=rs2 (tos-1).
+                    // Multi-cycle container path; S_CONTAINER updates TOS.
+                    is_container_o = 1'b1;
+                end else begin
+                    pop_stack_o = 1'b1;
+                    illegal_opcode_o = alu_op_o == PY_ALU_ILLEGAL;
+                end
             end
 
             PY_OP_COMPARE_OP: begin
@@ -135,6 +149,37 @@ module pycore_decode (
 
             PY_OP_CALL: begin
                 is_call_o = 1'b1;
+            end
+
+            // ---------------------------------------------------------------
+            // Container build and subscript operations.
+            // All three are multi-cycle: the core's S_CONTAINER state drives
+            // the heap allocator and dmem handshake; TOS is updated there,
+            // not here.  The register selectors below give S_CONTAINER the
+            // two operands it needs from the register file.
+            // ---------------------------------------------------------------
+
+            // BUILD_LIST(count): pop count items, allocate a list, push LIST.
+            // count = arg.  All elements are read by S_CONTAINER via the RF
+            // address override; rs1/rs2 decoded here are not used.
+            PY_OP_BUILD_LIST: begin
+                is_container_o = 1'b1;
+            end
+
+            // BUILD_MAP(count): pop 2*count items (interleaved key/value).
+            // Option B: always traps PY_TRAP_TYPE in S_CONTAINER (TODO: implement
+            // open-addressed linear-probe dict in a follow-up PR).
+            PY_OP_BUILD_MAP: begin
+                is_container_o = 1'b1;
+            end
+
+            // STORE_SUBSCR: container[key] = value.
+            // Stack (top to bottom): key(tos-1), container(tos-2), value(tos-3).
+            // rs1 = key, rs2 = container; value read by S_CONTAINER from tos-3.
+            PY_OP_STORE_SUBSCR: begin
+                rs1_sel_o = {1'b0, tos_index_i - 6'd1};  // key
+                rs2_sel_o = {1'b0, tos_index_i - 6'd2};  // container
+                is_container_o = 1'b1;
             end
 
             // Internal-only data-memory ops (not emitted by preprocess.py).

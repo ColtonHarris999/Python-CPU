@@ -90,6 +90,10 @@ localparam logic [4:0] PY_ALU_LE        = 5'd19;
 localparam logic [4:0] PY_ALU_GT        = 5'd20;
 localparam logic [4:0] PY_ALU_GE        = 5'd21;
 localparam logic [4:0] PY_ALU_PASS      = 5'd22;
+// PY_ALU_SUBSCR routes BINARY_OP NB_SUBSCR to the S_CONTAINER FSM path rather
+// than to the arithmetic execute fabric.  Values 24-30 are reserved for future
+// ALU operations; ILLEGAL remains 31 to catch undecodable opargs.
+localparam logic [4:0] PY_ALU_SUBSCR   = 5'd23;
 localparam logic [4:0] PY_ALU_ILLEGAL   = 5'd31;
 
 localparam logic [7:0] PY_OP_CACHE            = 8'd0;
@@ -111,6 +115,27 @@ localparam logic [7:0] PY_OP_RESUME           = 8'd128;
 localparam logic [7:0] PY_OP_EXTENDED_ARG     = 8'd144;
 localparam logic [7:0] PY_OP_JUMP_FORWARD     = 8'd110;
 localparam logic [7:0] PY_OP_JUMP_BACKWARD    = 8'd140;
+
+// Container / subscript opcodes added in PyCore dict-list support.
+// Opcode integers resolved from the CPython 3.14 interpreter:
+//   python3.14 -c "import opcode; [print(n,opcode.opmap[n]) for n in \
+//       ['BUILD_LIST','BUILD_MAP','STORE_SUBSCR','BINARY_OP', \
+//        'LOAD_FAST_BORROW_LOAD_FAST_BORROW']]"
+//   BUILD_LIST                       = 46
+//   BUILD_MAP                        = 47
+//   STORE_SUBSCR                     = 38
+//   BINARY_OP                        = 44  (unchanged)
+//   LOAD_FAST_BORROW_LOAD_FAST_BORROW = 87
+//
+// NB_SUBSCR oparg resolved from opcode._nb_ops (index 26):
+//   python3.14 -c "import opcode; print([(i,e) for i,e in enumerate(opcode._nb_ops) if 'SUBSCR' in e[0]])"
+//   NB_SUBSCR = 26
+localparam logic [7:0] PY_OP_BUILD_LIST        = 8'd46;
+localparam logic [7:0] PY_OP_BUILD_MAP         = 8'd47;
+localparam logic [7:0] PY_OP_STORE_SUBSCR      = 8'd38;
+localparam logic [7:0] PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = 8'd87;
+// BINARY_OP oparg for subscript read (x[k]); not a standalone opcode.
+localparam logic [7:0] PY_NBARG_SUBSCR         = 8'd26;
 
 // Internal-only memory opcodes. These are not part of the CPython 3.14 opcode
 // space and are never emitted by preprocess.py; they exist so hand-written test
@@ -247,6 +272,99 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_long_str_entry(
 );
     begin
         pycore_make_long_str_entry = pycore_make_entry(PY_TAG_LONG_STR, {size, addr});
+    end
+endfunction
+
+// -------------------------------------------------------------------------
+// Heap allocator address-space parameters.
+//
+// The object heap lives at the bottom of dmem, below the frame stack which
+// starts at FRAME_STACK_BASE (0x2000).  PYCORE_HEAP_BASE is left at 0x0400
+// to leave a 1 KB buffer at address 0 for any PTR-based user data.  The
+// bump pointer starts at PYCORE_HEAP_BASE and grows upward; a trap is
+// raised when it would exceed PYCORE_HEAP_LIMIT.
+//
+// Default memory map:
+//   0x0000 – 0x03FF  (1 KB)  reserved / user PTR data
+//   0x0400 – 0x1FFF  (7 KB)  container heap (this region)
+//   0x2000 – 0x3FFF  (8 KB)  call-frame stack
+// -------------------------------------------------------------------------
+localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0400;
+localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0000_2000;
+
+// -------------------------------------------------------------------------
+// LIST in-dmem layout (all addresses 16-byte aligned, 128-bit dmem slots):
+//
+//   base + 0                 : header  { capacity[63:0] , length[63:0] }
+//   base + 16*(1 + 2*i)      : element[i] value[127:0]      (128-bit)
+//   base + 16*(2 + 2*i)      : element[i] tag   {124'b0, tag[3:0]}
+//
+// Element stride = 32 bytes (2 slots).
+// Total allocation = pycore_list_alloc_bytes(capacity) bytes.
+//
+// This encoding follows the convention that each 132-bit tagged entry
+// { tag[3:0], value[127:0] } is split across two consecutive 128-bit
+// dmem slots: the 128-bit value slot followed by a 128-bit tag slot
+// (tag in bits [3:0], upper 124 bits zero).
+//
+// DICT: option B (interim) — BUILD_MAP / subscript / store on a DICT-tagged
+// handle raise PY_TRAP_TYPE with a TODO comment.  A future PR will implement
+// open-addressed linear-probe lookup over this same dmem port.
+// -------------------------------------------------------------------------
+function automatic logic [63:0] pycore_list_capacity(
+    input logic [PYCORE_VAL_WIDTH-1:0] header
+);
+    begin
+        pycore_list_capacity = header[127:64];
+    end
+endfunction
+
+function automatic logic [63:0] pycore_list_length(
+    input logic [PYCORE_VAL_WIDTH-1:0] header
+);
+    begin
+        pycore_list_length = header[63:0];
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_list_header(
+    input logic [63:0] capacity,
+    input logic [63:0] length
+);
+    begin
+        pycore_list_header = {capacity, length};
+    end
+endfunction
+
+// Byte address of element i's VALUE slot within a list at base.
+function automatic logic [31:0] pycore_list_val_addr(
+    input logic [31:0] base,
+    input logic [31:0] idx
+);
+    begin
+        // base + 16 + idx*32
+        pycore_list_val_addr = base + 32'd16 + (idx << 5);
+    end
+endfunction
+
+// Byte address of element i's TAG slot within a list at base.
+function automatic logic [31:0] pycore_list_tag_addr(
+    input logic [31:0] base,
+    input logic [31:0] idx
+);
+    begin
+        // base + 32 + idx*32
+        pycore_list_tag_addr = base + 32'd32 + (idx << 5);
+    end
+endfunction
+
+// Total bytes to allocate for a list with the given capacity.
+function automatic logic [31:0] pycore_list_alloc_bytes(
+    input logic [31:0] capacity
+);
+    begin
+        // 16 (header) + capacity * 32 (2 slots per element)
+        pycore_list_alloc_bytes = 32'd16 + (capacity << 5);
     end
 endfunction
 
