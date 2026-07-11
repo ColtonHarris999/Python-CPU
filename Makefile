@@ -47,7 +47,7 @@ PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv
 
-.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-multifn-simple pycore-multifn-const pycore-multifn-arg pycore-multifn-chain pycore-multifn-stress clean docker-build docker-run-file docker-pycore-test docker-all-tests
+.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-multifn-simple pycore-multifn-const pycore-multifn-arg pycore-multifn-chain pycore-multifn-stress pycore-container pycore-container-build-index pycore-container-store-subscr clean docker-build docker-run-file docker-pycore-test docker-all-tests
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -261,7 +261,39 @@ pycore-multifn-stress:
 
 pycore-multifn: pycore-multifn-simple pycore-multifn-const pycore-multifn-arg pycore-multifn-chain pycore-multifn-stress
 
-pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn
+# ---- Container (list) tests ------------------------------------------------
+# tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /
+# EXPECTED_VALUE specify the expected base-frame return.
+
+pycore-container-build-index:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/list_build_index.hex\" \
+		-GEXPECTED_TAG=4\'b0001 \
+		"-GEXPECTED_VALUE=128\'d99" \
+		--Mdir $(BUILD_DIR)/pycore_container_build_index \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/pycore_container_build_index/Vtb_container
+
+pycore-container-store-subscr:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/list_store_subscr.hex\" \
+		-GEXPECTED_TAG=4\'b0001 \
+		"-GEXPECTED_VALUE=128\'d42" \
+		--Mdir $(BUILD_DIR)/pycore_container_store_subscr \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/pycore_container_store_subscr/Vtb_container
+
+pycore-container: pycore-container-build-index pycore-container-store-subscr
+
+pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .

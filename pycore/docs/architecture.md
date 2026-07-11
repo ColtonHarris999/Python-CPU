@@ -282,6 +282,74 @@ instruction words zero-padded to one 8-byte imem slot (three slots for
 `LOAD_SMALL_INT`, `NOT_TAKEN`, and `POP_ITER` are modeled as CPython 3.14
 features; removed 3.13 opcodes are not assumed.
 
+## Container heap and object model
+
+### Heap allocator
+
+The core carries a **bump-pointer heap allocator** for dynamically allocated
+container objects.  The heap occupies a fixed region of data memory:
+
+```text
+PYCORE_HEAP_BASE  = 0x0000_0400  (1 KB offset from dmem start)
+PYCORE_HEAP_LIMIT = 0x0000_2000  (just below the call-frame stack)
+```
+
+Capacity: ~7 KB.  A `heap_ptr_r` register in `pycore_core.sv` starts at
+`PYCORE_HEAP_BASE` and advances monotonically; there is no free list (no
+object reclamation in this prototype).  Overflow traps `PY_TRAP_MEM_FAULT`.
+
+### LIST in-dmem layout
+
+All addresses are 16-byte aligned (128-bit dmem slot granularity).
+
+```text
+base + 0                : header { capacity[63:0], length[63:0] }
+base + 16*(1 + 2*i)     : element[i] value[127:0]
+base + 16*(2 + 2*i)     : element[i] tag  { 124'b0, tag[3:0] }
+```
+
+Each element occupies **two 16-byte slots** (element stride = 32 bytes).
+Total allocation = `16 + capacity × 32` bytes.
+
+The 132-bit tagged entry `{ tag[3:0], value[127:0] }` is split across two
+consecutive 128-bit dmem slots: the value slot followed by the tag slot.
+This avoids any non-16-byte addressing.
+
+Helpers `pycore_list_val_addr(base, idx)` and `pycore_list_tag_addr(base,
+idx)` in `pycore_defs.svh` compute element addresses.
+
+### DICT status (option B, interim)
+
+`BUILD_MAP`, `BINARY_OP/NB_SUBSCR` on a DICT handle, and `STORE_SUBSCR` on a
+DICT handle all trap `PY_TRAP_TYPE`.  The `S_CONTAINER` FSM has a placeholder
+`CONT_BUILD_MAP` path and the `CONT_SUBSCR_READ` / `CONT_STORE_SUBSCR` paths
+check the container tag and trap for DICT.  A follow-up PR will implement an
+open-addressed linear-probe hash table using the same dmem port.
+
+### `S_CONTAINER` FSM state
+
+`S_CONTAINER` is a new FSM state (value 8, requiring 4-bit `state_r`) entered
+directly from `S_EXEC` when `dec_is_container` is asserted.  It bypasses both
+`S_MEM` and `S_WB`; TOS and RF updates happen inside `S_CONTAINER`.
+
+Sub-phases (stored in `container_phase_r [2:0]`):
+
+| Phase | Name | Purpose |
+|-------|------|---------|
+| 0 | `CP_INIT` | First active cycle; set up the first dmem or RF operation. |
+| 1 | `CP_HDR` | In-flight header read/write; wait for dmem ack. |
+| 2 | `CP_VAL` | In-flight element value read/write; wait for ack. |
+| 3 | `CP_TAG` | In-flight element tag read/write; wait for ack. |
+| 4 | `CP_DONE` | Terminal marker; `always_comb` transitions to `S_FETCH`. Empty in `always_ff`. |
+
+The dmem port is arbitrated via `container_dmem_pending_r`, which mirrors
+`frame_dmem_pending_r` used by `S_CALL` and `S_RETURN`.
+
+An RF address override (`rs1_addr_eff`) redirects the regfile's rs1 read port
+to `container_rf_addr_r` while in `S_CONTAINER`, enabling multi-element reads
+for `BUILD_LIST` and the value read for `STORE_SUBSCR` without an extra RF
+read port.
+
 ## Metrics
 
 `cycle_count` increments every non-reset, non-trapped cycle. The primary metric

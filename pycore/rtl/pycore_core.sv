@@ -180,6 +180,8 @@ module pycore_core #(
     logic [PYCORE_ENTRY_WIDTH-1:0] container_wb_data_r;
 
     // One-cycle trap pulses raised inside S_CONTAINER.
+    // These are cleared every cycle by the default-clear block above; a non-zero
+    // value persists for exactly one clock cycle.
     logic                          container_type_trap_r;
     logic                          container_mem_fault_r;
 
@@ -704,9 +706,8 @@ module pycore_core #(
     // next state, computed every cycle and sampled on the next rising edge.
     // ---------------------------------------------------------------------
     logic [3:0] state_next;
-    // One-cycle flag set in S_CONTAINER's always_ff to trigger the S_FETCH
-    // transition (used instead of per-phase edge detection in always_comb).
-    logic        container_done_r;
+    // (container_done_r removed: all operations advance container_phase_r to
+    // CP_DONE as the terminal marker; the always_comb checks that directly.)
 
     always_comb begin
         state_next = state_r;  // default: hold current state
@@ -749,8 +750,13 @@ module pycore_core #(
                     if (frame_return_done) state_next = S_FETCH;
                 end
                 S_CONTAINER: begin
-                    // container_done_r is a one-cycle pulse set in always_ff.
-                    if (container_done_r) state_next = S_FETCH;
+                    // CP_DONE is a terminal marker phase used uniformly by all
+                    // sub-operations.  All actual work (RF write, TOS update) is
+                    // committed in the cycle that advances container_phase_r to
+                    // CP_DONE, so the CP_DONE always_ff case is intentionally empty.
+                    // Once container_phase_r == CP_DONE the FSM transitions to
+                    // S_FETCH.
+                    if (container_phase_r == CP_DONE) state_next = S_FETCH;
                 end
                 S_HALT: begin
                     state_next = S_HALT;
@@ -813,7 +819,6 @@ module pycore_core #(
             container_wb_data_r      <= '0;
             container_type_trap_r    <= 1'b0;
             container_mem_fault_r    <= 1'b0;
-            container_done_r         <= 1'b0;
         end else begin
             state_r <= state_next;  // register next state (computed in always_comb)
 
@@ -825,10 +830,9 @@ module pycore_core #(
             rf_set_locals_r      <= 1'b0;
             rf_init_frame_r      <= 1'b0;
             return_wb_we_r       <= 1'b0;
-            container_wb_we_r    <= 1'b0;
+            container_wb_we_r     <= 1'b0;
             container_type_trap_r <= 1'b0;
             container_mem_fault_r <= 1'b0;
-            container_done_r     <= 1'b0;
 
             if (state_r == S_FETCH) begin
                 redirect_pending_r <= 1'b0;
@@ -873,7 +877,6 @@ module pycore_core #(
                             container_dmem_pending_r <= 1'b0;
                             container_type_trap_r    <= 1'b0;
                             container_mem_fault_r    <= 1'b0;
-                            container_done_r         <= 1'b0;
                             container_wb_we_r        <= 1'b0;
 
                             if (cur_opcode_r == PY_OP_BUILD_LIST) begin
@@ -1146,12 +1149,15 @@ module pycore_core #(
                                 end
 
                                 // Phase 3 (CP_TAG): wait for element tag-write ack.
+                                // When all elements are written, commit the list
+                                // handle here (in the same ack cycle) and advance
+                                // to CP_DONE, which is an intentionally empty
+                                // terminal phase that triggers S_FETCH transition.
                                 CP_TAG: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_idx_r + 7'd1 < container_count_r) begin
                                             // More elements: advance to next.
                                             container_idx_r     <= container_idx_r + 7'd1;
-                                            // RF addr for next element.
                                             container_rf_addr_r <= RF_AW'(
                                                 {2'b0, tos_r}
                                                 - {2'b0, container_count_r}
@@ -1159,26 +1165,29 @@ module pycore_core #(
                                                 + 9'd1);
                                             container_phase_r   <= CP_HDR;
                                         end else begin
-                                            // All elements written.
+                                            // All elements written — commit list.
+                                            // Push {PY_TAG_LIST, 0, base} to RF[tos-count].
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                {2'b0, tos_r} - {2'b0, container_count_r});
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_LIST,
+                                                {{64{1'b0}}, container_base_r});
+                                            tos_r            <= tos_r
+                                                - {2'b0, container_count_r} + 7'd1;
+                                            fetch_skip_r     <= 1'b1;
+                                            // Advance to terminal phase; always_comb
+                                            // transitions to S_FETCH when phase=CP_DONE.
                                             container_phase_r   <= CP_DONE;
                                         end
                                     end
                                 end
 
-                                // Phase 4 (CP_DONE): commit list handle to RF.
-                                CP_DONE: begin
-                                    // Push {PY_TAG_LIST, 120'b0, base[63:0]} to
-                                    // RF[tos - count] (net stack effect: -count+1).
-                                    container_wb_we_r   <= 1'b1;
-                                    container_wb_addr_r <= RF_AW'(
-                                        {2'b0, tos_r} - {2'b0, container_count_r});
-                                    container_wb_data_r <= pycore_make_entry(
-                                        PY_TAG_LIST,
-                                        {{64{1'b0}}, container_base_r});
-                                    tos_r           <= tos_r - {2'b0, container_count_r} + 7'd1;
-                                    fetch_skip_r    <= 1'b1;
-                                    container_done_r <= 1'b1;
-                                end
+                                // Phase 4 (CP_DONE): terminal marker — do nothing.
+                                // All commit work was done in CP_TAG above.
+                                // The always_comb state-next logic transitions to
+                                // S_FETCH the same cycle container_phase_r=CP_DONE.
+                                CP_DONE: ;
 
                                 default: ;
 
@@ -1250,11 +1259,18 @@ module pycore_core #(
                                             container_rd_data_r[3:0],
                                             container_val_r);
                                         // Pop 1 (key): tos-2 keeps the result.
-                                        tos_r            <= tos_r - 7'd1;
-                                        fetch_skip_r     <= 1'b1;
-                                        container_done_r <= 1'b1;
+                                        tos_r             <= tos_r - 7'd1;
+                                        fetch_skip_r      <= 1'b1;
+                                        // Advance to terminal marker to prevent
+                                        // this branch from executing a second time
+                                        // while the FSM lingers in S_CONTAINER.
+                                        container_phase_r <= CP_DONE;
                                     end
                                 end
+
+                                // CP_DONE: terminal — nothing to execute.
+                                // State transitions to S_FETCH via always_comb.
+                                CP_DONE: ;
 
                                 default: ;
 
@@ -1322,11 +1338,14 @@ module pycore_core #(
                                 CP_TAG: begin
                                     if (!container_dmem_pending_r) begin
                                         // Pop 3 (key, container, value).
-                                        tos_r            <= tos_r - 7'd3;
-                                        fetch_skip_r     <= 1'b1;
-                                        container_done_r <= 1'b1;
+                                        tos_r             <= tos_r - 7'd3;
+                                        fetch_skip_r      <= 1'b1;
+                                        container_phase_r <= CP_DONE;
                                     end
                                 end
+
+                                // CP_DONE: terminal — nothing to execute.
+                                CP_DONE: ;
 
                                 default: ;
 
