@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import dis
 import importlib.util
+import opcode as _opcode_module
 import pathlib
 import struct
 import sys
@@ -14,6 +15,62 @@ from typing import Iterable
 
 
 REQUIRED_PY = (3, 14)
+
+# ---------------------------------------------------------------------------
+# Opcode numbers and subop values resolved from the running Python 3.14
+# interpreter.  Do NOT hand-transcribe these from memory or training data.
+# The block below runs at import time and will raise AttributeError / KeyError
+# if the interpreter does not expose the expected attributes, which catches
+# forward-compatibility breaks early.
+#
+# Verified values (Python 3.14.x):
+#   OP_BUILD_LIST                       = 46
+#   OP_BUILD_MAP                        = 47
+#   OP_STORE_SUBSCR                     = 38
+#   OP_BINARY_OP                        = 44
+#   OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = 87
+#   NBARG_SUBSCR                        = 26
+# ---------------------------------------------------------------------------
+_OM = _opcode_module.opmap
+OP_BUILD_LIST    = _OM["BUILD_LIST"]
+OP_BUILD_MAP     = _OM["BUILD_MAP"]
+OP_STORE_SUBSCR  = _OM["STORE_SUBSCR"]
+OP_BINARY_OP     = _OM["BINARY_OP"]
+OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = _OM.get(
+    "LOAD_FAST_BORROW_LOAD_FAST_BORROW", None
+)
+
+# NB_SUBSCR oparg: locate "NB_SUBSCR" in _nb_ops by searching for the entry
+# whose first element contains "SUBSCR".
+_nb_ops = getattr(_opcode_module, "_nb_ops", [])
+NBARG_SUBSCR: int | None = None
+for _i, _entry in enumerate(_nb_ops):
+    if "SUBSCR" in str(_entry[0]).upper():
+        NBARG_SUBSCR = _i
+        break
+if NBARG_SUBSCR is None:
+    raise RuntimeError(
+        "Could not resolve NB_SUBSCR oparg from opcode._nb_ops. "
+        "Verify Python version is 3.14."
+    )
+
+# Opcodes that have been intentionally deferred (not yet implemented).
+# Preprocess raises a specific error when it encounters any of these so the
+# user knows to use a supported alternative.
+DEFERRED_OPS: dict[str, str] = {
+    "LIST_APPEND":   "use BUILD_LIST + direct element stores (not yet implemented)",
+    "MAP_ADD":       "dict mutation not yet implemented",
+    "LIST_EXTEND":   "list.extend not yet implemented",
+    "DICT_UPDATE":   "dict.update not yet implemented",
+    "DICT_MERGE":    "dict merge not yet implemented",
+    "DELETE_SUBSCR": "del x[k] not yet implemented",
+    "CONTAINS_OP":   "in / not-in operator not yet implemented",
+    "BINARY_SLICE":  "slice notation not yet implemented",
+    "STORE_SLICE":   "slice assignment not yet implemented",
+    "BUILD_SET":     "set literals not yet implemented",
+    "SET_ADD":       "set.add not yet implemented",
+    "SET_UPDATE":    "set.update not yet implemented",
+}
 
 TAG_UNINITIALIZED = 0b0000
 TAG_INT           = 0b0001
@@ -44,6 +101,10 @@ SUPPORTED_OPS = {
     "EXTENDED_ARG",
     "LOAD_FAST",
     "LOAD_FAST_BORROW",
+    # LOAD_FAST_BORROW_LOAD_FAST_BORROW (opcode 87, Python 3.14): loads two
+    # locals in one instruction.  Expanded to two LOAD_FAST_BORROW in
+    # emit_instruction_words so hardware never sees this combined opcode.
+    "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
     "STORE_FAST",
     "LOAD_SMALL_INT",
     "LOAD_CONST",
@@ -66,6 +127,10 @@ SUPPORTED_OPS = {
     "POP_ITER",
     "CALL",
     "RETURN_VALUE",
+    # Container operations (in-scope for PyCore dict-list support).
+    "BUILD_LIST",
+    "BUILD_MAP",
+    "STORE_SUBSCR",
 }
 
 SUPPORTED_BINARY_ARGS = {
@@ -81,6 +146,8 @@ SUPPORTED_BINARY_ARGS = {
     10, 23,  # subtract
     11, 24,  # true divide
     12, 25,  # xor
+    # NB_SUBSCR (oparg 26): subscript read x[k] — routes to S_CONTAINER FSM.
+    NBARG_SUBSCR,
 }
 
 
@@ -126,6 +193,13 @@ def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
             # following Instruction.arg; the fetch stage also supports raw
             # EXTENDED_ARG for hand-written streams.
             continue
+        if ins.opname in DEFERRED_OPS:
+            reason = DEFERRED_OPS[ins.opname]
+            raise ValueError(
+                f"Deferred opcode {ins.opname!r} at bytecode offset {ins.offset}: "
+                f"{reason}.  Use a different construct or wait for a future PyCore "
+                f"release that supports this operation."
+            )
         if ins.opname not in SUPPORTED_OPS:
             raise ValueError(
                 f"Unsupported opcode {ins.opname!r} at bytecode offset {ins.offset}"
@@ -150,10 +224,26 @@ def emit_instruction_words(
     LOAD_CONST instructions are present.
     """
     emitted: list[EmittedInstruction] = []
+    lfb_opcode = _OM.get("LOAD_FAST_BORROW", 86)
     for ins in instructions:
         arg = ins.arg or 0
         if not 0 <= arg < (1 << 32):
             raise ValueError(f"Instruction argument exceeds 32 bits: {ins}")
+
+        # Expand LOAD_FAST_BORROW_LOAD_FAST_BORROW → two LOAD_FAST_BORROW.
+        # Encoding: arg[7:4] = first variable index, arg[3:0] = second.
+        # This keeps the hardware simple: it only ever sees LOAD_FAST_BORROW.
+        if ins.opname == "LOAD_FAST_BORROW_LOAD_FAST_BORROW":
+            first_idx  = arg >> 4
+            second_idx = arg & 0xF
+            for var_idx in (first_idx, second_idx):
+                emitted.append(EmittedInstruction(
+                    opcode=lfb_opcode,
+                    arg=var_idx,
+                    source_offset=ins.offset,
+                    opname="LOAD_FAST_BORROW",
+                ))
+            continue
 
         const_tag = None
         const_value = None
@@ -442,10 +532,32 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             idx = ins.arg or 0
             if 0 < idx <= len(stack):
                 stack[-1], stack[-idx] = stack[-idx], stack[-1]
+        elif ins.opname == "BUILD_LIST":
+            count = ins.arg or 0
+            for _ in range(min(count, len(stack))):
+                stack.pop()
+            stack.append(TAG_LIST)
+        elif ins.opname == "BUILD_MAP":
+            count = ins.arg or 0
+            for _ in range(min(2 * count, len(stack))):
+                stack.pop()
+            stack.append(TAG_DICT)
+        elif ins.opname == "STORE_SUBSCR":
+            # Pops key, container, value (3 items); pushes nothing.
+            for _ in range(min(3, len(stack))):
+                stack.pop()
         elif ins.opname == "BINARY_OP":
             rhs = stack.pop() if stack else TAG_OBJECT
             lhs = stack.pop() if stack else TAG_OBJECT
-            result_tag = merge_numeric(lhs, rhs, ins.arg)
+            if ins.arg == NBARG_SUBSCR:
+                # Subscript read: result type is unknown (element type not tracked).
+                result_tag = TAG_OBJECT
+                if lhs not in (TAG_LIST, TAG_DICT, TAG_OBJECT):
+                    warnings.append(
+                        f"NB_SUBSCR on non-container tag {lhs} at offset {ins.source_offset}"
+                    )
+            else:
+                result_tag = merge_numeric(lhs, rhs, ins.arg)
             if result_tag == TAG_OBJECT:
                 warnings.append(
                     f"OBJECT-typed value feeds BINARY_OP at bytecode offset {ins.source_offset}"

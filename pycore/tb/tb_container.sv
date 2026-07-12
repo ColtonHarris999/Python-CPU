@@ -1,14 +1,14 @@
 `include "pycore_defs.svh"
 
-// Parameterized testbench for multi-function call tests.
-// Loads PROG_HEX, runs until base-frame RETURN_VALUE retires, and checks
-// the return entry against {EXPECTED_TAG, EXPECTED_VALUE}.
-module tb_multifn #(
-    parameter string PROG_HEX       = "pycore/programs/multifn_simple.hex",
+// Testbench for container (LIST) operations.
+// Parameterized over PROG_HEX and the expected return tag+value.
+// Reuses the same run-until-RETURN_VALUE pattern as tb_multifn.
+module tb_container #(
+    parameter string PROG_HEX       = "pycore/programs/list_build_index.hex",
     parameter string STRING_HEX     = "pycore/programs/string_mem.hex",
-    parameter int    MAX_CYCLES     = 4000,
-    parameter logic [3:0]                      EXPECTED_TAG   = PY_TAG_INT,
-    parameter logic [PYCORE_VAL_WIDTH-1:0]     EXPECTED_VALUE = 128'd42
+    parameter int    MAX_CYCLES     = 8000,
+    parameter logic [3:0]                  EXPECTED_TAG   = PY_TAG_INT,
+    parameter logic [PYCORE_VAL_WIDTH-1:0] EXPECTED_VALUE = 128'd99
 );
     localparam logic [3:0] CORE_S_WB = 4'd4;
 
@@ -64,12 +64,11 @@ module tb_multifn #(
             @(posedge clk);
 
             if (trap_out) begin
-                $error("[FAIL] program trapped (code=%0d) at cycle %0d",
-                       trap_code, cycle_count);
+                $error("[FAIL] program trapped (code=%0d) at cycle %0d — %s",
+                       trap_code, cycle_count, PROG_HEX);
                 $finish;
             end
 
-            // Detect base-frame RETURN_VALUE: no active frames and opcode matches.
             if ((dut.core.state_r == CORE_S_WB) &&
                 (dut.core.cur_opcode_r == PY_OP_RETURN_VALUE) &&
                 (dut.core.frame_active_depth == 0)) begin
@@ -80,16 +79,18 @@ module tb_multifn #(
         end
 
         check(return_seen,
-              $sformatf("program did not complete within MAX_CYCLES=%0d", MAX_CYCLES));
+              $sformatf("program did not complete within MAX_CYCLES=%0d (%s)",
+                        MAX_CYCLES, PROG_HEX));
 
         got_tag = pycore_get_tag(return_entry);
         got_val = pycore_get_val(return_entry);
 
         check(got_tag == EXPECTED_TAG,
-              $sformatf("tag mismatch: expected %0d, got %0d", EXPECTED_TAG, got_tag));
+              $sformatf("tag mismatch: expected %0d got %0d (%s)",
+                        EXPECTED_TAG, got_tag, PROG_HEX));
         check(got_val == EXPECTED_VALUE,
-              $sformatf("value mismatch: expected 0x%0h, got 0x%0h",
-                        EXPECTED_VALUE, got_val));
+              $sformatf("value mismatch: expected 0x%0h got 0x%0h (%s)",
+                        EXPECTED_VALUE, got_val, PROG_HEX));
 
         $display("PASS: %s — tag=%0d value=0x%0h cycles=%0d",
                  PROG_HEX, got_tag, got_val[63:0], cycle_count);
