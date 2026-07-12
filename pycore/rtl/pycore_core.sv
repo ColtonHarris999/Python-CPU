@@ -219,6 +219,7 @@ module pycore_core #(
     logic [127:0]                  call_consts_r;      // callee co_consts TUPLE
     logic [127:0]                  call_names_r;       // callee co_names TUPLE
     logic [15:0]                   call_argcount_r;    // callee metadata argcount
+    logic [15:0]                   call_nlocals_r;     // callee metadata nlocals
     logic [RF_AW-1:0]              call_new_locals_r;  // tos - argc
     logic [RF_AW-1:0]              call_tos_base_r;    // tos - argc - 2
     // One-cycle pulse: raise PY_TRAP_CALL_FILTER for callable checks and
@@ -462,8 +463,11 @@ module pycore_core #(
     logic [PYCORE_ENTRY_WIDTH-1:0] rf_rs1;
     logic [PYCORE_ENTRY_WIDTH-1:0] rf_rs2;
     logic [RF_AW-1:0] rs1_addr_eff;
-    assign rs1_addr_eff = (state_r == S_CONTAINER) ? container_rf_addr_r
-                                                    : dec_rs1_sel[RF_AW-1:0];
+    // S_CONTAINER and S_CALL both drive container_rf_addr_r to walk RF
+    // slots without a second read port (callable / null / STORE value).
+    assign rs1_addr_eff = ((state_r == S_CONTAINER) || (state_r == S_CALL))
+                          ? container_rf_addr_r
+                          : dec_rs1_sel[RF_AW-1:0];
 
     // ---------------------------------------------------------------------
     // EX: execute fabric + branch unit
@@ -604,10 +608,10 @@ module pycore_core #(
 
     // ---------------------------------------------------------------------
     // Frame manager (pycore_frame).
-    // On CALL the current frame descriptor {pc_return, tos_base, locals_base}
-    // is pushed to a DRAM stack in one 128-bit write.  On RETURN it is
-    // popped back via a 128-bit read.  The core mediates both dmem
-    // transactions through the push/pop handshake.
+    // On CALL the current frame descriptor {pc_return, tos_base, locals_base,
+    // cur_code} is pushed to a DRAM stack as two 128-bit slots. On RETURN the
+    // two slots are popped back and the core reloads caller code-object fields.
+    // The core mediates those dmem transactions through the push/pop handshake.
     //
     // The frame stack lives in the upper half of the 16 KB data memory
     // (byte addresses 0x2000–0x3FFF), leaving the lower 8 KB for user-level
@@ -617,7 +621,7 @@ module pycore_core #(
     localparam int    RF_BASE_CORE          = STACK_BASE;
     localparam int    MAX_CALL_DEPTH_CORE   = 64;
     localparam logic [ADDR_WIDTH-1:0] FRAME_STACK_BASE = 32'h0000_2000;
-    localparam int    FRAME_STACK_BYTES     = 32'h0000_2000;  // 8 KB, 512 frames
+    localparam int    FRAME_STACK_BYTES     = 32'h0000_2000;  // 8 KB, 256 frames
 
     logic [RF_AW-1:0]      frame_next_locals_base;
     logic                  frame_init_new_frame;
@@ -1045,6 +1049,7 @@ module pycore_core #(
             call_consts_r        <= '0;
             call_names_r         <= '0;
             call_argcount_r      <= '0;
+            call_nlocals_r       <= '0;
             call_new_locals_r    <= '0;
             call_tos_base_r      <= '0;
             call_filter_trap_r   <= 1'b0;
@@ -1348,9 +1353,15 @@ module pycore_core #(
                         4'd6: begin
                             if (!container_dmem_pending_r) begin
                                 call_argcount_r <= pycore_code_meta_argcount(container_rd_data_r);
+                                call_nlocals_r  <= pycore_code_meta_nlocals(container_rd_data_r);
                                 // Argcount preflight: mismatched arity → CALL_FILTER.
                                 if (pycore_code_meta_argcount(container_rd_data_r)
                                     != cur_arg_r[15:0]) begin
+                                    call_filter_trap_r <= 1'b1;
+                                end else if ((9'(call_new_locals_r)
+                                              + 9'(pycore_code_meta_nlocals(
+                                                    container_rd_data_r)))
+                                             > 9'(STACK_TOP_MAX)) begin
                                     call_filter_trap_r <= 1'b1;
                                 end else begin
                                     call_phase_r <= 4'd7;
@@ -1378,6 +1389,8 @@ module pycore_core #(
                                 rf_set_locals_r      <= 1'b1;
                                 rf_new_locals_r      <= frame_next_locals_base;
                                 rf_init_frame_r      <= (call_argcount_r == 16'd0);
+                                tos_r                <= frame_next_locals_base
+                                                        + call_nlocals_r[6:0];
                                 call_sent_r          <= 1'b0;
                                 frame_dmem_pending_r <= 1'b0;
                                 // Commit callee code-object caches.

@@ -6,13 +6,13 @@
 //
 // fib(11) generates 287 calls and a maximum recursion depth of 11.
 // With push_ack/pop_ack tied to 1, every DRAM transaction completes in one
-// extra cycle (instant mock ack).  A mock stack mirrors pushed data for
-// correct restoration on pop.
+// extra cycle (instant mock ack).  A mock stack mirrors the two pushed slots
+// per frame for correct restoration on pop.
 module tb_frame_fib_recursion;
     localparam int RF_DEPTH          = 16;
     localparam int RF_BASE           = 12;
     localparam int MAX_CALL_DEPTH    = 64;
-    localparam int FRAME_ENTRY_BYTES = 16;
+    localparam int FRAME_ENTRY_BYTES = 32;
     localparam int FIB_N             = 11;
     localparam int RF_AW             = $clog2(RF_DEPTH);
 
@@ -24,9 +24,11 @@ module tb_frame_fib_recursion;
     logic [RF_AW-1:0] tos_base_in;
     logic [RF_AW-1:0] locals_base_in;
     logic [RF_AW-1:0] new_locals_base_in;
+    logic [31:0]      cur_code_in;
     logic [31:0]      pc_return_out;
     logic [RF_AW-1:0] tos_base_out;
     logic [RF_AW-1:0] locals_base_out;
+    logic [31:0]      cur_code_out;
     logic [RF_AW-1:0] next_locals_base;
     logic             init_new_frame;
     logic             return_done;
@@ -59,10 +61,12 @@ module tb_frame_fib_recursion;
         .pc_return_in_i(pc_return_in),
         .tos_base_in_i(tos_base_in),
         .locals_base_in_i(locals_base_in),
+        .cur_code_in_i(cur_code_in),
         .new_locals_base_in_i(new_locals_base_in),
         .pc_return_out_o(pc_return_out),
         .tos_base_out_o(tos_base_out),
         .locals_base_out_o(locals_base_out),
+        .cur_code_out_o(cur_code_out),
         .next_locals_base_o(next_locals_base),
         .init_new_frame_o(init_new_frame),
         .return_done_o(return_done),
@@ -86,7 +90,7 @@ module tb_frame_fib_recursion;
     // -----------------------------------------------------------------------
     // Mock stack (same scheme as tb_frame).
     // -----------------------------------------------------------------------
-    logic [PYCORE_DMEM_DATA_WIDTH-1:0] mock_stack [0:MAX_CALL_DEPTH-1];
+    logic [PYCORE_DMEM_DATA_WIDTH-1:0] mock_stack [0:(MAX_CALL_DEPTH*2)-1];
     int mock_sp;
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -135,6 +139,7 @@ module tb_frame_fib_recursion;
             pc_return_in   = 32'(pc_seed);
             tos_base_in    = '0;
             locals_base_in = '0;
+            cur_code_in    = 32'hF1B0_0000 ^ 32'(pc_seed);
             @(posedge clk);
             @(negedge clk);
             call_valid = 1'b0;
@@ -199,6 +204,7 @@ module tb_frame_fib_recursion;
         tos_base_in        = '0;
         locals_base_in     = '0;
         new_locals_base_in = '0;
+        cur_code_in        = '0;
         max_active_frames  = 0;
         call_count         = 0;
         return_count       = 0;

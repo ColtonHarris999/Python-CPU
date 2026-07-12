@@ -9,6 +9,18 @@ Bytecode support status (fully supported / partially supported / unsupported) is
 tracked separately in `pycore/docs/bytecode_support.md` so decode and
 preprocessing changes can be reviewed against one explicit matrix.
 
+## CPython image fidelity boundary
+
+"Identical to what a CPython compiler would create" means: the image contains
+the same object graph as `compile()` output -- same bytecode units in the same
+order (including `CACHE` and `EXTENDED_ARG`), same `co_consts`/`co_names`, and
+nested code objects -- lowered mechanically into tagged 128-bit-slot encoding.
+No opcode is added, removed, reordered, rewritten, or argument-remapped.
+
+Byte-exact CPython C-struct layout is out of scope because PyCore requires
+tagged slots for hardware access. Matching CPython's in-memory C object layout
+is future work.
+
 ## Tagged value invariant
 
 Every architectural value is a 132-bit register-file entry:
@@ -44,7 +56,7 @@ The tag encoding is:
 | `1011` | `SET` python set: `addr[63:0]` |
 | `1100` | `CODE_OBJECT` PythonCodeObject: `addr[63:0]` |
 | `1101` | `FRAME_OBJECT` PythonFrameObject: `addr[63:0]` |
-| `1110` | `UNUSED` |
+| `1110` | `NULL` CPython `self_or_null` call sentinel |
 | `1111` | `NONE` python None type |
 
 Undefined local reads still trap instead of returning a garbage value.
@@ -81,15 +93,17 @@ slow arithmetic type; it means "unknown, therefore unsafe." Reimplementing
 CPython's complete object protocol in hardware is explicitly outside PyCore's
 fast path.
 
-Trap priority is implemented by `pycore_trap.sv`:
+Trap priority is implemented by `pycore_trap.sv` (numeric trap codes are noted
+where they differ from priority position):
 
 1. `TYPE_TRAP`
 2. `STACK_FAULT`
 3. `DIV_ZERO`
 4. `FPU_EXCEPTION`
 5. `ILLEGAL_OPCODE`
-6. `ADDR_ALIGN` (misaligned data access)
-7. `MEM_FAULT` (out-of-range address or invalid PTR)
+6. `CALL_FILTER` (code 6; non-callable, bad argc, or frame-manager fault)
+7. `ADDR_ALIGN` (code 8; misaligned data access)
+8. `MEM_FAULT` (code 7; out-of-range address, missing global/key, or invalid PTR)
 
 The trap block halts the core (forcing the control FSM into `S_HALT`) and
 latches the fault PC plus both source entries. `ADDR_ALIGN` and `MEM_FAULT` are
@@ -180,9 +194,9 @@ block_off = addr[BLOCK_SHIFT-1:0]
 word_idx  = block_off >> log2(DATA_WIDTH/8)
 ```
 
-- `pycore_imem.sv`: read-only, `IMEM_DATA_WIDTH = 64`. Most instructions are one
-  8-byte slot (the 40-bit folded word zero-padded). `LOAD_CONST` is a 3-slot
-  variable-length instruction (see below). Fetch drives `pc << 3`.
+- `pycore_imem.sv`: read-only, `IMEM_DATA_WIDTH = 64`. Each CPython two-byte
+  code unit is one 8-byte slot. `CACHE` and `EXTENDED_ARG` units remain present
+  in the image; fetch folds/skips them at execution time. Fetch drives `pc << 3`.
 - `pycore_dmem.sv`: read/write, `DMEM_DATA_WIDTH = 128`. Access is one 128-bit
   value per transaction, 16-byte aligned in v1.
 
@@ -208,64 +222,79 @@ RF[32..95] operand stack
 
 Function calls are managed by the as-built `pycore_frame.sv`, which implements
 a **simple push/pop call-frame stack in dmem** (not a ring-buffer spill design).
-Each CALL pushes a frame record containing return PC, TOS base, and locals base;
-each RETURN pops it and restores the caller's stack window. Frame depth is
-bounded by the reserved frame-stack region (`0x2000`–`0x3FFF`).
+Each CALL pushes a two-slot, 32-byte frame descriptor:
+
+```text
+slot 0: { pc_return[31:0], tos_base, locals_base, zero padding }
+slot 1: { zero padding, caller cur_code[31:0] }
+```
+
+Each RETURN pops slot 1 then slot 0, restores the caller's code object pointer,
+PC, TOS base, and locals base, then reloads the caller's `co_consts` and
+`co_names` from the code object before fetch resumes. Frame depth is bounded by
+the reserved frame-stack region (`0x2000`-`0x3FFF`).
 
 > **Future work:** an earlier design study (`pycore/rtl/attic/pycore_frame_buffer.sv`)
 > explored a ring-buffer RF window with memory spill so call depth could scale
 > with dmem capacity rather than RF depth. That module is unintegrated; the
 > production path remains the simple `pycore_frame.sv` push/pop manager.
 
-## LOAD_CONST: inline literal encoding
+## Image boot and code objects
 
-`LOAD_CONST` constants are embedded directly in the instruction stream rather
-than in a separate constant ROM. This removes the single-function limitation and
-the fixed-depth table.
-
-Each `LOAD_CONST` occupies **three consecutive 8-byte imem slots**:
+When `BOOT_EN=1`, reset enters `S_BOOT` before normal fetch. The core reads the
+boot record at `PYCORE_BOOT_RECORD_ADDR = 0x0000_03e0`:
 
 ```text
-Slot 0  bits[63:60] = tag[3:0]   bits[7:0] = opcode (PY_OP_LOAD_CONST)
-Slot 1  value[127:64]
-Slot 2  value[63:0]
+0x3e0: module code object value
+0x3f0: module code object tag
+0x400: globals dict value
+0x410: globals dict tag
 ```
 
-The fetch unit (`pycore_fetch.sv`) detects `PY_OP_LOAD_CONST` in the FS_NORMAL
-sub-state, then issues two more imem reads (sub-states FS_CONST_W1,
-FS_CONST_W2) to assemble the complete 132-bit tagged entry. It reports the
-instruction to the rest of the pipeline only after all three slots have been
-consumed, presenting the entry in the `inline_const` output alongside the usual
-`instr_valid`/`opcode`/`pc` signals. The core latches `inline_const` and
-delivers it directly to the MEM stage, which forwards it to writeback without
-any ROM lookup.
+The boot walker verifies `CODE_OBJECT`/`DICT`, caches the module code object's
+`co_consts` and `co_names`, latches `globals_base_r`, and redirects fetch to the
+module entry slot. `BOOT_EN=0` is retained only for legacy hand-authored hex
+fixtures.
 
-Because `LOAD_CONST` instructions are three slots wide rather than one,
-`preprocess.py` rewrites all jump arguments from instruction-index units to
-slot-index units (`remap_branch_args`) so that the hardware branch unit
-(`pycore_branch.sv`) continues to compute correct targets from the raw `arg`
-field.
+Serialized code objects are four tagged-entry fields (32 bytes per field):
 
-### Benefits over the fixed const ROM
+```text
+field 0: entry_slot  (INT, imem slot index)
+field 1: co_consts   (TUPLE handle)
+field 2: co_names    (TUPLE handle)
+field 3: metadata    (INT, packed {stacksize, nlocals, argcount})
+```
 
-- **Multi-function programs**: each function's constants travel with its code
-  in imem; no shared or conflicting index space exists.
-- **Unbounded constants**: the only limit is total imem capacity; no 256-entry
-  ceiling applies.
-- **No startup loading**: constants are part of the instruction image loaded
-  once at elaboration; no separate ROM hex file is needed.
-- **Simpler integration**: `pycore_system.sv` no longer instantiates
-  `pycore_const_table.sv`; the `CONST_HEX`, `CONST_DEPTH`, and `CONST_IDX_W`
-  parameters are gone.
+The interim function model is **function == code object**: `MAKE_FUNCTION`
+checks that TOS is a `CODE_OBJECT` and leaves it in place. `CALL` expects the
+CPython 3.14 non-method layout `callable, NULL, args...`, validates the callable
+tag and argcount, reads the callee code-object fields, then enters the frame
+manager.
 
-## CPython 3.14 preprocessing
+`LOAD_CONST` is now a normal one-slot CPython instruction. It indexes
+`co_consts[arg]` and the container FSM performs two dmem reads (value slot then
+tag slot) before pushing the tagged entry. This raises CPO for constant-heavy
+programs versus the old inline literal path; an inline cache or small const
+cache is future work.
 
-`pycore/tools/preprocess.py` must run on Python 3.14. It compiles a host Python
-function, rejects unsupported opcodes, strips `CACHE`, emits folded 40-bit
-instruction words zero-padded to one 8-byte imem slot (three slots for
-`LOAD_CONST`), and produces a `.types` annotation file. `LOAD_FAST_BORROW`,
-`LOAD_SMALL_INT`, `NOT_TAKEN`, and `POP_ITER` are modeled as CPython 3.14
-features; removed 3.13 opcodes are not assumed.
+`LOAD_GLOBAL` and `LOAD_NAME` read the name from `co_names`, then probe the
+module globals dict. There is no builtins fallback in this prototype: a missing
+name traps `PY_TRAP_MEM_FAULT`. `LOAD_NAME` is currently equivalent to globals
+lookup at module scope. `STORE_NAME` and `STORE_GLOBAL` update the same globals
+dict.
+
+## CPython 3.14 image tooling
+
+`pycore/tools/image_from_source.py` is the primary flow. It must run on Python
+3.14, compiles the module with `compile()`, validates that all code objects use
+supported opcodes, transcodes every raw `co_code` unit one-for-one into imem,
+serializes the object graph (`co_consts`, `co_names`, nested code objects, and
+globals dict) into tagged dmem slots, and writes the boot record. Branch
+arguments are not remapped because imem slot index equals CPython code-unit
+index.
+
+`pycore/tools/preprocess.py` is deprecated legacy tooling for older
+single-function hex fixtures and should not be used for new image-boot tests.
 
 ## Container heap and object model
 

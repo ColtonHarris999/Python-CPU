@@ -5,14 +5,14 @@
 //
 // push_ack and pop_ack are tied to 1'b1 so every dmem transaction is
 // acknowledged immediately (no real DRAM backing needed for these metadata
-// tests).  pop_data is driven by a 16-entry "mock stack" that mirrors
-// whatever was last pushed, providing correct pc_return / tos / locals
-// restoration for the return-path checks.
+// tests).  pop_data is driven by a small "mock stack" that mirrors the
+// two 128-bit slots pushed per frame, providing correct pc_return / tos /
+// locals / cur_code restoration for the return-path checks.
 module tb_frame;
     localparam int RF_DEPTH           = 12;
     localparam int RF_BASE            = 8;
     localparam int MAX_CALL_DEPTH     = 6;
-    localparam int FRAME_ENTRY_BYTES  = 16;
+    localparam int FRAME_ENTRY_BYTES  = 32;
     localparam int RF_AW              = $clog2(RF_DEPTH);
 
     logic clk;
@@ -23,9 +23,11 @@ module tb_frame;
     logic [RF_AW-1:0] tos_base_in;
     logic [RF_AW-1:0] locals_base_in;
     logic [RF_AW-1:0] new_locals_base_in;
+    logic [31:0]   cur_code_in;
     logic [31:0]   pc_return_out;
     logic [RF_AW-1:0] tos_base_out;
     logic [RF_AW-1:0] locals_base_out;
+    logic [31:0]   cur_code_out;
     logic [RF_AW-1:0] next_locals_base;
     logic          init_new_frame;
     logic          return_done;
@@ -56,10 +58,12 @@ module tb_frame;
         .pc_return_in_i(pc_return_in),
         .tos_base_in_i(tos_base_in),
         .locals_base_in_i(locals_base_in),
+        .cur_code_in_i(cur_code_in),
         .new_locals_base_in_i(new_locals_base_in),
         .pc_return_out_o(pc_return_out),
         .tos_base_out_o(tos_base_out),
         .locals_base_out_o(locals_base_out),
+        .cur_code_out_o(cur_code_out),
         .next_locals_base_o(next_locals_base),
         .init_new_frame_o(init_new_frame),
         .return_done_o(return_done),
@@ -85,7 +89,7 @@ module tb_frame;
     // correct values.  The DUT writes push_data on push_req; the mock stack
     // stores it and presents it via pop_data_drv on pop_req.
     // -----------------------------------------------------------------------
-    logic [PYCORE_DMEM_DATA_WIDTH-1:0] mock_stack [0:MAX_CALL_DEPTH-1];
+    logic [PYCORE_DMEM_DATA_WIDTH-1:0] mock_stack [0:(MAX_CALL_DEPTH*2)-1];
     int mock_sp;
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -133,6 +137,7 @@ module tb_frame;
             pc_return_in   = pc_ret[31:0];
             tos_base_in    = tos[RF_AW-1:0];
             locals_base_in = locals[RF_AW-1:0];
+            cur_code_in    = 32'hC0DE_0000 ^ pc_ret[31:0];
             @(posedge clk);
             @(negedge clk);
             call_valid = 1'b0;
@@ -186,6 +191,7 @@ module tb_frame;
         tos_base_in      = '0;
         locals_base_in   = '0;
         new_locals_base_in = '0;
+        cur_code_in      = '0;
 
         #20;
         rst_n = 1'b1;
@@ -221,16 +227,22 @@ module tb_frame;
               "tos_base_out should be 4 after popping frame 2");
         check(locals_base_out == RF_AW'(1),
               "locals_base_out should be 1 after popping frame 2");
+        check(cur_code_out == (32'hC0DE_0000 ^ 32'h300),
+              "cur_code_out mismatch for frame 2");
 
         // Return from frame 1.
         do_return(1'b0);
         check(active_frames_out == 1, "depth should drop to 1");
         check(pc_return_out == 32'h200, "pc_return_out mismatch for frame 1");
+        check(cur_code_out == (32'hC0DE_0000 ^ 32'h200),
+              "cur_code_out mismatch for frame 1");
 
         // Return from frame 0.
         do_return(1'b0);
         check(active_frames_out == 0, "all frames should be released");
         check(pc_return_out == 32'h100, "pc_return_out mismatch for frame 0");
+        check(cur_code_out == (32'hC0DE_0000 ^ 32'h100),
+              "cur_code_out mismatch for frame 0");
         check(head_ptr_out == 0, "head pointer should be 0 when stack is empty");
 
         // ------------------------------------------------------------------

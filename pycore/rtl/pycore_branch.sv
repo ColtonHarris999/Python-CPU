@@ -15,9 +15,12 @@ module pycore_branch (
     logic [PYCORE_VAL_WIDTH-1:0] value;
     logic truthy;
     logic [7:0] n_cache;
+    logic is_conditional;
 
     assign tag = pycore_get_tag(tos_entry_i);
     assign value = pycore_get_val(tos_entry_i);
+    assign is_conditional = (opcode_i == PY_OP_POP_JUMP_IF_TRUE) ||
+                            (opcode_i == PY_OP_POP_JUMP_IF_FALSE);
 
     // Relative-jump target = pc + 1 + n_cache ± arg  (CPython 3.14 unit math;
     // slot index == code-unit index after 1:1 transcoding).
@@ -48,8 +51,8 @@ module pycore_branch (
             end
             default: begin
                 truthy = 1'b0;
-                trap_o = 1'b1;
-                trap_code_o = PY_TRAP_TYPE;
+                trap_o = is_conditional;
+                trap_code_o = is_conditional ? PY_TRAP_TYPE : PY_TRAP_NONE;
             end
         endcase
     end

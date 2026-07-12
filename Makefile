@@ -1,10 +1,10 @@
 VERILATOR ?= verilator
+PYTHON ?= python3.14
 BUILD_DIR ?= build
 DOCKER_IMAGE ?= python-cpu-sim
 DOCKER_CONTAINER_WORKDIR ?= /work
 DOCKER_BUILD_FLAGS ?=
 DOCKER_RUN_FLAGS ?=
-PYTHON ?= python3
 
 PYCORE_SOURCE ?= pycore/programs/smoke_return.py
 PYCORE_FUNCTION ?= managed_entry
@@ -47,7 +47,24 @@ PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv
 
-.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container pycore-container-build-index pycore-container-store-subscr pycore-container-dict-lookup pycore-container-dict-store pycore-container-list-empty pycore-container-dict-multi-pair pycore-container-dict-collision pycore-container-dict-insert-new-key pycore-container-dict-empty pycore-container-list-nested pycore-container-tuple-index pycore-container-tuple-empty pycore-container-list-oob-read pycore-container-list-oob-write pycore-container-dict-missing-key pycore-container-tuple-store-trap pycore-container-dict-full-insert pycore-container-list-oom clean docker-build docker-run-file docker-pycore-test docker-all-tests
+.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test \
+	pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs \
+	pycore-python-tests pycore-mem pycore-frame pycore-frame-fib \
+	pycore-top pycore-multifn \
+	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
+	pycore-img-containers pycore-img-recursion pycore-img-extended-arg \
+	pycore-img-branchy pycore-img-undef-global pycore-img-noncallable \
+	pycore-img-bad-argc \
+	pycore-container pycore-container-build-index pycore-container-store-subscr \
+	pycore-container-dict-lookup pycore-container-dict-store \
+	pycore-container-list-empty pycore-container-dict-multi-pair \
+	pycore-container-dict-collision pycore-container-dict-insert-new-key \
+	pycore-container-dict-empty pycore-container-list-nested \
+	pycore-container-tuple-index pycore-container-tuple-empty \
+	pycore-container-list-oob-read pycore-container-list-oob-write \
+	pycore-container-dict-missing-key pycore-container-tuple-store-trap \
+	pycore-container-dict-full-insert pycore-container-list-oom clean \
+	docker-build docker-run-file docker-pycore-test docker-all-tests
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -180,7 +197,7 @@ pycore-frame-fib:
 	./$(BUILD_DIR)/pycore_frame_fib/Vtb_frame_fib_recursion
 
 pycore-python-tests:
-	$(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
 
 pycore-top:
 	@echo "tb_pycore relies on the pre-3.14 inline 3-slot LOAD_CONST datapath."
@@ -198,6 +215,113 @@ pycore-top:
 
 pycore-multifn:
 	@echo "Legacy multifn targets removed; use image-boot img_* programs instead."
+
+# ---- CPython image-boot differential tests ---------------------------------
+# Positive tests use run_image_test.py so EXPECTED_TAG / EXPECTED_VALUE are
+# derived from host CPython execution and then checked in hardware. Negative
+# tests use image_from_source.py directly because host execution intentionally
+# raises before a valid entry return exists.
+
+define PYCORE_IMAGE_RUN
+	mkdir -p $(BUILD_DIR)/img_$(1)
+	$(PYTHON) pycore/tools/run_image_test.py \
+		--source pycore/programs/img_$(1).py \
+		--entry managed_entry \
+		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
+		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
+		--string-hex $(BUILD_DIR)/img_$(1)/string_mem.hex \
+		--meta $(BUILD_DIR)/img_$(1)/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/img_$(1)/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/img_$(1)/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/img_$(1)/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d$$EXPECTED_TAG \
+		"-GEXPECTED_VALUE=128'd$$EXPECTED_VALUE" \
+		-GMAX_CYCLES=$(2) \
+		--Mdir $(BUILD_DIR)/img_$(1)/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/img_$(1)/verilator/Vtb_container
+endef
+
+define PYCORE_IMAGE_TRAP_RUN
+	mkdir -p $(BUILD_DIR)/img_$(1)
+	$(PYTHON) pycore/tools/image_from_source.py \
+		--source pycore/programs/img_$(1).py \
+		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
+		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
+		--string-hex $(BUILD_DIR)/img_$(1)/string_mem.hex \
+		--meta $(BUILD_DIR)/img_$(1)/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/img_$(1)/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/img_$(1)/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/img_$(1)/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GEXPECT_TRAP=1 \
+		-GEXPECTED_TRAP_CODE=4\'d$(2) \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GMAX_CYCLES=$(3) \
+		--Mdir $(BUILD_DIR)/img_$(1)/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/img_$(1)/verilator/Vtb_container
+endef
+
+pycore-img-smoke:
+	$(call PYCORE_IMAGE_RUN,smoke,50000)
+
+pycore-img-call-chain:
+	$(call PYCORE_IMAGE_RUN,call_chain,50000)
+
+pycore-img-str-consts:
+	$(call PYCORE_IMAGE_RUN,str_consts,50000)
+
+pycore-img-containers:
+	$(call PYCORE_IMAGE_RUN,containers,50000)
+
+pycore-img-recursion:
+	$(call PYCORE_IMAGE_RUN,recursion,100000)
+
+pycore-img-extended-arg:
+	$(call PYCORE_IMAGE_RUN,extended_arg,200000)
+
+pycore-img-branchy:
+	$(call PYCORE_IMAGE_RUN,branchy,50000)
+
+pycore-img-undef-global:
+	$(call PYCORE_IMAGE_TRAP_RUN,undef_global,7,50000)
+
+pycore-img-noncallable:
+	$(call PYCORE_IMAGE_TRAP_RUN,noncallable,6,50000)
+
+pycore-img-bad-argc:
+	$(call PYCORE_IMAGE_TRAP_RUN,bad_argc,6,50000)
+
+pycore-img: \
+	pycore-img-smoke \
+	pycore-img-call-chain \
+	pycore-img-str-consts \
+	pycore-img-containers \
+	pycore-img-recursion \
+	pycore-img-extended-arg \
+	pycore-img-branchy \
+	pycore-img-undef-global \
+	pycore-img-noncallable \
+	pycore-img-bad-argc
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /
@@ -310,7 +434,7 @@ pycore-container: \
 	pycore-container-dict-full-insert \
 	pycore-container-list-oom
 
-pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container
+pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container pycore-img
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .
