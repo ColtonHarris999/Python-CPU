@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Preprocess CPython 3.14 bytecode for the PyCore hardware prototype."""
+"""Deprecated legacy single-function preprocessor for PyCore.
+
+The primary CPython image-boot path is image_from_source.py.  This module is
+kept for older container/type fixtures that still use inline LOAD_CONST payloads
+and branch remapping.
+"""
 
 from __future__ import annotations
 
@@ -8,10 +13,44 @@ import dis
 import importlib.util
 import opcode as _opcode_module
 import pathlib
-import struct
 import sys
 from dataclasses import dataclass, field
 from typing import Iterable
+
+from encoding import (
+    ENTRY_HEX_DIGITS,
+    IMEM_SLOT_HEX_DIGITS,
+    SHORT_STR_DATA_SHIFT,
+    SHORT_STR_MAX_BYTES,
+    SHORT_STR_SIZE_SHIFT,
+    STRING_MEM_BYTES,
+    STRING_RUNTIME_BASE,
+    TAG_BOOL,
+    TAG_CODE_OBJECT,
+    TAG_DICT,
+    TAG_FLOAT,
+    TAG_FRAME_OBJECT,
+    TAG_INT,
+    TAG_LIST,
+    TAG_LONG_STR,
+    TAG_NONE,
+    TAG_NULL,
+    TAG_OBJECT,
+    TAG_PTR,
+    TAG_SET,
+    TAG_SHORT_STR,
+    TAG_TUPLE,
+    TAG_UNINIT,
+    TAG_UNINITIALIZED,
+    TAG_UNUSED,
+    VAL_MASK,
+    VAL_WIDTH,
+    StringHeapBuilder,
+    float_bits,
+    format_entry,
+    format_imem_slot,
+    tag_constant,
+)
 
 
 REQUIRED_PY = (3, 14)
@@ -72,30 +111,13 @@ DEFERRED_OPS: dict[str, str] = {
     "BUILD_SET":     "set literals not yet implemented",
     "SET_ADD":       "set.add not yet implemented",
     "SET_UPDATE":    "set.update not yet implemented",
+    "LOAD_GLOBAL":   "module/global lookup is supported by image_from_source.py",
+    "LOAD_NAME":     "module/name lookup is supported by image_from_source.py",
+    "STORE_NAME":    "module/name stores are supported by image_from_source.py",
+    "STORE_GLOBAL":  "global stores are supported by image_from_source.py",
+    "PUSH_NULL":     "CALL self-or-null layout is supported by image_from_source.py",
+    "MAKE_FUNCTION": "function objects are supported by image_from_source.py",
 }
-
-TAG_UNINITIALIZED = 0b0000
-TAG_INT           = 0b0001
-TAG_FLOAT         = 0b0010
-TAG_BOOL          = 0b0011
-TAG_PTR           = 0b0100
-TAG_TUPLE         = 0b0101
-TAG_SHORT_STR     = 0b0110
-TAG_LONG_STR      = 0b0111
-TAG_OBJECT        = 0b1000
-TAG_DICT          = 0b1001
-TAG_LIST          = 0b1010
-TAG_SET           = 0b1011
-TAG_CODE_OBJECT   = 0b1100
-TAG_FRAME_OBJECT  = 0b1101
-TAG_UNUSED        = 0b1110
-TAG_NONE          = 0b1111
-
-SHORT_STR_MAX_BYTES = 15
-SHORT_STR_SIZE_SHIFT = 124
-SHORT_STR_DATA_SHIFT = 4
-STRING_MEM_BYTES = 65536
-STRING_RUNTIME_BASE = 16384
 
 SUPPORTED_OPS = {
     "RESUME",
@@ -272,104 +294,6 @@ def emit_instruction_words(
     return emitted
 
 
-def float_bits(value: float) -> int:
-    return struct.unpack(">Q", struct.pack(">d", value))[0]
-
-
-class StringHeapBuilder:
-    """Builds an initialized long-string memory image for hardware.
-
-    Long strings are interned: identical byte sequences reuse the same address.
-    Dict key equality for LONG_STR relies on this interning invariant — hardware
-    compares {size, addr} descriptors only, so two descriptors are equal iff
-    they name the same interned payload.
-    """
-
-    def __init__(self) -> None:
-        self.next_addr = 0
-        self.image: dict[int, int] = {}
-        self._intern: dict[bytes, int] = {}
-
-    def allocate(self, data: bytes) -> int:
-        if not data:
-            return 0
-
-        existing = self._intern.get(data)
-        if existing is not None:
-            return existing
-
-        addr = self.next_addr
-        end = addr + len(data)
-        if end > STRING_RUNTIME_BASE:
-            raise ValueError(
-                "Long-string constants exceed reserved string-constant memory "
-                f"region (used {end} bytes, limit {STRING_RUNTIME_BASE})"
-            )
-
-        for offset, byte in enumerate(data):
-            self.image[addr + offset] = byte
-        self.next_addr = end
-        self._intern[data] = addr
-        return addr
-
-
-# Architectural value is now a 128-bit field carrying a 4-bit tag, i.e. a
-# 132-bit entry. INT keeps a 64-bit signed fast path sign-extended into the
-# upper 64 bits; FLOAT/BOOL live in the low 64 bits with the rest zero.
-VAL_WIDTH = 128
-VAL_MASK = (1 << VAL_WIDTH) - 1
-TAG_WIDTH = 4
-ENTRY_HEX_DIGITS = (TAG_WIDTH + VAL_WIDTH + 3) // 4  # ceil(132/4) == 33
-
-# Instruction memory slot: 40-bit folded word, zero-padded to one 8-byte slot.
-IMEM_SLOT_BITS = 64
-IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
-
-
-def _encode_short_string(data: bytes) -> int:
-    payload = 0
-    for idx, byte in enumerate(data):
-        shift = SHORT_STR_DATA_SHIFT + (SHORT_STR_MAX_BYTES - 1 - idx) * 8
-        payload |= int(byte) << shift
-    payload |= (len(data) & 0xF) << SHORT_STR_SIZE_SHIFT
-    return payload
-
-
-def tag_constant(value: object, string_heap: StringHeapBuilder) -> tuple[int, int]:
-    if isinstance(value, bool):
-        return TAG_BOOL, int(value)
-    if isinstance(value, int):
-        # Two's-complement masked to 128 bits sign-extends negatives correctly.
-        return TAG_INT, value & VAL_MASK
-    if isinstance(value, float):
-        return TAG_FLOAT, float_bits(value)
-    if isinstance(value, str):
-        encoded = value.encode("utf-8")
-        if len(encoded) <= SHORT_STR_MAX_BYTES:
-            return TAG_SHORT_STR, _encode_short_string(encoded)
-        if len(encoded) > ((1 << 64) - 1):
-            raise ValueError("String constant exceeds 64-bit length field")
-        addr = string_heap.allocate(encoded)
-        return TAG_LONG_STR, ((len(encoded) & ((1 << 64) - 1)) << 64) | (addr & ((1 << 64) - 1))
-    if value is None:
-        return TAG_NONE, 0
-    if isinstance(value, tuple):
-        raise ValueError(
-            "tuple constants require the static heap image builder — not yet supported"
-        )
-    if isinstance(value, (list, dict, set, frozenset)):
-        raise ValueError(
-            f"{type(value).__name__} constants require the static heap image "
-            "builder — not yet supported"
-        )
-    return TAG_OBJECT, 0
-
-
-def format_entry(tag: int, value: int) -> str:
-    entry = ((tag & 0xF) << VAL_WIDTH) | (value & VAL_MASK)
-    return f"{entry:0{ENTRY_HEX_DIGITS}x}"
-
-
 def write_text(path: pathlib.Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="ascii")
@@ -471,9 +395,7 @@ def write_program_hex(path: pathlib.Path, instructions: Iterable[EmittedInstruct
             lines.append(f"{word1:0{IMEM_SLOT_HEX_DIGITS}x}")
             lines.append(f"{word2:0{IMEM_SLOT_HEX_DIGITS}x}")
         else:
-            lines.append(
-                f"{((ins.arg & 0xffffffff) << 8) | ins.opcode:0{IMEM_SLOT_HEX_DIGITS}x}"
-            )
+            lines.append(format_imem_slot(ins.opcode, ins.arg))
     write_text(path, "\n".join(lines) + ("\n" if lines else ""))
 
 
