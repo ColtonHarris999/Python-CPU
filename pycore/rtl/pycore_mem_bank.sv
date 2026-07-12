@@ -13,6 +13,10 @@
 // return exactly one cycle later, matching the synchronous-SRAM block latency.
 // An out-of-range block, or a write to a READ_ONLY bank, raises `fault_o` with the
 // ack_o so the master can convert it into a trap without hanging.
+//
+// Preload: when INIT_HEX is nonempty, the full bank image is $readmemh'd into a
+// temporary array and copied into every block (Verilator-compatible). Previously
+// only block 0 was initializable, limiting preload to the first 4 KB.
 module pycore_mem_bank #(
     parameter int    DATA_WIDTH  = 64,
     parameter int    ADDR_WIDTH  = 32,
@@ -37,6 +41,8 @@ module pycore_mem_bank #(
     localparam int WORDS_PER_BLOCK = (1 << BLOCK_SHIFT) / BYTES_PER_WORD;
     localparam int WORD_ADDR_W     = $clog2(WORDS_PER_BLOCK);
     localparam int BLOCK_IDX_W     = (BLOCK_COUNT <= 1) ? 1 : $clog2(BLOCK_COUNT);
+    localparam int TOTAL_WORDS     = BLOCK_COUNT * WORDS_PER_BLOCK;
+    localparam bit HAS_INIT        = (INIT_HEX != "");
 
     logic [ADDR_WIDTH-BLOCK_SHIFT-1:0] block_idx;
     logic [WORD_ADDR_W-1:0]            word_idx;
@@ -52,6 +58,19 @@ module pycore_mem_bank #(
 
     logic [DATA_WIDTH-1:0] blk_rdata [0:BLOCK_COUNT-1];
 
+    // Full-bank preload image (only used when HAS_INIT).
+    logic [DATA_WIDTH-1:0] init_img [0:TOTAL_WORDS-1];
+
+    initial begin
+        int wi;
+        for (wi = 0; wi < TOTAL_WORDS; wi++) begin
+            init_img[wi] = '0;
+        end
+        if (HAS_INIT) begin
+            $readmemh(INIT_HEX, init_img);
+        end
+    end
+
     genvar g;
     generate
         for (g = 0; g < BLOCK_COUNT; g++) begin : gen_block
@@ -59,10 +78,13 @@ module pycore_mem_bank #(
             assign blk_we = req_i && we_i && (READ_ONLY == 0) &&
                             !req_fault && (block_idx == g);
 
+            // When the bank owns a full-image preload, skip per-block zeroing
+            // so the generate-local copy below is the sole initializer.
             pycore_mem_block #(
                 .DATA_WIDTH(DATA_WIDTH),
                 .DEPTH(WORDS_PER_BLOCK),
-                .INIT_HEX((g == 0) ? INIT_HEX : "")
+                .INIT_HEX(""),
+                .INIT_ZERO(!HAS_INIT)
             ) blk (
                 .clk_i(clk_i),
                 .we_i(blk_we),
@@ -70,6 +92,17 @@ module pycore_mem_bank #(
                 .wdata_i(wdata_i),
                 .rdata_o(blk_rdata[g])
             );
+
+            if (HAS_INIT) begin : gen_copy
+                // genvar g is constant in this scope — Verilator can expand
+                // the hierarchical reference to blk.mem.
+                initial begin
+                    int wi;
+                    for (wi = 0; wi < WORDS_PER_BLOCK; wi++) begin
+                        blk.mem[wi] = init_img[g * WORDS_PER_BLOCK + wi];
+                    end
+                end
+            end
         end
     endgenerate
 

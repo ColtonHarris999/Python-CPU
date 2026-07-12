@@ -6,7 +6,8 @@
 module pycore_mem_block #(
     parameter int    DATA_WIDTH = 64,
     parameter int    DEPTH      = 512,
-    parameter string INIT_HEX   = ""
+    parameter string INIT_HEX   = "",
+    parameter bit    INIT_ZERO  = 1'b1
 ) (
     input  logic                       clk_i,
     input  logic                       we_i,
@@ -19,8 +20,10 @@ module pycore_mem_block #(
 
     initial begin
         int i;
-        for (i = 0; i < DEPTH; i++) begin
-            mem[i] = '0;
+        if (INIT_ZERO) begin
+            for (i = 0; i < DEPTH; i++) begin
+                mem[i] = '0;
+            end
         end
         if (INIT_HEX != "") begin
             $readmemh(INIT_HEX, mem);

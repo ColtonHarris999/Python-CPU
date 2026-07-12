@@ -26,6 +26,7 @@ REQUIRED_PY = (3, 14)
 # Verified values (Python 3.14.x):
 #   OP_BUILD_LIST                       = 46
 #   OP_BUILD_MAP                        = 47
+#   OP_BUILD_TUPLE                      = 51
 #   OP_STORE_SUBSCR                     = 38
 #   OP_BINARY_OP                        = 44
 #   OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = 87
@@ -34,6 +35,7 @@ REQUIRED_PY = (3, 14)
 _OM = _opcode_module.opmap
 OP_BUILD_LIST    = _OM["BUILD_LIST"]
 OP_BUILD_MAP     = _OM["BUILD_MAP"]
+OP_BUILD_TUPLE   = _OM["BUILD_TUPLE"]
 OP_STORE_SUBSCR  = _OM["STORE_SUBSCR"]
 OP_BINARY_OP     = _OM["BINARY_OP"]
 OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = _OM.get(
@@ -130,6 +132,7 @@ SUPPORTED_OPS = {
     # Container operations (in-scope for PyCore dict-list support).
     "BUILD_LIST",
     "BUILD_MAP",
+    "BUILD_TUPLE",
     "STORE_SUBSCR",
 }
 
@@ -274,15 +277,26 @@ def float_bits(value: float) -> int:
 
 
 class StringHeapBuilder:
-    """Builds an initialized long-string memory image for hardware."""
+    """Builds an initialized long-string memory image for hardware.
+
+    Long strings are interned: identical byte sequences reuse the same address.
+    Dict key equality for LONG_STR relies on this interning invariant — hardware
+    compares {size, addr} descriptors only, so two descriptors are equal iff
+    they name the same interned payload.
+    """
 
     def __init__(self) -> None:
         self.next_addr = 0
         self.image: dict[int, int] = {}
+        self._intern: dict[bytes, int] = {}
 
     def allocate(self, data: bytes) -> int:
         if not data:
             return 0
+
+        existing = self._intern.get(data)
+        if existing is not None:
+            return existing
 
         addr = self.next_addr
         end = addr + len(data)
@@ -295,6 +309,7 @@ class StringHeapBuilder:
         for offset, byte in enumerate(data):
             self.image[addr + offset] = byte
         self.next_addr = end
+        self._intern[data] = addr
         return addr
 
 
@@ -336,6 +351,17 @@ def tag_constant(value: object, string_heap: StringHeapBuilder) -> tuple[int, in
             raise ValueError("String constant exceeds 64-bit length field")
         addr = string_heap.allocate(encoded)
         return TAG_LONG_STR, ((len(encoded) & ((1 << 64) - 1)) << 64) | (addr & ((1 << 64) - 1))
+    if value is None:
+        return TAG_NONE, 0
+    if isinstance(value, tuple):
+        raise ValueError(
+            "tuple constants require the static heap image builder — not yet supported"
+        )
+    if isinstance(value, (list, dict, set, frozenset)):
+        raise ValueError(
+            f"{type(value).__name__} constants require the static heap image "
+            "builder — not yet supported"
+        )
     return TAG_OBJECT, 0
 
 
@@ -537,6 +563,11 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             for _ in range(min(count, len(stack))):
                 stack.pop()
             stack.append(TAG_LIST)
+        elif ins.opname == "BUILD_TUPLE":
+            count = ins.arg or 0
+            for _ in range(min(count, len(stack))):
+                stack.pop()
+            stack.append(TAG_TUPLE)
         elif ins.opname == "BUILD_MAP":
             count = ins.arg or 0
             for _ in range(min(2 * count, len(stack))):
@@ -552,7 +583,7 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             if ins.arg == NBARG_SUBSCR:
                 # Subscript read: result type is unknown (element type not tracked).
                 result_tag = TAG_OBJECT
-                if lhs not in (TAG_LIST, TAG_DICT, TAG_OBJECT):
+                if lhs not in (TAG_LIST, TAG_DICT, TAG_TUPLE, TAG_OBJECT):
                     warnings.append(
                         f"NB_SUBSCR on non-container tag {lhs} at offset {ins.source_offset}"
                     )

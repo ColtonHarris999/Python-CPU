@@ -16,7 +16,9 @@ module pycore_system #(
     parameter int    IMEM_BLOCK_COUNT = PYCORE_IMEM_BLOCK_COUNT,
     parameter int    DMEM_BLOCK_COUNT = PYCORE_DMEM_BLOCK_COUNT,
     parameter string PROG_HEX         = "pycore/programs/program.hex",
-    parameter string STRING_HEX       = "pycore/programs/string_mem.hex"
+    parameter string STRING_HEX       = "pycore/programs/string_mem.hex",
+    parameter string DMEM_HEX         = "",
+    parameter logic [31:0] HEAP_INIT_PTR = PYCORE_HEAP_BASE
 ) (
     input  logic        clk_i,
     input  logic        rst_n_i,
@@ -50,7 +52,8 @@ module pycore_system #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .IMEM_DATA_W(IMEM_DATA_W),
         .DMEM_DATA_W(DMEM_DATA_W),
-        .STRING_HEX(STRING_HEX)
+        .STRING_HEX(STRING_HEX),
+        .HEAP_INIT_PTR(HEAP_INIT_PTR)
     ) core (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
@@ -98,7 +101,8 @@ module pycore_system #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .DATA_WIDTH(DMEM_DATA_W),
         .BLOCK_SHIFT(BLOCK_SHIFT),
-        .BLOCK_COUNT(DMEM_BLOCK_COUNT)
+        .BLOCK_COUNT(DMEM_BLOCK_COUNT),
+        .INIT_HEX(DMEM_HEX)
     ) dmem (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
