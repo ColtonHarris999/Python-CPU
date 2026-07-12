@@ -36,7 +36,11 @@ localparam logic [3:0] PY_TAG_LIST         = 4'b1010;
 localparam logic [3:0] PY_TAG_SET          = 4'b1011;
 localparam logic [3:0] PY_TAG_CODE_OBJECT  = 4'b1100;
 localparam logic [3:0] PY_TAG_FRAME_OBJECT = 4'b1101;
-localparam logic [3:0] PY_TAG_UNUSED       = 4'b1110;
+// PY_TAG_NULL: CPython self_or_null sentinel pushed for non-method calls
+// (LOAD_GLOBAL with low bit set, or explicit PUSH_NULL). Formerly PY_TAG_UNUSED.
+// Value field is zero. Traps in arithmetic/branch like UNINIT (covered by
+// pycore_is_trapping_tag — not numeric, not string).
+localparam logic [3:0] PY_TAG_NULL         = 4'b1110;
 localparam logic [3:0] PY_TAG_NONE         = 4'b1111;
 
 localparam int PYCORE_SHORT_STR_MAX_BYTES = 15;
@@ -96,62 +100,103 @@ localparam logic [4:0] PY_ALU_PASS      = 5'd22;
 localparam logic [4:0] PY_ALU_SUBSCR   = 5'd23;
 localparam logic [4:0] PY_ALU_ILLEGAL   = 5'd31;
 
+// -------------------------------------------------------------------------
+// Opcode numbers — resolved from the running CPython 3.14.6 interpreter
+// (opcode.opmap). Do NOT hand-transcribe from memory; 3.11→3.14 renumbered
+// many opcodes (CALL, PUSH_NULL, jumps, EXTENDED_ARG, COMPARE_OP, POP_TOP).
+//
+//   python3.14 -c "import opcode; print({n:opcode.opmap[n] for n in [...]})"
+// -------------------------------------------------------------------------
 localparam logic [7:0] PY_OP_CACHE            = 8'd0;
-localparam logic [7:0] PY_OP_POP_TOP          = 8'd1;
-localparam logic [7:0] PY_OP_PUSH_NULL        = 8'd2;
-localparam logic [7:0] PY_OP_POP_ITER         = 8'd3;
+localparam logic [7:0] PY_OP_MAKE_FUNCTION    = 8'd23;
+localparam logic [7:0] PY_OP_NOT_TAKEN        = 8'd28;
+localparam logic [7:0] PY_OP_POP_ITER         = 8'd30;
+localparam logic [7:0] PY_OP_POP_TOP          = 8'd31;
+localparam logic [7:0] PY_OP_PUSH_NULL        = 8'd33;
 localparam logic [7:0] PY_OP_RETURN_VALUE     = 8'd35;
+localparam logic [7:0] PY_OP_STORE_SUBSCR     = 8'd38;
+localparam logic [7:0] PY_OP_TO_BOOL          = 8'd39;
 localparam logic [7:0] PY_OP_BINARY_OP        = 8'd44;
-localparam logic [7:0] PY_OP_COMPARE_OP       = 8'd58;
+localparam logic [7:0] PY_OP_BUILD_LIST       = 8'd46;
+localparam logic [7:0] PY_OP_BUILD_MAP        = 8'd47;
+localparam logic [7:0] PY_OP_BUILD_TUPLE      = 8'd51;
+localparam logic [7:0] PY_OP_CALL             = 8'd52;
+localparam logic [7:0] PY_OP_COMPARE_OP       = 8'd56;
+localparam logic [7:0] PY_OP_EXTENDED_ARG     = 8'd69;
+localparam logic [7:0] PY_OP_JUMP_BACKWARD    = 8'd75;
+localparam logic [7:0] PY_OP_JUMP_FORWARD     = 8'd77;
 localparam logic [7:0] PY_OP_LOAD_CONST       = 8'd82;
 localparam logic [7:0] PY_OP_LOAD_FAST        = 8'd84;
 localparam logic [7:0] PY_OP_LOAD_FAST_BORROW = 8'd86;
-localparam logic [7:0] PY_OP_LOAD_SMALL_INT   = 8'd94;
-localparam logic [7:0] PY_OP_STORE_FAST       = 8'd112;
-localparam logic [7:0] PY_OP_POP_JUMP_IF_FALSE = 8'd114;
-localparam logic [7:0] PY_OP_POP_JUMP_IF_TRUE  = 8'd115;
-localparam logic [7:0] PY_OP_CALL             = 8'd171;
-localparam logic [7:0] PY_OP_RESUME           = 8'd128;
-localparam logic [7:0] PY_OP_EXTENDED_ARG     = 8'd144;
-localparam logic [7:0] PY_OP_JUMP_FORWARD     = 8'd110;
-localparam logic [7:0] PY_OP_JUMP_BACKWARD    = 8'd140;
-
-// Container / subscript opcodes added in PyCore dict-list support.
-// Opcode integers resolved from the CPython 3.14 interpreter:
-//   python3.14 -c "import opcode; [print(n,opcode.opmap[n]) for n in \
-//       ['BUILD_LIST','BUILD_MAP','BUILD_TUPLE','STORE_SUBSCR','BINARY_OP', \
-//        'LOAD_FAST_BORROW_LOAD_FAST_BORROW']]"
-//   BUILD_LIST                       = 46
-//   BUILD_MAP                        = 47
-//   BUILD_TUPLE                      = 51
-//   STORE_SUBSCR                     = 38
-//   BINARY_OP                        = 44  (unchanged)
-//   LOAD_FAST_BORROW_LOAD_FAST_BORROW = 87
-//
-// NB_SUBSCR oparg resolved from opcode._nb_ops (index 26):
-//   python3.14 -c "import opcode; print([(i,e) for i,e in enumerate(opcode._nb_ops) if 'SUBSCR' in e[0]])"
-//   NB_SUBSCR = 26
-localparam logic [7:0] PY_OP_BUILD_LIST        = 8'd46;
-localparam logic [7:0] PY_OP_BUILD_MAP         = 8'd47;
-localparam logic [7:0] PY_OP_BUILD_TUPLE       = 8'd51;
-localparam logic [7:0] PY_OP_STORE_SUBSCR      = 8'd38;
 localparam logic [7:0] PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = 8'd87;
+localparam logic [7:0] PY_OP_LOAD_GLOBAL      = 8'd92;
+localparam logic [7:0] PY_OP_LOAD_NAME        = 8'd93;
+localparam logic [7:0] PY_OP_LOAD_SMALL_INT   = 8'd94;
+localparam logic [7:0] PY_OP_POP_JUMP_IF_FALSE = 8'd100;
+localparam logic [7:0] PY_OP_POP_JUMP_IF_TRUE  = 8'd103;
+localparam logic [7:0] PY_OP_SET_FUNCTION_ATTRIBUTE = 8'd108;
+localparam logic [7:0] PY_OP_STORE_FAST       = 8'd112;
+localparam logic [7:0] PY_OP_STORE_GLOBAL     = 8'd115;
+localparam logic [7:0] PY_OP_STORE_NAME       = 8'd116;
+localparam logic [7:0] PY_OP_RESUME           = 8'd128;
+
+// -------------------------------------------------------------------------
+// Verified CPython 3.14.6 conventions (probes recorded 2026-07-12):
+//
+// LOAD_GLOBAL oparg (from bytecodes.c macro LOAD_GLOBAL):
+//   namei = oparg >> 1
+//   if (oparg & 1): after pushing the global, also push NULL
+//   Probe:
+//     def f(x): return x
+//     def g(): return f(7)
+//     # dis: LOAD_GLOBAL 1 (f + NULL)  → arg=1, namei=0, null_bit=1
+//   Stack after LOAD_GLOBAL(f+NULL): [callable, NULL]  (NULL at TOS)
+//   Order: _LOAD_GLOBAL then _PUSH_NULL_CONDITIONAL (NULL pushed AFTER global).
+//
+// LOAD_NAME / PUSH_NULL (module-level call):
+//     LOAD_NAME managed_entry; PUSH_NULL; CALL 0
+//   Stack before CALL: [callable, NULL]  (same layout as LOAD_GLOBAL+NULL)
+//
+// CALL stack (from bytecodes.c _DO_CALL / _SPECIALIZE_CALL):
+//   (callable, self_or_null, args[oparg] -- res)
+//   Bottom→top: callable, self_or_null, arg1..argN
+//   RF: callable @ tos-argc-2, sentinel @ tos-argc-1, args @ tos-argc .. tos-1
+//   Non-method calls require sentinel tag == PY_TAG_NULL.
+//
+// MAKE_FUNCTION: (codeobj -- func), oparg unused/None, stack effect 0.
+//   Interim model: function ≡ code object handle (no defaults/closures).
+//
+// COMPARE_OP: comparison selector is oparg >> 5  (3.13+ packed encoding).
+//   Probe: < →2, <= →42, == →72, != →103, > →132, >= →172  (>>5 → 0..5)
+//
+// Relative jumps (slot index == code-unit index; CACHE units count):
+//   forward:  target = pc + 1 + n_cache + arg
+//   backward: target = pc + 1 + n_cache - arg
+//   n_cache from opcode._inline_cache_entries (name-keyed):
+//     POP_JUMP_IF_{TRUE,FALSE}=1, JUMP_BACKWARD=1, JUMP_FORWARD=0
+// -------------------------------------------------------------------------
+
 // BINARY_OP oparg for subscript read (x[k]); not a standalone opcode.
+//   python3.14 -c "import opcode; print([(i,e) for i,e in enumerate(opcode._nb_ops) if 'SUBSCR' in e[0]])"
 localparam logic [7:0] PY_NBARG_SUBSCR         = 8'd26;
 
+// Inline-cache unit counts for relative-jump target computation (3.14.6).
+localparam logic [7:0] PY_CACHE_JUMP_FORWARD      = 8'd0;
+localparam logic [7:0] PY_CACHE_JUMP_BACKWARD     = 8'd1;
+localparam logic [7:0] PY_CACHE_POP_JUMP_IF_FALSE = 8'd1;
+localparam logic [7:0] PY_CACHE_POP_JUMP_IF_TRUE  = 8'd1;
+
 // Internal-only memory opcodes. These are not part of the CPython 3.14 opcode
-// space and are never emitted by preprocess.py; they exist so hand-written test
-// streams can exercise the dmem datapath through the real MEM stage. The values
-// are chosen above the CPython opcode range to avoid collisions.
+// space and are never emitted by the image builder; they exist so hand-written
+// test streams can exercise the dmem datapath through the real MEM stage.
 localparam logic [7:0] PY_OP_MEM_LOAD_PTR     = 8'd200;
 localparam logic [7:0] PY_OP_MEM_STORE_PTR    = 8'd201;
 
 localparam logic [2:0] PY_MEM_NONE       = 3'd0;
 localparam logic [2:0] PY_MEM_LOAD_FAST  = 3'd1;
 localparam logic [2:0] PY_MEM_STORE_FAST = 3'd2;
-localparam logic [2:0] PY_MEM_LOAD_CONST = 3'd3;
-localparam logic [2:0] PY_MEM_LOAD_PTR   = 3'd4;
-localparam logic [2:0] PY_MEM_STORE_PTR  = 3'd5;
+localparam logic [2:0] PY_MEM_LOAD_PTR   = 3'd3;
+localparam logic [2:0] PY_MEM_STORE_PTR  = 3'd4;
 
 // Entry accessors. Fixed to PYCORE_ENTRY_WIDTH so callers do not scatter slice
 // indices through the RTL.
@@ -560,5 +605,81 @@ function automatic logic [31:0] pycore_tuple_alloc_bytes(
         pycore_tuple_alloc_bytes = size << 5;
     end
 endfunction
+
+// -------------------------------------------------------------------------
+// CODE OBJECT in-dmem layout (tuple-element convention, 4 fields = 128 bytes):
+//
+//   Handle: { PY_TAG_CODE_OBJECT, {64'd0, addr[63:0]} }
+//
+//   field 0 : entry_slot (INT)  — imem slot index of first code unit
+//   field 1 : co_consts  (TUPLE handle; empty tuple allowed)
+//   field 2 : co_names   (TUPLE handle; empty tuple allowed)
+//   field 3 : metadata   (INT)  — packed
+//               value[15:0]  = argcount
+//               value[31:16] = nlocals
+//               value[47:32] = stacksize
+//
+// Interim model: a "function object" IS a code-object handle (function ≡ code).
+// Per-function globals / defaults / closures are future work.
+// -------------------------------------------------------------------------
+localparam logic [31:0] PYCORE_CODE_FIELD_ENTRY_SLOT = 32'd0;
+localparam logic [31:0] PYCORE_CODE_FIELD_CO_CONSTS  = 32'd1;
+localparam logic [31:0] PYCORE_CODE_FIELD_CO_NAMES   = 32'd2;
+localparam logic [31:0] PYCORE_CODE_FIELD_METADATA   = 32'd3;
+localparam logic [31:0] PYCORE_CODE_NFIELDS          = 32'd4;
+localparam logic [31:0] PYCORE_CODE_OBJECT_BYTES     = 32'd128;
+
+function automatic logic [31:0] pycore_code_field_val_addr(
+    input logic [31:0] addr,
+    input logic [31:0] i
+);
+    begin
+        pycore_code_field_val_addr = pycore_tuple_val_addr(addr, i);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_code_field_tag_addr(
+    input logic [31:0] addr,
+    input logic [31:0] i
+);
+    begin
+        pycore_code_field_tag_addr = pycore_tuple_tag_addr(addr, i);
+    end
+endfunction
+
+function automatic logic [15:0] pycore_code_meta_argcount(
+    input logic [PYCORE_VAL_WIDTH-1:0] meta
+);
+    begin
+        pycore_code_meta_argcount = meta[15:0];
+    end
+endfunction
+
+function automatic logic [15:0] pycore_code_meta_nlocals(
+    input logic [PYCORE_VAL_WIDTH-1:0] meta
+);
+    begin
+        pycore_code_meta_nlocals = meta[31:16];
+    end
+endfunction
+
+function automatic logic [15:0] pycore_code_meta_stacksize(
+    input logic [PYCORE_VAL_WIDTH-1:0] meta
+);
+    begin
+        pycore_code_meta_stacksize = meta[47:32];
+    end
+endfunction
+
+// -------------------------------------------------------------------------
+// Boot record — two tagged-entry pairs just below the heap base, inside the
+// reserved low region:
+//
+//   PYCORE_BOOT_RECORD_ADDR + 0  : module code object handle (CODE_OBJECT)
+//   PYCORE_BOOT_RECORD_ADDR + 32 : globals dict handle (DICT)
+//
+// Written by image_from_source.py; read by S_BOOT at reset when BOOT_EN=1.
+// -------------------------------------------------------------------------
+localparam logic [31:0] PYCORE_BOOT_RECORD_ADDR = 32'h0000_03E0;
 
 `endif

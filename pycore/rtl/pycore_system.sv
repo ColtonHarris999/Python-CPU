@@ -5,9 +5,10 @@
 // so memory lives outside the core as real master/slave connections instead of
 // a loopback wire.
 //
-// The constant ROM has been removed. LOAD_CONST constants are now embedded
-// directly in the instruction stream as 3-slot variable-length instructions
-// and are reconstructed by the fetch unit, so no separate ROM is needed.
+// The constant ROM has been removed.  LOAD_CONST reads co_consts through
+// S_CONTAINER; the module image builder (image_from_source.py) preloads
+// dmem with the code object + constants tuple + globals dict, and the CPU
+// walks the boot record at reset (S_BOOT) when BOOT_EN=1.
 module pycore_system #(
     parameter int    ADDR_WIDTH       = PYCORE_ADDR_WIDTH,
     parameter int    IMEM_DATA_W      = PYCORE_IMEM_DATA_WIDTH,
@@ -18,7 +19,8 @@ module pycore_system #(
     parameter string PROG_HEX         = "pycore/programs/program.hex",
     parameter string STRING_HEX       = "pycore/programs/string_mem.hex",
     parameter string DMEM_HEX         = "",
-    parameter logic [31:0] HEAP_INIT_PTR = PYCORE_HEAP_BASE
+    parameter logic [31:0] HEAP_INIT_PTR = PYCORE_HEAP_BASE,
+    parameter bit    BOOT_EN          = 1'b1
 ) (
     input  logic        clk_i,
     input  logic        rst_n_i,
@@ -53,7 +55,8 @@ module pycore_system #(
         .IMEM_DATA_W(IMEM_DATA_W),
         .DMEM_DATA_W(DMEM_DATA_W),
         .STRING_HEX(STRING_HEX),
-        .HEAP_INIT_PTR(HEAP_INIT_PTR)
+        .HEAP_INIT_PTR(HEAP_INIT_PTR),
+        .BOOT_EN(BOOT_EN)
     ) core (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),

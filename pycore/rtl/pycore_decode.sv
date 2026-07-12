@@ -15,9 +15,8 @@ module pycore_decode (
     output logic        is_branch_o,
     output logic        is_call_o,
     output logic        is_return_o,
-    // Asserted for BUILD_LIST, BUILD_MAP, STORE_SUBSCR, and BINARY_OP/NB_SUBSCR.
-    // These instructions are multi-cycle container operations handled entirely
-    // by the core's S_CONTAINER state; they bypass S_MEM and S_WB.
+    // Asserted for multi-cycle container / name / const-table operations
+    // handled by S_CONTAINER (bypass S_MEM and S_WB).
     output logic        is_container_o,
     output logic        push_stack_o,
     output logic        pop_stack_o,
@@ -49,15 +48,16 @@ module pycore_decode (
         end
     endfunction
 
+    // CPython 3.14 COMPARE_OP: comparison selector is oparg >> 5.
     function automatic logic [4:0] decode_compare_op(input logic [7:0] cmp);
         begin
-            unique case (cmp)
-                8'd0: decode_compare_op = PY_ALU_LT;
-                8'd1: decode_compare_op = PY_ALU_LE;
-                8'd2: decode_compare_op = PY_ALU_EQ;
-                8'd3: decode_compare_op = PY_ALU_NE;
-                8'd4: decode_compare_op = PY_ALU_GT;
-                8'd5: decode_compare_op = PY_ALU_GE;
+            unique case (cmp[7:5])
+                3'd0: decode_compare_op = PY_ALU_LT;
+                3'd1: decode_compare_op = PY_ALU_LE;
+                3'd2: decode_compare_op = PY_ALU_EQ;
+                3'd3: decode_compare_op = PY_ALU_NE;
+                3'd4: decode_compare_op = PY_ALU_GT;
+                3'd5: decode_compare_op = PY_ALU_GE;
                 default: decode_compare_op = PY_ALU_ILLEGAL;
             endcase
         end
@@ -80,7 +80,8 @@ module pycore_decode (
         decoded_pc_o = pc_i;
 
         unique case (opcode_i)
-            PY_OP_RESUME: begin
+            PY_OP_RESUME, PY_OP_NOT_TAKEN: begin
+                // NOT_TAKEN is a monitoring NOP in 3.14 branch patterns.
             end
 
             PY_OP_LOAD_FAST, PY_OP_LOAD_FAST_BORROW: begin
@@ -90,6 +91,12 @@ module pycore_decode (
                 mem_op_o = PY_MEM_LOAD_FAST;
             end
 
+            // Combined load: arg[7:4]=first, arg[3:0]=second. Handled as a
+            // two-beat container op so the image path can keep 1:1 encoding.
+            PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW: begin
+                is_container_o = 1'b1;
+            end
+
             PY_OP_STORE_FAST: begin
                 rs1_sel_o = {1'b0, tos_index_i - 6'd1};
                 rd_sel_o = {1'b0, locals_base_i + arg_i[5:0]};
@@ -97,10 +104,33 @@ module pycore_decode (
                 mem_op_o = PY_MEM_STORE_FAST;
             end
 
-            PY_OP_LOAD_SMALL_INT, PY_OP_LOAD_CONST: begin
+            PY_OP_LOAD_SMALL_INT: begin
                 rd_sel_o = {1'b0, tos_index_i};
                 push_stack_o = 1'b1;
-                mem_op_o = (opcode_i == PY_OP_LOAD_CONST) ? PY_MEM_LOAD_CONST : PY_MEM_NONE;
+            end
+
+            // LOAD_CONST: read co_consts[arg] via CONT_LOAD_CONST.
+            PY_OP_LOAD_CONST: begin
+                is_container_o = 1'b1;
+            end
+
+            // PUSH_NULL: push {PY_TAG_NULL, 0} (self_or_null sentinel).
+            PY_OP_PUSH_NULL: begin
+                rd_sel_o = {1'b0, tos_index_i};
+                push_stack_o = 1'b1;
+            end
+
+            // TO_BOOL: convert TOS numeric to BOOL in place (net stack 0).
+            PY_OP_TO_BOOL: begin
+                rs1_sel_o = {1'b0, tos_index_i - 6'd1};
+                rd_sel_o  = {1'b0, tos_index_i - 6'd1};
+                alu_op_o  = PY_ALU_PASS;  // conversion done in core EX
+            end
+
+            // MAKE_FUNCTION: pop code / push function (≡ code). Net effect 0.
+            // Verified in EXEC: trap TYPE if TOS is not CODE_OBJECT.
+            PY_OP_MAKE_FUNCTION: begin
+                rs1_sel_o = {1'b0, tos_index_i - 6'd1};
             end
 
             PY_OP_POP_TOP, PY_OP_POP_ITER: begin
@@ -113,8 +143,6 @@ module pycore_decode (
                 rd_sel_o = {1'b0, tos_index_i - 6'd2};
                 alu_op_o = decode_binary_op(arg_i[7:0]);
                 if (alu_op_o == PY_ALU_SUBSCR) begin
-                    // NB_SUBSCR: container=rs1 (tos-2), key=rs2 (tos-1).
-                    // Multi-cycle container path; S_CONTAINER updates TOS.
                     is_container_o = 1'b1;
                 end else begin
                     pop_stack_o = 1'b1;
@@ -151,52 +179,39 @@ module pycore_decode (
                 is_call_o = 1'b1;
             end
 
-            // ---------------------------------------------------------------
-            // Container build and subscript operations.
-            // All are multi-cycle: the core's S_CONTAINER state drives
-            // the heap allocator and dmem handshake; TOS is updated there,
-            // not here.  The register selectors below give S_CONTAINER the
-            // two operands it needs from the register file.
-            // ---------------------------------------------------------------
+            // LOAD_GLOBAL / LOAD_NAME / STORE_*: multi-cycle name dict ops.
+            PY_OP_LOAD_GLOBAL, PY_OP_LOAD_NAME: begin
+                is_container_o = 1'b1;
+            end
 
-            // BUILD_LIST(count): pop count items, allocate a list, push LIST.
-            // count = arg.  All elements are read by S_CONTAINER via the RF
-            // address override; rs1/rs2 decoded here are not used.
+            PY_OP_STORE_NAME, PY_OP_STORE_GLOBAL: begin
+                is_container_o = 1'b1;
+            end
+
             PY_OP_BUILD_LIST: begin
                 is_container_o = 1'b1;
             end
 
-            // BUILD_MAP(count): pop 2*count items (interleaved key/value),
-            // allocate a dict, push DICT.  Multi-cycle S_CONTAINER path.
             PY_OP_BUILD_MAP: begin
                 is_container_o = 1'b1;
             end
 
-            // BUILD_TUPLE(count): pop count items, allocate a tuple (no header),
-            // push TUPLE handle {size, addr}.
             PY_OP_BUILD_TUPLE: begin
                 is_container_o = 1'b1;
             end
 
-            // STORE_SUBSCR: container[key] = value.
-            // Stack (top to bottom): key(tos-1), container(tos-2), value(tos-3).
-            // rs1 = key, rs2 = container; value read by S_CONTAINER from tos-3.
             PY_OP_STORE_SUBSCR: begin
                 rs1_sel_o = {1'b0, tos_index_i - 6'd1};  // key
                 rs2_sel_o = {1'b0, tos_index_i - 6'd2};  // container
                 is_container_o = 1'b1;
             end
 
-            // Internal-only data-memory ops (not emitted by preprocess.py).
-            // LOAD_PTR: pop an address from TOS, push the loaded value back
-            // (net stack effect zero -> destination reuses the TOS-1 slot).
             PY_OP_MEM_LOAD_PTR: begin
                 rs1_sel_o = {1'b0, tos_index_i - 6'd1};
                 rd_sel_o  = {1'b0, tos_index_i - 6'd1};
                 mem_op_o  = PY_MEM_LOAD_PTR;
             end
 
-            // STORE_PTR: TOS is store data, TOS-1 is the address; both pop.
             PY_OP_MEM_STORE_PTR: begin
                 rs1_sel_o = {1'b0, tos_index_i - 6'd1};
                 rs2_sel_o = {1'b0, tos_index_i - 6'd2};

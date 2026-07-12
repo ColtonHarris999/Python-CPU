@@ -8,6 +8,7 @@ module pycore_trap (
     input  logic        div_zero_i,
     input  logic        fpu_exception_i,
     input  logic        illegal_opcode_i,
+    input  logic        call_filter_i,
     input  logic        mem_fault_i,
     input  logic        addr_align_i,
     input  logic [31:0] fault_pc_i,
@@ -26,7 +27,7 @@ module pycore_trap (
 
     always_comb begin
         next_trap = type_trap_i || stack_fault_i || div_zero_i || fpu_exception_i ||
-                    illegal_opcode_i || mem_fault_i || addr_align_i;
+                    illegal_opcode_i || call_filter_i || mem_fault_i || addr_align_i;
         if (type_trap_i) begin
             next_code = PY_TRAP_TYPE;
         end else if (stack_fault_i) begin
@@ -37,6 +38,8 @@ module pycore_trap (
             next_code = PY_TRAP_FPU_EXCEPTION;
         end else if (illegal_opcode_i) begin
             next_code = PY_TRAP_ILLEGAL_OPCODE;
+        end else if (call_filter_i) begin
+            next_code = PY_TRAP_CALL_FILTER;
         end else if (addr_align_i) begin
             next_code = PY_TRAP_ADDR_ALIGN;
         end else if (mem_fault_i) begin
