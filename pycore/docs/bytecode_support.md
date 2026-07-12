@@ -21,8 +21,8 @@ fully unsupported for the current PyCore implementation.
 | `POP_JUMP_IF_TRUE` | Pops TOS and jumps if truthy. | Supported with numeric/bool truthiness rules. |
 | `POP_JUMP_IF_FALSE` | Pops TOS and jumps if falsy. | Supported with numeric/bool truthiness rules. |
 | `BUILD_LIST` | Pops `count` values, allocates a list object, pushes a `LIST`-tagged handle. | Multi-cycle `S_CONTAINER` FSM; heap bump-allocator at `PYCORE_HEAP_BASE` (0x0400). Element layout: header slot + 2 dmem slots per element (value + tag). Traps `PY_TRAP_MEM_FAULT` on OOM or out-of-range index. Keys must be `INT` or `BOOL`. |
-| `BINARY_OP` with oparg `NB_SUBSCR` (26) | Subscript read `x[k]`. | `LIST` containers: bounds-checked one-indexed read. `DICT` and all other non-`LIST` containers trap `PY_TRAP_TYPE` (option-B interim). Key must be `INT` or `BOOL`. |
-| `STORE_SUBSCR` | Subscript write `x[k] = v`. | Same constraints as `NB_SUBSCR`; pops key, container, value (3 items). `DICT` traps `PY_TRAP_TYPE`. |
+| `BINARY_OP` with oparg `NB_SUBSCR` (26) | Subscript read `x[k]`. | `LIST`: bounds-checked index read. `DICT`: open-addressed linear-probe lookup; key not found traps `PY_TRAP_MEM_FAULT`. Key must be `INT` or `BOOL`; others trap `PY_TRAP_TYPE`. |
+| `STORE_SUBSCR` | Subscript write `x[k] = v`. | `LIST`: bounds-checked index write. `DICT`: upsert via linear probe (insert new key or overwrite existing). Same key constraints; pops key, container, value (3 items). |
 
 ## Partially supported bytecodes
 
@@ -32,7 +32,7 @@ fully unsupported for the current PyCore implementation.
 | `EXTENDED_ARG` | Extends argument width of the following opcode. | Folded out by preprocess/fetch rather than executed architecturally. |
 | `LOAD_FAST_BORROW_LOAD_FAST_BORROW` | CPython 3.14 combined two-local load (opcode 87). | Expanded by preprocess into two `LOAD_FAST_BORROW` instructions; never reaches hardware. |
 | `BINARY_OP` | Performs binary arithmetic/bitwise operation selected by `oparg`. | Arithmetic/bitwise opargs use the existing ALU path; `NB_SUBSCR` (oparg 26) routes to `S_CONTAINER` for list reads; unsupported variants trap or are rejected by preprocess. |
-| `BUILD_MAP` | Allocates a dict object. | **Option B (interim):** always traps `PY_TRAP_TYPE`. Preprocess accepts the opcode; the trap fires in `S_CONTAINER`. A future PR will implement open-addressed linear-probe dict lookup. |
+| `BUILD_MAP` | Pops `2*count` items (interleaved key/value), allocates a dict object, pushes a `DICT`-tagged handle. | Multi-cycle `S_CONTAINER` FSM with open-addressed linear-probe insertion. Key must be `INT` or `BOOL`; others trap `PY_TRAP_TYPE`. Slot count = `next_pow2(max(4, 2*count))`; OOM traps `PY_TRAP_MEM_FAULT`. |
 | `COMPARE_OP` | Performs rich comparison selected by `oparg`. | Only compare selectors `0..5` (`<,<=,==,!=,>,>=`) are decoded. |
 | `CALL` | Invokes a callable with positional arguments. | Decoded but full Python call-frame/object-call semantics are not implemented. |
 | `COPY` | Duplicates a stack value at depth `oparg`. | Accepted by preprocess for compatibility, but current decode path does not execute it. |

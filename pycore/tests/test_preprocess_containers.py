@@ -116,7 +116,7 @@ class TestBuildMapAccepted(unittest.TestCase):
             if e.opname == "BUILD_MAP":
                 self.assertEqual(slot_map[i + 1] - slot_map[i], 1)
 
-    def test_type_sketch_dict(self) -> None:
+    def test_type_sketch_dict_variable(self) -> None:
         heap = preprocess.StringHeapBuilder()
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
@@ -124,9 +124,26 @@ class TestBuildMapAccepted(unittest.TestCase):
             string_heap=heap,
         )
         _, warnings = preprocess.infer_types(self.fn, emitted)
-        # DICT result feeds BINARY_OP? No — it's returned directly here.
         # Check we can at least run type inference without raising.
         self.assertIsInstance(warnings, list)
+
+    def test_dict_stored_variable_tagged_dict(self) -> None:
+        """A local variable holding a BUILD_MAP result is tagged DICT."""
+        fn = _compile_fn(
+            "def managed_entry():\n"
+            "    k = 7\n"
+            "    v = 42\n"
+            "    d = {k: v}\n"
+            "    return d\n"
+        )
+        heap = preprocess.StringHeapBuilder()
+        emitted = preprocess.emit_instruction_words(
+            preprocess.iter_filtered_instructions(fn),
+            co_consts=fn.__code__.co_consts,
+            string_heap=heap,
+        )
+        var_tags, _ = preprocess.infer_types(fn, emitted)
+        self.assertEqual(var_tags.get("d"), preprocess.TAG_DICT)
 
 
 class TestStoreSubscrAccepted(unittest.TestCase):

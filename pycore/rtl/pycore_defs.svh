@@ -276,6 +276,97 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_long_str_entry(
 endfunction
 
 // -------------------------------------------------------------------------
+// DICT in-dmem layout (all addresses 16-byte aligned):
+//
+//   base + 0                  : header { slot_count[63:0], used[63:0] }
+//   base + 16*(1 + 4*i)       : slot[i] key   value[127:0]
+//   base + 16*(2 + 4*i)       : slot[i] key   tag   {124'b0, key_tag[3:0]}
+//   base + 16*(3 + 4*i)       : slot[i] value value[127:0]
+//   base + 16*(4 + 4*i)       : slot[i] value tag   {124'b0, val_tag[3:0]}
+//
+// Slot stride = 4 * 16 = 64 bytes.
+// Empty-bucket sentinel: key tag == PY_TAG_UNINIT (4'b0000).
+// Slot count is always a power of two; probe mask = slot_count - 1.
+// Hash function: key_val[63:0] & (slot_count - 1)  (INT and BOOL keys only).
+// Unsupported key tags trap PY_TRAP_TYPE; key-not-found traps PY_TRAP_MEM_FAULT.
+//
+// Dict option: open-addressed linear probe with tombstone-free insert
+// (tombstone deletion deferred; DELETE_SUBSCR not yet implemented).
+// -------------------------------------------------------------------------
+function automatic logic [31:0] pycore_dict_kval_addr(
+    input logic [31:0] base, input logic [31:0] probe_idx
+);
+    begin
+        // base + 16 + probe_idx * 64
+        pycore_dict_kval_addr = base + 32'd16 + (probe_idx << 6);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_dict_ktag_addr(
+    input logic [31:0] base, input logic [31:0] probe_idx
+);
+    begin
+        pycore_dict_ktag_addr = base + 32'd32 + (probe_idx << 6);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_dict_vval_addr(
+    input logic [31:0] base, input logic [31:0] probe_idx
+);
+    begin
+        pycore_dict_vval_addr = base + 32'd48 + (probe_idx << 6);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_dict_vtag_addr(
+    input logic [31:0] base, input logic [31:0] probe_idx
+);
+    begin
+        pycore_dict_vtag_addr = base + 32'd64 + (probe_idx << 6);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_dict_alloc_bytes(
+    input logic [31:0] slot_count
+);
+    begin
+        // 16-byte header + slot_count * 64-byte slot
+        pycore_dict_alloc_bytes = 32'd16 + (slot_count << 6);
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_dict_header(
+    input logic [63:0] slot_count,
+    input logic [63:0] used
+);
+    begin
+        pycore_dict_header = {slot_count, used};
+    end
+endfunction
+
+function automatic logic [63:0] pycore_dict_slot_count_from_hdr(
+    input logic [PYCORE_VAL_WIDTH-1:0] header
+);
+    begin
+        pycore_dict_slot_count_from_hdr = header[127:64];
+    end
+endfunction
+
+// Minimum slot count = next_pow2(max(4, 2*n_pairs)) so max load ≤ 50%.
+function automatic logic [31:0] pycore_dict_min_slots(
+    input logic [6:0] n_pairs
+);
+    begin
+        if      (n_pairs <= 7'd2)  pycore_dict_min_slots = 32'd4;
+        else if (n_pairs <= 7'd4)  pycore_dict_min_slots = 32'd8;
+        else if (n_pairs <= 7'd8)  pycore_dict_min_slots = 32'd16;
+        else if (n_pairs <= 7'd16) pycore_dict_min_slots = 32'd32;
+        else if (n_pairs <= 7'd32) pycore_dict_min_slots = 32'd64;
+        else                       pycore_dict_min_slots = 32'd128;
+    end
+endfunction
+
+// -------------------------------------------------------------------------
 // Heap allocator address-space parameters.
 //
 // The object heap lives at the bottom of dmem, below the frame stack which

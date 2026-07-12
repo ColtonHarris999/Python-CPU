@@ -318,13 +318,42 @@ This avoids any non-16-byte addressing.
 Helpers `pycore_list_val_addr(base, idx)` and `pycore_list_tag_addr(base,
 idx)` in `pycore_defs.svh` compute element addresses.
 
-### DICT status (option B, interim)
+### DICT in-dmem layout
 
-`BUILD_MAP`, `BINARY_OP/NB_SUBSCR` on a DICT handle, and `STORE_SUBSCR` on a
-DICT handle all trap `PY_TRAP_TYPE`.  The `S_CONTAINER` FSM has a placeholder
-`CONT_BUILD_MAP` path and the `CONT_SUBSCR_READ` / `CONT_STORE_SUBSCR` paths
-check the container tag and trap for DICT.  A follow-up PR will implement an
-open-addressed linear-probe hash table using the same dmem port.
+All addresses are 16-byte aligned (128-bit dmem slot granularity).
+
+```text
+base + 0                 : header { slot_count[63:0], used[63:0] }
+base + 16*(1 + 4*i)      : slot[i] key   value[127:0]
+base + 16*(2 + 4*i)      : slot[i] key   tag   { 124'b0, key_tag[3:0] }
+base + 16*(3 + 4*i)      : slot[i] value value[127:0]
+base + 16*(4 + 4*i)      : slot[i] value tag   { 124'b0, val_tag[3:0] }
+```
+
+Each slot occupies **four 16-byte dmem slots** (slot stride = 64 bytes).
+Total allocation = `16 + slot_count × 64` bytes.
+
+Empty-bucket sentinel: key tag = `PY_TAG_UNINIT` (4'b0000).
+
+Slot count = `next_pow2(max(4, 2 × n_pairs))`, ensuring max load ≤ 50% at
+construction time. Hash = `key_val[31:0] & (slot_count − 1)` (INT/BOOL keys
+only; other key tags trap `PY_TRAP_TYPE`).
+
+The implementation uses **tombstone-free open-addressed linear probing**.
+`DELETE_SUBSCR` is deferred; tombstone logic can be added later when needed.
+
+### DICT FSM path
+
+`CONT_BUILD_MAP`, `CONT_SUBSCR_DICT`, and `CONT_STORE_DICT` are three distinct
+container op codes (3-bit `container_op_r`) sharing the dict-specific phases
+`CP_DICT_HASH` (5) through `CP_DICT_RD_VTAG` (14).
+
+- **`BUILD_MAP`**: allocates header, then for each pair reads key from RF,
+  probes for empty/matching slot, inserts key + value (4 dmem writes each).
+- **`NB_SUBSCR` on DICT**: reads header → slot_count, probes for matching key,
+  reads value value + tag, writes result to RF.
+- **`STORE_SUBSCR` on DICT**: reads header, probes for matching or empty slot,
+  writes key value, key tag, value value, value tag.
 
 ### `S_CONTAINER` FSM state
 

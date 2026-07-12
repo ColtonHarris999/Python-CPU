@@ -1,0 +1,7 @@
+d: DICT
+k: INT
+newval: INT
+v: INT
+
+# warnings
+OBJECT-typed value feeds BINARY_OP at bytecode offset 30
