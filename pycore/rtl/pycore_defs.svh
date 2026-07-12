@@ -119,10 +119,11 @@ localparam logic [7:0] PY_OP_JUMP_BACKWARD    = 8'd140;
 // Container / subscript opcodes added in PyCore dict-list support.
 // Opcode integers resolved from the CPython 3.14 interpreter:
 //   python3.14 -c "import opcode; [print(n,opcode.opmap[n]) for n in \
-//       ['BUILD_LIST','BUILD_MAP','STORE_SUBSCR','BINARY_OP', \
+//       ['BUILD_LIST','BUILD_MAP','BUILD_TUPLE','STORE_SUBSCR','BINARY_OP', \
 //        'LOAD_FAST_BORROW_LOAD_FAST_BORROW']]"
 //   BUILD_LIST                       = 46
 //   BUILD_MAP                        = 47
+//   BUILD_TUPLE                      = 51
 //   STORE_SUBSCR                     = 38
 //   BINARY_OP                        = 44  (unchanged)
 //   LOAD_FAST_BORROW_LOAD_FAST_BORROW = 87
@@ -132,6 +133,7 @@ localparam logic [7:0] PY_OP_JUMP_BACKWARD    = 8'd140;
 //   NB_SUBSCR = 26
 localparam logic [7:0] PY_OP_BUILD_LIST        = 8'd46;
 localparam logic [7:0] PY_OP_BUILD_MAP         = 8'd47;
+localparam logic [7:0] PY_OP_BUILD_TUPLE       = 8'd51;
 localparam logic [7:0] PY_OP_STORE_SUBSCR      = 8'd38;
 localparam logic [7:0] PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = 8'd87;
 // BINARY_OP oparg for subscript read (x[k]); not a standalone opcode.
@@ -287,12 +289,51 @@ endfunction
 // Slot stride = 4 * 16 = 64 bytes.
 // Empty-bucket sentinel: key tag == PY_TAG_UNINIT (4'b0000).
 // Slot count is always a power of two; probe mask = slot_count - 1.
-// Hash function: key_val[63:0] & (slot_count - 1)  (INT and BOOL keys only).
+//
+// Hash: pycore_dict_key_hash(tag, value) & (slot_count - 1).
+// Supported key tags: INT, BOOL, SHORT_STR, LONG_STR.
 // Unsupported key tags trap PY_TRAP_TYPE; key-not-found traps PY_TRAP_MEM_FAULT.
+//
+// Interim insert policy (until rehash/grow exists): never fill the table
+// completely — require used < slot_count after every insert so at least one
+// empty slot remains and absent-key probes always terminate.  Probe loops
+// are also bounded by slot_count and trap PY_TRAP_MEM_FAULT on exhaustion.
 //
 // Dict option: open-addressed linear probe with tombstone-free insert
 // (tombstone deletion deferred; DELETE_SUBSCR not yet implemented).
 // -------------------------------------------------------------------------
+
+// 32-bit key hash; caller masks with (slot_count - 1).
+// INT/BOOL use value[31:0] (preserves existing images).  SHORT_STR folds the
+// full 128-bit value field.  LONG_STR hashes low-32(addr) ^ low-32(size).
+function automatic logic [31:0] pycore_dict_key_hash(
+    input logic [3:0]                    tag,
+    input logic [PYCORE_VAL_WIDTH-1:0]   value
+);
+    begin
+        unique case (tag)
+            PY_TAG_INT, PY_TAG_BOOL:
+                pycore_dict_key_hash = value[31:0];
+            PY_TAG_SHORT_STR:
+                pycore_dict_key_hash = value[127:96] ^ value[95:64]
+                                     ^ value[63:32]  ^ value[31:0];
+            PY_TAG_LONG_STR:
+                // value = {size[63:0], addr[63:0]}
+                pycore_dict_key_hash = value[31:0] ^ value[95:64];
+            default:
+                pycore_dict_key_hash = value[31:0];
+        endcase
+    end
+endfunction
+
+function automatic logic pycore_dict_key_tag_ok(input logic [3:0] tag);
+    begin
+        pycore_dict_key_tag_ok = (tag == PY_TAG_INT) || (tag == PY_TAG_BOOL)
+                              || (tag == PY_TAG_SHORT_STR)
+                              || (tag == PY_TAG_LONG_STR);
+    end
+endfunction
+
 function automatic logic [31:0] pycore_dict_kval_addr(
     input logic [31:0] base, input logic [31:0] probe_idx
 );
@@ -352,6 +393,14 @@ function automatic logic [63:0] pycore_dict_slot_count_from_hdr(
     end
 endfunction
 
+function automatic logic [63:0] pycore_dict_used_from_hdr(
+    input logic [PYCORE_VAL_WIDTH-1:0] header
+);
+    begin
+        pycore_dict_used_from_hdr = header[63:0];
+    end
+endfunction
+
 // Minimum slot count = next_pow2(max(4, 2*n_pairs)) so max load ≤ 50%.
 function automatic logic [31:0] pycore_dict_min_slots(
     input logic [6:0] n_pairs
@@ -397,10 +446,6 @@ localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0000_2000;
 // { tag[3:0], value[127:0] } is split across two consecutive 128-bit
 // dmem slots: the 128-bit value slot followed by a 128-bit tag slot
 // (tag in bits [3:0], upper 124 bits zero).
-//
-// DICT: option B (interim) — BUILD_MAP / subscript / store on a DICT-tagged
-// handle raise PY_TRAP_TYPE with a TODO comment.  A future PR will implement
-// open-addressed linear-probe lookup over this same dmem port.
 // -------------------------------------------------------------------------
 function automatic logic [63:0] pycore_list_capacity(
     input logic [PYCORE_VAL_WIDTH-1:0] header
@@ -456,6 +501,63 @@ function automatic logic [31:0] pycore_list_alloc_bytes(
     begin
         // 16 (header) + capacity * 32 (2 slots per element)
         pycore_list_alloc_bytes = 32'd16 + (capacity << 5);
+    end
+endfunction
+
+// -------------------------------------------------------------------------
+// TUPLE in-dmem layout (all addresses 16-byte aligned, 128-bit dmem slots):
+//
+// Because size lives inline in the handle value field
+//   { size[63:0], addr[63:0] },
+// tuples need NO header slot in dmem:
+//
+//   element[i] value : addr + 32*i          (128-bit slot)
+//   element[i] tag   : addr + 32*i + 16     ({124'b0, tag[3:0]})
+//   allocation bytes : size * 32
+//
+// Handle: { PY_TAG_TUPLE, {size[63:0], addr[63:0]} }.
+// -------------------------------------------------------------------------
+function automatic logic [63:0] pycore_tuple_size(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_tuple_size = value[127:64];
+    end
+endfunction
+
+function automatic logic [63:0] pycore_tuple_addr(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_tuple_addr = value[63:0];
+    end
+endfunction
+
+function automatic logic [31:0] pycore_tuple_val_addr(
+    input logic [31:0] addr,
+    input logic [31:0] idx
+);
+    begin
+        // addr + idx*32
+        pycore_tuple_val_addr = addr + (idx << 5);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_tuple_tag_addr(
+    input logic [31:0] addr,
+    input logic [31:0] idx
+);
+    begin
+        // addr + idx*32 + 16
+        pycore_tuple_tag_addr = addr + (idx << 5) + 32'd16;
+    end
+endfunction
+
+function automatic logic [31:0] pycore_tuple_alloc_bytes(
+    input logic [31:0] size
+);
+    begin
+        pycore_tuple_alloc_bytes = size << 5;
     end
 endfunction
 

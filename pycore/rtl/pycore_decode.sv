@@ -153,7 +153,7 @@ module pycore_decode (
 
             // ---------------------------------------------------------------
             // Container build and subscript operations.
-            // All three are multi-cycle: the core's S_CONTAINER state drives
+            // All are multi-cycle: the core's S_CONTAINER state drives
             // the heap allocator and dmem handshake; TOS is updated there,
             // not here.  The register selectors below give S_CONTAINER the
             // two operands it needs from the register file.
@@ -166,10 +166,15 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
-            // BUILD_MAP(count): pop 2*count items (interleaved key/value).
-            // Option B: always traps PY_TRAP_TYPE in S_CONTAINER (TODO: implement
-            // open-addressed linear-probe dict in a follow-up PR).
+            // BUILD_MAP(count): pop 2*count items (interleaved key/value),
+            // allocate a dict, push DICT.  Multi-cycle S_CONTAINER path.
             PY_OP_BUILD_MAP: begin
+                is_container_o = 1'b1;
+            end
+
+            // BUILD_TUPLE(count): pop count items, allocate a tuple (no header),
+            // push TUPLE handle {size, addr}.
+            PY_OP_BUILD_TUPLE: begin
                 is_container_o = 1'b1;
             end
 

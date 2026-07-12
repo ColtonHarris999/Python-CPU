@@ -206,31 +206,16 @@ RF[0..31]  frame locals
 RF[32..95] operand stack
 ```
 
-Function calls are managed by `pycore_frame.sv`, which now treats the RF stack
-window as a **ring buffer with memory spill** rather than a hard depth limit.
-Each call allocates a frame node containing:
+Function calls are managed by the as-built `pycore_frame.sv`, which implements
+a **simple push/pop call-frame stack in dmem** (not a ring-buffer spill design).
+Each CALL pushes a frame record containing return PC, TOS base, and locals base;
+each RETURN pops it and restores the caller's stack window. Frame depth is
+bounded by the reserved frame-stack region (`0x2000`–`0x3FFF`).
 
-- `{pc_return, tos_base, locals_base}` bookkeeping
-- linked-list pointers (`prev`, `next`) for active-frame traversal
-- a per-slot mapping table where `0` means "resident in RF" and nonzero is the
-  spill memory address
-- an allocation pointer target used to identify the oldest frame that still owns
-  resident RF data
-
-The RF residency policy is FIFO by age: when a new frame needs registers and
-the resident ring is full, the oldest resident slot is spilled to memory and
-its mapping table entry flips from `0` to the spill address. This allows call
-depth and total logical register demand to scale with memory capacity rather
-than RF depth.
-
-Two explicit memory regions are reserved for runtime frame storage:
-
-- **stack-frame metadata region**: frame linked-list nodes
-- **frame spill region**: spilled register payloads for non-resident slots
-
-Spill slots are reclaimed on return, so deep but finite recursion can continue
-as long as free spill capacity remains. A separate heap region remains reserved
-for future object/string support.
+> **Future work:** an earlier design study (`pycore/rtl/attic/pycore_frame_buffer.sv`)
+> explored a ring-buffer RF window with memory spill so call depth could scale
+> with dmem capacity rather than RF depth. That module is unintegrated; the
+> production path remains the simple `pycore_frame.sv` push/pop manager.
 
 ## LOAD_CONST: inline literal encoding
 
@@ -295,8 +280,12 @@ PYCORE_HEAP_LIMIT = 0x0000_2000  (just below the call-frame stack)
 ```
 
 Capacity: ~7 KB.  A `heap_ptr_r` register in `pycore_core.sv` starts at
-`PYCORE_HEAP_BASE` and advances monotonically; there is no free list (no
-object reclamation in this prototype).  Overflow traps `PY_TRAP_MEM_FAULT`.
+`HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE`) and advances monotonically; there
+is no free list (no object reclamation in this prototype).  Overflow traps
+`PY_TRAP_MEM_FAULT`.  A preloaded static heap image sets `HEAP_INIT_PTR` to the
+first free byte above the static objects so bump allocation does not overwrite
+them.  `DMEM_HEX` on `pycore_system` / `pycore_dmem` preloads the whole dmem
+bank (not just the first 4 KB block).
 
 ### LIST in-dmem layout
 
@@ -318,6 +307,23 @@ This avoids any non-16-byte addressing.
 Helpers `pycore_list_val_addr(base, idx)` and `pycore_list_tag_addr(base,
 idx)` in `pycore_defs.svh` compute element addresses.
 
+Negative indices are **not** wrapped: the bounds check is unsigned, so a
+negative INT key traps `PY_TRAP_MEM_FAULT` (same policy for TUPLE).
+
+### TUPLE in-dmem layout
+
+Because size lives inline in the handle `{ size[63:0], addr[63:0] }`, tuples
+need **no header slot**:
+
+```text
+element[i] value : addr + 32*i
+element[i] tag   : addr + 32*i + 16
+allocation bytes : size * 32
+```
+
+Helpers: `pycore_tuple_val_addr`, `pycore_tuple_tag_addr`,
+`pycore_tuple_alloc_bytes`, `pycore_tuple_size`, `pycore_tuple_addr`.
+
 ### DICT in-dmem layout
 
 All addresses are 16-byte aligned (128-bit dmem slot granularity).
@@ -336,24 +342,52 @@ Total allocation = `16 + slot_count × 64` bytes.
 Empty-bucket sentinel: key tag = `PY_TAG_UNINIT` (4'b0000).
 
 Slot count = `next_pow2(max(4, 2 × n_pairs))`, ensuring max load ≤ 50% at
-construction time. Hash = `key_val[31:0] & (slot_count − 1)` (INT/BOOL keys
-only; other key tags trap `PY_TRAP_TYPE`).
+construction time. Hash = `pycore_dict_key_hash(tag, value) & (slot_count − 1)`:
+
+| Key tag | Hash |
+| --- | --- |
+| `INT` / `BOOL` | `value[31:0]` (preserves existing images) |
+| `SHORT_STR` | XOR of the four 32-bit words of `value[127:0]` |
+| `LONG_STR` | `value[31:0] ^ value[95:64]` (low 32 of addr XOR low 32 of size) |
+
+Supported key tags: `INT`, `BOOL`, `SHORT_STR`, `LONG_STR`. Other key tags trap
+`PY_TRAP_TYPE`. Key-not-found traps `PY_TRAP_MEM_FAULT`.
+
+`LONG_STR` equality is descriptor equality (`{size, addr}`). This relies on
+**interning**: `StringHeapBuilder` deduplicates identical long-string constants
+so descriptor equality is string equality. Runtime-concatenated `LONG_STR`
+results (private to `pycore_exec` string memory, not interned) are not valid
+dict keys semantically; hardware cannot detect this.
+
+The header `used` field is maintained on insert. Probe loops are bounded by
+`slot_count` and trap `PY_TRAP_MEM_FAULT` on exhaustion. Interim insert policy
+(until rehash/grow): never fill the table completely — require
+`used + 1 < slot_count` before an empty-slot insert so at least one empty slot
+always remains.
 
 The implementation uses **tombstone-free open-addressed linear probing**.
 `DELETE_SUBSCR` is deferred; tombstone logic can be added later when needed.
+
+Static heap images for dicts/tuples/lists can be built with
+`pycore/tools/heap_image.py` (`HeapImageBuilder`), which mirrors the RTL hash
+and probe rules.
 
 ### DICT FSM path
 
 `CONT_BUILD_MAP`, `CONT_SUBSCR_DICT`, and `CONT_STORE_DICT` are three distinct
 container op codes (3-bit `container_op_r`) sharing the dict-specific phases
-`CP_DICT_HASH` (5) through `CP_DICT_RD_VTAG` (14).
+`CP_DICT_HASH` (5) through `CP_DICT_RD_VTAG` (14). `CONT_BUILD_TUPLE` and
+`CONT_SUBSCR_TUPLE` reuse the shared LIST-style phases without a header.
 
 - **`BUILD_MAP`**: allocates header, then for each pair reads key from RF,
-  probes for empty/matching slot, inserts key + value (4 dmem writes each).
+  probes for empty/matching slot, inserts key + value (4 dmem writes each),
+  rewrites `used` in the header once at the end.
 - **`NB_SUBSCR` on DICT**: reads header → slot_count, probes for matching key,
   reads value value + tag, writes result to RF.
 - **`STORE_SUBSCR` on DICT**: reads header, probes for matching or empty slot,
-  writes key value, key tag, value value, value tag.
+  writes key/value; bumps `used` on new-key insert.
+- **`BUILD_TUPLE` / `NB_SUBSCR` on TUPLE**: no header; size is inline in the
+  handle. `STORE_SUBSCR` on a TUPLE traps `PY_TRAP_TYPE` (immutable).
 
 ### `S_CONTAINER` FSM state
 

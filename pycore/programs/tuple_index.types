@@ -1,0 +1,11 @@
+a: INT
+b: INT
+c: INT
+t: TUPLE
+x: OBJECT
+y: OBJECT
+
+# warnings
+OBJECT-typed value feeds BINARY_OP at bytecode offset 26
+OBJECT-typed value feeds BINARY_OP at bytecode offset 44
+OBJECT-typed value feeds BINARY_OP at bytecode offset 60
