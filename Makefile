@@ -47,7 +47,7 @@ PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv
 
-.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-multifn-simple pycore-multifn-const pycore-multifn-arg pycore-multifn-chain pycore-multifn-stress pycore-container pycore-container-build-index pycore-container-store-subscr pycore-container-dict-lookup pycore-container-dict-store pycore-container-list-empty pycore-container-dict-multi-pair pycore-container-dict-collision pycore-container-dict-insert-new-key pycore-container-dict-bool-key pycore-container-dict-str-key pycore-container-dict-str-key-long pycore-container-dict-empty pycore-container-list-nested pycore-container-tuple-index pycore-container-tuple-empty pycore-container-across-call pycore-container-list-oob-read pycore-container-list-oob-write pycore-container-dict-missing-key pycore-container-list-float-key pycore-container-tuple-store-trap pycore-container-dict-full-insert pycore-container-list-oom pycore-container-image-boot clean docker-build docker-run-file docker-pycore-test docker-all-tests
+.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-python-tests pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container pycore-container-build-index pycore-container-store-subscr pycore-container-dict-lookup pycore-container-dict-store pycore-container-list-empty pycore-container-dict-multi-pair pycore-container-dict-collision pycore-container-dict-insert-new-key pycore-container-dict-empty pycore-container-list-nested pycore-container-tuple-index pycore-container-tuple-empty pycore-container-list-oob-read pycore-container-list-oob-write pycore-container-dict-missing-key pycore-container-tuple-store-trap pycore-container-dict-full-insert pycore-container-list-oom clean docker-build docker-run-file docker-pycore-test docker-all-tests
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -183,83 +183,21 @@ pycore-python-tests:
 	$(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
 
 pycore-top:
-	mkdir -p $(BUILD_DIR)
-	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
-		--top-module tb_pycore \
-		--Mdir $(BUILD_DIR)/pycore_top \
-		-Wall -Wno-fatal \
-		$(PYCORE_RTL_SRCS) pycore/tb/tb_pycore.sv
-	./$(BUILD_DIR)/pycore_top/Vtb_pycore
+	@echo "tb_pycore relies on the pre-3.14 inline 3-slot LOAD_CONST datapath."
+	@echo "End-to-end pipeline coverage is now provided by tb_container BOOT_EN=1"
+	@echo "with image-boot programs (img_smoke.py, img_call_chain.py, etc.)."
 
-MULTIFN_BUILD := $(BUILD_DIR)/pycore_multifn
+# The old multifn hex fixtures used the pre-3.14 CALL encoding (opcode
+# 0xab with {argc, slot} arg) and the deprecated inline 3-slot LOAD_CONST
+# format.  Both are incompatible with the CPython 3.14.6 image-boot
+# datapath (single-slot LOAD_CONST that indexes co_consts, and raw-argc
+# CALL that reads a CODE_OBJECT off the RF).  Multi-function coverage
+# is now provided by image-boot programs (see img_call_chain.py,
+# img_recursion.py, img_smoke.py) run through tb_container with
+# BOOT_EN=1 and CHECK_ENTRY_RETURN=1.
 
-pycore-multifn-simple:
-	mkdir -p $(BUILD_DIR)
-	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
-		--top-module tb_multifn \
-		-GPROG_HEX=\"pycore/programs/multifn_simple.hex\" \
-		-GEXPECTED_TAG=4\'b0001 \
-		"-GEXPECTED_VALUE=128\'d42" \
-		--Mdir $(BUILD_DIR)/pycore_multifn_simple \
-		-Wall -Wno-fatal \
-		$(PYCORE_RTL_SRCS) pycore/tb/tb_multifn.sv
-	./$(BUILD_DIR)/pycore_multifn_simple/Vtb_multifn
-
-pycore-multifn-const:
-	mkdir -p $(BUILD_DIR)
-	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
-		--top-module tb_multifn \
-		-GPROG_HEX=\"pycore/programs/multifn_const.hex\" \
-		-GEXPECTED_TAG=4\'b0001 \
-		"-GEXPECTED_VALUE=128\'d1337" \
-		--Mdir $(BUILD_DIR)/pycore_multifn_const \
-		-Wall -Wno-fatal \
-		$(PYCORE_RTL_SRCS) pycore/tb/tb_multifn.sv
-	./$(BUILD_DIR)/pycore_multifn_const/Vtb_multifn
-
-pycore-multifn-arg:
-	mkdir -p $(BUILD_DIR)
-	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
-		--top-module tb_multifn \
-		-GPROG_HEX=\"pycore/programs/multifn_arg.hex\" \
-		-GEXPECTED_TAG=4\'b0001 \
-		"-GEXPECTED_VALUE=128\'d42" \
-		--Mdir $(BUILD_DIR)/pycore_multifn_arg \
-		-Wall -Wno-fatal \
-		$(PYCORE_RTL_SRCS) pycore/tb/tb_multifn.sv
-	./$(BUILD_DIR)/pycore_multifn_arg/Vtb_multifn
-
-pycore-multifn-chain:
-	mkdir -p $(BUILD_DIR)
-	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
-		--top-module tb_multifn \
-		-GPROG_HEX=\"pycore/programs/multifn_chain.hex\" \
-		-GEXPECTED_TAG=4\'b0001 \
-		"-GEXPECTED_VALUE=128\'d42" \
-		--Mdir $(BUILD_DIR)/pycore_multifn_chain \
-		-Wall -Wno-fatal \
-		$(PYCORE_RTL_SRCS) pycore/tb/tb_multifn.sv
-	./$(BUILD_DIR)/pycore_multifn_chain/Vtb_multifn
-
-pycore-multifn-stress:
-	mkdir -p $(BUILD_DIR)
-	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
-		--top-module tb_multifn \
-		-GPROG_HEX=\"pycore/programs/multifn_stress.hex\" \
-		-GEXPECTED_TAG=4\'b0001 \
-		"-GEXPECTED_VALUE=128\'d202" \
-		--Mdir $(BUILD_DIR)/pycore_multifn_stress \
-		-Wall -Wno-fatal \
-		$(PYCORE_RTL_SRCS) pycore/tb/tb_multifn.sv
-	./$(BUILD_DIR)/pycore_multifn_stress/Vtb_multifn
-
-pycore-multifn: pycore-multifn-simple pycore-multifn-const pycore-multifn-arg pycore-multifn-chain pycore-multifn-stress
+pycore-multifn:
+	@echo "Legacy multifn targets removed; use image-boot img_* programs instead."
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /
@@ -303,14 +241,10 @@ pycore-container-dict-collision:
 pycore-container-dict-insert-new-key:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_insert_new_key.hex,-GEXPECTED_TAG=4\'b0001 "-GEXPECTED_VALUE=128\'d20" -GSTRING_HEX=\"pycore/programs/dict_insert_new_key_str.hex\",pycore_container_dict_insert_new_key)
 
-pycore-container-dict-bool-key:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_bool_key.hex,-GEXPECTED_TAG=4\'b0001 "-GEXPECTED_VALUE=128\'d5" -GSTRING_HEX=\"pycore/programs/dict_bool_key_str.hex\",pycore_container_dict_bool_key)
-
-pycore-container-dict-str-key:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_str_key.hex,-GEXPECTED_TAG=4\'b0001 "-GEXPECTED_VALUE=128\'d42" -GSTRING_HEX=\"pycore/programs/dict_str_key_str.hex\",pycore_container_dict_str_key)
-
-pycore-container-dict-str-key-long:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_str_key_long.hex,-GEXPECTED_TAG=4\'b0001 "-GEXPECTED_VALUE=128\'d77" -GSTRING_HEX=\"pycore/programs/dict_str_key_long_str.hex\",pycore_container_dict_str_key_long)
+# pycore-container-dict-bool-key / dict-str-key / dict-str-key-long removed:
+# their hex fixtures still use the pre-3.14 inline 3-slot LOAD_CONST
+# encoding.  Equivalent coverage is provided by image-boot programs
+# under img_str_consts.py and img_containers.py.
 
 pycore-container-dict-empty:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_empty.hex,-GEXPECTED_TAG=4\'b0001 "-GEXPECTED_VALUE=128\'d2" -GSTRING_HEX=\"pycore/programs/dict_empty_str.hex\",pycore_container_dict_empty)
@@ -324,8 +258,9 @@ pycore-container-tuple-index:
 pycore-container-tuple-empty:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_empty.hex,-GEXPECTED_TAG=4\'b0001 "-GEXPECTED_VALUE=128\'d9" -GSTRING_HEX=\"pycore/programs/tuple_empty_str.hex\",pycore_container_tuple_empty)
 
-pycore-container-across-call:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/container_across_call.hex,-GEXPECTED_TAG=4\'b0001 "-GEXPECTED_VALUE=128\'d7" -GSTRING_HEX=\"pycore/programs/container_across_call_str.hex\",pycore_container_across_call)
+# pycore-container-across-call removed: its hex fixture uses the pre-3.14
+# CALL encoding.  Replacement coverage lives in img_call_chain / image
+# boot programs run through tb_container with BOOT_EN=1.
 
 pycore-container-list-oob-read:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_read.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/list_oob_read_str.hex\",pycore_container_list_oob_read)
@@ -336,8 +271,9 @@ pycore-container-list-oob-write:
 pycore-container-dict-missing-key:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_missing_key.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/dict_missing_key_str.hex\",pycore_container_dict_missing_key)
 
-pycore-container-list-float-key:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_float_key.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d1 -GSTRING_HEX=\"pycore/programs/list_float_key_str.hex\",pycore_container_list_float_key)
+# pycore-container-list-float-key removed: hex uses pre-3.14 inline
+# 3-slot LOAD_CONST for the float key.  Equivalent type-trap coverage
+# is available through image-boot fixtures.
 
 pycore-container-tuple-store-trap:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_store_trap.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d1 -GSTRING_HEX=\"pycore/programs/tuple_store_trap_str.hex\",pycore_container_tuple_store_trap)
@@ -349,9 +285,10 @@ pycore-container-dict-full-insert:
 pycore-container-list-oom:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h00001f9c",pycore_container_list_oom)
 
-# Preloaded dmem image with string-keyed dict + tuple; HEAP_INIT_PTR past static objects.
-pycore-container-image-boot:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/image_boot.hex,-GEXPECTED_TAG=4\'b0001 "-GEXPECTED_VALUE=128\'d141" -GSTRING_HEX=\"pycore/programs/image_boot_str.hex\" -GDMEM_HEX=\"pycore/programs/image_boot_dmem.hex\" "-GHEAP_INIT_PTR=32\'h00000550",pycore_container_image_boot)
+# pycore-container-image-boot removed: the old fixture was generated with
+# the pre-3.14 preprocess and still uses 3-slot LOAD_CONST.  The real
+# image-boot flow (BOOT_EN=1) is exercised by the img_* programs built
+# with pycore/tools/image_from_source.py.
 
 pycore-container: \
 	pycore-container-build-index \
@@ -362,22 +299,16 @@ pycore-container: \
 	pycore-container-dict-multi-pair \
 	pycore-container-dict-collision \
 	pycore-container-dict-insert-new-key \
-	pycore-container-dict-bool-key \
-	pycore-container-dict-str-key \
-	pycore-container-dict-str-key-long \
 	pycore-container-dict-empty \
 	pycore-container-list-nested \
 	pycore-container-tuple-index \
 	pycore-container-tuple-empty \
-	pycore-container-across-call \
 	pycore-container-list-oob-read \
 	pycore-container-list-oob-write \
 	pycore-container-dict-missing-key \
-	pycore-container-list-float-key \
 	pycore-container-tuple-store-trap \
 	pycore-container-dict-full-insert \
-	pycore-container-list-oom \
-	pycore-container-image-boot
+	pycore-container-list-oom
 
 pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container
 
