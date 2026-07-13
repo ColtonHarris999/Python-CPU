@@ -54,6 +54,10 @@ Additional design detail is documented in `pycore/docs/architecture.md`.
 
 ## Docs
 
+- **Execution flow specification (LaTeX):** `pycore/docs/pycore_execution_flow.tex`
+  (PDF: `pycore/docs/pycore_execution_flow.pdf`) — end-to-end path from Python
+  source through image construction to multi-cycle bytecode retirement
+- Architecture: `pycore/docs/architecture.md`
 - Preprocessing breakdown: `pycore/docs/preprocessing_breakdown.md`
 - Bytecode support matrix: `pycore/docs/bytecode_support.md`
 
@@ -165,6 +169,8 @@ make pycore-test
 
 PyCore docs:
 
+- **execution flow specification**: `pycore/docs/pycore_execution_flow.pdf`
+  (source: `pycore/docs/pycore_execution_flow.tex`)
 - architecture: `pycore/docs/architecture.md`
 - preprocessing breakdown: `pycore/docs/preprocessing_breakdown.md`
 - bytecode support matrix: `pycore/docs/bytecode_support.md`
