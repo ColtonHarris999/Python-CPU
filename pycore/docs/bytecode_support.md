@@ -7,12 +7,23 @@ fully unsupported for the current PyCore implementation.
 
 | Bytecode | Description | PyCore-specific note |
 | --- | --- | --- |
+| `CACHE` | Inline cache entry used by CPython adaptive interpreter. | Preserved in the image and skipped by fetch; slot order remains CPython-identical. |
+| `EXTENDED_ARG` | Extends argument width of the following opcode. | Preserved in the image and folded by fetch; following opcode sees the full argument. |
 | `RESUME` | Marks function entry/resume points in CPython bytecode. | Treated as a no-op control marker. |
 | `LOAD_FAST` | Pushes a local variable onto the value stack. | Mapped directly to local-window reads. |
 | `LOAD_FAST_BORROW` | Pushes a local variable with CPython borrow semantics. | Executed the same as `LOAD_FAST` in current hardware. |
 | `STORE_FAST` | Pops the top stack value into a local variable slot. | Writes local-window storage directly. |
 | `LOAD_SMALL_INT` | Pushes a small immediate integer encoded in `oparg`. | Fully supported fast-path immediate load. |
-| `LOAD_CONST` | Pushes a constant-table entry onto the value stack. | Loads tagged constants through MEM stage. Tuple/list/dict/set/frozenset constants are rejected by preprocess (need the static heap image builder). `None` encodes as `TAG_NONE`. |
+| `LOAD_CONST` | Pushes `co_consts[oparg]` onto the value stack. | One CPython code unit; hardware reads value+tag from the serialized `co_consts` tuple in dmem. |
+| `LOAD_GLOBAL` | Loads a global by name. | Reads `co_names[namei]`, probes module globals, and optionally pushes `NULL` when `oparg & 1`. No builtins fallback. |
+| `LOAD_NAME` | Loads a name by index. | Same globals lookup path as `LOAD_GLOBAL` at module scope; no locals/builtins chain. |
+| `STORE_NAME` | Stores TOS into a module/global name. | Updates the serialized globals dict, popping one value. |
+| `STORE_GLOBAL` | Stores TOS into a global name. | Same hardware path as `STORE_NAME`. |
+| `PUSH_NULL` | Pushes CPython's non-method call sentinel. | Writes `{PY_TAG_NULL, 0}` to TOS. |
+| `MAKE_FUNCTION` | Builds a function object from a code object. | Interim model: function is the `CODE_OBJECT` handle itself; defaults/closures are rejected by tooling. |
+| `CALL` | Invokes a callable with positional arguments. | Supports CPython 3.14 non-method layout `callable, NULL, args...`; validates callable tag and argcount, pushes/pops hardware frames. |
+| `TO_BOOL` | Converts TOS to exact bool for branch helpers. | Supports numeric/bool truthiness and rewrites TOS in place to `BOOL`; unsupported tags trap `TYPE`. |
+| `NOT_TAKEN` | CPython branch prediction/adaptation marker. | Treated as a no-op marker. |
 | `POP_TOP` | Pops and discards the top stack value. | Implemented as a stack-pointer decrement. |
 | `POP_ITER` | Pops iterator state in loop/iteration sequences. | Implemented as a stack-pointer decrement. |
 | `RETURN_VALUE` | Returns the top-of-stack value from a function. | Implemented return datapath is active. |
@@ -30,17 +41,13 @@ fully unsupported for the current PyCore implementation.
 
 | Bytecode | Description | Current limitation |
 | --- | --- | --- |
-| `CACHE` | Inline cache entry used by CPython adaptive interpreter. | Stripped by preprocess and never executed in hardware. |
-| `EXTENDED_ARG` | Extends argument width of the following opcode. | Folded out by preprocess/fetch rather than executed architecturally. |
 | `LOAD_FAST_BORROW_LOAD_FAST_BORROW` | CPython 3.14 combined two-local load (opcode 87). | Expanded by preprocess into two `LOAD_FAST_BORROW` instructions; never reaches hardware. |
 | `BINARY_OP` | Performs binary arithmetic/bitwise operation selected by `oparg`. | Arithmetic/bitwise opargs use the existing ALU path; `NB_SUBSCR` (oparg 26) routes to `S_CONTAINER`; unsupported variants trap or are rejected by preprocess. |
 | `COMPARE_OP` | Performs rich comparison selected by `oparg`. | Only compare selectors `0..5` (`<,<=,==,!=,>,>=`) are decoded. |
-| `CALL` | Invokes a callable with positional arguments. | Interim encoding `arg = {argc[15:0], slot[15:0]}` for hand-assembled multi-function fixtures; full Python call-frame / `LOAD_GLOBAL` object-call semantics are not implemented yet. |
-| `COPY` | Duplicates a stack value at depth `oparg`. | Accepted by preprocess for compatibility, but current decode path does not execute it. |
-| `SWAP` | Swaps TOS with a deeper stack element. | Accepted by preprocess for compatibility, but current decode path does not execute it. |
-| `JUMP_IF_TRUE_OR_POP` | Jumps if truthy else pops TOS. | Accepted by preprocess for compatibility, but current decode path does not execute it. |
-| `JUMP_IF_FALSE_OR_POP` | Jumps if falsy else pops TOS. | Accepted by preprocess for compatibility, but current decode path does not execute it. |
-| `NOT_TAKEN` | Marker used by CPython for branch prediction/adaptation accounting. | Accepted by preprocess for compatibility, but current decode path does not execute it. |
+| `COPY` | Duplicates a stack value at depth `oparg`. | Rejected by the image builder; no hardware execute path yet. |
+| `SWAP` | Swaps TOS with a deeper stack element. | Rejected by the image builder; no hardware execute path yet. |
+| `JUMP_IF_TRUE_OR_POP` | Jumps if truthy else pops TOS. | Not part of the current image-boot subset. |
+| `JUMP_IF_FALSE_OR_POP` | Jumps if falsy else pops TOS. | Not part of the current image-boot subset. |
 
 ## Fully unsupported bytecodes
 
@@ -74,13 +81,24 @@ this milestone:
 5. **Dict fill policy.** Until rehash/grow exists, an insert that would make
    the table completely full traps `PY_TRAP_MEM_FAULT` so absent-key probes
    always terminate (at least one empty slot remains).
+6. **No builtins fallback for names.** `LOAD_GLOBAL` / `LOAD_NAME` probe only
+   the serialized module globals dict; missing names trap `PY_TRAP_MEM_FAULT`.
+7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
+   the stack and `CALL` treats that handle as the function. Defaults,
+   annotations, closures, bound methods, and callable objects are out of scope.
+8. **`LOAD_NAME` module-scope behavior.** The current hardware treats
+   `LOAD_NAME` as a globals lookup, matching the image-boot module programs but
+   not CPython's full locals/globals/builtins search chain.
+9. **Image fidelity scope.** Images preserve the `compile()` object graph and
+   bytecode-unit order, including `CACHE` and `EXTENDED_ARG`, but use PyCore's
+   tagged 128-bit-slot layout rather than CPython C structs.
 
 ## Deferred container opcodes
 
-The following container-related opcodes are explicitly deferred. `preprocess.py`
-rejects them with a `"Deferred opcode"` error message; if somehow one reaches
-hardware it is trapped as illegal. Each entry has a TODO hook ready for a
-follow-up PR.
+The following container-related opcodes are explicitly deferred.
+`image_from_source.py` rejects them with a `"Deferred opcode"` error message
+before image generation; if somehow one reaches hardware it is trapped as
+illegal. Each entry has a TODO hook ready for a follow-up PR.
 
 | Bytecode | Description | Deferral reason |
 | --- | --- | --- |

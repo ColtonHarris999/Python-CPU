@@ -5,12 +5,11 @@
 //
 //   - Pass-through ops (NONE/LOAD_FAST/STORE_FAST): forward the EX result entry
 //     to writeback.
-//   - LOAD_CONST: forward the inline_const_i assembled by the fetch unit directly
-//     to writeback. No separate ROM lookup is required because the constant value
-//     was already embedded in the instruction stream and reconstructed by fetch.
 //   - LOAD_PTR / STORE_PTR: drive a real dmem transaction over the req/ack
 //     handshake, stalling the pipeline until the access completes; a load tags
 //     the result INT.
+//
+// LOAD_CONST is no longer a MEM-stage op — it reads co_consts via S_CONTAINER.
 //
 // Memory faults (misaligned, address out of the 32-bit window, or a bank
 // out-of-range fault) raise a trap rather than corrupting state.
@@ -25,8 +24,6 @@ module pycore_mem_stage #(
     input  logic                          rd_we_in_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] alu_entry_i,    // store data / pass value
     input  logic [PYCORE_ENTRY_WIDTH-1:0] addr_entry_i,   // PTR base address
-    // Inline constant assembled by the fetch unit for LOAD_CONST instructions.
-    input  logic [PYCORE_ENTRY_WIDTH-1:0] inline_const_i,
     // dmem master port
     output logic                          dmem_req_o,
     output logic                          dmem_we_o,
@@ -90,11 +87,7 @@ module pycore_mem_stage #(
         mem_trap_o      = 1'b0;
         mem_trap_code_o = PY_TRAP_NONE;
 
-        if (valid_i && mem_op_i == PY_MEM_LOAD_CONST) begin
-            // The constant was assembled inline by the fetch unit; forward it.
-            wb_entry_o = inline_const_i;
-            wb_we_o    = rd_we_in_i;
-        end else if (is_ptr_op) begin
+        if (is_ptr_op) begin
             if (pre_trap) begin
                 wb_we_o         = 1'b0;
                 mem_trap_o      = 1'b1;

@@ -1,9 +1,8 @@
 """Static heap-image builder for PyCore dmem preload.
 
-Lays out dicts, tuples, and lists into a 128-bit-slot dmem hex image using the
-same hash/probe rules as the RTL (`pycore_dict_key_hash` in pycore_defs.svh).
-Does not yet understand code objects — scalar and string-descriptor values are
-enough to unblock memory-image boot work.
+Lays out dicts, tuples, lists, and code objects into a 128-bit-slot dmem hex
+image using the same hash/probe rules as the RTL (`pycore_dict_key_hash` in
+pycore_defs.svh).
 
 Tagged entries are (tag: int, value: int) with value a 128-bit unsigned int.
 """
@@ -13,20 +12,37 @@ from __future__ import annotations
 import pathlib
 from dataclasses import dataclass, field
 
-# Mirror pycore/rtl/pycore_defs.svh tags.
-TAG_UNINIT = 0b0000
-TAG_INT = 0b0001
-TAG_FLOAT = 0b0010
+from encoding import (
+    BOOT_RECORD_ADDR,
+    CODE_FIELD_CO_CONSTS,
+    CODE_FIELD_CO_NAMES,
+    CODE_FIELD_ENTRY_SLOT,
+    CODE_FIELD_METADATA,
+    CODE_OBJECT_BYTES,
+    CODE_OBJECT_NFIELDS,
+    HEAP_BASE,
+    HEAP_LIMIT,
+    TAG_CODE_OBJECT,
+    TAG_DICT,
+    TAG_INT,
+    TAG_LIST,
+    TAG_NULL,
+    TAG_TUPLE,
+    TAG_UNINIT,
+    bool_value,
+    dict_slot_count_for_stores,
+    encode_short_str,
+    int_value,
+    pack_code_metadata,
+)
+
+# Re-export tag constants for callers / tests.
 TAG_BOOL = 0b0011
-TAG_TUPLE = 0b0101
+TAG_FLOAT = 0b0010
 TAG_SHORT_STR = 0b0110
 TAG_LONG_STR = 0b0111
-TAG_DICT = 0b1001
-TAG_LIST = 0b1010
 TAG_NONE = 0b1111
-
-HEAP_BASE = 0x0400
-HEAP_LIMIT = 0x2000
+TAG_UNUSED = TAG_NULL  # renamed; kept as alias
 
 Tagged = tuple[int, int]  # (tag, value128)
 
@@ -70,26 +86,6 @@ def dict_min_slots(n_pairs: int) -> int:
     if n_pairs <= 32:
         return 64
     return 128
-
-
-def encode_short_str(data: bytes) -> int:
-    """Encode a ≤15-byte string into the SHORT_STR value field."""
-    if len(data) > 15:
-        raise ValueError("short string max 15 bytes")
-    payload = 0
-    for idx, byte in enumerate(data):
-        shift = 4 + (15 - 1 - idx) * 8
-        payload |= int(byte) << shift
-    payload |= (len(data) & 0xF) << 124
-    return payload
-
-
-def int_value(n: int) -> int:
-    return n & ((1 << 128) - 1)
-
-
-def bool_value(b: bool) -> int:
-    return 1 if b else 0
 
 
 @dataclass
@@ -202,6 +198,68 @@ class HeapImageBuilder:
 
         self._write(base, ((slot_count & ((1 << 64) - 1)) << 64) | (used & ((1 << 64) - 1)))
         return TAG_DICT, base
+
+    # ---- CODE OBJECT ----
+    def add_code_object(
+        self,
+        entry_slot: int,
+        co_consts: Tagged,
+        co_names: Tagged,
+        *,
+        stacksize: int,
+        nlocals: int,
+        argcount: int,
+    ) -> Tagged:
+        """Allocate a 128-byte code object (4 tagged-entry fields).
+
+        field 0 : entry_slot (INT) — imem slot index of the first code unit
+        field 1 : co_consts  (TUPLE handle)
+        field 2 : co_names   (TUPLE handle)
+        field 3 : metadata   (INT) — packed {stacksize, nlocals, argcount}
+        """
+        assert CODE_OBJECT_NFIELDS == 4
+        assert co_consts[0] == TAG_TUPLE
+        assert co_names[0] == TAG_TUPLE
+        addr = self._alloc(CODE_OBJECT_BYTES)
+        fields: list[Tagged] = [
+            (TAG_INT, int_value(entry_slot)),  # field 0
+            co_consts,                         # field 1
+            co_names,                          # field 2
+            (TAG_INT, pack_code_metadata(stacksize, nlocals, argcount)),  # field 3
+        ]
+        # Silence unused-import lint for field index constants (documented API).
+        assert CODE_FIELD_ENTRY_SLOT == 0
+        assert CODE_FIELD_CO_CONSTS == 1
+        assert CODE_FIELD_CO_NAMES == 2
+        assert CODE_FIELD_METADATA == 3
+        for i, (tag, val) in enumerate(fields):
+            self._write_tagged(addr + i * 32, tag, val)
+        return TAG_CODE_OBJECT, addr & ((1 << 64) - 1)
+
+    def write_boot_record(
+        self,
+        module_code: Tagged,
+        globals_dict: Tagged,
+        addr: int = BOOT_RECORD_ADDR,
+    ) -> None:
+        """Write the two-pair boot record below the heap base.
+
+        pair 0 : module code object handle (CODE_OBJECT)
+        pair 1 : globals dict handle (DICT)
+        """
+        if module_code[0] != TAG_CODE_OBJECT:
+            raise ValueError("boot record pair 0 must be CODE_OBJECT")
+        if globals_dict[0] != TAG_DICT:
+            raise ValueError("boot record pair 1 must be DICT")
+        if addr % 16 != 0:
+            raise ValueError(f"boot record addr must be 16-byte aligned, got {addr:#x}")
+        self._write_tagged(addr, module_code[0], module_code[1])
+        self._write_tagged(addr + 32, globals_dict[0], globals_dict[1])
+
+    def alloc_empty_globals(self, n_store_names: int) -> Tagged:
+        """Empty dict pre-sized for runtime STORE_NAME / STORE_GLOBAL inserts."""
+        slots = dict_slot_count_for_stores(n_store_names)
+        return self.alloc_dict([], slot_count=slots)
 
     def write_hex(self, path: pathlib.Path, total_bytes: int | None = None) -> None:
         """Write a $readmemh image of 128-bit words covering [0, total_bytes).

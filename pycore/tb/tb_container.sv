@@ -16,7 +16,17 @@ module tb_container #(
     parameter logic [3:0]                  EXPECTED_TAG   = PY_TAG_INT,
     parameter logic [PYCORE_VAL_WIDTH-1:0] EXPECTED_VALUE = 128'd99,
     parameter bit    EXPECT_TRAP         = 1'b0,
-    parameter logic [3:0] EXPECTED_TRAP_CODE = PY_TRAP_MEM_FAULT
+    parameter logic [3:0] EXPECTED_TRAP_CODE = PY_TRAP_MEM_FAULT,
+    // BOOT_EN passes through to pycore_system.  Legacy hand-assembled
+    // container fixtures use BOOT_EN=0 (no image-boot walk); real image
+    // programs built by image_from_source.py use BOOT_EN=1.
+    parameter bit    BOOT_EN             = 1'b0,
+    // CHECK_ENTRY_RETURN: when 1, capture the return value at the frame
+    // depth where the module entry function returns to module scope
+    // (frame_active_depth == 1).  Used by image-boot tests where the
+    // module code calls the entry function and receives its result at
+    // depth 1 rather than the classic depth==0 base-frame return.
+    parameter bit    CHECK_ENTRY_RETURN  = 1'b0
 );
     localparam logic [3:0] CORE_S_WB = 4'd4;
 
@@ -33,7 +43,8 @@ module tb_container #(
         .PROG_HEX  (PROG_HEX),
         .STRING_HEX(STRING_HEX),
         .DMEM_HEX  (DMEM_HEX),
-        .HEAP_INIT_PTR(HEAP_INIT_PTR)
+        .HEAP_INIT_PTR(HEAP_INIT_PTR),
+        .BOOT_EN(BOOT_EN)
     ) dut (
         .clk_i(clk),
         .rst_n_i(rst_n),
@@ -85,10 +96,20 @@ module tb_container #(
 
             if ((dut.core.state_r == CORE_S_WB) &&
                 (dut.core.cur_opcode_r == PY_OP_RETURN_VALUE) &&
-                (dut.core.frame_active_depth == 0)) begin
-                return_seen  = 1;
-                return_entry = dut.core.rs1_r;
-                break;
+                (dut.core.frame_active_depth ==
+                    (CHECK_ENTRY_RETURN ? 7'd1 : 7'd0))) begin
+                // Under image boot the module frame's terminal return is
+                // typically `return None` (RETURN_VALUE with a NONE-tagged
+                // TOS).  Filter those out so the check locks onto the
+                // entry function's real return value.
+                if (CHECK_ENTRY_RETURN &&
+                    (pycore_get_tag(dut.core.rs1_r) == PY_TAG_NONE)) begin
+                    // Skip and keep waiting for the entry return.
+                end else begin
+                    return_seen  = 1;
+                    return_entry = dut.core.rs1_r;
+                    break;
+                end
             end
         end
 
