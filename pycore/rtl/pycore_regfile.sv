@@ -1,7 +1,7 @@
 `include "pycore_defs.svh"
 
 module pycore_regfile #(
-    parameter int RF_DEPTH = 96,
+    parameter int RF_DEPTH = 256,
     parameter int VAL_WIDTH = PYCORE_VAL_WIDTH,
     parameter int TAG_WIDTH = PYCORE_TAG_WIDTH,
     parameter int LOCAL_COUNT = 32,

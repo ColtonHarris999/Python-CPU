@@ -28,7 +28,7 @@ module pycore_system #(
     output logic [3:0]  trap_code_o,
     output logic [63:0] cycle_count_o,
     output logic                          dbg_wb_we_o,
-    output logic [6:0]                    dbg_wb_addr_o,
+    output logic [7:0]                    dbg_wb_addr_o,
     output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry_o
 );
 

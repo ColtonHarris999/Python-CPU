@@ -13,7 +13,7 @@ module tb_pycore_runfile #(
     logic [3:0] trap_code;
     logic [63:0] cycle_count;
     logic dbg_wb_we;
-    logic [6:0] dbg_wb_addr;
+    logic [7:0] dbg_wb_addr;
     logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry;
 
     pycore_system #(
@@ -32,7 +32,7 @@ module tb_pycore_runfile #(
 
     always #5 clk = ~clk;
 
-    logic [PYCORE_ENTRY_WIDTH-1:0] shadow [0:95];
+    logic [PYCORE_ENTRY_WIDTH-1:0] shadow [0:255];
 
     always_ff @(posedge clk) begin
         if (dbg_wb_we) begin

@@ -32,9 +32,13 @@ module pycore_core #(
     parameter int ADDR_WIDTH    = PYCORE_ADDR_WIDTH,
     parameter int IMEM_DATA_W   = PYCORE_IMEM_DATA_WIDTH,
     parameter int DMEM_DATA_W   = PYCORE_DMEM_DATA_WIDTH,
-    parameter int RF_DEPTH      = 96,
+    // Deep call graphs (e.g. img_deep_callgraph) keep every live frame's
+    // locals/args resident in the RF, so depth is limited by RF_DEPTH more
+    // tightly than by the dmem frame-descriptor stack.  256 entries leaves
+    // headroom above fib(10)-class recursion.
+    parameter int RF_DEPTH      = 256,
     parameter int STACK_BASE    = 32,
-    parameter int STACK_TOP_MAX = 96,
+    parameter int STACK_TOP_MAX = 255,
     parameter string STRING_HEX = "pycore/programs/string_mem.hex",
     // First free byte of the bump-pointer heap.  A preloaded static heap
     // image sets this above the static objects so runtime allocations do
@@ -74,7 +78,7 @@ module pycore_core #(
     output logic [63:0]                   cycle_count_o,
     // debug writeback snoop (for verification; mirrors the RF write port)
     output logic                          dbg_wb_we_o,
-    output logic [6:0]                    dbg_wb_addr_o,
+    output logic [7:0]                    dbg_wb_addr_o,
     output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry_o
 );
 
@@ -619,7 +623,7 @@ module pycore_core #(
     // (BLOCK_COUNT × 2^BLOCK_SHIFT = 4 × 4 KB = 16 KB).
     // ---------------------------------------------------------------------
     localparam int    RF_BASE_CORE          = STACK_BASE;
-    localparam int    MAX_CALL_DEPTH_CORE   = 64;
+    localparam int    MAX_CALL_DEPTH_CORE   = 128;
     localparam logic [ADDR_WIDTH-1:0] FRAME_STACK_BASE = 32'h0000_2000;
     localparam int    FRAME_STACK_BYTES     = 32'h0000_2000;  // 8 KB, 256 frames
 
@@ -710,7 +714,7 @@ module pycore_core #(
                             return_wb_we_r    ? rs1_r               :
                                                 wb_entry_r;
     assign dbg_wb_we_o    = rf_we;
-    assign dbg_wb_addr_o  = {1'b0, rf_rd_addr_mux};
+    assign dbg_wb_addr_o  = 8'(rf_rd_addr_mux);
     assign dbg_wb_entry_o = rf_rd_data_mux;
 
     pycore_regfile #(

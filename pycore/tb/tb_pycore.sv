@@ -14,7 +14,7 @@ module tb_pycore;
     logic [3:0] trap_code;
     logic [63:0] cycle_count;
     logic dbg_wb_we;
-    logic [6:0] dbg_wb_addr;
+    logic [7:0] dbg_wb_addr;
     logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry;
 
     pycore_system #(
@@ -33,7 +33,7 @@ module tb_pycore;
     always #5 clk = ~clk;
 
     // Shadow register file rebuilt by snooping the writeback port.
-    logic [PYCORE_ENTRY_WIDTH-1:0] shadow [0:95];
+    logic [PYCORE_ENTRY_WIDTH-1:0] shadow [0:255];
     int wb_count;
 
     always_ff @(posedge clk or negedge rst_n) begin

@@ -54,7 +54,9 @@ PYCORE_MEM_SRCS := \
 	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
 	pycore-img-containers pycore-img-recursion pycore-img-extended-arg \
 	pycore-img-branchy pycore-img-undef-global pycore-img-noncallable \
-	pycore-img-bad-argc \
+	pycore-img-bad-argc pycore-img-deep-callgraph pycore-img-helper-containers \
+	pycore-img-algo-sort pycore-img-bitwise-calls pycore-img-globals-accum \
+	pycore-img-string-ops \
 	pycore-container pycore-container-build-index pycore-container-store-subscr \
 	pycore-container-dict-lookup pycore-container-dict-store \
 	pycore-container-list-empty pycore-container-dict-multi-pair \
@@ -311,6 +313,24 @@ pycore-img-noncallable:
 pycore-img-bad-argc:
 	$(call PYCORE_IMAGE_TRAP_RUN,bad_argc,6,50000)
 
+pycore-img-deep-callgraph:
+	$(call PYCORE_IMAGE_RUN,deep_callgraph,400000)
+
+pycore-img-helper-containers:
+	$(call PYCORE_IMAGE_RUN,helper_containers,100000)
+
+pycore-img-algo-sort:
+	$(call PYCORE_IMAGE_RUN,algo_sort,200000)
+
+pycore-img-bitwise-calls:
+	$(call PYCORE_IMAGE_RUN,bitwise_calls,100000)
+
+pycore-img-globals-accum:
+	$(call PYCORE_IMAGE_RUN,globals_accum,100000)
+
+pycore-img-string-ops:
+	$(call PYCORE_IMAGE_RUN,string_ops,100000)
+
 pycore-img: \
 	pycore-img-smoke \
 	pycore-img-call-chain \
@@ -321,7 +341,13 @@ pycore-img: \
 	pycore-img-branchy \
 	pycore-img-undef-global \
 	pycore-img-noncallable \
-	pycore-img-bad-argc
+	pycore-img-bad-argc \
+	pycore-img-deep-callgraph \
+	pycore-img-helper-containers \
+	pycore-img-algo-sort \
+	pycore-img-bitwise-calls \
+	pycore-img-globals-accum \
+	pycore-img-string-ops
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /
