@@ -2,3 +2,10 @@ build/
 .DS_Store
 __pycache__/
 *.pyc
+*.aux
+*.log
+*.toc
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk

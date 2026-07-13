@@ -5,6 +5,11 @@ subset. The prototype is written as portable SystemVerilog. FPGA use is only a
 functional vehicle; FPGA-specific inference hints and resource pragmas are
 intentionally absent.
 
+For a diagram-heavy, end-to-end specification of the path from Python source
+through image construction to hardware retirement, see
+[`pycore_execution_flow.pdf`](pycore_execution_flow.pdf)
+([LaTeX source](pycore_execution_flow.tex)).
+
 Bytecode support status (fully supported / partially supported / unsupported) is
 tracked separately in `pycore/docs/bytecode_support.md` so decode and
 preprocessing changes can be reviewed against one explicit matrix.
