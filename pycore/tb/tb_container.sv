@@ -36,7 +36,7 @@ module tb_container #(
     logic [3:0]  trap_code;
     logic [63:0] cycle_count;
     logic dbg_wb_we;
-    logic [6:0]  dbg_wb_addr;
+    logic [7:0]  dbg_wb_addr;
     logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry;
 
     pycore_system #(
@@ -97,7 +97,7 @@ module tb_container #(
             if ((dut.core.state_r == CORE_S_WB) &&
                 (dut.core.cur_opcode_r == PY_OP_RETURN_VALUE) &&
                 (dut.core.frame_active_depth ==
-                    (CHECK_ENTRY_RETURN ? 7'd1 : 7'd0))) begin
+                    (CHECK_ENTRY_RETURN ? 8'd1 : 8'd0))) begin
                 // Under image boot the module frame's terminal return is
                 // typically `return None` (RETURN_VALUE with a NONE-tagged
                 // TOS).  Filter those out so the check locks onto the

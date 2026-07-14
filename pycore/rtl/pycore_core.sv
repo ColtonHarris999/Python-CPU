@@ -32,9 +32,13 @@ module pycore_core #(
     parameter int ADDR_WIDTH    = PYCORE_ADDR_WIDTH,
     parameter int IMEM_DATA_W   = PYCORE_IMEM_DATA_WIDTH,
     parameter int DMEM_DATA_W   = PYCORE_DMEM_DATA_WIDTH,
-    parameter int RF_DEPTH      = 96,
+    // Deep call graphs (e.g. img_deep_callgraph) keep every live frame's
+    // locals/args resident in the RF, so depth is limited by RF_DEPTH more
+    // tightly than by the dmem frame-descriptor stack.  256 entries leaves
+    // headroom above fib(10)-class recursion.
+    parameter int RF_DEPTH      = 256,
     parameter int STACK_BASE    = 32,
-    parameter int STACK_TOP_MAX = 96,
+    parameter int STACK_TOP_MAX = 255,
     parameter string STRING_HEX = "pycore/programs/string_mem.hex",
     // First free byte of the bump-pointer heap.  A preloaded static heap
     // image sets this above the static objects so runtime allocations do
@@ -74,7 +78,7 @@ module pycore_core #(
     output logic [63:0]                   cycle_count_o,
     // debug writeback snoop (for verification; mirrors the RF write port)
     output logic                          dbg_wb_we_o,
-    output logic [6:0]                    dbg_wb_addr_o,
+    output logic [7:0]                    dbg_wb_addr_o,
     output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry_o
 );
 
@@ -176,7 +180,7 @@ module pycore_core #(
     logic [31:0]                   branch_tgt_r;
     logic [PYCORE_ENTRY_WIDTH-1:0] wb_entry_r;
     logic                          wb_we_r;
-    logic [6:0]                    tos_r;
+    logic [RF_AW-1:0]              tos_r;
 
     // Currently-executing code object (byte address into dmem; upper bits 0).
     // Latched by S_BOOT / S_CALL / S_RETURN; consumed by S_RETURN to reload
@@ -344,9 +348,9 @@ module pycore_core #(
     // ID: decode (pure combinational off the latched instruction + tos).
     // ---------------------------------------------------------------------
     logic [4:0]  dec_alu_op;
-    logic [6:0]  dec_rs1_sel;
-    logic [6:0]  dec_rs2_sel;
-    logic [6:0]  dec_rd_sel;
+    logic [7:0]  dec_rs1_sel;
+    logic [7:0]  dec_rs2_sel;
+    logic [7:0]  dec_rd_sel;
     logic        dec_is_branch;
     logic        dec_is_call;
     logic        dec_is_return;
@@ -362,8 +366,8 @@ module pycore_core #(
         .opcode_i(cur_opcode_r),
         .arg_i(cur_arg_r),
         .pc_i(cur_pc_r),
-        .tos_index_i(tos_r[5:0]),
-        .locals_base_i(cur_locals_base_r[5:0]),
+        .tos_index_i(tos_r[7:0]),
+        .locals_base_i(cur_locals_base_r[7:0]),
         .decoded_valid_o(),
         .alu_op_o(dec_alu_op),
         .rs1_sel_o(dec_rs1_sel),
@@ -619,7 +623,7 @@ module pycore_core #(
     // (BLOCK_COUNT × 2^BLOCK_SHIFT = 4 × 4 KB = 16 KB).
     // ---------------------------------------------------------------------
     localparam int    RF_BASE_CORE          = STACK_BASE;
-    localparam int    MAX_CALL_DEPTH_CORE   = 64;
+    localparam int    MAX_CALL_DEPTH_CORE   = 128;
     localparam logic [ADDR_WIDTH-1:0] FRAME_STACK_BASE = 32'h0000_2000;
     localparam int    FRAME_STACK_BYTES     = 32'h0000_2000;  // 8 KB, 256 frames
 
@@ -710,7 +714,7 @@ module pycore_core #(
                             return_wb_we_r    ? rs1_r               :
                                                 wb_entry_r;
     assign dbg_wb_we_o    = rf_we;
-    assign dbg_wb_addr_o  = {1'b0, rf_rd_addr_mux};
+    assign dbg_wb_addr_o  = 8'(rf_rd_addr_mux);
     assign dbg_wb_entry_o = rf_rd_data_mux;
 
     pycore_regfile #(
@@ -770,7 +774,7 @@ module pycore_core #(
     // Trap aggregation (single in-flight instruction).
     // ---------------------------------------------------------------------
     logic        freeze_pipeline;
-    logic signed [8:0] next_tos;
+    logic signed [9:0] next_tos;
     assign next_tos = $signed({2'b0, tos_r}) + id_tos_delta;
 
     logic type_trap_sig;
@@ -1021,7 +1025,7 @@ module pycore_core #(
             branch_tgt_r         <= 32'b0;
             wb_entry_r           <= '0;
             wb_we_r              <= 1'b0;
-            tos_r                <= STACK_BASE[6:0];
+            tos_r                <= STACK_BASE[RF_AW-1:0];
             fetch_skip_r         <= 1'b0;
             redirect_pending_r   <= 1'b0;
             redirect_tgt_r       <= 32'b0;
@@ -1205,7 +1209,7 @@ module pycore_core #(
                 S_WB: begin
                     if (!dec_is_call && !dec_is_return) begin
                         // Normal instruction writeback.
-                        tos_r <= next_tos[6:0];
+                        tos_r <= next_tos[RF_AW-1:0];
                         if (dec_is_branch && branch_take_r) begin
                             redirect_pending_r <= 1'b1;
                             redirect_tgt_r     <= branch_tgt_r;
@@ -1237,7 +1241,7 @@ module pycore_core #(
                         end else begin
                             // Base-frame return: no caller exists.  Just pop
                             // the TOS and resume fetching.
-                            tos_r        <= next_tos[6:0];
+                            tos_r        <= next_tos[RF_AW-1:0];
                             fetch_skip_r <= 1'b1;
                             // state_next = S_FETCH (from always_comb)
                         end
@@ -1477,7 +1481,7 @@ module pycore_core #(
                                 // Commit return value at caller's tos_base.
                                 return_wb_we_r     <= 1'b1;
                                 return_wb_addr_r   <= call_tos_base_r;
-                                tos_r              <= call_tos_base_r + 7'd1;
+                                tos_r              <= call_tos_base_r + RF_AW'(1);
                                 redirect_pending_r <= 1'b1;
                                 redirect_tgt_r     <= call_entry_slot_r[31:0];
                                 return_phase_r     <= RET_PHASE_DONE;
@@ -1571,7 +1575,7 @@ module pycore_core #(
                                             container_wb_data_r <= pycore_make_entry(
                                                 PY_TAG_LIST,
                                                 {{96{1'b0}}, container_base_r});
-                                            tos_r             <= tos_r + 7'd1;
+                                            tos_r             <= tos_r + RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
                                         end else begin
@@ -1712,12 +1716,12 @@ module pycore_core #(
                                         // Tag is in container_rd_data_r[3:0].
                                         // Result lands at tos-2 (container slot).
                                         container_wb_we_r   <= 1'b1;
-                                        container_wb_addr_r <= RF_AW'(tos_r - 7'd2);
+                                        container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(2));
                                         container_wb_data_r <= pycore_make_entry(
                                             container_rd_data_r[3:0],
                                             container_val_r);
                                         // Pop 1 (key): tos-2 keeps the result.
-                                        tos_r             <= tos_r - 7'd1;
+                                        tos_r             <= tos_r - RF_AW'(1);
                                         fetch_skip_r      <= 1'b1;
                                         // Advance to terminal marker to prevent
                                         // this branch from executing a second time
@@ -1751,7 +1755,7 @@ module pycore_core #(
                                         container_type_trap_r <= 1'b1;
                                     end else begin
                                         // Set RF address to read value (tos-3).
-                                        container_rf_addr_r      <= RF_AW'(tos_r - 7'd3);
+                                        container_rf_addr_r      <= RF_AW'(tos_r - RF_AW'(3));
                                         // Start header read.
                                         container_base_r         <= cont_rs2_addr;
                                         container_dmem_addr_r    <= cont_rs2_addr;
@@ -1796,7 +1800,7 @@ module pycore_core #(
                                 CP_TAG: begin
                                     if (!container_dmem_pending_r) begin
                                         // Pop 3 (key, container, value).
-                                        tos_r             <= tos_r - 7'd3;
+                                        tos_r             <= tos_r - RF_AW'(3);
                                         fetch_skip_r      <= 1'b1;
                                         container_phase_r <= CP_DONE;
                                     end
@@ -1868,7 +1872,7 @@ module pycore_core #(
                                             container_wb_addr_r <= RF_AW'({2'b0, tos_r});
                                             container_wb_data_r <= pycore_make_entry(
                                                 PY_TAG_DICT, {{96{1'b0}}, container_base_r});
-                                            tos_r             <= tos_r + 7'd1;
+                                            tos_r             <= tos_r + RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
                                         end else begin
@@ -2161,10 +2165,10 @@ module pycore_core #(
                                 CP_DICT_RD_VTAG: begin
                                     if (!container_dmem_pending_r) begin
                                         container_wb_we_r   <= 1'b1;
-                                        container_wb_addr_r <= RF_AW'(tos_r - 7'd2);
+                                        container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(2));
                                         container_wb_data_r <= pycore_make_entry(
                                             container_rd_data_r[3:0], container_val_r);
-                                        tos_r             <= tos_r - 7'd1;
+                                        tos_r             <= tos_r - RF_AW'(1);
                                         fetch_skip_r      <= 1'b1;
                                         container_phase_r <= CP_DONE;
                                     end
@@ -2192,8 +2196,8 @@ module pycore_core #(
                                     end else begin
                                         container_tag_r <= cont_rs1_tag;
                                         container_val_r <= cont_rs1_val;
-                                        container_rf_addr_r     <= RF_AW'(tos_r - 7'd3);
-                                        container_val_rf_addr_r <= RF_AW'(tos_r - 7'd3);
+                                        container_rf_addr_r     <= RF_AW'(tos_r - RF_AW'(3));
+                                        container_val_rf_addr_r <= RF_AW'(tos_r - RF_AW'(3));
                                         container_insert_new_r  <= 1'b0;
                                         container_finishing_r   <= 1'b0;
                                         container_base_r         <= cont_rs2_addr;
@@ -2209,7 +2213,7 @@ module pycore_core #(
                                         if (container_finishing_r) begin
                                             // used-count header rewrite acked → pop and done.
                                             container_finishing_r <= 1'b0;
-                                            tos_r             <= tos_r - 7'd3;
+                                            tos_r             <= tos_r - RF_AW'(3);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
                                         end else begin
@@ -2352,7 +2356,7 @@ module pycore_core #(
                                             container_finishing_r  <= 1'b1;
                                             container_phase_r <= CP_HDR;
                                         end else begin
-                                            tos_r             <= tos_r - 7'd3;
+                                            tos_r             <= tos_r - RF_AW'(3);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
                                         end
@@ -2384,7 +2388,7 @@ module pycore_core #(
                                         container_wb_data_r    <= pycore_make_entry(
                                             PY_TAG_TUPLE,
                                             {64'd0, {32'b0, heap_ptr_r}});
-                                        tos_r             <= tos_r + 7'd1;
+                                        tos_r             <= tos_r + RF_AW'(1);
                                         fetch_skip_r      <= 1'b1;
                                         container_phase_r <= CP_DONE;
                                     end else begin
@@ -2493,11 +2497,11 @@ module pycore_core #(
                                 CP_TAG: begin
                                     if (!container_dmem_pending_r) begin
                                         container_wb_we_r   <= 1'b1;
-                                        container_wb_addr_r <= RF_AW'(tos_r - 7'd2);
+                                        container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(2));
                                         container_wb_data_r <= pycore_make_entry(
                                             container_rd_data_r[3:0],
                                             container_val_r);
-                                        tos_r             <= tos_r - 7'd1;
+                                        tos_r             <= tos_r - RF_AW'(1);
                                         fetch_skip_r      <= 1'b1;
                                         container_phase_r <= CP_DONE;
                                     end
@@ -2550,7 +2554,7 @@ module pycore_core #(
                                         container_wb_data_r <= pycore_make_entry(
                                             container_rd_data_r[3:0],
                                             container_val_r);
-                                        tos_r             <= tos_r + 7'd1;
+                                        tos_r             <= tos_r + RF_AW'(1);
                                         fetch_skip_r      <= 1'b1;
                                         container_phase_r <= CP_DONE;
                                     end
@@ -2715,7 +2719,7 @@ module pycore_core #(
                                         container_wb_data_r <= pycore_make_entry(
                                             container_rd_data_r[3:0],
                                             container_val_r);
-                                        tos_r <= tos_r + 7'd1;
+                                        tos_r <= tos_r + RF_AW'(1);
                                         if (container_push_null_r) begin
                                             // Second beat: push NULL next cycle.
                                             container_phase_r <= CP_LG_WB_NULL;
@@ -2730,7 +2734,7 @@ module pycore_core #(
                                     container_wb_we_r   <= 1'b1;
                                     container_wb_addr_r <= RF_AW'({2'b0, tos_r});
                                     container_wb_data_r <= pycore_make_entry(PY_TAG_NULL, '0);
-                                    tos_r <= tos_r + 7'd1;
+                                    tos_r <= tos_r + RF_AW'(1);
                                     fetch_skip_r      <= 1'b1;
                                     container_phase_r <= CP_DONE;
                                 end
@@ -2782,8 +2786,8 @@ module pycore_core #(
                                             container_type_trap_r <= 1'b1;
                                         end else begin
                                             // Read STORE_DICT preamble: value @ RF[tos-1].
-                                            container_rf_addr_r      <= RF_AW'(tos_r - 7'd1);
-                                            container_val_rf_addr_r  <= RF_AW'(tos_r - 7'd1);
+                                            container_rf_addr_r      <= RF_AW'(tos_r - RF_AW'(1));
+                                            container_val_rf_addr_r  <= RF_AW'(tos_r - RF_AW'(1));
                                             container_insert_new_r   <= 1'b0;
                                             container_finishing_r    <= 1'b0;
                                             container_base_r         <= globals_base_r;
@@ -2800,7 +2804,7 @@ module pycore_core #(
                                         if (container_finishing_r) begin
                                             // Header rewrite ack → pop value.
                                             container_finishing_r <= 1'b0;
-                                            tos_r             <= tos_r - 7'd1;
+                                            tos_r             <= tos_r - RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
                                         end else begin
@@ -2945,7 +2949,7 @@ module pycore_core #(
                                             container_finishing_r  <= 1'b1;
                                             container_phase_r <= CP_HDR;
                                         end else begin
-                                            tos_r             <= tos_r - 7'd1;
+                                            tos_r             <= tos_r - RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
                                         end
@@ -2977,7 +2981,7 @@ module pycore_core #(
                                     container_wb_we_r   <= 1'b1;
                                     container_wb_addr_r <= RF_AW'({2'b0, tos_r});
                                     container_wb_data_r <= rf_rs1;
-                                    tos_r <= tos_r + 7'd1;
+                                    tos_r <= tos_r + RF_AW'(1);
                                     container_rf_addr_r <= RF_AW'(
                                         {2'b0, cur_locals_base_r} + {5'b0, container_lfb_lo_r});
                                     container_phase_r <= CP_LFB_SECOND;
@@ -2987,7 +2991,7 @@ module pycore_core #(
                                     container_wb_we_r   <= 1'b1;
                                     container_wb_addr_r <= RF_AW'({2'b0, tos_r});
                                     container_wb_data_r <= rf_rs1;
-                                    tos_r <= tos_r + 7'd1;
+                                    tos_r <= tos_r + RF_AW'(1);
                                     fetch_skip_r      <= 1'b1;
                                     container_phase_r <= CP_DONE;
                                 end

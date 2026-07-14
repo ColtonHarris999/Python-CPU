@@ -33,8 +33,8 @@
 // FRAME_ENTRY_BYTES = 32 (two 16-byte dmem words). The 8 KB frame region
 // still holds 256 frames.
 module pycore_frame #(
-    parameter int MAX_CALL_DEPTH   = 64,
-    parameter int RF_DEPTH         = 96,
+    parameter int MAX_CALL_DEPTH   = 128,
+    parameter int RF_DEPTH         = 256,
     parameter int RF_BASE          = 32,
     parameter int ADDR_WIDTH       = PYCORE_ADDR_WIDTH,
     parameter logic [ADDR_WIDTH-1:0] STACK_BASE_ADDR  = 32'h0001_0000,

@@ -1,17 +1,18 @@
 `include "pycore_defs.svh"
 
+// Decode for RF_DEPTH up to 256: stack/local indices and RF selects are 8-bit.
 module pycore_decode (
     input  logic        instr_valid_i,
     input  logic [7:0]  opcode_i,
     input  logic [31:0] arg_i,
     input  logic [31:0] pc_i,
-    input  logic [5:0]  tos_index_i,
-    input  logic [5:0]  locals_base_i,
+    input  logic [7:0]  tos_index_i,
+    input  logic [7:0]  locals_base_i,
     output logic        decoded_valid_o,
     output logic [4:0]  alu_op_o,
-    output logic [6:0]  rs1_sel_o,
-    output logic [6:0]  rs2_sel_o,
-    output logic [6:0]  rd_sel_o,
+    output logic [7:0]  rs1_sel_o,
+    output logic [7:0]  rs2_sel_o,
+    output logic [7:0]  rd_sel_o,
     output logic        is_branch_o,
     output logic        is_call_o,
     output logic        is_return_o,
@@ -66,9 +67,9 @@ module pycore_decode (
     always_comb begin
         decoded_valid_o = instr_valid_i;
         alu_op_o = PY_ALU_PASS;
-        rs1_sel_o = 7'b0;
-        rs2_sel_o = 7'b0;
-        rd_sel_o = 7'b0;
+        rs1_sel_o = 8'b0;
+        rs2_sel_o = 8'b0;
+        rd_sel_o = 8'b0;
         is_branch_o = 1'b0;
         is_call_o = 1'b0;
         is_return_o = 1'b0;
@@ -85,8 +86,8 @@ module pycore_decode (
             end
 
             PY_OP_LOAD_FAST, PY_OP_LOAD_FAST_BORROW: begin
-                rs1_sel_o = {1'b0, locals_base_i + arg_i[5:0]};
-                rd_sel_o = {1'b0, tos_index_i};
+                rs1_sel_o = locals_base_i + arg_i[7:0];
+                rd_sel_o = tos_index_i;
                 push_stack_o = 1'b1;
                 mem_op_o = PY_MEM_LOAD_FAST;
             end
@@ -98,14 +99,14 @@ module pycore_decode (
             end
 
             PY_OP_STORE_FAST: begin
-                rs1_sel_o = {1'b0, tos_index_i - 6'd1};
-                rd_sel_o = {1'b0, locals_base_i + arg_i[5:0]};
+                rs1_sel_o = tos_index_i - 8'd1;
+                rd_sel_o = locals_base_i + arg_i[7:0];
                 pop_stack_o = 1'b1;
                 mem_op_o = PY_MEM_STORE_FAST;
             end
 
             PY_OP_LOAD_SMALL_INT: begin
-                rd_sel_o = {1'b0, tos_index_i};
+                rd_sel_o = tos_index_i;
                 push_stack_o = 1'b1;
             end
 
@@ -116,21 +117,21 @@ module pycore_decode (
 
             // PUSH_NULL: push {PY_TAG_NULL, 0} (self_or_null sentinel).
             PY_OP_PUSH_NULL: begin
-                rd_sel_o = {1'b0, tos_index_i};
+                rd_sel_o = tos_index_i;
                 push_stack_o = 1'b1;
             end
 
             // TO_BOOL: convert TOS numeric to BOOL in place (net stack 0).
             PY_OP_TO_BOOL: begin
-                rs1_sel_o = {1'b0, tos_index_i - 6'd1};
-                rd_sel_o  = {1'b0, tos_index_i - 6'd1};
+                rs1_sel_o = tos_index_i - 8'd1;
+                rd_sel_o  = tos_index_i - 8'd1;
                 alu_op_o  = PY_ALU_PASS;  // conversion done in core EX
             end
 
             // MAKE_FUNCTION: pop code / push function (≡ code). Net effect 0.
             // Verified in EXEC: trap TYPE if TOS is not CODE_OBJECT.
             PY_OP_MAKE_FUNCTION: begin
-                rs1_sel_o = {1'b0, tos_index_i - 6'd1};
+                rs1_sel_o = tos_index_i - 8'd1;
             end
 
             PY_OP_POP_TOP, PY_OP_POP_ITER: begin
@@ -138,9 +139,9 @@ module pycore_decode (
             end
 
             PY_OP_BINARY_OP: begin
-                rs1_sel_o = {1'b0, tos_index_i - 6'd2};
-                rs2_sel_o = {1'b0, tos_index_i - 6'd1};
-                rd_sel_o = {1'b0, tos_index_i - 6'd2};
+                rs1_sel_o = tos_index_i - 8'd2;
+                rs2_sel_o = tos_index_i - 8'd1;
+                rd_sel_o = tos_index_i - 8'd2;
                 alu_op_o = decode_binary_op(arg_i[7:0]);
                 if (alu_op_o == PY_ALU_SUBSCR) begin
                     is_container_o = 1'b1;
@@ -151,16 +152,16 @@ module pycore_decode (
             end
 
             PY_OP_COMPARE_OP: begin
-                rs1_sel_o = {1'b0, tos_index_i - 6'd2};
-                rs2_sel_o = {1'b0, tos_index_i - 6'd1};
-                rd_sel_o = {1'b0, tos_index_i - 6'd2};
+                rs1_sel_o = tos_index_i - 8'd2;
+                rs2_sel_o = tos_index_i - 8'd1;
+                rd_sel_o = tos_index_i - 8'd2;
                 pop_stack_o = 1'b1;
                 alu_op_o = decode_compare_op(arg_i[7:0]);
                 illegal_opcode_o = alu_op_o == PY_ALU_ILLEGAL;
             end
 
             PY_OP_RETURN_VALUE: begin
-                rs1_sel_o = {1'b0, tos_index_i - 6'd1};
+                rs1_sel_o = tos_index_i - 8'd1;
                 pop_stack_o = 1'b1;
                 is_return_o = 1'b1;
                 alu_op_o = PY_ALU_PASS;
@@ -170,7 +171,7 @@ module pycore_decode (
             PY_OP_POP_JUMP_IF_TRUE, PY_OP_POP_JUMP_IF_FALSE: begin
                 is_branch_o = 1'b1;
                 if (opcode_i == PY_OP_POP_JUMP_IF_TRUE || opcode_i == PY_OP_POP_JUMP_IF_FALSE) begin
-                    rs1_sel_o = {1'b0, tos_index_i - 6'd1};
+                    rs1_sel_o = tos_index_i - 8'd1;
                     pop_stack_o = 1'b1;
                 end
             end
@@ -201,20 +202,20 @@ module pycore_decode (
             end
 
             PY_OP_STORE_SUBSCR: begin
-                rs1_sel_o = {1'b0, tos_index_i - 6'd1};  // key
-                rs2_sel_o = {1'b0, tos_index_i - 6'd2};  // container
+                rs1_sel_o = tos_index_i - 8'd1;  // key
+                rs2_sel_o = tos_index_i - 8'd2;  // container
                 is_container_o = 1'b1;
             end
 
             PY_OP_MEM_LOAD_PTR: begin
-                rs1_sel_o = {1'b0, tos_index_i - 6'd1};
-                rd_sel_o  = {1'b0, tos_index_i - 6'd1};
+                rs1_sel_o = tos_index_i - 8'd1;
+                rd_sel_o  = tos_index_i - 8'd1;
                 mem_op_o  = PY_MEM_LOAD_PTR;
             end
 
             PY_OP_MEM_STORE_PTR: begin
-                rs1_sel_o = {1'b0, tos_index_i - 6'd1};
-                rs2_sel_o = {1'b0, tos_index_i - 6'd2};
+                rs1_sel_o = tos_index_i - 8'd1;
+                rs2_sel_o = tos_index_i - 8'd2;
                 pop_stack_o = 1'b1;
                 mem_op_o  = PY_MEM_STORE_PTR;
             end
