@@ -14,27 +14,26 @@ module tb_pycore;
     logic [3:0] trap_code;
     logic [63:0] cycle_count;
     logic dbg_wb_we;
-    logic [6:0] dbg_wb_addr;
+    logic [7:0] dbg_wb_addr;
     logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry;
 
     pycore_system #(
-        .PROG_HEX("pycore/programs/mem_demo_prog.hex"),
-        .CONST_HEX("pycore/programs/mem_demo_consts.hex")
+        .PROG_HEX("pycore/programs/mem_demo_prog.hex")
     ) dut (
-        .clk(clk),
-        .rst_n(rst_n),
-        .trap_out(trap_out),
-        .trap_code(trap_code),
-        .cycle_count(cycle_count),
-        .dbg_wb_we(dbg_wb_we),
-        .dbg_wb_addr(dbg_wb_addr),
-        .dbg_wb_entry(dbg_wb_entry)
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .trap_out_o(trap_out),
+        .trap_code_o(trap_code),
+        .cycle_count_o(cycle_count),
+        .dbg_wb_we_o(dbg_wb_we),
+        .dbg_wb_addr_o(dbg_wb_addr),
+        .dbg_wb_entry_o(dbg_wb_entry)
     );
 
     always #5 clk = ~clk;
 
     // Shadow register file rebuilt by snooping the writeback port.
-    logic [PYCORE_ENTRY_WIDTH-1:0] shadow [0:95];
+    logic [PYCORE_ENTRY_WIDTH-1:0] shadow [0:255];
     int wb_count;
 
     always_ff @(posedge clk or negedge rst_n) begin

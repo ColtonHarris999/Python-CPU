@@ -1,0 +1,4 @@
+lst: LIST
+
+# warnings
+OBJECT-typed value feeds BINARY_OP at bytecode offset 12

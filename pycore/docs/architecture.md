@@ -9,12 +9,24 @@ Bytecode support status (fully supported / partially supported / unsupported) is
 tracked separately in `pycore/docs/bytecode_support.md` so decode and
 preprocessing changes can be reviewed against one explicit matrix.
 
+## CPython image fidelity boundary
+
+"Identical to what a CPython compiler would create" means: the image contains
+the same object graph as `compile()` output -- same bytecode units in the same
+order (including `CACHE` and `EXTENDED_ARG`), same `co_consts`/`co_names`, and
+nested code objects -- lowered mechanically into tagged 128-bit-slot encoding.
+No opcode is added, removed, reordered, rewritten, or argument-remapped.
+
+Byte-exact CPython C-struct layout is out of scope because PyCore requires
+tagged slots for hardware access. Matching CPython's in-memory C object layout
+is future work.
+
 ## Tagged value invariant
 
-Every architectural value is a 131-bit register-file entry:
+Every architectural value is a 132-bit register-file entry:
 
 ```text
-{ tag[2:0], value[127:0] }
+{ tag[3:0], value[127:0] }
 ```
 
 The tag is co-located with the value and is read on every access. This avoids a
@@ -30,14 +42,22 @@ The tag encoding is:
 
 | Tag | Meaning |
 | --- | --- |
-| `000` | `UNINITIALIZED` |
-| `001` | signed `INT` (64-bit fast path, sign-extended to 128) |
-| `010` | IEEE 754 double `FLOAT` in `value[63:0]`, upper bits zero |
-| `011` | `BOOL`, with `value[0]` significant, upper bits zero |
-| `100` | raw `PTR`, 128-bit byte address for data memory |
-| `101` | opaque `OBJECT` |
-| `110` | `SHORT_STR` inline string: `size[3:0]`, `bytes[119:0]`, `flags[3:0]` |
-| `111` | `LONG_STR` descriptor: `size[63:0]`, `addr[63:0]` |
+| `0000` | `UNINITIALIZED` |
+| `0001` | signed `INT` (64-bit fast path, sign-extended to 128) |
+| `0010` | IEEE 754 double `FLOAT` in `value[63:0]`, upper bits zero |
+| `0011` | `BOOL`, with `value[0]` significant, upper bits zero |
+| `0100` | raw `PTR`, 128-bit byte address for data memory |
+| `0101` | `TUPLE`: `size[63:0]`, `addr[63:0]` |
+| `0110` | `SHORT_STR` inline string: `size[3:0]`, `bytes[119:0]`, `flags[3:0]` |
+| `0111` | `LONG_STR` descriptor: `size[63:0]`, `addr[63:0]` |
+| `1000` | opaque `OBJECT`: `addr[63:0]` |
+| `1001` | `DICT` python dictionary: `addr[63:0]` |
+| `1010` | `LIST` python list: `addr[63:0]` |
+| `1011` | `SET` python set: `addr[63:0]` |
+| `1100` | `CODE_OBJECT` PythonCodeObject: `addr[63:0]` |
+| `1101` | `FRAME_OBJECT` PythonFrameObject: `addr[63:0]` |
+| `1110` | `NULL` CPython `self_or_null` call sentinel |
+| `1111` | `NONE` python None type |
 
 Undefined local reads still trap instead of returning a garbage value.
 
@@ -73,15 +93,17 @@ slow arithmetic type; it means "unknown, therefore unsafe." Reimplementing
 CPython's complete object protocol in hardware is explicitly outside PyCore's
 fast path.
 
-Trap priority is implemented by `pycore_trap.sv`:
+Trap priority is implemented by `pycore_trap.sv` (numeric trap codes are noted
+where they differ from priority position):
 
 1. `TYPE_TRAP`
 2. `STACK_FAULT`
 3. `DIV_ZERO`
 4. `FPU_EXCEPTION`
 5. `ILLEGAL_OPCODE`
-6. `ADDR_ALIGN` (misaligned data access)
-7. `MEM_FAULT` (out-of-range address or invalid PTR)
+6. `CALL_FILTER` (code 6; non-callable, bad argc, or frame-manager fault)
+7. `ADDR_ALIGN` (code 8; misaligned data access)
+8. `MEM_FAULT` (code 7; out-of-range address, missing global/key, or invalid PTR)
 
 The trap block halts the core (forcing the control FSM into `S_HALT`) and
 latches the fault PC plus both source entries. `ADDR_ALIGN` and `MEM_FAULT` are
@@ -172,12 +194,11 @@ block_off = addr[BLOCK_SHIFT-1:0]
 word_idx  = block_off >> log2(DATA_WIDTH/8)
 ```
 
-- `pycore_imem.sv`: read-only, `IMEM_DATA_WIDTH = 64`. Each instruction is one
-  8-byte slot (the 40-bit folded word zero-padded). Fetch drives `pc << 3`.
+- `pycore_imem.sv`: read-only, `IMEM_DATA_WIDTH = 64`. Each CPython two-byte
+  code unit is one 8-byte slot. `CACHE` and `EXTENDED_ARG` units remain present
+  in the image; fetch folds/skips them at execution time. Fetch drives `pc << 3`.
 - `pycore_dmem.sv`: read/write, `DMEM_DATA_WIDTH = 128`. Access is one 128-bit
   value per transaction, 16-byte aligned in v1.
-- `pycore_const_table.sv`: a 131-bit constant ROM read by the MEM stage so that
-  `LOAD_CONST` writeback flows through MEM -> WB like any other value.
 
 Default memory map (all parameters in `pycore_defs.svh`): `ADDR_WIDTH = 32`,
 `BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 4` (16 KB), `DMEM_BLOCK_COUNT = 4`
@@ -199,41 +220,227 @@ RF[0..31]  frame locals
 RF[32..95] operand stack
 ```
 
-Function calls are managed by `pycore_frame.sv`, which now treats the RF stack
-window as a **ring buffer with memory spill** rather than a hard depth limit.
-Each call allocates a frame node containing:
+Function calls are managed by the as-built `pycore_frame.sv`, which implements
+a **simple push/pop call-frame stack in dmem** (not a ring-buffer spill design).
+Each CALL pushes a two-slot, 32-byte frame descriptor:
 
-- `{pc_return, tos_base, locals_base}` bookkeeping
-- linked-list pointers (`prev`, `next`) for active-frame traversal
-- a per-slot mapping table where `0` means "resident in RF" and nonzero is the
-  spill memory address
-- an allocation pointer target used to identify the oldest frame that still owns
-  resident RF data
+```text
+slot 0: { pc_return[31:0], tos_base, locals_base, zero padding }
+slot 1: { zero padding, caller cur_code[31:0] }
+```
 
-The RF residency policy is FIFO by age: when a new frame needs registers and
-the resident ring is full, the oldest resident slot is spilled to memory and
-its mapping table entry flips from `0` to the spill address. This allows call
-depth and total logical register demand to scale with memory capacity rather
-than RF depth.
+Each RETURN pops slot 1 then slot 0, restores the caller's code object pointer,
+PC, TOS base, and locals base, then reloads the caller's `co_consts` and
+`co_names` from the code object before fetch resumes. Frame depth is bounded by
+the reserved frame-stack region (`0x2000`-`0x3FFF`).
 
-Two explicit memory regions are reserved for runtime frame storage:
+> **Future work:** an earlier design study (`pycore/rtl/attic/pycore_frame_buffer.sv`)
+> explored a ring-buffer RF window with memory spill so call depth could scale
+> with dmem capacity rather than RF depth. That module is unintegrated; the
+> production path remains the simple `pycore_frame.sv` push/pop manager.
 
-- **stack-frame metadata region**: frame linked-list nodes
-- **frame spill region**: spilled register payloads for non-resident slots
+## Image boot and code objects
 
-Spill slots are reclaimed on return, so deep but finite recursion can continue
-as long as free spill capacity remains. A separate heap region remains reserved
-for future object/string support.
+When `BOOT_EN=1`, reset enters `S_BOOT` before normal fetch. The core reads the
+boot record at `PYCORE_BOOT_RECORD_ADDR = 0x0000_03e0`:
 
-## CPython 3.14 preprocessing
+```text
+0x3e0: module code object value
+0x3f0: module code object tag
+0x400: globals dict value
+0x410: globals dict tag
+```
 
-`pycore/tools/preprocess.py` must run on Python 3.14. It compiles a host Python
-function, rejects unsupported opcodes, strips `CACHE`, emits folded 40-bit
-instruction words zero-padded to one 8-byte imem slot, writes 131-bit tagged
-constants (33 hex digits), and produces a `.types`
-annotation file. `LOAD_FAST_BORROW`, `LOAD_SMALL_INT`, `NOT_TAKEN`, and
-`POP_ITER` are modeled as CPython 3.14 features; removed 3.13 opcodes are not
-assumed.
+The boot walker verifies `CODE_OBJECT`/`DICT`, caches the module code object's
+`co_consts` and `co_names`, latches `globals_base_r`, and redirects fetch to the
+module entry slot. `BOOT_EN=0` is retained only for legacy hand-authored hex
+fixtures.
+
+Serialized code objects are four tagged-entry fields (32 bytes per field):
+
+```text
+field 0: entry_slot  (INT, imem slot index)
+field 1: co_consts   (TUPLE handle)
+field 2: co_names    (TUPLE handle)
+field 3: metadata    (INT, packed {stacksize, nlocals, argcount})
+```
+
+The interim function model is **function == code object**: `MAKE_FUNCTION`
+checks that TOS is a `CODE_OBJECT` and leaves it in place. `CALL` expects the
+CPython 3.14 non-method layout `callable, NULL, args...`, validates the callable
+tag and argcount, reads the callee code-object fields, then enters the frame
+manager.
+
+`LOAD_CONST` is now a normal one-slot CPython instruction. It indexes
+`co_consts[arg]` and the container FSM performs two dmem reads (value slot then
+tag slot) before pushing the tagged entry. This raises CPO for constant-heavy
+programs versus the old inline literal path; an inline cache or small const
+cache is future work.
+
+`LOAD_GLOBAL` and `LOAD_NAME` read the name from `co_names`, then probe the
+module globals dict. There is no builtins fallback in this prototype: a missing
+name traps `PY_TRAP_MEM_FAULT`. `LOAD_NAME` is currently equivalent to globals
+lookup at module scope. `STORE_NAME` and `STORE_GLOBAL` update the same globals
+dict.
+
+## CPython 3.14 image tooling
+
+`pycore/tools/image_from_source.py` is the primary flow. It must run on Python
+3.14, compiles the module with `compile()`, validates that all code objects use
+supported opcodes, transcodes every raw `co_code` unit one-for-one into imem,
+serializes the object graph (`co_consts`, `co_names`, nested code objects, and
+globals dict) into tagged dmem slots, and writes the boot record. Branch
+arguments are not remapped because imem slot index equals CPython code-unit
+index.
+
+`pycore/tools/preprocess.py` is deprecated legacy tooling for older
+single-function hex fixtures and should not be used for new image-boot tests.
+
+## Container heap and object model
+
+### Heap allocator
+
+The core carries a **bump-pointer heap allocator** for dynamically allocated
+container objects.  The heap occupies a fixed region of data memory:
+
+```text
+PYCORE_HEAP_BASE  = 0x0000_0400  (1 KB offset from dmem start)
+PYCORE_HEAP_LIMIT = 0x0000_2000  (just below the call-frame stack)
+```
+
+Capacity: ~7 KB.  A `heap_ptr_r` register in `pycore_core.sv` starts at
+`HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE`) and advances monotonically; there
+is no free list (no object reclamation in this prototype).  Overflow traps
+`PY_TRAP_MEM_FAULT`.  A preloaded static heap image sets `HEAP_INIT_PTR` to the
+first free byte above the static objects so bump allocation does not overwrite
+them.  `DMEM_HEX` on `pycore_system` / `pycore_dmem` preloads the whole dmem
+bank (not just the first 4 KB block).
+
+### LIST in-dmem layout
+
+All addresses are 16-byte aligned (128-bit dmem slot granularity).
+
+```text
+base + 0                : header { capacity[63:0], length[63:0] }
+base + 16*(1 + 2*i)     : element[i] value[127:0]
+base + 16*(2 + 2*i)     : element[i] tag  { 124'b0, tag[3:0] }
+```
+
+Each element occupies **two 16-byte slots** (element stride = 32 bytes).
+Total allocation = `16 + capacity × 32` bytes.
+
+The 132-bit tagged entry `{ tag[3:0], value[127:0] }` is split across two
+consecutive 128-bit dmem slots: the value slot followed by the tag slot.
+This avoids any non-16-byte addressing.
+
+Helpers `pycore_list_val_addr(base, idx)` and `pycore_list_tag_addr(base,
+idx)` in `pycore_defs.svh` compute element addresses.
+
+Negative indices are **not** wrapped: the bounds check is unsigned, so a
+negative INT key traps `PY_TRAP_MEM_FAULT` (same policy for TUPLE).
+
+### TUPLE in-dmem layout
+
+Because size lives inline in the handle `{ size[63:0], addr[63:0] }`, tuples
+need **no header slot**:
+
+```text
+element[i] value : addr + 32*i
+element[i] tag   : addr + 32*i + 16
+allocation bytes : size * 32
+```
+
+Helpers: `pycore_tuple_val_addr`, `pycore_tuple_tag_addr`,
+`pycore_tuple_alloc_bytes`, `pycore_tuple_size`, `pycore_tuple_addr`.
+
+### DICT in-dmem layout
+
+All addresses are 16-byte aligned (128-bit dmem slot granularity).
+
+```text
+base + 0                 : header { slot_count[63:0], used[63:0] }
+base + 16*(1 + 4*i)      : slot[i] key   value[127:0]
+base + 16*(2 + 4*i)      : slot[i] key   tag   { 124'b0, key_tag[3:0] }
+base + 16*(3 + 4*i)      : slot[i] value value[127:0]
+base + 16*(4 + 4*i)      : slot[i] value tag   { 124'b0, val_tag[3:0] }
+```
+
+Each slot occupies **four 16-byte dmem slots** (slot stride = 64 bytes).
+Total allocation = `16 + slot_count × 64` bytes.
+
+Empty-bucket sentinel: key tag = `PY_TAG_UNINIT` (4'b0000).
+
+Slot count = `next_pow2(max(4, 2 × n_pairs))`, ensuring max load ≤ 50% at
+construction time. Hash = `pycore_dict_key_hash(tag, value) & (slot_count − 1)`:
+
+| Key tag | Hash |
+| --- | --- |
+| `INT` / `BOOL` | `value[31:0]` (preserves existing images) |
+| `SHORT_STR` | XOR of the four 32-bit words of `value[127:0]` |
+| `LONG_STR` | `value[31:0] ^ value[95:64]` (low 32 of addr XOR low 32 of size) |
+
+Supported key tags: `INT`, `BOOL`, `SHORT_STR`, `LONG_STR`. Other key tags trap
+`PY_TRAP_TYPE`. Key-not-found traps `PY_TRAP_MEM_FAULT`.
+
+`LONG_STR` equality is descriptor equality (`{size, addr}`). This relies on
+**interning**: `StringHeapBuilder` deduplicates identical long-string constants
+so descriptor equality is string equality. Runtime-concatenated `LONG_STR`
+results (private to `pycore_exec` string memory, not interned) are not valid
+dict keys semantically; hardware cannot detect this.
+
+The header `used` field is maintained on insert. Probe loops are bounded by
+`slot_count` and trap `PY_TRAP_MEM_FAULT` on exhaustion. Interim insert policy
+(until rehash/grow): never fill the table completely — require
+`used + 1 < slot_count` before an empty-slot insert so at least one empty slot
+always remains.
+
+The implementation uses **tombstone-free open-addressed linear probing**.
+`DELETE_SUBSCR` is deferred; tombstone logic can be added later when needed.
+
+Static heap images for dicts/tuples/lists can be built with
+`pycore/tools/heap_image.py` (`HeapImageBuilder`), which mirrors the RTL hash
+and probe rules.
+
+### DICT FSM path
+
+`CONT_BUILD_MAP`, `CONT_SUBSCR_DICT`, and `CONT_STORE_DICT` are three distinct
+container op codes (3-bit `container_op_r`) sharing the dict-specific phases
+`CP_DICT_HASH` (5) through `CP_DICT_RD_VTAG` (14). `CONT_BUILD_TUPLE` and
+`CONT_SUBSCR_TUPLE` reuse the shared LIST-style phases without a header.
+
+- **`BUILD_MAP`**: allocates header, then for each pair reads key from RF,
+  probes for empty/matching slot, inserts key + value (4 dmem writes each),
+  rewrites `used` in the header once at the end.
+- **`NB_SUBSCR` on DICT**: reads header → slot_count, probes for matching key,
+  reads value value + tag, writes result to RF.
+- **`STORE_SUBSCR` on DICT**: reads header, probes for matching or empty slot,
+  writes key/value; bumps `used` on new-key insert.
+- **`BUILD_TUPLE` / `NB_SUBSCR` on TUPLE**: no header; size is inline in the
+  handle. `STORE_SUBSCR` on a TUPLE traps `PY_TRAP_TYPE` (immutable).
+
+### `S_CONTAINER` FSM state
+
+`S_CONTAINER` is a new FSM state (value 8, requiring 4-bit `state_r`) entered
+directly from `S_EXEC` when `dec_is_container` is asserted.  It bypasses both
+`S_MEM` and `S_WB`; TOS and RF updates happen inside `S_CONTAINER`.
+
+Sub-phases (stored in `container_phase_r [2:0]`):
+
+| Phase | Name | Purpose |
+|-------|------|---------|
+| 0 | `CP_INIT` | First active cycle; set up the first dmem or RF operation. |
+| 1 | `CP_HDR` | In-flight header read/write; wait for dmem ack. |
+| 2 | `CP_VAL` | In-flight element value read/write; wait for ack. |
+| 3 | `CP_TAG` | In-flight element tag read/write; wait for ack. |
+| 4 | `CP_DONE` | Terminal marker; `always_comb` transitions to `S_FETCH`. Empty in `always_ff`. |
+
+The dmem port is arbitrated via `container_dmem_pending_r`, which mirrors
+`frame_dmem_pending_r` used by `S_CALL` and `S_RETURN`.
+
+An RF address override (`rs1_addr_eff`) redirects the regfile's rs1 read port
+to `container_rf_addr_r` while in `S_CONTAINER`, enabling multi-element reads
+for `BUILD_LIST` and the value read for `STORE_SUBSCR` without an extra RF
+read port.
 
 ## Metrics
 

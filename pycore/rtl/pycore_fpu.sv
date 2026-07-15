@@ -3,16 +3,16 @@
 module pycore_fpu #(
     parameter int LATENCY = 0
 ) (
-    input  logic        clk,
-    input  logic        rst_n,
-    input  logic        start,
-    input  logic [4:0]  op,
-    input  logic [63:0] op_a,
-    input  logic [63:0] op_b,
-    output logic [63:0] result,
-    output logic        exception,
-    output logic        done,
-    output logic        stall
+    input  logic        clk_i,
+    input  logic        rst_n_i,
+    input  logic        start_i,
+    input  logic [4:0]  op_i,
+    input  logic [63:0] op_a_i,
+    input  logic [63:0] op_b_i,
+    output logic [63:0] result_o,
+    output logic        exception_o,
+    output logic        done_o,
+    output logic        stall_o
 );
 
     function automatic logic [63:0] bool_bits(input logic value);
@@ -27,104 +27,104 @@ module pycore_fpu #(
         end
     endfunction
 
-    real a_r;
-    real b_r;
-    real calc_r;
-    real div_r;
+    real a_real;
+    real b_real;
+    real calc_real;
+    real div_real;
     logic [63:0] comb_result;
     logic        comb_exception;
-    logic [63:0] result_q;
-    logic        exception_q;
-    logic [$clog2((LATENCY < 1) ? 2 : LATENCY + 1)-1:0] cycles_left;
-    logic        busy;
+    logic [63:0] result_r;
+    logic        exception_r;
+    logic [$clog2((LATENCY < 1) ? 2 : LATENCY + 1)-1:0] cycles_left_r;
+    logic        busy_r;
 
     always_comb begin
-        a_r = $bitstoreal(op_a);
-        b_r = $bitstoreal(op_b);
-        calc_r = 0.0;
-        div_r = 0.0;
+        a_real = $bitstoreal(op_a_i);
+        b_real = $bitstoreal(op_b_i);
+        calc_real = 0.0;
+        div_real = 0.0;
         comb_result = 64'b0;
         comb_exception = 1'b0;
 
-        unique case (op)
+        unique case (op_i)
             PY_ALU_ADD: begin
-                calc_r = a_r + b_r;
-                comb_result = $realtobits(calc_r);
+                calc_real = a_real + b_real;
+                comb_result = $realtobits(calc_real);
             end
             PY_ALU_SUB: begin
-                calc_r = a_r - b_r;
-                comb_result = $realtobits(calc_r);
+                calc_real = a_real - b_real;
+                comb_result = $realtobits(calc_real);
             end
             PY_ALU_MUL: begin
-                calc_r = a_r * b_r;
-                comb_result = $realtobits(calc_r);
+                calc_real = a_real * b_real;
+                comb_result = $realtobits(calc_real);
             end
             PY_ALU_TRUE_DIV: begin
-                if (b_r == 0.0) begin
+                if (b_real == 0.0) begin
                     comb_exception = 1'b1;
                 end else begin
-                    calc_r = a_r / b_r;
-                    comb_result = $realtobits(calc_r);
+                    calc_real = a_real / b_real;
+                    comb_result = $realtobits(calc_real);
                 end
             end
             PY_ALU_FLOOR_DIV: begin
-                if (b_r == 0.0) begin
+                if (b_real == 0.0) begin
                     comb_exception = 1'b1;
                 end else begin
-                    div_r = a_r / b_r;
-                    calc_r = $floor(div_r);
-                    comb_result = $realtobits(calc_r);
+                    div_real = a_real / b_real;
+                    calc_real = $floor(div_real);
+                    comb_result = $realtobits(calc_real);
                 end
             end
             PY_ALU_MOD: begin
-                if (b_r == 0.0) begin
+                if (b_real == 0.0) begin
                     comb_exception = 1'b1;
                 end else begin
-                    div_r = $floor(a_r / b_r);
-                    calc_r = a_r - (div_r * b_r);
-                    comb_result = $realtobits(calc_r);
+                    div_real = $floor(a_real / b_real);
+                    calc_real = a_real - (div_real * b_real);
+                    comb_result = $realtobits(calc_real);
                 end
             end
             PY_ALU_POWER: begin
-                calc_r = a_r ** b_r;
-                comb_result = $realtobits(calc_r);
+                calc_real = a_real ** b_real;
+                comb_result = $realtobits(calc_real);
             end
             PY_ALU_NEG: begin
-                comb_result = {~op_a[63], op_a[62:0]};
+                comb_result = {~op_a_i[63], op_a_i[62:0]};
             end
             PY_ALU_POS, PY_ALU_PASS: begin
-                comb_result = op_a;
+                comb_result = op_a_i;
             end
             PY_ALU_NOT: begin
-                comb_result = bool_bits((op_a[62:0] == 63'b0));
+                comb_result = bool_bits((op_a_i[62:0] == 63'b0));
             end
             PY_ALU_EQ: begin
-                comb_result = bool_bits(a_r == b_r);
+                comb_result = bool_bits(a_real == b_real);
             end
             PY_ALU_NE: begin
-                comb_result = bool_bits(a_r != b_r);
+                comb_result = bool_bits(a_real != b_real);
             end
             PY_ALU_LT: begin
-                comb_result = bool_bits(a_r < b_r);
+                comb_result = bool_bits(a_real < b_real);
             end
             PY_ALU_LE: begin
-                comb_result = bool_bits(a_r <= b_r);
+                comb_result = bool_bits(a_real <= b_real);
             end
             PY_ALU_GT: begin
-                comb_result = bool_bits(a_r > b_r);
+                comb_result = bool_bits(a_real > b_real);
             end
             PY_ALU_GE: begin
-                comb_result = bool_bits(a_r >= b_r);
+                comb_result = bool_bits(a_real >= b_real);
             end
             default: begin
                 comb_exception = 1'b1;
             end
         endcase
 
-        if (abs_real(a_r) > 0.0 && a_r != a_r) begin
+        if (abs_real(a_real) > 0.0 && a_real != a_real) begin
             comb_exception = 1'b1;
         end
-        if (abs_real(b_r) > 0.0 && b_r != b_r) begin
+        if (abs_real(b_real) > 0.0 && b_real != b_real) begin
             comb_exception = 1'b1;
         end
     end
@@ -132,37 +132,37 @@ module pycore_fpu #(
     generate
         if (LATENCY == 0) begin : gen_comb_fpu
             always_comb begin
-                result = comb_result;
-                exception = start && comb_exception;
-                done = start && !comb_exception;
-                stall = 1'b0;
+                result_o = comb_result;
+                exception_o = start_i && comb_exception;
+                done_o = start_i && !comb_exception;
+                stall_o = 1'b0;
             end
         end else begin : gen_seq_fpu
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    busy <= 1'b0;
-                    cycles_left <= '0;
-                    result_q <= 64'b0;
-                    exception_q <= 1'b0;
-                end else if (start && !busy) begin
-                    busy <= 1'b1;
-                    cycles_left <= LATENCY[$bits(cycles_left)-1:0];
-                    result_q <= comb_result;
-                    exception_q <= comb_exception;
-                end else if (busy) begin
-                    if (cycles_left <= 1) begin
-                        busy <= 1'b0;
-                        cycles_left <= '0;
+            always_ff @(posedge clk_i or negedge rst_n_i) begin
+                if (!rst_n_i) begin
+                    busy_r <= 1'b0;
+                    cycles_left_r <= '0;
+                    result_r <= 64'b0;
+                    exception_r <= 1'b0;
+                end else if (start_i && !busy_r) begin
+                    busy_r <= 1'b1;
+                    cycles_left_r <= LATENCY[$bits(cycles_left_r)-1:0];
+                    result_r <= comb_result;
+                    exception_r <= comb_exception;
+                end else if (busy_r) begin
+                    if (cycles_left_r <= 1) begin
+                        busy_r <= 1'b0;
+                        cycles_left_r <= '0;
                     end else begin
-                        cycles_left <= cycles_left - 1'b1;
+                        cycles_left_r <= cycles_left_r - 1'b1;
                     end
                 end
             end
 
-            assign result = result_q;
-            assign exception = busy && (cycles_left <= 1) && exception_q;
-            assign done = busy && (cycles_left <= 1) && !exception_q;
-            assign stall = busy && !done && !exception;
+            assign result_o = result_r;
+            assign exception_o = busy_r && (cycles_left_r <= 1) && exception_r;
+            assign done_o = busy_r && (cycles_left_r <= 1) && !exception_r;
+            assign stall_o = busy_r && !done_o && !exception_o;
         end
     endgenerate
 

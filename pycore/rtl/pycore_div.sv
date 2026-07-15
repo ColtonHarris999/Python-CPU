@@ -3,16 +3,16 @@
 module pycore_div #(
     parameter int LATENCY = 0
 ) (
-    input  logic        clk,
-    input  logic        rst_n,
-    input  logic        start,
-    input  logic        is_modulo,
-    input  logic [63:0] op_a,
-    input  logic [63:0] op_b,
-    output logic [63:0] result,
-    output logic        div_zero,
-    output logic        done,
-    output logic        stall
+    input  logic        clk_i,
+    input  logic        rst_n_i,
+    input  logic        start_i,
+    input  logic        is_modulo_i,
+    input  logic [63:0] op_a_i,
+    input  logic [63:0] op_b_i,
+    output logic [63:0] result_o,
+    output logic        div_zero_o,
+    output logic        done_o,
+    output logic        stall_o
 );
 
     function automatic logic signed [63:0] floor_quotient(
@@ -45,18 +45,18 @@ module pycore_div #(
     logic signed [63:0] a_s;
     logic signed [63:0] b_s;
     logic [63:0]        comb_result;
-    logic [63:0]        result_q;
-    logic [$clog2((LATENCY < 1) ? 2 : LATENCY + 1)-1:0] cycles_left;
-    logic               busy;
+    logic [63:0]        result_r;
+    logic [$clog2((LATENCY < 1) ? 2 : LATENCY + 1)-1:0] cycles_left_r;
+    logic               busy_r;
 
-    assign a_s = op_a;
-    assign b_s = op_b;
-    assign div_zero = start && (op_b == 64'b0);
+    assign a_s = op_a_i;
+    assign b_s = op_b_i;
+    assign div_zero_o = start_i && (op_b_i == 64'b0);
 
     always_comb begin
-        if (op_b == 64'b0) begin
+        if (op_b_i == 64'b0) begin
             comb_result = 64'b0;
-        end else if (is_modulo) begin
+        end else if (is_modulo_i) begin
             comb_result = floor_remainder(a_s, b_s);
         end else begin
             comb_result = floor_quotient(a_s, b_s);
@@ -66,33 +66,33 @@ module pycore_div #(
     generate
         if (LATENCY == 0) begin : gen_comb_div
             always_comb begin
-                result = comb_result;
-                done = start && !div_zero;
-                stall = 1'b0;
+                result_o = comb_result;
+                done_o = start_i && !div_zero_o;
+                stall_o = 1'b0;
             end
         end else begin : gen_seq_div
-            always_ff @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    busy <= 1'b0;
-                    cycles_left <= '0;
-                    result_q <= 64'b0;
-                end else if (start && !busy && !div_zero) begin
-                    busy <= 1'b1;
-                    cycles_left <= LATENCY[$bits(cycles_left)-1:0];
-                    result_q <= comb_result;
-                end else if (busy) begin
-                    if (cycles_left <= 1) begin
-                        busy <= 1'b0;
-                        cycles_left <= '0;
+            always_ff @(posedge clk_i or negedge rst_n_i) begin
+                if (!rst_n_i) begin
+                    busy_r <= 1'b0;
+                    cycles_left_r <= '0;
+                    result_r <= 64'b0;
+                end else if (start_i && !busy_r && !div_zero_o) begin
+                    busy_r <= 1'b1;
+                    cycles_left_r <= LATENCY[$bits(cycles_left_r)-1:0];
+                    result_r <= comb_result;
+                end else if (busy_r) begin
+                    if (cycles_left_r <= 1) begin
+                        busy_r <= 1'b0;
+                        cycles_left_r <= '0;
                     end else begin
-                        cycles_left <= cycles_left - 1'b1;
+                        cycles_left_r <= cycles_left_r - 1'b1;
                     end
                 end
             end
 
-            assign result = result_q;
-            assign done = busy && (cycles_left <= 1);
-            assign stall = busy && !done;
+            assign result_o = result_r;
+            assign done_o = busy_r && (cycles_left_r <= 1);
+            assign stall_o = busy_r && !done_o;
         end
     endgenerate
 

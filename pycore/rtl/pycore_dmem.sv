@@ -10,15 +10,15 @@ module pycore_dmem #(
     parameter int    BLOCK_COUNT = PYCORE_DMEM_BLOCK_COUNT,
     parameter string INIT_HEX    = ""
 ) (
-    input  logic                  clk,
-    input  logic                  rst_n,
-    input  logic                  req,
-    input  logic                  we,
-    input  logic [ADDR_WIDTH-1:0] addr,
-    input  logic [DATA_WIDTH-1:0] wdata,
-    output logic                  ack,
-    output logic [DATA_WIDTH-1:0] rdata,
-    output logic                  fault
+    input  logic                  clk_i,
+    input  logic                  rst_n_i,
+    input  logic                  req_i,
+    input  logic                  we_i,
+    input  logic [ADDR_WIDTH-1:0] addr_i,
+    input  logic [DATA_WIDTH-1:0] wdata_i,
+    output logic                  ack_o,
+    output logic [DATA_WIDTH-1:0] rdata_o,
+    output logic                  fault_o
 );
 
     pycore_mem_bank #(
@@ -29,15 +29,15 @@ module pycore_dmem #(
         .READ_ONLY(0),
         .INIT_HEX(INIT_HEX)
     ) bank (
-        .clk(clk),
-        .rst_n(rst_n),
-        .req(req),
-        .we(we),
-        .addr(addr),
-        .wdata(wdata),
-        .ack(ack),
-        .rdata(rdata),
-        .fault(fault)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .req_i(req_i),
+        .we_i(we_i),
+        .addr_i(addr_i),
+        .wdata_i(wdata_i),
+        .ack_o(ack_o),
+        .rdata_o(rdata_o),
+        .fault_o(fault_o)
     );
 
 endmodule

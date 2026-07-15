@@ -1,34 +1,123 @@
 #!/usr/bin/env python3
-"""Preprocess CPython 3.14 bytecode for the PyCore hardware prototype."""
+"""Deprecated legacy single-function preprocessor for PyCore.
+
+The primary CPython image-boot path is image_from_source.py.  This module is
+kept for older container/type fixtures that still use inline LOAD_CONST payloads
+and branch remapping.
+"""
 
 from __future__ import annotations
 
 import argparse
 import dis
 import importlib.util
+import opcode as _opcode_module
 import pathlib
-import struct
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
+
+from encoding import (
+    ENTRY_HEX_DIGITS,
+    IMEM_SLOT_HEX_DIGITS,
+    SHORT_STR_DATA_SHIFT,
+    SHORT_STR_MAX_BYTES,
+    SHORT_STR_SIZE_SHIFT,
+    STRING_MEM_BYTES,
+    STRING_RUNTIME_BASE,
+    TAG_BOOL,
+    TAG_CODE_OBJECT,
+    TAG_DICT,
+    TAG_FLOAT,
+    TAG_FRAME_OBJECT,
+    TAG_INT,
+    TAG_LIST,
+    TAG_LONG_STR,
+    TAG_NONE,
+    TAG_NULL,
+    TAG_OBJECT,
+    TAG_PTR,
+    TAG_SET,
+    TAG_SHORT_STR,
+    TAG_TUPLE,
+    TAG_UNINIT,
+    TAG_UNINITIALIZED,
+    TAG_UNUSED,
+    VAL_MASK,
+    VAL_WIDTH,
+    StringHeapBuilder,
+    float_bits,
+    format_entry,
+    format_imem_slot,
+    tag_constant,
+)
 
 
 REQUIRED_PY = (3, 14)
 
-TAG_UNINITIALIZED = 0b000
-TAG_INT = 0b001
-TAG_FLOAT = 0b010
-TAG_BOOL = 0b011
-TAG_PTR = 0b100
-TAG_OBJECT = 0b101
-TAG_SHORT_STR = 0b110
-TAG_LONG_STR = 0b111
+# ---------------------------------------------------------------------------
+# Opcode numbers and subop values resolved from the running Python 3.14
+# interpreter.  Do NOT hand-transcribe these from memory or training data.
+# The block below runs at import time and will raise AttributeError / KeyError
+# if the interpreter does not expose the expected attributes, which catches
+# forward-compatibility breaks early.
+#
+# Verified values (Python 3.14.x):
+#   OP_BUILD_LIST                       = 46
+#   OP_BUILD_MAP                        = 47
+#   OP_BUILD_TUPLE                      = 51
+#   OP_STORE_SUBSCR                     = 38
+#   OP_BINARY_OP                        = 44
+#   OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = 87
+#   NBARG_SUBSCR                        = 26
+# ---------------------------------------------------------------------------
+_OM = _opcode_module.opmap
+OP_BUILD_LIST    = _OM["BUILD_LIST"]
+OP_BUILD_MAP     = _OM["BUILD_MAP"]
+OP_BUILD_TUPLE   = _OM["BUILD_TUPLE"]
+OP_STORE_SUBSCR  = _OM["STORE_SUBSCR"]
+OP_BINARY_OP     = _OM["BINARY_OP"]
+OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = _OM.get(
+    "LOAD_FAST_BORROW_LOAD_FAST_BORROW", None
+)
 
-SHORT_STR_MAX_BYTES = 15
-SHORT_STR_SIZE_SHIFT = 124
-SHORT_STR_DATA_SHIFT = 4
-STRING_MEM_BYTES = 65536
-STRING_RUNTIME_BASE = 16384
+# NB_SUBSCR oparg: locate "NB_SUBSCR" in _nb_ops by searching for the entry
+# whose first element contains "SUBSCR".
+_nb_ops = getattr(_opcode_module, "_nb_ops", [])
+NBARG_SUBSCR: int | None = None
+for _i, _entry in enumerate(_nb_ops):
+    if "SUBSCR" in str(_entry[0]).upper():
+        NBARG_SUBSCR = _i
+        break
+if NBARG_SUBSCR is None:
+    raise RuntimeError(
+        "Could not resolve NB_SUBSCR oparg from opcode._nb_ops. "
+        "Verify Python version is 3.14."
+    )
+
+# Opcodes that have been intentionally deferred (not yet implemented).
+# Preprocess raises a specific error when it encounters any of these so the
+# user knows to use a supported alternative.
+DEFERRED_OPS: dict[str, str] = {
+    "LIST_APPEND":   "use BUILD_LIST + direct element stores (not yet implemented)",
+    "MAP_ADD":       "dict mutation not yet implemented",
+    "LIST_EXTEND":   "list.extend not yet implemented",
+    "DICT_UPDATE":   "dict.update not yet implemented",
+    "DICT_MERGE":    "dict merge not yet implemented",
+    "DELETE_SUBSCR": "del x[k] not yet implemented",
+    "CONTAINS_OP":   "in / not-in operator not yet implemented",
+    "BINARY_SLICE":  "slice notation not yet implemented",
+    "STORE_SLICE":   "slice assignment not yet implemented",
+    "BUILD_SET":     "set literals not yet implemented",
+    "SET_ADD":       "set.add not yet implemented",
+    "SET_UPDATE":    "set.update not yet implemented",
+    "LOAD_GLOBAL":   "module/global lookup is supported by image_from_source.py",
+    "LOAD_NAME":     "module/name lookup is supported by image_from_source.py",
+    "STORE_NAME":    "module/name stores are supported by image_from_source.py",
+    "STORE_GLOBAL":  "global stores are supported by image_from_source.py",
+    "PUSH_NULL":     "CALL self-or-null layout is supported by image_from_source.py",
+    "MAKE_FUNCTION": "function objects are supported by image_from_source.py",
+}
 
 SUPPORTED_OPS = {
     "RESUME",
@@ -36,6 +125,10 @@ SUPPORTED_OPS = {
     "EXTENDED_ARG",
     "LOAD_FAST",
     "LOAD_FAST_BORROW",
+    # LOAD_FAST_BORROW_LOAD_FAST_BORROW (opcode 87, Python 3.14): loads two
+    # locals in one instruction.  Expanded to two LOAD_FAST_BORROW in
+    # emit_instruction_words so hardware never sees this combined opcode.
+    "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
     "STORE_FAST",
     "LOAD_SMALL_INT",
     "LOAD_CONST",
@@ -58,6 +151,11 @@ SUPPORTED_OPS = {
     "POP_ITER",
     "CALL",
     "RETURN_VALUE",
+    # Container operations (in-scope for PyCore dict-list support).
+    "BUILD_LIST",
+    "BUILD_MAP",
+    "BUILD_TUPLE",
+    "STORE_SUBSCR",
 }
 
 SUPPORTED_BINARY_ARGS = {
@@ -73,6 +171,8 @@ SUPPORTED_BINARY_ARGS = {
     10, 23,  # subtract
     11, 24,  # true divide
     12, 25,  # xor
+    # NB_SUBSCR (oparg 26): subscript read x[k] — routes to S_CONTAINER FSM.
+    NBARG_SUBSCR,
 }
 
 
@@ -82,6 +182,10 @@ class EmittedInstruction:
     arg: int
     source_offset: int
     opname: str
+    # For LOAD_CONST only: the pre-encoded 4-bit tag and 128-bit value that will
+    # be embedded inline in the instruction stream.  None for all other opcodes.
+    const_tag: int | None = None
+    const_value: int | None = None
 
 
 def require_python_3_14() -> None:
@@ -114,6 +218,13 @@ def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
             # following Instruction.arg; the fetch stage also supports raw
             # EXTENDED_ARG for hand-written streams.
             continue
+        if ins.opname in DEFERRED_OPS:
+            reason = DEFERRED_OPS[ins.opname]
+            raise ValueError(
+                f"Deferred opcode {ins.opname!r} at bytecode offset {ins.offset}: "
+                f"{reason}.  Use a different construct or wait for a future PyCore "
+                f"release that supports this operation."
+            )
         if ins.opname not in SUPPORTED_OPS:
             raise ValueError(
                 f"Unsupported opcode {ins.opname!r} at bytecode offset {ins.offset}"
@@ -125,95 +236,62 @@ def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
         yield ins
 
 
-def emit_instruction_words(instructions: Iterable[dis.Instruction]) -> list[EmittedInstruction]:
+def emit_instruction_words(
+    instructions: Iterable[dis.Instruction],
+    co_consts: tuple[object, ...] | None = None,
+    string_heap: "StringHeapBuilder | None" = None,
+) -> list[EmittedInstruction]:
+    """Convert filtered dis.Instruction objects to EmittedInstruction records.
+
+    For LOAD_CONST instructions the constant value is eagerly encoded using
+    tag_constant so that write_program_hex can embed it inline in the
+    instruction stream.  co_consts and string_heap must be provided when
+    LOAD_CONST instructions are present.
+    """
     emitted: list[EmittedInstruction] = []
+    lfb_opcode = _OM.get("LOAD_FAST_BORROW", 86)
     for ins in instructions:
         arg = ins.arg or 0
         if not 0 <= arg < (1 << 32):
             raise ValueError(f"Instruction argument exceeds 32 bits: {ins}")
+
+        # Expand LOAD_FAST_BORROW_LOAD_FAST_BORROW → two LOAD_FAST_BORROW.
+        # Encoding: arg[7:4] = first variable index, arg[3:0] = second.
+        # This keeps the hardware simple: it only ever sees LOAD_FAST_BORROW.
+        if ins.opname == "LOAD_FAST_BORROW_LOAD_FAST_BORROW":
+            first_idx  = arg >> 4
+            second_idx = arg & 0xF
+            for var_idx in (first_idx, second_idx):
+                emitted.append(EmittedInstruction(
+                    opcode=lfb_opcode,
+                    arg=var_idx,
+                    source_offset=ins.offset,
+                    opname="LOAD_FAST_BORROW",
+                ))
+            continue
+
+        const_tag = None
+        const_value = None
+        if ins.opname == "LOAD_CONST":
+            if co_consts is None or string_heap is None:
+                raise ValueError(
+                    "co_consts and string_heap are required when LOAD_CONST "
+                    "instructions are present"
+                )
+            const_obj = co_consts[arg]
+            const_tag, const_value = tag_constant(const_obj, string_heap)
+
         emitted.append(
             EmittedInstruction(
                 opcode=ins.opcode,
                 arg=arg,
                 source_offset=ins.offset,
                 opname=ins.opname,
+                const_tag=const_tag,
+                const_value=const_value,
             )
         )
     return emitted
-
-
-def float_bits(value: float) -> int:
-    return struct.unpack(">Q", struct.pack(">d", value))[0]
-
-
-class StringHeapBuilder:
-    """Builds an initialized long-string memory image for hardware."""
-
-    def __init__(self) -> None:
-        self.next_addr = 0
-        self.image: dict[int, int] = {}
-
-    def allocate(self, data: bytes) -> int:
-        if not data:
-            return 0
-
-        addr = self.next_addr
-        end = addr + len(data)
-        if end > STRING_RUNTIME_BASE:
-            raise ValueError(
-                "Long-string constants exceed reserved string-constant memory "
-                f"region (used {end} bytes, limit {STRING_RUNTIME_BASE})"
-            )
-
-        for offset, byte in enumerate(data):
-            self.image[addr + offset] = byte
-        self.next_addr = end
-        return addr
-
-
-# Architectural value is now a 128-bit field carrying a 3-bit tag, i.e. a
-# 131-bit entry. INT keeps a 64-bit signed fast path sign-extended into the
-# upper 64 bits; FLOAT/BOOL live in the low 64 bits with the rest zero.
-VAL_WIDTH = 128
-VAL_MASK = (1 << VAL_WIDTH) - 1
-ENTRY_HEX_DIGITS = (3 + VAL_WIDTH + 3) // 4  # ceil(131/4) == 33
-
-# Instruction memory slot: 40-bit folded word, zero-padded to one 8-byte slot.
-IMEM_SLOT_BITS = 64
-IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
-
-
-def _encode_short_string(data: bytes) -> int:
-    payload = 0
-    for idx, byte in enumerate(data):
-        shift = SHORT_STR_DATA_SHIFT + (SHORT_STR_MAX_BYTES - 1 - idx) * 8
-        payload |= int(byte) << shift
-    payload |= (len(data) & 0xF) << SHORT_STR_SIZE_SHIFT
-    return payload
-
-
-def tag_constant(value: object, string_heap: StringHeapBuilder) -> tuple[int, int]:
-    if isinstance(value, bool):
-        return TAG_BOOL, int(value)
-    if isinstance(value, int):
-        # Two's-complement masked to 128 bits sign-extends negatives correctly.
-        return TAG_INT, value & VAL_MASK
-    if isinstance(value, float):
-        return TAG_FLOAT, float_bits(value)
-    if isinstance(value, str):
-        encoded = value.encode("utf-8")
-        if len(encoded) <= SHORT_STR_MAX_BYTES:
-            return TAG_SHORT_STR, _encode_short_string(encoded)
-        if len(encoded) > ((1 << 64) - 1):
-            raise ValueError("String constant exceeds 64-bit length field")
-        addr = string_heap.allocate(encoded)
-        return TAG_LONG_STR, ((len(encoded) & ((1 << 64) - 1)) << 64) | (addr & ((1 << 64) - 1))
-    return TAG_OBJECT, 0
-
-
-def format_entry(tag: int, value: int) -> str:
-    entry = ((tag & 0x7) << VAL_WIDTH) | (value & VAL_MASK)
-    return f"{entry:0{ENTRY_HEX_DIGITS}x}"
 
 
 def write_text(path: pathlib.Path, text: str) -> None:
@@ -221,23 +299,104 @@ def write_text(path: pathlib.Path, text: str) -> None:
     path.write_text(text, encoding="ascii")
 
 
+def compute_slot_map(instructions: list[EmittedInstruction]) -> dict[int, int]:
+    """Map each instruction index to its starting imem slot index.
+
+    LOAD_CONST instructions occupy 3 consecutive slots (one header word plus
+    two value words); every other instruction occupies exactly 1 slot.  The
+    returned dict also includes an entry at index len(instructions) that gives
+    the slot address one past the last instruction.
+    """
+    slot_map: dict[int, int] = {}
+    slot = 0
+    for i, ins in enumerate(instructions):
+        slot_map[i] = slot
+        slot += 3 if ins.opname == "LOAD_CONST" else 1
+    slot_map[len(instructions)] = slot
+    return slot_map
+
+
+def remap_branch_args(instructions: list[EmittedInstruction]) -> list[EmittedInstruction]:
+    """Rewrite jump arguments from instruction-index units to slot-index units.
+
+    The hardware branch unit operates on slot addresses, so any jump argument
+    that was expressed as an instruction count must be converted to the
+    equivalent slot offset or slot address now that LOAD_CONST instructions are
+    3 slots wide instead of 1.
+
+    Semantics matched to the pycore_branch.sv implementation:
+      JUMP_FORWARD  arg=N  ->  branch_target = pc + N  (relative, N slots forward)
+      JUMP_BACKWARD arg=N  ->  branch_target = pc - N  (relative, N slots back)
+      POP_JUMP_IF_TRUE/FALSE arg=N  ->  branch_target = N  (absolute slot address)
+
+    With 1:1 instruction-to-slot mapping these pass through unchanged.  When
+    LOAD_CONST instructions are present the offsets grow to account for the
+    extra slots they occupy.
+    """
+    slot_map = compute_slot_map(instructions)
+    remapped: list[EmittedInstruction] = []
+
+    for i, ins in enumerate(instructions):
+        arg = ins.arg
+        if ins.opname == "JUMP_FORWARD":
+            # Relative: target is arg instruction-indices ahead of instruction i.
+            # In slot space: slot_map[i + arg] - slot_map[i].
+            target_idx = i + arg
+            new_arg = slot_map[target_idx] - slot_map[i]
+        elif ins.opname == "JUMP_BACKWARD":
+            # Relative: target is arg instruction-indices behind instruction i.
+            target_idx = i - arg
+            new_arg = slot_map[i] - slot_map[target_idx]
+        elif ins.opname in ("POP_JUMP_IF_TRUE", "POP_JUMP_IF_FALSE",
+                            "JUMP_IF_TRUE_OR_POP", "JUMP_IF_FALSE_OR_POP"):
+            # Absolute: arg is the target instruction index; convert to slot.
+            new_arg = slot_map[arg]
+        else:
+            new_arg = arg
+
+        if new_arg != arg:
+            ins = EmittedInstruction(
+                opcode=ins.opcode,
+                arg=new_arg,
+                source_offset=ins.source_offset,
+                opname=ins.opname,
+                const_tag=ins.const_tag,
+                const_value=ins.const_value,
+            )
+        remapped.append(ins)
+
+    return remapped
+
+
 def write_program_hex(path: pathlib.Path, instructions: Iterable[EmittedInstruction]) -> None:
-    lines = [
-        f"{((ins.arg & 0xffffffff) << 8) | ins.opcode:0{IMEM_SLOT_HEX_DIGITS}x}"
-        for ins in instructions
-    ]
+    """Write the instruction memory image.
+
+    LOAD_CONST instructions expand to three 64-bit slots:
+      Slot 0  bits[63:60] = tag[3:0],  bits[7:0] = opcode
+      Slot 1  value[127:64]
+      Slot 2  value[63:0]
+
+    All other instructions remain a single 64-bit slot:
+      bits[39:8] = arg[31:0],  bits[7:0] = opcode
+    """
+    lines: list[str] = []
+    for ins in instructions:
+        if ins.opname == "LOAD_CONST":
+            assert ins.const_tag is not None and ins.const_value is not None
+            tag = ins.const_tag
+            val = ins.const_value
+            # Slot 0: tag in the four MSBs, opcode in the eight LSBs.
+            word0 = ((tag & 0xF) << 60) | ins.opcode
+            # Slot 1: value[127:64]
+            word1 = (val >> 64) & 0xFFFF_FFFF_FFFF_FFFF
+            # Slot 2: value[63:0]
+            word2 = val & 0xFFFF_FFFF_FFFF_FFFF
+            lines.append(f"{word0:0{IMEM_SLOT_HEX_DIGITS}x}")
+            lines.append(f"{word1:0{IMEM_SLOT_HEX_DIGITS}x}")
+            lines.append(f"{word2:0{IMEM_SLOT_HEX_DIGITS}x}")
+        else:
+            lines.append(format_imem_slot(ins.opcode, ins.arg))
     write_text(path, "\n".join(lines) + ("\n" if lines else ""))
-
-
-def write_const_hex(
-    path: pathlib.Path,
-    consts: tuple[object, ...],
-    string_heap: StringHeapBuilder,
-) -> None:
-    lines = [format_entry(*tag_constant(value, string_heap)) for value in consts]
-    if not lines:
-        lines = [format_entry(TAG_UNINITIALIZED, 0)]
-    write_text(path, "\n".join(lines) + "\n")
 
 
 def write_string_hex(path: pathlib.Path, string_heap: StringHeapBuilder) -> None:
@@ -288,6 +447,11 @@ def merge_numeric(tag_a: int, tag_b: int, op_arg: int) -> int:
 
 
 def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, int], list[str]]:
+    """Infer the tag of each local variable from the instruction stream.
+
+    Must be called on the original (pre-remapping) instruction list so that
+    LOAD_CONST entries still carry const_tag (set by emit_instruction_words).
+    """
     local_names = list(fn.__code__.co_varnames)
     var_tags = {name: TAG_UNINITIALIZED for name in local_names}
     stack: list[int] = []
@@ -295,12 +459,8 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
 
     for ins in instructions:
         if ins.opname == "LOAD_CONST":
-            const_value = fn.__code__.co_consts[ins.arg]
-            if isinstance(const_value, str):
-                encoded = const_value.encode("utf-8")
-                tag = TAG_SHORT_STR if len(encoded) <= SHORT_STR_MAX_BYTES else TAG_LONG_STR
-            else:
-                tag, _ = tag_constant(const_value, StringHeapBuilder())
+            # Use the pre-encoded tag stored in the EmittedInstruction.
+            tag = ins.const_tag if ins.const_tag is not None else TAG_OBJECT
             stack.append(tag)
         elif ins.opname == "LOAD_SMALL_INT":
             stack.append(TAG_INT)
@@ -320,10 +480,37 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             idx = ins.arg or 0
             if 0 < idx <= len(stack):
                 stack[-1], stack[-idx] = stack[-idx], stack[-1]
+        elif ins.opname == "BUILD_LIST":
+            count = ins.arg or 0
+            for _ in range(min(count, len(stack))):
+                stack.pop()
+            stack.append(TAG_LIST)
+        elif ins.opname == "BUILD_TUPLE":
+            count = ins.arg or 0
+            for _ in range(min(count, len(stack))):
+                stack.pop()
+            stack.append(TAG_TUPLE)
+        elif ins.opname == "BUILD_MAP":
+            count = ins.arg or 0
+            for _ in range(min(2 * count, len(stack))):
+                stack.pop()
+            stack.append(TAG_DICT)
+        elif ins.opname == "STORE_SUBSCR":
+            # Pops key, container, value (3 items); pushes nothing.
+            for _ in range(min(3, len(stack))):
+                stack.pop()
         elif ins.opname == "BINARY_OP":
             rhs = stack.pop() if stack else TAG_OBJECT
             lhs = stack.pop() if stack else TAG_OBJECT
-            result_tag = merge_numeric(lhs, rhs, ins.arg)
+            if ins.arg == NBARG_SUBSCR:
+                # Subscript read: result type is unknown (element type not tracked).
+                result_tag = TAG_OBJECT
+                if lhs not in (TAG_LIST, TAG_DICT, TAG_TUPLE, TAG_OBJECT):
+                    warnings.append(
+                        f"NB_SUBSCR on non-container tag {lhs} at offset {ins.source_offset}"
+                    )
+            else:
+                result_tag = merge_numeric(lhs, rhs, ins.arg)
             if result_tag == TAG_OBJECT:
                 warnings.append(
                     f"OBJECT-typed value feeds BINARY_OP at bytecode offset {ins.source_offset}"
@@ -352,14 +539,22 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
 
 def write_types(path: pathlib.Path, var_tags: dict[str, int], warnings: list[str]) -> None:
     tag_names = {
-        TAG_UNINITIALIZED: "UNINITIALIZED",
         TAG_INT: "INT",
+        TAG_UNINITIALIZED: "UNINITIALIZED",
         TAG_FLOAT: "FLOAT",
         TAG_BOOL: "BOOL",
         TAG_PTR: "PTR",
-        TAG_OBJECT: "OBJECT",
+        TAG_TUPLE: "TUPLE",
         TAG_SHORT_STR: "SHORT_STR",
         TAG_LONG_STR: "LONG_STR",
+        TAG_OBJECT: "OBJECT",
+        TAG_DICT: "DICT",
+        TAG_LIST: "LIST",
+        TAG_SET: "SET",
+        TAG_CODE_OBJECT: "CODE_OBJECT",
+        TAG_FRAME_OBJECT: "FRAME_OBJECT",
+        TAG_UNUSED: "UNUSED",
+        TAG_NONE: "NONE",
     }
     lines = [f"{name}: {tag_names.get(tag, 'RESERVED')}" for name, tag in sorted(var_tags.items())]
     if warnings:
@@ -373,18 +568,21 @@ def preprocess(
     source: pathlib.Path,
     function_name: str,
     program_hex: pathlib.Path,
-    const_hex: pathlib.Path,
     string_hex: pathlib.Path,
     types_path: pathlib.Path,
     cache_map: pathlib.Path,
 ) -> None:
     require_python_3_14()
     fn = load_function(source, function_name)
-    instructions = emit_instruction_words(iter_filtered_instructions(fn))
-    var_tags, warnings = infer_types(fn, instructions)
     string_heap = StringHeapBuilder()
+    instructions = emit_instruction_words(
+        iter_filtered_instructions(fn),
+        co_consts=fn.__code__.co_consts,
+        string_heap=string_heap,
+    )
+    var_tags, warnings = infer_types(fn, instructions)
+    instructions = remap_branch_args(instructions)
     write_program_hex(program_hex, instructions)
-    write_const_hex(const_hex, fn.__code__.co_consts, string_heap)
     write_string_hex(string_hex, string_heap)
     write_types(types_path, var_tags, warnings)
     write_cache_map(cache_map)
@@ -395,7 +593,6 @@ def main() -> None:
     parser.add_argument("--source", default="pycore/programs/smoke_return.py")
     parser.add_argument("--function", default="managed_entry")
     parser.add_argument("--program-hex", default="pycore/programs/program.hex")
-    parser.add_argument("--const-hex", default="pycore/programs/consts.hex")
     parser.add_argument("--string-hex", default="pycore/programs/string_mem.hex")
     parser.add_argument("--types", default="pycore/programs/program.types")
     parser.add_argument("--cache-map", default="pycore/programs/cache_map.hex")
@@ -404,7 +601,6 @@ def main() -> None:
         source=pathlib.Path(args.source),
         function_name=args.function,
         program_hex=pathlib.Path(args.program_hex),
-        const_hex=pathlib.Path(args.const_hex),
         string_hex=pathlib.Path(args.string_hex),
         types_path=pathlib.Path(args.types),
         cache_map=pathlib.Path(args.cache_map),

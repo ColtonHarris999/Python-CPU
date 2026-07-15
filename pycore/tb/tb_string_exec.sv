@@ -25,16 +25,16 @@ module tb_string_exec;
         .STRING_MAX_LEN(STRING_MAX_LEN),
         .STRING_RUNTIME_BASE(STRING_RUNTIME_BASE)
     ) dut (
-        .clk(clk),
-        .rst_n(rst_n),
-        .valid(valid),
-        .alu_op(alu_op),
-        .rs1(rs1),
-        .rs2(rs2),
-        .result(result),
-        .stall(stall),
-        .trap(trap),
-        .trap_code(trap_code)
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .valid_i(valid),
+        .alu_op_i(alu_op),
+        .rs1_i(rs1),
+        .rs2_i(rs2),
+        .result_o(result),
+        .stall_o(stall),
+        .trap_o(trap),
+        .trap_code_o(trap_code)
     );
 
     always #5 clk = ~clk;
@@ -102,7 +102,7 @@ module tb_string_exec;
         input string expected_value
     );
         int i;
-        logic [2:0] out_tag;
+        logic [3:0] out_tag;
         logic [PYCORE_VAL_WIDTH-1:0] out_val;
         longint unsigned out_len;
         longint unsigned out_addr;
