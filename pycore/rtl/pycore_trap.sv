@@ -11,6 +11,10 @@ module pycore_trap (
     input  logic        call_filter_i,
     input  logic        mem_fault_i,
     input  logic        addr_align_i,
+    // PY_TRAP_LIST_GROW: full-list LIST_APPEND (Phase A: fatal; Phase C:
+    // routed to the excore before reaching this module when EXCORE_EN and
+    // pycore_trap_recoverable(code) both hold).
+    input  logic        list_grow_i,
     input  logic [31:0] fault_pc_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs1_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs2_i,
@@ -27,7 +31,8 @@ module pycore_trap (
 
     always_comb begin
         next_trap = type_trap_i || stack_fault_i || div_zero_i || fpu_exception_i ||
-                    illegal_opcode_i || call_filter_i || mem_fault_i || addr_align_i;
+                    illegal_opcode_i || call_filter_i || mem_fault_i || addr_align_i ||
+                    list_grow_i;
         if (type_trap_i) begin
             next_code = PY_TRAP_TYPE;
         end else if (stack_fault_i) begin
@@ -44,6 +49,8 @@ module pycore_trap (
             next_code = PY_TRAP_ADDR_ALIGN;
         end else if (mem_fault_i) begin
             next_code = PY_TRAP_MEM_FAULT;
+        end else if (list_grow_i) begin
+            next_code = PY_TRAP_LIST_GROW;
         end else begin
             next_code = PY_TRAP_NONE;
         end

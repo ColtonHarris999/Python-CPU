@@ -118,6 +118,7 @@ module pycore_core #(
     localparam logic [3:0] CONT_LOAD_GLOBAL  = 4'd9; // LOAD_GLOBAL / LOAD_NAME
     localparam logic [3:0] CONT_STORE_NAME   = 4'd10;// STORE_NAME / STORE_GLOBAL
     localparam logic [3:0] CONT_LFB_PAIR     = 4'd11;// LFB_LFB combined load
+    localparam logic [3:0] CONT_LIST_APPEND  = 4'd12;// LIST_APPEND fast path (Phase A)
 
     // Container phases (stored in container_phase_r, 4-bit).
     //
@@ -165,6 +166,16 @@ module pycore_core #(
     // CP_HDR/CP_VAL/CP_TAG so the always_ff case tables stay legible.
     localparam logic [4:0] CP_NAME_VAL    = 5'd18;
     localparam logic [4:0] CP_NAME_TAG    = 5'd19;
+    // LIST v2 (split object/buffer) shared phases:
+    //   CP_LIST_BUF (20): ob_item slot access at obj_addr+16 — a WRITE while
+    //     the buffer address is being installed (CONT_BUILD_LIST,
+    //     CONT_LIST_APPEND's grow completion is excore-only in Phase A/B) or
+    //     a READ while resolving the buffer address before an element access
+    //     (CONT_SUBSCR_LIST, CONT_STORE_LIST, CONT_LIST_APPEND fast path).
+    //   CP_LIST_WB (21): header write-back ack (CONT_LIST_APPEND: commits
+    //     length+1 after the element itself has been written).
+    localparam logic [4:0] CP_LIST_BUF    = 5'd20;
+    localparam logic [4:0] CP_LIST_WB     = 5'd21;
 
     logic [3:0] state_r;
 
@@ -279,6 +290,21 @@ module pycore_core #(
     logic                          container_insert_new_r;
     // 1 = BUILD_MAP finishing: header used-count rewrite in flight before commit.
     logic                          container_finishing_r;
+    // LIST v2 (split object/buffer): buffer base address, resolved from the
+    // object's ob_item field (CONT_BUILD_LIST / CONT_SUBSCR_LIST /
+    // CONT_STORE_LIST / CONT_LIST_APPEND all funnel element addressing
+    // through this register once ob_item has been read or chosen).
+    logic [31:0]                   container_buf_r;
+    // CONT_LIST_APPEND: snapshot of the object header {capacity,length} at
+    // the moment the fast-path decision is made, held across the ob_item
+    // read and element writes (container_rd_data_r gets overwritten by
+    // those later dmem acks, so the header must be preserved separately).
+    logic [PYCORE_VAL_WIDTH-1:0]   container_list_hdr_r;
+    // One-cycle pulse: CONT_LIST_APPEND raised PY_TRAP_LIST_GROW (list at
+    // capacity). Phase A has no excore, so this is fatal like any other
+    // trap; raised strictly before any RF/heap commit (CP_HDR, before the
+    // ob_item read) so a future RETRY-based recovery stays valid.
+    logic                          container_list_grow_trap_r;
 
     // S_CONTAINER dmem handshake (mirrors frame_dmem_pending_r for S_CALL).
     logic                          container_dmem_pending_r;
@@ -784,6 +810,7 @@ module pycore_core #(
     logic illegal_sig;
     logic mem_fault_sig;
     logic addr_align_sig;
+    logic list_grow_sig;
     logic frame_fault_trap_sig;
 
     logic exec_in;
@@ -813,6 +840,11 @@ module pycore_core #(
                             imem_fault_i;
     assign addr_align_sig = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ADDR_ALIGN)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_ADDR_ALIGN));
+    // CONT_LIST_APPEND raises this before any RF/heap commit (see
+    // CP_HDR).  Phase A/B report it fatally; Phase C's S_TRAP_MARSHAL
+    // intercepts pycore_trap_recoverable() codes before they ever reach
+    // this signal when EXCORE_EN is set.
+    assign list_grow_sig  = container_list_grow_trap_r;
     // Frame faults and CALL preflight failures both report as PY_TRAP_CALL_FILTER.
     assign frame_fault_trap_sig = (state_r == S_CALL || state_r == S_RETURN) &&
                                   frame_fault_sig;
@@ -835,6 +867,7 @@ module pycore_core #(
         .call_filter_i(call_filter_trap_r || frame_fault_trap_sig),
         .mem_fault_i(mem_fault_sig),
         .addr_align_i(addr_align_sig),
+        .list_grow_i(list_grow_sig),
         .fault_pc_i(fault_pc),
         .fault_rs1_i(fault_rs1),
         .fault_rs2_i(fault_rs2),
@@ -859,7 +892,19 @@ module pycore_core #(
     logic [63:0]  cont_key_u;     // key value as unsigned 64-bit (rs2 or rs1 for STORE_SUBSCR)
     logic [63:0]  cont_key_u_st;  // key for STORE_SUBSCR (from rs1_r)
     logic [63:0]  cont_hdr_len;   // list length from last header read
-    logic [31:0]  cont_bl_alloc;  // bytes to allocate for BUILD_LIST
+    logic [63:0]  cont_hdr_cap;   // list capacity from last header read
+    // Resolved buffer address from the last ob_item slot read
+    // (container_rd_data_r = {64'd0, ob_item}).  Function-call results
+    // cannot be part-selected directly inside always_ff (Verilator parser
+    // limitation), so this wire exists purely to let CP_LIST_BUF phases
+    // read a 32-bit address without an inline slice.
+    logic [63:0]  cont_obitem_raw;
+    logic [31:0]  cont_obitem_buf;
+    // Resolved element index (list length) from the CONT_LIST_APPEND
+    // header snapshot — same part-select restriction as cont_obitem_buf.
+    logic [63:0]  cont_list_append_idx_raw;
+    logic [31:0]  cont_list_append_idx;
+    logic [31:0]  cont_bl_alloc;  // bytes to allocate for BUILD_LIST (object + buffer)
     logic [31:0]  cont_bt_alloc;  // bytes to allocate for BUILD_TUPLE
     logic [63:0]  cont_tuple_size;// inline size from TUPLE handle (rs1)
     logic [3:0]   cont_rs1_tag;   // tag of rs1_r
@@ -874,7 +919,16 @@ module pycore_core #(
     assign cont_key_u     = cont_rs2_val[63:0];   // SUBSCR_*: key = rs2
     assign cont_key_u_st  = cont_rs1_val[63:0];   // STORE_SUBSCR: key = rs1
     assign cont_hdr_len   = pycore_list_length(container_rd_data_r);
-    assign cont_bl_alloc  = pycore_list_alloc_bytes({25'b0, container_count_r});
+    assign cont_hdr_cap   = pycore_list_capacity(container_rd_data_r);
+    assign cont_obitem_raw = pycore_list_obitem(container_rd_data_r);
+    assign cont_obitem_buf = cont_obitem_raw[31:0];
+    assign cont_list_append_idx_raw = pycore_list_length(container_list_hdr_r);
+    assign cont_list_append_idx = cont_list_append_idx_raw[31:0];
+    // Object (32B, fixed) + buffer (count*32B; 0 for the empty-list case,
+    // matching the count==0 early-exit that skips buffer allocation).
+    assign cont_bl_alloc  = pycore_list_obj_bytes() +
+                            ((container_count_r == 7'd0) ? 32'd0 :
+                             pycore_list_buf_bytes({25'b0, container_count_r}));
     assign cont_bt_alloc  = pycore_tuple_alloc_bytes({25'b0, container_count_r});
     assign cont_tuple_size = pycore_tuple_size(cont_rs1_val);
     assign cont_rs1_tag   = pycore_get_tag(rs1_r);
@@ -1087,6 +1141,9 @@ module pycore_core #(
             container_wb_data_r      <= '0;
             container_type_trap_r    <= 1'b0;
             container_mem_fault_r    <= 1'b0;
+            container_buf_r          <= '0;
+            container_list_hdr_r     <= '0;
+            container_list_grow_trap_r <= 1'b0;
         end else begin
             state_r <= state_next;  // register next state (computed in always_comb)
 
@@ -1101,6 +1158,7 @@ module pycore_core #(
             container_wb_we_r     <= 1'b0;
             container_type_trap_r <= 1'b0;
             container_mem_fault_r <= 1'b0;
+            container_list_grow_trap_r <= 1'b0;
             call_filter_trap_r    <= 1'b0;
 
             if (state_r == S_FETCH) begin
@@ -1182,6 +1240,8 @@ module pycore_core #(
                                 container_op_r     <= CONT_LFB_PAIR;
                                 container_lfb_hi_r <= cur_arg_r[7:4];
                                 container_lfb_lo_r <= cur_arg_r[3:0];
+                            end else if (cur_opcode_r == PY_OP_LIST_APPEND) begin
+                                container_op_r <= CONT_LIST_APPEND;
                             end else if (cur_opcode_r == PY_OP_BINARY_OP) begin
                                 // BINARY_OP/NB_SUBSCR: rs1 = container.
                                 if (cont_rs1_tag == PY_TAG_DICT)
@@ -1497,25 +1557,45 @@ module pycore_core #(
                 //
                 // Sub-phases (container_phase_r):
                 //
-                //   BUILD_LIST(count):
-                //     CP_INIT : write header {count, count} to heap; set RF addr.
-                //     CP_HDR  : ack of header write → empty-list early exit, or
-                //               save RF data and write value.
-                //     CP_VAL  : ack of value write  → write tag.
-                //     CP_TAG  : ack of tag write    → idx++; loop or CP_DONE.
-                //     CP_DONE : terminal marker; always_comb → S_FETCH.
+                //   BUILD_LIST(count) — allocates the stable OBJECT (32B) and
+                //   the element BUFFER (count*32B) in one combined OOM check
+                //   (list layout v2, Phase A):
+                //     CP_INIT     : OOM check (object + buffer); write header
+                //                   {count, count} to the object; set RF addr.
+                //     CP_HDR      : ack of header write → write ob_item
+                //                   (buffer address, 0 if count==0).
+                //     CP_LIST_BUF : ack of ob_item write → empty-list early
+                //                   exit, or save RF data and write element
+                //                   value into the buffer.
+                //     CP_VAL      : ack of value write  → write tag.
+                //     CP_TAG      : ack of tag write    → idx++, loop back to
+                //                   CP_LIST_BUF, or CP_DONE.
+                //     CP_DONE     : terminal marker; always_comb → S_FETCH.
                 //
-                //   BINARY_OP / NB_SUBSCR (list read):
-                //     CP_INIT : check types; start header read.
-                //     CP_HDR  : ack header  → bounds check; start value read.
-                //     CP_VAL  : ack value   → save value; start tag read.
-                //     CP_TAG  : ack tag     → assemble result; pulse wb/TOS/done.
+                //   BINARY_OP / NB_SUBSCR (list read) — one extra ob_item
+                //   read between the header and the element access:
+                //     CP_INIT     : check types; start header read.
+                //     CP_HDR      : ack header → bounds check (against
+                //                   length); start ob_item read.
+                //     CP_LIST_BUF : ack ob_item → resolve buffer address;
+                //                   start value read.
+                //     CP_VAL      : ack value  → save value; start tag read.
+                //     CP_TAG      : ack tag    → assemble result; pulse
+                //                   wb/TOS/done.
                 //
-                //   STORE_SUBSCR (list write):
-                //     CP_INIT : check types; set RF addr for value; start header read.
-                //     CP_HDR  : ack header  → read RF value; bounds check; write value.
-                //     CP_VAL  : ack value   → write tag.
-                //     CP_TAG  : ack tag     → update TOS, go to S_FETCH.
+                //   STORE_SUBSCR (list write) — same ob_item indirection:
+                //     CP_INIT     : check types; set RF addr for value;
+                //                   start header read.
+                //     CP_HDR      : ack header → bounds check; start ob_item
+                //                   read.
+                //     CP_LIST_BUF : ack ob_item → resolve buffer address;
+                //                   read RF value; write value.
+                //     CP_VAL      : ack value  → write tag.
+                //     CP_TAG      : ack tag    → update TOS, go to S_FETCH.
+                //
+                //   LIST_APPEND (fast path only — Phase A; see
+                //   CONT_LIST_APPEND below for the full state list and the
+                //   PY_TRAP_LIST_GROW early-trap discipline).
                 //
                 //   BUILD_MAP / SUBSCR_DICT / STORE_DICT: see CONT_* cases below.
                 //   BUILD_TUPLE / SUBSCR_TUPLE: like LIST without a header slot.
@@ -1536,16 +1616,20 @@ module pycore_core #(
                         CONT_BUILD_LIST: begin
                             unique case (container_phase_r)
 
-                                // Phase 0 (CP_INIT): check OOM and issue
-                                // header write.
+                                // Phase 0 (CP_INIT): check OOM (object + buffer
+                                // together) and issue the object's header write.
                                 CP_INIT: begin
-                                    // OOM check: ensure heap has room for
-                                    // 1 header + 2*count element slots.
+                                    // OOM check: object (32B) + buffer (count*32B,
+                                    // 0 for the empty-list case).
                                     if ((heap_ptr_r + cont_bl_alloc) > PYCORE_HEAP_LIMIT) begin
                                         container_mem_fault_r <= 1'b1;
                                     end else begin
-                                        // Allocate list base.
+                                        // Object base (stable handle target).
                                         container_base_r       <= heap_ptr_r;
+                                        // Buffer base immediately follows the 32B
+                                        // object; irrelevant (never read) when
+                                        // count==0, where ob_item is written 0.
+                                        container_buf_r         <= heap_ptr_r + 32'd32;
                                         // Issue header write: {capacity, length}.
                                         container_dmem_addr_r  <= heap_ptr_r;
                                         container_dmem_we_r    <= 1'b1;
@@ -1553,7 +1637,11 @@ module pycore_core #(
                                             {57'b0, container_count_r},
                                             {57'b0, container_count_r});
                                         container_dmem_pending_r <= 1'b1;
-                                        heap_ptr_r             <= heap_ptr_r + 32'd16;
+                                        // Advance heap_ptr by the full allocation
+                                        // now — capacity == count exactly (no
+                                        // over-allocation), matching CPython
+                                        // list-literal semantics.
+                                        heap_ptr_r             <= heap_ptr_r + cont_bl_alloc;
                                         // Pre-load RF address for element 0.
                                         container_rf_addr_r <= RF_AW'(
                                             {2'b0, tos_r} - {2'b0, container_count_r});
@@ -1562,14 +1650,30 @@ module pycore_core #(
                                     end
                                 end
 
-                                // Phase 1 (CP_HDR): wait for header-write ack.
-                                // Empty list: commit handle now (do not advance
-                                // heap_ptr beyond the 16-byte header).
-                                // Non-empty: RF address set last cycle; rf_rs1 valid.
+                                // Phase 1 (CP_HDR): wait for header-write ack,
+                                // then write ob_item (buffer address, or 0 for
+                                // an empty list — no buffer allocation).
                                 CP_HDR: begin
                                     if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r  <= pycore_list_obitem_addr(
+                                            container_base_r);
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <= {64'b0,
+                                            (container_count_r == 7'd0) ? 32'd0 : container_buf_r};
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r      <= CP_LIST_BUF;
+                                    end
+                                end
+
+                                // Phase 2 (CP_LIST_BUF): wait for ob_item-write
+                                // ack.  Empty list: commit handle now.  Non-empty
+                                // (also reached by looping back from CP_TAG for
+                                // element i>0): RF address settled; issue the
+                                // element value write against the buffer base.
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
                                         if (container_count_r == 7'd0) begin
-                                            // Empty list: header only.
+                                            // Empty list: object only, ob_item=0.
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'({2'b0, tos_r});
                                             container_wb_data_r <= pycore_make_entry(
@@ -1582,35 +1686,33 @@ module pycore_core #(
                                             // Save element from RF (async read valid now).
                                             container_tag_r        <= cont_rf_rs1_tag;
                                             container_val_r        <= cont_rf_rs1_val;
-                                            // Issue element value write.
+                                            // Issue element value write into the buffer.
                                             container_dmem_addr_r  <= pycore_list_val_addr(
-                                                container_base_r,
+                                                container_buf_r,
                                                 {25'b0, container_idx_r});
                                             container_dmem_we_r    <= 1'b1;
                                             container_dmem_wdata_r <= cont_rf_rs1_val;
                                             container_dmem_pending_r <= 1'b1;
-                                            heap_ptr_r             <= heap_ptr_r + 32'd16;
                                             container_phase_r      <= CP_VAL;
                                         end
                                     end
                                 end
 
-                                // Phase 2 (CP_VAL): wait for element value-write ack.
+                                // Phase 3 (CP_VAL): wait for element value-write ack.
                                 CP_VAL: begin
                                     if (!container_dmem_pending_r) begin
                                         // Issue element tag write.
                                         container_dmem_addr_r  <= pycore_list_tag_addr(
-                                            container_base_r,
+                                            container_buf_r,
                                             {25'b0, container_idx_r});
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <= {124'b0, container_tag_r};
                                         container_dmem_pending_r <= 1'b1;
-                                        heap_ptr_r             <= heap_ptr_r + 32'd16;
                                         container_phase_r      <= CP_TAG;
                                     end
                                 end
 
-                                // Phase 3 (CP_TAG): wait for element tag-write ack.
+                                // Phase 4 (CP_TAG): wait for element tag-write ack.
                                 // When all elements are written, commit the list
                                 // handle here (in the same ack cycle) and advance
                                 // to CP_DONE, which is an intentionally empty
@@ -1618,19 +1720,23 @@ module pycore_core #(
                                 CP_TAG: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_idx_r + 7'd1 < container_count_r) begin
-                                            // More elements: advance to next.
+                                            // More elements: advance to next, and
+                                            // loop back to CP_LIST_BUF (no dmem op
+                                            // is pending, so the guard there passes
+                                            // immediately and issues the next
+                                            // element's value write).
                                             container_idx_r     <= container_idx_r + 7'd1;
                                             container_rf_addr_r <= RF_AW'(
                                                 {2'b0, tos_r}
                                                 - {2'b0, container_count_r}
                                                 + {2'b0, container_idx_r}
                                                 + 9'd1);
-                                            container_phase_r   <= CP_HDR;
+                                            container_phase_r   <= CP_LIST_BUF;
                                         end else begin
                                             // All elements written — commit list.
                                             // Push {PY_TAG_LIST, 0, base} to RF[tos-count].
-                                            // heap_ptr advanced by exactly
-                                            // pycore_list_alloc_bytes(count).
+                                            // heap_ptr already advanced by exactly
+                                            // cont_bl_alloc back in CP_INIT.
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
                                                 {2'b0, tos_r} - {2'b0, container_count_r});
@@ -1647,10 +1753,11 @@ module pycore_core #(
                                     end
                                 end
 
-                                // Phase 4 (CP_DONE): terminal marker — do nothing.
-                                // All commit work was done in CP_TAG / empty CP_HDR.
-                                // The always_comb state-next logic transitions to
-                                // S_FETCH the same cycle container_phase_r=CP_DONE.
+                                // Phase 5 (CP_DONE): terminal marker — do nothing.
+                                // All commit work was done in CP_TAG / empty
+                                // CP_LIST_BUF.  The always_comb state-next logic
+                                // transitions to S_FETCH the same cycle
+                                // container_phase_r=CP_DONE.
                                 CP_DONE: ;
 
                                 default: ;
@@ -1672,7 +1779,7 @@ module pycore_core #(
                                                  cont_rs2_tag != PY_TAG_BOOL) begin
                                         container_type_trap_r <= 1'b1;
                                     end else begin
-                                        // Issue header read.
+                                        // Issue header read (object address).
                                         container_base_r         <= cont_rs1_addr;
                                         container_dmem_addr_r    <= cont_rs1_addr;
                                         container_dmem_we_r      <= 1'b0;
@@ -1688,13 +1795,27 @@ module pycore_core #(
                                         if (cont_key_u >= cont_hdr_len) begin
                                             container_mem_fault_r <= 1'b1;
                                         end else begin
-                                            // Read element value.
-                                            container_dmem_addr_r <= pycore_list_val_addr(
-                                                container_base_r, cont_key_u[31:0]);
+                                            // Read ob_item (buffer address).
+                                            container_dmem_addr_r <= pycore_list_obitem_addr(
+                                                container_base_r);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
-                                            container_phase_r        <= CP_VAL;
+                                            container_phase_r        <= CP_LIST_BUF;
                                         end
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        // container_rd_data_r = {0, ob_item}.
+                                        container_buf_r <= cont_obitem_buf;
+                                        // Read element value from the buffer.
+                                        container_dmem_addr_r <= pycore_list_val_addr(
+                                            cont_obitem_buf,
+                                            cont_key_u[31:0]);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_VAL;
                                     end
                                 end
 
@@ -1756,7 +1877,7 @@ module pycore_core #(
                                     end else begin
                                         // Set RF address to read value (tos-3).
                                         container_rf_addr_r      <= RF_AW'(tos_r - RF_AW'(3));
-                                        // Start header read.
+                                        // Start header read (object address).
                                         container_base_r         <= cont_rs2_addr;
                                         container_dmem_addr_r    <= cont_rs2_addr;
                                         container_dmem_we_r      <= 1'b0;
@@ -1772,17 +1893,33 @@ module pycore_core #(
                                         if (cont_key_u_st >= cont_hdr_len) begin
                                             container_mem_fault_r <= 1'b1;
                                         end else begin
-                                            // Save value from RF.
-                                            container_tag_r        <= cont_rf_rs1_tag;
-                                            container_val_r        <= cont_rf_rs1_val;
-                                            // Write value slot.
-                                            container_dmem_addr_r  <= pycore_list_val_addr(
-                                                container_base_r, cont_key_u_st[31:0]);
-                                            container_dmem_we_r    <= 1'b1;
-                                            container_dmem_wdata_r <= cont_rf_rs1_val;
+                                            // Read ob_item (buffer address).
+                                            container_dmem_addr_r <= pycore_list_obitem_addr(
+                                                container_base_r);
+                                            container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
-                                            container_phase_r      <= CP_VAL;
+                                            container_phase_r        <= CP_LIST_BUF;
                                         end
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        // container_rd_data_r = {0, ob_item}.
+                                        // Save value from RF (addr settled since
+                                        // CP_INIT; unaffected by the intervening
+                                        // header/ob_item reads).
+                                        container_buf_r         <= cont_obitem_buf;
+                                        container_tag_r        <= cont_rf_rs1_tag;
+                                        container_val_r        <= cont_rf_rs1_val;
+                                        // Write value slot into the buffer.
+                                        container_dmem_addr_r  <= pycore_list_val_addr(
+                                            cont_obitem_buf,
+                                            cont_key_u_st[31:0]);
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <= cont_rf_rs1_val;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r      <= CP_VAL;
                                     end
                                 end
 
@@ -1813,6 +1950,127 @@ module pycore_core #(
 
                             endcase
                         end // CONT_STORE_LIST
+
+                        // =====================================================
+                        // CONT_LIST_APPEND: fast path only (Phase A).  When the
+                        // list has spare capacity, append in place; when full,
+                        // raise PY_TRAP_LIST_GROW *before* any RF/heap/dmem
+                        // commit (checked in CP_HDR, before the ob_item read) so
+                        // the operation is safely restartable — a prerequisite
+                        // for the future excore RETRY contract (Phase C), even
+                        // though Phase A always treats this trap as fatal.
+                        //
+                        //   rs1_r = list handle (RF[tos-1-arg], PY_TAG_LIST)
+                        //   rs2_r = element     (RF[tos-1], popped on success)
+                        //
+                        //   CP_INIT     : type-check rs1; start header read.
+                        //   CP_HDR      : ack header → snapshot {cap,length}
+                        //                 into container_list_hdr_r (it must
+                        //                 survive the ob_item read's overwrite
+                        //                 of container_rd_data_r); length<cap →
+                        //                 read ob_item, else PY_TRAP_LIST_GROW.
+                        //   CP_LIST_BUF : ack ob_item → resolve buffer address;
+                        //                 write element value at buf+length*32.
+                        //   CP_VAL      : ack value write → write element tag.
+                        //   CP_TAG      : ack tag write → write back header
+                        //                 {cap, length+1}.
+                        //   CP_LIST_WB  : ack header write → pop 1 (element);
+                        //                 done.
+                        // =====================================================
+                        CONT_LIST_APPEND: begin
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    if (cont_rs1_tag != PY_TAG_LIST) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        container_base_r         <= cont_rs1_addr;
+                                        container_dmem_addr_r    <= cont_rs1_addr;
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_HDR;
+                                    end
+                                end
+
+                                CP_HDR: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (cont_hdr_len < cont_hdr_cap) begin
+                                            // Fast path: spare capacity exists.
+                                            // Snapshot the header now — it will
+                                            // be needed again at CP_TAG, after
+                                            // container_rd_data_r has been
+                                            // overwritten by the ob_item read.
+                                            container_list_hdr_r  <= container_rd_data_r;
+                                            container_dmem_addr_r <= pycore_list_obitem_addr(
+                                                container_base_r);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_LIST_BUF;
+                                        end else begin
+                                            // Full: raise the recoverable-in-
+                                            // principle grow trap.  No RF, heap,
+                                            // or dmem-write commit has happened.
+                                            container_list_grow_trap_r <= 1'b1;
+                                        end
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        // container_rd_data_r = {0, ob_item}.
+                                        container_buf_r        <= cont_obitem_buf;
+                                        container_tag_r         <= cont_rs2_tag;
+                                        container_dmem_addr_r   <= pycore_list_val_addr(
+                                            cont_obitem_buf,
+                                            cont_list_append_idx);
+                                        container_dmem_we_r     <= 1'b1;
+                                        container_dmem_wdata_r  <= cont_rs2_val;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r       <= CP_VAL;
+                                    end
+                                end
+
+                                CP_VAL: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r  <= pycore_list_tag_addr(
+                                            container_buf_r,
+                                            cont_list_append_idx);
+                                        container_dmem_we_r     <= 1'b1;
+                                        container_dmem_wdata_r  <= {124'b0, container_tag_r};
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r       <= CP_TAG;
+                                    end
+                                end
+
+                                CP_TAG: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r  <= container_base_r;
+                                        container_dmem_we_r     <= 1'b1;
+                                        container_dmem_wdata_r  <= pycore_list_header(
+                                            pycore_list_capacity(container_list_hdr_r),
+                                            pycore_list_length(container_list_hdr_r) + 64'd1);
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r       <= CP_LIST_WB;
+                                    end
+                                end
+
+                                CP_LIST_WB: begin
+                                    if (!container_dmem_pending_r) begin
+                                        // Pop 1 (the appended element); the list
+                                        // handle beneath it is left in place.
+                                        tos_r             <= tos_r - RF_AW'(1);
+                                        fetch_skip_r      <= 1'b1;
+                                        container_phase_r <= CP_DONE;
+                                    end
+                                end
+
+                                // CP_DONE: terminal — nothing to execute.
+                                CP_DONE: ;
+
+                                default: ;
+
+                            endcase
+                        end // CONT_LIST_APPEND
 
                         // ===========================================================
                         // CONT_BUILD_MAP: allocate dict + linear-probe insert all pairs.
