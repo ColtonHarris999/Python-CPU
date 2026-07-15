@@ -52,7 +52,16 @@ module pycore_core #(
     //               globals/consts/names.  Retained for legacy hex
     //               fixtures (tb_container programs) that hand-assemble
     //               streams using only LOAD_SMALL_INT and stack ops.
-    parameter bit BOOT_EN = 1'b1
+    parameter bit BOOT_EN = 1'b1,
+    // EXCORE_EN = 1 : a recoverable trap (pycore_trap_recoverable(code))
+    //                 enters S_TRAP_MARSHAL / S_TRAP_WAIT instead of
+    //                 halting -- see pycore_excore_system.sv (Phase C).
+    // EXCORE_EN = 0 : default.  Every legacy unit tb instantiates
+    //                 pycore_core (via pycore_system) without overriding
+    //                 this, so trap behavior is byte-identical to Phase A.
+    parameter bit EXCORE_EN = 1'b0,
+    parameter int MAX_TRAP_ENTRIES = 3,
+    parameter int MAX_RES_ENTRIES  = 2
 ) (
     input  logic                          clk_i,
     input  logic                          rst_n_i,
@@ -72,6 +81,25 @@ module pycore_core #(
     input  logic                          dmem_ack_i,
     input  logic [DMEM_DATA_W-1:0]        dmem_rdata_i,
     input  logic                          dmem_fault_i,
+    // trap_req (pycore -> excore, via trap_mailbox.sv). Unused (tied off)
+    // when EXCORE_EN=0.
+    output logic                          trap_req_valid_o,
+    input  logic                          trap_req_ready_i,
+    output logic [3:0]                    trap_req_code_o,
+    output logic [31:0]                   trap_req_pc_o,
+    output logic [39:0]                   trap_req_instr_o,
+    output logic [31:0]                   trap_req_heap_ptr_o,
+    output logic [2:0]                    trap_req_entry_count_o,
+    output logic [PYCORE_ENTRY_WIDTH-1:0] trap_req_entries_o [0:MAX_TRAP_ENTRIES-1],
+    // trap_res (excore -> pycore, via trap_mailbox.sv).
+    input  logic                          trap_res_valid_i,
+    output logic                          trap_res_ready_o,
+    input  logic [3:0]                    trap_res_code_i,
+    input  logic [3:0]                    trap_res_fatal_code_i,
+    input  logic [2:0]                    trap_res_pop_count_i,
+    input  logic [1:0]                    trap_res_push_count_i,
+    input  logic [31:0]                   trap_res_heap_ptr_i,
+    input  logic [PYCORE_ENTRY_WIDTH-1:0] trap_res_entries_i [0:MAX_RES_ENTRIES-1],
     // status
     output logic                          trap_out_o,
     output logic [3:0]                    trap_code_o,
@@ -104,6 +132,21 @@ module pycore_core #(
     // object, then redirects fetch to the entry slot before dropping
     // into S_FETCH for normal execution.
     localparam logic [3:0] S_BOOT      = 4'd9;
+    // S_TRAP_MARSHAL / S_TRAP_WAIT (Phase C, EXCORE_EN=1 only): entered
+    // instead of the fatal-halt path when a recoverable trap
+    // (pycore_trap_recoverable(code)) fires.  S_TRAP_MARSHAL asserts
+    // trap_req_valid_o with the already-gathered operand entries (no dmem
+    // or RF activity — pycore is "frozen" per the memory-ownership
+    // protocol) until the mailbox handshake completes; S_TRAP_WAIT then
+    // waits for trap_res_valid_i and applies the result (see the
+    // always_ff case below).
+    localparam logic [3:0] S_TRAP_MARSHAL = 4'd10;
+    localparam logic [3:0] S_TRAP_WAIT    = 4'd11;
+
+    // trap_res_code_i values (mirrors excore/docs/mmio_map.md RES_CODE).
+    localparam logic [3:0] TRAP_RES_COMPLETED = 4'd0;
+    localparam logic [3:0] TRAP_RES_RETRY     = 4'd1;
+    localparam logic [3:0] TRAP_RES_FATAL     = 4'd2;
 
     // Container sub-operation codes (stored in container_op_r, 4-bit).
     localparam logic [3:0] CONT_BUILD_LIST   = 4'd0;
@@ -305,6 +348,34 @@ module pycore_core #(
     // trap; raised strictly before any RF/heap commit (CP_HDR, before the
     // ob_item read) so a future RETRY-based recovery stays valid.
     logic                          container_list_grow_trap_r;
+
+    // -----------------------------------------------------------------------
+    // S_TRAP_MARSHAL / S_TRAP_WAIT (Phase C) registers.
+    // -----------------------------------------------------------------------
+    // Set (alongside container_phase_r <= CP_DONE) by a container op that
+    // detects a recoverable trap under EXCORE_EN=1, instead of raising the
+    // fatal one-cycle pulse (e.g. container_list_grow_trap_r). Selects
+    // S_TRAP_MARSHAL over S_FETCH as the CP_DONE exit target; cleared on
+    // entry to S_TRAP_MARSHAL.
+    logic                          trap_marshal_pending_r;
+    logic [3:0]                    trap_marshal_code_r;
+    logic [2:0]                    trap_marshal_entry_count_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] trap_marshal_entries_r [0:2]; // MAX_TRAP_ENTRIES
+    // S_TRAP_WAIT: sequences push_count_i RF writes (one per cycle) after
+    // popping pop_count_i, before applying COMPLETED/RETRY/FATAL.
+    logic [1:0]                    trap_wait_push_idx_r;
+    // 1 once the result fields below have been latched from trap_res_*_i
+    // (the first cycle trap_res_valid_i is seen); cleared once the
+    // resume/retry/fatal decision has been applied.
+    logic                          trap_res_seen_r;
+    logic [3:0]                    trap_res_code_r2;
+    logic [3:0]                    trap_res_fatal_r2;
+    logic [1:0]                    trap_res_push_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] trap_res_entries_r2 [0:1]; // MAX_RES_ENTRIES
+    // One-cycle pulse: forward an excore-reported FATAL code into
+    // pycore_trap as a normal halt.
+    logic                          excore_fatal_trap_r;
+    logic [3:0]                    excore_fatal_code_r;
 
     // S_CONTAINER dmem handshake (mirrors frame_dmem_pending_r for S_CALL).
     logic                          container_dmem_pending_r;
@@ -845,6 +916,10 @@ module pycore_core #(
     // intercepts pycore_trap_recoverable() codes before they ever reach
     // this signal when EXCORE_EN is set.
     assign list_grow_sig  = container_list_grow_trap_r;
+    // Phase C: excore reported RES_FATAL for a trap it was handed — forward
+    // its fatal_code as a normal halt (see S_TRAP_WAIT).
+    logic excore_fatal_sig;
+    assign excore_fatal_sig = excore_fatal_trap_r;
     // Frame faults and CALL preflight failures both report as PY_TRAP_CALL_FILTER.
     assign frame_fault_trap_sig = (state_r == S_CALL || state_r == S_RETURN) &&
                                   frame_fault_sig;
@@ -868,6 +943,8 @@ module pycore_core #(
         .mem_fault_i(mem_fault_sig),
         .addr_align_i(addr_align_sig),
         .list_grow_i(list_grow_sig),
+        .excore_fatal_i(excore_fatal_sig),
+        .excore_fatal_code_i(excore_fatal_code_r),
         .fault_pc_i(fault_pc),
         .fault_rs1_i(fault_rs1),
         .fault_rs2_i(fault_rs2),
@@ -878,6 +955,29 @@ module pycore_core #(
         .trap_rs2_o(),
         .freeze_pipeline_o(freeze_pipeline)
     );
+
+    // -------------------------------------------------------------------------
+    // S_TRAP_MARSHAL / S_TRAP_WAIT (Phase C) combinational wiring.
+    // -------------------------------------------------------------------------
+    // trap_req_valid_o is a level tied directly to state_r, not a register:
+    // the mailbox handshake (trap_req_ready_i) is what advances us out of
+    // S_TRAP_MARSHAL, so there is nothing to latch beyond what the
+    // container op already staged in trap_marshal_*_r.
+    assign trap_req_valid_o        = (state_r == S_TRAP_MARSHAL);
+    assign trap_req_code_o         = trap_marshal_code_r;
+    assign trap_req_pc_o           = cur_pc_r;
+    assign trap_req_instr_o        = {cur_arg_r, cur_opcode_r};
+    assign trap_req_heap_ptr_o     = heap_ptr_r;
+    assign trap_req_entry_count_o  = trap_marshal_entry_count_r;
+    assign trap_req_entries_o      = trap_marshal_entries_r;
+
+    // trap_wait_ready: all of S_TRAP_WAIT's local work (latch result, pop,
+    // sequence push_count writes) has committed; gates both the exit from
+    // S_TRAP_WAIT (always_comb above) and the trap_res handshake ack.
+    logic trap_wait_ready;
+    assign trap_wait_ready  = trap_res_seen_r &&
+                              (trap_wait_push_idx_r >= {1'b0, trap_res_push_r});
+    assign trap_res_ready_o = (state_r == S_TRAP_WAIT) && trap_wait_ready;
 
     // -------------------------------------------------------------------------
     // Combinational helpers for S_CONTAINER.
@@ -1049,7 +1149,19 @@ module pycore_core #(
                     // sub-operations.  All actual work (RF write, TOS update) is
                     // committed in the cycle that advances container_phase_r to
                     // CP_DONE, so the CP_DONE always_ff case is intentionally empty.
-                    if (container_phase_r == CP_DONE) state_next = S_FETCH;
+                    // trap_marshal_pending_r (Phase C, EXCORE_EN=1) redirects the
+                    // exit to S_TRAP_MARSHAL instead of S_FETCH.
+                    if (container_phase_r == CP_DONE) begin
+                        state_next = trap_marshal_pending_r ? S_TRAP_MARSHAL : S_FETCH;
+                    end
+                end
+                S_TRAP_MARSHAL: begin
+                    if (trap_req_ready_i) state_next = S_TRAP_WAIT;
+                end
+                S_TRAP_WAIT: begin
+                    if (trap_wait_ready) begin
+                        state_next = (trap_res_code_r2 == TRAP_RES_FATAL) ? S_HALT : S_FETCH;
+                    end
                 end
                 S_BOOT: begin
                     if (boot_phase_r == BOOT_PHASE_DONE) state_next = S_FETCH;
@@ -1144,6 +1256,21 @@ module pycore_core #(
             container_buf_r          <= '0;
             container_list_hdr_r     <= '0;
             container_list_grow_trap_r <= 1'b0;
+            trap_marshal_pending_r     <= 1'b0;
+            trap_marshal_code_r        <= '0;
+            trap_marshal_entry_count_r <= '0;
+            trap_marshal_entries_r[0]  <= '0;
+            trap_marshal_entries_r[1]  <= '0;
+            trap_marshal_entries_r[2]  <= '0;
+            trap_wait_push_idx_r       <= '0;
+            trap_res_seen_r            <= 1'b0;
+            trap_res_code_r2           <= '0;
+            trap_res_fatal_r2          <= '0;
+            trap_res_push_r            <= '0;
+            trap_res_entries_r2[0]     <= '0;
+            trap_res_entries_r2[1]     <= '0;
+            excore_fatal_trap_r        <= 1'b0;
+            excore_fatal_code_r        <= '0;
         end else begin
             state_r <= state_next;  // register next state (computed in always_comb)
 
@@ -1159,6 +1286,7 @@ module pycore_core #(
             container_type_trap_r <= 1'b0;
             container_mem_fault_r <= 1'b0;
             container_list_grow_trap_r <= 1'b0;
+            excore_fatal_trap_r   <= 1'b0;
             call_filter_trap_r    <= 1'b0;
 
             if (state_r == S_FETCH) begin
@@ -1204,6 +1332,7 @@ module pycore_core #(
                             container_type_trap_r    <= 1'b0;
                             container_mem_fault_r    <= 1'b0;
                             container_wb_we_r        <= 1'b0;
+                            trap_marshal_pending_r   <= 1'b0;
 
                             if (cur_opcode_r == PY_OP_BUILD_LIST) begin
                                 container_op_r    <= CONT_BUILD_LIST;
@@ -2006,10 +2135,26 @@ module pycore_core #(
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r        <= CP_LIST_BUF;
-                                        end else begin
-                                            // Full: raise the recoverable-in-
-                                            // principle grow trap.  No RF, heap,
+                                        end else if (EXCORE_EN &&
+                                                     pycore_trap_recoverable(PY_TRAP_LIST_GROW)) begin
+                                            // Full, but the excore can service
+                                            // this: marshal the operands it
+                                            // needs (list handle + element —
+                                            // exactly rs1_r/rs2_r, already
+                                            // decoded for this op) and hand off
+                                            // instead of halting.  No RF, heap,
                                             // or dmem-write commit has happened.
+                                            trap_marshal_pending_r    <= 1'b1;
+                                            trap_marshal_code_r       <= PY_TRAP_LIST_GROW;
+                                            trap_marshal_entry_count_r <= 3'd2;
+                                            trap_marshal_entries_r[0] <= rs1_r; // list handle
+                                            trap_marshal_entries_r[1] <= rs2_r; // element
+                                            container_phase_r         <= CP_DONE;
+                                        end else begin
+                                            // Full, no excore: raise the fatal
+                                            // grow trap (Phase A/B behavior).
+                                            // No RF, heap, or dmem-write commit
+                                            // has happened.
                                             container_list_grow_trap_r <= 1'b1;
                                         end
                                     end
@@ -3391,6 +3536,66 @@ module pycore_core #(
 
                         default: ;
                     endcase
+                end
+
+                // ----------------------------------------------------------
+                // S_TRAP_MARSHAL: assert trap_req_valid_o (combinational,
+                // see below) with the operands trap_marshal_* already
+                // latched by the container op that detected the recoverable
+                // trap. No dmem or RF activity here — pycore is "frozen"
+                // per the memory-ownership protocol until trap_res arrives.
+                S_TRAP_MARSHAL: begin
+                    if (trap_req_ready_i) begin
+                        trap_marshal_pending_r <= 1'b0;
+                        trap_res_seen_r        <= 1'b0;
+                        trap_wait_push_idx_r   <= '0;
+                        // state_next = S_TRAP_WAIT (from always_comb)
+                    end
+                end
+
+                // ----------------------------------------------------------
+                // S_TRAP_WAIT: apply the excore's result once trap_res_valid_i
+                // arrives — heap_ptr adoption, pop, then push_count RF writes
+                // (one per cycle; the RF write port is single-slot) — then
+                // resume / retry / forward-fatal per trap_res_code_i.
+                S_TRAP_WAIT: begin
+                    if (trap_res_valid_i && !trap_res_seen_r) begin
+                        // First cycle observing the result: latch it and
+                        // apply heap_ptr + pop right away.
+                        heap_ptr_r          <= trap_res_heap_ptr_i;
+                        tos_r               <= tos_r - RF_AW'({5'b0, trap_res_pop_count_i});
+                        trap_res_code_r2    <= trap_res_code_i;
+                        trap_res_fatal_r2   <= trap_res_fatal_code_i;
+                        trap_res_push_r     <= trap_res_push_count_i;
+                        trap_res_entries_r2 <= trap_res_entries_i;
+                        trap_res_seen_r     <= 1'b1;
+                        trap_wait_push_idx_r <= 2'd0;
+                    end else if (trap_res_seen_r &&
+                                 (trap_wait_push_idx_r < {1'b0, trap_res_push_r})) begin
+                        // Sequence one push write per cycle at the (already
+                        // post-pop) tos.
+                        container_wb_we_r   <= 1'b1;
+                        container_wb_addr_r <= RF_AW'({2'b0, tos_r});
+                        container_wb_data_r <= trap_res_entries_r2[trap_wait_push_idx_r];
+                        tos_r                <= tos_r + RF_AW'(1);
+                        trap_wait_push_idx_r <= trap_wait_push_idx_r + 2'd1;
+                    end else if (trap_res_seen_r) begin
+                        // All pushes done: resume / retry / forward-fatal.
+                        trap_res_seen_r <= 1'b0;
+                        unique case (trap_res_code_r2)
+                            TRAP_RES_COMPLETED: begin
+                                fetch_skip_r <= 1'b1; // resume at next instr
+                            end
+                            TRAP_RES_RETRY: begin
+                                redirect_pending_r <= 1'b1;
+                                redirect_tgt_r     <= cur_pc_r; // re-dispatch same pc
+                            end
+                            default: begin // TRAP_RES_FATAL
+                                excore_fatal_trap_r <= 1'b1;
+                                excore_fatal_code_r <= trap_res_fatal_r2;
+                            end
+                        endcase
+                    end
                 end
 
                 // ----------------------------------------------------------
