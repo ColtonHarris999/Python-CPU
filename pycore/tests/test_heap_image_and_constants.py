@@ -148,5 +148,102 @@ class TestDictKeyHashAgreement(unittest.TestCase):
         self.assertEqual(heap_image.dict_key_hash(heap_image.TAG_INT, 4) & 3, 0)
 
 
+class TestListObjectBufferLayout(unittest.TestCase):
+    """Phase A: growable split object/buffer LIST layout (see pycore_defs.svh)."""
+
+    def test_empty_list_is_object_only(self) -> None:
+        builder = heap_image.HeapImageBuilder()
+        tag, obj_addr = builder.alloc_list([])
+        self.assertEqual(tag, heap_image.TAG_LIST)
+        # header {capacity=0, length=0}
+        self.assertEqual(builder.words[obj_addr], 0)
+        # ob_item = 0 (no buffer allocated)
+        self.assertEqual(builder.words[obj_addr + 16], 0)
+        # Exactly the 32-byte object was allocated.
+        self.assertEqual(builder.end_ptr, obj_addr + 32)
+
+    def test_nonempty_list_object_and_buffer_addresses(self) -> None:
+        builder = heap_image.HeapImageBuilder()
+        elements = [(heap_image.TAG_INT, 7), (heap_image.TAG_INT, 9)]
+        tag, obj_addr = builder.alloc_list(elements)
+        self.assertEqual(tag, heap_image.TAG_LIST)
+
+        header = builder.words[obj_addr]
+        capacity = header >> 64
+        length = header & ((1 << 64) - 1)
+        self.assertEqual(capacity, 2)
+        self.assertEqual(length, 2)
+
+        ob_item = builder.words[obj_addr + 16]
+        # Buffer immediately follows the 32-byte object.
+        self.assertEqual(ob_item, obj_addr + 32)
+
+        # Element 0 at ob_item+0 (value) / ob_item+16 (tag).
+        self.assertEqual(builder.words[ob_item], 7)
+        self.assertEqual(builder.words[ob_item + 16], heap_image.TAG_INT)
+        # Element 1 at ob_item+32 (value) / ob_item+48 (tag).
+        self.assertEqual(builder.words[ob_item + 32], 9)
+        self.assertEqual(builder.words[ob_item + 48], heap_image.TAG_INT)
+
+        # Total allocation: 32 (object) + 2*32 (buffer).
+        self.assertEqual(builder.end_ptr, obj_addr + 32 + 64)
+
+    def test_alias_same_handle_round_trips(self) -> None:
+        """Two RF slots referencing the same list handle name the same object.
+
+        This is the prerequisite the split object/buffer design exists for:
+        growth only ever rewrites the object's ob_item field, so any alias
+        that stored the (tag, obj_addr) handle keeps working after growth
+        because it never stored a buffer address directly.
+        """
+        builder = heap_image.HeapImageBuilder()
+        list_handle = builder.alloc_list([(heap_image.TAG_INT, 1)])
+
+        # Nest the same handle twice inside an outer list (two aliases).
+        outer_tag, outer_addr = builder.alloc_list([list_handle, list_handle])
+
+        outer_ob_item = builder.words[outer_addr + 16]
+        alias_0 = builder.words[outer_ob_item]        # element 0 value field
+        alias_1 = builder.words[outer_ob_item + 32]    # element 1 value field
+        self.assertEqual(alias_0, list_handle[1])
+        self.assertEqual(alias_1, list_handle[1])
+        self.assertEqual(alias_0, alias_1)
+
+        # Both aliases' tag slots name PY_TAG_LIST.
+        self.assertEqual(builder.words[outer_ob_item + 16], heap_image.TAG_LIST)
+        self.assertEqual(builder.words[outer_ob_item + 48], heap_image.TAG_LIST)
+
+
+class TestListWithSpareCapacity(unittest.TestCase):
+    """alloc_list_with_capacity: hand-set spare capacity for LIST_APPEND
+    fast-path fixtures (BUILD_LIST itself never produces capacity > length)."""
+
+    def test_capacity_greater_than_length(self) -> None:
+        builder = heap_image.HeapImageBuilder()
+        tag, obj_addr = builder.alloc_list_with_capacity(
+            [(heap_image.TAG_INT, 7)], capacity=4
+        )
+        self.assertEqual(tag, heap_image.TAG_LIST)
+        header = builder.words[obj_addr]
+        capacity = header >> 64
+        length = header & ((1 << 64) - 1)
+        self.assertEqual(capacity, 4)
+        self.assertEqual(length, 1)
+
+        ob_item = builder.words[obj_addr + 16]
+        self.assertEqual(ob_item, obj_addr + 32)
+        # Buffer reserved for 4 elements (128 bytes), only element 0 written.
+        self.assertEqual(builder.end_ptr, ob_item + 4 * 32)
+        self.assertEqual(builder.words[ob_item], 7)
+        self.assertEqual(builder.words.get(ob_item + 32, 0), 0)
+
+    def test_capacity_less_than_length_rejected(self) -> None:
+        builder = heap_image.HeapImageBuilder()
+        with self.assertRaises(ValueError):
+            builder.alloc_list_with_capacity(
+                [(heap_image.TAG_INT, 1), (heap_image.TAG_INT, 2)], capacity=1
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
