@@ -32,12 +32,12 @@ into a two-core system happens in three ordered phases:
   messages driven directly onto `excore_mmio`'s input ports) and a real
   `pycore_mem_bank` instance; no pycore RTL changed in this phase. See
   `excore/docs/` for excore-specific docs.
-- **Phase C** (not yet started): the mailbox transport
-  (`trap_mailbox.sv`), the memory-ownership grant mux in a new
-  `pycore_excore_system.sv` top level, and pycore's `S_TRAP_MARSHAL` /
-  `S_TRAP_WAIT` states that hand a recoverable trap to the excore instead
-  of halting, then apply its result (resume, retry, or forward a fatal
-  code into `pycore_trap` as today's ordinary halt).
+- **Phase C** (done): the mailbox transport (`excore/rtl/trap_mailbox.sv`),
+  the memory-ownership grant mux in the new `pycore_excore_system.sv` top
+  level, and pycore's `S_TRAP_MARSHAL` / `S_TRAP_WAIT` states that hand a
+  recoverable trap to the excore instead of halting, then apply its result
+  (resume, retry, or forward a fatal code into `pycore_trap` as today's
+  ordinary halt). See "Two-core transport and integration" below.
 
 ### The excore contract: "complete the semantic effect"
 
@@ -59,6 +59,125 @@ recoverable trap is raised **before any RF/heap/dmem commit** (see
 before issuing the `ob_item` read) — a property every future recoverable
 container-op trap must preserve, since `RETRY` semantics depend on pycore
 state not having advanced when the trap fired.
+
+### Two-core transport and integration (Phase C)
+
+#### Mailbox message formats
+
+`trap_mailbox.sv` bridges two different handshake styles: pycore's
+`trap_req`/`trap_res` are proper wide-parallel valid/ready handshakes;
+`excore_mmio`'s mailbox is level-held (`MB_STATUS.trap_pending` stays
+asserted until firmware reports a result via `RES_GO`) and its result is a
+one-cycle pulse. Field widths (`MAX_TRAP_ENTRIES = 3`, `MAX_RES_ENTRIES =
+2`) are module parameters on `pycore_core`, `trap_mailbox`, and
+`excore_mmio` alike, so a future handler needing more operands widens them
+in one place.
+
+```text
+trap_req_valid / trap_req_ready
+  trap_code[3:0], pc[31:0], instr[39:0] ({arg[31:0], opcode[7:0]}),
+  heap_ptr[31:0], entry_count[2:0], entries[3][131:0]
+trap_res_valid / trap_res_ready
+  res_code[3:0], fatal_code[3:0], pop_count[2:0], push_count[1:0],
+  heap_ptr[31:0], entries[2][131:0]
+```
+
+Wide parallel buses are acceptable at this scale; single-beat ->
+multi-beat serialization (to shrink the wire count for an ASIC target) is
+future work, not needed for the current FPGA-class prototype.
+
+#### Memory-ownership protocol
+
+`pycore_excore_system.sv` owns a registered grant mux (`mem_owner_r ∈
+{PYCORE, EXCORE}`, default `PYCORE`) over the one shared dmem bank
+(`pycore_mem_bank`). Ownership flips to `EXCORE` exactly when the
+`trap_req` handshake completes (pycore's `S_TRAP_MARSHAL` sees
+`trap_req_ready_i`); back to `PYCORE` exactly when the `trap_res`
+handshake completes (`S_TRAP_WAIT` sees `trap_wait_ready` / asserts
+`trap_res_ready_o`). No cycle-level arbitration is needed: pycore is
+frozen in `S_TRAP_MARSHAL`/`S_TRAP_WAIT` (no dmem or RF activity) exactly
+while `EXCORE` owns memory, and the excore firmware is parked polling
+`MB_STATUS` exactly while `PYCORE` owns it, so the two masters are never
+both active. A `$fatal` check in `pycore_excore_system.sv` still verifies
+in simulation that the non-owner never raises `req` while it doesn't hold
+the grant.
+
+Instruction memories are never shared — pycore's imem and the excore's
+private firmware imem are each their own array (Harvard per core); only
+the *data* heap is shared, and only because that's exactly the resource
+whose ownership is being transferred.
+
+#### Trap taxonomy
+
+| Trap code | Name | Classification | Notes |
+| --- | --- | --- | --- |
+| 0 | `PY_TRAP_NONE` | n/a | no trap |
+| 1 | `PY_TRAP_TYPE` | fatal | |
+| 2 | `PY_TRAP_STACK` | fatal | |
+| 3 | `PY_TRAP_DIV_ZERO` | fatal | |
+| 4 | `PY_TRAP_FPU_EXCEPTION` | fatal | |
+| 5 | `PY_TRAP_ILLEGAL_OPCODE` | fatal | also the excore's own dispatch-loop default for an unrecognized trap code |
+| 6 | `PY_TRAP_CALL_FILTER` | fatal | |
+| 7 | `PY_TRAP_MEM_FAULT` | fatal | also the excore's OOM report (`FATAL(MEM_FAULT)`) |
+| 8 | `PY_TRAP_ADDR_ALIGN` | fatal | |
+| 9 | `PY_TRAP_LIST_GROW` | **recoverable** | `pycore_trap_recoverable(code)` returns 1 only for this code today |
+
+`pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
+truth for the fatal/recoverable split. `EXCORE_EN=1` intercepts a
+recoverable code in `CONT_LIST_APPEND`'s `CP_HDR` phase (in general: in
+whichever container-op phase first detects the condition) *before* it
+would have reached `pycore_trap`, and routes it to `S_TRAP_MARSHAL`
+instead. `EXCORE_EN=0`, or any non-recoverable code, is completely
+untouched — `pycore_trap` sees exactly what it always has.
+
+The excore's result (`RES_CODE`, `excore/docs/mmio_map.md`) has three
+values, and the restartability requirement each implies:
+
+- **`COMPLETED`** — the excore finished the trapped instruction's full
+  semantic effect (see "The excore contract" above); pycore pops
+  `pop_count`, pushes `push_count` entries, and resumes at the *next*
+  instruction (normal fetch-skip handling, same as any other multi-cycle
+  container op's terminal phase).
+- **`RETRY`** — pycore state did not advance past the trap point; pycore
+  re-dispatches the *same* pc (`redirect_pending_r`/`redirect_tgt_r ←
+  cur_pc_r`, the same mechanism a taken branch uses). This is only
+  semantically valid because the trap was raised before any commit — see
+  the early-trap discipline above. No current handler returns `RETRY`
+  (`LIST_GROW` always completes); the code path exists and is wired end to
+  end (`S_TRAP_WAIT`'s `unique case` on `trap_res_code_r2`) for a future
+  handler where the excore does *not* hold enough state to finish the
+  semantic effect itself (e.g. an opcode requiring iteration protocol
+  support pycore doesn't have).
+- **`FATAL`** — forwarded into `pycore_trap` as an ordinary halt via a new
+  `excore_fatal_i`/`excore_fatal_code_i` input pair (bypassing the fixed
+  one-hot condition list, since the code is data from firmware, not a
+  wired condition).
+
+#### `S_TRAP_MARSHAL` / `S_TRAP_WAIT`
+
+Two new `pycore_core` FSM states. `S_TRAP_MARSHAL` asserts `trap_req_valid_o`
+with the operand entries the detecting container op already gathered
+(e.g. `CONT_LIST_APPEND` reuses `rs1_r`/`rs2_r` — the list handle and
+element it had already decoded for the fast path — so no extra RF read
+port or extra cycles are needed to marshal). `S_TRAP_WAIT` waits for
+`trap_res_valid_i`, applies `heap_ptr_r ← res.heap_ptr`, pops `pop_count`,
+sequences `push_count` RF writes one per cycle (the RF write port is
+single-slot), then branches on `res_code` as described above.
+
+#### `pycore_excore_system.sv`
+
+The two-core top level. `pycore_system.sv` remains the single-core top for
+legacy testbenches (its `pycore_core` instantiation doesn't override
+`EXCORE_EN`, so it defaults to 0 and ties the new trap_req/trap_res ports
+off). `tb_container.sv` grows an `EXCORE_EN`/`FW_HEX` parameter pair and a
+`generate if` that instantiates `pycore_excore_system` instead of
+`pycore_system` when `EXCORE_EN=1`, wrapped in a fixed-name generate block
+(`g_dut`) so every existing hierarchical debug reference
+(`g_dut.dut.core.*`) resolves identically regardless of which top is
+selected — every pre-existing image-boot test can therefore run unchanged
+on the two-core system by simply adding `-GEXCORE_EN=1
+-GFW_HEX=<assembled firmware>` (see `pycore-img-*-two-core` Makefile
+targets).
 
 ## CPython image fidelity boundary
 

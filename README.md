@@ -105,6 +105,8 @@ make pycore-top
 make pycore-python-tests
 make excore-asm-tests
 make excore-cpu-test
+make pycore-excore-system
+make pycore-img-two-core
 ```
 
 ### Run all tests (local)
@@ -183,12 +185,18 @@ PyCore docs:
 
 ## excore quick reference
 
-excore is standalone as of Phase B (no pycore integration yet — see
-`pycore/docs/architecture.md` for the planned trap-transport/integration
-work). Regression entrypoint:
+excore is now fully integrated with pycore (Phase C): a recoverable trap
+(currently just `PY_TRAP_LIST_GROW`) is handed to the excore over
+`trap_mailbox.sv` instead of halting — see `pycore/docs/architecture.md`'s
+"Two-core transport and integration" section for the mailbox format,
+memory-ownership protocol, and trap taxonomy. `excore/` also still has its
+own standalone regression (excore unit-tested against a mocked mailbox,
+independent of pycore):
 
 ```bash
-make excore-test
+make excore-test                 # standalone excore (mocked mailbox)
+make pycore-excore-system         # pycore <-> excore integration (real traps)
+make pycore-img-two-core          # every img_* differential test on the two-core top
 ```
 
 excore docs:
@@ -196,3 +204,4 @@ excore docs:
 - MMIO map: `excore/docs/mmio_map.md`
 - supported RV32I subset: `excore/docs/rv32i_subset.md`
 - firmware build flow: `excore/docs/firmware_build.md`
+- adding a new trap handler: `excore/docs/adding_a_trap_handler.md`
