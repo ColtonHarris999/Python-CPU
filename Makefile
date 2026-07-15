@@ -44,7 +44,11 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_dmem.sv \
 	pycore/rtl/pycore_mem_stage.sv \
 	pycore/rtl/pycore_core.sv \
-	pycore/rtl/pycore_system.sv
+	pycore/rtl/pycore_system.sv \
+	excore/rtl/excore_cpu.sv \
+	excore/rtl/excore_mmio.sv \
+	excore/rtl/trap_mailbox.sv \
+	pycore/rtl/pycore_excore_system.sv
 
 PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
@@ -81,6 +85,12 @@ EXCORE_RTL_SRCS := \
 	pycore-container-dict-full-insert pycore-container-list-oom \
 	pycore-container-list-append-fast pycore-container-list-append-full-fatal \
 	pycore-list-append-fixtures \
+	pycore-excore-integration-fixtures pycore-excore-grow-from-zero \
+	pycore-excore-fast-path-no-trap pycore-excore-grow-oom-fatal \
+	pycore-excore-alias-stability pycore-excore-mixed-tags-preserved \
+	pycore-excore-grow-repeated pycore-excore-append-across-call \
+	pycore-excore-disabled pycore-excore-system \
+	pycore-img-two-core \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
 
@@ -271,6 +281,45 @@ define PYCORE_IMAGE_RUN
 	./$(BUILD_DIR)/img_$(1)/verilator/Vtb_container
 endef
 
+# Phase C full-regression companion to PYCORE_IMAGE_RUN: same image, run on
+# the two-core top (EXCORE_EN=1) instead of the legacy pycore_system. None
+# of the img_* programs can emit LIST_APPEND (compile() only does so inside
+# comprehensions, which still need FOR_ITER/GET_ITER), so this proves the
+# two-core wiring is a no-op for every existing differential test rather
+# than exercising the excore itself.
+define PYCORE_IMAGE_RUN_TWOCORE
+	mkdir -p $(BUILD_DIR)/img_$(1)
+	$(PYTHON) pycore/tools/run_image_test.py \
+		--source pycore/programs/img_$(1).py \
+		--entry managed_entry \
+		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
+		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
+		--string-hex $(BUILD_DIR)/img_$(1)/string_mem.hex \
+		--meta $(BUILD_DIR)/img_$(1)/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/img_$(1)/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/img_$(1)/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/img_$(1)/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GEXCORE_EN=1 \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d$$EXPECTED_TAG \
+		"-GEXPECTED_VALUE=128'd$$EXPECTED_VALUE" \
+		-GMAX_CYCLES=$(2) \
+		--Mdir $(BUILD_DIR)/img_$(1)/verilator_twocore \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/img_$(1)/verilator_twocore/Vtb_container
+endef
+
 define PYCORE_IMAGE_TRAP_RUN
 	mkdir -p $(BUILD_DIR)/img_$(1)
 	$(PYTHON) pycore/tools/image_from_source.py \
@@ -346,6 +395,102 @@ pycore-img-globals-accum:
 
 pycore-img-string-ops:
 	$(call PYCORE_IMAGE_RUN,string_ops,100000)
+
+define PYCORE_IMAGE_TRAP_RUN_TWOCORE
+	mkdir -p $(BUILD_DIR)/img_$(1)
+	$(PYTHON) pycore/tools/image_from_source.py \
+		--source pycore/programs/img_$(1).py \
+		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
+		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
+		--string-hex $(BUILD_DIR)/img_$(1)/string_mem.hex \
+		--meta $(BUILD_DIR)/img_$(1)/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/img_$(1)/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/img_$(1)/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/img_$(1)/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GEXCORE_EN=1 \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		-GEXPECT_TRAP=1 \
+		-GEXPECTED_TRAP_CODE=4\'d$(2) \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GMAX_CYCLES=$(3) \
+		--Mdir $(BUILD_DIR)/img_$(1)/verilator_twocore \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/img_$(1)/verilator_twocore/Vtb_container
+endef
+
+pycore-img-smoke-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,smoke,50000)
+
+pycore-img-call-chain-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,call_chain,50000)
+
+pycore-img-str-consts-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,str_consts,50000)
+
+pycore-img-containers-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,containers,50000)
+
+pycore-img-recursion-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,recursion,100000)
+
+pycore-img-extended-arg-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,extended_arg,200000)
+
+pycore-img-branchy-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,branchy,50000)
+
+pycore-img-undef-global-two-core: excore-fw
+	$(call PYCORE_IMAGE_TRAP_RUN_TWOCORE,undef_global,7,50000)
+
+pycore-img-noncallable-two-core: excore-fw
+	$(call PYCORE_IMAGE_TRAP_RUN_TWOCORE,noncallable,6,50000)
+
+pycore-img-bad-argc-two-core: excore-fw
+	$(call PYCORE_IMAGE_TRAP_RUN_TWOCORE,bad_argc,6,50000)
+
+pycore-img-deep-callgraph-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,deep_callgraph,400000)
+
+pycore-img-helper-containers-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,helper_containers,100000)
+
+pycore-img-algo-sort-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,algo_sort,200000)
+
+pycore-img-bitwise-calls-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,bitwise_calls,100000)
+
+pycore-img-globals-accum-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,globals_accum,100000)
+
+pycore-img-string-ops-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,string_ops,100000)
+
+pycore-img-two-core: \
+	pycore-img-smoke-two-core \
+	pycore-img-call-chain-two-core \
+	pycore-img-str-consts-two-core \
+	pycore-img-containers-two-core \
+	pycore-img-recursion-two-core \
+	pycore-img-extended-arg-two-core \
+	pycore-img-branchy-two-core \
+	pycore-img-undef-global-two-core \
+	pycore-img-noncallable-two-core \
+	pycore-img-bad-argc-two-core \
+	pycore-img-deep-callgraph-two-core \
+	pycore-img-helper-containers-two-core \
+	pycore-img-algo-sort-two-core \
+	pycore-img-bitwise-calls-two-core \
+	pycore-img-globals-accum-two-core \
+	pycore-img-string-ops-two-core
 
 pycore-img: \
 	pycore-img-smoke \
@@ -488,6 +633,108 @@ pycore-container-list-append-fast:
 pycore-container-list-append-full-fatal:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_append_full_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d9 -GSTRING_HEX=\"pycore/programs/list_append_full_fatal_str.hex\",pycore_container_list_append_full_fatal)
 
+# ---- Phase C: two-core (pycore + excore) system tests ----------------------
+# Hand-built images (gen_excore_integration_fixtures.py) exercising the real
+# CONT_LIST_APPEND -> S_TRAP_MARSHAL -> trap_mailbox -> excore -> S_TRAP_WAIT
+# round trip, driven by genuine LIST_APPEND traps (not a mocked mailbox --
+# that's excore-cpu-test / tb_excore.sv, Phase B).
+pycore-excore-integration-fixtures:
+	$(PYTHON) pycore/tools/gen_excore_integration_fixtures.py
+
+define PYCORE_EXCORE_RUN
+	mkdir -p $(BUILD_DIR)/$(1)
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/$(1).meta); \
+	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/$(1).hex\" \
+		-GSTRING_HEX=\"pycore/programs/$(1)_str.hex\" \
+		-GDMEM_HEX=\"pycore/programs/$(1)_dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GEXCORE_EN=1 \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		$(2) \
+		--Mdir $(BUILD_DIR)/$(1)/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/$(1)/verilator/Vtb_container
+endef
+
+pycore-excore-grow-from-zero: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,grow_from_zero,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd55" -GEXPECTED_TRAP_REQ_COUNT=1)
+
+pycore-excore-fast-path-no-trap: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,fast_path_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd9" -GEXPECTED_TRAP_REQ_COUNT=0)
+
+# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0x2000) so the excore's
+# doubled buffer (cap 4 -> 8, 256 bytes) cannot fit -> FATAL(MEM_FAULT).
+pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
+	mkdir -p $(BUILD_DIR)/grow_oom_fatal
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/grow_oom_fatal.hex\" \
+		-GSTRING_HEX=\"pycore/programs/grow_oom_fatal_str.hex\" \
+		-GDMEM_HEX=\"pycore/programs/grow_oom_fatal_dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GEXCORE_EN=1 \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		"-GHEAP_INIT_PTR=32'h00001f80" \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 \
+		--Mdir $(BUILD_DIR)/grow_oom_fatal/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/grow_oom_fatal/verilator/Vtb_container
+
+pycore-excore-alias-stability: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,alias_stability,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd30" -GEXPECTED_TRAP_REQ_COUNT=1)
+
+pycore-excore-mixed-tags-preserved: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,mixed_tags_preserved,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd1677" -GEXPECTED_TRAP_REQ_COUNT=1)
+
+pycore-excore-grow-repeated: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,grow_repeated,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd3850" -GEXPECTED_TRAP_REQ_COUNT=3 -GMAX_CYCLES=20000)
+
+pycore-excore-append-across-call: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,append_across_call,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd77" -GEXPECTED_TRAP_REQ_COUNT=1)
+
+# excore_disabled: the same image as grow_from_zero, but EXCORE_EN=0 ->
+# legacy fatal behavior preserved (trap code 9), proving EXCORE_EN really
+# gates the marshal path rather than pycore_trap_recoverable() alone.
+pycore-excore-disabled: pycore-excore-integration-fixtures
+	mkdir -p $(BUILD_DIR)/excore_disabled
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/grow_from_zero.meta); \
+	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/grow_from_zero.hex\" \
+		-GSTRING_HEX=\"pycore/programs/grow_from_zero_str.hex\" \
+		-GDMEM_HEX=\"pycore/programs/grow_from_zero_dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GEXCORE_EN=0 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d9 \
+		--Mdir $(BUILD_DIR)/excore_disabled/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/excore_disabled/verilator/Vtb_container
+
+pycore-excore-system: \
+	pycore-excore-grow-from-zero \
+	pycore-excore-fast-path-no-trap \
+	pycore-excore-grow-oom-fatal \
+	pycore-excore-alias-stability \
+	pycore-excore-mixed-tags-preserved \
+	pycore-excore-grow-repeated \
+	pycore-excore-append-across-call \
+	pycore-excore-disabled
+
 # pycore-container-image-boot removed: the old fixture was generated with
 # the pre-3.14 preprocess and still uses 3-slot LOAD_CONST.  The real
 # image-boot flow (BOOT_EN=1) is exercised by the img_* programs built
@@ -537,7 +784,7 @@ excore-cpu-test: excore-fw
 
 excore-test: excore-asm-tests excore-cpu-test
 
-pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container pycore-img
+pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container pycore-img pycore-excore-system pycore-img-two-core
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .
