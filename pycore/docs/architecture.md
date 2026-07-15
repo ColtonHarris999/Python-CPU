@@ -316,28 +316,74 @@ first free byte above the static objects so bump allocation does not overwrite
 them.  `DMEM_HEX` on `pycore_system` / `pycore_dmem` preloads the whole dmem
 bank (not just the first 4 KB block).
 
-### LIST in-dmem layout
+### LIST in-dmem layout (v2 — growable split object/buffer)
 
 All addresses are 16-byte aligned (128-bit dmem slot granularity).
 
+Lists moved (Phase A) from a v1 inline layout (header immediately followed
+by elements at the same base) to a **CPython-style split model**: a stable
+32-byte **object** whose address never changes (and is what the `LIST`
+handle names), pointing at a relocatable **element buffer**.  This is the
+prerequisite for growth — v1's inline layout made growing a list impossible
+without moving it, which would dangle every alias of the handle.
+
 ```text
-base + 0                : header { capacity[63:0], length[63:0] }
-base + 16*(1 + 2*i)     : element[i] value[127:0]
-base + 16*(2 + 2*i)     : element[i] tag  { 124'b0, tag[3:0] }
+obj_addr + 0  : header  { capacity[63:0], length[63:0] }
+obj_addr + 16 : { 64'd0, ob_item[63:0] }   (element buffer byte address)
+
+ob_item + idx*32      : element[idx] value[127:0]
+ob_item + idx*32 + 16 : element[idx] tag  { 124'b0, tag[3:0] }
 ```
 
-Each element occupies **two 16-byte slots** (element stride = 32 bytes).
-Total allocation = `16 + capacity × 32` bytes.
+Each element occupies **two 16-byte slots** in the buffer (element stride =
+32 bytes).  The object is always exactly 32 bytes
+(`pycore_list_obj_bytes()`); the buffer is `capacity × 32` bytes
+(`pycore_list_buf_bytes(capacity)`).  Empty list: `capacity = 0, length = 0,
+ob_item = 0` — no buffer allocation (object only).
 
 The 132-bit tagged entry `{ tag[3:0], value[127:0] }` is split across two
 consecutive 128-bit dmem slots: the value slot followed by the tag slot.
 This avoids any non-16-byte addressing.
 
-Helpers `pycore_list_val_addr(base, idx)` and `pycore_list_tag_addr(base,
-idx)` in `pycore_defs.svh` compute element addresses.
+Helpers in `pycore_defs.svh`: `pycore_list_obitem_addr(obj)` /
+`pycore_list_obitem(slot)` resolve the buffer address from the object;
+`pycore_list_val_addr(buf, idx)` / `pycore_list_tag_addr(buf, idx)` compute
+element addresses **within the buffer** (not the object — every read/write
+path resolves `ob_item` first, then addresses the buffer, adding one dmem
+op versus v1: `CONT_SUBSCR_LIST` / `CONT_STORE_LIST` insert a `CP_LIST_BUF`
+phase between the header read and the element access).
+
+`BUILD_LIST` allocates the object and a `count`-sized buffer in a single
+combined OOM check, with `capacity == count` exactly (no spare capacity —
+matching CPython list-literal semantics; growth only ever happens via
+`LIST_APPEND`, never at construction).
 
 Negative indices are **not** wrapped: the bounds check is unsigned, so a
 negative INT key traps `PY_TRAP_MEM_FAULT` (same policy for TUPLE).
+
+#### `LIST_APPEND`
+
+`LIST_APPEND` (opcode 78) has a fast path and a grow path:
+
+- **Fast path** (`length < capacity`, `CONT_LIST_APPEND` in `pycore_core.sv`):
+  read the object header, read `ob_item`, write the element's value and tag
+  at `ob_item + length*32`, write back `{capacity, length+1}`, pop the
+  element.  5 dmem ops, no trap.
+- **Grow path** (`length == capacity`): raises `PY_TRAP_LIST_GROW`
+  (trap code 9) **before any RF/heap/dmem commit** — checked in the same
+  cycle as the header read ack, before the `ob_item` read is even issued.
+  This early-trap discipline is what lets a future retry-based recovery
+  (the excore's `RETRY` result code) be safe: pycore state has not
+  advanced when the trap fires. As of Phase A there is no excore, so this
+  trap is unconditionally fatal, reported through the normal halt path
+  like any other trap. Phase C wires `EXCORE_EN` + a mailbox handoff so the
+  excore's firmware grows the buffer (typically doubling capacity) and
+  completes the append itself before pycore resumes.
+
+Cost model: fast path is `O(1)` (5 dmem ops); the grow path is a
+memory-ownership handoff plus `O(length)` element copy in firmware,
+amortized `O(1)` across appends because the excore doubles capacity on
+every grow (see `excore/docs/` once Phase B/C land).
 
 ### TUPLE in-dmem layout
 

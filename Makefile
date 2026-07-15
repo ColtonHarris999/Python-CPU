@@ -65,7 +65,9 @@ PYCORE_MEM_SRCS := \
 	pycore-container-tuple-index pycore-container-tuple-empty \
 	pycore-container-list-oob-read pycore-container-list-oob-write \
 	pycore-container-dict-missing-key pycore-container-tuple-store-trap \
-	pycore-container-dict-full-insert pycore-container-list-oom clean \
+	pycore-container-dict-full-insert pycore-container-list-oom \
+	pycore-container-list-append-fast pycore-container-list-append-full-fatal \
+	pycore-list-append-fixtures clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
 
 pycore-preprocess:
@@ -435,6 +437,43 @@ pycore-container-dict-full-insert:
 pycore-container-list-oom:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h00001f9c",pycore_container_list_oom)
 
+# list_append_fast / list_append_full_fatal (Phase A, LIST_APPEND): hand-
+# built fixtures — compile() can only emit LIST_APPEND inside comprehensions,
+# which still require unimplemented FOR_ITER/GET_ITER, so these cannot go
+# through preprocess.py / image_from_source.py.  See
+# pycore/tools/gen_list_append_fixtures.py for the generator (imem/dmem hex
+# outputs are committed fixtures, like the other list_*.hex files).
+pycore-list-append-fixtures:
+	$(PYTHON) pycore/tools/gen_list_append_fixtures.py
+
+# list_append_fast: [7] with hand-set capacity 4 (BUILD_LIST alone can never
+# produce spare capacity); appends 8 and 9 via the fast path (no trap),
+# subscripts both back, returns their sum (17).
+pycore-container-list-append-fast:
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_append_fast.meta); \
+	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	mkdir -p $(BUILD_DIR); \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/list_append_fast.hex\" \
+		-GSTRING_HEX=\"pycore/programs/list_append_fast_str.hex\" \
+		-GDMEM_HEX=\"pycore/programs/list_append_fast_dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd17" \
+		--Mdir $(BUILD_DIR)/pycore_container_list_append_fast \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/pycore_container_list_append_fast/Vtb_container
+
+# list_append_full_fatal: BUILD_LIST 1 (capacity==length==1, exactly full)
+# then one LIST_APPEND -> PY_TRAP_LIST_GROW (trap code 9). Phase A has no
+# excore, so this is fatal.
+pycore-container-list-append-full-fatal:
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_append_full_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d9 -GSTRING_HEX=\"pycore/programs/list_append_full_fatal_str.hex\",pycore_container_list_append_full_fatal)
+
 # pycore-container-image-boot removed: the old fixture was generated with
 # the pre-3.14 preprocess and still uses 3-slot LOAD_CONST.  The real
 # image-boot flow (BOOT_EN=1) is exercised by the img_* programs built
@@ -458,7 +497,9 @@ pycore-container: \
 	pycore-container-dict-missing-key \
 	pycore-container-tuple-store-trap \
 	pycore-container-dict-full-insert \
-	pycore-container-list-oom
+	pycore-container-list-oom \
+	pycore-container-list-append-fast \
+	pycore-container-list-append-full-fatal
 
 pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container pycore-img
 
