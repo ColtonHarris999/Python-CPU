@@ -9,6 +9,57 @@ Bytecode support status (fully supported / partially supported / unsupported) is
 tracked separately in `pycore/docs/bytecode_support.md` so decode and
 preprocessing changes can be reviewed against one explicit matrix.
 
+## Two-core system: pycore + excore
+
+The system is (as of Phase B) two cores: **pycore** (this document's
+subject — the CPython-bytecode hart) and **excore**, a minimal RV32I hart
+under `excore/` that services *recoverable* traps in firmware instead of
+halting. `pycore_trap.sv` still halts on every trap today; growing this
+into a two-core system happens in three ordered phases:
+
+- **Phase A** (done): the LIST layout became growable (stable
+  object + relocatable buffer — see the LIST section below) and
+  `LIST_APPEND` gained a fast path plus a new trap, `PY_TRAP_LIST_GROW`,
+  that is *classified* recoverable (`pycore_trap_recoverable()`) but still
+  reported fatally, because there is no excore yet to hand it to.
+- **Phase B** (done): the excore itself, standalone — `excore_cpu.sv` (a
+  minimal multi-cycle RV32I hart), `excore_mmio.sv` (the mailbox/result/
+  slot-port MMIO peripheral), a self-contained RV32I assembler
+  (`excore/tools/asm_rv32.py`, no external toolchain), and
+  `excore/fw/list_grow.s` — the firmware that emulates-and-completes a
+  `LIST_GROW` trap (allocate a bigger buffer, copy, append, then tell
+  pycore to resume). Unit-tested against a mocked mailbox (canned trap
+  messages driven directly onto `excore_mmio`'s input ports) and a real
+  `pycore_mem_bank` instance; no pycore RTL changed in this phase. See
+  `excore/docs/` for excore-specific docs.
+- **Phase C** (not yet started): the mailbox transport
+  (`trap_mailbox.sv`), the memory-ownership grant mux in a new
+  `pycore_excore_system.sv` top level, and pycore's `S_TRAP_MARSHAL` /
+  `S_TRAP_WAIT` states that hand a recoverable trap to the excore instead
+  of halting, then apply its result (resume, retry, or forward a fatal
+  code into `pycore_trap` as today's ordinary halt).
+
+### The excore contract: "complete the semantic effect"
+
+The excore's job is not "retry the trapped instruction" but "finish what
+it was trying to do." For `LIST_APPEND` this means the excore allocates a
+bigger buffer, copies the old elements, **and appends the new one** —
+because by the time the excore is invoked it already holds the element (in
+the trap message) and is already looping over the buffer, so the append
+itself is nearly free. A plain retry would cost a second `S_CONTAINER`
+dispatch and a second memory-ownership handoff round trip for no benefit.
+The result protocol still defines a `RETRY` code for a future handler
+where pycore state genuinely did not advance (e.g. a not-yet-implemented
+opcode being emulated from scratch) — but `LIST_GROW` always answers
+`COMPLETED`.
+
+This "complete, don't retry" contract is only safe because every
+recoverable trap is raised **before any RF/heap/dmem commit** (see
+`CONT_LIST_APPEND`'s `CP_HDR` phase, which checks `length < capacity`
+before issuing the `ob_item` read) — a property every future recoverable
+container-op trap must preserve, since `RETRY` semantics depend on pycore
+state not having advanced when the trap fired.
+
 ## CPython image fidelity boundary
 
 "Identical to what a CPython compiler would create" means: the image contains

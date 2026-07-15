@@ -1,5 +1,8 @@
 VERILATOR ?= verilator
 PYTHON ?= python3.14
+# excore tooling is plain Python 3 (not CPython-3.14-coupled — RV32I
+# encodings come from the ISA spec, not from probing a running interpreter).
+PYTHON3 ?= python3
 BUILD_DIR ?= build
 DOCKER_IMAGE ?= python-cpu-sim
 DOCKER_CONTAINER_WORKDIR ?= /work
@@ -47,6 +50,16 @@ PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv
 
+# ---- excore (Phase B: standalone excore, no pycore integration yet) -------
+EXCORE_FW_SRC ?= excore/fw/list_grow.s
+EXCORE_FW_HEX ?= $(BUILD_DIR)/excore_fw/list_grow.hex
+
+EXCORE_RTL_SRCS := \
+	pycore/rtl/pycore_mem_block.sv \
+	pycore/rtl/pycore_mem_bank.sv \
+	excore/rtl/excore_cpu.sv \
+	excore/rtl/excore_mmio.sv
+
 .PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs \
 	pycore-python-tests pycore-mem pycore-frame pycore-frame-fib \
@@ -67,7 +80,8 @@ PYCORE_MEM_SRCS := \
 	pycore-container-dict-missing-key pycore-container-tuple-store-trap \
 	pycore-container-dict-full-insert pycore-container-list-oom \
 	pycore-container-list-append-fast pycore-container-list-append-full-fatal \
-	pycore-list-append-fixtures clean \
+	pycore-list-append-fixtures \
+	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
 
 pycore-preprocess:
@@ -105,7 +119,7 @@ pycore-run-file:
 	@echo "Type sketch file: $(RUN_TYPES)"
 	@echo "Cache map file: $(RUN_CACHE_MAP)"
 
-all-tests: pycore-test
+all-tests: pycore-test excore-test
 
 pycore-tag-decode:
 	mkdir -p $(BUILD_DIR)
@@ -500,6 +514,28 @@ pycore-container: \
 	pycore-container-list-oom \
 	pycore-container-list-append-fast \
 	pycore-container-list-append-full-fatal
+
+# excore-fw: assemble excore firmware as a build step. Generated hex is
+# never committed (see excore/tools/asm_rv32.py) — no external toolchain.
+excore-fw:
+	mkdir -p $(dir $(EXCORE_FW_HEX))
+	$(PYTHON3) excore/tools/asm_rv32.py $(EXCORE_FW_SRC) -o $(EXCORE_FW_HEX)
+
+excore-asm-tests:
+	$(PYTHON3) -m unittest discover -s excore/tests -p "test_*.py"
+
+excore-cpu-test: excore-fw
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl \
+		--top-module tb_excore \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		--Mdir $(BUILD_DIR)/excore_cpu_test \
+		-Wall -Wno-fatal \
+		$(EXCORE_RTL_SRCS) excore/tb/tb_excore.sv
+	./$(BUILD_DIR)/excore_cpu_test/Vtb_excore
+
+excore-test: excore-asm-tests excore-cpu-test
 
 pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container pycore-img
 

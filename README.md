@@ -6,7 +6,13 @@ SystemVerilog multi-cycle Python-bytecode core using tagged 132-bit entries:
 { tag[3:0], value[127:0] }
 ```
 
-The repository now contains a single active implementation path under `pycore/`.
+The repository is a two-core system: `pycore/` is the primary CPython-bytecode
+core, and `excore/` is a minimal RV32I "exception core" that services
+recoverable traps (list growth today; dict rehash / GC / unimplemented-opcode
+emulation are future milestones) in firmware instead of halting. See
+`pycore/docs/architecture.md` for the two-core design and `excore/docs/` for
+the excore-specific docs (MMIO map, supported RV32I subset, firmware build
+flow).
 
 ## Register layout and tag system
 
@@ -56,6 +62,10 @@ Additional design detail is documented in `pycore/docs/architecture.md`.
 
 - Preprocessing breakdown: `pycore/docs/preprocessing_breakdown.md`
 - Bytecode support matrix: `pycore/docs/bytecode_support.md`
+- Two-core architecture: `pycore/docs/architecture.md`
+- excore MMIO map: `excore/docs/mmio_map.md`
+- excore RV32I subset: `excore/docs/rv32i_subset.md`
+- excore firmware build flow: `excore/docs/firmware_build.md`
 
 ## Quick setup after clone
 
@@ -93,6 +103,8 @@ make pycore-frame
 make pycore-frame-fib
 make pycore-top
 make pycore-python-tests
+make excore-asm-tests
+make excore-cpu-test
 ```
 
 ### Run all tests (local)
@@ -168,3 +180,19 @@ PyCore docs:
 - architecture: `pycore/docs/architecture.md`
 - preprocessing breakdown: `pycore/docs/preprocessing_breakdown.md`
 - bytecode support matrix: `pycore/docs/bytecode_support.md`
+
+## excore quick reference
+
+excore is standalone as of Phase B (no pycore integration yet — see
+`pycore/docs/architecture.md` for the planned trap-transport/integration
+work). Regression entrypoint:
+
+```bash
+make excore-test
+```
+
+excore docs:
+
+- MMIO map: `excore/docs/mmio_map.md`
+- supported RV32I subset: `excore/docs/rv32i_subset.md`
+- firmware build flow: `excore/docs/firmware_build.md`
