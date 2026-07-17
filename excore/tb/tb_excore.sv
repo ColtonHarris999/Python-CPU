@@ -233,7 +233,8 @@ module tb_excore #(
         poke_slot(old_buf, 128'd100);                 // element0 value
         poke_slot(old_buf + 16, {124'b0, 4'd1});      // element0 tag (INT)
 
-        run_list_grow(obj_addr, {4'd1, 128'd200}, new_buf, 2000);
+        // Multicycle hart is ~5 cycles/insn; copy+append needs headroom.
+        run_list_grow(obj_addr, {4'd1, 128'd200}, new_buf, 20000);
 
         check(res_code == RES_COMPLETED, "scenario1: expected RES_COMPLETED");
         check(res_pop_count == 3'd1, "scenario1: expected pop_count=1");
@@ -258,7 +259,7 @@ module tb_excore #(
         poke_slot(obj_addr, {64'd0, 64'd0});         // header {cap=0, len=0}
         poke_slot(obj_addr + 16, 128'd0);             // ob_item = 0
 
-        run_list_grow(obj_addr, {4'd1, 128'd42}, new_buf, 2000);
+        run_list_grow(obj_addr, {4'd1, 128'd42}, new_buf, 20000);
 
         check(res_code == RES_COMPLETED, "scenario2: expected RES_COMPLETED");
         // Exactly 2 reads: the header and the ob_item slot. Zero additional
@@ -289,7 +290,7 @@ module tb_excore #(
         poke_slot(old_buf + 64,  {64'd0, 32'd0, 32'h0000_0700});           // nested LIST handle
         poke_slot(old_buf + 80,  {124'b0, 4'd10});
 
-        run_list_grow(obj_addr, {4'd1, 128'd999}, new_buf, 2000);
+        run_list_grow(obj_addr, {4'd1, 128'd999}, new_buf, 20000);
 
         check(res_code == RES_COMPLETED, "scenario3: expected RES_COMPLETED");
         check(res_heap_ptr == new_buf + 32'd256,
@@ -324,7 +325,7 @@ module tb_excore #(
         poke_slot(old_buf + 32, 128'd2);
         poke_slot(old_buf + 48, {124'b0, 4'd1});
 
-        run_list_grow(obj_addr, {4'd1, 128'd7}, 32'h1F80, 2000);
+        run_list_grow(obj_addr, {4'd1, 128'd7}, 32'h1F80, 20000);
 
         check(res_code == RES_FATAL, "scenario4: expected RES_FATAL");
         check(res_fatal_code == PY_TRAP_MEM_FAULT,
@@ -341,7 +342,7 @@ module tb_excore #(
         // Scenario 5: unknown trap code -> FATAL(ILLEGAL_OPCODE).
         // ------------------------------------------------------------------
         do_reset();
-        run_unknown_trap(4'd3, 2000); // PY_TRAP_DIV_ZERO is not LIST_GROW
+        run_unknown_trap(4'd3, 20000); // PY_TRAP_DIV_ZERO is not LIST_GROW
 
         check(res_code == RES_FATAL, "scenario5: expected RES_FATAL");
         check(res_fatal_code == PY_TRAP_ILLEGAL_OPCODE,

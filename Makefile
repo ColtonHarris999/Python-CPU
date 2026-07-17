@@ -58,6 +58,10 @@ PYCORE_MEM_SRCS := \
 EXCORE_FW_SRC ?= excore/fw/list_grow.s
 EXCORE_FW_HEX ?= $(BUILD_DIR)/excore_fw/list_grow.hex
 
+# Vendored singlecore RV32 sources are pulled in via `include from
+# excore_cpu.sv; every Verilator invoke that builds PYCORE_RTL_SRCS /
+# EXCORE_RTL_SRCS also needs +incdir+excore/rtl/singlecore (applied below).
+
 EXCORE_RTL_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv \
@@ -115,7 +119,7 @@ pycore-run-file:
 		--cache-map "$(RUN_CACHE_MAP)"
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_pycore_runfile \
 		-GPROG_HEX=\"$(RUN_PROGRAM_HEX)\" \
 		-GSTRING_HEX=\"$(RUN_STRING_HEX)\" \
@@ -134,7 +138,7 @@ all-tests: pycore-test excore-test
 pycore-tag-decode:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_tag_decode \
 		--Mdir $(BUILD_DIR)/pycore_tag_decode \
 		-Wall -Wno-fatal \
@@ -144,7 +148,7 @@ pycore-tag-decode:
 pycore-exec:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_exec \
 		--Mdir $(BUILD_DIR)/pycore_exec \
 		-Wall -Wno-fatal \
@@ -161,7 +165,7 @@ pycore-exec:
 pycore-string-exec:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_string_exec \
 		--Mdir $(BUILD_DIR)/pycore_string_exec \
 		-Wall -Wno-fatal \
@@ -178,7 +182,7 @@ pycore-string-exec:
 pycore-type-pairs:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_type_pairs \
 		--Mdir $(BUILD_DIR)/pycore_type_pairs \
 		-Wall -Wno-fatal \
@@ -195,7 +199,7 @@ pycore-type-pairs:
 pycore-mem:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_mem_bank \
 		--Mdir $(BUILD_DIR)/pycore_mem \
 		-Wall -Wno-fatal \
@@ -205,7 +209,7 @@ pycore-mem:
 pycore-frame:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_frame \
 		--Mdir $(BUILD_DIR)/pycore_frame \
 		-Wall -Wno-fatal \
@@ -216,7 +220,7 @@ pycore-frame:
 pycore-frame-fib:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_frame_fib_recursion \
 		--Mdir $(BUILD_DIR)/pycore_frame_fib \
 		-Wall -Wno-fatal \
@@ -264,7 +268,7 @@ define PYCORE_IMAGE_RUN
 	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_container \
 		-GPROG_HEX=\"$(BUILD_DIR)/img_$(1)/program.hex\" \
 		-GSTRING_HEX=\"$(BUILD_DIR)/img_$(1)/string_mem.hex\" \
@@ -301,7 +305,7 @@ define PYCORE_IMAGE_RUN_TWOCORE
 	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_container \
 		-GPROG_HEX=\"$(BUILD_DIR)/img_$(1)/program.hex\" \
 		-GSTRING_HEX=\"$(BUILD_DIR)/img_$(1)/string_mem.hex\" \
@@ -331,7 +335,7 @@ define PYCORE_IMAGE_TRAP_RUN
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_container \
 		-GPROG_HEX=\"$(BUILD_DIR)/img_$(1)/program.hex\" \
 		-GSTRING_HEX=\"$(BUILD_DIR)/img_$(1)/string_mem.hex\" \
@@ -407,7 +411,7 @@ define PYCORE_IMAGE_TRAP_RUN_TWOCORE
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_container \
 		-GPROG_HEX=\"$(BUILD_DIR)/img_$(1)/program.hex\" \
 		-GSTRING_HEX=\"$(BUILD_DIR)/img_$(1)/string_mem.hex\" \
@@ -518,7 +522,7 @@ pycore-img: \
 define PYCORE_CONTAINER_RUN
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_container \
 		-GPROG_HEX=\"$(1)\" \
 		$(2) \
@@ -613,7 +617,7 @@ pycore-container-list-append-fast:
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_container \
 		-GPROG_HEX=\"pycore/programs/list_append_fast.hex\" \
 		-GSTRING_HEX=\"pycore/programs/list_append_fast_str.hex\" \
@@ -646,7 +650,7 @@ define PYCORE_EXCORE_RUN
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/$(1).meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_container \
 		-GPROG_HEX=\"pycore/programs/$(1).hex\" \
 		-GSTRING_HEX=\"pycore/programs/$(1)_str.hex\" \
@@ -664,7 +668,7 @@ define PYCORE_EXCORE_RUN
 endef
 
 pycore-excore-grow-from-zero: excore-fw pycore-excore-integration-fixtures
-	$(call PYCORE_EXCORE_RUN,grow_from_zero,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd55" -GEXPECTED_TRAP_REQ_COUNT=1)
+	$(call PYCORE_EXCORE_RUN,grow_from_zero,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd55" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=20000)
 
 pycore-excore-fast-path-no-trap: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,fast_path_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd9" -GEXPECTED_TRAP_REQ_COUNT=0)
@@ -674,7 +678,7 @@ pycore-excore-fast-path-no-trap: excore-fw pycore-excore-integration-fixtures
 pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 	mkdir -p $(BUILD_DIR)/grow_oom_fatal
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_container \
 		-GPROG_HEX=\"pycore/programs/grow_oom_fatal.hex\" \
 		-GSTRING_HEX=\"pycore/programs/grow_oom_fatal_str.hex\" \
@@ -710,7 +714,7 @@ pycore-excore-disabled: pycore-excore-integration-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/grow_from_zero.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 		--top-module tb_container \
 		-GPROG_HEX=\"pycore/programs/grow_from_zero.hex\" \
 		-GSTRING_HEX=\"pycore/programs/grow_from_zero_str.hex\" \
@@ -774,7 +778,7 @@ excore-asm-tests:
 excore-cpu-test: excore-fw
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl +incdir+excore/rtl \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore +incdir+excore/rtl \
 		--top-module tb_excore \
 		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
 		--Mdir $(BUILD_DIR)/excore_cpu_test \

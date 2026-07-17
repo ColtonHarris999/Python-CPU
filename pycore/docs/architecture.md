@@ -12,7 +12,7 @@ preprocessing changes can be reviewed against one explicit matrix.
 ## Two-core system: pycore + excore
 
 The system is (as of Phase B) two cores: **pycore** (this document's
-subject — the CPython-bytecode hart) and **excore**, a minimal RV32I hart
+subject — the CPython-bytecode hart) and **excore**, an RV32 multicycle hart
 under `excore/` that services *recoverable* traps in firmware instead of
 halting. `pycore_trap.sv` still halts on every trap today; growing this
 into a two-core system happens in three ordered phases:
