@@ -127,13 +127,43 @@ class HeapImageBuilder:
         self._write(val_addr + 16, tag & 0xF)
 
     # ---- LIST ----
+    # v2 layout (Phase A, growable split object/buffer — mirrors
+    # pycore_defs.svh's LIST section):
+    #   obj_addr + 0  : header  { capacity[63:0], length[63:0] }
+    #   obj_addr + 16 : { 64'd0, ob_item[63:0] }  (buffer byte address)
+    #   ob_item + i*32      : element[i] value
+    #   ob_item + i*32 + 16 : element[i] tag
+    # Empty list: capacity=0, length=0, ob_item=0 (object only, no buffer).
+    LIST_OBJ_BYTES = 32
+
     def alloc_list(self, elements: list[Tagged]) -> Tagged:
+        return self.alloc_list_with_capacity(elements, len(elements))
+
+    def alloc_list_with_capacity(
+        self, elements: list[Tagged], capacity: int
+    ) -> Tagged:
+        """Like alloc_list, but reserves buffer room for `capacity` elements
+        while only initializing len(elements) of them.
+
+        BUILD_LIST always allocates capacity == length exactly (matching
+        CPython list-literal semantics — see CONT_BUILD_LIST), so a real
+        program can never produce a list with spare capacity.  Hand-built
+        test fixtures that need to exercise the LIST_APPEND fast path
+        (spare capacity, no trap) use this to pre-populate a list image
+        with capacity > length directly.
+        """
         n = len(elements)
-        base = self._alloc(16 + n * 32)
-        self._write(base, ((n & ((1 << 64) - 1)) << 64) | (n & ((1 << 64) - 1)))
-        for i, (tag, val) in enumerate(elements):
-            self._write_tagged(base + 16 + i * 32, tag, val)
-        return TAG_LIST, base
+        if capacity < n:
+            raise ValueError("capacity must be >= number of elements")
+        obj_addr = self._alloc(self.LIST_OBJ_BYTES)
+        ob_item = 0
+        if capacity:
+            ob_item = self._alloc(capacity * 32)
+            for i, (tag, val) in enumerate(elements):
+                self._write_tagged(ob_item + i * 32, tag, val)
+        self._write(obj_addr, ((capacity & ((1 << 64) - 1)) << 64) | (n & ((1 << 64) - 1)))
+        self._write(obj_addr + 16, ob_item & ((1 << 64) - 1))
+        return TAG_LIST, obj_addr
 
     # ---- TUPLE ----
     def alloc_tuple(self, elements: list[Tagged]) -> Tagged:

@@ -9,6 +9,176 @@ Bytecode support status (fully supported / partially supported / unsupported) is
 tracked separately in `pycore/docs/bytecode_support.md` so decode and
 preprocessing changes can be reviewed against one explicit matrix.
 
+## Two-core system: pycore + excore
+
+The system is (as of Phase B) two cores: **pycore** (this document's
+subject — the CPython-bytecode hart) and **excore**, a minimal RV32I hart
+under `excore/` that services *recoverable* traps in firmware instead of
+halting. `pycore_trap.sv` still halts on every trap today; growing this
+into a two-core system happens in three ordered phases:
+
+- **Phase A** (done): the LIST layout became growable (stable
+  object + relocatable buffer — see the LIST section below) and
+  `LIST_APPEND` gained a fast path plus a new trap, `PY_TRAP_LIST_GROW`,
+  that is *classified* recoverable (`pycore_trap_recoverable()`) but still
+  reported fatally, because there is no excore yet to hand it to.
+- **Phase B** (done): the excore itself, standalone — `excore_cpu.sv` (a
+  minimal multi-cycle RV32I hart), `excore_mmio.sv` (the mailbox/result/
+  slot-port MMIO peripheral), a self-contained RV32I assembler
+  (`excore/tools/asm_rv32.py`, no external toolchain), and
+  `excore/fw/list_grow.s` — the firmware that emulates-and-completes a
+  `LIST_GROW` trap (allocate a bigger buffer, copy, append, then tell
+  pycore to resume). Unit-tested against a mocked mailbox (canned trap
+  messages driven directly onto `excore_mmio`'s input ports) and a real
+  `pycore_mem_bank` instance; no pycore RTL changed in this phase. See
+  `excore/docs/` for excore-specific docs.
+- **Phase C** (done): the mailbox transport (`excore/rtl/trap_mailbox.sv`),
+  the memory-ownership grant mux in the new `pycore_excore_system.sv` top
+  level, and pycore's `S_TRAP_MARSHAL` / `S_TRAP_WAIT` states that hand a
+  recoverable trap to the excore instead of halting, then apply its result
+  (resume, retry, or forward a fatal code into `pycore_trap` as today's
+  ordinary halt). See "Two-core transport and integration" below.
+
+### The excore contract: "complete the semantic effect"
+
+The excore's job is not "retry the trapped instruction" but "finish what
+it was trying to do." For `LIST_APPEND` this means the excore allocates a
+bigger buffer, copies the old elements, **and appends the new one** —
+because by the time the excore is invoked it already holds the element (in
+the trap message) and is already looping over the buffer, so the append
+itself is nearly free. A plain retry would cost a second `S_CONTAINER`
+dispatch and a second memory-ownership handoff round trip for no benefit.
+The result protocol still defines a `RETRY` code for a future handler
+where pycore state genuinely did not advance (e.g. a not-yet-implemented
+opcode being emulated from scratch) — but `LIST_GROW` always answers
+`COMPLETED`.
+
+This "complete, don't retry" contract is only safe because every
+recoverable trap is raised **before any RF/heap/dmem commit** (see
+`CONT_LIST_APPEND`'s `CP_HDR` phase, which checks `length < capacity`
+before issuing the `ob_item` read) — a property every future recoverable
+container-op trap must preserve, since `RETRY` semantics depend on pycore
+state not having advanced when the trap fired.
+
+### Two-core transport and integration (Phase C)
+
+#### Mailbox message formats
+
+`trap_mailbox.sv` bridges two different handshake styles: pycore's
+`trap_req`/`trap_res` are proper wide-parallel valid/ready handshakes;
+`excore_mmio`'s mailbox is level-held (`MB_STATUS.trap_pending` stays
+asserted until firmware reports a result via `RES_GO`) and its result is a
+one-cycle pulse. Field widths (`MAX_TRAP_ENTRIES = 3`, `MAX_RES_ENTRIES =
+2`) are module parameters on `pycore_core`, `trap_mailbox`, and
+`excore_mmio` alike, so a future handler needing more operands widens them
+in one place.
+
+```text
+trap_req_valid / trap_req_ready
+  trap_code[3:0], pc[31:0], instr[39:0] ({arg[31:0], opcode[7:0]}),
+  heap_ptr[31:0], entry_count[2:0], entries[3][131:0]
+trap_res_valid / trap_res_ready
+  res_code[3:0], fatal_code[3:0], pop_count[2:0], push_count[1:0],
+  heap_ptr[31:0], entries[2][131:0]
+```
+
+Wide parallel buses are acceptable at this scale; single-beat ->
+multi-beat serialization (to shrink the wire count for an ASIC target) is
+future work, not needed for the current FPGA-class prototype.
+
+#### Memory-ownership protocol
+
+`pycore_excore_system.sv` owns a registered grant mux (`mem_owner_r ∈
+{PYCORE, EXCORE}`, default `PYCORE`) over the one shared dmem bank
+(`pycore_mem_bank`). Ownership flips to `EXCORE` exactly when the
+`trap_req` handshake completes (pycore's `S_TRAP_MARSHAL` sees
+`trap_req_ready_i`); back to `PYCORE` exactly when the `trap_res`
+handshake completes (`S_TRAP_WAIT` sees `trap_wait_ready` / asserts
+`trap_res_ready_o`). No cycle-level arbitration is needed: pycore is
+frozen in `S_TRAP_MARSHAL`/`S_TRAP_WAIT` (no dmem or RF activity) exactly
+while `EXCORE` owns memory, and the excore firmware is parked polling
+`MB_STATUS` exactly while `PYCORE` owns it, so the two masters are never
+both active. A `$fatal` check in `pycore_excore_system.sv` still verifies
+in simulation that the non-owner never raises `req` while it doesn't hold
+the grant.
+
+Instruction memories are never shared — pycore's imem and the excore's
+private firmware imem are each their own array (Harvard per core); only
+the *data* heap is shared, and only because that's exactly the resource
+whose ownership is being transferred.
+
+#### Trap taxonomy
+
+| Trap code | Name | Classification | Notes |
+| --- | --- | --- | --- |
+| 0 | `PY_TRAP_NONE` | n/a | no trap |
+| 1 | `PY_TRAP_TYPE` | fatal | |
+| 2 | `PY_TRAP_STACK` | fatal | |
+| 3 | `PY_TRAP_DIV_ZERO` | fatal | |
+| 4 | `PY_TRAP_FPU_EXCEPTION` | fatal | |
+| 5 | `PY_TRAP_ILLEGAL_OPCODE` | fatal | also the excore's own dispatch-loop default for an unrecognized trap code |
+| 6 | `PY_TRAP_CALL_FILTER` | fatal | |
+| 7 | `PY_TRAP_MEM_FAULT` | fatal | also the excore's OOM report (`FATAL(MEM_FAULT)`) |
+| 8 | `PY_TRAP_ADDR_ALIGN` | fatal | |
+| 9 | `PY_TRAP_LIST_GROW` | **recoverable** | `pycore_trap_recoverable(code)` returns 1 only for this code today |
+
+`pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
+truth for the fatal/recoverable split. `EXCORE_EN=1` intercepts a
+recoverable code in `CONT_LIST_APPEND`'s `CP_HDR` phase (in general: in
+whichever container-op phase first detects the condition) *before* it
+would have reached `pycore_trap`, and routes it to `S_TRAP_MARSHAL`
+instead. `EXCORE_EN=0`, or any non-recoverable code, is completely
+untouched — `pycore_trap` sees exactly what it always has.
+
+The excore's result (`RES_CODE`, `excore/docs/mmio_map.md`) has three
+values, and the restartability requirement each implies:
+
+- **`COMPLETED`** — the excore finished the trapped instruction's full
+  semantic effect (see "The excore contract" above); pycore pops
+  `pop_count`, pushes `push_count` entries, and resumes at the *next*
+  instruction (normal fetch-skip handling, same as any other multi-cycle
+  container op's terminal phase).
+- **`RETRY`** — pycore state did not advance past the trap point; pycore
+  re-dispatches the *same* pc (`redirect_pending_r`/`redirect_tgt_r ←
+  cur_pc_r`, the same mechanism a taken branch uses). This is only
+  semantically valid because the trap was raised before any commit — see
+  the early-trap discipline above. No current handler returns `RETRY`
+  (`LIST_GROW` always completes); the code path exists and is wired end to
+  end (`S_TRAP_WAIT`'s `unique case` on `trap_res_code_r2`) for a future
+  handler where the excore does *not* hold enough state to finish the
+  semantic effect itself (e.g. an opcode requiring iteration protocol
+  support pycore doesn't have).
+- **`FATAL`** — forwarded into `pycore_trap` as an ordinary halt via a new
+  `excore_fatal_i`/`excore_fatal_code_i` input pair (bypassing the fixed
+  one-hot condition list, since the code is data from firmware, not a
+  wired condition).
+
+#### `S_TRAP_MARSHAL` / `S_TRAP_WAIT`
+
+Two new `pycore_core` FSM states. `S_TRAP_MARSHAL` asserts `trap_req_valid_o`
+with the operand entries the detecting container op already gathered
+(e.g. `CONT_LIST_APPEND` reuses `rs1_r`/`rs2_r` — the list handle and
+element it had already decoded for the fast path — so no extra RF read
+port or extra cycles are needed to marshal). `S_TRAP_WAIT` waits for
+`trap_res_valid_i`, applies `heap_ptr_r ← res.heap_ptr`, pops `pop_count`,
+sequences `push_count` RF writes one per cycle (the RF write port is
+single-slot), then branches on `res_code` as described above.
+
+#### `pycore_excore_system.sv`
+
+The two-core top level. `pycore_system.sv` remains the single-core top for
+legacy testbenches (its `pycore_core` instantiation doesn't override
+`EXCORE_EN`, so it defaults to 0 and ties the new trap_req/trap_res ports
+off). `tb_container.sv` grows an `EXCORE_EN`/`FW_HEX` parameter pair and a
+`generate if` that instantiates `pycore_excore_system` instead of
+`pycore_system` when `EXCORE_EN=1`, wrapped in a fixed-name generate block
+(`g_dut`) so every existing hierarchical debug reference
+(`g_dut.dut.core.*`) resolves identically regardless of which top is
+selected — every pre-existing image-boot test can therefore run unchanged
+on the two-core system by simply adding `-GEXCORE_EN=1
+-GFW_HEX=<assembled firmware>` (see `pycore-img-*-two-core` Makefile
+targets).
+
 ## CPython image fidelity boundary
 
 "Identical to what a CPython compiler would create" means: the image contains
@@ -316,28 +486,74 @@ first free byte above the static objects so bump allocation does not overwrite
 them.  `DMEM_HEX` on `pycore_system` / `pycore_dmem` preloads the whole dmem
 bank (not just the first 4 KB block).
 
-### LIST in-dmem layout
+### LIST in-dmem layout (v2 — growable split object/buffer)
 
 All addresses are 16-byte aligned (128-bit dmem slot granularity).
 
+Lists moved (Phase A) from a v1 inline layout (header immediately followed
+by elements at the same base) to a **CPython-style split model**: a stable
+32-byte **object** whose address never changes (and is what the `LIST`
+handle names), pointing at a relocatable **element buffer**.  This is the
+prerequisite for growth — v1's inline layout made growing a list impossible
+without moving it, which would dangle every alias of the handle.
+
 ```text
-base + 0                : header { capacity[63:0], length[63:0] }
-base + 16*(1 + 2*i)     : element[i] value[127:0]
-base + 16*(2 + 2*i)     : element[i] tag  { 124'b0, tag[3:0] }
+obj_addr + 0  : header  { capacity[63:0], length[63:0] }
+obj_addr + 16 : { 64'd0, ob_item[63:0] }   (element buffer byte address)
+
+ob_item + idx*32      : element[idx] value[127:0]
+ob_item + idx*32 + 16 : element[idx] tag  { 124'b0, tag[3:0] }
 ```
 
-Each element occupies **two 16-byte slots** (element stride = 32 bytes).
-Total allocation = `16 + capacity × 32` bytes.
+Each element occupies **two 16-byte slots** in the buffer (element stride =
+32 bytes).  The object is always exactly 32 bytes
+(`pycore_list_obj_bytes()`); the buffer is `capacity × 32` bytes
+(`pycore_list_buf_bytes(capacity)`).  Empty list: `capacity = 0, length = 0,
+ob_item = 0` — no buffer allocation (object only).
 
 The 132-bit tagged entry `{ tag[3:0], value[127:0] }` is split across two
 consecutive 128-bit dmem slots: the value slot followed by the tag slot.
 This avoids any non-16-byte addressing.
 
-Helpers `pycore_list_val_addr(base, idx)` and `pycore_list_tag_addr(base,
-idx)` in `pycore_defs.svh` compute element addresses.
+Helpers in `pycore_defs.svh`: `pycore_list_obitem_addr(obj)` /
+`pycore_list_obitem(slot)` resolve the buffer address from the object;
+`pycore_list_val_addr(buf, idx)` / `pycore_list_tag_addr(buf, idx)` compute
+element addresses **within the buffer** (not the object — every read/write
+path resolves `ob_item` first, then addresses the buffer, adding one dmem
+op versus v1: `CONT_SUBSCR_LIST` / `CONT_STORE_LIST` insert a `CP_LIST_BUF`
+phase between the header read and the element access).
+
+`BUILD_LIST` allocates the object and a `count`-sized buffer in a single
+combined OOM check, with `capacity == count` exactly (no spare capacity —
+matching CPython list-literal semantics; growth only ever happens via
+`LIST_APPEND`, never at construction).
 
 Negative indices are **not** wrapped: the bounds check is unsigned, so a
 negative INT key traps `PY_TRAP_MEM_FAULT` (same policy for TUPLE).
+
+#### `LIST_APPEND`
+
+`LIST_APPEND` (opcode 78) has a fast path and a grow path:
+
+- **Fast path** (`length < capacity`, `CONT_LIST_APPEND` in `pycore_core.sv`):
+  read the object header, read `ob_item`, write the element's value and tag
+  at `ob_item + length*32`, write back `{capacity, length+1}`, pop the
+  element.  5 dmem ops, no trap.
+- **Grow path** (`length == capacity`): raises `PY_TRAP_LIST_GROW`
+  (trap code 9) **before any RF/heap/dmem commit** — checked in the same
+  cycle as the header read ack, before the `ob_item` read is even issued.
+  This early-trap discipline is what lets a future retry-based recovery
+  (the excore's `RETRY` result code) be safe: pycore state has not
+  advanced when the trap fires. As of Phase A there is no excore, so this
+  trap is unconditionally fatal, reported through the normal halt path
+  like any other trap. Phase C wires `EXCORE_EN` + a mailbox handoff so the
+  excore's firmware grows the buffer (typically doubling capacity) and
+  completes the append itself before pycore resumes.
+
+Cost model: fast path is `O(1)` (5 dmem ops); the grow path is a
+memory-ownership handoff plus `O(length)` element copy in firmware,
+amortized `O(1)` across appends because the excore doubles capacity on
+every grow (see `excore/docs/` once Phase B/C land).
 
 ### TUPLE in-dmem layout
 
