@@ -12,7 +12,7 @@ preprocessing changes can be reviewed against one explicit matrix.
 ## Two-core system: pycore + excore
 
 The system is (as of Phase B) two cores: **pycore** (this document's
-subject — the CPython-bytecode hart) and **excore**, a minimal RV32I hart
+subject — the CPython-bytecode hart) and **excore**, an RV32 multicycle hart
 under `excore/` that services *recoverable* traps in firmware instead of
 halting. `pycore_trap.sv` still halts on every trap today; growing this
 into a two-core system happens in three ordered phases:
@@ -22,16 +22,16 @@ into a two-core system happens in three ordered phases:
   `LIST_APPEND` gained a fast path plus a new trap, `PY_TRAP_LIST_GROW`,
   that is *classified* recoverable (`pycore_trap_recoverable()`) but still
   reported fatally, because there is no excore yet to hand it to.
-- **Phase B** (done): the excore itself, standalone — `excore_cpu.sv` (a
-  minimal multi-cycle RV32I hart), `excore_mmio.sv` (the mailbox/result/
-  slot-port MMIO peripheral), a self-contained RV32I assembler
-  (`excore/tools/asm_rv32.py`, no external toolchain), and
-  `excore/fw/list_grow.s` — the firmware that emulates-and-completes a
-  `LIST_GROW` trap (allocate a bigger buffer, copy, append, then tell
-  pycore to resume). Unit-tested against a mocked mailbox (canned trap
-  messages driven directly onto `excore_mmio`'s input ports) and a real
-  `pycore_mem_bank` instance; no pycore RTL changed in this phase. See
-  `excore/docs/` for excore-specific docs.
+- **Phase B** (done): the excore itself, standalone — `excore_cpu.sv`
+  (wrapper around the vendored singlecore `riscv_multicycle` RV32 hart),
+  `excore_mmio.sv` (the mailbox/result/slot-port MMIO peripheral), a
+  self-contained RV32I assembler (`excore/tools/asm_rv32.py`, no external
+  toolchain), and `excore/fw/list_grow.s` — the firmware that
+  emulates-and-completes a `LIST_GROW` trap (allocate a bigger buffer,
+  copy, append, then tell pycore to resume). Unit-tested against a mocked
+  mailbox (canned trap messages driven directly onto `excore_mmio`'s
+  input ports) and a real `pycore_mem_bank` instance. See `excore/docs/`
+  and `excore/rtl/singlecore/README.md` for excore-specific docs.
 - **Phase C** (done): the mailbox transport (`excore/rtl/trap_mailbox.sv`),
   the memory-ownership grant mux in the new `pycore_excore_system.sv` top
   level, and pycore's `S_TRAP_MARSHAL` / `S_TRAP_WAIT` states that hand a

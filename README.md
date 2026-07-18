@@ -7,7 +7,8 @@ SystemVerilog multi-cycle Python-bytecode core using tagged 132-bit entries:
 ```
 
 The repository is a two-core system: `pycore/` is the primary CPython-bytecode
-core, and `excore/` is a minimal RV32I "exception core" that services
+core, and `excore/` is an RV32 "exception core" (vendored singlecore
+multicycle hart + trap firmware) that services
 recoverable traps (list growth today; dict rehash / GC / unimplemented-opcode
 emulation are future milestones) in firmware instead of halting. See
 `pycore/docs/architecture.md` for the two-core design and `excore/docs/` for
