@@ -148,25 +148,25 @@ module pycore_core #(
     localparam logic [3:0] TRAP_RES_RETRY     = 4'd1;
     localparam logic [3:0] TRAP_RES_FATAL     = 4'd2;
 
-    // Container sub-operation codes (stored in container_op_r, 4-bit).
-    localparam logic [3:0] CONT_BUILD_LIST   = 4'd0;
-    localparam logic [3:0] CONT_SUBSCR_LIST  = 4'd1; // NB_SUBSCR on LIST
-    localparam logic [3:0] CONT_STORE_LIST   = 4'd2; // STORE_SUBSCR on LIST
-    localparam logic [3:0] CONT_BUILD_MAP    = 4'd3; // BUILD_MAP (dict construction)
-    localparam logic [3:0] CONT_SUBSCR_DICT  = 4'd4; // NB_SUBSCR on DICT
-    localparam logic [3:0] CONT_STORE_DICT   = 4'd5; // STORE_SUBSCR on DICT
-    localparam logic [3:0] CONT_BUILD_TUPLE  = 4'd6; // BUILD_TUPLE
-    localparam logic [3:0] CONT_SUBSCR_TUPLE = 4'd7; // NB_SUBSCR on TUPLE
-    localparam logic [3:0] CONT_LOAD_CONST   = 4'd8; // LOAD_CONST co_consts[arg]
-    localparam logic [3:0] CONT_LOAD_GLOBAL  = 4'd9; // LOAD_GLOBAL / LOAD_NAME
-    localparam logic [3:0] CONT_STORE_NAME   = 4'd10;// STORE_NAME / STORE_GLOBAL
-    localparam logic [3:0] CONT_LFB_PAIR     = 4'd11;// LFB_LFB / LFLF combined load
-    localparam logic [3:0] CONT_LIST_APPEND  = 4'd12;// LIST_APPEND fast path (Phase A)
-    localparam logic [3:0] CONT_LIST_EXTEND  = 4'd13;// LIST_EXTEND fast path / grow trap
-    localparam logic [3:0] CONT_SWAP         = 4'd14;// SWAP two-beat RF exchange
-    localparam logic [3:0] CONT_SFLF         = 4'd15;// STORE_FAST_LOAD_FAST
-    localparam logic [3:0] CONT_SFSF         = 4'd16;// STORE_FAST_STORE_FAST
-    localparam logic [3:0] CONT_LFAC         = 4'd17;// LOAD_FAST_AND_CLEAR
+    // Container sub-operation codes (stored in container_op_r, 5-bit).
+    localparam logic [4:0] CONT_BUILD_LIST   = 5'd0;
+    localparam logic [4:0] CONT_SUBSCR_LIST  = 5'd1; // NB_SUBSCR on LIST
+    localparam logic [4:0] CONT_STORE_LIST   = 5'd2; // STORE_SUBSCR on LIST
+    localparam logic [4:0] CONT_BUILD_MAP    = 5'd3; // BUILD_MAP (dict construction)
+    localparam logic [4:0] CONT_SUBSCR_DICT  = 5'd4; // NB_SUBSCR on DICT
+    localparam logic [4:0] CONT_STORE_DICT   = 5'd5; // STORE_SUBSCR on DICT
+    localparam logic [4:0] CONT_BUILD_TUPLE  = 5'd6; // BUILD_TUPLE
+    localparam logic [4:0] CONT_SUBSCR_TUPLE = 5'd7; // NB_SUBSCR on TUPLE
+    localparam logic [4:0] CONT_LOAD_CONST   = 5'd8; // LOAD_CONST co_consts[arg]
+    localparam logic [4:0] CONT_LOAD_GLOBAL  = 5'd9; // LOAD_GLOBAL / LOAD_NAME
+    localparam logic [4:0] CONT_STORE_NAME   = 5'd10;// STORE_NAME / STORE_GLOBAL
+    localparam logic [4:0] CONT_LFB_PAIR     = 5'd11;// LFB_LFB / LFLF combined load
+    localparam logic [4:0] CONT_LIST_APPEND  = 5'd12;// LIST_APPEND fast path (Phase A)
+    localparam logic [4:0] CONT_LIST_EXTEND  = 5'd13;// LIST_EXTEND fast path / grow trap
+    localparam logic [4:0] CONT_SWAP         = 5'd14;// SWAP two-beat RF exchange
+    localparam logic [4:0] CONT_SFLF         = 5'd15;// STORE_FAST_LOAD_FAST
+    localparam logic [4:0] CONT_SFSF         = 5'd16;// STORE_FAST_STORE_FAST
+    localparam logic [4:0] CONT_LFAC         = 5'd17;// LOAD_FAST_AND_CLEAR
 
     // Container phases (stored in container_phase_r, 4-bit).
     //
@@ -308,7 +308,7 @@ module pycore_core #(
     logic [31:0]                   heap_ptr_r;
 
     // Which container operation is in flight (CONT_* constants above).
-    logic [3:0]                    container_op_r;
+    logic [4:0]                    container_op_r;
     // Which phase within the current operation (CP_* constants above).
     logic [4:0]                    container_phase_r;
     // LOAD_GLOBAL push-null bit (oparg & 1 in CPython 3.14).  Sampled at
