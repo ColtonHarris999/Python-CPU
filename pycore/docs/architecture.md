@@ -180,9 +180,8 @@ with the operand entries the detecting container op already gathered
 list handle and element/iterable already decoded for the fast path — so no
 extra RF read port or extra cycles are needed to marshal). `S_TRAP_WAIT`
 waits for `trap_res_valid_i`, applies `heap_ptr_r ← res.heap_ptr`, pops
-`pop_count`,
-sequences `push_count` RF writes one per cycle (the RF write port is
-single-slot), then branches on `res_code` as described above.
+`pop_count`, sequences `push_count` RF writes one per cycle (the RF write
+port is single-slot), then branches on `res_code` as described above.
 
 #### `pycore_excore_system.sv`
 
