@@ -77,7 +77,18 @@ EXCORE_RTL_SRCS := \
 	pycore-img-branchy pycore-img-undef-global pycore-img-noncallable \
 	pycore-img-bad-argc pycore-img-deep-callgraph pycore-img-helper-containers \
 	pycore-img-algo-sort pycore-img-bitwise-calls pycore-img-globals-accum \
-	pycore-img-string-ops \
+	pycore-img-string-ops pycore-img-copy pycore-img-swap \
+	pycore-img-delete-fast pycore-img-delete-fast-unbound \
+	pycore-img-store-fast-load-fast pycore-img-load-fast-load-fast \
+	pycore-img-load-fast-borrow-load-fast-borrow \
+	pycore-img-load-fast-and-clear pycore-img-load-fast-and-clear-cleared \
+	pycore-img-load-fast-check pycore-img-load-fast-check-unbound \
+	pycore-img-to-bool pycore-img-to-bool-type-trap \
+	pycore-img-to-bool-str-trap pycore-img-to-bool-list-trap \
+	pycore-img-unary-not \
+	pycore-img-is-op \
+	pycore-img-pop-jump-if-none \
+	pycore-img-nop \
 	pycore-container pycore-container-build-index pycore-container-store-subscr \
 	pycore-container-dict-lookup pycore-container-dict-store \
 	pycore-container-list-empty pycore-container-dict-multi-pair \
@@ -410,6 +421,66 @@ pycore-img-globals-accum:
 pycore-img-string-ops:
 	$(call PYCORE_IMAGE_RUN,string_ops,100000)
 
+pycore-img-string-ops:
+	$(call PYCORE_IMAGE_RUN,string_ops,100000)
+
+pycore-img-copy:
+	$(call PYCORE_IMAGE_RUN,copy,50000)
+
+pycore-img-swap:
+	$(call PYCORE_IMAGE_RUN,swap,50000)
+
+pycore-img-delete-fast:
+	$(call PYCORE_IMAGE_RUN,delete_fast,50000)
+
+pycore-img-delete-fast-unbound:
+	$(call PYCORE_IMAGE_TRAP_RUN,delete_fast_unbound,7,50000)
+
+pycore-img-store-fast-load-fast:
+	$(call PYCORE_IMAGE_RUN,store_fast_load_fast,50000)
+
+pycore-img-load-fast-load-fast:
+	$(call PYCORE_IMAGE_RUN,load_fast_load_fast,50000)
+
+pycore-img-load-fast-borrow-load-fast-borrow:
+	$(call PYCORE_IMAGE_RUN,load_fast_borrow_load_fast_borrow,50000)
+
+pycore-img-load-fast-and-clear:
+	$(call PYCORE_IMAGE_RUN,load_fast_and_clear,50000)
+
+pycore-img-load-fast-and-clear-cleared:
+	$(call PYCORE_IMAGE_TRAP_RUN,load_fast_and_clear_cleared,7,50000)
+
+pycore-img-load-fast-check:
+	$(call PYCORE_IMAGE_RUN,load_fast_check,50000)
+
+pycore-img-load-fast-check-unbound:
+	$(call PYCORE_IMAGE_TRAP_RUN,load_fast_check_unbound,7,50000)
+
+pycore-img-to-bool:
+	$(call PYCORE_IMAGE_RUN,to_bool,50000)
+
+pycore-img-to-bool-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,to_bool_type_trap,1,50000)
+
+pycore-img-to-bool-str-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,to_bool_str_trap,1,50000)
+
+pycore-img-to-bool-list-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,to_bool_list_trap,1,50000)
+
+pycore-img-unary-not:
+	$(call PYCORE_IMAGE_RUN,unary_not,50000)
+
+pycore-img-is-op:
+	$(call PYCORE_IMAGE_RUN,is_op,50000)
+
+pycore-img-pop-jump-if-none:
+	$(call PYCORE_IMAGE_RUN,pop_jump_if_none,50000)
+
+pycore-img-nop:
+	$(call PYCORE_IMAGE_RUN,nop,50000)
+
 define PYCORE_IMAGE_TRAP_RUN_TWOCORE
 	mkdir -p $(BUILD_DIR)/img_$(1)
 	$(PYTHON) pycore/tools/image_from_source.py \
@@ -529,7 +600,26 @@ pycore-img: \
 	pycore-img-algo-sort \
 	pycore-img-bitwise-calls \
 	pycore-img-globals-accum \
-	pycore-img-string-ops
+	pycore-img-string-ops \
+	pycore-img-copy \
+	pycore-img-swap \
+	pycore-img-delete-fast \
+	pycore-img-delete-fast-unbound \
+	pycore-img-store-fast-load-fast \
+	pycore-img-load-fast-load-fast \
+	pycore-img-load-fast-borrow-load-fast-borrow \
+	pycore-img-load-fast-and-clear \
+	pycore-img-load-fast-and-clear-cleared \
+	pycore-img-load-fast-check \
+	pycore-img-load-fast-check-unbound \
+	pycore-img-to-bool \
+	pycore-img-to-bool-type-trap \
+	pycore-img-to-bool-str-trap \
+	pycore-img-to-bool-list-trap \
+	pycore-img-unary-not \
+	pycore-img-is-op \
+	pycore-img-pop-jump-if-none \
+	pycore-img-nop
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /

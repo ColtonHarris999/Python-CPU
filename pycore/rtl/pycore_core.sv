@@ -160,9 +160,13 @@ module pycore_core #(
     localparam logic [3:0] CONT_LOAD_CONST   = 4'd8; // LOAD_CONST co_consts[arg]
     localparam logic [3:0] CONT_LOAD_GLOBAL  = 4'd9; // LOAD_GLOBAL / LOAD_NAME
     localparam logic [3:0] CONT_STORE_NAME   = 4'd10;// STORE_NAME / STORE_GLOBAL
-    localparam logic [3:0] CONT_LFB_PAIR     = 4'd11;// LFB_LFB combined load
+    localparam logic [3:0] CONT_LFB_PAIR     = 4'd11;// LFB_LFB / LFLF combined load
     localparam logic [3:0] CONT_LIST_APPEND  = 4'd12;// LIST_APPEND fast path (Phase A)
     localparam logic [3:0] CONT_LIST_EXTEND  = 4'd13;// LIST_EXTEND fast path / grow trap
+    localparam logic [3:0] CONT_SWAP         = 4'd14;// SWAP two-beat RF exchange
+    localparam logic [3:0] CONT_SFLF         = 4'd15;// STORE_FAST_LOAD_FAST
+    localparam logic [3:0] CONT_SFSF         = 4'd16;// STORE_FAST_STORE_FAST
+    localparam logic [3:0] CONT_LFAC         = 4'd17;// LOAD_FAST_AND_CLEAR
 
     // Container phases (stored in container_phase_r, 4-bit).
     //
@@ -510,28 +514,42 @@ module pycore_core #(
         id_rd_we     = 1'b0;
         id_tos_delta = 3'sd0;
         unique case (cur_opcode_r)
-            PY_OP_LOAD_FAST, PY_OP_LOAD_FAST_BORROW: begin
+            PY_OP_LOAD_FAST, PY_OP_LOAD_FAST_BORROW, PY_OP_LOAD_FAST_CHECK: begin
                 id_rd_we = 1'b1; id_tos_delta = 3'sd1;
             end
             PY_OP_STORE_FAST: begin
                 id_rd_we = 1'b1; id_tos_delta = -3'sd1;
             end
+            // DELETE_FAST: write UNINIT into local oparg; net stack 0.
+            PY_OP_DELETE_FAST: begin
+                id_rd_we = 1'b1; id_tos_delta = 3'sd0;
+            end
             PY_OP_LOAD_SMALL_INT: begin
                 id_rd_we = 1'b1; id_tos_delta = 3'sd1;
             end
+            // COPY: duplicate stack[-oparg] onto TOS; one RF write, push +1.
+            PY_OP_COPY: begin
+                id_rd_we = 1'b1; id_tos_delta = 3'sd1;
+            end
             // LOAD_CONST / LOAD_GLOBAL / LOAD_NAME / STORE_NAME / STORE_GLOBAL
-            // are container ops (S_CONTAINER manages tos and RF writes).
+            // / SWAP / paired-FAST ops / LOAD_FAST_AND_CLEAR are container ops
+            // (S_CONTAINER manages tos and RF writes).
             PY_OP_LOAD_CONST, PY_OP_LOAD_GLOBAL, PY_OP_LOAD_NAME,
             PY_OP_STORE_NAME, PY_OP_STORE_GLOBAL,
-            PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW: begin
+            PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW,
+            PY_OP_LOAD_FAST_LOAD_FAST,
+            PY_OP_LOAD_FAST_AND_CLEAR,
+            PY_OP_STORE_FAST_LOAD_FAST,
+            PY_OP_STORE_FAST_STORE_FAST,
+            PY_OP_SWAP: begin
                 id_rd_we = 1'b0; id_tos_delta = 3'sd0;
             end
             // PUSH_NULL: push sentinel {NULL, 0}, one RF write via WB stage.
             PY_OP_PUSH_NULL: begin
                 id_rd_we = 1'b1; id_tos_delta = 3'sd1;
             end
-            // TO_BOOL: convert TOS in place; net stack effect 0.
-            PY_OP_TO_BOOL: begin
+            // TO_BOOL / UNARY_NOT: rewrite TOS in place; net stack effect 0.
+            PY_OP_TO_BOOL, PY_OP_UNARY_NOT: begin
                 id_rd_we = 1'b1; id_tos_delta = 3'sd0;
             end
             // MAKE_FUNCTION: function ≡ code object; net effect 0 with no
@@ -548,7 +566,7 @@ module pycore_core #(
                     id_rd_we = !dec_illegal; id_tos_delta = -3'sd1;
                 end
             end
-            PY_OP_COMPARE_OP: begin
+            PY_OP_COMPARE_OP, PY_OP_IS_OP: begin
                 id_rd_we = !dec_illegal; id_tos_delta = -3'sd1;
             end
             PY_OP_POP_TOP, PY_OP_POP_ITER: begin
@@ -557,7 +575,8 @@ module pycore_core #(
             PY_OP_RETURN_VALUE: begin
                 id_tos_delta = -3'sd1;
             end
-            PY_OP_POP_JUMP_IF_TRUE, PY_OP_POP_JUMP_IF_FALSE: begin
+            PY_OP_POP_JUMP_IF_TRUE, PY_OP_POP_JUMP_IF_FALSE,
+            PY_OP_POP_JUMP_IF_NONE, PY_OP_POP_JUMP_IF_NOT_NONE: begin
                 id_tos_delta = -3'sd1;
             end
             PY_OP_MEM_LOAD_PTR: begin
@@ -643,6 +662,7 @@ module pycore_core #(
         ex_entry      = rs1_r;
         ex_addr_entry = '0;
         exec_type_trap_pulse = 1'b0;
+        exec_mem_fault_pulse = 1'b0;
         ex_rs1_tag  = pycore_get_tag(rs1_r);
         ex_rs1_int  = rs1_r[63:0];
         ex_rs1_bool = 1'b0;
@@ -659,6 +679,20 @@ module pycore_core #(
             end
             // PUSH_NULL: emit the self_or_null sentinel entry.
             PY_OP_PUSH_NULL: ex_entry = pycore_make_entry(PY_TAG_NULL, '0);
+            // DELETE_FAST: clear local to UNINIT; already-unbound → MEM_FAULT.
+            PY_OP_DELETE_FAST: begin
+                if (ex_rs1_tag == PY_TAG_UNINIT) begin
+                    exec_mem_fault_pulse = (state_r == S_EXEC);
+                end
+                ex_entry = pycore_make_entry(PY_TAG_UNINIT, '0);
+            end
+            // LOAD_FAST_CHECK: push local like LOAD_FAST; unbound → MEM_FAULT.
+            PY_OP_LOAD_FAST_CHECK: begin
+                if (ex_rs1_tag == PY_TAG_UNINIT) begin
+                    exec_mem_fault_pulse = (state_r == S_EXEC);
+                end
+                ex_entry = rs1_r;
+            end
             // TO_BOOL: convert INT / BOOL / FLOAT to BOOL in place; anything
             // else raises PY_TRAP_TYPE via exec_type_trap_pulse.
             PY_OP_TO_BOOL: begin
@@ -671,6 +705,24 @@ module pycore_core #(
                         exec_type_trap_pulse = (state_r == S_EXEC);
                     end
                 endcase
+                ex_entry = pycore_make_entry(PY_TAG_BOOL, {{(PYCORE_VAL_WIDTH-1){1'b0}}, ex_rs1_bool});
+            end
+            // UNARY_NOT: invert TOS BOOL in place; non-BOOL → PY_TRAP_TYPE.
+            PY_OP_UNARY_NOT: begin
+                if (ex_rs1_tag == PY_TAG_BOOL) begin
+                    ex_rs1_bool = !ex_rs1_int[0];
+                end else begin
+                    ex_rs1_bool          = 1'b0;
+                    exec_type_trap_pulse = (state_r == S_EXEC);
+                end
+                ex_entry = pycore_make_entry(PY_TAG_BOOL, {{(PYCORE_VAL_WIDTH-1){1'b0}}, ex_rs1_bool});
+            end
+            // IS_OP: full RF-entry identity → BOOL; oparg[0]=1 inverts (is not).
+            PY_OP_IS_OP: begin
+                ex_rs1_bool = (rs1_r == rs2_r);
+                if (cur_arg_r[0]) begin
+                    ex_rs1_bool = !ex_rs1_bool;
+                end
                 ex_entry = pycore_make_entry(PY_TAG_BOOL, {{(PYCORE_VAL_WIDTH-1){1'b0}}, ex_rs1_bool});
             end
             // MAKE_FUNCTION: function is the code object itself; verify tag.
@@ -909,9 +961,14 @@ module pycore_core #(
 
     // container_type_trap_r / container_mem_fault_r are one-cycle pulses set in
     // S_CONTAINER's always_ff when a type or bounds error is detected.
-    // exec_type_trap_pulse folds in MAKE_FUNCTION (non-CODE_OBJECT) and
-    // TO_BOOL (non-numeric) type checks that ride the EX stage combinationally.
+    // exec_type_trap_pulse folds in MAKE_FUNCTION (non-CODE_OBJECT),
+    // TO_BOOL (non-numeric), and UNARY_NOT (non-BOOL) type checks that ride
+    // the EX stage combinationally.
+    // exec_mem_fault_pulse covers DELETE_FAST on an already-unbound local
+    // and LOAD_FAST_CHECK on an unbound local (UnboundLocalError analog →
+    // PY_TRAP_MEM_FAULT).
     logic exec_type_trap_pulse;
+    logic exec_mem_fault_pulse;
     assign type_trap_sig  = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_TYPE)) ||
                             (exec_in && dec_is_branch && branch_trap) ||
                             exec_type_trap_pulse ||
@@ -925,6 +982,7 @@ module pycore_core #(
                             (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ILLEGAL_OPCODE));
     assign mem_fault_sig  = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_MEM_FAULT)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_MEM_FAULT)) ||
+                            exec_mem_fault_pulse ||
                             container_mem_fault_r ||
                             imem_fault_i;
     assign addr_align_sig = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ADDR_ALIGN)) ||
@@ -1401,8 +1459,11 @@ module pycore_core #(
                             end else if ((cur_opcode_r == PY_OP_STORE_NAME) ||
                                          (cur_opcode_r == PY_OP_STORE_GLOBAL)) begin
                                 container_op_r <= CONT_STORE_NAME;
-                            end else if (cur_opcode_r ==
-                                         PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW) begin
+                            end else if ((cur_opcode_r ==
+                                          PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW) ||
+                                         (cur_opcode_r ==
+                                          PY_OP_LOAD_FAST_LOAD_FAST)) begin
+                                // LFLF shares CONT_LFB_PAIR (borrow≡owned).
                                 container_op_r     <= CONT_LFB_PAIR;
                                 container_lfb_hi_r <= cur_arg_r[7:4];
                                 container_lfb_lo_r <= cur_arg_r[3:0];
@@ -1410,6 +1471,22 @@ module pycore_core #(
                                 container_op_r <= CONT_LIST_APPEND;
                             end else if (cur_opcode_r == PY_OP_LIST_EXTEND) begin
                                 container_op_r <= CONT_LIST_EXTEND;
+                            end else if (cur_opcode_r ==
+                                         PY_OP_STORE_FAST_LOAD_FAST) begin
+                                container_op_r     <= CONT_SFLF;
+                                container_lfb_hi_r <= cur_arg_r[7:4];
+                                container_lfb_lo_r <= cur_arg_r[3:0];
+                            end else if (cur_opcode_r ==
+                                         PY_OP_STORE_FAST_STORE_FAST) begin
+                                container_op_r     <= CONT_SFSF;
+                                container_lfb_hi_r <= cur_arg_r[7:4];
+                                container_lfb_lo_r <= cur_arg_r[3:0];
+                            end else if (cur_opcode_r ==
+                                         PY_OP_LOAD_FAST_AND_CLEAR) begin
+                                // CONT_LFAC: rs1_r = latched local value.
+                                container_op_r <= CONT_LFAC;
+                            end else if (cur_opcode_r == PY_OP_SWAP) begin
+                                container_op_r <= CONT_SWAP;
                             end else if (cur_opcode_r == PY_OP_BINARY_OP) begin
                                 // BINARY_OP/NB_SUBSCR: rs1 = container.
                                 if (cont_rs1_tag == PY_TAG_DICT)
@@ -3694,6 +3771,153 @@ module pycore_core #(
 
                             endcase
                         end // CONT_LFB_PAIR
+
+                        // ===========================================================
+                        // CONT_SWAP: two-beat RF exchange.  rs1_r = TOS and
+                        // rs2_r = stack[-oparg] were latched in S_DECODE.
+                        // Beat1 writes deep→TOS; beat2 writes TOS→deep.
+                        // Net stack effect 0 (do not touch tos_r).
+                        // ===========================================================
+                        CONT_SWAP: begin
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, tos_r} - 9'd1);
+                                    container_wb_data_r <= rs2_r;
+                                    container_phase_r   <= CP_LFB_FIRST;
+                                end
+
+                                CP_LFB_FIRST: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]});
+                                    container_wb_data_r <= rs1_r;
+                                    fetch_skip_r        <= 1'b1;
+                                    container_phase_r   <= CP_DONE;
+                                end
+
+                                CP_DONE: ;
+                                default: ;
+
+                            endcase
+                        end // CONT_SWAP
+
+                        // ===========================================================
+                        // CONT_SFLF: STORE_FAST_LOAD_FAST.  rs1_r = TOS latched
+                        // at decode.  Beat1 stores TOS → locals[hi] and pops;
+                        // beat2 pushes locals[lo].  Net stack 0.  hi==lo is
+                        // safe: the store completes before the reload read.
+                        // ===========================================================
+                        CONT_SFLF: begin
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, cur_locals_base_r} +
+                                        {5'b0, container_lfb_hi_r});
+                                    container_wb_data_r <= rs1_r;
+                                    tos_r <= tos_r - RF_AW'(1);
+                                    container_rf_addr_r <= RF_AW'(
+                                        {2'b0, cur_locals_base_r} +
+                                        {5'b0, container_lfb_lo_r});
+                                    container_phase_r <= CP_LFB_FIRST;
+                                end
+
+                                CP_LFB_FIRST: begin
+                                    // hi==lo: RF write from CP_INIT is not yet
+                                    // visible on rf_rs1; bypass the stored TOS.
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'({2'b0, tos_r});
+                                    container_wb_data_r <=
+                                        (container_lfb_hi_r == container_lfb_lo_r)
+                                            ? rs1_r : rf_rs1;
+                                    tos_r <= tos_r + RF_AW'(1);
+                                    fetch_skip_r      <= 1'b1;
+                                    container_phase_r <= CP_DONE;
+                                end
+
+                                CP_DONE: ;
+                                default: ;
+
+                            endcase
+                        end // CONT_SFLF
+
+                        // ===========================================================
+                        // CONT_SFSF: STORE_FAST_STORE_FAST.  rs1_r = TOS.  Beat1
+                        // stores TOS → locals[hi] and pops; beat2 stores the new
+                        // TOS → locals[lo] and pops.  Net stack −2.  Pop order
+                        // matches CPython: hi first from TOS, then lo.
+                        // ===========================================================
+                        CONT_SFSF: begin
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, cur_locals_base_r} +
+                                        {5'b0, container_lfb_hi_r});
+                                    container_wb_data_r <= rs1_r;
+                                    // Point rs1 at the second-from-top (old
+                                    // tos_r-2) for the next-cycle store.
+                                    container_rf_addr_r <= RF_AW'(
+                                        {2'b0, tos_r} - 9'd2);
+                                    tos_r <= tos_r - RF_AW'(1);
+                                    container_phase_r <= CP_LFB_FIRST;
+                                end
+
+                                CP_LFB_FIRST: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, cur_locals_base_r} +
+                                        {5'b0, container_lfb_lo_r});
+                                    container_wb_data_r <= rf_rs1;
+                                    tos_r <= tos_r - RF_AW'(1);
+                                    fetch_skip_r      <= 1'b1;
+                                    container_phase_r <= CP_DONE;
+                                end
+
+                                CP_DONE: ;
+                                default: ;
+
+                            endcase
+                        end // CONT_SFSF
+
+                        // ===========================================================
+                        // CONT_LFAC: LOAD_FAST_AND_CLEAR.  rs1_r = latched local
+                        // value from S_DECODE.  Beat1 pushes it to TOS; beat2
+                        // writes UNINIT into locals[oparg].  Net stack +1.
+                        // Unbound slots do not trap (unlike DELETE_FAST).
+                        // ===========================================================
+                        CONT_LFAC: begin
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'({2'b0, tos_r});
+                                    container_wb_data_r <= rs1_r;
+                                    tos_r <= tos_r + RF_AW'(1);
+                                    container_phase_r <= CP_LFB_FIRST;
+                                end
+
+                                CP_LFB_FIRST: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, cur_locals_base_r} +
+                                        {5'b0, cur_arg_r[7:0]});
+                                    container_wb_data_r <=
+                                        pycore_make_entry(PY_TAG_UNINIT, '0);
+                                    fetch_skip_r      <= 1'b1;
+                                    container_phase_r <= CP_DONE;
+                                end
+
+                                CP_DONE: ;
+                                default: ;
+
+                            endcase
+                        end // CONT_LFAC
 
 
                         default: ;
