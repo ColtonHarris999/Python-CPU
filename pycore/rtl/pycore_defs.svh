@@ -131,6 +131,7 @@ localparam logic [4:0] PY_ALU_ILLEGAL   = 5'd31;
 // -------------------------------------------------------------------------
 localparam logic [7:0] PY_OP_CACHE            = 8'd0;
 localparam logic [7:0] PY_OP_MAKE_FUNCTION    = 8'd23;
+localparam logic [7:0] PY_OP_NOP              = 8'd27;
 localparam logic [7:0] PY_OP_NOT_TAKEN        = 8'd28;
 localparam logic [7:0] PY_OP_POP_ITER         = 8'd30;
 localparam logic [7:0] PY_OP_POP_TOP          = 8'd31;
@@ -138,28 +139,40 @@ localparam logic [7:0] PY_OP_PUSH_NULL        = 8'd33;
 localparam logic [7:0] PY_OP_RETURN_VALUE     = 8'd35;
 localparam logic [7:0] PY_OP_STORE_SUBSCR     = 8'd38;
 localparam logic [7:0] PY_OP_TO_BOOL          = 8'd39;
+localparam logic [7:0] PY_OP_UNARY_NOT        = 8'd42;
 localparam logic [7:0] PY_OP_BINARY_OP        = 8'd44;
 localparam logic [7:0] PY_OP_BUILD_LIST       = 8'd46;
 localparam logic [7:0] PY_OP_BUILD_MAP        = 8'd47;
 localparam logic [7:0] PY_OP_BUILD_TUPLE      = 8'd51;
 localparam logic [7:0] PY_OP_CALL             = 8'd52;
 localparam logic [7:0] PY_OP_COMPARE_OP       = 8'd56;
+localparam logic [7:0] PY_OP_COPY             = 8'd59;
+localparam logic [7:0] PY_OP_DELETE_FAST      = 8'd63;
 localparam logic [7:0] PY_OP_EXTENDED_ARG     = 8'd69;
+localparam logic [7:0] PY_OP_IS_OP            = 8'd74;
 localparam logic [7:0] PY_OP_JUMP_BACKWARD    = 8'd75;
 localparam logic [7:0] PY_OP_JUMP_FORWARD     = 8'd77;
 localparam logic [7:0] PY_OP_LOAD_CONST       = 8'd82;
 localparam logic [7:0] PY_OP_LOAD_FAST        = 8'd84;
+localparam logic [7:0] PY_OP_LOAD_FAST_AND_CLEAR = 8'd85;
 localparam logic [7:0] PY_OP_LOAD_FAST_BORROW = 8'd86;
 localparam logic [7:0] PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = 8'd87;
+localparam logic [7:0] PY_OP_LOAD_FAST_CHECK = 8'd88;
+localparam logic [7:0] PY_OP_LOAD_FAST_LOAD_FAST = 8'd89;
 localparam logic [7:0] PY_OP_LOAD_GLOBAL      = 8'd92;
 localparam logic [7:0] PY_OP_LOAD_NAME        = 8'd93;
 localparam logic [7:0] PY_OP_LOAD_SMALL_INT   = 8'd94;
-localparam logic [7:0] PY_OP_POP_JUMP_IF_FALSE = 8'd100;
-localparam logic [7:0] PY_OP_POP_JUMP_IF_TRUE  = 8'd103;
+localparam logic [7:0] PY_OP_POP_JUMP_IF_FALSE    = 8'd100;
+localparam logic [7:0] PY_OP_POP_JUMP_IF_NONE     = 8'd101;
+localparam logic [7:0] PY_OP_POP_JUMP_IF_NOT_NONE = 8'd102;
+localparam logic [7:0] PY_OP_POP_JUMP_IF_TRUE     = 8'd103;
 localparam logic [7:0] PY_OP_SET_FUNCTION_ATTRIBUTE = 8'd108;
 localparam logic [7:0] PY_OP_STORE_FAST       = 8'd112;
+localparam logic [7:0] PY_OP_STORE_FAST_LOAD_FAST  = 8'd113;
+localparam logic [7:0] PY_OP_STORE_FAST_STORE_FAST = 8'd114;
 localparam logic [7:0] PY_OP_STORE_GLOBAL     = 8'd115;
 localparam logic [7:0] PY_OP_STORE_NAME       = 8'd116;
+localparam logic [7:0] PY_OP_SWAP             = 8'd117;
 localparam logic [7:0] PY_OP_RESUME           = 8'd128;
 
 // LIST_APPEND: resolved from opcode.opmap at tool-import time (see
@@ -248,7 +261,7 @@ localparam logic [7:0] PY_OP_LIST_EXTEND      = 8'd79;
 //   forward:  target = pc + 1 + n_cache + arg
 //   backward: target = pc + 1 + n_cache - arg
 //   n_cache from opcode._inline_cache_entries (name-keyed):
-//     POP_JUMP_IF_{TRUE,FALSE}=1, JUMP_BACKWARD=1, JUMP_FORWARD=0
+//     POP_JUMP_IF_{TRUE,FALSE,NONE,NOT_NONE}=1, JUMP_BACKWARD=1, JUMP_FORWARD=0
 // -------------------------------------------------------------------------
 
 // BINARY_OP oparg for subscript read (x[k]); not a standalone opcode.
@@ -256,10 +269,12 @@ localparam logic [7:0] PY_OP_LIST_EXTEND      = 8'd79;
 localparam logic [7:0] PY_NBARG_SUBSCR         = 8'd26;
 
 // Inline-cache unit counts for relative-jump target computation (3.14.6).
-localparam logic [7:0] PY_CACHE_JUMP_FORWARD      = 8'd0;
-localparam logic [7:0] PY_CACHE_JUMP_BACKWARD     = 8'd1;
-localparam logic [7:0] PY_CACHE_POP_JUMP_IF_FALSE = 8'd1;
-localparam logic [7:0] PY_CACHE_POP_JUMP_IF_TRUE  = 8'd1;
+localparam logic [7:0] PY_CACHE_JUMP_FORWARD         = 8'd0;
+localparam logic [7:0] PY_CACHE_JUMP_BACKWARD        = 8'd1;
+localparam logic [7:0] PY_CACHE_POP_JUMP_IF_FALSE    = 8'd1;
+localparam logic [7:0] PY_CACHE_POP_JUMP_IF_NONE     = 8'd1;
+localparam logic [7:0] PY_CACHE_POP_JUMP_IF_NOT_NONE = 8'd1;
+localparam logic [7:0] PY_CACHE_POP_JUMP_IF_TRUE     = 8'd1;
 
 // Internal-only memory opcodes. These are not part of the CPython 3.14 opcode
 // space and are never emitted by the image builder; they exist so hand-written

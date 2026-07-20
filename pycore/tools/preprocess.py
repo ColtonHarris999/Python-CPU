@@ -125,14 +125,21 @@ SUPPORTED_OPS = {
     "EXTENDED_ARG",
     "LOAD_FAST",
     "LOAD_FAST_BORROW",
+    "LOAD_FAST_AND_CLEAR",
+    "LOAD_FAST_CHECK",
     # LOAD_FAST_BORROW_LOAD_FAST_BORROW (opcode 87, Python 3.14): loads two
     # locals in one instruction.  Expanded to two LOAD_FAST_BORROW in
     # emit_instruction_words so hardware never sees this combined opcode.
     "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
+    "LOAD_FAST_LOAD_FAST",
     "STORE_FAST",
+    "STORE_FAST_LOAD_FAST",
+    "STORE_FAST_STORE_FAST",
+    "DELETE_FAST",
     "LOAD_SMALL_INT",
     "LOAD_CONST",
     "POP_TOP",
+    "NOP",
     "COPY",
     "SWAP",
     "BINARY_OP",
@@ -141,10 +148,13 @@ SUPPORTED_OPS = {
     "UNARY_INVERT",
     "UNARY_NOT",
     "COMPARE_OP",
+    "IS_OP",
     "JUMP_FORWARD",
     "JUMP_BACKWARD",
     "POP_JUMP_IF_TRUE",
     "POP_JUMP_IF_FALSE",
+    "POP_JUMP_IF_NONE",
+    "POP_JUMP_IF_NOT_NONE",
     "JUMP_IF_TRUE_OR_POP",
     "JUMP_IF_FALSE_OR_POP",
     "NOT_TAKEN",
@@ -354,6 +364,7 @@ def remap_branch_args(instructions: list[EmittedInstruction]) -> list[EmittedIns
             target_idx = i - arg
             new_arg = slot_map[i] - slot_map[target_idx]
         elif ins.opname in ("POP_JUMP_IF_TRUE", "POP_JUMP_IF_FALSE",
+                            "POP_JUMP_IF_NONE", "POP_JUMP_IF_NOT_NONE",
                             "JUMP_IF_TRUE_OR_POP", "JUMP_IF_FALSE_OR_POP"):
             # Absolute: arg is the target instruction index; convert to slot.
             new_arg = slot_map[arg]
@@ -470,7 +481,7 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             stack.append(tag)
         elif ins.opname == "LOAD_SMALL_INT":
             stack.append(TAG_INT)
-        elif ins.opname in ("LOAD_FAST", "LOAD_FAST_BORROW"):
+        elif ins.opname in ("LOAD_FAST", "LOAD_FAST_BORROW", "LOAD_FAST_CHECK"):
             name = local_names[ins.arg] if ins.arg < len(local_names) else f"local_{ins.arg}"
             stack.append(var_tags.get(name, TAG_OBJECT))
         elif ins.opname == "STORE_FAST":
@@ -532,7 +543,7 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
                     f"OBJECT-typed value feeds BINARY_OP at bytecode offset {ins.source_offset}"
                 )
             stack.append(result_tag)
-        elif ins.opname == "COMPARE_OP":
+        elif ins.opname in ("COMPARE_OP", "IS_OP"):
             if stack:
                 stack.pop()
             if stack:

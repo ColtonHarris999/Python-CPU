@@ -76,6 +76,362 @@ class ImageTranscodingTest(unittest.TestCase):
         self.assertIn("defaults", msg)
         self.assertIn("closures", msg)
 
+    def test_nop_opcode_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    x = 7\n"
+            "    if False:\n"
+            "        pass\n"
+            "    return x\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        # Dead `if False:` leaves NOP after CPython 3.14 peephole.
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("NOP", opnames)
+
+        result = image_from_source.build_image_from_source_text(src, "<nop>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_copy_opcode_now_supported(self) -> None:
+        src = (
+            "x = y = 5\n"
+            "def managed_entry():\n"
+            "    return x\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        # `x = y = 5` emits COPY (duplicating the value for the second store).
+        opnames = {
+            ins.opname for ins in dis.get_instructions(_compile_module(src))
+        }
+        self.assertIn("COPY", opnames)
+
+        # COPY was previously rejected by STACK_OP_REJECTS; it must now build.
+        result = image_from_source.build_image_from_source_text(src, "<copy>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_swap_opcode_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    x = [1, 2]\n"
+            "    x[0] += 5\n"
+            "    return x[0]\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        # `x[0] += 5` emits SWAP 3 / SWAP 2 before STORE_SUBSCR.
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("SWAP", opnames)
+
+        # SWAP was previously rejected by STACK_OP_REJECTS; it must now build.
+        result = image_from_source.build_image_from_source_text(src, "<swap>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_delete_fast_opcode_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    x = 1\n"
+            "    y = 2\n"
+            "    del x\n"
+            "    return y\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("DELETE_FAST", opnames)
+
+        result = image_from_source.build_image_from_source_text(src, "<delete_fast>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_store_fast_load_fast_opcode_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a = 1\n"
+            "    b = 2\n"
+            "    a = 9; return a + b\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("STORE_FAST_LOAD_FAST", opnames)
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<store_fast_load_fast>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_load_fast_load_fast_opcode_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a = 1\n"
+            "    b = 2\n"
+            "    a, b = b, a\n"
+            "    return a\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("LOAD_FAST_LOAD_FAST", opnames)
+        self.assertIn("STORE_FAST_STORE_FAST", opnames)
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<load_fast_load_fast>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_load_fast_borrow_load_fast_borrow_opcode_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a = 3\n"
+            "    b = 4\n"
+            "    return a + b\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("LOAD_FAST_BORROW_LOAD_FAST_BORROW", opnames)
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<load_fast_borrow_load_fast_borrow>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_load_fast_and_clear_opcode_now_supported(self) -> None:
+        src = (
+            "# pycore-inject: LOAD_FAST_AND_CLEAR managed_entry x\n"
+            "\n"
+            "def managed_entry():\n"
+            "    x = 5\n"
+            "    y = 2\n"
+            "    z = x\n"
+            "    return z + y\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        module_code = compile(src, "<load_fast_and_clear>", "exec")
+        injected = image_from_source.apply_lfac_injects(module_code, src)
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(injected):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("LOAD_FAST_AND_CLEAR", opnames)
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<load_fast_and_clear>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_load_fast_and_clear_inject_clears_source_slot(self) -> None:
+        # Mirrors img_load_fast_and_clear_cleared.py: the inject rewrites the
+        # first LOAD_FAST of `x` to LOAD_FAST_AND_CLEAR, and the following
+        # `del x` emits DELETE_FAST on that same slot.  The clear-proof
+        # depends on both opcodes being present over the same local.
+        src = (
+            "# pycore-inject: LOAD_FAST_AND_CLEAR managed_entry x\n"
+            "\n"
+            "def managed_entry():\n"
+            "    x = 5\n"
+            "    y = 2\n"
+            "    z = x\n"
+            "    del x\n"
+            "    return z + y\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        module_code = compile(src, "<lfac_cleared>", "exec")
+        injected = image_from_source.apply_lfac_injects(module_code, src)
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(injected):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("LOAD_FAST_AND_CLEAR", opnames)
+        self.assertIn("DELETE_FAST", opnames)
+
+        result = image_from_source.build_image_from_source_text(src, "<lfac_cleared>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_load_fast_check_opcode_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    cond = 1\n"
+            "    if cond:\n"
+            "        a = 7\n"
+            "    return a\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("LOAD_FAST_CHECK", opnames)
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<load_fast_check>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_to_bool_opcode_now_supported(self) -> None:
+        # Mirrors img_to_bool.py: INT (0/nonzero), BOOL, and FLOAT (0.0/nonzero)
+        # all flow through TO_BOOL, and a FLOAT constant must serialize.
+        src = (
+            "def managed_entry():\n"
+            "    z = 0\n"
+            "    n = 5\n"
+            "    b = True\n"
+            "    fz = 0.0\n"
+            "    fnz = 2.5\n"
+            "    out = 0\n"
+            "    if z:\n"
+            "        out += 1\n"
+            "    if n:\n"
+            "        out += 10\n"
+            "    if b:\n"
+            "        out += 100\n"
+            "    if fz:\n"
+            "        out += 1000\n"
+            "    if fnz:\n"
+            "        out += 10000\n"
+            "    return out\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("TO_BOOL", opnames)
+
+        result = image_from_source.build_image_from_source_text(src, "<to_bool>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_unary_not_opcode_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    z = 0\n"
+            "    n = 5\n"
+            "    t = True\n"
+            "    f = False\n"
+            "    a = not z\n"
+            "    b = not n\n"
+            "    c = not t\n"
+            "    d = not f\n"
+            "    out = 0\n"
+            "    if a:\n"
+            "        out += 1\n"
+            "    if b:\n"
+            "        out += 2\n"
+            "    if c:\n"
+            "        out += 4\n"
+            "    if d:\n"
+            "        out += 8\n"
+            "    return out\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("UNARY_NOT", opnames)
+
+        result = image_from_source.build_image_from_source_text(src, "<unary_not>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_is_op_opcode_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a = 1\n"
+            "    b = 2\n"
+            "    t = True\n"
+            "    f = False\n"
+            "    n = None\n"
+            "    m = None\n"
+            "    x = []\n"
+            "    one = 1\n"
+            "    out = 0\n"
+            "    if a is a:\n"
+            "        out += 1\n"
+            "    if a is not b:\n"
+            "        out += 2\n"
+            "    if t is f:\n"
+            "        out += 4\n"
+            "    if t is True:\n"
+            "        out += 8\n"
+            "    if n is m:\n"
+            "        out += 16\n"
+            "    if t is not one:\n"
+            "        out += 32\n"
+            "    if x is x:\n"
+            "        out += 64\n"
+            "    y = []\n"
+            "    z = []\n"
+            "    if y is not z:\n"
+            "        out += 128\n"
+            "    return out\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("IS_OP", opnames)
+
+        result = image_from_source.build_image_from_source_text(src, "<is_op>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_pop_jump_if_none_opcodes_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    n = None\n"
+            "    x = 1\n"
+            "    lst = []\n"
+            "    out = 0\n"
+            "    if n is None:\n"
+            "        out += 1\n"
+            "    if x is not None:\n"
+            "        out += 2\n"
+            "    if lst is not None:\n"
+            "        out += 4\n"
+            "    if x is None:\n"
+            "        out += 8\n"
+            "    return out\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("POP_JUMP_IF_NONE", opnames)
+        self.assertIn("POP_JUMP_IF_NOT_NONE", opnames)
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<pop_jump_if_none>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
     def test_globals_dict_pre_sizing_counts_distinct_stores(self) -> None:
         result = image_from_source.build_image_from_source_text(
             "a = 1\n"

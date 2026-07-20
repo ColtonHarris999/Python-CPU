@@ -67,17 +67,27 @@ SUPPORTED_OPS = {
     "EXTENDED_ARG",
     "LOAD_CONST",
     "STORE_FAST",
+    "STORE_FAST_LOAD_FAST",
+    "STORE_FAST_STORE_FAST",
+    "DELETE_FAST",
+    "LOAD_FAST_AND_CLEAR",
+    "LOAD_FAST_CHECK",
     "LOAD_SMALL_INT",
     "POP_TOP",
     "POP_ITER",
+    "NOP",
     "NOT_TAKEN",
     "TO_BOOL",
+    "UNARY_NOT",
     "BINARY_OP",
     "COMPARE_OP",
+    "IS_OP",
     "BUILD_LIST",
     "BUILD_MAP",
     "BUILD_TUPLE",
     "STORE_SUBSCR",
+    "COPY",
+    "SWAP",
     "CALL",
     "RETURN_VALUE",
     "LOAD_GLOBAL",
@@ -108,8 +118,6 @@ DEFERRED_OPS: dict[str, str] = {
     "SET_ADD": "set.add/set-comprehension lowering is deferred",
     "SET_UPDATE": "set.update lowering is deferred",
 }
-
-STACK_OP_REJECTS = {"COPY", "SWAP"}
 
 
 @dataclass(frozen=True)
@@ -200,11 +208,6 @@ def validate_code_object(co: types.CodeType) -> None:
                 f"{co.co_name!r} at bytecode offset {ins.offset}: function "
                 "defaults, annotations, and closures are not supported by the "
                 "image-boot serializer"
-            )
-        if ins.opname in STACK_OP_REJECTS:
-            raise ValueError(
-                f"Unsupported stack manipulation opcode {ins.opname!r} in code "
-                f"object {co.co_name!r} at bytecode offset {ins.offset}"
             )
         if not _is_supported_opname(ins.opname):
             raise ValueError(
@@ -352,8 +355,99 @@ def build_image_from_code(module_code: types.CodeType) -> ImageBuildResult:
     )
 
 
+_INJECT_LFAC_PREFIX = "# pycore-inject: LOAD_FAST_AND_CLEAR "
+_OP_LOAD_FAST = _OM["LOAD_FAST"]
+_OP_LOAD_FAST_BORROW = _OM["LOAD_FAST_BORROW"]
+_OP_LOAD_FAST_AND_CLEAR = _OM["LOAD_FAST_AND_CLEAR"]
+
+
+def parse_lfac_inject_pragmas(source_text: str) -> list[tuple[str, str]]:
+    """Return ``(func_name, local_name)`` pairs from ``# pycore-inject:`` lines."""
+    pragmas: list[tuple[str, str]] = []
+    for line in source_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(_INJECT_LFAC_PREFIX):
+            continue
+        rest = stripped[len(_INJECT_LFAC_PREFIX) :].strip()
+        parts = rest.split()
+        if len(parts) != 2:
+            raise ValueError(
+                "pycore-inject LOAD_FAST_AND_CLEAR expects "
+                f"'<func> <local>', got {rest!r}"
+            )
+        pragmas.append((parts[0], parts[1]))
+    return pragmas
+
+
+def _rewrite_first_load_to_lfac(co: types.CodeType, local_name: str) -> types.CodeType:
+    try:
+        local_index = co.co_varnames.index(local_name)
+    except ValueError as exc:
+        raise ValueError(
+            f"local {local_name!r} not found in code object {co.co_name!r}"
+        ) from exc
+
+    code = bytearray(co.co_code)
+    for offset in range(0, len(code), 2):
+        op = code[offset]
+        arg = code[offset + 1]
+        if op in (_OP_LOAD_FAST, _OP_LOAD_FAST_BORROW) and arg == local_index:
+            code[offset] = _OP_LOAD_FAST_AND_CLEAR
+            return co.replace(co_code=bytes(code))
+    raise ValueError(
+        f"no LOAD_FAST/LOAD_FAST_BORROW of {local_name!r} in "
+        f"code object {co.co_name!r}"
+    )
+
+
+def _replace_code_by_name(
+    co: types.CodeType, func_name: str, new_co: types.CodeType
+) -> types.CodeType:
+    if co.co_name == func_name:
+        return new_co
+    consts = list(co.co_consts)
+    changed = False
+    for i, const in enumerate(consts):
+        if isinstance(const, types.CodeType):
+            replaced = _replace_code_by_name(const, func_name, new_co)
+            if replaced is not const:
+                consts[i] = replaced
+                changed = True
+    if not changed:
+        return co
+    return co.replace(co_consts=tuple(consts))
+
+
+def _find_code_by_name(co: types.CodeType, func_name: str) -> types.CodeType | None:
+    if co.co_name == func_name:
+        return co
+    for const in co.co_consts:
+        if isinstance(const, types.CodeType):
+            found = _find_code_by_name(const, func_name)
+            if found is not None:
+                return found
+    return None
+
+
+def apply_lfac_injects(
+    module_code: types.CodeType, source_text: str
+) -> types.CodeType:
+    """Apply ``# pycore-inject: LOAD_FAST_AND_CLEAR <func> <local>`` rewrites."""
+    result = module_code
+    for func_name, local_name in parse_lfac_inject_pragmas(source_text):
+        target = _find_code_by_name(result, func_name)
+        if target is None:
+            raise ValueError(
+                f"pycore-inject target function {func_name!r} not found"
+            )
+        rewritten = _rewrite_first_load_to_lfac(target, local_name)
+        result = _replace_code_by_name(result, func_name, rewritten)
+    return result
+
+
 def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildResult:
     module_code = compile(source_text, filename, "exec")
+    module_code = apply_lfac_injects(module_code, source_text)
     return build_image_from_code(module_code)
 
 

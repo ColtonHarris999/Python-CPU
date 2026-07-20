@@ -81,11 +81,12 @@ module pycore_decode (
         decoded_pc_o = pc_i;
 
         unique case (opcode_i)
-            PY_OP_RESUME, PY_OP_NOT_TAKEN: begin
-                // NOT_TAKEN is a monitoring NOP in 3.14 branch patterns.
+            PY_OP_RESUME, PY_OP_NOT_TAKEN, PY_OP_NOP: begin
+                // NOT_TAKEN / NOP are monitoring / peephole no-ops in 3.14.
             end
 
-            PY_OP_LOAD_FAST, PY_OP_LOAD_FAST_BORROW: begin
+            // LOAD_FAST_CHECK: same datapath as LOAD_FAST; EX traps on UNINIT.
+            PY_OP_LOAD_FAST, PY_OP_LOAD_FAST_BORROW, PY_OP_LOAD_FAST_CHECK: begin
                 rs1_sel_o = locals_base_i + arg_i[7:0];
                 rd_sel_o = tos_index_i;
                 push_stack_o = 1'b1;
@@ -94,7 +95,16 @@ module pycore_decode (
 
             // Combined load: arg[7:4]=first, arg[3:0]=second. Handled as a
             // two-beat container op so the image path can keep 1:1 encoding.
-            PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW: begin
+            // LOAD_FAST_LOAD_FAST shares CONT_LFB_PAIR (borrow≡owned in HW).
+            PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW,
+            PY_OP_LOAD_FAST_LOAD_FAST: begin
+                is_container_o = 1'b1;
+            end
+
+            // LOAD_FAST_AND_CLEAR: latch local in rs1; CONT_LFAC pushes then
+            // clears the slot to UNINIT (two-beat; unbound does not trap).
+            PY_OP_LOAD_FAST_AND_CLEAR: begin
+                rs1_sel_o = locals_base_i + arg_i[7:0];
                 is_container_o = 1'b1;
             end
 
@@ -105,9 +115,44 @@ module pycore_decode (
                 mem_op_o = PY_MEM_STORE_FAST;
             end
 
+            // STORE_FAST_LOAD_FAST / STORE_FAST_STORE_FAST: nibble oparg
+            // (hi<<4)|lo.  Latch TOS in rs1 for the first store beat.
+            PY_OP_STORE_FAST_LOAD_FAST,
+            PY_OP_STORE_FAST_STORE_FAST: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
+            end
+
+            // DELETE_FAST: clear local oparg to UNINIT (net stack 0).
+            // Reads the slot for the unbound check; writes the same address.
+            PY_OP_DELETE_FAST: begin
+                rs1_sel_o = locals_base_i + arg_i[7:0];
+                rd_sel_o  = locals_base_i + arg_i[7:0];
+            end
+
             PY_OP_LOAD_SMALL_INT: begin
                 rd_sel_o = tos_index_i;
                 push_stack_o = 1'b1;
+            end
+
+            // COPY oparg: push a duplicate of the stack entry at depth oparg
+            // (stack[-oparg]).  Clone of the LOAD_FAST datapath: read one RF
+            // slot and push it verbatim through EX/MEM.  oparg is 1-based and
+            // never 0 in valid CPython bytecode (COPY 1 duplicates TOS).
+            PY_OP_COPY: begin
+                rs1_sel_o = tos_index_i - arg_i[7:0];
+                rd_sel_o = tos_index_i;
+                push_stack_o = 1'b1;
+                mem_op_o = PY_MEM_LOAD_FAST;
+            end
+
+            // SWAP oparg: exchange TOS with stack[-oparg].  Dual RF read in
+            // decode; two-beat CONT_SWAP writeback (single RF write port).
+            // oparg is 1-based; valid CPython bytecode uses oparg >= 2.
+            PY_OP_SWAP: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                rs2_sel_o = tos_index_i - arg_i[7:0];
+                is_container_o = 1'b1;
             end
 
             // LOAD_CONST: read co_consts[arg] via CONT_LOAD_CONST.
@@ -126,6 +171,14 @@ module pycore_decode (
                 rs1_sel_o = tos_index_i - 8'd1;
                 rd_sel_o  = tos_index_i - 8'd1;
                 alu_op_o  = PY_ALU_PASS;  // conversion done in core EX
+            end
+
+            // UNARY_NOT: invert TOS BOOL in place (net stack 0). CPython 3.14
+            // always emits TO_BOOL immediately before; non-BOOL traps in EX.
+            PY_OP_UNARY_NOT: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                rd_sel_o  = tos_index_i - 8'd1;
+                alu_op_o  = PY_ALU_PASS;  // invert done in core EX
             end
 
             // MAKE_FUNCTION: pop code / push function (≡ code). Net effect 0.
@@ -160,6 +213,16 @@ module pycore_decode (
                 illegal_opcode_o = alu_op_o == PY_ALU_ILLEGAL;
             end
 
+            // IS_OP: identity compare (is / is not). Same stack shape as
+            // COMPARE_OP; result built in core EX from full RF-entry equality.
+            PY_OP_IS_OP: begin
+                rs1_sel_o = tos_index_i - 8'd2;
+                rs2_sel_o = tos_index_i - 8'd1;
+                rd_sel_o = tos_index_i - 8'd2;
+                pop_stack_o = 1'b1;
+                alu_op_o = PY_ALU_PASS;
+            end
+
             PY_OP_RETURN_VALUE: begin
                 rs1_sel_o = tos_index_i - 8'd1;
                 pop_stack_o = 1'b1;
@@ -168,9 +231,13 @@ module pycore_decode (
             end
 
             PY_OP_JUMP_FORWARD, PY_OP_JUMP_BACKWARD,
-            PY_OP_POP_JUMP_IF_TRUE, PY_OP_POP_JUMP_IF_FALSE: begin
+            PY_OP_POP_JUMP_IF_TRUE, PY_OP_POP_JUMP_IF_FALSE,
+            PY_OP_POP_JUMP_IF_NONE, PY_OP_POP_JUMP_IF_NOT_NONE: begin
                 is_branch_o = 1'b1;
-                if (opcode_i == PY_OP_POP_JUMP_IF_TRUE || opcode_i == PY_OP_POP_JUMP_IF_FALSE) begin
+                if (opcode_i == PY_OP_POP_JUMP_IF_TRUE ||
+                    opcode_i == PY_OP_POP_JUMP_IF_FALSE ||
+                    opcode_i == PY_OP_POP_JUMP_IF_NONE ||
+                    opcode_i == PY_OP_POP_JUMP_IF_NOT_NONE) begin
                     rs1_sel_o = tos_index_i - 8'd1;
                     pop_stack_o = 1'b1;
                 end
