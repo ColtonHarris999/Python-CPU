@@ -15,6 +15,8 @@ module pycore_trap (
     // routed to the excore before reaching this module when EXCORE_EN and
     // pycore_trap_recoverable(code) both hold).
     input  logic        list_grow_i,
+    // PY_TRAP_LIST_EXTEND: LIST_EXTEND that needs a grow (same routing).
+    input  logic        list_extend_i,
     // Phase C: the excore reported RES_FATAL for a recoverable trap it was
     // handed (S_TRAP_WAIT). excore_fatal_code_i is forwarded verbatim as
     // trap_code_o rather than mapped through a fixed one-hot condition,
@@ -38,7 +40,7 @@ module pycore_trap (
     always_comb begin
         next_trap = type_trap_i || stack_fault_i || div_zero_i || fpu_exception_i ||
                     illegal_opcode_i || call_filter_i || mem_fault_i || addr_align_i ||
-                    list_grow_i || excore_fatal_i;
+                    list_grow_i || list_extend_i || excore_fatal_i;
         if (excore_fatal_i) begin
             next_code = excore_fatal_code_i;
         end else if (type_trap_i) begin
@@ -59,6 +61,8 @@ module pycore_trap (
             next_code = PY_TRAP_MEM_FAULT;
         end else if (list_grow_i) begin
             next_code = PY_TRAP_LIST_GROW;
+        end else if (list_extend_i) begin
+            next_code = PY_TRAP_LIST_EXTEND;
         end else begin
             next_code = PY_TRAP_NONE;
         end

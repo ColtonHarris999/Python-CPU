@@ -81,6 +81,7 @@ OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = _OM.get(
     "LOAD_FAST_BORROW_LOAD_FAST_BORROW", None
 )
 OP_LIST_APPEND   = _OM["LIST_APPEND"]
+OP_LIST_EXTEND   = _OM["LIST_EXTEND"]
 
 # NB_SUBSCR oparg: locate "NB_SUBSCR" in _nb_ops by searching for the entry
 # whose first element contains "SUBSCR".
@@ -101,7 +102,6 @@ if NBARG_SUBSCR is None:
 # user knows to use a supported alternative.
 DEFERRED_OPS: dict[str, str] = {
     "MAP_ADD":       "dict mutation not yet implemented",
-    "LIST_EXTEND":   "list.extend not yet implemented",
     "DICT_UPDATE":   "dict.update not yet implemented",
     "DICT_MERGE":    "dict merge not yet implemented",
     "DELETE_SUBSCR": "del x[k] not yet implemented",
@@ -156,10 +156,12 @@ SUPPORTED_OPS = {
     "BUILD_MAP",
     "BUILD_TUPLE",
     "STORE_SUBSCR",
-    # LIST_APPEND fast-path / grow-trap: see CONT_LIST_APPEND (pycore_core.sv).
-    # Comprehensions still fail validation on FOR_ITER/GET_ITER (deferred);
-    # this only unblocks hand-assembled instruction streams.
+    # LIST_APPEND / LIST_EXTEND fast-path / grow-trap: see CONT_LIST_APPEND
+    # and CONT_LIST_EXTEND (pycore_core.sv). Comprehensions still fail
+    # validation on FOR_ITER/GET_ITER (deferred); LIST_EXTEND is also
+    # emitted by list-display unpack (`[a, *b]` / `[*a, *b]`).
     "LIST_APPEND",
+    "LIST_EXTEND",
 }
 
 SUPPORTED_BINARY_ARGS = {
@@ -506,6 +508,11 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
         elif ins.opname == "LIST_APPEND":
             # Pops only the appended element (TOS); the list handle,
             # `oparg - 1` slots further down, is left in place untouched.
+            if stack:
+                stack.pop()
+        elif ins.opname == "LIST_EXTEND":
+            # Same stack shape as LIST_APPEND: pop only the iterable (TOS);
+            # the list handle at RF[tos-1-arg] stays.
             if stack:
                 stack.pop()
         elif ins.opname == "BINARY_OP":

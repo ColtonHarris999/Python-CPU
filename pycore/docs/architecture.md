@@ -19,19 +19,21 @@ into a two-core system happens in three ordered phases:
 
 - **Phase A** (done): the LIST layout became growable (stable
   object + relocatable buffer — see the LIST section below) and
-  `LIST_APPEND` gained a fast path plus a new trap, `PY_TRAP_LIST_GROW`,
-  that is *classified* recoverable (`pycore_trap_recoverable()`) but still
-  reported fatally, because there is no excore yet to hand it to.
+  `LIST_APPEND` / `LIST_EXTEND` gained fast paths plus recoverable traps
+  (`PY_TRAP_LIST_GROW` / `PY_TRAP_LIST_EXTEND`) that are *classified*
+  recoverable (`pycore_trap_recoverable()`). Without `EXCORE_EN` they are
+  still reported fatally.
 - **Phase B** (done): the excore itself, standalone — `excore_cpu.sv`
   (wrapper around the vendored singlecore `riscv_multicycle` RV32 hart),
   `excore_mmio.sv` (the mailbox/result/slot-port MMIO peripheral), a
   self-contained RV32I assembler (`excore/tools/asm_rv32.py`, no external
   toolchain), and `excore/fw/list_grow.s` — the firmware that
-  emulates-and-completes a `LIST_GROW` trap (allocate a bigger buffer,
-  copy, append, then tell pycore to resume). Unit-tested against a mocked
-  mailbox (canned trap messages driven directly onto `excore_mmio`'s
-  input ports) and a real `pycore_mem_bank` instance. See `excore/docs/`
-  and `excore/rtl/singlecore/README.md` for excore-specific docs.
+  emulates-and-completes `LIST_GROW` and `LIST_EXTEND` traps (allocate a
+  bigger buffer, copy, finish the append/extend, then tell pycore to
+  resume). Unit-tested against a mocked mailbox (canned trap messages
+  driven directly onto `excore_mmio`'s input ports) and a real
+  `pycore_mem_bank` instance. See `excore/docs/` and
+  `excore/rtl/singlecore/README.md` for excore-specific docs.
 - **Phase C** (done): the mailbox transport (`excore/rtl/trap_mailbox.sv`),
   the memory-ownership grant mux in the new `pycore_excore_system.sv` top
   level, and pycore's `S_TRAP_MARSHAL` / `S_TRAP_WAIT` states that hand a
@@ -46,19 +48,33 @@ it was trying to do." For `LIST_APPEND` this means the excore allocates a
 bigger buffer, copies the old elements, **and appends the new one** —
 because by the time the excore is invoked it already holds the element (in
 the trap message) and is already looping over the buffer, so the append
-itself is nearly free. A plain retry would cost a second `S_CONTAINER`
-dispatch and a second memory-ownership handoff round trip for no benefit.
-The result protocol still defines a `RETRY` code for a future handler
-where pycore state genuinely did not advance (e.g. a not-yet-implemented
-opcode being emulated from scratch) — but `LIST_GROW` always answers
-`COMPLETED`.
+itself is nearly free. For `LIST_EXTEND` the same rule applies with
+grow-to-fit: double until `new_cap >= len + src_len`, copy the destination
+prefix, then copy the source elements, and answer `COMPLETED` (pop 1).
+
+A plain **RETRY** after resize-only would cost a second memory-ownership
+handoff plus a second `S_CONTAINER` dispatch. In the eventual pipelined
+pycore that handoff is the dominant cost (pipeline drain / grant /
+refill). Grow-to-fit also matters: a single doubling can still undershoot
+`src_len` (e.g. cap=1, src_len=10 → need=11), so RETRY would cascade into
+multiple traps; COMPLETED finishes in one handoff. The protocol still
+defines `RETRY` for handlers where pycore state genuinely did not advance
+(e.g. emulating an unimplemented opcode from scratch) — but `LIST_GROW`
+and `LIST_EXTEND` always answer `COMPLETED`.
 
 This "complete, don't retry" contract is only safe because every
 recoverable trap is raised **before any RF/heap/dmem commit** (see
-`CONT_LIST_APPEND`'s `CP_HDR` phase, which checks `length < capacity`
-before issuing the `ob_item` read) — a property every future recoverable
-container-op trap must preserve, since `RETRY` semantics depend on pycore
-state not having advanced when the trap fired.
+`CONT_LIST_APPEND`'s `CP_HDR` / `CONT_LIST_EXTEND`'s capacity check) — a
+property every future recoverable container-op trap must preserve, since
+`RETRY` semantics depend on pycore state not having advanced when the trap
+fired.
+
+**Why pycore still owns the fast path when there is spare capacity:**
+handing every extend to the excore would force a memory-ownership transfer
+even when a short copy loop on pycore would suffice. In a future pipelined
+design that transfer flushes in-flight work; keeping `len + src_len <= cap`
+(and the empty-source no-op) on pycore is the low-latency path. Resizing
+itself always stays on the excore — pycore never reallocates list buffers.
 
 ### Two-core transport and integration (Phase C)
 
@@ -526,7 +542,7 @@ phase between the header read and the element access).
 `BUILD_LIST` allocates the object and a `count`-sized buffer in a single
 combined OOM check, with `capacity == count` exactly (no spare capacity —
 matching CPython list-literal semantics; growth only ever happens via
-`LIST_APPEND`, never at construction).
+`LIST_APPEND` / `LIST_EXTEND`, never at construction).
 
 Negative indices are **not** wrapped: the bounds check is unsigned, so a
 negative INT key traps `PY_TRAP_MEM_FAULT` (same policy for TUPLE).
@@ -542,18 +558,34 @@ negative INT key traps `PY_TRAP_MEM_FAULT` (same policy for TUPLE).
 - **Grow path** (`length == capacity`): raises `PY_TRAP_LIST_GROW`
   (trap code 9) **before any RF/heap/dmem commit** — checked in the same
   cycle as the header read ack, before the `ob_item` read is even issued.
-  This early-trap discipline is what lets a future retry-based recovery
-  (the excore's `RETRY` result code) be safe: pycore state has not
-  advanced when the trap fires. As of Phase A there is no excore, so this
-  trap is unconditionally fatal, reported through the normal halt path
-  like any other trap. Phase C wires `EXCORE_EN` + a mailbox handoff so the
-  excore's firmware grows the buffer (typically doubling capacity) and
-  completes the append itself before pycore resumes.
+  With `EXCORE_EN=1` the excore doubles capacity (floor 4), copies, appends,
+  and returns `COMPLETED`. With `EXCORE_EN=0` the trap is fatal.
 
 Cost model: fast path is `O(1)` (5 dmem ops); the grow path is a
 memory-ownership handoff plus `O(length)` element copy in firmware,
 amortized `O(1)` across appends because the excore doubles capacity on
-every grow (see `excore/docs/` once Phase B/C land).
+every grow.
+
+#### `LIST_EXTEND`
+
+`LIST_EXTEND` (opcode 79) extends a list from a **LIST or TUPLE** source
+(other tags → `PY_TRAP_TYPE`; no iterator protocol yet):
+
+- **Empty source**: no-op pop of the iterable on pycore (no trap).
+- **Fast path** (`len + src_len <= capacity`, `CONT_LIST_EXTEND`): copy
+  `src_len` elements into the spare slots, write back the new length, pop
+  the iterable. Self-extend is safe when `2*len <= capacity` (write
+  indices do not overlap the read window).
+- **Grow path** (`len + src_len > capacity`): raises `PY_TRAP_LIST_EXTEND`
+  (trap code 10) before any commit. The excore grows-to-fit
+  (`new_cap = max(cap?cap*2:4, need)`, doubling until `>= need`), copies
+  destination then source (self-extend snapshots `old_buf` before the
+  `ob_item` rewrite; old buffer is intentionally leaked), and returns
+  `COMPLETED` with pop 1.
+
+`compile()` emits `LIST_EXTEND` for list-display unpack (`[1, 2, *x]`,
+`[*a, *b]`). Method-style `a.extend(b)` still lowers via `LOAD_ATTR`+`CALL`
+and is unsupported.
 
 ### TUPLE in-dmem layout
 

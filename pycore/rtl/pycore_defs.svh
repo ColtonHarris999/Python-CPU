@@ -77,15 +77,19 @@ localparam logic [3:0] PY_TRAP_ADDR_ALIGN     = 4'd8;
 // through the same halt path.  Raised before any RF/heap commit (see
 // pycore_trap_recoverable below and CONT_LIST_APPEND's CP_HDR phase).
 localparam logic [3:0] PY_TRAP_LIST_GROW      = 4'd9;
+// PY_TRAP_LIST_EXTEND: raised by CONT_LIST_EXTEND when
+// length + src_len > capacity. Recoverable — the excore grows-to-fit and
+// completes the extend (emulate-and-complete; not RETRY). Raised before
+// any RF/heap commit. Codes 11-15 remain free.
+localparam logic [3:0] PY_TRAP_LIST_EXTEND    = 4'd10;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a
-// hard fatal condition that always halts?  Unused until Phase C wires up
-// S_TRAP_MARSHAL / EXCORE_EN, but defined now alongside the trap codes so
-// the classification lives in one place.
+// hard fatal condition that always halts?
 function automatic logic pycore_trap_recoverable(input logic [3:0] code);
     begin
-        pycore_trap_recoverable = (code == PY_TRAP_LIST_GROW);
+        pycore_trap_recoverable = (code == PY_TRAP_LIST_GROW) ||
+                                  (code == PY_TRAP_LIST_EXTEND);
     end
 endfunction
 
@@ -164,6 +168,11 @@ localparam logic [7:0] PY_OP_RESUME           = 8'd128;
 //   -> 78
 localparam logic [7:0] PY_OP_LIST_APPEND      = 8'd78;
 
+// LIST_EXTEND: resolved from opcode.opmap at tool-import time.
+//   python3.14 -c "import opcode; print(opcode.opmap['LIST_EXTEND'])"
+//   -> 79
+localparam logic [7:0] PY_OP_LIST_EXTEND      = 8'd79;
+
 // -------------------------------------------------------------------------
 // LIST_APPEND stack convention — verified 2026-07-15 against CPython 3.14.6:
 //
@@ -185,6 +194,25 @@ localparam logic [7:0] PY_OP_LIST_APPEND      = 8'd78;
 //   element (popped) : RF[tos-1]
 //   list handle       : RF[tos-1-arg]
 // Confirmed empirically for oparg=2 above (list 3 slots below TOS).
+// -------------------------------------------------------------------------
+
+// -------------------------------------------------------------------------
+// LIST_EXTEND stack convention — verified 2026-07-20 against CPython 3.14.6:
+//
+//   python3.14 -c "
+//   import dis
+//   dis.dis(compile('[*a, *b]', '<p>', 'eval'))"
+//
+//   BUILD_LIST               0
+//   LOAD_NAME                0 (a)
+//   LIST_EXTEND              1
+//   LOAD_NAME                1 (b)
+//   LIST_EXTEND              1
+//
+// Same shape as LIST_APPEND: iterable at TOS (popped), list handle at
+// RF[tos-1-arg].  oparg=1 in every unpack form probed.  Only LIST and
+// TUPLE sources are implemented (TYPE trap otherwise — no iterator
+// protocol yet).  Empty source is a no-op pop.
 // -------------------------------------------------------------------------
 
 // -------------------------------------------------------------------------

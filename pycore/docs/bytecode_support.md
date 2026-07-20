@@ -48,7 +48,8 @@ fully unsupported for the current PyCore implementation.
 | `SWAP` | Swaps TOS with a deeper stack element. | Rejected by the image builder; no hardware execute path yet. |
 | `JUMP_IF_TRUE_OR_POP` | Jumps if truthy else pops TOS. | Not part of the current image-boot subset. |
 | `JUMP_IF_FALSE_OR_POP` | Jumps if falsy else pops TOS. | Not part of the current image-boot subset. |
-| `LIST_APPEND` | Appends TOS to the list `oparg` slots below it (`list, unused[oparg-1], v -- list, unused[oparg-1]`); pops only `v`. | Fast path (`CONT_LIST_APPEND`, opcode 78): spare capacity (`length < capacity`) appends in place, 5 dmem ops, no trap. Grow path (`length == capacity`) raises `PY_TRAP_LIST_GROW` (trap 9) before any commit. With `EXCORE_EN=1` (`pycore_excore_system.sv`, Phase C) this is handed to the excore, which doubles the buffer (floor 4), copies, appends, and returns `COMPLETED` — invisible to the rest of the program except for the handoff latency. With `EXCORE_EN=0` (or no excore, Phase A/B), it is unconditionally fatal. `compile()` only emits this opcode inside comprehensions, which still require `FOR_ITER`/`GET_ITER` (fully unsupported below), so real programs cannot reach it yet; coverage is via hand-assembled fixtures (`list_append_fast`/`list_append_full_fatal` for the single-core path; `grow_from_zero`/`grow_repeated`/`alias_stability`/`mixed_tags_preserved`/`grow_oom_fatal`/`append_across_call`/`excore_disabled` for the two-core path). |
+| `LIST_APPEND` | Appends TOS to the list `oparg` slots below it (`list, unused[oparg-1], v -- list, unused[oparg-1]`); pops only `v`. | Fast path (`CONT_LIST_APPEND`, opcode 78): spare capacity (`length < capacity`) appends in place, 5 dmem ops, no trap. Grow path (`length == capacity`) raises `PY_TRAP_LIST_GROW` (trap 9) before any commit. With `EXCORE_EN=1` the excore doubles the buffer (floor 4), copies, appends, and returns `COMPLETED`. With `EXCORE_EN=0` it is fatal. `compile()` only emits this inside comprehensions (`FOR_ITER`/`GET_ITER` still unsupported); coverage is via hand-assembled fixtures. |
+| `LIST_EXTEND` | Extends the list `oparg` slots below TOS with the iterable at TOS; pops only the iterable. | Fast path (`CONT_LIST_EXTEND`, opcode 79) when `len + src_len <= capacity` (LIST or TUPLE sources only; empty source is a no-op pop). Grow path raises `PY_TRAP_LIST_EXTEND` (trap 10); with `EXCORE_EN=1` the excore grows-to-fit and completes the extend (`COMPLETED`, pop 1). Unsupported iterable tags → `PY_TRAP_TYPE`. Emitted by compile() for list-display unpack (`[1,2,*x]`, `[*a,*b]`); `list.extend` method calls still need `LOAD_ATTR`. Fixtures: `list_extend_*` (single-core), `extend_*` + `img_list_extend` (two-core). |
 
 ## Fully unsupported bytecodes
 
@@ -103,9 +104,7 @@ illegal. Each entry has a TODO hook ready for a follow-up PR.
 
 | Bytecode | Description | Deferral reason |
 | --- | --- | --- |
-| `LIST_APPEND` | Append value to an existing list. | Requires mutable list resize (realloc or capacity extension). |
 | `MAP_ADD` | Add a key/value pair to an existing dict. | Dict mutation via comprehension helper; use `STORE_SUBSCR`. |
-| `LIST_EXTEND` | Extend list with an iterable. | Requires iteration protocol. |
 | `DICT_UPDATE` | Update dict from a mapping. | Requires dict merge semantics. |
 | `DICT_MERGE` | Merge dict into another dict. | Requires dict iteration. |
 | `DELETE_SUBSCR` | `del x[k]` — delete a subscript. | Requires tombstone or shift-down logic. |

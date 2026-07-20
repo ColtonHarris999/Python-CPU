@@ -86,18 +86,18 @@ SUPPORTED_OPS = {
     "STORE_GLOBAL",
     "PUSH_NULL",
     "MAKE_FUNCTION",
-    # LIST_APPEND fast-path (spare capacity) / grow-trap (Phase A) is
-    # implemented in CONT_LIST_APPEND (pycore_core.sv).  compile() only
-    # emits LIST_APPEND inside comprehensions, which still require FOR_ITER
-    # / GET_ITER (deferred below) to reach it — so accepting the opname here
-    # only unblocks hand-assembled instruction streams and future iterator
-    # work, not real compiled comprehensions yet.
+    # LIST_APPEND / LIST_EXTEND fast-path (spare capacity) / grow-trap are
+    # implemented in CONT_LIST_APPEND / CONT_LIST_EXTEND (pycore_core.sv).
+    # LIST_APPEND still only appears inside comprehensions (FOR_ITER/GET_ITER
+    # deferred). LIST_EXTEND is emitted by list-display unpack forms such as
+    # `[1, 2, *x]` and `[*a, *b]` — those are accepted here. Sources must be
+    # LIST or TUPLE (no iterator protocol yet).
     "LIST_APPEND",
+    "LIST_EXTEND",
 }
 
 DEFERRED_OPS: dict[str, str] = {
     "MAP_ADD": "dict-comprehension MAP_ADD lowering is deferred",
-    "LIST_EXTEND": "list unpack/list.extend lowering is deferred",
     "DICT_UPDATE": "dict update/unpack lowering is deferred",
     "DICT_MERGE": "dict merge lowering is deferred",
     "DELETE_SUBSCR": "subscript deletion is deferred",

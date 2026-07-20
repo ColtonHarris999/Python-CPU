@@ -1,9 +1,9 @@
 `include "pycore_defs.svh"
 
 // Phase B testbench: excore_cpu + excore_mmio + a real pycore_mem_bank,
-// running the assembled list_grow.s firmware against five canned trap
-// messages driven directly onto the mailbox input ports (no trap_mailbox.sv
-// / pycore integration yet -- that is Phase C).
+// running the assembled list_grow.s firmware against canned LIST_GROW and
+// LIST_EXTEND trap messages driven directly onto the mailbox input ports
+// (no trap_mailbox.sv / pycore integration yet -- that is Phase C).
 //
 // pycore_mem_bank is configured as a single 8 KB block (BLOCK_SHIFT=13,
 // BLOCK_COUNT=1) covering the whole heap [0, PYCORE_HEAP_LIMIT), so scenario
@@ -192,6 +192,34 @@ module tb_excore #(
         $finish;
     endtask
 
+    // Present a LIST_EXTEND trap (dst list + LIST/TUPLE iterable).
+    task automatic run_list_extend(
+        input logic [131:0] dst_entry,
+        input logic [131:0] src_entry,
+        input logic [31:0] heap_ptr,
+        input int max_cycles
+    );
+        int i;
+        mb_entries[0]  = dst_entry;
+        mb_entries[1]  = src_entry;
+        mb_entry_count = 3'd2;
+        mb_heap_ptr    = heap_ptr;
+        mb_trap_code   = TRAP_LIST_EXTEND;
+        @(negedge clk);
+        mb_trap_pending = 1'b1;
+
+        for (i = 0; i < max_cycles; i++) begin
+            @(posedge clk);
+            if (res_go) begin
+                @(negedge clk);
+                mb_trap_pending = 1'b0;
+                return;
+            end
+        end
+        $error("[FAIL] timed out waiting for RES_GO (LIST_EXTEND)");
+        $finish;
+    endtask
+
     task automatic run_unknown_trap(input logic [3:0] code, input int max_cycles);
         int i;
         mb_entry_count = 3'd0;
@@ -211,12 +239,13 @@ module tb_excore #(
         $finish;
     endtask
 
-    localparam logic [3:0] TRAP_LIST_GROW = 4'd9;
-    localparam logic [3:0] RES_COMPLETED  = 4'd0;
-    localparam logic [3:0] RES_FATAL      = 4'd2;
+    localparam logic [3:0] TRAP_LIST_GROW   = 4'd9;
+    localparam logic [3:0] TRAP_LIST_EXTEND = 4'd10;
+    localparam logic [3:0] RES_COMPLETED    = 4'd0;
+    localparam logic [3:0] RES_FATAL        = 4'd2;
 
     initial begin
-        logic [31:0] obj_addr, old_buf, new_buf;
+        logic [31:0] obj_addr, old_buf, new_buf, src_addr, src_buf;
         logic [127:0] hdr;
 
         clk = 1'b0;
@@ -349,9 +378,122 @@ module tb_excore #(
               "scenario5: expected fatal_code == PY_TRAP_ILLEGAL_OPCODE");
         $display("PASS: scenario5 (unknown trap code -> FATAL(ILLEGAL_OPCODE))");
 
+        // ------------------------------------------------------------------
+        // Scenario 6: LIST_EXTEND from a distinct LIST; grow-to-fit.
+        // dst cap=2/len=1 [100]; src len=2 [200,300]; need=3 → new_cap=4.
+        // ------------------------------------------------------------------
+        do_reset();
+        obj_addr = 32'h0700;
+        old_buf  = 32'h0720;
+        src_addr = 32'h0780;
+        src_buf  = 32'h07A0;
+        new_buf  = 32'h0800;
+        poke_slot(obj_addr, {64'd2, 64'd1});
+        poke_slot(obj_addr + 16, {96'd0, old_buf});
+        poke_slot(old_buf, 128'd100);
+        poke_slot(old_buf + 16, {124'b0, 4'd1});
+        poke_slot(src_addr, {64'd2, 64'd2});          // src header {cap=2,len=2}
+        poke_slot(src_addr + 16, {96'd0, src_buf});
+        poke_slot(src_buf, 128'd200);
+        poke_slot(src_buf + 16, {124'b0, 4'd1});
+        poke_slot(src_buf + 32, 128'd300);
+        poke_slot(src_buf + 48, {124'b0, 4'd1});
+
+        run_list_extend(
+            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            {PY_TAG_LIST, {96{1'b0}}, src_addr},
+            new_buf, 40000);
+
+        check(res_code == RES_COMPLETED, "scenario6: expected RES_COMPLETED");
+        check(res_pop_count == 3'd1, "scenario6: expected pop_count=1");
+        hdr = peek_slot(obj_addr);
+        check(hdr == {64'd4, 64'd3}, "scenario6: header should be {cap=4, len=3}");
+        check(peek_slot(new_buf) == 128'd100, "scenario6: preserved dst[0]");
+        check(peek_slot(new_buf + 32) == 128'd200, "scenario6: extended src[0]");
+        check(peek_slot(new_buf + 64) == 128'd300, "scenario6: extended src[1]");
+        $display("PASS: scenario6 (LIST_EXTEND list source, grow-to-fit)");
+
+        // ------------------------------------------------------------------
+        // Scenario 7: LIST_EXTEND from a TUPLE source.
+        // dst cap=1/len=1 [7]; tuple (8, 9) at src_addr; need=3 → new_cap=4.
+        // ------------------------------------------------------------------
+        do_reset();
+        obj_addr = 32'h0900;
+        old_buf  = 32'h0920;
+        src_addr = 32'h0940; // tuple element base (inline, no header)
+        new_buf  = 32'h0980;
+        poke_slot(obj_addr, {64'd1, 64'd1});
+        poke_slot(obj_addr + 16, {96'd0, old_buf});
+        poke_slot(old_buf, 128'd7);
+        poke_slot(old_buf + 16, {124'b0, 4'd1});
+        poke_slot(src_addr, 128'd8);
+        poke_slot(src_addr + 16, {124'b0, 4'd1});
+        poke_slot(src_addr + 32, 128'd9);
+        poke_slot(src_addr + 48, {124'b0, 4'd1});
+
+        run_list_extend(
+            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            {PY_TAG_TUPLE, 64'd2, {32'd0, src_addr}},
+            new_buf, 40000);
+
+        check(res_code == RES_COMPLETED, "scenario7: expected RES_COMPLETED");
+        hdr = peek_slot(obj_addr);
+        check(hdr == {64'd4, 64'd3}, "scenario7: header should be {cap=4, len=3}");
+        check(peek_slot(new_buf) == 128'd7, "scenario7: preserved dst[0]");
+        check(peek_slot(new_buf + 32) == 128'd8, "scenario7: tuple elem0");
+        check(peek_slot(new_buf + 64) == 128'd9, "scenario7: tuple elem1");
+        $display("PASS: scenario7 (LIST_EXTEND tuple source)");
+
+        // ------------------------------------------------------------------
+        // Scenario 8: LIST_EXTEND self-extend.
+        // dst cap=2/len=2 [11, 22]; extend with itself → [11,22,11,22], cap=4.
+        // ------------------------------------------------------------------
+        do_reset();
+        obj_addr = 32'h0A00;
+        old_buf  = 32'h0A20;
+        new_buf  = 32'h0A80;
+        poke_slot(obj_addr, {64'd2, 64'd2});
+        poke_slot(obj_addr + 16, {96'd0, old_buf});
+        poke_slot(old_buf, 128'd11);
+        poke_slot(old_buf + 16, {124'b0, 4'd1});
+        poke_slot(old_buf + 32, 128'd22);
+        poke_slot(old_buf + 48, {124'b0, 4'd1});
+
+        run_list_extend(
+            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            new_buf, 40000);
+
+        check(res_code == RES_COMPLETED, "scenario8: expected RES_COMPLETED");
+        hdr = peek_slot(obj_addr);
+        check(hdr == {64'd4, 64'd4}, "scenario8: header should be {cap=4, len=4}");
+        check(peek_slot(new_buf) == 128'd11, "scenario8: dst[0]");
+        check(peek_slot(new_buf + 32) == 128'd22, "scenario8: dst[1]");
+        check(peek_slot(new_buf + 64) == 128'd11, "scenario8: self-copy[0]");
+        check(peek_slot(new_buf + 96) == 128'd22, "scenario8: self-copy[1]");
+        $display("PASS: scenario8 (LIST_EXTEND self-extend)");
+
+        // ------------------------------------------------------------------
+        // Scenario 9: LIST_EXTEND with INT iterable → FATAL(TYPE).
+        // ------------------------------------------------------------------
+        do_reset();
+        obj_addr = 32'h0B00;
+        poke_slot(obj_addr, {64'd1, 64'd0});
+        poke_slot(obj_addr + 16, 128'd0);
+
+        run_list_extend(
+            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            {4'd1, 128'd5}, // INT
+            32'h0B40, 20000);
+
+        check(res_code == RES_FATAL, "scenario9: expected RES_FATAL");
+        check(res_fatal_code == PY_TRAP_TYPE,
+              "scenario9: expected fatal_code == PY_TRAP_TYPE");
+        $display("PASS: scenario9 (LIST_EXTEND bad iterable -> FATAL(TYPE))");
+
         check(!cpu_fault, "excore_cpu raised an internal fault (unsupported instruction)");
 
-        $display("PASS: tb_excore — all 5 scenarios green");
+        $display("PASS: tb_excore — all 9 scenarios green");
         $finish;
     end
 endmodule

@@ -5,8 +5,8 @@ unimplemented opcode, ...), following the pattern `PY_TRAP_LIST_GROW`
 established:
 
 1. **Assign a trap code.** Add `PY_TRAP_<NAME>` to `pycore_defs.svh`
-   (codes 10-15 are free as of this writing — `pycore_defs.svh` is the
-   source of truth for what's taken).
+   (codes 11-15 are free as of this writing — `9`/`10` are
+   `LIST_GROW`/`LIST_EXTEND`; `pycore_defs.svh` is the source of truth).
 
 2. **Classify it.** Add it to `pycore_trap_recoverable()` in
    `pycore_defs.svh`. This is the single gate that decides whether

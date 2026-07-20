@@ -162,6 +162,7 @@ module pycore_core #(
     localparam logic [3:0] CONT_STORE_NAME   = 4'd10;// STORE_NAME / STORE_GLOBAL
     localparam logic [3:0] CONT_LFB_PAIR     = 4'd11;// LFB_LFB combined load
     localparam logic [3:0] CONT_LIST_APPEND  = 4'd12;// LIST_APPEND fast path (Phase A)
+    localparam logic [3:0] CONT_LIST_EXTEND  = 4'd13;// LIST_EXTEND fast path / grow trap
 
     // Container phases (stored in container_phase_r, 4-bit).
     //
@@ -217,8 +218,18 @@ module pycore_core #(
     //     (CONT_SUBSCR_LIST, CONT_STORE_LIST, CONT_LIST_APPEND fast path).
     //   CP_LIST_WB (21): header write-back ack (CONT_LIST_APPEND: commits
     //     length+1 after the element itself has been written).
+    //   CP_SRC_HDR (22): CONT_LIST_EXTEND — waiting on source-list header
+    //     read (when the iterable is a distinct LIST).
+    //   CP_EXT_SRC_BUF (23): CONT_LIST_EXTEND — waiting on source-list
+    //     ob_item read before the element copy loop.
+    //   CP_EXT_DST_VAL / CP_EXT_DST_TAG (24/25): CONT_LIST_EXTEND fast-path
+    //     destination element value/tag writes inside the copy loop.
     localparam logic [4:0] CP_LIST_BUF    = 5'd20;
     localparam logic [4:0] CP_LIST_WB     = 5'd21;
+    localparam logic [4:0] CP_SRC_HDR     = 5'd22;
+    localparam logic [4:0] CP_EXT_SRC_BUF = 5'd23;
+    localparam logic [4:0] CP_EXT_DST_VAL = 5'd24;
+    localparam logic [4:0] CP_EXT_DST_TAG = 5'd25;
 
     logic [3:0] state_r;
 
@@ -348,6 +359,13 @@ module pycore_core #(
     // trap; raised strictly before any RF/heap commit (CP_HDR, before the
     // ob_item read) so a future RETRY-based recovery stays valid.
     logic                          container_list_grow_trap_r;
+    // CONT_LIST_EXTEND: source iterable buffer base (list ob_item or tuple
+    // addr) and source length, held across the destination copy loop.
+    logic [31:0]                   container_src_buf_r;
+    logic [31:0]                   container_src_len_r;
+    logic [31:0]                   container_dst_len_r;
+    // One-cycle pulse: CONT_LIST_EXTEND needs a grow (len+src_len > cap).
+    logic                          container_list_extend_trap_r;
 
     // -----------------------------------------------------------------------
     // S_TRAP_MARSHAL / S_TRAP_WAIT (Phase C) registers.
@@ -916,6 +934,8 @@ module pycore_core #(
     // intercepts pycore_trap_recoverable() codes before they ever reach
     // this signal when EXCORE_EN is set.
     assign list_grow_sig  = container_list_grow_trap_r;
+    logic list_extend_sig;
+    assign list_extend_sig = container_list_extend_trap_r;
     // Phase C: excore reported RES_FATAL for a trap it was handed — forward
     // its fatal_code as a normal halt (see S_TRAP_WAIT).
     logic excore_fatal_sig;
@@ -943,6 +963,7 @@ module pycore_core #(
         .mem_fault_i(mem_fault_sig),
         .addr_align_i(addr_align_sig),
         .list_grow_i(list_grow_sig),
+        .list_extend_i(list_extend_sig),
         .excore_fatal_i(excore_fatal_sig),
         .excore_fatal_code_i(excore_fatal_code_r),
         .fault_pc_i(fault_pc),
@@ -1031,6 +1052,17 @@ module pycore_core #(
                              pycore_list_buf_bytes({25'b0, container_count_r}));
     assign cont_bt_alloc  = pycore_tuple_alloc_bytes({25'b0, container_count_r});
     assign cont_tuple_size = pycore_tuple_size(cont_rs1_val);
+    // LIST_EXTEND: iterable is rs2 — tuple size/addr come from its handle.
+    logic [63:0]  cont_tuple_size_rs2;
+    logic [31:0]  cont_tuple_addr_rs2;
+    logic [63:0]  cont_ext_hdr_len;
+    logic [63:0]  cont_ext_hdr_cap;
+    logic [31:0]  cont_ext_dst_idx; // dst_len + copy idx for writes
+    assign cont_tuple_size_rs2 = pycore_tuple_size(cont_rs2_val);
+    assign cont_tuple_addr_rs2 = cont_rs2_val[31:0];
+    assign cont_ext_hdr_len    = pycore_list_length(container_list_hdr_r);
+    assign cont_ext_hdr_cap    = pycore_list_capacity(container_list_hdr_r);
+    assign cont_ext_dst_idx    = container_dst_len_r + {25'b0, container_idx_r};
     assign cont_rs1_tag   = pycore_get_tag(rs1_r);
     assign cont_rs2_tag   = pycore_get_tag(rs2_r);
     assign cont_rf_rs1_val = pycore_get_val(rf_rs1);
@@ -1255,7 +1287,11 @@ module pycore_core #(
             container_mem_fault_r    <= 1'b0;
             container_buf_r          <= '0;
             container_list_hdr_r     <= '0;
-            container_list_grow_trap_r <= 1'b0;
+            container_list_grow_trap_r   <= 1'b0;
+            container_src_buf_r          <= '0;
+            container_src_len_r          <= '0;
+            container_dst_len_r          <= '0;
+            container_list_extend_trap_r <= 1'b0;
             trap_marshal_pending_r     <= 1'b0;
             trap_marshal_code_r        <= '0;
             trap_marshal_entry_count_r <= '0;
@@ -1285,7 +1321,8 @@ module pycore_core #(
             container_wb_we_r     <= 1'b0;
             container_type_trap_r <= 1'b0;
             container_mem_fault_r <= 1'b0;
-            container_list_grow_trap_r <= 1'b0;
+            container_list_grow_trap_r   <= 1'b0;
+            container_list_extend_trap_r <= 1'b0;
             excore_fatal_trap_r   <= 1'b0;
             call_filter_trap_r    <= 1'b0;
 
@@ -1371,6 +1408,8 @@ module pycore_core #(
                                 container_lfb_lo_r <= cur_arg_r[3:0];
                             end else if (cur_opcode_r == PY_OP_LIST_APPEND) begin
                                 container_op_r <= CONT_LIST_APPEND;
+                            end else if (cur_opcode_r == PY_OP_LIST_EXTEND) begin
+                                container_op_r <= CONT_LIST_EXTEND;
                             end else if (cur_opcode_r == PY_OP_BINARY_OP) begin
                                 // BINARY_OP/NB_SUBSCR: rs1 = container.
                                 if (cont_rs1_tag == PY_TAG_DICT)
@@ -2216,6 +2255,257 @@ module pycore_core #(
 
                             endcase
                         end // CONT_LIST_APPEND
+
+                        // =====================================================
+                        // CONT_LIST_EXTEND: extend dst list from a LIST or TUPLE
+                        // source.  Fast path when len+src_len <= capacity;
+                        // otherwise PY_TRAP_LIST_EXTEND (excore grows-to-fit
+                        // and completes the extend). Empty source is a no-op
+                        // pop. Unsupported iterable tags → TYPE trap.
+                        //
+                        //   rs1_r = list handle (RF[tos-1-arg])
+                        //   rs2_r = iterable    (RF[tos-1], popped)
+                        // =====================================================
+                        CONT_LIST_EXTEND: begin
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    if (cont_rs1_tag != PY_TAG_LIST) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else if (cont_rs2_tag != PY_TAG_LIST &&
+                                                 cont_rs2_tag != PY_TAG_TUPLE) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        container_base_r         <= cont_rs1_addr;
+                                        container_dmem_addr_r    <= cont_rs1_addr;
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_HDR;
+                                    end
+                                end
+
+                                CP_HDR: begin
+                                    if (!container_dmem_pending_r) begin
+                                        // Snapshot dst header; decide next step.
+                                        container_list_hdr_r <= container_rd_data_r;
+                                        container_dst_len_r  <= cont_hdr_len[31:0];
+                                        if (cont_rs2_tag == PY_TAG_TUPLE) begin
+                                            container_src_len_r <= cont_tuple_size_rs2[31:0];
+                                            container_src_buf_r <= cont_tuple_addr_rs2;
+                                            // Fall through to capacity decision below
+                                            // via a dedicated phase that doesn't
+                                            // wait on dmem.
+                                            container_phase_r <= CP_SRC_HDR;
+                                            // No dmem op pending; CP_SRC_HDR runs
+                                            // immediately next cycle.
+                                        end else if (cont_rs2_addr == cont_rs1_addr) begin
+                                            // Self-extend: snapshot src_len = dst len.
+                                            container_src_len_r <= cont_hdr_len[31:0];
+                                            container_phase_r   <= CP_SRC_HDR;
+                                        end else begin
+                                            // Distinct list source: read its header.
+                                            container_dmem_addr_r    <= cont_rs2_addr;
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_SRC_HDR;
+                                        end
+                                    end
+                                end
+
+                                CP_SRC_HDR: begin
+                                    // Either we just arrived with src_len already
+                                    // set (tuple / self), or we need to latch it
+                                    // from a source-list header ack.
+                                    if (cont_rs2_tag == PY_TAG_LIST &&
+                                        cont_rs2_addr != cont_rs1_addr &&
+                                        container_dmem_pending_r) begin
+                                        // Still waiting on src header.
+                                    end else begin
+                                        if (cont_rs2_tag == PY_TAG_LIST &&
+                                            cont_rs2_addr != cont_rs1_addr &&
+                                            !container_dmem_pending_r) begin
+                                            container_src_len_r <= cont_hdr_len[31:0];
+                                        end
+                                        // Capacity decision. Use latched
+                                        // container_src_len_r when already set
+                                        // (tuple/self); for distinct list the
+                                        // assign above commits this cycle so
+                                        // combinational need uses cont_hdr_len.
+                                        if ((cont_rs2_tag == PY_TAG_LIST &&
+                                             cont_rs2_addr != cont_rs1_addr)
+                                            ? (cont_ext_hdr_len + cont_hdr_len >
+                                               cont_ext_hdr_cap)
+                                            : (cont_ext_hdr_len +
+                                               {32'b0, container_src_len_r} >
+                                               cont_ext_hdr_cap)) begin
+                                            // Grow path — early trap, no commit.
+                                            if (EXCORE_EN &&
+                                                pycore_trap_recoverable(PY_TRAP_LIST_EXTEND)) begin
+                                                trap_marshal_pending_r     <= 1'b1;
+                                                trap_marshal_code_r        <= PY_TRAP_LIST_EXTEND;
+                                                trap_marshal_entry_count_r <= 3'd2;
+                                                trap_marshal_entries_r[0]  <= rs1_r;
+                                                trap_marshal_entries_r[1]  <= rs2_r;
+                                                container_phase_r          <= CP_DONE;
+                                            end else begin
+                                                container_list_extend_trap_r <= 1'b1;
+                                            end
+                                        end else if (
+                                            (cont_rs2_tag == PY_TAG_LIST &&
+                                             cont_rs2_addr != cont_rs1_addr)
+                                            ? (cont_hdr_len == 64'd0)
+                                            : (container_src_len_r == 32'd0)) begin
+                                            // Empty source: pop iterable, done.
+                                            tos_r             <= tos_r - RF_AW'(1);
+                                            fetch_skip_r      <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            // Fast path: read dst ob_item.
+                                            if (cont_rs2_tag == PY_TAG_LIST &&
+                                                cont_rs2_addr != cont_rs1_addr) begin
+                                                container_src_len_r <= cont_hdr_len[31:0];
+                                            end
+                                            container_dmem_addr_r    <=
+                                                pycore_list_obitem_addr(container_base_r);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_LIST_BUF;
+                                        end
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_buf_r <= cont_obitem_buf;
+                                        container_idx_r <= 7'd0;
+                                        if (cont_rs2_tag == PY_TAG_LIST) begin
+                                            if (cont_rs2_addr == cont_rs1_addr) begin
+                                                // Self-extend: src buf == dst buf
+                                                // (ob_item just read).
+                                                container_src_buf_r <= cont_obitem_buf;
+                                                container_dmem_addr_r <=
+                                                    pycore_list_val_addr(
+                                                        cont_obitem_buf, 32'd0);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r        <= CP_VAL;
+                                            end else begin
+                                                // Read source list ob_item.
+                                                container_dmem_addr_r <=
+                                                    pycore_list_obitem_addr(cont_rs2_addr);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r        <= CP_EXT_SRC_BUF;
+                                            end
+                                        end else begin
+                                            // Tuple: src_buf already set.
+                                            container_dmem_addr_r <=
+                                                pycore_tuple_val_addr(
+                                                    container_src_buf_r, 32'd0);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_VAL;
+                                        end
+                                    end
+                                end
+
+                                CP_EXT_SRC_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_src_buf_r <= cont_obitem_buf;
+                                        container_dmem_addr_r <=
+                                            pycore_list_val_addr(cont_obitem_buf, 32'd0);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_VAL;
+                                    end
+                                end
+
+                                // Copy loop: read src value.
+                                CP_VAL: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_val_r <= container_rd_data_r;
+                                        container_dmem_addr_r <=
+                                            container_dmem_addr_r + 32'd16;
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_TAG;
+                                    end
+                                end
+
+                                // Copy loop: read src tag, then write dst value.
+                                CP_TAG: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_tag_r <= container_rd_data_r[3:0];
+                                        container_dmem_addr_r <=
+                                            pycore_list_val_addr(
+                                                container_buf_r, cont_ext_dst_idx);
+                                        container_dmem_we_r     <= 1'b1;
+                                        container_dmem_wdata_r  <= container_val_r;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r       <= CP_EXT_DST_VAL;
+                                    end
+                                end
+
+                                CP_EXT_DST_VAL: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r <=
+                                            pycore_list_tag_addr(
+                                                container_buf_r, cont_ext_dst_idx);
+                                        container_dmem_we_r     <= 1'b1;
+                                        container_dmem_wdata_r  <=
+                                            {124'b0, container_tag_r};
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r       <= CP_EXT_DST_TAG;
+                                    end
+                                end
+
+                                CP_EXT_DST_TAG: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if ({25'b0, container_idx_r} + 32'd1 <
+                                            container_src_len_r) begin
+                                            container_idx_r <= container_idx_r + 7'd1;
+                                            if (cont_rs2_tag == PY_TAG_TUPLE) begin
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_val_addr(
+                                                        container_src_buf_r,
+                                                        {25'b0, container_idx_r} + 32'd1);
+                                            end else begin
+                                                container_dmem_addr_r <=
+                                                    pycore_list_val_addr(
+                                                        container_src_buf_r,
+                                                        {25'b0, container_idx_r} + 32'd1);
+                                            end
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_VAL;
+                                        end else begin
+                                            // All elements copied — write header.
+                                            container_dmem_addr_r  <= container_base_r;
+                                            container_dmem_we_r     <= 1'b1;
+                                            container_dmem_wdata_r  <= pycore_list_header(
+                                                cont_ext_hdr_cap,
+                                                cont_ext_hdr_len +
+                                                    {32'b0, container_src_len_r});
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r       <= CP_LIST_WB;
+                                        end
+                                    end
+                                end
+
+                                CP_LIST_WB: begin
+                                    if (!container_dmem_pending_r) begin
+                                        tos_r             <= tos_r - RF_AW'(1);
+                                        fetch_skip_r      <= 1'b1;
+                                        container_phase_r <= CP_DONE;
+                                    end
+                                end
+
+                                CP_DONE: ;
+
+                                default: ;
+
+                            endcase
+                        end // CONT_LIST_EXTEND
 
                         // ===========================================================
                         // CONT_BUILD_MAP: allocate dict + linear-probe insert all pairs.

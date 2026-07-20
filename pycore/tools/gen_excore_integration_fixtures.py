@@ -32,6 +32,7 @@ OP_LOAD_CONST = 82
 OP_LOAD_SMALL_INT = 94
 OP_BINARY_OP = 44
 OP_LIST_APPEND = 78
+OP_LIST_EXTEND = 79
 OP_RETURN_VALUE = 35
 OP_PUSH_NULL = 33
 OP_CALL = 52
@@ -314,6 +315,274 @@ def gen_append_across_call() -> None:
     )
 
 
+# ===========================================================================
+# LIST_EXTEND integration fixtures
+# ===========================================================================
+
+
+def gen_extend_grow_list() -> None:
+    """Full dst [1] (cap=1) + LIST_EXTEND from [2, 3] → grow-to-fit, return
+    1+2+3 = 6. One LIST_EXTEND trap.
+    """
+    heap = _new_heap()
+    dst = heap.alloc_list([(TAG_INT, int_value(1))])
+    src = heap.alloc_list([(TAG_INT, int_value(2)), (TAG_INT, int_value(3))])
+    co_consts = heap.alloc_tuple([dst, src])
+
+    slots: list[str] = []
+    _emit(slots, OP_RESUME)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_CONST, 1)
+    _emit(slots, OP_LIST_EXTEND, 1)            # 1+2 > 1 → trap 10
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 0)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 1)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_BINARY_OP, NBARG_ADD)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 2)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_BINARY_OP, NBARG_ADD)
+    _emit(slots, OP_RETURN_VALUE)
+
+    _write_image("extend_grow_list", heap, slots, co_consts)
+
+
+def gen_extend_grow_tuple() -> None:
+    """Full dst [10] + LIST_EXTEND from tuple (20, 30) → return 60."""
+    heap = _new_heap()
+    dst = heap.alloc_list([(TAG_INT, int_value(10))])
+    src = heap.alloc_tuple([(TAG_INT, int_value(20)), (TAG_INT, int_value(30))])
+    co_consts = heap.alloc_tuple([dst, src])
+
+    slots: list[str] = []
+    _emit(slots, OP_RESUME)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_CONST, 1)
+    _emit(slots, OP_LIST_EXTEND, 1)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 0)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 1)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_BINARY_OP, NBARG_ADD)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 2)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_BINARY_OP, NBARG_ADD)
+    _emit(slots, OP_RETURN_VALUE)
+
+    _write_image("extend_grow_tuple", heap, slots, co_consts)
+
+
+def gen_extend_fast_no_trap() -> None:
+    """Spare capacity: cap=8/len=1 + extend [2,3] → no trap; return 2+3=5."""
+    heap = _new_heap()
+    dst = heap.alloc_list_with_capacity([(TAG_INT, int_value(1))], capacity=8)
+    src = heap.alloc_list([(TAG_INT, int_value(2)), (TAG_INT, int_value(3))])
+    co_consts = heap.alloc_tuple([dst, src])
+
+    slots: list[str] = []
+    _emit(slots, OP_RESUME)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_CONST, 1)
+    _emit(slots, OP_LIST_EXTEND, 1)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 1)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 2)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_BINARY_OP, NBARG_ADD)
+    _emit(slots, OP_RETURN_VALUE)
+
+    _write_image("extend_fast_no_trap", heap, slots, co_consts)
+
+
+def gen_extend_empty_noop() -> None:
+    """Empty source: no trap, list unchanged; return 7."""
+    heap = _new_heap()
+    dst = heap.alloc_list_with_capacity([(TAG_INT, int_value(7))], capacity=4)
+    src = heap.alloc_list([])
+    co_consts = heap.alloc_tuple([dst, src])
+
+    slots: list[str] = []
+    _emit(slots, OP_RESUME)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_CONST, 1)
+    _emit(slots, OP_LIST_EXTEND, 1)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 0)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_RETURN_VALUE)
+
+    _write_image("extend_empty_noop", heap, slots, co_consts)
+
+
+def gen_extend_self() -> None:
+    """Self-extend full list [10, 20] (cap=2) → [10,20,10,20]; return 60."""
+    heap = _new_heap()
+    dst = heap.alloc_list(
+        [(TAG_INT, int_value(10)), (TAG_INT, int_value(20))]
+    )
+    co_consts = heap.alloc_tuple([dst])
+
+    slots: list[str] = []
+    _emit(slots, OP_RESUME)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_CONST, 0)             # self as iterable
+    _emit(slots, OP_LIST_EXTEND, 1)            # 2+2 > 2 → grow
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 0)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 1)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_BINARY_OP, NBARG_ADD)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 2)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_BINARY_OP, NBARG_ADD)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 3)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(slots, OP_BINARY_OP, NBARG_ADD)
+    _emit(slots, OP_RETURN_VALUE)
+
+    _write_image("extend_self", heap, slots, co_consts)
+
+
+def gen_extend_mixed_tags() -> None:
+    """Full dst [999]; extend [SHORT_STR, nested LIST[123], 555].
+    Returns 999 + 123 + 555 = 1677 (same checksum idea as append mixed-tags).
+    """
+    heap = _new_heap()
+    nested = heap.alloc_list([(TAG_INT, int_value(123))])
+    dst = heap.alloc_list([(TAG_INT, int_value(999))])
+    src = heap.alloc_list([
+        heap_image_short_str("hi"),
+        nested,
+        (TAG_INT, int_value(555)),
+    ])
+    co_consts = heap.alloc_tuple([dst, src])
+
+    slots: list[str] = []
+    _emit(slots, OP_RESUME)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_CONST, 1)
+    _emit(slots, OP_LIST_EXTEND, 1)            # 1+3 > 1 → grow
+
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 0)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)   # [999]
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 2)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)   # [999, nested]
+    _emit(slots, OP_LOAD_SMALL_INT, 0)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)   # [999, 123]
+    _emit(slots, OP_BINARY_OP, NBARG_ADD)      # [1122]
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_SMALL_INT, 3)
+    _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)   # [1122, 555]
+    _emit(slots, OP_BINARY_OP, NBARG_ADD)      # [1677]
+    _emit(slots, OP_RETURN_VALUE)
+
+    _write_image("extend_mixed_tags", heap, slots, co_consts)
+
+
+def gen_extend_grow_to_fit() -> None:
+    """cap=1/len=1 dst + 10-element src → need=11, doubles 2→4→8→16 in one
+    COMPLETED handoff (proves grow-to-fit beats double+RETRY). Checksum
+    sum(dst) = 1 + sum(10..19) = 1+145 = 146.
+    """
+    heap = _new_heap()
+    dst = heap.alloc_list([(TAG_INT, int_value(1))])
+    src = heap.alloc_list([(TAG_INT, int_value(10 + i)) for i in range(10)])
+    co_consts = heap.alloc_tuple([dst, src])
+
+    slots: list[str] = []
+    _emit(slots, OP_RESUME)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_CONST, 1)
+    _emit(slots, OP_LIST_EXTEND, 1)
+
+    _emit(slots, OP_LOAD_SMALL_INT, 0)         # acc
+    for i in range(11):
+        _emit(slots, OP_LOAD_CONST, 0)
+        _emit(slots, OP_LOAD_SMALL_INT, i)
+        _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)
+        _emit(slots, OP_BINARY_OP, NBARG_ADD)
+    _emit(slots, OP_RETURN_VALUE)
+
+    _write_image("extend_grow_to_fit", heap, slots, co_consts, stacksize=8)
+
+
+def gen_extend_oom_fatal() -> None:
+    """Full list + extend one element; HEAP_INIT_PTR overridden near limit
+    so the grow-to-fit buffer cannot fit → FATAL(MEM_FAULT).
+    """
+    heap = _new_heap()
+    dst = heap.alloc_list(
+        [(TAG_INT, int_value(i)) for i in (1, 2, 3, 4)]
+    )
+    src = heap.alloc_list([(TAG_INT, int_value(99))])
+    co_consts = heap.alloc_tuple([dst, src])
+
+    slots: list[str] = []
+    _emit(slots, OP_RESUME)
+    _emit(slots, OP_LOAD_CONST, 0)
+    _emit(slots, OP_LOAD_CONST, 1)
+    _emit(slots, OP_LIST_EXTEND, 1)
+
+    _write_image("extend_oom_fatal", heap, slots, co_consts)
+
+
+def gen_extend_across_call() -> None:
+    """LIST_EXTEND trap inside a callee frame; return element[1] = 88."""
+    heap = _new_heap()
+
+    callee_dst = heap.alloc_list([(TAG_INT, int_value(77))])
+    callee_src = heap.alloc_list([(TAG_INT, int_value(88))])
+    callee_consts = heap.alloc_tuple([callee_dst, callee_src])
+
+    callee_slots: list[str] = []
+    _emit(callee_slots, OP_RESUME)
+    _emit(callee_slots, OP_LOAD_CONST, 0)
+    _emit(callee_slots, OP_LOAD_CONST, 1)
+    _emit(callee_slots, OP_LIST_EXTEND, 1)
+    _emit(callee_slots, OP_LOAD_CONST, 0)
+    _emit(callee_slots, OP_LOAD_SMALL_INT, 1)
+    _emit(callee_slots, OP_BINARY_OP, NBARG_SUBSCR)
+    _emit(callee_slots, OP_RETURN_VALUE)
+
+    callee_names = heap.alloc_tuple([])
+    callee_code = heap.add_code_object(
+        entry_slot=0,
+        co_consts=callee_consts,
+        co_names=callee_names,
+        stacksize=4,
+        nlocals=0,
+        argcount=0,
+    )
+
+    caller_slots: list[str] = []
+    _emit(caller_slots, OP_RESUME)
+    _emit(caller_slots, OP_LOAD_CONST, 0)
+    _emit(caller_slots, OP_PUSH_NULL)
+    _emit(caller_slots, OP_CALL, 0)
+    _emit(caller_slots, OP_RETURN_VALUE)
+
+    module_co_consts = heap.alloc_tuple([callee_code])
+    slots = callee_slots + caller_slots
+    _write_image(
+        "extend_across_call", heap, slots, module_co_consts,
+        entry_slot=len(callee_slots), stacksize=4,
+    )
+
+
 def main() -> None:
     gen_grow_from_zero()
     gen_fast_path_no_trap()
@@ -322,6 +591,15 @@ def main() -> None:
     gen_mixed_tags_preserved()
     gen_grow_repeated()
     gen_append_across_call()
+    gen_extend_grow_list()
+    gen_extend_grow_tuple()
+    gen_extend_fast_no_trap()
+    gen_extend_empty_noop()
+    gen_extend_self()
+    gen_extend_mixed_tags()
+    gen_extend_grow_to_fit()
+    gen_extend_oom_fatal()
+    gen_extend_across_call()
     print("Wrote Phase C integration fixtures under", PROGRAMS_DIR)
 
 

@@ -89,11 +89,22 @@ EXCORE_RTL_SRCS := \
 	pycore-container-dict-full-insert pycore-container-list-oom \
 	pycore-container-list-append-fast pycore-container-list-append-full-fatal \
 	pycore-list-append-fixtures \
+	pycore-container-list-extend-fast pycore-container-list-extend-fast-tuple \
+	pycore-container-list-extend-empty \
+	pycore-container-list-extend-full-fatal pycore-container-list-extend-type-fatal \
+	pycore-list-extend-fixtures \
 	pycore-excore-integration-fixtures pycore-excore-grow-from-zero \
 	pycore-excore-fast-path-no-trap pycore-excore-grow-oom-fatal \
 	pycore-excore-alias-stability pycore-excore-mixed-tags-preserved \
 	pycore-excore-grow-repeated pycore-excore-append-across-call \
-	pycore-excore-disabled pycore-excore-system \
+	pycore-excore-disabled \
+	pycore-excore-extend-grow-list pycore-excore-extend-grow-tuple \
+	pycore-excore-extend-fast-no-trap pycore-excore-extend-empty-noop \
+	pycore-excore-extend-self pycore-excore-extend-mixed-tags \
+	pycore-excore-extend-grow-to-fit pycore-excore-extend-oom-fatal \
+	pycore-excore-extend-across-call pycore-excore-extend-disabled \
+	pycore-excore-system \
+	pycore-img-list-extend-two-core \
 	pycore-img-two-core \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
@@ -478,6 +489,12 @@ pycore-img-globals-accum-two-core: excore-fw
 pycore-img-string-ops-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,string_ops,100000)
 
+# LIST_EXTEND via compile() list-display unpack (`[1,2,*x]`, `[*a,*b]`).
+# Always hits the grow path (BUILD_LIST allocates cap==len), so this is
+# two-core only.
+pycore-img-list-extend-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_extend,100000)
+
 pycore-img-two-core: \
 	pycore-img-smoke-two-core \
 	pycore-img-call-chain-two-core \
@@ -494,7 +511,8 @@ pycore-img-two-core: \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \
 	pycore-img-globals-accum-two-core \
-	pycore-img-string-ops-two-core
+	pycore-img-string-ops-two-core \
+	pycore-img-list-extend-two-core
 
 pycore-img: \
 	pycore-img-smoke \
@@ -637,6 +655,76 @@ pycore-container-list-append-fast:
 pycore-container-list-append-full-fatal:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_append_full_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d9 -GSTRING_HEX=\"pycore/programs/list_append_full_fatal_str.hex\",pycore_container_list_append_full_fatal)
 
+# list_extend_* (LIST_EXTEND): hand-built fixtures — see
+# pycore/tools/gen_list_extend_fixtures.py. Fast-path cases need spare
+# capacity (BUILD_LIST never produces it). Grow-without-excore is fatal
+# trap code 10; unsupported iterable tags are TYPE (code 1).
+pycore-list-extend-fixtures:
+	$(PYTHON) pycore/tools/gen_list_extend_fixtures.py
+
+pycore-container-list-extend-fast:
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_fast.meta); \
+	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	mkdir -p $(BUILD_DIR); \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/list_extend_fast.hex\" \
+		-GSTRING_HEX=\"pycore/programs/list_extend_fast_str.hex\" \
+		-GDMEM_HEX=\"pycore/programs/list_extend_fast_dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd19" \
+		--Mdir $(BUILD_DIR)/pycore_container_list_extend_fast \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/pycore_container_list_extend_fast/Vtb_container
+
+pycore-container-list-extend-fast-tuple:
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_fast_tuple.meta); \
+	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	mkdir -p $(BUILD_DIR); \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/list_extend_fast_tuple.hex\" \
+		-GSTRING_HEX=\"pycore/programs/list_extend_fast_tuple_str.hex\" \
+		-GDMEM_HEX=\"pycore/programs/list_extend_fast_tuple_dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd23" \
+		--Mdir $(BUILD_DIR)/pycore_container_list_extend_fast_tuple \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/pycore_container_list_extend_fast_tuple/Vtb_container
+
+pycore-container-list-extend-empty:
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_empty.meta); \
+	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	mkdir -p $(BUILD_DIR); \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/list_extend_empty.hex\" \
+		-GSTRING_HEX=\"pycore/programs/list_extend_empty_str.hex\" \
+		-GDMEM_HEX=\"pycore/programs/list_extend_empty_dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd42" \
+		--Mdir $(BUILD_DIR)/pycore_container_list_extend_empty \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/pycore_container_list_extend_empty/Vtb_container
+
+pycore-container-list-extend-full-fatal:
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_extend_full_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d10 -GSTRING_HEX=\"pycore/programs/list_extend_full_fatal_str.hex\",pycore_container_list_extend_full_fatal)
+
+pycore-container-list-extend-type-fatal:
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_extend_type_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d1 -GSTRING_HEX=\"pycore/programs/list_extend_type_fatal_str.hex\",pycore_container_list_extend_type_fatal)
+
 # ---- Phase C: two-core (pycore + excore) system tests ----------------------
 # Hand-built images (gen_excore_integration_fixtures.py) exercising the real
 # CONT_LIST_APPEND -> S_TRAP_MARSHAL -> trap_mailbox -> excore -> S_TRAP_WAIT
@@ -729,6 +817,70 @@ pycore-excore-disabled: pycore-excore-integration-fixtures
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
 	./$(BUILD_DIR)/excore_disabled/verilator/Vtb_container
 
+pycore-excore-extend-grow-list: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,extend_grow_list,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd6" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=50000)
+
+pycore-excore-extend-grow-tuple: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,extend_grow_tuple,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd60" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=50000)
+
+pycore-excore-extend-fast-no-trap: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,extend_fast_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd5" -GEXPECTED_TRAP_REQ_COUNT=0)
+
+pycore-excore-extend-empty-noop: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,extend_empty_noop,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd7" -GEXPECTED_TRAP_REQ_COUNT=0)
+
+pycore-excore-extend-self: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,extend_self,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd60" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=50000)
+
+pycore-excore-extend-mixed-tags: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,extend_mixed_tags,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd1677" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=50000)
+
+pycore-excore-extend-grow-to-fit: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,extend_grow_to_fit,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd146" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=100000)
+
+pycore-excore-extend-oom-fatal: excore-fw pycore-excore-integration-fixtures
+	mkdir -p $(BUILD_DIR)/extend_oom_fatal
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/extend_oom_fatal.hex\" \
+		-GSTRING_HEX=\"pycore/programs/extend_oom_fatal_str.hex\" \
+		-GDMEM_HEX=\"pycore/programs/extend_oom_fatal_dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GEXCORE_EN=1 \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		"-GHEAP_INIT_PTR=32'h00001f80" \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 \
+		--Mdir $(BUILD_DIR)/extend_oom_fatal/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/extend_oom_fatal/verilator/Vtb_container
+
+pycore-excore-extend-across-call: excore-fw pycore-excore-integration-fixtures
+	$(call PYCORE_EXCORE_RUN,extend_across_call,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd88" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=50000)
+
+# Same image as extend_grow_list, but EXCORE_EN=0 → fatal trap code 10.
+pycore-excore-extend-disabled: pycore-excore-integration-fixtures
+	mkdir -p $(BUILD_DIR)/extend_disabled
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/extend_grow_list.meta); \
+	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"pycore/programs/extend_grow_list.hex\" \
+		-GSTRING_HEX=\"pycore/programs/extend_grow_list_str.hex\" \
+		-GDMEM_HEX=\"pycore/programs/extend_grow_list_dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=0 \
+		-GEXCORE_EN=0 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d10 \
+		--Mdir $(BUILD_DIR)/extend_disabled/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
+	./$(BUILD_DIR)/extend_disabled/verilator/Vtb_container
+
 pycore-excore-system: \
 	pycore-excore-grow-from-zero \
 	pycore-excore-fast-path-no-trap \
@@ -737,7 +889,17 @@ pycore-excore-system: \
 	pycore-excore-mixed-tags-preserved \
 	pycore-excore-grow-repeated \
 	pycore-excore-append-across-call \
-	pycore-excore-disabled
+	pycore-excore-disabled \
+	pycore-excore-extend-grow-list \
+	pycore-excore-extend-grow-tuple \
+	pycore-excore-extend-fast-no-trap \
+	pycore-excore-extend-empty-noop \
+	pycore-excore-extend-self \
+	pycore-excore-extend-mixed-tags \
+	pycore-excore-extend-grow-to-fit \
+	pycore-excore-extend-oom-fatal \
+	pycore-excore-extend-across-call \
+	pycore-excore-extend-disabled
 
 # pycore-container-image-boot removed: the old fixture was generated with
 # the pre-3.14 preprocess and still uses 3-slot LOAD_CONST.  The real
@@ -764,7 +926,12 @@ pycore-container: \
 	pycore-container-dict-full-insert \
 	pycore-container-list-oom \
 	pycore-container-list-append-fast \
-	pycore-container-list-append-full-fatal
+	pycore-container-list-append-full-fatal \
+	pycore-container-list-extend-fast \
+	pycore-container-list-extend-fast-tuple \
+	pycore-container-list-extend-empty \
+	pycore-container-list-extend-full-fatal \
+	pycore-container-list-extend-type-fatal
 
 # excore-fw: assemble excore firmware as a build step. Generated hex is
 # never committed (see excore/tools/asm_rv32.py) — no external toolchain.
