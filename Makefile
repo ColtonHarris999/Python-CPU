@@ -297,11 +297,10 @@ define PYCORE_IMAGE_RUN
 endef
 
 # Phase C full-regression companion to PYCORE_IMAGE_RUN: same image, run on
-# the two-core top (EXCORE_EN=1) instead of the legacy pycore_system. None
-# of the img_* programs can emit LIST_APPEND (compile() only does so inside
-# comprehensions, which still need FOR_ITER/GET_ITER), so this proves the
-# two-core wiring is a no-op for every existing differential test rather
-# than exercising the excore itself.
+# the two-core top (EXCORE_EN=1) instead of the legacy pycore_system. Most
+# img_* programs never emit LIST_APPEND/LIST_EXTEND grow traps (LIST_APPEND
+# still needs FOR_ITER/GET_ITER; LIST_EXTEND is covered by
+# img_list_extend.py on the two-core path only).
 define PYCORE_IMAGE_RUN_TWOCORE
 	mkdir -p $(BUILD_DIR)/img_$(1)
 	$(PYTHON) pycore/tools/run_image_test.py \
