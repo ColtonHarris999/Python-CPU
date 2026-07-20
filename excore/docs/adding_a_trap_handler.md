@@ -1,8 +1,8 @@
 # Adding a new excore trap handler
 
 Checklist for a future recoverable trap (dict rehash, GC, emulating an
-unimplemented opcode, ...), following the pattern `PY_TRAP_LIST_GROW`
-established:
+unimplemented opcode, ...), following the pattern established by
+`PY_TRAP_LIST_GROW` / `PY_TRAP_LIST_EXTEND`:
 
 1. **Assign a trap code.** Add `PY_TRAP_<NAME>` to `pycore_defs.svh`
    (codes 11-15 are free as of this writing — `9`/`10` are

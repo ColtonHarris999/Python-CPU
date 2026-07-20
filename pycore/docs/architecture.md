@@ -136,15 +136,18 @@ whose ownership is being transferred.
 | 6 | `PY_TRAP_CALL_FILTER` | fatal | |
 | 7 | `PY_TRAP_MEM_FAULT` | fatal | also the excore's OOM report (`FATAL(MEM_FAULT)`) |
 | 8 | `PY_TRAP_ADDR_ALIGN` | fatal | |
-| 9 | `PY_TRAP_LIST_GROW` | **recoverable** | `pycore_trap_recoverable(code)` returns 1 only for this code today |
+| 9 | `PY_TRAP_LIST_GROW` | **recoverable** | `LIST_APPEND` at capacity; excore doubles + completes append |
+| 10 | `PY_TRAP_LIST_EXTEND` | **recoverable** | `LIST_EXTEND` when `len+src_len > cap`; excore grows-to-fit + completes extend |
+| 11–15 | *(free)* | — | reserved for future recoverable / fatal codes |
 
 `pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
-truth for the fatal/recoverable split. `EXCORE_EN=1` intercepts a
-recoverable code in `CONT_LIST_APPEND`'s `CP_HDR` phase (in general: in
-whichever container-op phase first detects the condition) *before* it
-would have reached `pycore_trap`, and routes it to `S_TRAP_MARSHAL`
-instead. `EXCORE_EN=0`, or any non-recoverable code, is completely
-untouched — `pycore_trap` sees exactly what it always has.
+truth for the fatal/recoverable split (today: `LIST_GROW` and
+`LIST_EXTEND`). `EXCORE_EN=1` intercepts a recoverable code in
+`CONT_LIST_APPEND` / `CONT_LIST_EXTEND` (in general: in whichever
+container-op phase first detects the condition) *before* it would have
+reached `pycore_trap`, and routes it to `S_TRAP_MARSHAL` instead.
+`EXCORE_EN=0`, or any non-recoverable code, is completely untouched —
+`pycore_trap` sees exactly what it always has.
 
 The excore's result (`RES_CODE`, `excore/docs/mmio_map.md`) has three
 values, and the restartability requirement each implies:
@@ -159,11 +162,11 @@ values, and the restartability requirement each implies:
   cur_pc_r`, the same mechanism a taken branch uses). This is only
   semantically valid because the trap was raised before any commit — see
   the early-trap discipline above. No current handler returns `RETRY`
-  (`LIST_GROW` always completes); the code path exists and is wired end to
-  end (`S_TRAP_WAIT`'s `unique case` on `trap_res_code_r2`) for a future
-  handler where the excore does *not* hold enough state to finish the
-  semantic effect itself (e.g. an opcode requiring iteration protocol
-  support pycore doesn't have).
+  (`LIST_GROW` and `LIST_EXTEND` always complete); the code path exists
+  and is wired end to end (`S_TRAP_WAIT`'s `unique case` on
+  `trap_res_code_r2`) for a future handler where the excore does *not*
+  hold enough state to finish the semantic effect itself (e.g. an opcode
+  requiring iteration protocol support pycore doesn't have).
 - **`FATAL`** — forwarded into `pycore_trap` as an ordinary halt via a new
   `excore_fatal_i`/`excore_fatal_code_i` input pair (bypassing the fixed
   one-hot condition list, since the code is data from firmware, not a
@@ -173,10 +176,11 @@ values, and the restartability requirement each implies:
 
 Two new `pycore_core` FSM states. `S_TRAP_MARSHAL` asserts `trap_req_valid_o`
 with the operand entries the detecting container op already gathered
-(e.g. `CONT_LIST_APPEND` reuses `rs1_r`/`rs2_r` — the list handle and
-element it had already decoded for the fast path — so no extra RF read
-port or extra cycles are needed to marshal). `S_TRAP_WAIT` waits for
-`trap_res_valid_i`, applies `heap_ptr_r ← res.heap_ptr`, pops `pop_count`,
+(e.g. `CONT_LIST_APPEND` / `CONT_LIST_EXTEND` reuse `rs1_r`/`rs2_r` — the
+list handle and element/iterable already decoded for the fast path — so no
+extra RF read port or extra cycles are needed to marshal). `S_TRAP_WAIT`
+waits for `trap_res_valid_i`, applies `heap_ptr_r ← res.heap_ptr`, pops
+`pop_count`,
 sequences `push_count` RF writes one per cycle (the RF write port is
 single-slot), then branches on `res_code` as described above.
 

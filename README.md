@@ -186,8 +186,8 @@ PyCore docs:
 
 ## excore quick reference
 
-excore is now fully integrated with pycore (Phase C): a recoverable trap
-(currently just `PY_TRAP_LIST_GROW`) is handed to the excore over
+excore is now fully integrated with pycore (Phase C): recoverable traps
+(`PY_TRAP_LIST_GROW`, `PY_TRAP_LIST_EXTEND`) are handed to the excore over
 `trap_mailbox.sv` instead of halting — see `pycore/docs/architecture.md`'s
 "Two-core transport and integration" section for the mailbox format,
 memory-ownership protocol, and trap taxonomy. `excore/` also still has its
