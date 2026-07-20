@@ -70,6 +70,28 @@ localparam logic [3:0] PY_TRAP_ILLEGAL_OPCODE = 4'd5;
 localparam logic [3:0] PY_TRAP_CALL_FILTER    = 4'd6;
 localparam logic [3:0] PY_TRAP_MEM_FAULT      = 4'd7;
 localparam logic [3:0] PY_TRAP_ADDR_ALIGN     = 4'd8;
+// PY_TRAP_LIST_GROW: raised by CONT_LIST_APPEND when the target list is at
+// capacity (length == capacity).  Recoverable in principle (Phase C hands it
+// to the excore, which grows the buffer and completes the append); Phase A
+// has no excore, so this trap is fatal like any other and is reported
+// through the same halt path.  Raised before any RF/heap commit (see
+// pycore_trap_recoverable below and CONT_LIST_APPEND's CP_HDR phase).
+localparam logic [3:0] PY_TRAP_LIST_GROW      = 4'd9;
+// PY_TRAP_LIST_EXTEND: raised by CONT_LIST_EXTEND when
+// length + src_len > capacity. Recoverable — the excore grows-to-fit and
+// completes the extend (emulate-and-complete; not RETRY). Raised before
+// any RF/heap commit. Codes 11-15 remain free.
+localparam logic [3:0] PY_TRAP_LIST_EXTEND    = 4'd10;
+
+// Trap taxonomy: does a given trap code represent a condition the excore can
+// service and hand control back to pycore for (Phase C), as opposed to a
+// hard fatal condition that always halts?
+function automatic logic pycore_trap_recoverable(input logic [3:0] code);
+    begin
+        pycore_trap_recoverable = (code == PY_TRAP_LIST_GROW) ||
+                                  (code == PY_TRAP_LIST_EXTEND);
+    end
+endfunction
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;
@@ -139,6 +161,59 @@ localparam logic [7:0] PY_OP_STORE_FAST       = 8'd112;
 localparam logic [7:0] PY_OP_STORE_GLOBAL     = 8'd115;
 localparam logic [7:0] PY_OP_STORE_NAME       = 8'd116;
 localparam logic [7:0] PY_OP_RESUME           = 8'd128;
+
+// LIST_APPEND: resolved from opcode.opmap at tool-import time (see
+// pycore/tools/image_from_source.py / preprocess.py); mirrored here.
+//   python3.14 -c "import opcode; print(opcode.opmap['LIST_APPEND'])"
+//   -> 78
+localparam logic [7:0] PY_OP_LIST_APPEND      = 8'd78;
+
+// LIST_EXTEND: resolved from opcode.opmap at tool-import time.
+//   python3.14 -c "import opcode; print(opcode.opmap['LIST_EXTEND'])"
+//   -> 79
+localparam logic [7:0] PY_OP_LIST_EXTEND      = 8'd79;
+
+// -------------------------------------------------------------------------
+// LIST_APPEND stack convention — verified 2026-07-15 against CPython 3.14.6:
+//
+//   python3.14 -c "
+//   import dis
+//   dis.dis(compile('[x for x in y]', '<p>', 'eval'))"
+//
+//   ...
+//       L2:     FOR_ITER                 4 (to L3)
+//               STORE_FAST_LOAD_FAST     0 (x, x)
+//               LIST_APPEND              2
+//               JUMP_BACKWARD            6 (to L2)
+//
+// LIST_APPEND's oparg matches CPython's documented bytecodes.c signature
+// `LIST_APPEND(list, unused[oparg-1], v -- list, unused[oparg-1])`: the
+// list handle sits (oparg+1) slots below TOS (list, then oparg-1 "unused"
+// loop-nesting slots, then the appended value v at TOS), and only v is
+// popped.  In RF terms with tos one-past-top:
+//   element (popped) : RF[tos-1]
+//   list handle       : RF[tos-1-arg]
+// Confirmed empirically for oparg=2 above (list 3 slots below TOS).
+// -------------------------------------------------------------------------
+
+// -------------------------------------------------------------------------
+// LIST_EXTEND stack convention — verified 2026-07-20 against CPython 3.14.6:
+//
+//   python3.14 -c "
+//   import dis
+//   dis.dis(compile('[*a, *b]', '<p>', 'eval'))"
+//
+//   BUILD_LIST               0
+//   LOAD_NAME                0 (a)
+//   LIST_EXTEND              1
+//   LOAD_NAME                1 (b)
+//   LIST_EXTEND              1
+//
+// Same shape as LIST_APPEND: iterable at TOS (popped), list handle at
+// RF[tos-1-arg].  oparg=1 in every unpack form probed.  Only LIST and
+// TUPLE sources are implemented (TYPE trap otherwise — no iterator
+// protocol yet).  Empty source is a no-op pop.
+// -------------------------------------------------------------------------
 
 // -------------------------------------------------------------------------
 // Verified CPython 3.14.6 conventions (probes recorded 2026-07-12):
@@ -478,19 +553,30 @@ localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0400;
 localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0000_2000;
 
 // -------------------------------------------------------------------------
-// LIST in-dmem layout (all addresses 16-byte aligned, 128-bit dmem slots):
+// LIST in-dmem layout v2 — growable split object/buffer (Phase A).
 //
-//   base + 0                 : header  { capacity[63:0] , length[63:0] }
-//   base + 16*(1 + 2*i)      : element[i] value[127:0]      (128-bit)
-//   base + 16*(2 + 2*i)      : element[i] tag   {124'b0, tag[3:0]}
+// The list HANDLE (PY_TAG_LIST, value={64'd0, obj_addr[63:0]}) names a
+// stable, 32-byte LIST OBJECT that never moves; every alias of the handle
+// stays valid across growth because growth only ever updates the object's
+// ob_item field, never the object's own address:
 //
-// Element stride = 32 bytes (2 slots).
-// Total allocation = pycore_list_alloc_bytes(capacity) bytes.
+//   obj_addr + 0  : header  { capacity[63:0] , length[63:0] }
+//   obj_addr + 16 : { 64'd0 , ob_item[63:0] }   (element buffer byte addr)
 //
-// This encoding follows the convention that each 132-bit tagged entry
-// { tag[3:0], value[127:0] } is split across two consecutive 128-bit
-// dmem slots: the 128-bit value slot followed by a 128-bit tag slot
-// (tag in bits [3:0], upper 124 bits zero).
+// The element BUFFER at ob_item is relocatable (capacity * 32 bytes):
+//
+//   ob_item + idx*32      : element[idx] value[127:0]
+//   ob_item + idx*32 + 16 : element[idx] tag   {124'b0, tag[3:0]}
+//
+// Element stride = 32 bytes (2 slots), same as v1.  Empty list: capacity=0,
+// length=0, ob_item=0 — no buffer allocation (object only).
+//
+// This replaces the v1 inline layout (header immediately followed by
+// elements at the same base) that made growth impossible without
+// relocating every alias.  pycore_list_val_addr / pycore_list_tag_addr now
+// take the BUFFER base (ob_item), not the object address — callers must
+// read the object's ob_item field first (see CONT_SUBSCR_LIST /
+// CONT_STORE_LIST / CONT_LIST_APPEND in pycore_core.sv).
 // -------------------------------------------------------------------------
 function automatic logic [63:0] pycore_list_capacity(
     input logic [PYCORE_VAL_WIDTH-1:0] header
@@ -517,35 +603,59 @@ function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_list_header(
     end
 endfunction
 
-// Byte address of element i's VALUE slot within a list at base.
+// Byte address of the list object's ob_item (buffer pointer) slot.
+function automatic logic [31:0] pycore_list_obitem_addr(
+    input logic [31:0] obj_addr
+);
+    begin
+        pycore_list_obitem_addr = obj_addr + 32'd16;
+    end
+endfunction
+
+// Extract the buffer byte address from a slot read at obj_addr+16.
+function automatic logic [63:0] pycore_list_obitem(
+    input logic [PYCORE_VAL_WIDTH-1:0] slot
+);
+    begin
+        pycore_list_obitem = slot[63:0];
+    end
+endfunction
+
+// Byte address of element i's VALUE slot within the BUFFER at buf_addr.
 function automatic logic [31:0] pycore_list_val_addr(
-    input logic [31:0] base,
+    input logic [31:0] buf_addr,
     input logic [31:0] idx
 );
     begin
-        // base + 16 + idx*32
-        pycore_list_val_addr = base + 32'd16 + (idx << 5);
+        // buf_addr + idx*32 (no header inside the buffer — see layout above)
+        pycore_list_val_addr = buf_addr + (idx << 5);
     end
 endfunction
 
-// Byte address of element i's TAG slot within a list at base.
+// Byte address of element i's TAG slot within the BUFFER at buf_addr.
 function automatic logic [31:0] pycore_list_tag_addr(
-    input logic [31:0] base,
+    input logic [31:0] buf_addr,
     input logic [31:0] idx
 );
     begin
-        // base + 32 + idx*32
-        pycore_list_tag_addr = base + 32'd32 + (idx << 5);
+        // buf_addr + idx*32 + 16
+        pycore_list_tag_addr = buf_addr + (idx << 5) + 32'd16;
     end
 endfunction
 
-// Total bytes to allocate for a list with the given capacity.
-function automatic logic [31:0] pycore_list_alloc_bytes(
+// Fixed size of the (stable) list object: header (16B) + ob_item (16B).
+function automatic logic [31:0] pycore_list_obj_bytes();
+    begin
+        pycore_list_obj_bytes = 32'd32;
+    end
+endfunction
+
+// Bytes to allocate for a buffer holding `capacity` elements.
+function automatic logic [31:0] pycore_list_buf_bytes(
     input logic [31:0] capacity
 );
     begin
-        // 16 (header) + capacity * 32 (2 slots per element)
-        pycore_list_alloc_bytes = 32'd16 + (capacity << 5);
+        pycore_list_buf_bytes = capacity << 5;
     end
 endfunction
 

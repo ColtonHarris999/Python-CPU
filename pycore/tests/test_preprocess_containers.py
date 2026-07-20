@@ -274,6 +274,108 @@ class TestLFBLFBExpansion(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# LIST_APPEND acceptance (Phase A: fast-path / grow-trap in CONT_LIST_APPEND)
+# ---------------------------------------------------------------------------
+
+class TestListAppendAccepted(unittest.TestCase):
+    """LIST_APPEND is no longer deferred (see CONT_LIST_APPEND, pycore_core.sv).
+
+    compile() only emits LIST_APPEND inside comprehensions, which still fail
+    validation on FOR_ITER/GET_ITER (correctly still deferred) — so these
+    tests exercise the opcode-table classification and type-sketch handling
+    directly rather than a real compiled comprehension.
+    """
+
+    def test_list_append_not_deferred(self) -> None:
+        self.assertNotIn("LIST_APPEND", preprocess.DEFERRED_OPS)
+
+    def test_list_append_in_supported_ops(self) -> None:
+        self.assertIn("LIST_APPEND", preprocess.SUPPORTED_OPS)
+
+    def test_opcode_number(self) -> None:
+        # python3.14 -c "import opcode; print(opcode.opmap['LIST_APPEND'])"
+        self.assertEqual(preprocess.OP_LIST_APPEND, 78)
+
+    def test_for_iter_get_iter_still_deferred_or_unsupported(self) -> None:
+        # Comprehensions remain out of scope until FOR_ITER/GET_ITER land.
+        self.assertNotIn("FOR_ITER", preprocess.SUPPORTED_OPS)
+        self.assertNotIn("GET_ITER", preprocess.SUPPORTED_OPS)
+
+    def test_infer_types_pops_only_the_element(self) -> None:
+        """LIST_APPEND pops just the element; the list beneath is untouched."""
+        fn = _compile_fn(
+            "def managed_entry():\n"
+            "    a = 1\n"
+            "    return a\n"
+        )
+        instructions = [
+            preprocess.EmittedInstruction(
+                opcode=preprocess.OP_BUILD_LIST, arg=0,
+                source_offset=0, opname="BUILD_LIST"),
+            preprocess.EmittedInstruction(
+                opcode=0, arg=0, source_offset=2,
+                opname="LOAD_SMALL_INT"),
+            preprocess.EmittedInstruction(
+                opcode=preprocess.OP_LIST_APPEND, arg=1,
+                source_offset=4, opname="LIST_APPEND"),
+        ]
+        # Should not raise (would IndexError/underflow on a bad pop count).
+        preprocess.infer_types(fn, instructions)
+
+
+# ---------------------------------------------------------------------------
+# LIST_EXTEND acceptance (fast-path / grow-trap in CONT_LIST_EXTEND)
+# ---------------------------------------------------------------------------
+
+class TestListExtendAccepted(unittest.TestCase):
+    """LIST_EXTEND is no longer deferred (see CONT_LIST_EXTEND).
+
+    compile() emits LIST_EXTEND from list-display unpack (`[1, 2, *x]`,
+    `[*a, *b]`). Method calls like `a.extend(b)` still lower via
+    LOAD_ATTR+CALL (unsupported), not LIST_EXTEND.
+    """
+
+    def test_list_extend_not_deferred(self) -> None:
+        self.assertNotIn("LIST_EXTEND", preprocess.DEFERRED_OPS)
+
+    def test_list_extend_in_supported_ops(self) -> None:
+        self.assertIn("LIST_EXTEND", preprocess.SUPPORTED_OPS)
+
+    def test_opcode_number(self) -> None:
+        self.assertEqual(preprocess.OP_LIST_EXTEND, 79)
+
+    def test_infer_types_pops_only_the_iterable(self) -> None:
+        """LIST_EXTEND pops just the iterable; the list beneath is untouched."""
+        fn = _compile_fn(
+            "def managed_entry():\n"
+            "    a = 1\n"
+            "    return a\n"
+        )
+        instructions = [
+            preprocess.EmittedInstruction(
+                opcode=preprocess.OP_BUILD_LIST, arg=0,
+                source_offset=0, opname="BUILD_LIST"),
+            preprocess.EmittedInstruction(
+                opcode=preprocess.OP_BUILD_LIST, arg=0,
+                source_offset=2, opname="BUILD_LIST"),
+            preprocess.EmittedInstruction(
+                opcode=preprocess.OP_LIST_EXTEND, arg=1,
+                source_offset=4, opname="LIST_EXTEND"),
+        ]
+        preprocess.infer_types(fn, instructions)
+
+    def test_star_unpack_program_accepted(self) -> None:
+        """A real `[1, 2, *x]` program must preprocess without Deferred errors."""
+        fn = _compile_fn(
+            "def managed_entry(x):\n"
+            "    return [1, 2, *x]\n",
+            "managed_entry",
+        )
+        # Should not raise ValueError for LIST_EXTEND.
+        list(preprocess.iter_filtered_instructions(fn))
+
+
+# ---------------------------------------------------------------------------
 # Deferred-opcode rejection tests
 # ---------------------------------------------------------------------------
 
@@ -295,14 +397,8 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
         self.assertTrue(len(reason) > 5,
                         f"DEFERRED_OPS[{opname!r}] reason is too short: {reason!r}")
 
-    def test_list_append_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("LIST_APPEND")
-
     def test_map_add_in_deferred_ops(self) -> None:
         self._assert_deferred_error("MAP_ADD")
-
-    def test_list_extend_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("LIST_EXTEND")
 
     def test_dict_update_in_deferred_ops(self) -> None:
         self._assert_deferred_error("DICT_UPDATE")

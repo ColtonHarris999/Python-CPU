@@ -207,6 +207,22 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
+            // LIST_APPEND: list handle at RF[tos-1-arg], element at RF[tos-1]
+            // (popped).  See pycore_defs.svh for the verified stack layout.
+            PY_OP_LIST_APPEND: begin
+                rs1_sel_o = tos_index_i - 8'd1 - arg_i[7:0];  // list handle
+                rs2_sel_o = tos_index_i - 8'd1;               // element
+                is_container_o = 1'b1;
+            end
+
+            // LIST_EXTEND: list handle at RF[tos-1-arg], iterable at RF[tos-1]
+            // (popped).  Same stack shape as LIST_APPEND.
+            PY_OP_LIST_EXTEND: begin
+                rs1_sel_o = tos_index_i - 8'd1 - arg_i[7:0];  // list handle
+                rs2_sel_o = tos_index_i - 8'd1;               // iterable
+                is_container_o = 1'b1;
+            end
+
             PY_OP_MEM_LOAD_PTR: begin
                 rs1_sel_o = tos_index_i - 8'd1;
                 rd_sel_o  = tos_index_i - 8'd1;

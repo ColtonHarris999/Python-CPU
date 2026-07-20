@@ -26,7 +26,17 @@ module tb_container #(
     // (frame_active_depth == 1).  Used by image-boot tests where the
     // module code calls the entry function and receives its result at
     // depth 1 rather than the classic depth==0 base-frame return.
-    parameter bit    CHECK_ENTRY_RETURN  = 1'b0
+    parameter bit    CHECK_ENTRY_RETURN  = 1'b0,
+    // Phase C: instantiate the two-core top (pycore_excore_system) instead
+    // of the legacy single-core pycore_system when set, so every existing
+    // image flow can also be run on the new system unchanged. FW_HEX is
+    // the assembled excore firmware (see excore/tools/asm_rv32.py);
+    // ignored when EXCORE_EN=0.
+    parameter bit    EXCORE_EN           = 1'b0,
+    parameter string FW_HEX              = "",
+    // When >= 0, assert trap_req_count == this value at the end of the run
+    // (see trap_req_count above). Sentinel -1 (default) skips the check.
+    parameter int    EXPECTED_TRAP_REQ_COUNT = -1
 );
     localparam logic [3:0] CORE_S_WB = 4'd4;
 
@@ -39,22 +49,65 @@ module tb_container #(
     logic [7:0]  dbg_wb_addr;
     logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry;
 
-    pycore_system #(
-        .PROG_HEX  (PROG_HEX),
-        .STRING_HEX(STRING_HEX),
-        .DMEM_HEX  (DMEM_HEX),
-        .HEAP_INIT_PTR(HEAP_INIT_PTR),
-        .BOOT_EN(BOOT_EN)
-    ) dut (
-        .clk_i(clk),
-        .rst_n_i(rst_n),
-        .trap_out_o(trap_out),
-        .trap_code_o(trap_code),
-        .cycle_count_o(cycle_count),
-        .dbg_wb_we_o(dbg_wb_we),
-        .dbg_wb_addr_o(dbg_wb_addr),
-        .dbg_wb_entry_o(dbg_wb_entry)
-    );
+    // Counts completed trap_req handshakes (i.e. how many times pycore
+    // handed a recoverable trap to the excore) — 0 always under
+    // EXCORE_EN=0. Used by Phase C tests that assert an exact excore
+    // grant count (e.g. "exactly 3 traps fired" / "excore never granted
+    // memory").
+    int unsigned trap_req_count;
+
+    // g_dut wraps the DUT instance so both branches resolve to the same
+    // hierarchical prefix (g_dut.dut.core.*) regardless of which top is
+    // selected -- every hierarchical reference below is written against
+    // that fixed shape.
+    generate
+        if (EXCORE_EN) begin : g_dut
+            pycore_excore_system #(
+                .PROG_HEX  (PROG_HEX),
+                .STRING_HEX(STRING_HEX),
+                .DMEM_HEX  (DMEM_HEX),
+                .HEAP_INIT_PTR(HEAP_INIT_PTR),
+                .BOOT_EN(BOOT_EN),
+                .EXCORE_EN(1'b1),
+                .FW_HEX(FW_HEX)
+            ) dut (
+                .clk_i(clk),
+                .rst_n_i(rst_n),
+                .trap_out_o(trap_out),
+                .trap_code_o(trap_code),
+                .cycle_count_o(cycle_count),
+                .dbg_wb_we_o(dbg_wb_we),
+                .dbg_wb_addr_o(dbg_wb_addr),
+                .dbg_wb_entry_o(dbg_wb_entry)
+            );
+
+            initial trap_req_count = 0;
+            always @(posedge clk) begin
+                if (dut.trap_req_valid && dut.trap_req_ready) begin
+                    trap_req_count <= trap_req_count + 1;
+                end
+            end
+        end else begin : g_dut
+            pycore_system #(
+                .PROG_HEX  (PROG_HEX),
+                .STRING_HEX(STRING_HEX),
+                .DMEM_HEX  (DMEM_HEX),
+                .HEAP_INIT_PTR(HEAP_INIT_PTR),
+                .BOOT_EN(BOOT_EN)
+            ) dut (
+                .clk_i(clk),
+                .rst_n_i(rst_n),
+                .trap_out_o(trap_out),
+                .trap_code_o(trap_code),
+                .cycle_count_o(cycle_count),
+                .dbg_wb_we_o(dbg_wb_we),
+                .dbg_wb_addr_o(dbg_wb_addr),
+                .dbg_wb_entry_o(dbg_wb_entry)
+            );
+
+            initial trap_req_count = 0; // pycore_system never marshals a trap
+        end
+    endgenerate
 
     always #5 clk = ~clk;
 
@@ -94,20 +147,20 @@ module tb_container #(
                 break;
             end
 
-            if ((dut.core.state_r == CORE_S_WB) &&
-                (dut.core.cur_opcode_r == PY_OP_RETURN_VALUE) &&
-                (dut.core.frame_active_depth ==
+            if ((g_dut.dut.core.state_r == CORE_S_WB) &&
+                (g_dut.dut.core.cur_opcode_r == PY_OP_RETURN_VALUE) &&
+                (g_dut.dut.core.frame_active_depth ==
                     (CHECK_ENTRY_RETURN ? 8'd1 : 8'd0))) begin
                 // Under image boot the module frame's terminal return is
                 // typically `return None` (RETURN_VALUE with a NONE-tagged
                 // TOS).  Filter those out so the check locks onto the
                 // entry function's real return value.
                 if (CHECK_ENTRY_RETURN &&
-                    (pycore_get_tag(dut.core.rs1_r) == PY_TAG_NONE)) begin
+                    (pycore_get_tag(g_dut.dut.core.rs1_r) == PY_TAG_NONE)) begin
                     // Skip and keep waiting for the entry return.
                 end else begin
                     return_seen  = 1;
-                    return_entry = dut.core.rs1_r;
+                    return_entry = g_dut.dut.core.rs1_r;
                     break;
                 end
             end
@@ -153,6 +206,12 @@ module tb_container #(
 
             $display("PASS: %s — tag=%0d value=0x%0h cycles=%0d",
                      PROG_HEX, got_tag, got_val[63:0], cycle_count);
+        end
+
+        if (EXPECTED_TRAP_REQ_COUNT >= 0) begin
+            check(trap_req_count == EXPECTED_TRAP_REQ_COUNT,
+                  $sformatf("trap_req_count mismatch: expected %0d got %0d (%s)",
+                            EXPECTED_TRAP_REQ_COUNT, trap_req_count, PROG_HEX));
         end
         $finish;
     end
