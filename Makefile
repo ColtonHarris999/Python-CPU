@@ -116,6 +116,13 @@ EXCORE_RTL_SRCS := \
 	pycore-excore-extend-across-call pycore-excore-extend-disabled \
 	pycore-excore-system \
 	pycore-img-list-extend-two-core \
+	pycore-img-list-del-simple pycore-img-list-del-first-last \
+	pycore-img-list-contains-simple pycore-img-list-contains-types \
+	pycore-img-tuple-contains pycore-img-dict-contains \
+	pycore-img-list-del-contains pycore-img-list-del-nested \
+	pycore-img-list-del-contains-call pycore-img-list-extend-del-contains-two-core \
+	pycore-img-list-del-oob pycore-img-list-del-tuple-trap \
+	pycore-img-dict-del-trap \
 	pycore-img-two-core \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
@@ -481,6 +488,47 @@ pycore-img-pop-jump-if-none:
 pycore-img-nop:
 	$(call PYCORE_IMAGE_RUN,nop,50000)
 
+# DELETE_SUBSCR / CONTAINS_OP (list shift-down + membership; raw Python imgs)
+pycore-img-list-del-simple:
+	$(call PYCORE_IMAGE_RUN,list_del_simple,50000)
+
+pycore-img-list-del-first-last:
+	$(call PYCORE_IMAGE_RUN,list_del_first_last,50000)
+
+pycore-img-list-contains-simple:
+	$(call PYCORE_IMAGE_RUN,list_contains_simple,50000)
+
+pycore-img-list-contains-types:
+	$(call PYCORE_IMAGE_RUN,list_contains_types,50000)
+
+pycore-img-tuple-contains:
+	$(call PYCORE_IMAGE_RUN,tuple_contains,50000)
+
+pycore-img-dict-contains:
+	$(call PYCORE_IMAGE_RUN,dict_contains,50000)
+
+pycore-img-list-del-contains:
+	$(call PYCORE_IMAGE_RUN,list_del_contains,50000)
+
+pycore-img-list-del-nested:
+	$(call PYCORE_IMAGE_RUN,list_del_nested,50000)
+
+pycore-img-list-del-contains-call:
+	$(call PYCORE_IMAGE_RUN,list_del_contains_call,100000)
+
+pycore-img-list-del-oob:
+	$(call PYCORE_IMAGE_TRAP_RUN,list_del_oob,7,50000)
+
+pycore-img-list-del-tuple-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,list_del_tuple_trap,1,50000)
+
+pycore-img-dict-del-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,dict_del_trap,1,50000)
+
+# Extend (excore grow) then delete/contains — two-core only.
+pycore-img-list-extend-del-contains-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_extend_del_contains,100000)
+
 define PYCORE_IMAGE_TRAP_RUN_TWOCORE
 	mkdir -p $(BUILD_DIR)/img_$(1)
 	$(PYTHON) pycore/tools/image_from_source.py \
@@ -582,7 +630,8 @@ pycore-img-two-core: \
 	pycore-img-bitwise-calls-two-core \
 	pycore-img-globals-accum-two-core \
 	pycore-img-string-ops-two-core \
-	pycore-img-list-extend-two-core
+	pycore-img-list-extend-two-core \
+	pycore-img-list-extend-del-contains-two-core
 
 pycore-img: \
 	pycore-img-smoke \
@@ -619,7 +668,19 @@ pycore-img: \
 	pycore-img-unary-not \
 	pycore-img-is-op \
 	pycore-img-pop-jump-if-none \
-	pycore-img-nop
+	pycore-img-nop \
+	pycore-img-list-del-simple \
+	pycore-img-list-del-first-last \
+	pycore-img-list-contains-simple \
+	pycore-img-list-contains-types \
+	pycore-img-tuple-contains \
+	pycore-img-dict-contains \
+	pycore-img-list-del-contains \
+	pycore-img-list-del-nested \
+	pycore-img-list-del-contains-call \
+	pycore-img-list-del-oob \
+	pycore-img-list-del-tuple-trap \
+	pycore-img-dict-del-trap
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /

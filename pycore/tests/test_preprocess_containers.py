@@ -376,6 +376,43 @@ class TestListExtendAccepted(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# DELETE_SUBSCR / CONTAINS_OP acceptance
+# ---------------------------------------------------------------------------
+
+class TestDeleteContainsAccepted(unittest.TestCase):
+    def test_delete_subscr_not_deferred(self) -> None:
+        self.assertNotIn("DELETE_SUBSCR", preprocess.DEFERRED_OPS)
+        self.assertIn("DELETE_SUBSCR", preprocess.SUPPORTED_OPS)
+        self.assertEqual(preprocess.OP_DELETE_SUBSCR, 8)
+
+    def test_contains_op_not_deferred(self) -> None:
+        self.assertNotIn("CONTAINS_OP", preprocess.DEFERRED_OPS)
+        self.assertIn("CONTAINS_OP", preprocess.SUPPORTED_OPS)
+        self.assertEqual(preprocess.OP_CONTAINS_OP, 57)
+
+    def test_delete_subscr_program_accepted(self) -> None:
+        fn = _compile_fn(
+            "def managed_entry():\n"
+            "    a = [1, 2, 3]\n"
+            "    del a[1]\n"
+            "    return a[0]\n",
+        )
+        list(preprocess.iter_filtered_instructions(fn))
+
+    def test_contains_op_program_accepted(self) -> None:
+        fn = _compile_fn(
+            "def managed_entry():\n"
+            "    a = [1, 2, 3]\n"
+            "    if 2 in a:\n"
+            "        if 9 not in a:\n"
+            "            return 1\n"
+            "        return 0\n"
+            "    return 0\n",
+        )
+        list(preprocess.iter_filtered_instructions(fn))
+
+
+# ---------------------------------------------------------------------------
 # Deferred-opcode rejection tests
 # ---------------------------------------------------------------------------
 
@@ -385,8 +422,7 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
     Because some source programs emit other unsupported opcodes (e.g.
     LOAD_ATTR) before reaching the deferred op, these tests check the
     DEFERRED_OPS dict directly for membership and message quality, and
-    supplement with two real program tests for opcodes that can be reached
-    in isolation (DELETE_SUBSCR, BUILD_SET).
+    supplement with a real program test for BUILD_SET.
     """
 
     def _assert_deferred_error(self, opname: str) -> None:
@@ -403,12 +439,6 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
     def test_dict_update_in_deferred_ops(self) -> None:
         self._assert_deferred_error("DICT_UPDATE")
 
-    def test_delete_subscr_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("DELETE_SUBSCR")
-
-    def test_contains_op_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("CONTAINS_OP")
-
     def test_build_set_in_deferred_ops(self) -> None:
         self._assert_deferred_error("BUILD_SET")
 
@@ -422,15 +452,6 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
                 opname, preprocess.SUPPORTED_OPS,
                 f"{opname} is in DEFERRED_OPS but also in SUPPORTED_OPS",
             )
-
-    def test_delete_subscr_program_rejected(self) -> None:
-        """A real program using del d[k] should be rejected at preprocessing."""
-        fn = _compile_fn("def f(d, k):\n    del d[k]\n    return 0\n", "f")
-        with self.assertRaises(ValueError) as ctx:
-            list(preprocess.iter_filtered_instructions(fn))
-        msg = str(ctx.exception)
-        self.assertIn("Deferred opcode", msg)
-        self.assertIn("DELETE_SUBSCR", msg)
 
     def test_build_set_program_rejected(self) -> None:
         """A real program returning a set literal should be rejected."""
