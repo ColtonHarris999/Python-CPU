@@ -590,6 +590,25 @@ every grow.
 `[*a, *b]`). Method-style `a.extend(b)` still lowers via `LOAD_ATTR`+`CALL`
 and is unsupported.
 
+#### `DELETE_SUBSCR` (list)
+
+`DELETE_SUBSCR` (opcode 8) on a **LIST** shifts elements `[idx+1 .. len)`
+down one slot and writes `length-1` (capacity unchanged). Implemented
+entirely on pycore (`CONT_DELETE_LIST`) — delete never reallocates, so there
+is no excore handoff. OOB / negative indices → `PY_TRAP_MEM_FAULT`. Tuple
+and dict targets → `PY_TRAP_TYPE` (dict tombstones remain deferred).
+
+#### `CONTAINS_OP`
+
+`CONTAINS_OP` (opcode 57) implements `in` / `not in` (oparg bit 0) entirely
+on pycore — membership never changes capacity:
+
+- **LIST / TUPLE**: linear scan (`CONT_CONTAINS_LIST` / `_TUPLE`); INT/BOOL
+  cross-equality matches CPython (`True == 1`).
+- **DICT**: open-addressed probe (`CONT_CONTAINS_DICT`); miss pushes
+  `False` (unlike `NB_SUBSCR`, which traps). Key equality follows the
+  existing same-tag dict policy.
+
 ### TUPLE in-dmem layout
 
 Because size lives inline in the handle `{ size[63:0], addr[63:0] }`, tuples
@@ -646,7 +665,8 @@ The header `used` field is maintained on insert. Probe loops are bounded by
 always remains.
 
 The implementation uses **tombstone-free open-addressed linear probing**.
-`DELETE_SUBSCR` is deferred; tombstone logic can be added later when needed.
+Dict `DELETE_SUBSCR` still type-traps until tombstones (or compacting) land;
+list delete and all `CONTAINS_OP` paths are on pycore (see above).
 
 Static heap images for dicts/tuples/lists can be built with
 `pycore/tools/heap_image.py` (`HeapImageBuilder`), which mirrors the RTL hash

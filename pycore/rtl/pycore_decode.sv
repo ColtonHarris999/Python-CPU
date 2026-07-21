@@ -274,6 +274,22 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
+            // DELETE_SUBSCR: same key/container wiring as STORE_SUBSCR; both
+            // popped by the container FSM (no value operand).
+            PY_OP_DELETE_SUBSCR: begin
+                rs1_sel_o = tos_index_i - 8'd1;  // key
+                rs2_sel_o = tos_index_i - 8'd2;  // container
+                is_container_o = 1'b1;
+            end
+
+            // CONTAINS_OP: needle at tos-2, container at tos-1; BOOL result
+            // replaces both (pop 1). oparg[0]=1 inverts (not in).
+            PY_OP_CONTAINS_OP: begin
+                rs1_sel_o = tos_index_i - 8'd2;  // needle
+                rs2_sel_o = tos_index_i - 8'd1;  // container
+                is_container_o = 1'b1;
+            end
+
             // LIST_APPEND: list handle at RF[tos-1-arg], element at RF[tos-1]
             // (popped).  See pycore_defs.svh for the verified stack layout.
             PY_OP_LIST_APPEND: begin

@@ -1,7 +1,9 @@
 # Vendored singlecore RISC-V hart
 
-Source: `singlecore.zip` on the `singlecore` branch (the course / reference
+Source: `singlecore.zip` on the `excore` branch (the course / reference
 RISC-V CPU previously referenced by the empty `singlecore/` gitlink).
+Vendored under `excore/rtl/singlecore/` so the multicycle hart lives next
+to the MMIO / mailbox glue.
 
 The excore uses the **5-stage multicycle** hart (`riscv_multicycle.sv`) as
 its execution engine. Wrapping, private IMEM preload, scratch RAM, and the

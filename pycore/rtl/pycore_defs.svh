@@ -186,7 +186,26 @@ localparam logic [7:0] PY_OP_LIST_APPEND      = 8'd78;
 //   -> 79
 localparam logic [7:0] PY_OP_LIST_EXTEND      = 8'd79;
 
+// DELETE_SUBSCR / CONTAINS_OP — CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['DELETE_SUBSCR'],
+//                                       opcode.opmap['CONTAINS_OP'])"
+//   -> 8, 57
+localparam logic [7:0] PY_OP_DELETE_SUBSCR    = 8'd8;
+localparam logic [7:0] PY_OP_CONTAINS_OP      = 8'd57;
+
 // -------------------------------------------------------------------------
+// DELETE_SUBSCR stack convention — verified 2026-07-21 against CPython 3.14.6:
+//   del a[i]  →  LOAD a; LOAD i; DELETE_SUBSCR
+//   container at RF[tos-2], key at RF[tos-1]; both popped. List: shift-down
+//   in place (capacity unchanged). Tuple/dict: TYPE trap (dict tombstones
+//   deferred).
+// -------------------------------------------------------------------------
+// CONTAINS_OP stack convention — verified 2026-07-21:
+//   x in a / x not in a  →  LOAD x; LOAD a; CONTAINS_OP oparg
+//   needle at RF[tos-2], container at RF[tos-1]; result BOOL at tos-2, pop 1.
+//   oparg[0]=0 → in; oparg[0]=1 → not in. LIST/TUPLE linear scan; DICT probe.
+// -------------------------------------------------------------------------
+
 // LIST_APPEND stack convention — verified 2026-07-15 against CPython 3.14.6:
 //
 //   python3.14 -c "
@@ -434,8 +453,9 @@ endfunction
 // empty slot remains and absent-key probes always terminate.  Probe loops
 // are also bounded by slot_count and trap PY_TRAP_MEM_FAULT on exhaustion.
 //
-// Dict option: open-addressed linear probe with tombstone-free insert
-// (tombstone deletion deferred; DELETE_SUBSCR not yet implemented).
+// Dict option: open-addressed linear probe. Tombstone deletion is not yet
+// implemented — DELETE_SUBSCR on DICT type-traps. Empty bucket: key tag
+// PY_TAG_UNINIT.
 // -------------------------------------------------------------------------
 
 // 32-bit key hash; caller masks with (slot_count - 1).
@@ -466,6 +486,34 @@ function automatic logic pycore_dict_key_tag_ok(input logic [3:0] tag);
         pycore_dict_key_tag_ok = (tag == PY_TAG_INT) || (tag == PY_TAG_BOOL)
                               || (tag == PY_TAG_SHORT_STR)
                               || (tag == PY_TAG_LONG_STR);
+    end
+endfunction
+
+// Element equality for CONTAINS_OP (list/tuple scan and dict key match).
+// INT/BOOL cross-compare as integers (True==1 / False==0), matching CPython.
+// Same-tag NONE is always equal. All other same-tag pairs compare the full
+// 128-bit value field (FLOAT bit-exact; SHORT_STR/LONG_STR; LIST/DICT/TUPLE
+// handles — identity via equal descriptors).
+function automatic logic pycore_elem_eq(
+    input logic [3:0]               tag_a,
+    input logic [PYCORE_VAL_WIDTH-1:0] val_a,
+    input logic [3:0]               tag_b,
+    input logic [PYCORE_VAL_WIDTH-1:0] val_b
+);
+    logic [63:0] ia, ib;
+    begin
+        if (((tag_a == PY_TAG_INT) || (tag_a == PY_TAG_BOOL)) &&
+            ((tag_b == PY_TAG_INT) || (tag_b == PY_TAG_BOOL))) begin
+            ia = (tag_a == PY_TAG_BOOL) ? {63'b0, val_a[0]} : val_a[63:0];
+            ib = (tag_b == PY_TAG_BOOL) ? {63'b0, val_b[0]} : val_b[63:0];
+            pycore_elem_eq = (ia == ib);
+        end else if (tag_a != tag_b) begin
+            pycore_elem_eq = 1'b0;
+        end else if (tag_a == PY_TAG_NONE) begin
+            pycore_elem_eq = 1'b1;
+        end else begin
+            pycore_elem_eq = (val_a == val_b);
+        end
     end
 endfunction
 

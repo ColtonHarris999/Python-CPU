@@ -82,6 +82,8 @@ OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = _OM.get(
 )
 OP_LIST_APPEND   = _OM["LIST_APPEND"]
 OP_LIST_EXTEND   = _OM["LIST_EXTEND"]
+OP_DELETE_SUBSCR = _OM["DELETE_SUBSCR"]
+OP_CONTAINS_OP   = _OM["CONTAINS_OP"]
 
 # NB_SUBSCR oparg: locate "NB_SUBSCR" in _nb_ops by searching for the entry
 # whose first element contains "SUBSCR".
@@ -104,8 +106,6 @@ DEFERRED_OPS: dict[str, str] = {
     "MAP_ADD":       "dict mutation not yet implemented",
     "DICT_UPDATE":   "dict.update not yet implemented",
     "DICT_MERGE":    "dict merge not yet implemented",
-    "DELETE_SUBSCR": "del x[k] not yet implemented",
-    "CONTAINS_OP":   "in / not-in operator not yet implemented",
     "BINARY_SLICE":  "slice notation not yet implemented",
     "STORE_SLICE":   "slice assignment not yet implemented",
     "BUILD_SET":     "set literals not yet implemented",
@@ -166,6 +166,8 @@ SUPPORTED_OPS = {
     "BUILD_MAP",
     "BUILD_TUPLE",
     "STORE_SUBSCR",
+    "DELETE_SUBSCR",
+    "CONTAINS_OP",
     # LIST_APPEND / LIST_EXTEND fast-path / grow-trap: see CONT_LIST_APPEND
     # and CONT_LIST_EXTEND (pycore_core.sv). Comprehensions still fail
     # validation on FOR_ITER/GET_ITER (deferred); LIST_EXTEND is also
@@ -516,6 +518,17 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             # Pops key, container, value (3 items); pushes nothing.
             for _ in range(min(3, len(stack))):
                 stack.pop()
+        elif ins.opname == "DELETE_SUBSCR":
+            # Pops key and container (2 items); pushes nothing.
+            for _ in range(min(2, len(stack))):
+                stack.pop()
+        elif ins.opname == "CONTAINS_OP":
+            # Pops needle + container; pushes BOOL.
+            if stack:
+                stack.pop()
+            if stack:
+                stack.pop()
+            stack.append(TAG_BOOL)
         elif ins.opname == "LIST_APPEND":
             # Pops only the appended element (TOS); the list handle,
             # `oparg - 1` slots further down, is left in place untouched.

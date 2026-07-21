@@ -104,14 +104,14 @@ SUPPORTED_OPS = {
     # LIST or TUPLE (no iterator protocol yet).
     "LIST_APPEND",
     "LIST_EXTEND",
+    "DELETE_SUBSCR",
+    "CONTAINS_OP",
 }
 
 DEFERRED_OPS: dict[str, str] = {
     "MAP_ADD": "dict-comprehension MAP_ADD lowering is deferred",
     "DICT_UPDATE": "dict update/unpack lowering is deferred",
     "DICT_MERGE": "dict merge lowering is deferred",
-    "DELETE_SUBSCR": "subscript deletion is deferred",
-    "CONTAINS_OP": "in / not-in operator support is deferred",
     "BINARY_SLICE": "slice notation support is deferred",
     "STORE_SLICE": "slice assignment support is deferred",
     "BUILD_SET": "set literals are deferred",
