@@ -6,20 +6,24 @@ Returns a bit-packed checksum of which memberships succeeded.
 
 
 def managed_entry():
-    a = [7, True, "hi", None]
-    n = 0
+    i = 7
+    t = True
+    s = "hi"
+    none_v = None
+    a = [i, t, s, none_v]
+    acc = 0
     if 7 in a:
-        n = n + 1
+        acc = acc + 1
     if 1 in a:
         # True == 1 in CPython; PyCore INT/BOOL cross-eq should match.
-        n = n + 2
+        acc = acc + 2
     if "hi" in a:
-        n = n + 4
+        acc = acc + 4
     if None in a:
-        n = n + 8
+        acc = acc + 8
     if 99 not in a:
-        n = n + 16
-    return n
+        acc = acc + 16
+    return acc
 
 
 managed_entry()

@@ -2,7 +2,9 @@
 
 
 def managed_entry():
-    a = [1, 2]
+    x0 = 1
+    x1 = 2
+    a = [x0, x1]
     del a[5]
     return 0
 

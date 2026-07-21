@@ -15,7 +15,10 @@ def helper(xs):
 
 
 def managed_entry():
-    xs = [10, 20, 30]
+    x0 = 10
+    x1 = 20
+    x2 = 30
+    xs = [x0, x1, x2]
     xs[1] = 25
     # [10, 25, 30]
     s = helper(xs)

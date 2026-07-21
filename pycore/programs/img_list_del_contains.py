@@ -2,7 +2,11 @@
 
 
 def managed_entry():
-    a = [5, 6, 7, 8]
+    x0 = 5
+    x1 = 6
+    x2 = 7
+    x3 = 8
+    a = [x0, x1, x2, x3]
     del a[1]
     # now [5, 7, 8]
     n = 0

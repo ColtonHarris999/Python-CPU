@@ -6,6 +6,8 @@ Returns 1+2+40 = 43 if extend/delete/contains all behaved.
 
 
 def managed_entry():
+    # Constant list literals compile to BUILD_LIST 0 + LIST_EXTEND — that is
+    # intentional here (two-core grow path).
     x = [30, 40]
     y = [1, 2, *x]
     # y == [1, 2, 30, 40]
