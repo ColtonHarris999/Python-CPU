@@ -590,24 +590,28 @@ every grow.
 `[*a, *b]`). Method-style `a.extend(b)` still lowers via `LOAD_ATTR`+`CALL`
 and is unsupported.
 
-#### `DELETE_SUBSCR` (list)
+#### `DELETE_SUBSCR` (list / dict)
 
 `DELETE_SUBSCR` (opcode 8) on a **LIST** shifts elements `[idx+1 .. len)`
 down one slot and writes `length-1` (capacity unchanged). Implemented
-entirely on pycore (`CONT_DELETE_LIST`) — delete never reallocates, so there
-is no excore handoff. OOB / negative indices → `PY_TRAP_MEM_FAULT`. Tuple
-and dict targets → `PY_TRAP_TYPE` (dict tombstones remain deferred).
+entirely on pycore (`CONT_DELETE_LIST`) — delete never reallocates. OOB /
+negative indices → `PY_TRAP_MEM_FAULT`. Tuple → `PY_TRAP_TYPE`.
+
+On a **DICT**, same-tag hits write `PY_TAG_TOMBSTONE` on the key tag and
+decrement `used` on pycore. Cross-tag numeric probes raise
+`PY_TRAP_DICT_COLLISION` (12) so excore can apply rich equality (e.g.
+`del d[True]` after storing `1`). Miss → `PY_TRAP_MEM_FAULT`.
 
 #### `CONTAINS_OP`
 
-`CONTAINS_OP` (opcode 57) implements `in` / `not in` (oparg bit 0) entirely
-on pycore — membership never changes capacity:
+`CONTAINS_OP` (opcode 57) implements `in` / `not in` (oparg bit 0) —
+membership never changes capacity:
 
-- **LIST / TUPLE**: linear scan (`CONT_CONTAINS_LIST` / `_TUPLE`); INT/BOOL
-  cross-equality matches CPython (`True == 1`).
-- **DICT**: open-addressed probe (`CONT_CONTAINS_DICT`); miss pushes
-  `False` (unlike `NB_SUBSCR`, which traps). Key equality follows the
-  existing same-tag dict policy.
+- **LIST / TUPLE**: linear scan on pycore; INT/BOOL cross-equality matches
+  CPython (`True == 1`).
+- **DICT**: open-addressed probe; miss pushes `False` (unlike `NB_SUBSCR`,
+  which traps). Same-tag matches on pycore; cross-tag numeric →
+  `DICT_COLLISION` for excore. Tombstones are skipped.
 
 ### TUPLE in-dmem layout
 
@@ -623,34 +627,37 @@ allocation bytes : size * 32
 Helpers: `pycore_tuple_val_addr`, `pycore_tuple_tag_addr`,
 `pycore_tuple_alloc_bytes`, `pycore_tuple_size`, `pycore_tuple_addr`.
 
-### DICT in-dmem layout
+### DICT in-dmem layout (v2)
 
-All addresses are 16-byte aligned (128-bit dmem slot granularity).
+All addresses are 16-byte aligned (128-bit dmem slot granularity). Layout v2
+keeps a **stable 32-byte object** and a **relocatable table** (grow updates
+`table_ptr` only; the dict handle address does not move):
 
 ```text
-base + 0                 : header { slot_count[63:0], used[63:0] }
-base + 16*(1 + 4*i)      : slot[i] key   value[127:0]
-base + 16*(2 + 4*i)      : slot[i] key   tag   { 124'b0, key_tag[3:0] }
-base + 16*(3 + 4*i)      : slot[i] value value[127:0]
-base + 16*(4 + 4*i)      : slot[i] value tag   { 124'b0, val_tag[3:0] }
+obj+0  : header { slot_count[63:0], used[63:0] }
+obj+16 : { 64'd0, table_ptr[63:0] }     // 0 if slot_count == 0
+
+table + i*64 + 0  : key value
+table + i*64 + 16 : key tag   (UNINIT=empty, TOMBSTONE=deleted)
+table + i*64 + 32 : value value
+table + i*64 + 48 : value tag
 ```
 
-Each slot occupies **four 16-byte dmem slots** (slot stride = 64 bytes).
-Total allocation = `16 + slot_count × 64` bytes.
-
-Empty-bucket sentinel: key tag = `PY_TAG_UNINIT` (4'b0000).
-
-Slot count = `next_pow2(max(4, 2 × n_pairs))`, ensuring max load ≤ 50% at
-construction time. Hash = `pycore_dict_key_hash(tag, value) & (slot_count − 1)`:
+`BUILD_MAP` may allocate object+table contiguously
+(`pycore_dict_alloc_bytes`); slot helpers take the **table** base. Slot count
+= `next_pow2(max(4, 2 × n_pairs))` (including empty `BUILD_MAP 0` → 4 slots).
+Hash = `pycore_dict_key_hash(tag, value) & (slot_count − 1)`:
 
 | Key tag | Hash |
 | --- | --- |
-| `INT` / `BOOL` | `value[31:0]` (preserves existing images) |
+| `INT` | `value[31:0]`; CPython `-1 → -2` |
+| `BOOL` | `value[0]` as 0/1 |
+| `FLOAT` | integer-valued / ±0 match int hashes; else bit-mix |
 | `SHORT_STR` | XOR of the four 32-bit words of `value[127:0]` |
 | `LONG_STR` | `value[31:0] ^ value[95:64]` (low 32 of addr XOR low 32 of size) |
 
-Supported key tags: `INT`, `BOOL`, `SHORT_STR`, `LONG_STR`. Other key tags trap
-`PY_TRAP_TYPE`. Key-not-found traps `PY_TRAP_MEM_FAULT`.
+Supported key tags: `INT`, `BOOL`, `FLOAT`, `SHORT_STR`, `LONG_STR`. Other key
+tags trap `PY_TRAP_TYPE`. Key-not-found traps `PY_TRAP_MEM_FAULT`.
 
 `LONG_STR` equality is descriptor equality (`{size, addr}`). This relies on
 **interning**: `StringHeapBuilder` deduplicates identical long-string constants
@@ -658,15 +665,14 @@ so descriptor equality is string equality. Runtime-concatenated `LONG_STR`
 results (private to `pycore_exec` string memory, not interned) are not valid
 dict keys semantically; hardware cannot detect this.
 
-The header `used` field is maintained on insert. Probe loops are bounded by
-`slot_count` and trap `PY_TRAP_MEM_FAULT` on exhaustion. Interim insert policy
-(until rehash/grow): never fill the table completely — require
-`used + 1 < slot_count` before an empty-slot insert so at least one empty slot
-always remains.
-
-The implementation uses **tombstone-free open-addressed linear probing**.
-Dict `DELETE_SUBSCR` still type-traps until tombstones (or compacting) land;
-list delete and all `CONTAINS_OP` paths are on pycore (see above).
+**Same-tag probe** (empty / exact match / unequal continue) and **tombstone
+skip** stay on pycore. **Cross-tag numeric** probe hits raise
+`PY_TRAP_DICT_COLLISION` (12) for excore rich equality. Before a new-key
+insert, load ≥ 2/3 (`used*3 >= slot_count*2`), empty table, or no free slot
+raises `PY_TRAP_DICT_GROW` (11); excore reallocates (`used*4` if `used≤50k`
+else `used*2`, floored/rounded to a power of two), rehashes, and completes
+the STORE. Without `EXCORE_EN` grow/collision are fatal. Design notes:
+`pycore/docs/dict_excore.md`.
 
 Static heap images for dicts/tuples/lists can be built with
 `pycore/tools/heap_image.py` (`HeapImageBuilder`), which mirrors the RTL hash
@@ -674,18 +680,20 @@ and probe rules.
 
 ### DICT FSM path
 
-`CONT_BUILD_MAP`, `CONT_SUBSCR_DICT`, and `CONT_STORE_DICT` are three distinct
-container op codes (3-bit `container_op_r`) sharing the dict-specific phases
-`CP_DICT_HASH` (5) through `CP_DICT_RD_VTAG` (14). `CONT_BUILD_TUPLE` and
+`CONT_BUILD_MAP`, `CONT_SUBSCR_DICT`, `CONT_STORE_DICT`, plus dict
+`DELETE_SUBSCR` / `CONTAINS_OP` paths, share the dict probe phases. Layout v2
+reads `table_ptr` via `CP_LIST_BUF` after the header. `CONT_BUILD_TUPLE` and
 `CONT_SUBSCR_TUPLE` reuse the shared LIST-style phases without a header.
 
-- **`BUILD_MAP`**: allocates header, then for each pair reads key from RF,
-  probes for empty/matching slot, inserts key + value (4 dmem writes each),
-  rewrites `used` in the header once at the end.
-- **`NB_SUBSCR` on DICT**: reads header → slot_count, probes for matching key,
-  reads value value + tag, writes result to RF.
-- **`STORE_SUBSCR` on DICT**: reads header, probes for matching or empty slot,
-  writes key/value; bumps `used` on new-key insert.
+- **`BUILD_MAP`**: allocates 32B object + contiguous table, writes header +
+  `table_ptr`, then for each pair probes (same-tag only) and inserts; rewrites
+  `used` once at the end. Empty maps still get ≥4 slots.
+- **`NB_SUBSCR` on DICT**: reads header + `table_ptr`, probes; same-tag hit
+  returns value; cross-tag numeric → `DICT_COLLISION`; miss → `MEM_FAULT`.
+- **`STORE_SUBSCR` on DICT**: same-tag upsert / tombstone reuse on pycore;
+  new-key insert may `DICT_GROW`; cross-tag numeric → `DICT_COLLISION`.
+- **`DELETE_SUBSCR` / `CONTAINS_OP` on DICT**: tombstone / BOOL result on
+  same-tag; cross-tag → `DICT_COLLISION`.
 - **`BUILD_TUPLE` / `NB_SUBSCR` on TUPLE**: no header; size is inline in the
   handle. `STORE_SUBSCR` on a TUPLE traps `PY_TRAP_TYPE` (immutable).
 

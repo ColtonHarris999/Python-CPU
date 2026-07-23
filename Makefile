@@ -123,6 +123,14 @@ EXCORE_RTL_SRCS := \
 	pycore-img-list-del-contains-call pycore-img-list-extend-del-contains-two-core \
 	pycore-img-list-del-oob pycore-img-list-del-tuple-trap \
 	pycore-img-dict-del-trap \
+	pycore-img-dict-store-lookup pycore-img-dict-overwrite \
+	pycore-img-dict-del-simple pycore-img-dict-del-then-insert \
+	pycore-img-dict-hash-neg1 pycore-img-dict-str-keys \
+	pycore-img-dict-large-pycore pycore-img-dict-grow-fatal \
+	pycore-img-dict-bool-int-collision pycore-img-dict-false-zero \
+	pycore-img-dict-grow-basic pycore-img-dict-grow-large \
+	pycore-img-dict-del-collision pycore-img-dict-contains-collision \
+	pycore-img-dict-mixed-ops \
 	pycore-img-two-core \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
@@ -526,6 +534,54 @@ pycore-img-dict-del-trap:
 	# Same-tag dict delete is on-pycore (tombstone); no TYPE trap.
 	$(call PYCORE_IMAGE_RUN,dict_del_trap,50000)
 
+# Dict same-tag paths (single-core; no DICT_GROW / DICT_COLLISION).
+pycore-img-dict-store-lookup:
+	$(call PYCORE_IMAGE_RUN,dict_store_lookup,50000)
+
+pycore-img-dict-overwrite:
+	$(call PYCORE_IMAGE_RUN,dict_overwrite,50000)
+
+pycore-img-dict-del-simple:
+	$(call PYCORE_IMAGE_RUN,dict_del_simple,50000)
+
+pycore-img-dict-del-then-insert:
+	$(call PYCORE_IMAGE_RUN,dict_del_then_insert,50000)
+
+pycore-img-dict-hash-neg1:
+	$(call PYCORE_IMAGE_RUN,dict_hash_neg1,50000)
+
+pycore-img-dict-str-keys:
+	$(call PYCORE_IMAGE_RUN,dict_str_keys,50000)
+
+pycore-img-dict-large-pycore:
+	$(call PYCORE_IMAGE_RUN,dict_large_pycore,100000)
+
+# Empty dict + 4th new-key insert → fatal DICT_GROW without excore.
+pycore-img-dict-grow-fatal:
+	$(call PYCORE_IMAGE_TRAP_RUN,dict_grow_fatal,11,50000)
+
+# Dict grow / cross-tag collision (two-core; EXCORE_EN=1).
+pycore-img-dict-bool-int-collision: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_bool_int_collision,100000)
+
+pycore-img-dict-false-zero: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_false_zero,100000)
+
+pycore-img-dict-grow-basic: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_grow_basic,100000)
+
+pycore-img-dict-grow-large: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_grow_large,200000)
+
+pycore-img-dict-del-collision: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_del_collision,100000)
+
+pycore-img-dict-contains-collision: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_contains_collision,100000)
+
+pycore-img-dict-mixed-ops: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_mixed_ops,200000)
+
 # Extend (excore grow) then delete/contains — two-core only.
 pycore-img-list-extend-del-contains-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,list_extend_del_contains,100000)
@@ -632,7 +688,14 @@ pycore-img-two-core: \
 	pycore-img-globals-accum-two-core \
 	pycore-img-string-ops-two-core \
 	pycore-img-list-extend-two-core \
-	pycore-img-list-extend-del-contains-two-core
+	pycore-img-list-extend-del-contains-two-core \
+	pycore-img-dict-bool-int-collision \
+	pycore-img-dict-false-zero \
+	pycore-img-dict-grow-basic \
+	pycore-img-dict-grow-large \
+	pycore-img-dict-del-collision \
+	pycore-img-dict-contains-collision \
+	pycore-img-dict-mixed-ops
 
 pycore-img: \
 	pycore-img-smoke \
@@ -681,7 +744,15 @@ pycore-img: \
 	pycore-img-list-del-contains-call \
 	pycore-img-list-del-oob \
 	pycore-img-list-del-tuple-trap \
-	pycore-img-dict-del-trap
+	pycore-img-dict-del-trap \
+	pycore-img-dict-store-lookup \
+	pycore-img-dict-overwrite \
+	pycore-img-dict-del-simple \
+	pycore-img-dict-del-then-insert \
+	pycore-img-dict-hash-neg1 \
+	pycore-img-dict-str-keys \
+	pycore-img-dict-large-pycore \
+	pycore-img-dict-grow-fatal
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /

@@ -47,7 +47,7 @@ fully unsupported for the current PyCore implementation.
 | `BUILD_TUPLE` | Pops `count` values, allocates a tuple (no header), pushes a `TUPLE` handle `{size, addr}`. | Opcode 51 (resolved from CPython 3.14). Same index rules as LIST for `NB_SUBSCR`. |
 | `BUILD_MAP` | Pops `2*count` items (interleaved key/value), allocates a dict, pushes `DICT`. | Open-addressed linear-probe insert. Keys: `INT`, `BOOL`, `SHORT_STR`, `LONG_STR`. Slot count = `next_pow2(max(4, 2*count))`. |
 | `BINARY_OP` with oparg `NB_SUBSCR` (26) | Subscript read `x[k]`. | `LIST`/`TUPLE`: unsigned bounds-checked index read. `DICT`: linear-probe lookup; missing key traps `PY_TRAP_MEM_FAULT`. Dict keys may be `INT`/`BOOL`/`SHORT_STR`/`LONG_STR`; other key tags trap `PY_TRAP_TYPE`. |
-| `STORE_SUBSCR` | Subscript write `x[k] = v`. | `LIST`: bounds-checked index write. `DICT`: upsert via linear probe (maintains `used`; refuses inserts that would fill the table completely). `TUPLE`: traps `PY_TRAP_TYPE` (immutable). Pops key, container, value (3 items). |
+| `STORE_SUBSCR` | Subscript write `x[k] = v`. | `LIST`: bounds-checked index write. `DICT`: same-tag upsert on pycore (tombstone reuse); new-key insert at load ≥ 2/3 → `DICT_GROW` (11); cross-tag numeric → `DICT_COLLISION` (12). `TUPLE`: `TYPE`. Pops key, container, value (3 items). Prefer `d={}` + stores or locals for `BUILD_MAP` (CPython 3.14 may emit `BUILD_CONST_KEY_MAP` for constant `{k:v}`). |
 | `COPY` | Duplicates the stack entry at depth `oparg`, pushing a copy to TOS. | Clone of the `LOAD_FAST` datapath: reads RF slot `tos_index - oparg` and pushes the `{tag, value}` entry verbatim. Tag-agnostic, no trap. Value-stack-overflow is not detected (see deviation 10). |
 | `SWAP` | Swaps TOS with the stack entry at depth `oparg`. | Two-beat `S_CONTAINER` RF exchange (`CONT_LFB_PAIR` clone): writes deep→TOS then TOS→deep; tag-agnostic, net stack 0, no trap. |
 
@@ -61,8 +61,8 @@ fully unsupported for the current PyCore implementation.
 | `JUMP_IF_FALSE_OR_POP` | Jumps if falsy else pops TOS. | Not part of the current image-boot subset. |
 | `LIST_APPEND` | Appends TOS to the list `oparg` slots below it (`list, unused[oparg-1], v -- list, unused[oparg-1]`); pops only `v`. | Fast path (`CONT_LIST_APPEND`, opcode 78): spare capacity (`length < capacity`) appends in place, 5 dmem ops, no trap. Grow path (`length == capacity`) raises `PY_TRAP_LIST_GROW` (trap 9) before any commit. With `EXCORE_EN=1` the excore doubles the buffer (floor 4), copies, appends, and returns `COMPLETED`. With `EXCORE_EN=0` it is fatal. `compile()` only emits this inside comprehensions (`FOR_ITER`/`GET_ITER` still unsupported); coverage is via hand-assembled fixtures. |
 | `LIST_EXTEND` | Extends the list `oparg` slots below TOS with the iterable at TOS; pops only the iterable. | Fast path (`CONT_LIST_EXTEND`, opcode 79) when `len + src_len <= capacity` (LIST or TUPLE sources only; empty source is a no-op pop). Grow path raises `PY_TRAP_LIST_EXTEND` (trap 10); with `EXCORE_EN=1` the excore grows-to-fit and completes the extend (`COMPLETED`, pop 1). Unsupported iterable tags → `PY_TRAP_TYPE`. Emitted by compile() for list-display unpack (`[1,2,*x]`, `[*a,*b]`); `list.extend` method calls still need `LOAD_ATTR`. Fixtures: `list_extend_*` (single-core), `extend_*` + `img_list_extend` (two-core). |
-| `DELETE_SUBSCR` | `del container[key]` — pops container and key. | List: in-place shift-down on pycore (`CONT_DELETE_LIST`, opcode 8); capacity unchanged; OOB → `MEM_FAULT`. Tuple/dict: `TYPE` trap (dict tombstones deferred). No excore — delete never reallocates. |
-| `CONTAINS_OP` | `x in container` / `x not in container` (oparg 0/1); needle then container on stack; pushes BOOL. | List/tuple: linear scan (`CONT_CONTAINS_LIST` / `_TUPLE`) with INT/BOOL cross-equality (`True == 1`). Dict: hash probe (`CONT_CONTAINS_DICT`); miss → False (not KeyError / not `MEM_FAULT`); key match is same-tag like `NB_SUBSCR`. All on pycore — no capacity change, no excore. |
+| `DELETE_SUBSCR` | `del container[key]` — pops container and key. | List: in-place shift-down on pycore (`CONT_DELETE_LIST`); capacity unchanged; OOB → `MEM_FAULT`. Tuple → `TYPE`. Dict: same-tag hit writes `PY_TAG_TOMBSTONE` and decrements `used` on pycore; cross-tag numeric (INT/BOOL/FLOAT) → `DICT_COLLISION` (12) for excore rich-eq delete; miss → `MEM_FAULT`. Delete never reallocates. Images: `img_dict_del_*`. |
+| `CONTAINS_OP` | `x in container` / `x not in container` (oparg 0/1); needle then container on stack; pushes BOOL. | List/tuple: linear scan with INT/BOOL cross-equality (`True == 1`). Dict: hash probe; miss → False (not KeyError); same-tag match on pycore; cross-tag numeric → `DICT_COLLISION` (excore). Tombstones are skipped. Images: `img_dict_contains*`. |
 
 ## Fully unsupported bytecodes
 
@@ -81,11 +81,13 @@ In short, unsupported bytecodes do not have fallback emulation in hardware.
 These are intentional or interim differences; they are not bugs to "fix" in
 this milestone:
 
-1. **INT/BOOL key non-equivalence.** CPython has `hash(True) == hash(1)` and
-   `True == 1`, so `{1: v}[True]` hits. PyCore matches keys only within the same
-   tag, so that lookup traps as key-not-found (`PY_TRAP_MEM_FAULT`).
+1. **INT/BOOL/FLOAT cross-tag keys need excore.** Same-tag probes stay on
+   pycore. Cross-tag numeric hits (`True` vs `1`, `1.0` vs `1`, …) raise
+   `DICT_COLLISION` (12); with `EXCORE_EN=1` excore finishes rich equality
+   (CPython semantics). Without excore the trap is fatal.
 2. **Missing dict key → `PY_TRAP_MEM_FAULT`.** There is no `KeyError` object;
-   absent keys raise the memory-fault trap (KeyError analog).
+   absent keys raise the memory-fault trap (KeyError analog). `CONTAINS_OP`
+   misses push `False` instead.
 3. **Negative list/tuple indices trap.** Bounds checks are unsigned; negative
    INT indices do not wrap to `size + idx`.
 4. **Non-interned runtime strings as dict keys.** `LONG_STR` equality is
@@ -93,9 +95,10 @@ this milestone:
    Runtime-concatenated long strings live in the exec unit's private
    `string_mem` and are not interned; using them as dict keys is not
    semantically valid. Hardware cannot detect this.
-5. **Dict fill policy.** Until rehash/grow exists, an insert that would make
-   the table completely full traps `PY_TRAP_MEM_FAULT` so absent-key probes
-   always terminate (at least one empty slot remains).
+5. **Dict grow via excore.** Load ≥ 2/3 (or empty table / no free slot) before
+   a new-key insert raises `DICT_GROW` (11). With `EXCORE_EN=1` excore
+   reallocates the table, rehashes, and completes the STORE; without excore
+   the trap is fatal. See `pycore/docs/dict_excore.md`.
 6. **No builtins fallback for names.** `LOAD_GLOBAL` / `LOAD_NAME` probe only
    the serialized module globals dict; missing names trap `PY_TRAP_MEM_FAULT`.
 7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
