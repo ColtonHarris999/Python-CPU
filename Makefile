@@ -69,6 +69,7 @@ EXCORE_RTL_SRCS := \
 	excore/rtl/excore_mmio.sv
 
 .PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test \
+	pycore-docs \
 	pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs \
 	pycore-python-tests pycore-mem pycore-frame pycore-frame-fib \
 	pycore-top pycore-multifn \
@@ -1106,6 +1107,17 @@ excore-cpu-test: excore-fw
 excore-test: excore-asm-tests excore-cpu-test
 
 pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container pycore-img pycore-excore-system pycore-img-two-core
+
+# Build the LaTeX execution-flow specification PDF (requires pdflatex + texlive).
+PYCORE_SPEC_TEX := pycore/docs/pycore_execution_flow.tex
+PYCORE_SPEC_PDF := pycore/docs/pycore_execution_flow.pdf
+
+pycore-docs:
+	pdflatex -interaction=nonstopmode -output-directory pycore/docs $(PYCORE_SPEC_TEX)
+	pdflatex -interaction=nonstopmode -output-directory pycore/docs $(PYCORE_SPEC_TEX)
+	@rm -f pycore/docs/pycore_execution_flow.aux pycore/docs/pycore_execution_flow.log \
+		pycore/docs/pycore_execution_flow.toc pycore/docs/pycore_execution_flow.out
+	@echo "Built $(PYCORE_SPEC_PDF)"
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .
