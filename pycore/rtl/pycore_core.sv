@@ -171,6 +171,7 @@ module pycore_core #(
     localparam logic [4:0] CONT_CONTAINS_LIST  = 5'd19;// CONTAINS_OP on LIST
     localparam logic [4:0] CONT_CONTAINS_TUPLE = 5'd20;// CONTAINS_OP on TUPLE
     localparam logic [4:0] CONT_CONTAINS_DICT  = 5'd21;// CONTAINS_OP on DICT
+    localparam logic [4:0] CONT_DELETE_DICT  = 5'd22;// DELETE_SUBSCR on DICT
 
     // Container phases (stored in container_phase_r, 4-bit).
     //
@@ -218,12 +219,12 @@ module pycore_core #(
     // CP_HDR/CP_VAL/CP_TAG so the always_ff case tables stay legible.
     localparam logic [4:0] CP_NAME_VAL    = 5'd18;
     localparam logic [4:0] CP_NAME_TAG    = 5'd19;
-    // LIST v2 (split object/buffer) shared phases:
-    //   CP_LIST_BUF (20): ob_item slot access at obj_addr+16 — a WRITE while
-    //     the buffer address is being installed (CONT_BUILD_LIST,
-    //     CONT_LIST_APPEND's grow completion is excore-only in Phase A/B) or
-    //     a READ while resolving the buffer address before an element access
-    //     (CONT_SUBSCR_LIST, CONT_STORE_LIST, CONT_LIST_APPEND fast path).
+    // LIST v2 / DICT v2 shared phases:
+    //   CP_LIST_BUF (20): list ob_item OR dict table_ptr at obj_addr+16 —
+    //     WRITE while installing (CONT_BUILD_LIST / CONT_BUILD_MAP) or READ
+    //     while resolving the buffer/table base before element/slot access
+    //     (CONT_SUBSCR_LIST/DICT, CONT_STORE_LIST/DICT, CONT_LIST_APPEND,
+    //     CONT_CONTAINS_DICT, CONT_DELETE_DICT, LOAD_GLOBAL, STORE_NAME).
     //   CP_LIST_WB (21): header write-back ack (CONT_LIST_APPEND: commits
     //     length+1 after the element itself has been written).
     //   CP_SRC_HDR (22): CONT_LIST_EXTEND — waiting on source-list header
@@ -374,6 +375,14 @@ module pycore_core #(
     logic [31:0]                   container_dst_len_r;
     // One-cycle pulse: CONT_LIST_EXTEND needs a grow (len+src_len > cap).
     logic                          container_list_extend_trap_r;
+    // One-cycle pulses: dict grow / cross-tag collision (fatal when
+    // EXCORE_EN=0; otherwise marshaled like LIST_GROW before any commit).
+    logic                          container_dict_grow_trap_r;
+    logic                          container_dict_collision_trap_r;
+    // STORE_DICT / STORE_NAME: first tombstone index seen during probe
+    // (insert target when the key is absent). Valid while tomb_valid_r=1.
+    logic                          container_tomb_valid_r;
+    logic [31:0]                   container_tomb_idx_r;
 
     // -----------------------------------------------------------------------
     // S_TRAP_MARSHAL / S_TRAP_WAIT (Phase C) registers.
@@ -998,6 +1007,10 @@ module pycore_core #(
     assign list_grow_sig  = container_list_grow_trap_r;
     logic list_extend_sig;
     assign list_extend_sig = container_list_extend_trap_r;
+    logic dict_grow_sig;
+    logic dict_collision_sig;
+    assign dict_grow_sig      = container_dict_grow_trap_r;
+    assign dict_collision_sig = container_dict_collision_trap_r;
     // Phase C: excore reported RES_FATAL for a trap it was handed — forward
     // its fatal_code as a normal halt (see S_TRAP_WAIT).
     logic excore_fatal_sig;
@@ -1026,6 +1039,8 @@ module pycore_core #(
         .addr_align_i(addr_align_sig),
         .list_grow_i(list_grow_sig),
         .list_extend_i(list_extend_sig),
+        .dict_grow_i(dict_grow_sig),
+        .dict_collision_i(dict_collision_sig),
         .excore_fatal_i(excore_fatal_sig),
         .excore_fatal_code_i(excore_fatal_code_r),
         .fault_pc_i(fault_pc),
@@ -1157,7 +1172,7 @@ module pycore_core #(
 
     // Key comparison against the last kval read (container_rd_data_r).
     // INT: compare value[63:0]. BOOL: compare value[0].
-    // SHORT_STR / LONG_STR: full 128-bit value-field equality.
+    // FLOAT / SHORT_STR / LONG_STR: full 128-bit value-field equality.
     // LONG_STR equality relies on interning: the tooling guarantees at most
     // one copy of each distinct long string in the image, so descriptor
     // equality is string equality. Runtime-concatenated LONG_STR results
@@ -1167,9 +1182,19 @@ module pycore_core #(
     assign cont_dict_key_match =
         (container_tag_r == PY_TAG_INT)  ? (container_rd_data_r[63:0] == container_val_r[63:0]) :
         (container_tag_r == PY_TAG_BOOL) ? (container_rd_data_r[0]    == container_val_r[0])    :
-        (container_tag_r == PY_TAG_SHORT_STR ||
+        (container_tag_r == PY_TAG_FLOAT ||
+         container_tag_r == PY_TAG_SHORT_STR ||
          container_tag_r == PY_TAG_LONG_STR) ? (container_rd_data_r == container_val_r) :
         1'b0;
+
+    // Load-factor / empty-table check before a new-key dict insert.
+    logic cont_dict_needs_grow;
+    assign cont_dict_needs_grow = pycore_dict_needs_grow(
+        container_used_r, {32'b0, container_slot_count_r});
+
+    // table_ptr low 32 bits from the last table_ptr-slot dmem read.
+    logic [31:0] cont_dict_table_ptr;
+    assign cont_dict_table_ptr = container_rd_data_r[31:0];
 
     // CONTAINS_OP: compare scanned element (value latched in container_val_r,
     // tag in container_rd_data_r[3:0] during CP_TAG) against needle rs1.
@@ -1361,6 +1386,10 @@ module pycore_core #(
             container_src_len_r          <= '0;
             container_dst_len_r          <= '0;
             container_list_extend_trap_r <= 1'b0;
+            container_dict_grow_trap_r      <= 1'b0;
+            container_dict_collision_trap_r <= 1'b0;
+            container_tomb_valid_r          <= 1'b0;
+            container_tomb_idx_r            <= '0;
             trap_marshal_pending_r     <= 1'b0;
             trap_marshal_code_r        <= '0;
             trap_marshal_entry_count_r <= '0;
@@ -1392,6 +1421,8 @@ module pycore_core #(
             container_mem_fault_r <= 1'b0;
             container_list_grow_trap_r   <= 1'b0;
             container_list_extend_trap_r <= 1'b0;
+            container_dict_grow_trap_r      <= 1'b0;
+            container_dict_collision_trap_r <= 1'b0;
             excore_fatal_trap_r   <= 1'b0;
             call_filter_trap_r    <= 1'b0;
 
@@ -1459,9 +1490,10 @@ module pycore_core #(
                                 container_op_r <= (cont_rs2_tag == PY_TAG_DICT) ?
                                                   CONT_STORE_DICT : CONT_STORE_LIST;
                             end else if (cur_opcode_r == PY_OP_DELETE_SUBSCR) begin
-                                // List-only shift-down. Dict/tuple → TYPE in
-                                // CONT_DELETE_LIST CP_INIT (dict tombstones deferred).
-                                container_op_r <= CONT_DELETE_LIST;
+                                // DICT → tombstone path; LIST → shift-down;
+                                // other containers TYPE-trap in CONT_DELETE_LIST.
+                                container_op_r <= (cont_rs2_tag == PY_TAG_DICT) ?
+                                                  CONT_DELETE_DICT : CONT_DELETE_LIST;
                             end else if (cur_opcode_r == PY_OP_CONTAINS_OP) begin
                                 // rs1 = needle, rs2 = container.
                                 if (cont_rs2_tag == PY_TAG_DICT)
@@ -2750,14 +2782,17 @@ module pycore_core #(
                         end // CONT_LIST_EXTEND
 
                         // ===========================================================
-                        // CONT_BUILD_MAP: allocate dict + linear-probe insert all pairs.
-                        // Tracks `used` in container_used_r and rewrites the header
-                        // once at the end. Probe loops are bounded by slot_count.
+                        // CONT_BUILD_MAP: allocate dict (32B obj + contiguous table)
+                        // + linear-probe insert all pairs. Layout v2: slot helpers
+                        // take table base in container_buf_r. Probe is same-tag
+                        // only (cross-tag numeric → continue; no DICT_COLLISION
+                        // mid-build). Fresh bump-heap words are zero → UNINIT
+                        // empty slots (same assumption as unused list capacity).
                         // ===========================================================
                         CONT_BUILD_MAP: begin
                             unique case (container_phase_r)
 
-                                // Phase 0: OOM check, allocate header.
+                                // Phase 0: OOM check, allocate header + table.
                                 CP_INIT: begin
                                     if ((heap_ptr_r + pycore_dict_alloc_bytes(cont_dict_min_slots))
                                             > PYCORE_HEAP_LIMIT) begin
@@ -2769,6 +2804,8 @@ module pycore_core #(
                                         container_insert_new_r <= 1'b0;
                                         container_finishing_r  <= 1'b0;
                                         container_base_r       <= heap_ptr_r;
+                                        // Contiguous table immediately after 32B object.
+                                        container_buf_r        <= heap_ptr_r + 32'd32;
                                         heap_ptr_r             <= heap_ptr_r +
                                             pycore_dict_alloc_bytes(cont_dict_min_slots);
                                         container_dmem_addr_r  <= heap_ptr_r;
@@ -2783,7 +2820,8 @@ module pycore_core #(
                                     end
                                 end
 
-                                // Phase 1: wait for header write ack.
+                                // Phase 1: header write ack → write table_ptr,
+                                // or finish used-count rewrite / empty commit.
                                 CP_HDR: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_finishing_r) begin
@@ -2801,8 +2839,25 @@ module pycore_core #(
                                                 + 7'd1;
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
-                                        end else if (container_count_r == 7'd0) begin
-                                            // Empty dict: done (used already 0).
+                                        end else begin
+                                            // Install table_ptr at obj+16 (0 only
+                                            // if slot_count were 0; BUILD_MAP always
+                                            // allocates ≥4 slots via min_slots).
+                                            container_dmem_addr_r <=
+                                                pycore_dict_table_ptr_addr(container_base_r);
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                {{64{1'b0}}, {32'b0, container_buf_r}};
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r <= CP_LIST_BUF;
+                                        end
+                                    end
+                                end
+
+                                // Phase 2: table_ptr write ack → probe or empty done.
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_count_r == 7'd0) begin
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'({2'b0, tos_r});
                                             container_wb_data_r <= pycore_make_entry(
@@ -2811,7 +2866,6 @@ module pycore_core #(
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
                                         end else begin
-                                            // Read first pair's key from RF.
                                             container_tag_r <= cont_rf_rs1_tag;
                                             container_val_r <= cont_rf_rs1_val;
                                             if (!pycore_dict_key_tag_ok(cont_rf_rs1_tag)) begin
@@ -2826,10 +2880,11 @@ module pycore_core #(
                                                     probe0 = pycore_dict_key_hash(
                                                         cont_rf_rs1_tag, cont_rf_rs1_val)
                                                         & (container_slot_count_r - 32'd1);
-                                                    container_probe_r  <= probe0;
+                                                    container_probe_r   <= probe0;
                                                     container_probe_n_r <= 32'd0;
-                                                    container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                        container_base_r, probe0);
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r, probe0);
                                                 end
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
@@ -2839,7 +2894,7 @@ module pycore_core #(
                                     end
                                 end
 
-                                // Probe: wait for ktag read; check empty/match/collision.
+                                // Probe: same-tag only. Tombstone skip; other tags continue.
                                 CP_DICT_PROBE: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_probe_n_r >= container_slot_count_r) begin
@@ -2847,17 +2902,32 @@ module pycore_core #(
                                         end else begin
                                             container_probe_n_r <= container_probe_n_r + 32'd1;
                                             if (container_rd_data_r[3:0] == PY_TAG_UNINIT) begin
-                                                // Empty slot → insert here (new key).
                                                 container_insert_new_r <= 1'b1;
                                                 container_dmem_addr_r  <= pycore_dict_kval_addr(
-                                                    container_base_r, container_probe_r);
+                                                    container_buf_r, container_probe_r);
                                                 container_dmem_we_r    <= 1'b1;
                                                 container_dmem_wdata_r <= container_val_r;
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r <= CP_DICT_WR_KVAL;
-                                            end else if (container_rd_data_r[3:0] == container_tag_r) begin
+                                            end else if (pycore_dict_tombstone(
+                                                            container_rd_data_r[3:0])) begin
+                                                // BUILD_MAP: treat tombstone like occupied
+                                                // mismatch — continue (should not appear).
+                                                if (container_probe_n_r + 32'd1
+                                                        >= container_slot_count_r) begin
+                                                    container_mem_fault_r <= 1'b1;
+                                                end else begin
+                                                    container_probe_r <= cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r, cont_probe_next);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end
+                                            end else if (container_rd_data_r[3:0]
+                                                         == container_tag_r) begin
                                                 container_dmem_addr_r <= pycore_dict_kval_addr(
-                                                    container_base_r, container_probe_r);
+                                                    container_buf_r, container_probe_r);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r <= CP_DICT_CHK_VAL;
@@ -2865,9 +2935,11 @@ module pycore_core #(
                                                          >= container_slot_count_r) begin
                                                 container_mem_fault_r <= 1'b1;
                                             end else begin
+                                                // Different tag (incl. cross-tag numeric):
+                                                // continue probe — no rich-eq during build.
                                                 container_probe_r <= cont_probe_next;
                                                 container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                    container_base_r, cont_probe_next);
+                                                    container_buf_r, cont_probe_next);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                             end
@@ -2878,10 +2950,9 @@ module pycore_core #(
                                 CP_DICT_CHK_VAL: begin
                                     if (!container_dmem_pending_r) begin
                                         if (cont_dict_key_match) begin
-                                            // Same key: overwrite (do not bump used).
                                             container_insert_new_r <= 1'b0;
                                             container_dmem_addr_r  <= pycore_dict_kval_addr(
-                                                container_base_r, container_probe_r);
+                                                container_buf_r, container_probe_r);
                                             container_dmem_we_r    <= 1'b1;
                                             container_dmem_wdata_r <= container_val_r;
                                             container_dmem_pending_r <= 1'b1;
@@ -2892,7 +2963,7 @@ module pycore_core #(
                                         end else begin
                                             container_probe_r <= cont_probe_next;
                                             container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                container_base_r, cont_probe_next);
+                                                container_buf_r, cont_probe_next);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r <= CP_DICT_PROBE;
@@ -2903,7 +2974,7 @@ module pycore_core #(
                                 CP_DICT_WR_KVAL: begin
                                     if (!container_dmem_pending_r) begin
                                         container_dmem_addr_r  <= pycore_dict_ktag_addr(
-                                            container_base_r, container_probe_r);
+                                            container_buf_r, container_probe_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <= {124'b0, container_tag_r};
                                         container_dmem_pending_r <= 1'b1;
@@ -2925,7 +2996,7 @@ module pycore_core #(
                                 CP_DICT_RD_VAL: begin
                                     container_tag_r <= cont_rf_rs1_tag;
                                     container_dmem_addr_r  <= pycore_dict_vval_addr(
-                                        container_base_r, container_probe_r);
+                                        container_buf_r, container_probe_r);
                                     container_dmem_we_r    <= 1'b1;
                                     container_dmem_wdata_r <= cont_rf_rs1_val;
                                     container_dmem_pending_r <= 1'b1;
@@ -2935,7 +3006,7 @@ module pycore_core #(
                                 CP_DICT_WR_VVAL: begin
                                     if (!container_dmem_pending_r) begin
                                         container_dmem_addr_r  <= pycore_dict_vtag_addr(
-                                            container_base_r, container_probe_r);
+                                            container_buf_r, container_probe_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <= {124'b0, container_tag_r};
                                         container_dmem_pending_r <= 1'b1;
@@ -2959,7 +3030,6 @@ module pycore_core #(
                                                 + 9'd3);
                                             container_phase_r <= CP_DICT_HASH;
                                         end else begin
-                                            // All pairs inserted — rewrite header with used.
                                             container_dmem_addr_r  <= container_base_r;
                                             container_dmem_we_r    <= 1'b1;
                                             container_dmem_wdata_r <= pycore_dict_header(
@@ -2981,7 +3051,7 @@ module pycore_core #(
                                         container_probe_r   <= cont_dict_hash;
                                         container_probe_n_r <= 32'd0;
                                         container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                            container_base_r, cont_dict_hash);
+                                            container_buf_r, cont_dict_hash);
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         container_phase_r <= CP_DICT_PROBE;
@@ -2994,9 +3064,13 @@ module pycore_core #(
                             endcase
                         end // CONT_BUILD_MAP
 
+
                         // ===========================================================
                         // CONT_SUBSCR_DICT: dict key lookup (NB_SUBSCR on DICT handle).
-                        // rs1_r = dict handle; rs2_r = key (INT/BOOL/SHORT_STR/LONG_STR).
+                        // rs1_r = dict handle; rs2_r = key.
+                        // Layout v2: CP_HDR → CP_LIST_BUF reads table_ptr into
+                        // container_buf_r; slot helpers use the table base.
+                        // Cross-tag numeric probe → DICT_COLLISION (before commit).
                         // ===========================================================
                         CONT_SUBSCR_DICT: begin
                             unique case (container_phase_r)
@@ -3019,19 +3093,37 @@ module pycore_core #(
                                     if (!container_dmem_pending_r) begin
                                         container_slot_count_r <= cont_dict_hdr_slots[31:0];
                                         container_used_r       <= cont_dict_hdr_used;
-                                        begin
-                                            logic [31:0] probe0;
-                                            probe0 = pycore_dict_key_hash(
-                                                container_tag_r, container_val_r)
-                                                & (cont_dict_hdr_slots[31:0] - 32'd1);
-                                            container_probe_r   <= probe0;
-                                            container_probe_n_r <= 32'd0;
-                                            container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                container_base_r, probe0);
-                                        end
+                                        container_dmem_addr_r <=
+                                            pycore_dict_table_ptr_addr(container_base_r);
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
-                                        container_phase_r <= CP_DICT_PROBE;
+                                        container_phase_r        <= CP_LIST_BUF;
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_buf_r <= cont_dict_table_ptr;
+                                        if ((container_slot_count_r == 32'd0) ||
+                                            (cont_dict_table_ptr == 32'd0)) begin
+                                            // Empty dict → KeyError analog.
+                                            container_mem_fault_r <= 1'b1;
+                                        end else begin
+                                            begin
+                                                logic [31:0] probe0;
+                                                probe0 = pycore_dict_key_hash(
+                                                    container_tag_r, container_val_r)
+                                                    & (container_slot_count_r - 32'd1);
+                                                container_probe_r   <= probe0;
+                                                container_probe_n_r <= 32'd0;
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_ktag_addr(
+                                                        cont_dict_table_ptr, probe0);
+                                            end
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r <= CP_DICT_PROBE;
+                                        end
                                     end
                                 end
 
@@ -3042,21 +3134,51 @@ module pycore_core #(
                                         end else begin
                                             container_probe_n_r <= container_probe_n_r + 32'd1;
                                             if (container_rd_data_r[3:0] == PY_TAG_UNINIT) begin
-                                                // Key not found.
                                                 container_mem_fault_r <= 1'b1;
-                                            end else if (container_rd_data_r[3:0] == container_tag_r) begin
+                                            end else if (pycore_dict_tombstone(
+                                                            container_rd_data_r[3:0])) begin
+                                                if (container_probe_n_r + 32'd1
+                                                        >= container_slot_count_r) begin
+                                                    container_mem_fault_r <= 1'b1;
+                                                end else begin
+                                                    container_probe_r <= cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r, cont_probe_next);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end
+                                            end else if (container_rd_data_r[3:0]
+                                                         == container_tag_r) begin
                                                 container_dmem_addr_r <= pycore_dict_kval_addr(
-                                                    container_base_r, container_probe_r);
+                                                    container_buf_r, container_probe_r);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r <= CP_DICT_CHK_VAL;
+                                            end else if (pycore_dict_key_rich_maybe(
+                                                            container_tag_r,
+                                                            container_rd_data_r[3:0])) begin
+                                                // Cross-tag numeric — before any commit.
+                                                if (EXCORE_EN &&
+                                                    pycore_trap_recoverable(
+                                                        PY_TRAP_DICT_COLLISION)) begin
+                                                    trap_marshal_pending_r     <= 1'b1;
+                                                    trap_marshal_code_r        <=
+                                                        PY_TRAP_DICT_COLLISION;
+                                                    trap_marshal_entry_count_r <= 3'd2;
+                                                    trap_marshal_entries_r[0]  <= rs1_r;
+                                                    trap_marshal_entries_r[1]  <= rs2_r;
+                                                    container_phase_r          <= CP_DONE;
+                                                end else begin
+                                                    container_dict_collision_trap_r <= 1'b1;
+                                                end
                                             end else if (container_probe_n_r + 32'd1
                                                          >= container_slot_count_r) begin
                                                 container_mem_fault_r <= 1'b1;
                                             end else begin
                                                 container_probe_r <= cont_probe_next;
                                                 container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                    container_base_r, cont_probe_next);
+                                                    container_buf_r, cont_probe_next);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                             end
@@ -3068,7 +3190,7 @@ module pycore_core #(
                                     if (!container_dmem_pending_r) begin
                                         if (cont_dict_key_match) begin
                                             container_dmem_addr_r <= pycore_dict_vval_addr(
-                                                container_base_r, container_probe_r);
+                                                container_buf_r, container_probe_r);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r <= CP_DICT_RD_VVAL;
@@ -3078,7 +3200,7 @@ module pycore_core #(
                                         end else begin
                                             container_probe_r <= cont_probe_next;
                                             container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                container_base_r, cont_probe_next);
+                                                container_buf_r, cont_probe_next);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r <= CP_DICT_PROBE;
@@ -3090,7 +3212,7 @@ module pycore_core #(
                                     if (!container_dmem_pending_r) begin
                                         container_val_r <= container_rd_data_r;
                                         container_dmem_addr_r <= pycore_dict_vtag_addr(
-                                            container_base_r, container_probe_r);
+                                            container_buf_r, container_probe_r);
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         container_phase_r <= CP_DICT_RD_VTAG;
@@ -3115,12 +3237,15 @@ module pycore_core #(
                             endcase
                         end // CONT_SUBSCR_DICT
 
+
                         // ===========================================================
-                        // CONT_STORE_DICT: dict key upsert (STORE_SUBSCR on DICT handle).
-                        // rs1_r = key; rs2_r = dict handle; value = RF[tos-3].
-                        // Interim policy: never fill the table completely — require
-                        // used + 1 < slot_count before an empty-slot insert so at
-                        // least one empty slot always remains.
+                        // CONT_STORE_DICT: dict key upsert (STORE_SUBSCR on DICT).
+                        // rs1_r = key; rs2_r = dict handle; value = RF[tos-3]
+                        // (latched via container_rf_addr_r set in CP_INIT so
+                        // cont_rf_rs1_* is ready by grow/collision trap time).
+                        // New-key insert at empty/tombstone: DICT_GROW when
+                        // pycore_dict_needs_grow; else write. Cross-tag numeric
+                        // → DICT_COLLISION before any commit.
                         // ===========================================================
                         CONT_STORE_DICT: begin
                             unique case (container_phase_r)
@@ -3131,10 +3256,14 @@ module pycore_core #(
                                     end else begin
                                         container_tag_r <= cont_rs1_tag;
                                         container_val_r <= cont_rs1_val;
+                                        // Point RF port at value early so grow /
+                                        // collision marshal can assemble entry2.
                                         container_rf_addr_r     <= RF_AW'(tos_r - RF_AW'(3));
                                         container_val_rf_addr_r <= RF_AW'(tos_r - RF_AW'(3));
                                         container_insert_new_r  <= 1'b0;
                                         container_finishing_r   <= 1'b0;
+                                        container_tomb_valid_r  <= 1'b0;
+                                        container_tomb_idx_r    <= 32'd0;
                                         container_base_r         <= cont_rs2_addr;
                                         container_dmem_addr_r    <= cont_rs2_addr;
                                         container_dmem_we_r      <= 1'b0;
@@ -3146,7 +3275,6 @@ module pycore_core #(
                                 CP_HDR: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_finishing_r) begin
-                                            // used-count header rewrite acked → pop and done.
                                             container_finishing_r <= 1'b0;
                                             tos_r             <= tos_r - RF_AW'(3);
                                             fetch_skip_r      <= 1'b1;
@@ -3154,15 +3282,46 @@ module pycore_core #(
                                         end else begin
                                             container_slot_count_r <= cont_dict_hdr_slots[31:0];
                                             container_used_r       <= cont_dict_hdr_used;
+                                            container_dmem_addr_r <=
+                                                pycore_dict_table_ptr_addr(container_base_r);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_LIST_BUF;
+                                        end
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_buf_r <= cont_dict_table_ptr;
+                                        if ((container_slot_count_r == 32'd0) ||
+                                            (cont_dict_table_ptr == 32'd0)) begin
+                                            // Empty table → DICT_GROW before insert.
+                                            if (EXCORE_EN &&
+                                                pycore_trap_recoverable(PY_TRAP_DICT_GROW)) begin
+                                                trap_marshal_pending_r     <= 1'b1;
+                                                trap_marshal_code_r        <= PY_TRAP_DICT_GROW;
+                                                trap_marshal_entry_count_r <= 3'd3;
+                                                trap_marshal_entries_r[0]  <= rs2_r;
+                                                trap_marshal_entries_r[1]  <= rs1_r;
+                                                trap_marshal_entries_r[2]  <=
+                                                    pycore_make_entry(cont_rf_rs1_tag,
+                                                                      cont_rf_rs1_val);
+                                                container_phase_r          <= CP_DONE;
+                                            end else begin
+                                                container_dict_grow_trap_r <= 1'b1;
+                                            end
+                                        end else begin
                                             begin
                                                 logic [31:0] probe0;
                                                 probe0 = pycore_dict_key_hash(
                                                     container_tag_r, container_val_r)
-                                                    & (cont_dict_hdr_slots[31:0] - 32'd1);
+                                                    & (container_slot_count_r - 32'd1);
                                                 container_probe_r   <= probe0;
                                                 container_probe_n_r <= 32'd0;
-                                                container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                    container_base_r, probe0);
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_ktag_addr(
+                                                        cont_dict_table_ptr, probe0);
                                             end
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
@@ -3174,37 +3333,160 @@ module pycore_core #(
                                 CP_DICT_PROBE: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_probe_n_r >= container_slot_count_r) begin
-                                            container_mem_fault_r <= 1'b1;
-                                        end else begin
-                                            container_probe_n_r <= container_probe_n_r + 32'd1;
-                                            if (container_rd_data_r[3:0] == PY_TAG_UNINIT) begin
-                                                // Empty slot → insert iff room remains
-                                                // for at least one empty after insert.
-                                                if (!(container_used_r + 64'd1
-                                                        < {32'b0, container_slot_count_r})) begin
-                                                    container_mem_fault_r <= 1'b1;
+                                            // Full probe without UNINIT: insert at
+                                            // first tombstone if any, else fault.
+                                            if (container_tomb_valid_r) begin
+                                                if (cont_dict_needs_grow) begin
+                                                    if (EXCORE_EN &&
+                                                        pycore_trap_recoverable(
+                                                            PY_TRAP_DICT_GROW)) begin
+                                                        trap_marshal_pending_r     <= 1'b1;
+                                                        trap_marshal_code_r        <=
+                                                            PY_TRAP_DICT_GROW;
+                                                        trap_marshal_entry_count_r <= 3'd3;
+                                                        trap_marshal_entries_r[0]  <= rs2_r;
+                                                        trap_marshal_entries_r[1]  <= rs1_r;
+                                                        trap_marshal_entries_r[2]  <=
+                                                            pycore_make_entry(
+                                                                cont_rf_rs1_tag,
+                                                                cont_rf_rs1_val);
+                                                        container_phase_r          <= CP_DONE;
+                                                    end else begin
+                                                        container_dict_grow_trap_r <= 1'b1;
+                                                    end
                                                 end else begin
+                                                    container_probe_r      <= container_tomb_idx_r;
                                                     container_insert_new_r <= 1'b1;
-                                                    container_dmem_addr_r  <= pycore_dict_kval_addr(
-                                                        container_base_r, container_probe_r);
+                                                    container_dmem_addr_r  <=
+                                                        pycore_dict_kval_addr(
+                                                            container_buf_r,
+                                                            container_tomb_idx_r);
                                                     container_dmem_we_r    <= 1'b1;
                                                     container_dmem_wdata_r <= container_val_r;
                                                     container_dmem_pending_r <= 1'b1;
                                                     container_phase_r <= CP_DICT_WR_KVAL;
                                                 end
-                                            end else if (container_rd_data_r[3:0] == container_tag_r) begin
+                                            end else begin
+                                                // No empty/tombstone: grow.
+                                                if (EXCORE_EN &&
+                                                    pycore_trap_recoverable(
+                                                        PY_TRAP_DICT_GROW)) begin
+                                                    trap_marshal_pending_r     <= 1'b1;
+                                                    trap_marshal_code_r        <=
+                                                        PY_TRAP_DICT_GROW;
+                                                    trap_marshal_entry_count_r <= 3'd3;
+                                                    trap_marshal_entries_r[0]  <= rs2_r;
+                                                    trap_marshal_entries_r[1]  <= rs1_r;
+                                                    trap_marshal_entries_r[2]  <=
+                                                        pycore_make_entry(
+                                                            cont_rf_rs1_tag,
+                                                            cont_rf_rs1_val);
+                                                    container_phase_r          <= CP_DONE;
+                                                end else begin
+                                                    container_dict_grow_trap_r <= 1'b1;
+                                                end
+                                            end
+                                        end else begin
+                                            container_probe_n_r <= container_probe_n_r + 32'd1;
+                                            if (container_rd_data_r[3:0] == PY_TAG_UNINIT) begin
+                                                // Insert at first tombstone or here.
+                                                if (cont_dict_needs_grow) begin
+                                                    if (EXCORE_EN &&
+                                                        pycore_trap_recoverable(
+                                                            PY_TRAP_DICT_GROW)) begin
+                                                        trap_marshal_pending_r     <= 1'b1;
+                                                        trap_marshal_code_r        <=
+                                                            PY_TRAP_DICT_GROW;
+                                                        trap_marshal_entry_count_r <= 3'd3;
+                                                        trap_marshal_entries_r[0]  <= rs2_r;
+                                                        trap_marshal_entries_r[1]  <= rs1_r;
+                                                        trap_marshal_entries_r[2]  <=
+                                                            pycore_make_entry(
+                                                                cont_rf_rs1_tag,
+                                                                cont_rf_rs1_val);
+                                                        container_phase_r          <= CP_DONE;
+                                                    end else begin
+                                                        container_dict_grow_trap_r <= 1'b1;
+                                                    end
+                                                end else begin
+                                                    begin
+                                                        logic [31:0] ins;
+                                                        ins = container_tomb_valid_r ?
+                                                              container_tomb_idx_r :
+                                                              container_probe_r;
+                                                        container_probe_r      <= ins;
+                                                        container_insert_new_r <= 1'b1;
+                                                        container_dmem_addr_r  <=
+                                                            pycore_dict_kval_addr(
+                                                                container_buf_r, ins);
+                                                        container_dmem_we_r    <= 1'b1;
+                                                        container_dmem_wdata_r <=
+                                                            container_val_r;
+                                                        container_dmem_pending_r <= 1'b1;
+                                                        container_phase_r <= CP_DICT_WR_KVAL;
+                                                    end
+                                                end
+                                            end else if (pycore_dict_tombstone(
+                                                            container_rd_data_r[3:0])) begin
+                                                if (!container_tomb_valid_r) begin
+                                                    container_tomb_valid_r <= 1'b1;
+                                                    container_tomb_idx_r   <= container_probe_r;
+                                                end
+                                                if (container_probe_n_r + 32'd1
+                                                        >= container_slot_count_r) begin
+                                                    // Fall through next cycle via
+                                                    // probe_n >= slot_count path.
+                                                    container_probe_r <= cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r, cont_probe_next);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end else begin
+                                                    container_probe_r <= cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r, cont_probe_next);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end
+                                            end else if (container_rd_data_r[3:0]
+                                                         == container_tag_r) begin
                                                 container_dmem_addr_r <= pycore_dict_kval_addr(
-                                                    container_base_r, container_probe_r);
+                                                    container_buf_r, container_probe_r);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r <= CP_DICT_CHK_VAL;
+                                            end else if (pycore_dict_key_rich_maybe(
+                                                            container_tag_r,
+                                                            container_rd_data_r[3:0])) begin
+                                                if (EXCORE_EN &&
+                                                    pycore_trap_recoverable(
+                                                        PY_TRAP_DICT_COLLISION)) begin
+                                                    trap_marshal_pending_r     <= 1'b1;
+                                                    trap_marshal_code_r        <=
+                                                        PY_TRAP_DICT_COLLISION;
+                                                    trap_marshal_entry_count_r <= 3'd3;
+                                                    trap_marshal_entries_r[0]  <= rs2_r;
+                                                    trap_marshal_entries_r[1]  <= rs1_r;
+                                                    trap_marshal_entries_r[2]  <=
+                                                        pycore_make_entry(
+                                                            cont_rf_rs1_tag,
+                                                            cont_rf_rs1_val);
+                                                    container_phase_r          <= CP_DONE;
+                                                end else begin
+                                                    container_dict_collision_trap_r <= 1'b1;
+                                                end
                                             end else if (container_probe_n_r + 32'd1
                                                          >= container_slot_count_r) begin
-                                                container_mem_fault_r <= 1'b1;
+                                                // Last slot examined without match:
+                                                // defer to exhaustion logic next cycle.
+                                                container_probe_n_r <=
+                                                    container_slot_count_r;
                                             end else begin
                                                 container_probe_r <= cont_probe_next;
                                                 container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                    container_base_r, cont_probe_next);
+                                                    container_buf_r, cont_probe_next);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                             end
@@ -3218,7 +3500,7 @@ module pycore_core #(
                                             // Overwrite existing key — used unchanged.
                                             container_insert_new_r <= 1'b0;
                                             container_dmem_addr_r  <= pycore_dict_kval_addr(
-                                                container_base_r, container_probe_r);
+                                                container_buf_r, container_probe_r);
                                             container_dmem_we_r    <= 1'b1;
                                             container_dmem_wdata_r <= container_val_r;
                                             container_dmem_pending_r <= 1'b1;
@@ -3229,7 +3511,7 @@ module pycore_core #(
                                         end else begin
                                             container_probe_r <= cont_probe_next;
                                             container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                container_base_r, cont_probe_next);
+                                                container_buf_r, cont_probe_next);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r <= CP_DICT_PROBE;
@@ -3240,7 +3522,7 @@ module pycore_core #(
                                 CP_DICT_WR_KVAL: begin
                                     if (!container_dmem_pending_r) begin
                                         container_dmem_addr_r  <= pycore_dict_ktag_addr(
-                                            container_base_r, container_probe_r);
+                                            container_buf_r, container_probe_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <= {124'b0, container_tag_r};
                                         container_dmem_pending_r <= 1'b1;
@@ -3258,7 +3540,7 @@ module pycore_core #(
                                 CP_DICT_RD_VAL: begin
                                     container_tag_r <= cont_rf_rs1_tag;
                                     container_dmem_addr_r  <= pycore_dict_vval_addr(
-                                        container_base_r, container_probe_r);
+                                        container_buf_r, container_probe_r);
                                     container_dmem_we_r    <= 1'b1;
                                     container_dmem_wdata_r <= cont_rf_rs1_val;
                                     container_dmem_pending_r <= 1'b1;
@@ -3268,7 +3550,7 @@ module pycore_core #(
                                 CP_DICT_WR_VVAL: begin
                                     if (!container_dmem_pending_r) begin
                                         container_dmem_addr_r  <= pycore_dict_vtag_addr(
-                                            container_base_r, container_probe_r);
+                                            container_buf_r, container_probe_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <= {124'b0, container_tag_r};
                                         container_dmem_pending_r <= 1'b1;
@@ -3279,7 +3561,6 @@ module pycore_core #(
                                 CP_DICT_WR_VTAG: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_insert_new_r) begin
-                                            // Bump used in header before completing.
                                             container_dmem_addr_r  <= container_base_r;
                                             container_dmem_we_r    <= 1'b1;
                                             container_dmem_wdata_r <= pycore_dict_header(
@@ -3303,6 +3584,7 @@ module pycore_core #(
 
                             endcase
                         end // CONT_STORE_DICT
+
 
                         // ===========================================================
                         // CONT_BUILD_TUPLE: like BUILD_LIST but no header slot.
@@ -3640,7 +3922,8 @@ module pycore_core #(
                         // =====================================================
                         // CONT_CONTAINS_DICT: CONTAINS_OP on DICT.
                         // Probe like SUBSCR_DICT but miss → False (not MEM_FAULT).
-                        // Needle/key = rs1; dict = rs2.
+                        // Needle/key = rs1; dict = rs2. Cross-tag numeric →
+                        // DICT_COLLISION. Tombstones skipped.
                         // =====================================================
                         CONT_CONTAINS_DICT: begin
                             unique case (container_phase_r)
@@ -3663,26 +3946,51 @@ module pycore_core #(
                                     if (!container_dmem_pending_r) begin
                                         container_slot_count_r <= cont_dict_hdr_slots[31:0];
                                         container_used_r       <= cont_dict_hdr_used;
-                                        begin
-                                            logic [31:0] probe0;
-                                            probe0 = pycore_dict_key_hash(
-                                                container_tag_r, container_val_r)
-                                                & (cont_dict_hdr_slots[31:0] - 32'd1);
-                                            container_probe_r   <= probe0;
-                                            container_probe_n_r <= 32'd0;
-                                            container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                container_base_r, probe0);
-                                        end
+                                        container_dmem_addr_r <=
+                                            pycore_dict_table_ptr_addr(container_base_r);
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
-                                        container_phase_r <= CP_DICT_PROBE;
+                                        container_phase_r        <= CP_LIST_BUF;
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_buf_r <= cont_dict_table_ptr;
+                                        if ((container_slot_count_r == 32'd0) ||
+                                            (cont_dict_table_ptr == 32'd0)) begin
+                                            // Empty → miss (False / True for not-in).
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(2));
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_BOOL,
+                                                {{(PYCORE_VAL_WIDTH-1){1'b0}},
+                                                 cur_arg_r[0]});
+                                            tos_r             <= tos_r - RF_AW'(1);
+                                            fetch_skip_r      <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            begin
+                                                logic [31:0] probe0;
+                                                probe0 = pycore_dict_key_hash(
+                                                    container_tag_r, container_val_r)
+                                                    & (container_slot_count_r - 32'd1);
+                                                container_probe_r   <= probe0;
+                                                container_probe_n_r <= 32'd0;
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_ktag_addr(
+                                                        cont_dict_table_ptr, probe0);
+                                            end
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r <= CP_DICT_PROBE;
+                                        end
                                     end
                                 end
 
                                 CP_DICT_PROBE: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_probe_n_r >= container_slot_count_r) begin
-                                            // Exhausted → miss.
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(2));
                                             container_wb_data_r <= pycore_make_entry(
@@ -3704,13 +4012,51 @@ module pycore_core #(
                                                 tos_r             <= tos_r - RF_AW'(1);
                                                 fetch_skip_r      <= 1'b1;
                                                 container_phase_r <= CP_DONE;
+                                            end else if (pycore_dict_tombstone(
+                                                            container_rd_data_r[3:0])) begin
+                                                if (container_probe_n_r + 32'd1
+                                                        >= container_slot_count_r) begin
+                                                    container_wb_we_r   <= 1'b1;
+                                                    container_wb_addr_r <=
+                                                        RF_AW'(tos_r - RF_AW'(2));
+                                                    container_wb_data_r <= pycore_make_entry(
+                                                        PY_TAG_BOOL,
+                                                        {{(PYCORE_VAL_WIDTH-1){1'b0}},
+                                                         cur_arg_r[0]});
+                                                    tos_r             <= tos_r - RF_AW'(1);
+                                                    fetch_skip_r      <= 1'b1;
+                                                    container_phase_r <= CP_DONE;
+                                                end else begin
+                                                    container_probe_r <= cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r, cont_probe_next);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end
                                             end else if (container_rd_data_r[3:0]
                                                          == container_tag_r) begin
                                                 container_dmem_addr_r <= pycore_dict_kval_addr(
-                                                    container_base_r, container_probe_r);
+                                                    container_buf_r, container_probe_r);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r <= CP_DICT_CHK_VAL;
+                                            end else if (pycore_dict_key_rich_maybe(
+                                                            container_tag_r,
+                                                            container_rd_data_r[3:0])) begin
+                                                if (EXCORE_EN &&
+                                                    pycore_trap_recoverable(
+                                                        PY_TRAP_DICT_COLLISION)) begin
+                                                    trap_marshal_pending_r     <= 1'b1;
+                                                    trap_marshal_code_r        <=
+                                                        PY_TRAP_DICT_COLLISION;
+                                                    trap_marshal_entry_count_r <= 3'd2;
+                                                    trap_marshal_entries_r[0]  <= rs2_r;
+                                                    trap_marshal_entries_r[1]  <= rs1_r;
+                                                    container_phase_r          <= CP_DONE;
+                                                end else begin
+                                                    container_dict_collision_trap_r <= 1'b1;
+                                                end
                                             end else if (container_probe_n_r + 32'd1
                                                          >= container_slot_count_r) begin
                                                 container_wb_we_r   <= 1'b1;
@@ -3725,7 +4071,7 @@ module pycore_core #(
                                             end else begin
                                                 container_probe_r <= cont_probe_next;
                                                 container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                    container_base_r, cont_probe_next);
+                                                    container_buf_r, cont_probe_next);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                             end
@@ -3759,7 +4105,7 @@ module pycore_core #(
                                         end else begin
                                             container_probe_r <= cont_probe_next;
                                             container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                container_base_r, cont_probe_next);
+                                                container_buf_r, cont_probe_next);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r <= CP_DICT_PROBE;
@@ -3772,6 +4118,178 @@ module pycore_core #(
 
                             endcase
                         end // CONT_CONTAINS_DICT
+
+                        // =====================================================
+                        // CONT_DELETE_DICT: DELETE_SUBSCR on DICT.
+                        // rs1_r = key; rs2_r = dict. Same-tag hit → write
+                        // TOMBSTONE to ktag, used--, pop 2. Cross-tag numeric →
+                        // DICT_COLLISION. Miss → MEM_FAULT. Tombstones skipped.
+                        // =====================================================
+                        CONT_DELETE_DICT: begin
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    if (!pycore_dict_key_tag_ok(cont_rs1_tag)) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        container_tag_r <= cont_rs1_tag;
+                                        container_val_r <= cont_rs1_val;
+                                        container_finishing_r    <= 1'b0;
+                                        container_base_r         <= cont_rs2_addr;
+                                        container_dmem_addr_r    <= cont_rs2_addr;
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_HDR;
+                                    end
+                                end
+
+                                CP_HDR: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_finishing_r) begin
+                                            container_finishing_r <= 1'b0;
+                                            tos_r             <= tos_r - RF_AW'(2);
+                                            fetch_skip_r      <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            container_slot_count_r <= cont_dict_hdr_slots[31:0];
+                                            container_used_r       <= cont_dict_hdr_used;
+                                            container_dmem_addr_r <=
+                                                pycore_dict_table_ptr_addr(container_base_r);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_LIST_BUF;
+                                        end
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_buf_r <= cont_dict_table_ptr;
+                                        if ((container_slot_count_r == 32'd0) ||
+                                            (cont_dict_table_ptr == 32'd0)) begin
+                                            container_mem_fault_r <= 1'b1;
+                                        end else begin
+                                            begin
+                                                logic [31:0] probe0;
+                                                probe0 = pycore_dict_key_hash(
+                                                    container_tag_r, container_val_r)
+                                                    & (container_slot_count_r - 32'd1);
+                                                container_probe_r   <= probe0;
+                                                container_probe_n_r <= 32'd0;
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_ktag_addr(
+                                                        cont_dict_table_ptr, probe0);
+                                            end
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r <= CP_DICT_PROBE;
+                                        end
+                                    end
+                                end
+
+                                CP_DICT_PROBE: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_probe_n_r >= container_slot_count_r) begin
+                                            container_mem_fault_r <= 1'b1;
+                                        end else begin
+                                            container_probe_n_r <= container_probe_n_r + 32'd1;
+                                            if (container_rd_data_r[3:0] == PY_TAG_UNINIT) begin
+                                                container_mem_fault_r <= 1'b1;
+                                            end else if (pycore_dict_tombstone(
+                                                            container_rd_data_r[3:0])) begin
+                                                if (container_probe_n_r + 32'd1
+                                                        >= container_slot_count_r) begin
+                                                    container_mem_fault_r <= 1'b1;
+                                                end else begin
+                                                    container_probe_r <= cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r, cont_probe_next);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end
+                                            end else if (container_rd_data_r[3:0]
+                                                         == container_tag_r) begin
+                                                container_dmem_addr_r <= pycore_dict_kval_addr(
+                                                    container_buf_r, container_probe_r);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <= CP_DICT_CHK_VAL;
+                                            end else if (pycore_dict_key_rich_maybe(
+                                                            container_tag_r,
+                                                            container_rd_data_r[3:0])) begin
+                                                if (EXCORE_EN &&
+                                                    pycore_trap_recoverable(
+                                                        PY_TRAP_DICT_COLLISION)) begin
+                                                    trap_marshal_pending_r     <= 1'b1;
+                                                    trap_marshal_code_r        <=
+                                                        PY_TRAP_DICT_COLLISION;
+                                                    trap_marshal_entry_count_r <= 3'd2;
+                                                    trap_marshal_entries_r[0]  <= rs2_r;
+                                                    trap_marshal_entries_r[1]  <= rs1_r;
+                                                    container_phase_r          <= CP_DONE;
+                                                end else begin
+                                                    container_dict_collision_trap_r <= 1'b1;
+                                                end
+                                            end else if (container_probe_n_r + 32'd1
+                                                         >= container_slot_count_r) begin
+                                                container_mem_fault_r <= 1'b1;
+                                            end else begin
+                                                container_probe_r <= cont_probe_next;
+                                                container_dmem_addr_r <= pycore_dict_ktag_addr(
+                                                    container_buf_r, cont_probe_next);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                            end
+                                        end
+                                    end
+                                end
+
+                                CP_DICT_CHK_VAL: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (cont_dict_key_match) begin
+                                            // Tombstone the key tag; used-- via header.
+                                            container_dmem_addr_r  <= pycore_dict_ktag_addr(
+                                                container_buf_r, container_probe_r);
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                {124'b0, PY_TAG_TOMBSTONE};
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r <= CP_DICT_WR_KTAG;
+                                        end else if (container_probe_n_r
+                                                     >= container_slot_count_r) begin
+                                            container_mem_fault_r <= 1'b1;
+                                        end else begin
+                                            container_probe_r <= cont_probe_next;
+                                            container_dmem_addr_r <= pycore_dict_ktag_addr(
+                                                container_buf_r, cont_probe_next);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r <= CP_DICT_PROBE;
+                                        end
+                                    end
+                                end
+
+                                CP_DICT_WR_KTAG: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r  <= container_base_r;
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <= pycore_dict_header(
+                                            {32'b0, container_slot_count_r},
+                                            container_used_r - 64'd1);
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_used_r       <= container_used_r - 64'd1;
+                                        container_finishing_r  <= 1'b1;
+                                        container_phase_r <= CP_HDR;
+                                    end
+                                end
+
+                                CP_DONE: ;
+                                default: ;
+
+                            endcase
+                        end // CONT_DELETE_DICT
+
 
                         // ===========================================================
                         // CONT_LOAD_CONST: read co_consts[cur_arg_r] tuple element.
@@ -3893,19 +4411,36 @@ module pycore_core #(
                                     if (!container_dmem_pending_r) begin
                                         container_slot_count_r <= cont_dict_hdr_slots[31:0];
                                         container_used_r       <= cont_dict_hdr_used;
-                                        begin
-                                            logic [31:0] probe0;
-                                            probe0 = pycore_dict_key_hash(
-                                                container_tag_r, container_val_r)
-                                                & (cont_dict_hdr_slots[31:0] - 32'd1);
-                                            container_probe_r   <= probe0;
-                                            container_probe_n_r <= 32'd0;
-                                            container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                container_base_r, probe0);
-                                        end
+                                        container_dmem_addr_r <=
+                                            pycore_dict_table_ptr_addr(container_base_r);
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
-                                        container_phase_r <= CP_DICT_PROBE;
+                                        container_phase_r        <= CP_LIST_BUF;
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_buf_r <= cont_dict_table_ptr;
+                                        if ((container_slot_count_r == 32'd0) ||
+                                            (cont_dict_table_ptr == 32'd0)) begin
+                                            container_mem_fault_r <= 1'b1;
+                                        end else begin
+                                            begin
+                                                logic [31:0] probe0;
+                                                probe0 = pycore_dict_key_hash(
+                                                    container_tag_r, container_val_r)
+                                                    & (container_slot_count_r - 32'd1);
+                                                container_probe_r   <= probe0;
+                                                container_probe_n_r <= 32'd0;
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_ktag_addr(
+                                                        cont_dict_table_ptr, probe0);
+                                            end
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r <= CP_DICT_PROBE;
+                                        end
                                     end
                                 end
 
@@ -3918,19 +4453,54 @@ module pycore_core #(
                                             if (container_rd_data_r[3:0] == PY_TAG_UNINIT) begin
                                                 // Name not found — NameError analog.
                                                 container_mem_fault_r <= 1'b1;
-                                            end else if (container_rd_data_r[3:0] == container_tag_r) begin
+                                            end else if (pycore_dict_tombstone(
+                                                            container_rd_data_r[3:0])) begin
+                                                if (container_probe_n_r + 32'd1
+                                                        >= container_slot_count_r) begin
+                                                    container_mem_fault_r <= 1'b1;
+                                                end else begin
+                                                    container_probe_r <= cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r, cont_probe_next);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end
+                                            end else if (container_rd_data_r[3:0]
+                                                         == container_tag_r) begin
                                                 container_dmem_addr_r <= pycore_dict_kval_addr(
-                                                    container_base_r, container_probe_r);
+                                                    container_buf_r, container_probe_r);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r <= CP_DICT_CHK_VAL;
+                                            end else if (pycore_dict_key_rich_maybe(
+                                                            container_tag_r,
+                                                            container_rd_data_r[3:0])) begin
+                                                if (EXCORE_EN &&
+                                                    pycore_trap_recoverable(
+                                                        PY_TRAP_DICT_COLLISION)) begin
+                                                    trap_marshal_pending_r     <= 1'b1;
+                                                    trap_marshal_code_r        <=
+                                                        PY_TRAP_DICT_COLLISION;
+                                                    trap_marshal_entry_count_r <= 3'd2;
+                                                    trap_marshal_entries_r[0]  <=
+                                                        pycore_make_entry(
+                                                            PY_TAG_DICT,
+                                                            {{96{1'b0}}, container_base_r});
+                                                    trap_marshal_entries_r[1]  <=
+                                                        pycore_make_entry(
+                                                            container_tag_r, container_val_r);
+                                                    container_phase_r          <= CP_DONE;
+                                                end else begin
+                                                    container_dict_collision_trap_r <= 1'b1;
+                                                end
                                             end else if (container_probe_n_r + 32'd1
                                                          >= container_slot_count_r) begin
                                                 container_mem_fault_r <= 1'b1;
                                             end else begin
                                                 container_probe_r <= cont_probe_next;
                                                 container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                    container_base_r, cont_probe_next);
+                                                    container_buf_r, cont_probe_next);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                             end
@@ -3942,7 +4512,7 @@ module pycore_core #(
                                     if (!container_dmem_pending_r) begin
                                         if (cont_dict_key_match) begin
                                             container_dmem_addr_r <= pycore_dict_vval_addr(
-                                                container_base_r, container_probe_r);
+                                                container_buf_r, container_probe_r);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r <= CP_DICT_RD_VVAL;
@@ -3952,7 +4522,7 @@ module pycore_core #(
                                         end else begin
                                             container_probe_r <= cont_probe_next;
                                             container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                container_base_r, cont_probe_next);
+                                                container_buf_r, cont_probe_next);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r <= CP_DICT_PROBE;
@@ -3964,7 +4534,7 @@ module pycore_core #(
                                     if (!container_dmem_pending_r) begin
                                         container_val_r <= container_rd_data_r;
                                         container_dmem_addr_r <= pycore_dict_vtag_addr(
-                                            container_base_r, container_probe_r);
+                                            container_buf_r, container_probe_r);
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         container_phase_r <= CP_DICT_RD_VTAG;
@@ -4045,11 +4615,14 @@ module pycore_core #(
                                         if (!pycore_dict_key_tag_ok(container_rd_data_r[3:0])) begin
                                             container_type_trap_r <= 1'b1;
                                         end else begin
-                                            // Read STORE_DICT preamble: value @ RF[tos-1].
+                                            // Value @ RF[tos-1] — set RF addr early for
+                                            // grow/collision marshal entry2.
                                             container_rf_addr_r      <= RF_AW'(tos_r - RF_AW'(1));
                                             container_val_rf_addr_r  <= RF_AW'(tos_r - RF_AW'(1));
                                             container_insert_new_r   <= 1'b0;
                                             container_finishing_r    <= 1'b0;
+                                            container_tomb_valid_r   <= 1'b0;
+                                            container_tomb_idx_r     <= 32'd0;
                                             container_base_r         <= globals_base_r;
                                             container_dmem_addr_r    <= globals_base_r;
                                             container_dmem_we_r      <= 1'b0;
@@ -4062,7 +4635,6 @@ module pycore_core #(
                                 CP_HDR: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_finishing_r) begin
-                                            // Header rewrite ack → pop value.
                                             container_finishing_r <= 1'b0;
                                             tos_r             <= tos_r - RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
@@ -4070,15 +4642,50 @@ module pycore_core #(
                                         end else begin
                                             container_slot_count_r <= cont_dict_hdr_slots[31:0];
                                             container_used_r       <= cont_dict_hdr_used;
+                                            container_dmem_addr_r <=
+                                                pycore_dict_table_ptr_addr(container_base_r);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_LIST_BUF;
+                                        end
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_buf_r <= cont_dict_table_ptr;
+                                        if ((container_slot_count_r == 32'd0) ||
+                                            (cont_dict_table_ptr == 32'd0)) begin
+                                            if (EXCORE_EN &&
+                                                pycore_trap_recoverable(PY_TRAP_DICT_GROW)) begin
+                                                trap_marshal_pending_r     <= 1'b1;
+                                                trap_marshal_code_r        <= PY_TRAP_DICT_GROW;
+                                                trap_marshal_entry_count_r <= 3'd3;
+                                                trap_marshal_entries_r[0]  <=
+                                                    pycore_make_entry(
+                                                        PY_TAG_DICT,
+                                                        {{96{1'b0}}, container_base_r});
+                                                trap_marshal_entries_r[1]  <=
+                                                    pycore_make_entry(
+                                                        container_tag_r, container_val_r);
+                                                trap_marshal_entries_r[2]  <=
+                                                    pycore_make_entry(
+                                                        cont_rf_rs1_tag, cont_rf_rs1_val);
+                                                container_phase_r          <= CP_DONE;
+                                            end else begin
+                                                container_dict_grow_trap_r <= 1'b1;
+                                            end
+                                        end else begin
                                             begin
                                                 logic [31:0] probe0;
                                                 probe0 = pycore_dict_key_hash(
                                                     container_tag_r, container_val_r)
-                                                    & (cont_dict_hdr_slots[31:0] - 32'd1);
+                                                    & (container_slot_count_r - 32'd1);
                                                 container_probe_r   <= probe0;
                                                 container_probe_n_r <= 32'd0;
-                                                container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                    container_base_r, probe0);
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_ktag_addr(
+                                                        cont_dict_table_ptr, probe0);
                                             end
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
@@ -4090,35 +4697,172 @@ module pycore_core #(
                                 CP_DICT_PROBE: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_probe_n_r >= container_slot_count_r) begin
-                                            container_mem_fault_r <= 1'b1;
-                                        end else begin
-                                            container_probe_n_r <= container_probe_n_r + 32'd1;
-                                            if (container_rd_data_r[3:0] == PY_TAG_UNINIT) begin
-                                                if (!(container_used_r + 64'd1
-                                                        < {32'b0, container_slot_count_r})) begin
-                                                    container_mem_fault_r <= 1'b1;
+                                            if (container_tomb_valid_r) begin
+                                                if (cont_dict_needs_grow) begin
+                                                    if (EXCORE_EN &&
+                                                        pycore_trap_recoverable(
+                                                            PY_TRAP_DICT_GROW)) begin
+                                                        trap_marshal_pending_r     <= 1'b1;
+                                                        trap_marshal_code_r        <=
+                                                            PY_TRAP_DICT_GROW;
+                                                        trap_marshal_entry_count_r <= 3'd3;
+                                                        trap_marshal_entries_r[0]  <=
+                                                            pycore_make_entry(
+                                                                PY_TAG_DICT,
+                                                                {{96{1'b0}},
+                                                                 container_base_r});
+                                                        trap_marshal_entries_r[1]  <=
+                                                            pycore_make_entry(
+                                                                container_tag_r,
+                                                                container_val_r);
+                                                        trap_marshal_entries_r[2]  <=
+                                                            pycore_make_entry(
+                                                                cont_rf_rs1_tag,
+                                                                cont_rf_rs1_val);
+                                                        container_phase_r          <= CP_DONE;
+                                                    end else begin
+                                                        container_dict_grow_trap_r <= 1'b1;
+                                                    end
                                                 end else begin
+                                                    container_probe_r      <=
+                                                        container_tomb_idx_r;
                                                     container_insert_new_r <= 1'b1;
-                                                    container_dmem_addr_r  <= pycore_dict_kval_addr(
-                                                        container_base_r, container_probe_r);
+                                                    container_dmem_addr_r  <=
+                                                        pycore_dict_kval_addr(
+                                                            container_buf_r,
+                                                            container_tomb_idx_r);
                                                     container_dmem_we_r    <= 1'b1;
                                                     container_dmem_wdata_r <= container_val_r;
                                                     container_dmem_pending_r <= 1'b1;
                                                     container_phase_r <= CP_DICT_WR_KVAL;
                                                 end
-                                            end else if (container_rd_data_r[3:0] == container_tag_r) begin
+                                            end else begin
+                                                if (EXCORE_EN &&
+                                                    pycore_trap_recoverable(
+                                                        PY_TRAP_DICT_GROW)) begin
+                                                    trap_marshal_pending_r     <= 1'b1;
+                                                    trap_marshal_code_r        <=
+                                                        PY_TRAP_DICT_GROW;
+                                                    trap_marshal_entry_count_r <= 3'd3;
+                                                    trap_marshal_entries_r[0]  <=
+                                                        pycore_make_entry(
+                                                            PY_TAG_DICT,
+                                                            {{96{1'b0}}, container_base_r});
+                                                    trap_marshal_entries_r[1]  <=
+                                                        pycore_make_entry(
+                                                            container_tag_r, container_val_r);
+                                                    trap_marshal_entries_r[2]  <=
+                                                        pycore_make_entry(
+                                                            cont_rf_rs1_tag, cont_rf_rs1_val);
+                                                    container_phase_r          <= CP_DONE;
+                                                end else begin
+                                                    container_dict_grow_trap_r <= 1'b1;
+                                                end
+                                            end
+                                        end else begin
+                                            container_probe_n_r <= container_probe_n_r + 32'd1;
+                                            if (container_rd_data_r[3:0] == PY_TAG_UNINIT) begin
+                                                if (cont_dict_needs_grow) begin
+                                                    if (EXCORE_EN &&
+                                                        pycore_trap_recoverable(
+                                                            PY_TRAP_DICT_GROW)) begin
+                                                        trap_marshal_pending_r     <= 1'b1;
+                                                        trap_marshal_code_r        <=
+                                                            PY_TRAP_DICT_GROW;
+                                                        trap_marshal_entry_count_r <= 3'd3;
+                                                        trap_marshal_entries_r[0]  <=
+                                                            pycore_make_entry(
+                                                                PY_TAG_DICT,
+                                                                {{96{1'b0}},
+                                                                 container_base_r});
+                                                        trap_marshal_entries_r[1]  <=
+                                                            pycore_make_entry(
+                                                                container_tag_r,
+                                                                container_val_r);
+                                                        trap_marshal_entries_r[2]  <=
+                                                            pycore_make_entry(
+                                                                cont_rf_rs1_tag,
+                                                                cont_rf_rs1_val);
+                                                        container_phase_r          <= CP_DONE;
+                                                    end else begin
+                                                        container_dict_grow_trap_r <= 1'b1;
+                                                    end
+                                                end else begin
+                                                    begin
+                                                        logic [31:0] ins;
+                                                        ins = container_tomb_valid_r ?
+                                                              container_tomb_idx_r :
+                                                              container_probe_r;
+                                                        container_probe_r      <= ins;
+                                                        container_insert_new_r <= 1'b1;
+                                                        container_dmem_addr_r  <=
+                                                            pycore_dict_kval_addr(
+                                                                container_buf_r, ins);
+                                                        container_dmem_we_r    <= 1'b1;
+                                                        container_dmem_wdata_r <=
+                                                            container_val_r;
+                                                        container_dmem_pending_r <= 1'b1;
+                                                        container_phase_r <= CP_DICT_WR_KVAL;
+                                                    end
+                                                end
+                                            end else if (pycore_dict_tombstone(
+                                                            container_rd_data_r[3:0])) begin
+                                                if (!container_tomb_valid_r) begin
+                                                    container_tomb_valid_r <= 1'b1;
+                                                    container_tomb_idx_r   <=
+                                                        container_probe_r;
+                                                end
+                                                if (container_probe_n_r + 32'd1
+                                                        >= container_slot_count_r) begin
+                                                    container_probe_n_r <=
+                                                        container_slot_count_r;
+                                                end else begin
+                                                    container_probe_r <= cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r, cont_probe_next);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end
+                                            end else if (container_rd_data_r[3:0]
+                                                         == container_tag_r) begin
                                                 container_dmem_addr_r <= pycore_dict_kval_addr(
-                                                    container_base_r, container_probe_r);
+                                                    container_buf_r, container_probe_r);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r <= CP_DICT_CHK_VAL;
+                                            end else if (pycore_dict_key_rich_maybe(
+                                                            container_tag_r,
+                                                            container_rd_data_r[3:0])) begin
+                                                if (EXCORE_EN &&
+                                                    pycore_trap_recoverable(
+                                                        PY_TRAP_DICT_COLLISION)) begin
+                                                    trap_marshal_pending_r     <= 1'b1;
+                                                    trap_marshal_code_r        <=
+                                                        PY_TRAP_DICT_COLLISION;
+                                                    trap_marshal_entry_count_r <= 3'd3;
+                                                    trap_marshal_entries_r[0]  <=
+                                                        pycore_make_entry(
+                                                            PY_TAG_DICT,
+                                                            {{96{1'b0}}, container_base_r});
+                                                    trap_marshal_entries_r[1]  <=
+                                                        pycore_make_entry(
+                                                            container_tag_r, container_val_r);
+                                                    trap_marshal_entries_r[2]  <=
+                                                        pycore_make_entry(
+                                                            cont_rf_rs1_tag, cont_rf_rs1_val);
+                                                    container_phase_r          <= CP_DONE;
+                                                end else begin
+                                                    container_dict_collision_trap_r <= 1'b1;
+                                                end
                                             end else if (container_probe_n_r + 32'd1
                                                          >= container_slot_count_r) begin
-                                                container_mem_fault_r <= 1'b1;
+                                                container_probe_n_r <=
+                                                    container_slot_count_r;
                                             end else begin
                                                 container_probe_r <= cont_probe_next;
                                                 container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                    container_base_r, cont_probe_next);
+                                                    container_buf_r, cont_probe_next);
                                                 container_dmem_we_r      <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                             end
@@ -4131,7 +4875,7 @@ module pycore_core #(
                                         if (cont_dict_key_match) begin
                                             container_insert_new_r <= 1'b0;
                                             container_dmem_addr_r  <= pycore_dict_kval_addr(
-                                                container_base_r, container_probe_r);
+                                                container_buf_r, container_probe_r);
                                             container_dmem_we_r    <= 1'b1;
                                             container_dmem_wdata_r <= container_val_r;
                                             container_dmem_pending_r <= 1'b1;
@@ -4142,7 +4886,7 @@ module pycore_core #(
                                         end else begin
                                             container_probe_r <= cont_probe_next;
                                             container_dmem_addr_r <= pycore_dict_ktag_addr(
-                                                container_base_r, cont_probe_next);
+                                                container_buf_r, cont_probe_next);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r <= CP_DICT_PROBE;
@@ -4153,7 +4897,7 @@ module pycore_core #(
                                 CP_DICT_WR_KVAL: begin
                                     if (!container_dmem_pending_r) begin
                                         container_dmem_addr_r  <= pycore_dict_ktag_addr(
-                                            container_base_r, container_probe_r);
+                                            container_buf_r, container_probe_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <= {124'b0, container_tag_r};
                                         container_dmem_pending_r <= 1'b1;
@@ -4169,17 +4913,11 @@ module pycore_core #(
                                 end
 
                                 CP_DICT_RD_VAL: begin
-                                    // RF settled with value; issue vval write.
-                                    // Preserve key tag for post-write bookkeeping.
                                     container_dmem_addr_r  <= pycore_dict_vval_addr(
-                                        container_base_r, container_probe_r);
+                                        container_buf_r, container_probe_r);
                                     container_dmem_we_r    <= 1'b1;
                                     container_dmem_wdata_r <= cont_rf_rs1_val;
                                     container_dmem_pending_r <= 1'b1;
-                                    // Stash value tag in container_val_r high slot? Reuse
-                                    // container_tag_r would clobber key tag; instead
-                                    // capture value tag via container_val_rf_addr_r trick:
-                                    // borrow container_lfb_lo_r to remember value tag.
                                     container_lfb_lo_r <= cont_rf_rs1_tag;
                                     container_phase_r <= CP_DICT_WR_VVAL;
                                 end
@@ -4187,7 +4925,7 @@ module pycore_core #(
                                 CP_DICT_WR_VVAL: begin
                                     if (!container_dmem_pending_r) begin
                                         container_dmem_addr_r  <= pycore_dict_vtag_addr(
-                                            container_base_r, container_probe_r);
+                                            container_buf_r, container_probe_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <= {124'b0, container_lfb_lo_r};
                                         container_dmem_pending_r <= 1'b1;

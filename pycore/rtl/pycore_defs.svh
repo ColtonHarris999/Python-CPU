@@ -538,8 +538,11 @@ function automatic logic [31:0] pycore_dict_key_hash(
                         pycore_dict_key_hash = f_mag[31:0];
                     else if (f_mag == 64'd1)
                         pycore_dict_key_hash = 32'hFFFFFFFE; // hash(-1.0) == -2
-                    else
-                        pycore_dict_key_hash = (-f_mag)[31:0];
+                    else begin
+                        // Negate then take low 32 (part-select needs a primary).
+                        f_mag = -f_mag;
+                        pycore_dict_key_hash = f_mag[31:0];
+                    end
                 end
             end
             PY_TAG_SHORT_STR:
@@ -625,41 +628,41 @@ function automatic logic pycore_elem_eq(
     end
 endfunction
 
-// Slot address helpers — `table` is the relocatable table base (obj.table_ptr),
-// not the dict object address.
+// Slot address helpers — `tbl` is the relocatable table base (obj.table_ptr),
+// not the dict object address. (Named `tbl` because `table` is an SV keyword.)
 function automatic logic [31:0] pycore_dict_kval_addr(
-    input logic [31:0] table, input logic [31:0] probe_idx
+    input logic [31:0] tbl, input logic [31:0] probe_idx
 );
     begin
-        // table + probe_idx * 64
-        pycore_dict_kval_addr = table + (probe_idx << 6);
+        // tbl + probe_idx * 64
+        pycore_dict_kval_addr = tbl + (probe_idx << 6);
     end
 endfunction
 
 function automatic logic [31:0] pycore_dict_ktag_addr(
-    input logic [31:0] table, input logic [31:0] probe_idx
+    input logic [31:0] tbl, input logic [31:0] probe_idx
 );
     begin
-        // table + 16 + probe_idx * 64
-        pycore_dict_ktag_addr = table + 32'd16 + (probe_idx << 6);
+        // tbl + 16 + probe_idx * 64
+        pycore_dict_ktag_addr = tbl + 32'd16 + (probe_idx << 6);
     end
 endfunction
 
 function automatic logic [31:0] pycore_dict_vval_addr(
-    input logic [31:0] table, input logic [31:0] probe_idx
+    input logic [31:0] tbl, input logic [31:0] probe_idx
 );
     begin
-        // table + 32 + probe_idx * 64
-        pycore_dict_vval_addr = table + 32'd32 + (probe_idx << 6);
+        // tbl + 32 + probe_idx * 64
+        pycore_dict_vval_addr = tbl + 32'd32 + (probe_idx << 6);
     end
 endfunction
 
 function automatic logic [31:0] pycore_dict_vtag_addr(
-    input logic [31:0] table, input logic [31:0] probe_idx
+    input logic [31:0] tbl, input logic [31:0] probe_idx
 );
     begin
-        // table + 48 + probe_idx * 64
-        pycore_dict_vtag_addr = table + 32'd48 + (probe_idx << 6);
+        // tbl + 48 + probe_idx * 64
+        pycore_dict_vtag_addr = tbl + 32'd48 + (probe_idx << 6);
     end
 endfunction
 

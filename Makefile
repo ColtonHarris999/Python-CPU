@@ -523,7 +523,8 @@ pycore-img-list-del-tuple-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,list_del_tuple_trap,1,50000)
 
 pycore-img-dict-del-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,dict_del_trap,1,50000)
+	# Same-tag dict delete is on-pycore (tombstone); no TYPE trap.
+	$(call PYCORE_IMAGE_RUN,dict_del_trap,50000)
 
 # Extend (excore grow) then delete/contains — two-core only.
 pycore-img-list-extend-del-contains-two-core: excore-fw
@@ -762,7 +763,8 @@ pycore-container-tuple-store-trap:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_store_trap.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d1 -GSTRING_HEX=\"pycore/programs/tuple_store_trap_str.hex\",pycore_container_tuple_store_trap)
 
 pycore-container-dict-full-insert:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/dict_full_insert_str.hex\" -GMAX_CYCLES=20000,pycore_container_dict_full_insert)
+	# Load ≥ 2/3 / last-slot insert → PY_TRAP_DICT_GROW (11), not MEM_FAULT.
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d11 -GSTRING_HEX=\"pycore/programs/dict_full_insert_str.hex\" -GMAX_CYCLES=20000,pycore_container_dict_full_insert)
 
 # HEAP_INIT_PTR = 0x1F9C so BUILD_LIST 3 (112 bytes) exceeds PYCORE_HEAP_LIMIT.
 pycore-container-list-oom:
