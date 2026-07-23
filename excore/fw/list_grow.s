@@ -1,8 +1,8 @@
-# list_grow.s -- excore firmware: LIST_GROW + LIST_EXTEND trap handlers.
+# list_grow.s -- excore firmware: LIST_* + DICT_* trap handlers.
 #
 # Dispatch loop, parked until MB_STATUS.trap_pending is set. Handles
-# PY_TRAP_LIST_GROW (9) and PY_TRAP_LIST_EXTEND (10). Unknown codes ->
-# FATAL(ILLEGAL_OPCODE).
+# PY_TRAP_LIST_GROW (9), LIST_EXTEND (10), DICT_GROW (11), DICT_COLLISION (12).
+# Unknown codes -> FATAL(ILLEGAL_OPCODE).
 #
 # LIST_GROW (ENTRY[0]=list handle, ENTRY[1]=element):
 #   double (min 4), copy, append one element, COMPLETED pop 1.
@@ -13,12 +13,19 @@
 #   Self-extend is safe: src_len and old_buf are snapshotted before the
 #   ob_item rewrite; extend copies from the leaked old buffer.
 #
-# Both paths INTENTIONALLY LEAK the old buffer (bump allocator / future GC).
+# DICT_GROW (E0=dict, E1=key, E2=value): realloc table, rehash, STORE insert,
+#   COMPLETED pop 3. INTENTIONALLY LEAKS the old table.
+#
+# DICT_COLLISION: opcode in MB_INSTR_LO selects STORE_SUBSCR / BINARY_OP
+#   (NB_SUBSCR) / DELETE_SUBSCR / CONTAINS_OP; rich key equality probe.
+#
+# List paths INTENTIONALLY LEAK the old buffer (bump allocator / future GC).
 
     .equ MMIO_BASE,      0xF0000000
 
     .equ MB_STATUS,      0x00
     .equ MB_TRAP_CODE,   0x04
+    .equ MB_INSTR_LO,    0x0C
     .equ MB_HEAP_PTR,    0x14
     .equ MB_E0_VAL0,     0x20
     .equ MB_E0_TAG,      0x30
@@ -27,11 +34,21 @@
     .equ MB_E1_VAL2,     0x3C
     .equ MB_E1_VAL3,     0x40
     .equ MB_E1_TAG,      0x44
+    .equ MB_E2_VAL0,     0x48
+    .equ MB_E2_VAL1,     0x4C
+    .equ MB_E2_VAL2,     0x50
+    .equ MB_E2_VAL3,     0x54
+    .equ MB_E2_TAG,      0x58
 
     .equ RES_CODE,       0x80
     .equ RES_POP_COUNT,  0x84
     .equ RES_PUSH_COUNT, 0x88
     .equ RES_HEAP_PTR,   0x8C
+    .equ RES_E0_VAL0,    0x90
+    .equ RES_E0_VAL1,    0x94
+    .equ RES_E0_VAL2,    0x98
+    .equ RES_E0_VAL3,    0x9C
+    .equ RES_E0_TAG,     0xA0
     .equ RES_GO,         0xC0
 
     .equ SP_ADDR,        0xD0
@@ -50,8 +67,10 @@
     .equ RES_COMPLETED,  0
     .equ RES_FATAL,      2
 
-    .equ TRAP_LIST_GROW,   9
-    .equ TRAP_LIST_EXTEND, 10
+    .equ TRAP_LIST_GROW,     9
+    .equ TRAP_LIST_EXTEND,   10
+    .equ TRAP_DICT_GROW,     11
+    .equ TRAP_DICT_COLLISION,12
 
     # fatal_code values mirror pycore_defs.svh's PY_TRAP_* codes exactly --
     # Phase C forwards this nibble straight into pycore_trap as a normal
@@ -60,9 +79,52 @@
     .equ FATAL_ILLEGAL_OPCODE, 5
     .equ FATAL_MEM_FAULT,      7
 
-    .equ TAG_LIST,       10
+    .equ TAG_UNINIT,     0
+    .equ TAG_INT,        1
+    .equ TAG_FLOAT,      2
+    .equ TAG_BOOL,       3
     .equ TAG_TUPLE,      5
+    .equ TAG_SHORT_STR,  6
+    .equ TAG_LONG_STR,   7
+    .equ TAG_DICT,       9
+    .equ TAG_LIST,       10
+    .equ TAG_TOMBSTONE,  11
+
+    .equ OP_DELETE_SUBSCR, 8
+    .equ OP_STORE_SUBSCR,  38
+    .equ OP_BINARY_OP,     44
+    .equ OP_CONTAINS_OP,   57
+
     .equ HEAP_LIMIT,     0x2000
+
+    # Private scratch (CPU data RAM @ 0x0) for key/value + helper state.
+    .equ SCR_RA,         0x00
+    .equ SCR_RA2,        0x04
+    .equ SCR_KVAL0,      0x10
+    .equ SCR_KVAL1,      0x14
+    .equ SCR_KVAL2,      0x18
+    .equ SCR_KVAL3,      0x1C
+    .equ SCR_KTAG,       0x20
+    .equ SCR_VVAL0,      0x24
+    .equ SCR_VVAL1,      0x28
+    .equ SCR_VVAL2,      0x2C
+    .equ SCR_VVAL3,      0x30
+    .equ SCR_VTAG,       0x34
+    .equ SCR_SKVAL0,     0x38
+    .equ SCR_SKVAL1,     0x3C
+    .equ SCR_SKVAL2,     0x40
+    .equ SCR_SKVAL3,     0x44
+    .equ SCR_SKTAG,      0x48
+    .equ SCR_IDX,        0x4C
+    .equ SCR_TOMB,       0x50
+    .equ SCR_FOUND,      0x54
+    .equ SCR_A0,         0x58
+    .equ SCR_A1,         0x5C
+    .equ SCR_TMP_L0,     0x60
+    .equ SCR_TMP_L1,     0x64
+    .equ SCR_FTI0,       0x68
+    .equ SCR_FTI1,       0x6C
+    .equ SCR_RA3,        0x70
 
 reset:
     li   s11, MMIO_BASE            # s11: persistent MMIO base, never clobbered
@@ -77,7 +139,35 @@ wait_trap:
     beq  t0, t1, do_list_grow
     li   t1, TRAP_LIST_EXTEND
     beq  t0, t1, do_list_extend
+    li   t1, TRAP_DICT_GROW
+    beq  t0, t1, do_dict_grow
+    li   t1, TRAP_DICT_COLLISION
+    beq  t0, t1, do_dict_collision
     j    fatal_illegal
+
+
+fatal_type:
+    li   t0, FATAL_TYPE
+    j    do_fatal
+
+fatal_illegal:
+    li   t0, FATAL_ILLEGAL_OPCODE
+    j    do_fatal
+
+fatal_mem:
+    li   t0, FATAL_MEM_FAULT
+    j    do_fatal
+
+do_fatal:
+    slli t0, t0, 4
+    ori  t0, t0, RES_FATAL
+    sw   t0, RES_CODE(s11)
+    li   t0, 0
+    sw   t0, RES_POP_COUNT(s11)
+    sw   t0, RES_PUSH_COUNT(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
 
 do_list_grow:
     lw   t0, MB_E0_TAG(s11)
@@ -520,26 +610,846 @@ poll_ext_ob_wb:
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
-
-fatal_type:
-    li   t0, FATAL_TYPE
-    j    do_fatal
-
-fatal_illegal:
-    li   t0, FATAL_ILLEGAL_OPCODE
-    j    do_fatal
-
-fatal_mem:
-    li   t0, FATAL_MEM_FAULT
-    j    do_fatal
-
-do_fatal:
-    slli t0, t0, 4
-    ori  t0, t0, RES_FATAL
+# ===========================================================================
+# DICT_GROW: E0=dict, E1=key, E2=value — realloc, rehash, STORE insert.
+# ===========================================================================
+do_dict_grow:
+    lw   t0, MB_E0_TAG(s11)
+    li   t1, TAG_DICT
+    beq  t0, t1, dg_tag_ok
+    j    fatal_type
+dg_tag_ok:
+    lw   s0, MB_E0_VAL0(s11)
+    jal  ra, load_e1e2_to_scratch
+    jal  ra, dict_load_header_table
+    jal  ra, dict_grow_rehash
+    jal  ra, dict_insert_from_scratch
+    jal  ra, dict_writeback_header
+    li   t0, RES_COMPLETED
     sw   t0, RES_CODE(s11)
-    li   t0, 0
+    li   t0, 3
     sw   t0, RES_POP_COUNT(s11)
+    li   t0, 0
     sw   t0, RES_PUSH_COUNT(s11)
+    slli t0, s7, 6
+    add  t0, s4, t0
+    sw   t0, RES_HEAP_PTR(s11)
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
+
+# ===========================================================================
+# DICT_COLLISION — STORE_SUBSCR / BINARY_OP / DELETE_SUBSCR / CONTAINS_OP
+# ===========================================================================
+do_dict_collision:
+    lw   t0, MB_E0_TAG(s11)
+    li   t1, TAG_DICT
+    beq  t0, t1, dc_tag_ok
+    j    fatal_type
+dc_tag_ok:
+    lw   s0, MB_E0_VAL0(s11)
+    lw   t0, MB_E1_VAL0(s11)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, MB_E1_VAL1(s11)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, MB_E1_VAL2(s11)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, MB_E1_VAL3(s11)
+    sw   t0, SCR_KVAL3(x0)
+    lw   t0, MB_E1_TAG(s11)
+    sw   t0, SCR_KTAG(x0)
+    jal  ra, dict_load_header_table
+    lw   t0, MB_INSTR_LO(s11)
+    andi s9, t0, 0xFF
+    srli s10, t0, 8
+    li   t1, OP_STORE_SUBSCR
+    beq  s9, t1, dcol_store
+    li   t1, OP_BINARY_OP
+    beq  s9, t1, dcol_subscr
+    li   t1, OP_DELETE_SUBSCR
+    beq  s9, t1, dcol_delete
+    li   t1, OP_CONTAINS_OP
+    beq  s9, t1, dcol_contains
+    j    fatal_illegal
+
+dcol_store:
+    lw   t0, MB_E2_VAL0(s11)
+    sw   t0, SCR_VVAL0(x0)
+    lw   t0, MB_E2_VAL1(s11)
+    sw   t0, SCR_VVAL1(x0)
+    lw   t0, MB_E2_VAL2(s11)
+    sw   t0, SCR_VVAL2(x0)
+    lw   t0, MB_E2_VAL3(s11)
+    sw   t0, SCR_VVAL3(x0)
+    lw   t0, MB_E2_TAG(s11)
+    sw   t0, SCR_VTAG(x0)
+    beq  s1, x0, dcol_store_grow
+    jal  ra, dict_probe
+    lw   t0, SCR_FOUND(x0)
+    bne  t0, x0, dcol_store_hit
+    mv   a0, s2
+    mv   a1, s1
+    jal  ra, dict_needs_grow
+    bne  a0, x0, dcol_store_grow
+    lw   a0, SCR_IDX(x0)
+    jal  ra, dict_write_kv_at
+    addi s2, s2, 1
+    jal  ra, dict_write_used_slots
+    j    dcol_store_done
+dcol_store_hit:
+    lw   a0, SCR_IDX(x0)
+    jal  ra, dict_write_val_at
+    j    dcol_store_done
+dcol_store_grow:
+    jal  ra, dict_grow_rehash
+    jal  ra, dict_insert_from_scratch
+    jal  ra, dict_writeback_header
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 3
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 0
+    sw   t0, RES_PUSH_COUNT(s11)
+    slli t0, s7, 6
+    add  t0, s4, t0
+    sw   t0, RES_HEAP_PTR(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+dcol_store_done:
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 3
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 0
+    sw   t0, RES_PUSH_COUNT(s11)
+    lw   t0, MB_HEAP_PTR(s11)
+    sw   t0, RES_HEAP_PTR(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
+dcol_subscr:
+    beq  s1, x0, dcol_mem_fault
+    jal  ra, dict_probe
+    lw   t0, SCR_FOUND(x0)
+    beq  t0, x0, dcol_mem_fault
+    lw   a0, SCR_IDX(x0)
+    jal  ra, dict_read_val_to_res
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 2
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 1
+    sw   t0, RES_PUSH_COUNT(s11)
+    lw   t0, MB_HEAP_PTR(s11)
+    sw   t0, RES_HEAP_PTR(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
+dcol_delete:
+    beq  s1, x0, dcol_mem_fault
+    jal  ra, dict_probe
+    lw   t0, SCR_FOUND(x0)
+    beq  t0, x0, dcol_mem_fault
+    lw   a0, SCR_IDX(x0)
+    slli t0, a0, 6
+    add  a0, s3, t0
+    addi a0, a0, 16
+    li   t0, TAG_TOMBSTONE
+    sw   t0, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   t0, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    addi s2, s2, -1
+    jal  ra, dict_write_used_slots
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 2
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 0
+    sw   t0, RES_PUSH_COUNT(s11)
+    lw   t0, MB_HEAP_PTR(s11)
+    sw   t0, RES_HEAP_PTR(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
+dcol_contains:
+    li   s8, 0
+    beq  s1, x0, dcol_cont_result
+    jal  ra, dict_probe
+    lw   s8, SCR_FOUND(x0)
+dcol_cont_result:
+    andi t0, s10, 1
+    xor  t0, s8, t0
+    sw   t0, RES_E0_VAL0(s11)
+    li   t0, 0
+    sw   t0, RES_E0_VAL1(s11)
+    sw   t0, RES_E0_VAL2(s11)
+    sw   t0, RES_E0_VAL3(s11)
+    li   t0, TAG_BOOL
+    sw   t0, RES_E0_TAG(s11)
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 2
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 1
+    sw   t0, RES_PUSH_COUNT(s11)
+    lw   t0, MB_HEAP_PTR(s11)
+    sw   t0, RES_HEAP_PTR(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
+dcol_mem_fault:
+    j    fatal_mem
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+# sp_read(a0=addr): fault → fatal_mem; data left in SP_DATA*
+sp_read:
+    sw   a0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+sp_read_poll:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, sp_read_poll
+    andi t1, t0, SP_STATUS_FAULT
+    beq  t1, x0, sp_read_ok
+    j    fatal_mem
+sp_read_ok:
+    jalr x0, ra, 0
+
+# sp_write(a0=addr): SP_DATA* already set
+sp_write:
+    sw   a0, SP_ADDR(s11)
+    li   t0, SP_CTRL_WRITE
+    sw   t0, SP_CTRL(s11)
+sp_write_poll:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, sp_write_poll
+    jalr x0, ra, 0
+
+load_e1e2_to_scratch:
+    lw   t0, MB_E1_VAL0(s11)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, MB_E1_VAL1(s11)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, MB_E1_VAL2(s11)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, MB_E1_VAL3(s11)
+    sw   t0, SCR_KVAL3(x0)
+    lw   t0, MB_E1_TAG(s11)
+    sw   t0, SCR_KTAG(x0)
+    lw   t0, MB_E2_VAL0(s11)
+    sw   t0, SCR_VVAL0(x0)
+    lw   t0, MB_E2_VAL1(s11)
+    sw   t0, SCR_VVAL1(x0)
+    lw   t0, MB_E2_VAL2(s11)
+    sw   t0, SCR_VVAL2(x0)
+    lw   t0, MB_E2_VAL3(s11)
+    sw   t0, SCR_VVAL3(x0)
+    lw   t0, MB_E2_TAG(s11)
+    sw   t0, SCR_VTAG(x0)
+    jalr x0, ra, 0
+
+# → s1=slots, s2=used, s5/s3=table
+dict_load_header_table:
+    sw   ra, SCR_RA(x0)
+    mv   a0, s0
+    jal  ra, sp_read
+    lw   s2, SP_DATA0(s11)
+    lw   s1, SP_DATA2(s11)
+    addi a0, s0, 16
+    jal  ra, sp_read
+    lw   s5, SP_DATA0(s11)
+    mv   s3, s5
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+
+dict_write_used_slots:
+    sw   ra, SCR_RA3(x0)
+    sw   s2, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   s1, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    mv   a0, s0
+    jal  ra, sp_write
+    lw   ra, SCR_RA3(x0)
+    jalr x0, ra, 0
+
+dict_needs_grow:
+    beq  a1, x0, dng_yes
+    addi t0, a0, 1
+    bge  t0, a1, dng_yes
+    slli t1, a0, 1
+    add  t1, t1, a0
+    slli t2, a1, 1
+    bge  t1, t2, dng_yes
+    li   a0, 0
+    jalr x0, ra, 0
+dng_yes:
+    li   a0, 1
+    jalr x0, ra, 0
+
+# grow+rehash: s1/s2/s5 → s4/s7/s3=new table; restores E1/E2 into scratch
+dict_grow_rehash:
+    sw   ra, SCR_RA(x0)
+    li   t0, 50000
+    bltu t0, s2, dgr_mul2
+    slli a0, s2, 2
+    j    dgr_need
+dgr_mul2:
+    slli a0, s2, 1
+dgr_need:
+    li   t0, 8
+    bge  a0, t0, dgr_pow2_init
+    li   a0, 8
+dgr_pow2_init:
+    li   s7, 8
+dgr_pow2:
+    bge  s7, a0, dgr_gt_used
+    slli s7, s7, 1
+    j    dgr_pow2
+dgr_gt_used:
+    blt  s2, s7, dgr_vs_old
+    slli s7, s7, 1
+    j    dgr_gt_used
+dgr_vs_old:
+    beq  s1, x0, dgr_alloc
+    slli t0, s1, 1
+    bge  s7, t0, dgr_alloc
+    mv   s7, t0
+dgr_alloc:
+    lw   s4, MB_HEAP_PTR(s11)
+    slli t0, s7, 6
+    add  t0, s4, t0
+    li   t1, HEAP_LIMIT
+    bge  t1, t0, dgr_zero
+    j    fatal_mem
+dgr_zero:
+    li   s6, 0
+dgr_zero_loop:
+    beq  s6, s7, dgr_rehash
+    slli t0, s6, 6
+    add  a0, s4, t0
+    addi a0, a0, 16
+    li   t0, 0
+    sw   t0, SP_DATA0(s11)
+    sw   t0, SP_DATA1(s11)
+    sw   t0, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    addi s6, s6, 1
+    j    dgr_zero_loop
+dgr_rehash:
+    mv   s3, s4
+    beq  s1, x0, dgr_done
+    li   s6, 0
+dgr_rehash_loop:
+    beq  s6, s1, dgr_done
+    slli t0, s6, 6
+    add  t2, s5, t0
+    addi a0, t2, 16
+    sw   t2, SCR_A1(x0)
+    jal  ra, sp_read
+    lw   a1, SP_DATA0(s11)
+    beq  a1, x0, dgr_next
+    li   t0, TAG_TOMBSTONE
+    beq  a1, t0, dgr_next
+    lw   a0, SCR_A1(x0)
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_KVAL3(x0)
+    sw   a1, SCR_KTAG(x0)
+    lw   a0, SCR_A1(x0)
+    addi a0, a0, 32
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_VVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_VVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_VVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_VVAL3(x0)
+    lw   a0, SCR_A1(x0)
+    addi a0, a0, 48
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_VTAG(x0)
+    sw   s6, SCR_IDX(x0)
+    jal  ra, hash_key
+    addi t0, s7, -1
+    and  a0, a0, t0
+dgr_ins_probe:
+    sw   a0, SCR_A0(x0)
+    slli t0, a0, 6
+    add  t2, s3, t0
+    addi a0, t2, 16
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    beq  t0, x0, dgr_ins_write
+    lw   a0, SCR_A0(x0)
+    addi a0, a0, 1
+    addi t0, s7, -1
+    and  a0, a0, t0
+    j    dgr_ins_probe
+dgr_ins_write:
+    lw   a0, SCR_A0(x0)
+    jal  ra, dict_write_kv_at
+    lw   s6, SCR_IDX(x0)
+dgr_next:
+    addi s6, s6, 1
+    j    dgr_rehash_loop
+dgr_done:
+    jal  ra, load_e1e2_to_scratch
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+
+dict_insert_from_scratch:
+    sw   ra, SCR_RA(x0)
+    sw   s1, SCR_A1(x0)
+    mv   s1, s7
+    jal  ra, dict_probe
+    lw   s1, SCR_A1(x0)
+    lw   t0, SCR_FOUND(x0)
+    bne  t0, x0, difs_over
+    lw   a0, SCR_IDX(x0)
+    jal  ra, dict_write_kv_at
+    addi s2, s2, 1
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+difs_over:
+    lw   a0, SCR_IDX(x0)
+    jal  ra, dict_write_val_at
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+
+dict_writeback_header:
+    sw   ra, SCR_RA(x0)
+    sw   s2, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   s7, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    mv   a0, s0
+    jal  ra, sp_write
+    addi a0, s0, 16
+    sw   s4, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   t0, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    mv   s1, s7
+    mv   s3, s4
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+
+# probe s3/s1 with SCR_K* → SCR_FOUND / SCR_IDX / SCR_TOMB
+dict_probe:
+    sw   ra, SCR_RA2(x0)
+    li   t0, -1
+    sw   t0, SCR_TOMB(x0)
+    sw   x0, SCR_FOUND(x0)
+    jal  ra, hash_key
+    addi t0, s1, -1
+    and  a0, a0, t0
+    sw   a0, SCR_IDX(x0)
+    mv   s6, a0
+    li   s8, 0
+dprobe_loop:
+    slli t0, a0, 6
+    add  t2, s3, t0
+    sw   t2, SCR_A1(x0)
+    sw   a0, SCR_IDX(x0)
+    addi a0, t2, 16
+    jal  ra, sp_read
+    lw   a1, SP_DATA0(s11)
+    beq  a1, x0, dprobe_empty
+    li   t0, TAG_TOMBSTONE
+    beq  a1, t0, dprobe_tomb
+    lw   a0, SCR_A1(x0)
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_SKVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_SKVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_SKVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_SKVAL3(x0)
+    sw   a1, SCR_SKTAG(x0)
+    jal  ra, keys_rich_eq
+    bne  a0, x0, dprobe_hit
+    lw   a0, SCR_IDX(x0)
+    j    dprobe_advance
+dprobe_tomb:
+    lw   t0, SCR_TOMB(x0)
+    li   t1, -1
+    bne  t0, t1, dprobe_advance_ld
+    lw   a0, SCR_IDX(x0)
+    sw   a0, SCR_TOMB(x0)
+dprobe_advance_ld:
+    lw   a0, SCR_IDX(x0)
+    j    dprobe_advance
+dprobe_empty:
+    lw   t0, SCR_TOMB(x0)
+    li   t1, -1
+    beq  t0, t1, dprobe_empty_cur
+    sw   t0, SCR_IDX(x0)
+    j    dprobe_miss
+dprobe_empty_cur:
+    # SCR_IDX already current
+    j    dprobe_miss
+dprobe_miss:
+    sw   x0, SCR_FOUND(x0)
+    lw   ra, SCR_RA2(x0)
+    jalr x0, ra, 0
+dprobe_hit:
+    li   t0, 1
+    sw   t0, SCR_FOUND(x0)
+    lw   ra, SCR_RA2(x0)
+    jalr x0, ra, 0
+dprobe_advance:
+    addi s8, s8, 1
+    bge  s8, s1, dprobe_exhausted
+    addi a0, a0, 1
+    addi t0, s1, -1
+    and  a0, a0, t0
+    j    dprobe_loop
+dprobe_exhausted:
+    lw   t0, SCR_TOMB(x0)
+    li   t1, -1
+    beq  t0, t1, dprobe_ex_start
+    sw   t0, SCR_IDX(x0)
+    j    dprobe_miss
+dprobe_ex_start:
+    sw   s6, SCR_IDX(x0)
+    j    dprobe_miss
+
+dict_write_kv_at:
+    sw   ra, SCR_RA3(x0)
+    sw   a0, SCR_A0(x0)
+    slli t0, a0, 6
+    add  t2, s3, t0
+    sw   t2, SCR_A1(x0)
+    lw   t0, SCR_KVAL0(x0)
+    sw   t0, SP_DATA0(s11)
+    lw   t0, SCR_KVAL1(x0)
+    sw   t0, SP_DATA1(s11)
+    lw   t0, SCR_KVAL2(x0)
+    sw   t0, SP_DATA2(s11)
+    lw   t0, SCR_KVAL3(x0)
+    sw   t0, SP_DATA3(s11)
+    mv   a0, t2
+    jal  ra, sp_write
+    lw   a0, SCR_A1(x0)
+    addi a0, a0, 16
+    lw   t0, SCR_KTAG(x0)
+    sw   t0, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   t0, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   a0, SCR_A0(x0)
+    jal  ra, dict_write_val_at
+    lw   ra, SCR_RA3(x0)
+    jalr x0, ra, 0
+
+dict_write_val_at:
+    sw   ra, SCR_FTI0(x0)
+    slli t0, a0, 6
+    add  t2, s3, t0
+    addi a0, t2, 32
+    sw   t2, SCR_A1(x0)
+    lw   t0, SCR_VVAL0(x0)
+    sw   t0, SP_DATA0(s11)
+    lw   t0, SCR_VVAL1(x0)
+    sw   t0, SP_DATA1(s11)
+    lw   t0, SCR_VVAL2(x0)
+    sw   t0, SP_DATA2(s11)
+    lw   t0, SCR_VVAL3(x0)
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   a0, SCR_A1(x0)
+    addi a0, a0, 48
+    lw   t0, SCR_VTAG(x0)
+    sw   t0, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   t0, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   ra, SCR_FTI0(x0)
+    jalr x0, ra, 0
+
+dict_read_val_to_res:
+    sw   ra, SCR_RA3(x0)
+    slli t0, a0, 6
+    add  t2, s3, t0
+    sw   t2, SCR_A1(x0)
+    addi a0, t2, 32
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, RES_E0_VAL0(s11)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, RES_E0_VAL1(s11)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, RES_E0_VAL2(s11)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, RES_E0_VAL3(s11)
+    lw   a0, SCR_A1(x0)
+    addi a0, a0, 48
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, RES_E0_TAG(s11)
+    lw   ra, SCR_RA3(x0)
+    jalr x0, ra, 0
+
+hash_key:
+    lw   t0, SCR_KTAG(x0)
+    li   t1, TAG_INT
+    beq  t0, t1, hash_int
+    li   t1, TAG_BOOL
+    beq  t0, t1, hash_bool
+    li   t1, TAG_FLOAT
+    beq  t0, t1, hash_float
+    li   t1, TAG_SHORT_STR
+    beq  t0, t1, hash_sstr
+    li   t1, TAG_LONG_STR
+    beq  t0, t1, hash_lstr
+    lw   a0, SCR_KVAL0(x0)
+    jalr x0, ra, 0
+hash_int:
+    lw   a0, SCR_KVAL0(x0)
+    lw   t0, SCR_KVAL1(x0)
+    li   t1, -1
+    bne  a0, t1, hash_ret
+    bne  t0, t1, hash_ret
+    li   a0, 0xFFFFFFFE
+hash_ret:
+    jalr x0, ra, 0
+hash_bool:
+    lw   a0, SCR_KVAL0(x0)
+    andi a0, a0, 1
+    jalr x0, ra, 0
+hash_sstr:
+    lw   a0, SCR_KVAL0(x0)
+    lw   t0, SCR_KVAL1(x0)
+    xor  a0, a0, t0
+    lw   t0, SCR_KVAL2(x0)
+    xor  a0, a0, t0
+    lw   t0, SCR_KVAL3(x0)
+    xor  a0, a0, t0
+    jalr x0, ra, 0
+hash_lstr:
+    lw   a0, SCR_KVAL0(x0)
+    lw   t0, SCR_KVAL2(x0)
+    xor  a0, a0, t0
+    jalr x0, ra, 0
+hash_float:
+    sw   ra, SCR_RA3(x0)
+    lw   t3, SCR_KVAL0(x0)
+    lw   t4, SCR_KVAL1(x0)
+    jal  ra, float_to_int
+    beq  a0, x0, hash_fmix
+    mv   a0, t3
+    mv   t0, t4
+    li   t1, -1
+    bne  a0, t1, hash_fret
+    bne  t0, t1, hash_fret
+    li   a0, 0xFFFFFFFE
+    j    hash_fret
+hash_fmix:
+    lw   a0, SCR_KVAL0(x0)
+    lw   t0, SCR_KVAL1(x0)
+    xor  a0, a0, t0
+hash_fret:
+    lw   ra, SCR_RA3(x0)
+    jalr x0, ra, 0
+
+# keys_rich_eq: SCR_K* vs SCR_SK* → a0
+keys_rich_eq:
+    sw   ra, SCR_A0(x0)
+    lw   a2, SCR_KTAG(x0)
+    lw   a3, SCR_SKTAG(x0)
+    mv   a4, a2
+    lw   t3, SCR_KVAL0(x0)
+    lw   t4, SCR_KVAL1(x0)
+    jal  ra, norm_numeric
+    beq  a0, x0, kreq_bits
+    sw   a1, SCR_A1(x0)
+    sw   t3, SCR_TMP_L0(x0)
+    sw   t4, SCR_TMP_L1(x0)
+    mv   a4, a3
+    lw   t3, SCR_SKVAL0(x0)
+    lw   t4, SCR_SKVAL1(x0)
+    jal  ra, norm_numeric
+    beq  a0, x0, kreq_bits
+    lw   t0, SCR_A1(x0)
+    bne  t0, x0, kreq_fb
+    bne  a1, x0, kreq_fb
+    lw   t5, SCR_TMP_L0(x0)
+    lw   t6, SCR_TMP_L1(x0)
+    bne  t3, t5, kreq_no
+    bne  t4, t6, kreq_no
+    li   a0, 1
+    lw   ra, SCR_A0(x0)
+    jalr x0, ra, 0
+kreq_fb:
+    bne  t0, a1, kreq_no
+    li   t1, TAG_FLOAT
+    bne  a2, t1, kreq_no
+    bne  a3, t1, kreq_no
+kreq_bits:
+    bne  a2, a3, kreq_no
+    lw   t0, SCR_KVAL0(x0)
+    lw   t1, SCR_SKVAL0(x0)
+    bne  t0, t1, kreq_no
+    lw   t0, SCR_KVAL1(x0)
+    lw   t1, SCR_SKVAL1(x0)
+    bne  t0, t1, kreq_no
+    lw   t0, SCR_KVAL2(x0)
+    lw   t1, SCR_SKVAL2(x0)
+    bne  t0, t1, kreq_no
+    lw   t0, SCR_KVAL3(x0)
+    lw   t1, SCR_SKVAL3(x0)
+    bne  t0, t1, kreq_no
+    li   a0, 1
+    lw   ra, SCR_A0(x0)
+    jalr x0, ra, 0
+kreq_no:
+    li   a0, 0
+    lw   ra, SCR_A0(x0)
+    jalr x0, ra, 0
+
+norm_numeric:
+    li   t0, TAG_INT
+    beq  a4, t0, norm_int
+    li   t0, TAG_BOOL
+    beq  a4, t0, norm_bool
+    li   t0, TAG_FLOAT
+    beq  a4, t0, norm_float
+    li   a0, 0
+    jalr x0, ra, 0
+norm_int:
+    li   a0, 1
+    li   a1, 0
+    jalr x0, ra, 0
+norm_bool:
+    andi t3, t3, 1
+    li   t4, 0
+    li   a0, 1
+    li   a1, 0
+    jalr x0, ra, 0
+norm_float:
+    sw   ra, SCR_RA3(x0)
+    jal  ra, float_to_int
+    lw   ra, SCR_RA3(x0)
+    beq  a0, x0, norm_fbits
+    li   a1, 0
+    li   a0, 1
+    jalr x0, ra, 0
+norm_fbits:
+    li   a1, 1
+    li   a0, 1
+    jalr x0, ra, 0
+
+# float_to_int: t3/t4 bits → a0=1 + signed int64 in t3/t4, else a0=0 restore
+float_to_int:
+    sw   t3, SCR_FTI0(x0)
+    sw   t4, SCR_FTI1(x0)
+    srli a1, t4, 31
+    srli t0, t4, 20
+    andi t0, t0, 0x7FF
+    li   t1, 0xFFFFF
+    and  t6, t4, t1
+    li   t1, 0x7FF
+    beq  t0, t1, fti_fail
+    bne  t0, x0, fti_ge1
+    bne  t6, x0, fti_fail
+    bne  t3, x0, fti_fail
+    li   t3, 0
+    li   t4, 0
+    li   a0, 1
+    jalr x0, ra, 0
+fti_ge1:
+    li   t1, 1023
+    blt  t0, t1, fti_fail
+    sub  t1, t0, t1
+    li   t2, 63
+    bge  t1, t2, fti_fail
+    # Only handle uexp < 52 (covers normal test keys); else fail→bit path
+    li   t2, 52
+    bge  t1, t2, fti_fail
+    # non-int frac bits?
+    sub  t2, t2, t1
+    li   t5, 32
+    bge  t2, t5, fti_mw
+    li   t5, 1
+    sll  t5, t5, t2
+    addi t5, t5, -1
+    and  t5, t3, t5
+    bne  t5, x0, fti_fail
+    j    fti_shift
+fti_mw:
+    bne  t3, x0, fti_fail
+    addi t5, t2, -32
+    li   t0, 1
+    sll  t0, t0, t5
+    addi t0, t0, -1
+    and  t0, t6, t0
+    bne  t0, x0, fti_fail
+fti_shift:
+    li   t0, 0x100000
+    or   a3, t6, t0
+    mv   a2, t3
+    # t2 = 52-uexp still
+fti_shr:
+    beq  t2, x0, fti_mag
+    slli t0, a3, 31
+    srli a2, a2, 1
+    or   a2, a2, t0
+    srli a3, a3, 1
+    addi t2, t2, -1
+    j    fti_shr
+fti_mag:
+    beq  a1, x0, fti_pos
+    beq  a2, x0, fti_nz
+    sub  t3, x0, a2
+    li   t0, -1
+    xor  t4, a3, t0
+    j    fti_ok
+fti_nz:
+    li   t3, 0
+    sub  t4, x0, a3
+    j    fti_ok
+fti_pos:
+    mv   t3, a2
+    mv   t4, a3
+fti_ok:
+    li   a0, 1
+    jalr x0, ra, 0
+fti_fail:
+    lw   t3, SCR_FTI0(x0)
+    lw   t4, SCR_FTI1(x0)
+    li   a0, 0
+    jalr x0, ra, 0

@@ -239,10 +239,77 @@ module tb_excore #(
         $finish;
     endtask
 
-    localparam logic [3:0] TRAP_LIST_GROW   = 4'd9;
-    localparam logic [3:0] TRAP_LIST_EXTEND = 4'd10;
-    localparam logic [3:0] RES_COMPLETED    = 4'd0;
-    localparam logic [3:0] RES_FATAL        = 4'd2;
+    localparam logic [3:0] TRAP_LIST_GROW      = 4'd9;
+    localparam logic [3:0] TRAP_LIST_EXTEND    = 4'd10;
+    localparam logic [3:0] TRAP_DICT_GROW      = 4'd11;
+    localparam logic [3:0] TRAP_DICT_COLLISION = 4'd12;
+    localparam logic [3:0] RES_COMPLETED       = 4'd0;
+    localparam logic [3:0] RES_FATAL           = 4'd2;
+
+    // Present a DICT_GROW trap (dict + key + value).
+    task automatic run_dict_grow(
+        input logic [131:0] dict_entry,
+        input logic [131:0] key_entry,
+        input logic [131:0] val_entry,
+        input logic [31:0]  heap_ptr,
+        input int max_cycles
+    );
+        int i;
+        mb_entries[0]  = dict_entry;
+        mb_entries[1]  = key_entry;
+        mb_entries[2]  = val_entry;
+        mb_entry_count = 3'd3;
+        mb_heap_ptr    = heap_ptr;
+        mb_trap_code   = TRAP_DICT_GROW;
+        mb_opcode      = 8'd38; // STORE_SUBSCR
+        mb_arg         = 32'd0;
+        @(negedge clk);
+        mb_trap_pending = 1'b1;
+        for (i = 0; i < max_cycles; i++) begin
+            @(posedge clk);
+            if (res_go) begin
+                @(negedge clk);
+                mb_trap_pending = 1'b0;
+                return;
+            end
+        end
+        $error("[FAIL] timed out waiting for RES_GO (DICT_GROW)");
+        $finish;
+    endtask
+
+    // Present a DICT_COLLISION trap with opcode/arg.
+    task automatic run_dict_collision(
+        input logic [131:0] dict_entry,
+        input logic [131:0] key_entry,
+        input logic [131:0] val_entry,
+        input logic [2:0]   entry_count,
+        input logic [7:0]   opcode,
+        input logic [31:0]  arg,
+        input logic [31:0]  heap_ptr,
+        input int max_cycles
+    );
+        int i;
+        mb_entries[0]  = dict_entry;
+        mb_entries[1]  = key_entry;
+        mb_entries[2]  = val_entry;
+        mb_entry_count = entry_count;
+        mb_heap_ptr    = heap_ptr;
+        mb_trap_code   = TRAP_DICT_COLLISION;
+        mb_opcode      = opcode;
+        mb_arg         = arg;
+        @(negedge clk);
+        mb_trap_pending = 1'b1;
+        for (i = 0; i < max_cycles; i++) begin
+            @(posedge clk);
+            if (res_go) begin
+                @(negedge clk);
+                mb_trap_pending = 1'b0;
+                return;
+            end
+        end
+        $error("[FAIL] timed out waiting for RES_GO (DICT_COLLISION)");
+        $finish;
+    endtask
 
     initial begin
         logic [31:0] obj_addr, old_buf, new_buf, src_addr, src_buf;
@@ -491,9 +558,110 @@ module tb_excore #(
               "scenario9: expected fatal_code == PY_TRAP_TYPE");
         $display("PASS: scenario9 (LIST_EXTEND bad iterable -> FATAL(TYPE))");
 
+        // ------------------------------------------------------------------
+        // Scenario 10: DICT_GROW from empty table; insert key=1 → value=99.
+        // new_slots = 8; used becomes 1.
+        // ------------------------------------------------------------------
+        do_reset();
+        begin
+            logic [31:0] dobj, ntbl;
+            dobj = 32'h0C00;
+            ntbl = 32'h0C20;
+            poke_slot(dobj, {64'd0, 64'd0});       // slots=0, used=0
+            poke_slot(dobj + 16, 128'd0);          // table_ptr=0
+            run_dict_grow(
+                {PY_TAG_DICT, {96{1'b0}}, dobj},
+                {PY_TAG_INT, 128'd1},
+                {PY_TAG_INT, 128'd99},
+                ntbl, 80000);
+            check(res_code == RES_COMPLETED, "scenario10: DICT_GROW COMPLETED");
+            check(res_pop_count == 3'd3, "scenario10: pop=3");
+            check(res_push_count == 2'd0, "scenario10: push=0");
+            check(peek_slot(dobj) == {64'd8, 64'd1}, "scenario10: header {8,1}");
+            check(peek_slot(dobj + 16) == {96'd0, ntbl}, "scenario10: table_ptr");
+            // key 1 hashes to slot 1
+            check(peek_slot(ntbl + 64) == 128'd1, "scenario10: kval");
+            check(peek_slot(ntbl + 80) == {124'b0, PY_TAG_INT}, "scenario10: ktag");
+            check(peek_slot(ntbl + 96) == 128'd99, "scenario10: vval");
+            check(peek_slot(ntbl + 112) == {124'b0, PY_TAG_INT}, "scenario10: vtag");
+            $display("PASS: scenario10 (DICT_GROW empty -> insert)");
+        end
+
+        // ------------------------------------------------------------------
+        // Scenario 11: DICT_COLLISION STORE_SUBSCR — BOOL True matches INT 1.
+        // ------------------------------------------------------------------
+        do_reset();
+        begin
+            logic [31:0] dobj, tbl;
+            dobj = 32'h0D00;
+            tbl  = 32'h0D20;
+            poke_slot(dobj, {64'd4, 64'd1});
+            poke_slot(dobj + 16, {96'd0, tbl});
+            // slot 1: key INT 1 → value 10; other ktags UNINIT
+            poke_slot(tbl + 0, 128'd0);
+            poke_slot(tbl + 16, 128'd0);
+            poke_slot(tbl + 64, 128'd1);
+            poke_slot(tbl + 80, {124'b0, PY_TAG_INT});
+            poke_slot(tbl + 96, 128'd10);
+            poke_slot(tbl + 112, {124'b0, PY_TAG_INT});
+            poke_slot(tbl + 128, 128'd0);
+            poke_slot(tbl + 144, 128'd0);
+            poke_slot(tbl + 192, 128'd0);
+            poke_slot(tbl + 208, 128'd0);
+            run_dict_collision(
+                {PY_TAG_DICT, {96{1'b0}}, dobj},
+                {PY_TAG_BOOL, 128'd1},
+                {PY_TAG_INT, 128'd77},
+                3'd3, 8'd38, 32'd0, 32'h0E00, 80000);
+            check(res_code == RES_COMPLETED, "scenario11: STORE COMPLETED");
+            check(res_pop_count == 3'd3, "scenario11: pop=3");
+            check(peek_slot(dobj) == {64'd4, 64'd1}, "scenario11: used unchanged");
+            check(peek_slot(tbl + 96) == 128'd77, "scenario11: value overwritten via rich eq");
+            $display("PASS: scenario11 (DICT_COLLISION STORE True==1)");
+        end
+
+        // ------------------------------------------------------------------
+        // Scenario 12: DICT_COLLISION BINARY_OP subscript hit + CONTAINS miss.
+        // ------------------------------------------------------------------
+        do_reset();
+        begin
+            logic [31:0] dobj, tbl;
+            dobj = 32'h0F00;
+            tbl  = 32'h0F20;
+            poke_slot(dobj, {64'd4, 64'd1});
+            poke_slot(dobj + 16, {96'd0, tbl});
+            poke_slot(tbl + 64, 128'd1);
+            poke_slot(tbl + 80, {124'b0, PY_TAG_INT});
+            poke_slot(tbl + 96, 128'd42);
+            poke_slot(tbl + 112, {124'b0, PY_TAG_INT});
+            // zero other ktags
+            poke_slot(tbl + 16, 128'd0);
+            poke_slot(tbl + 144, 128'd0);
+            poke_slot(tbl + 208, 128'd0);
+            run_dict_collision(
+                {PY_TAG_DICT, {96{1'b0}}, dobj},
+                {PY_TAG_BOOL, 128'd1},
+                132'd0,
+                3'd2, 8'd44, 32'd26, 32'h1000, 80000);
+            check(res_code == RES_COMPLETED, "scenario12a: SUBSCR COMPLETED");
+            check(res_pop_count == 3'd2, "scenario12a: pop=2");
+            check(res_push_count == 2'd1, "scenario12a: push=1");
+            check(res_entries[0] == {PY_TAG_INT, 128'd42}, "scenario12a: pushed value 42");
+            $display("PASS: scenario12a (DICT_COLLISION SUBSCR True→42)");
+
+            run_dict_collision(
+                {PY_TAG_DICT, {96{1'b0}}, dobj},
+                {PY_TAG_INT, 128'd2},
+                132'd0,
+                3'd2, 8'd57, 32'd0, 32'h1000, 80000);
+            check(res_code == RES_COMPLETED, "scenario12b: CONTAINS COMPLETED");
+            check(res_entries[0] == {PY_TAG_BOOL, 128'd0}, "scenario12b: 2 not in dict → False");
+            $display("PASS: scenario12b (DICT_COLLISION CONTAINS miss)");
+        end
+
         check(!cpu_fault, "excore_cpu raised an internal fault (unsupported instruction)");
 
-        $display("PASS: tb_excore — all 9 scenarios green");
+        $display("PASS: tb_excore — all scenarios green");
         $finish;
     end
 endmodule
