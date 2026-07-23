@@ -34,6 +34,8 @@ localparam logic [3:0] PY_TAG_OBJECT       = 4'b1000;
 localparam logic [3:0] PY_TAG_DICT         = 4'b1001;
 localparam logic [3:0] PY_TAG_LIST         = 4'b1010;
 localparam logic [3:0] PY_TAG_SET          = 4'b1011;
+// Dict deleted-key sentinel until sets land (reuses unused SET tag).
+localparam logic [3:0] PY_TAG_TOMBSTONE    = PY_TAG_SET;
 localparam logic [3:0] PY_TAG_CODE_OBJECT  = 4'b1100;
 localparam logic [3:0] PY_TAG_FRAME_OBJECT = 4'b1101;
 // PY_TAG_NULL: CPython self_or_null sentinel pushed for non-method calls
@@ -80,8 +82,16 @@ localparam logic [3:0] PY_TRAP_LIST_GROW      = 4'd9;
 // PY_TRAP_LIST_EXTEND: raised by CONT_LIST_EXTEND when
 // length + src_len > capacity. Recoverable — the excore grows-to-fit and
 // completes the extend (emulate-and-complete; not RETRY). Raised before
-// any RF/heap commit. Codes 11-15 remain free.
+// any RF/heap commit.
 localparam logic [3:0] PY_TRAP_LIST_EXTEND    = 4'd10;
+// PY_TRAP_DICT_GROW: raised before a new-key dict insert when load ≥ 2/3
+// (or table empty). Recoverable — excore reallocates the relocatable table,
+// rehashes, and completes STORE. Handle address stays stable (layout v2).
+localparam logic [3:0] PY_TRAP_DICT_GROW      = 4'd11;
+// PY_TRAP_DICT_COLLISION: cross-tag probe hit needing rich equality
+// (INT↔BOOL, INT↔FLOAT, …). Recoverable — excore finishes the opcode
+// (STORE / SUBSCR / DELETE / CONTAINS; opcode in MB_INSTR_*).
+localparam logic [3:0] PY_TRAP_DICT_COLLISION = 4'd12;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a
@@ -89,7 +99,9 @@ localparam logic [3:0] PY_TRAP_LIST_EXTEND    = 4'd10;
 function automatic logic pycore_trap_recoverable(input logic [3:0] code);
     begin
         pycore_trap_recoverable = (code == PY_TRAP_LIST_GROW) ||
-                                  (code == PY_TRAP_LIST_EXTEND);
+                                  (code == PY_TRAP_LIST_EXTEND) ||
+                                  (code == PY_TRAP_DICT_GROW) ||
+                                  (code == PY_TRAP_DICT_COLLISION);
     end
 endfunction
 
@@ -432,43 +444,104 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_long_str_entry(
 endfunction
 
 // -------------------------------------------------------------------------
-// DICT in-dmem layout (all addresses 16-byte aligned):
+// DICT in-dmem layout v2 (all addresses 16-byte aligned):
 //
-//   base + 0                  : header { slot_count[63:0], used[63:0] }
-//   base + 16*(1 + 4*i)       : slot[i] key   value[127:0]
-//   base + 16*(2 + 4*i)       : slot[i] key   tag   {124'b0, key_tag[3:0]}
-//   base + 16*(3 + 4*i)       : slot[i] value value[127:0]
-//   base + 16*(4 + 4*i)       : slot[i] value tag   {124'b0, val_tag[3:0]}
+// Stable 32-byte object (handle never moves across grows) + relocatable
+// open-addressed table (like list obj / ob_item):
 //
-// Slot stride = 4 * 16 = 64 bytes.
-// Empty-bucket sentinel: key tag == PY_TAG_UNINIT (4'b0000).
-// Slot count is always a power of two; probe mask = slot_count - 1.
+//   obj + 0  : header { slot_count[63:0], used[63:0] }
+//   obj + 16 : { 64'd0, table_ptr[63:0] }   // 0 if slot_count==0
+//
+//   table + i*64 + 0  : key   value[127:0]
+//   table + i*64 + 16 : key   tag   {124'b0, key_tag[3:0]}
+//   table + i*64 + 32 : value value[127:0]
+//   table + i*64 + 48 : value tag   {124'b0, val_tag[3:0]}
+//
+// Slot stride = 64 bytes. Empty: key tag == PY_TAG_UNINIT.
+// Deleted: key tag == PY_TAG_TOMBSTONE (skip during probe).
+// Slot count is a power of two (or 0); probe mask = slot_count - 1.
+//
+// BUILD_MAP may allocate object+table contiguously
+// (pycore_dict_alloc_bytes); grow relocates the table only and updates
+// table_ptr. Address helpers take the TABLE base, not the object base.
 //
 // Hash: pycore_dict_key_hash(tag, value) & (slot_count - 1).
-// Supported key tags: INT, BOOL, SHORT_STR, LONG_STR.
-// Unsupported key tags trap PY_TRAP_TYPE; key-not-found traps PY_TRAP_MEM_FAULT.
-//
-// Interim insert policy (until rehash/grow exists): never fill the table
-// completely — require used < slot_count after every insert so at least one
-// empty slot remains and absent-key probes always terminate.  Probe loops
-// are also bounded by slot_count and trap PY_TRAP_MEM_FAULT on exhaustion.
-//
-// Dict option: open-addressed linear probe. Tombstone deletion is not yet
-// implemented — DELETE_SUBSCR on DICT type-traps. Empty bucket: key tag
-// PY_TAG_UNINIT.
+// Supported key tags: INT, BOOL, FLOAT, SHORT_STR, LONG_STR.
+// Unsupported key tags trap PY_TRAP_TYPE.
+// Load ≥ 2/3 before new-key insert → PY_TRAP_DICT_GROW.
+// Cross-tag numeric probe → PY_TRAP_DICT_COLLISION (rich eq in excore).
 // -------------------------------------------------------------------------
 
 // 32-bit key hash; caller masks with (slot_count - 1).
-// INT/BOOL use value[31:0] (preserves existing images).  SHORT_STR folds the
-// full 128-bit value field.  LONG_STR hashes low-32(addr) ^ low-32(size).
+// INT: CPython -1 → -2; else value[31:0].
+// BOOL: 0/1 from value[0].
+// FLOAT: integer-valued / ±0 match int hashes; NaN/Inf/non-int → bit mix.
+// SHORT_STR: XOR of four 32-bit words. LONG_STR: low32(addr) ^ low32(size).
 function automatic logic [31:0] pycore_dict_key_hash(
     input logic [3:0]                    tag,
     input logic [PYCORE_VAL_WIDTH-1:0]   value
 );
+    logic        f_sign;
+    logic [10:0] f_exp;
+    logic [51:0] f_frac;
+    logic [10:0] f_uexp;
+    logic [51:0] f_frac_mask;
+    logic [52:0] f_sig;
+    logic [63:0] f_mag;
+    logic        f_is_int;
     begin
+        f_sign      = value[63];
+        f_exp       = value[62:52];
+        f_frac      = value[51:0];
+        f_uexp      = f_exp - 11'd1023;
+        f_sig       = {1'b1, f_frac};
+        f_frac_mask = 52'd0;
+        f_mag       = 64'd0;
+        f_is_int    = 1'b0;
+
         unique case (tag)
-            PY_TAG_INT, PY_TAG_BOOL:
-                pycore_dict_key_hash = value[31:0];
+            PY_TAG_INT: begin
+                // CPython: hash(-1) == -2
+                if (value[63:0] == 64'hFFFFFFFFFFFFFFFF)
+                    pycore_dict_key_hash = 32'hFFFFFFFE;
+                else
+                    pycore_dict_key_hash = value[31:0];
+            end
+            PY_TAG_BOOL:
+                pycore_dict_key_hash = {31'b0, value[0]};
+            PY_TAG_FLOAT: begin
+                // value[63:0] = IEEE754 binary64
+                if (f_exp == 11'h7FF) begin
+                    // NaN / Inf — bit-mix; excore handles rich eq
+                    pycore_dict_key_hash = value[31:0] ^ value[63:32];
+                end else if ((f_exp == 11'd0) && (f_frac == 52'd0)) begin
+                    // ±0.0 → 0
+                    pycore_dict_key_hash = 32'd0;
+                end else if (f_exp < 11'd1023) begin
+                    // |x| < 1 (incl. subnormals): not integer-valued
+                    pycore_dict_key_hash = value[31:0] ^ value[63:32];
+                end else if (f_uexp >= 11'd63) begin
+                    // Magnitude does not fit in signed 64-bit int
+                    pycore_dict_key_hash = value[31:0] ^ value[63:32];
+                end else begin
+                    if (f_uexp < 11'd52) begin
+                        f_frac_mask = (52'h1 << (11'd52 - f_uexp)) - 52'h1;
+                        f_is_int    = ((f_frac & f_frac_mask) == 52'd0);
+                        f_mag       = {11'b0, f_sig} >> (11'd52 - f_uexp);
+                    end else begin
+                        f_is_int = 1'b1;
+                        f_mag    = {11'b0, f_sig} << (f_uexp - 11'd52);
+                    end
+                    if (!f_is_int)
+                        pycore_dict_key_hash = value[31:0] ^ value[63:32];
+                    else if (!f_sign)
+                        pycore_dict_key_hash = f_mag[31:0];
+                    else if (f_mag == 64'd1)
+                        pycore_dict_key_hash = 32'hFFFFFFFE; // hash(-1.0) == -2
+                    else
+                        pycore_dict_key_hash = (-f_mag)[31:0];
+                end
+            end
             PY_TAG_SHORT_STR:
                 pycore_dict_key_hash = value[127:96] ^ value[95:64]
                                      ^ value[63:32]  ^ value[31:0];
@@ -484,8 +557,43 @@ endfunction
 function automatic logic pycore_dict_key_tag_ok(input logic [3:0] tag);
     begin
         pycore_dict_key_tag_ok = (tag == PY_TAG_INT) || (tag == PY_TAG_BOOL)
+                              || (tag == PY_TAG_FLOAT)
                               || (tag == PY_TAG_SHORT_STR)
                               || (tag == PY_TAG_LONG_STR);
+    end
+endfunction
+
+// 1 when tags differ and both are numeric — RTL should DICT_COLLISION trap
+// rather than treat as unequal and continue the probe.
+function automatic logic pycore_dict_key_rich_maybe(
+    input logic [3:0] tag_a,
+    input logic [3:0] tag_b
+);
+    begin
+        pycore_dict_key_rich_maybe =
+            (tag_a != tag_b) &&
+            pycore_is_numeric_tag(tag_a) &&
+            pycore_is_numeric_tag(tag_b);
+    end
+endfunction
+
+function automatic logic pycore_dict_tombstone(input logic [3:0] tag);
+    begin
+        pycore_dict_tombstone = (tag == PY_TAG_TOMBSTONE);
+    end
+endfunction
+
+// Load factor check before a new-key insert: empty table, ≥ 2/3 full, or
+// would leave no empty slot for probe termination.
+function automatic logic pycore_dict_needs_grow(
+    input logic [63:0] used,
+    input logic [63:0] slot_count
+);
+    begin
+        pycore_dict_needs_grow =
+            (slot_count == 64'd0) ||
+            ((used * 64'd3) >= (slot_count * 64'd2)) ||
+            ((used + 64'd1) >= slot_count);
     end
 endfunction
 
@@ -517,36 +625,66 @@ function automatic logic pycore_elem_eq(
     end
 endfunction
 
+// Slot address helpers — `table` is the relocatable table base (obj.table_ptr),
+// not the dict object address.
 function automatic logic [31:0] pycore_dict_kval_addr(
-    input logic [31:0] base, input logic [31:0] probe_idx
+    input logic [31:0] table, input logic [31:0] probe_idx
 );
     begin
-        // base + 16 + probe_idx * 64
-        pycore_dict_kval_addr = base + 32'd16 + (probe_idx << 6);
+        // table + probe_idx * 64
+        pycore_dict_kval_addr = table + (probe_idx << 6);
     end
 endfunction
 
 function automatic logic [31:0] pycore_dict_ktag_addr(
-    input logic [31:0] base, input logic [31:0] probe_idx
+    input logic [31:0] table, input logic [31:0] probe_idx
 );
     begin
-        pycore_dict_ktag_addr = base + 32'd32 + (probe_idx << 6);
+        // table + 16 + probe_idx * 64
+        pycore_dict_ktag_addr = table + 32'd16 + (probe_idx << 6);
     end
 endfunction
 
 function automatic logic [31:0] pycore_dict_vval_addr(
-    input logic [31:0] base, input logic [31:0] probe_idx
+    input logic [31:0] table, input logic [31:0] probe_idx
 );
     begin
-        pycore_dict_vval_addr = base + 32'd48 + (probe_idx << 6);
+        // table + 32 + probe_idx * 64
+        pycore_dict_vval_addr = table + 32'd32 + (probe_idx << 6);
     end
 endfunction
 
 function automatic logic [31:0] pycore_dict_vtag_addr(
-    input logic [31:0] base, input logic [31:0] probe_idx
+    input logic [31:0] table, input logic [31:0] probe_idx
 );
     begin
-        pycore_dict_vtag_addr = base + 32'd64 + (probe_idx << 6);
+        // table + 48 + probe_idx * 64
+        pycore_dict_vtag_addr = table + 32'd48 + (probe_idx << 6);
+    end
+endfunction
+
+// Byte address of the dict object's table_ptr slot.
+function automatic logic [31:0] pycore_dict_table_ptr_addr(
+    input logic [31:0] obj_addr
+);
+    begin
+        pycore_dict_table_ptr_addr = obj_addr + 32'd16;
+    end
+endfunction
+
+// Fixed size of the (stable) dict object: header (16B) + table_ptr (16B).
+function automatic logic [31:0] pycore_dict_obj_bytes();
+    begin
+        pycore_dict_obj_bytes = 32'd32;
+    end
+endfunction
+
+// Bytes for a table holding `slot_count` buckets.
+function automatic logic [31:0] pycore_dict_table_bytes(
+    input logic [31:0] slot_count
+);
+    begin
+        pycore_dict_table_bytes = slot_count << 6;
     end
 endfunction
 
@@ -554,8 +692,9 @@ function automatic logic [31:0] pycore_dict_alloc_bytes(
     input logic [31:0] slot_count
 );
     begin
-        // 16-byte header + slot_count * 64-byte slot
-        pycore_dict_alloc_bytes = 32'd16 + (slot_count << 6);
+        // Contiguous BUILD_MAP layout: 32-byte object + slot_count * 64-byte table.
+        // Grow may relocate the table alone (object address stays stable).
+        pycore_dict_alloc_bytes = 32'd32 + (slot_count << 6);
     end
 endfunction
 

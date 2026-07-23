@@ -202,3 +202,71 @@ def next_pow2(n: int) -> int:
 def dict_slot_count_for_stores(n_names: int) -> int:
     """Pre-size globals dict: next_pow2(max(4, 2 * count))."""
     return next_pow2(max(4, 2 * max(n_names, 0)))
+
+
+def _float_key_hash(bits: int) -> int:
+    """IEEE754 binary64 hash matching pycore_dict_key_hash FLOAT path.
+
+    integer-valued / ±0 → same as INT (incl. -1.0 → -2);
+    NaN/Inf/non-integer/overflow → low32 ^ high32 bit-mix.
+    """
+    bits &= (1 << 64) - 1
+    sign = (bits >> 63) & 1
+    exp = (bits >> 52) & 0x7FF
+    frac = bits & ((1 << 52) - 1)
+    mix = ((bits & 0xFFFFFFFF) ^ ((bits >> 32) & 0xFFFFFFFF)) & 0xFFFFFFFF
+    if exp == 0x7FF:
+        return mix
+    if exp == 0 and frac == 0:
+        return 0
+    if exp < 1023:
+        return mix
+    uexp = exp - 1023
+    if uexp >= 63:
+        return mix
+    sig = (1 << 52) | frac
+    if uexp < 52:
+        frac_mask = (1 << (52 - uexp)) - 1
+        if frac & frac_mask:
+            return mix
+        mag = sig >> (52 - uexp)
+    else:
+        mag = sig << (uexp - 52)
+    if not sign:
+        return mag & 0xFFFFFFFF
+    if mag == 1:
+        return 0xFFFFFFFE
+    return (-mag) & 0xFFFFFFFF
+
+
+def dict_key_hash(tag: int, value: int) -> int:
+    """Mirror of pycore_dict_key_hash — returns unmasked 32-bit hash.
+
+    INT: -1 → 0xFFFFFFFE (-2); else value[31:0].
+    BOOL: value[0] as 0/1.
+    FLOAT: integer-valued / ±0 match int; else bit-mix.
+    SHORT_STR: XOR of four 32-bit words.
+    LONG_STR: low32(addr) ^ low32(size).
+    """
+    value &= VAL_MASK
+    if tag == TAG_INT:
+        low64 = value & ((1 << 64) - 1)
+        if low64 == (1 << 64) - 1:
+            return 0xFFFFFFFE
+        return value & 0xFFFFFFFF
+    if tag == TAG_BOOL:
+        return value & 1
+    if tag == TAG_FLOAT:
+        return _float_key_hash(value & ((1 << 64) - 1))
+    if tag == TAG_SHORT_STR:
+        w0 = value & 0xFFFFFFFF
+        w1 = (value >> 32) & 0xFFFFFFFF
+        w2 = (value >> 64) & 0xFFFFFFFF
+        w3 = (value >> 96) & 0xFFFFFFFF
+        return (w0 ^ w1 ^ w2 ^ w3) & 0xFFFFFFFF
+    if tag == TAG_LONG_STR:
+        # value = {size[63:0], addr[63:0]}; hash = value[31:0] ^ value[95:64]
+        low_addr = value & 0xFFFFFFFF
+        low_size = (value >> 64) & 0xFFFFFFFF
+        return (low_addr ^ low_size) & 0xFFFFFFFF
+    return value & 0xFFFFFFFF
