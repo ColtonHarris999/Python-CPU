@@ -597,7 +597,8 @@ down one slot and writes `length-1` (capacity unchanged). Implemented
 entirely on pycore (`CONT_DELETE_LIST`) — delete never reallocates. OOB /
 negative indices → `PY_TRAP_MEM_FAULT`. Tuple → `PY_TRAP_TYPE`.
 
-On a **DICT**, same-tag hits write `PY_TAG_TOMBSTONE` on the key tag and
+On a **DICT**, same-tag hits write `PY_TAG_TOMBSTONE` (`== PY_TAG_DICT`,
+since dicts cannot be keys) on the key tag and
 decrement `used` on pycore. Cross-tag numeric probes raise
 `PY_TRAP_DICT_COLLISION` (12) so excore can apply rich equality (e.g.
 `del d[True]` after storing `1`). Miss → `PY_TRAP_MEM_FAULT`.
@@ -638,7 +639,7 @@ obj+0  : header { slot_count[63:0], used[63:0] }
 obj+16 : { 64'd0, table_ptr[63:0] }     // 0 if slot_count == 0
 
 table + i*64 + 0  : key value
-table + i*64 + 16 : key tag   (UNINIT=empty, TOMBSTONE=deleted)
+table + i*64 + 16 : key tag   (UNINIT=empty, TOMBSTONE=DICT=9 deleted)
 table + i*64 + 32 : value value
 table + i*64 + 48 : value tag
 ```

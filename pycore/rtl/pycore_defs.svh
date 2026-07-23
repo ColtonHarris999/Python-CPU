@@ -34,8 +34,10 @@ localparam logic [3:0] PY_TAG_OBJECT       = 4'b1000;
 localparam logic [3:0] PY_TAG_DICT         = 4'b1001;
 localparam logic [3:0] PY_TAG_LIST         = 4'b1010;
 localparam logic [3:0] PY_TAG_SET          = 4'b1011;
-// Dict deleted-key sentinel until sets land (reuses unused SET tag).
-localparam logic [3:0] PY_TAG_TOMBSTONE    = PY_TAG_SET;
+// Dict deleted-key sentinel. Reuses PY_TAG_DICT because dicts are mutable and
+// cannot be hash keys — a key-slot tag of DICT is never a live key, so it is
+// free to mean "tombstone" during open-addressed probe / insert.
+localparam logic [3:0] PY_TAG_TOMBSTONE    = PY_TAG_DICT;
 localparam logic [3:0] PY_TAG_CODE_OBJECT  = 4'b1100;
 localparam logic [3:0] PY_TAG_FRAME_OBJECT = 4'b1101;
 // PY_TAG_NULL: CPython self_or_null sentinel pushed for non-method calls
@@ -458,7 +460,8 @@ endfunction
 //   table + i*64 + 48 : value tag   {124'b0, val_tag[3:0]}
 //
 // Slot stride = 64 bytes. Empty: key tag == PY_TAG_UNINIT.
-// Deleted: key tag == PY_TAG_TOMBSTONE (skip during probe).
+// Deleted: key tag == PY_TAG_TOMBSTONE (== PY_TAG_DICT; skip during probe).
+// Dicts cannot be keys, so DICT in a key slot unambiguously means tombstone.
 // Slot count is a power of two (or 0); probe mask = slot_count - 1.
 //
 // BUILD_MAP may allocate object+table contiguously

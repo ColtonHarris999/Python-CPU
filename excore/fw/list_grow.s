@@ -88,7 +88,9 @@
     .equ TAG_LONG_STR,   7
     .equ TAG_DICT,       9
     .equ TAG_LIST,       10
-    .equ TAG_TOMBSTONE,  11
+    # Tombstone reuses DICT: mutable dicts are never valid hash keys, so a
+    # key-slot tag of 9 means deleted (see PY_TAG_TOMBSTONE in pycore_defs.svh).
+    .equ TAG_TOMBSTONE,  9
 
     .equ OP_DELETE_SUBSCR, 8
     .equ OP_STORE_SUBSCR,  38
