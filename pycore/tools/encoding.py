@@ -25,6 +25,9 @@ TAG_OBJECT = 0b1000
 TAG_DICT = 0b1001
 TAG_LIST = 0b1010
 TAG_SET = 0b1011
+# Dict deleted-key sentinel (= TAG_DICT). Dicts are mutable and cannot be
+# hash keys, so DICT in a key slot means tombstone (mirrors PY_TAG_TOMBSTONE).
+TAG_TOMBSTONE = TAG_DICT
 TAG_CODE_OBJECT = 0b1100
 TAG_FRAME_OBJECT = 0b1101
 TAG_NULL = 0b1110  # formerly TAG_UNUSED; CPython self_or_null sentinel
