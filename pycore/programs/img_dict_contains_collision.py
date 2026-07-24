@@ -1,6 +1,6 @@
-"""Cross-tag CONTAINS_OP via DICT_COLLISION (True / 1).
+"""Cross-tag CONTAINS_OP via pycore rich_eq (True / 1).
 
-Requires EXCORE_EN=1. Bitmask: 1 in d, True in d, 0 not in d.
+Bitmask: 1 in d, True in d, 0 not in d (single-core).
 """
 
 

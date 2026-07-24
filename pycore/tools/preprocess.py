@@ -108,9 +108,6 @@ DEFERRED_OPS: dict[str, str] = {
     "DICT_MERGE":    "dict merge not yet implemented",
     "BINARY_SLICE":  "slice notation not yet implemented",
     "STORE_SLICE":   "slice assignment not yet implemented",
-    "BUILD_SET":     "set literals not yet implemented",
-    "SET_ADD":       "set.add not yet implemented",
-    "SET_UPDATE":    "set.update not yet implemented",
     "LOAD_GLOBAL":   "module/global lookup is supported by image_from_source.py",
     "LOAD_NAME":     "module/name lookup is supported by image_from_source.py",
     "STORE_NAME":    "module/name stores are supported by image_from_source.py",
@@ -174,6 +171,9 @@ SUPPORTED_OPS = {
     # emitted by list-display unpack (`[a, *b]` / `[*a, *b]`).
     "LIST_APPEND",
     "LIST_EXTEND",
+    "BUILD_SET",
+    "SET_ADD",
+    "SET_UPDATE",
 }
 
 SUPPORTED_BINARY_ARGS = {

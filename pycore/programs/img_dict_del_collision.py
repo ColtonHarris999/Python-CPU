@@ -1,6 +1,6 @@
-"""Cross-tag delete: store INT 1, del True via DICT_COLLISION.
+"""Cross-tag delete: store INT 1, del True via pycore rich_eq.
 
-Requires EXCORE_EN=1. Returns 0 when the key is gone.
+Returns 0 when the key is gone (single-core).
 """
 
 

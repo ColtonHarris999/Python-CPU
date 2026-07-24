@@ -273,3 +273,55 @@ def dict_key_hash(tag: int, value: int) -> int:
         low_size = (value >> 64) & 0xFFFFFFFF
         return (low_addr ^ low_size) & 0xFFFFFFFF
     return value & 0xFFFFFFFF
+
+
+def _float_as_int64(bits: int) -> int | None:
+    """Mirror of pycore_float_as_int64; None if not integer-valued."""
+    bits &= (1 << 64) - 1
+    sign = (bits >> 63) & 1
+    exp = (bits >> 52) & 0x7FF
+    frac = bits & ((1 << 52) - 1)
+    if exp == 0x7FF:
+        return None
+    if exp == 0 and frac == 0:
+        return 0
+    if exp < 1023:
+        return None
+    uexp = exp - 1023
+    if uexp >= 63:
+        return None
+    sig = (1 << 52) | frac
+    if uexp < 52:
+        frac_mask = (1 << (52 - uexp)) - 1
+        if frac & frac_mask:
+            return None
+        mag = sig >> (52 - uexp)
+    else:
+        mag = sig << (uexp - 52)
+    if mag >= (1 << 63):
+        return None
+    return -mag if sign else mag
+
+
+def dict_key_rich_eq(tag_a: int, val_a: int, tag_b: int, val_b: int) -> bool:
+    """Mirror of pycore_dict_key_rich_eq."""
+    val_a &= VAL_MASK
+    val_b &= VAL_MASK
+    numeric = {TAG_INT, TAG_BOOL, TAG_FLOAT}
+    if tag_a in numeric and tag_b in numeric:
+        def as_int(tag: int, val: int) -> int | None:
+            if tag == TAG_INT:
+                return val & ((1 << 64) - 1)
+            if tag == TAG_BOOL:
+                return val & 1
+            return _float_as_int64(val)
+
+        ia, ib = as_int(tag_a, val_a), as_int(tag_b, val_b)
+        if ia is not None and ib is not None:
+            return ia == ib
+        if tag_a == TAG_FLOAT and tag_b == TAG_FLOAT:
+            return val_a == val_b
+        return False
+    if tag_a == tag_b and tag_a in (TAG_SHORT_STR, TAG_LONG_STR):
+        return val_a == val_b
+    return False

@@ -1,7 +1,9 @@
-# list_grow.s -- excore firmware: LIST_* + DICT_* trap handlers.
+# list_grow.s -- excore firmware: LIST_* + DICT_* + SET_* trap handlers.
 #
 # Dispatch loop, parked until MB_STATUS.trap_pending is set. Handles
-# PY_TRAP_LIST_GROW (9), LIST_EXTEND (10), DICT_GROW (11), DICT_COLLISION (12).
+# PY_TRAP_LIST_GROW (9), LIST_EXTEND (10), DICT_GROW (11), SET_GROW (13),
+# SET_UPDATE (14). Code 12 (LIST_DELETE / former DICT_COLLISION) is FATAL
+# illegal — dict/set rich equality now runs on pycore.
 # Unknown codes -> FATAL(ILLEGAL_OPCODE).
 #
 # LIST_GROW (ENTRY[0]=list handle, ENTRY[1]=element):
@@ -16,10 +18,13 @@
 # DICT_GROW (E0=dict, E1=key, E2=value): realloc table, rehash, STORE insert,
 #   COMPLETED pop 3. INTENTIONALLY LEAKS the old table.
 #
-# DICT_COLLISION: opcode in MB_INSTR_LO selects STORE_SUBSCR / BINARY_OP
-#   (NB_SUBSCR) / DELETE_SUBSCR / CONTAINS_OP; rich key equality probe.
+# SET_GROW (E0=set, E1=element): realloc element table (stride 32), rehash,
+#   insert element, COMPLETED pop 1. INTENTIONALLY LEAKS the old table.
 #
-# List paths INTENTIONALLY LEAK the old buffer (bump allocator / future GC).
+# SET_UPDATE (E0=set, E1=LIST/TUPLE/SET): grow-to-fit as needed, insert all
+#   source elements, COMPLETED pop 1.
+#
+# List/dict/set grow paths INTENTIONALLY LEAK old buffers (bump allocator).
 
     .equ MMIO_BASE,      0xF0000000
 
@@ -70,7 +75,9 @@
     .equ TRAP_LIST_GROW,     9
     .equ TRAP_LIST_EXTEND,   10
     .equ TRAP_DICT_GROW,     11
-    .equ TRAP_DICT_COLLISION,12
+    .equ TRAP_LIST_DELETE,   12
+    .equ TRAP_SET_GROW,      13
+    .equ TRAP_SET_UPDATE,    14
 
     # fatal_code values mirror pycore_defs.svh's PY_TRAP_* codes exactly --
     # Phase C forwards this nibble straight into pycore_trap as a normal
@@ -88,6 +95,7 @@
     .equ TAG_LONG_STR,   7
     .equ TAG_DICT,       9
     .equ TAG_LIST,       10
+    .equ TAG_SET,        11
     # Tombstone reuses DICT: mutable dicts are never valid hash keys, so a
     # key-slot tag of 9 means deleted (see PY_TAG_TOMBSTONE in pycore_defs.svh).
     .equ TAG_TOMBSTONE,  9
@@ -143,10 +151,18 @@ wait_trap:
     beq  t0, t1, do_list_extend
     li   t1, TRAP_DICT_GROW
     beq  t0, t1, do_dict_grow
-    li   t1, TRAP_DICT_COLLISION
-    beq  t0, t1, do_dict_collision
+    li   t1, TRAP_SET_GROW
+    beq  t0, t1, tramp_set_grow
+    li   t1, TRAP_SET_UPDATE
+    beq  t0, t1, tramp_set_update
+    # LIST_DELETE (12) / unknown → FATAL illegal (dict collision retired).
     j    fatal_illegal
 
+# J-type trampolines: SET handlers live past B-type ±4KiB reach.
+tramp_set_grow:
+    j    do_set_grow
+tramp_set_update:
+    j    do_set_update
 
 fatal_type:
     li   t0, FATAL_TYPE
@@ -1454,4 +1470,488 @@ fti_fail:
     lw   t3, SCR_FTI0(x0)
     lw   t4, SCR_FTI1(x0)
     li   a0, 0
+    jalr x0, ra, 0
+
+# ===========================================================================
+# SET_GROW: E0=set, E1=element — realloc table (stride 32), rehash, insert.
+# ===========================================================================
+do_set_grow:
+    lw   t0, MB_E0_TAG(s11)
+    li   t1, TAG_SET
+    beq  t0, t1, sg_tag_ok
+    j    fatal_type
+sg_tag_ok:
+    lw   s0, MB_E0_VAL0(s11)
+    # Load element into SCR_K*
+    lw   t0, MB_E1_VAL0(s11)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, MB_E1_VAL1(s11)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, MB_E1_VAL2(s11)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, MB_E1_VAL3(s11)
+    sw   t0, SCR_KVAL3(x0)
+    lw   t0, MB_E1_TAG(s11)
+    sw   t0, SCR_KTAG(x0)
+    jal  ra, dict_load_header_table   # s1=slots, s2=used, s5/s3=table
+    jal  ra, set_grow_rehash
+    jal  ra, set_insert_from_scratch
+    jal  ra, set_writeback_header
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 1
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 0
+    sw   t0, RES_PUSH_COUNT(s11)
+    slli t0, s7, 5
+    add  t0, s4, t0
+    sw   t0, RES_HEAP_PTR(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
+# ===========================================================================
+# SET_UPDATE: E0=set, E1=LIST/TUPLE/SET — grow-to-fit once, insert all.
+# ===========================================================================
+do_set_update:
+    lw   t0, MB_E0_TAG(s11)
+    li   t1, TAG_SET
+    beq  t0, t1, su_tag_ok
+    j    fatal_type
+su_tag_ok:
+    lw   s0, MB_E0_VAL0(s11)
+    jal  ra, dict_load_header_table
+    lw   s9, MB_E1_TAG(s11)
+    lw   s10, MB_E1_VAL0(s11)
+    li   t1, TAG_LIST
+    beq  s9, t1, su_src_list
+    li   t1, TAG_TUPLE
+    beq  s9, t1, su_src_tuple
+    li   t1, TAG_SET
+    beq  s9, t1, su_src_set
+    j    fatal_type
+
+su_src_list:
+    mv   a0, s10
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)         # src_len (dense count)
+    sw   t0, SCR_TMP_L0(x0)
+    addi a0, s10, 16
+    jal  ra, sp_read
+    lw   s8, SP_DATA0(s11)
+    li   s9, 0
+    j    su_maybe_grow
+
+su_src_tuple:
+    lw   t0, MB_E1_VAL2(s11)
+    sw   t0, SCR_TMP_L0(x0)
+    mv   s8, s10
+    li   s9, 0
+    j    su_maybe_grow
+
+su_src_set:
+    mv   a0, s10
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)         # src used (upper bound on new elems)
+    sw   t0, SCR_TMP_L1(x0)
+    lw   t1, SP_DATA2(s11)         # src slots (walk count)
+    sw   t1, SCR_TMP_L0(x0)
+    addi a0, s10, 16
+    jal  ra, sp_read
+    lw   s8, SP_DATA0(s11)
+    li   s9, 1
+    # For grow sizing use src used, not slots.
+    lw   t0, SCR_TMP_L1(x0)
+    # Fall through with t0=src_used for need; walk count stays TMP_L0.
+    j    su_maybe_grow_set
+
+su_maybe_grow:
+    lw   t0, SCR_TMP_L0(x0)        # src_len
+su_maybe_grow_set:
+    sw   t0, SCR_FTI1(x0)          # save src_count across calls
+    # need_used_upper = used + src_count (duplicates shrink actual used)
+    add  t1, s2, t0
+    mv   a0, t1
+    mv   a1, s1
+    jal  ra, dict_needs_grow
+    beq  a0, x0, su_loop_init
+    # Force grow: set s2 temporarily to need for sizing, then restore.
+    sw   s2, SCR_FTI0(x0)
+    lw   t0, SCR_FTI1(x0)
+    add  s2, s2, t0
+    sw   x0, SCR_KVAL0(x0)
+    sw   x0, SCR_KVAL1(x0)
+    sw   x0, SCR_KVAL2(x0)
+    sw   x0, SCR_KVAL3(x0)
+    sw   x0, SCR_KTAG(x0)
+    jal  ra, set_grow_rehash_keep
+    lw   s2, SCR_FTI0(x0)
+
+su_loop_init:
+    li   s6, 0
+    li   s4, 0                     # no new heap unless we grew (s4 set in grow)
+su_loop:
+    lw   t0, SCR_TMP_L0(x0)
+    beq  s6, t0, su_done
+    bne  s9, x0, su_load_set
+    # dense LIST/TUPLE
+    slli t0, s6, 5
+    add  t2, s8, t0
+    mv   a0, t2
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_KVAL3(x0)
+    addi a0, t2, 16
+    jal  ra, sp_read
+    lw   a1, SP_DATA0(s11)
+    sw   a1, SCR_KTAG(x0)
+    j    su_insert
+su_load_set:
+    slli t0, s6, 5
+    add  t2, s8, t0
+    addi a0, t2, 16
+    sw   t2, SCR_A1(x0)
+    jal  ra, sp_read
+    lw   a1, SP_DATA0(s11)
+    beq  a1, x0, su_next
+    li   t0, TAG_TOMBSTONE
+    beq  a1, t0, su_next
+    lw   a0, SCR_A1(x0)
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_KVAL3(x0)
+    sw   a1, SCR_KTAG(x0)
+su_insert:
+    # set_probe clobbers s6 (start idx) and s8 (probe count).
+    sw   s6, SCR_FTI0(x0)
+    sw   s8, SCR_FTI1(x0)
+    jal  ra, set_probe
+    lw   s6, SCR_FTI0(x0)
+    lw   s8, SCR_FTI1(x0)
+    lw   t0, SCR_FOUND(x0)
+    bne  t0, x0, su_next
+    lw   a0, SCR_IDX(x0)
+    jal  ra, set_write_elem_at
+    addi s2, s2, 1
+    jal  ra, dict_write_used_slots
+su_next:
+    addi s6, s6, 1
+    j    su_loop
+
+su_done:
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 1
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 0
+    sw   t0, RES_PUSH_COUNT(s11)
+    beq  s4, x0, su_heap_mb
+    slli t0, s1, 5
+    add  t0, s4, t0
+    sw   t0, RES_HEAP_PTR(s11)
+    j    su_go
+su_heap_mb:
+    lw   t0, MB_HEAP_PTR(s11)
+    sw   t0, RES_HEAP_PTR(s11)
+su_go:
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
+# set_grow_rehash: like dict_grow_rehash but stride 32, element-only.
+# Does NOT call load_e1e2 (preserves SCR_K*).
+set_grow_rehash_keep:
+set_grow_rehash:
+    sw   ra, SCR_RA(x0)
+    li   t0, 50000
+    bltu t0, s2, sgr_mul2
+    slli a0, s2, 2
+    j    sgr_need
+sgr_mul2:
+    slli a0, s2, 1
+sgr_need:
+    li   t0, 8
+    bge  a0, t0, sgr_pow2_init
+    li   a0, 8
+sgr_pow2_init:
+    li   s7, 8
+sgr_pow2:
+    bge  s7, a0, sgr_gt_used
+    slli s7, s7, 1
+    j    sgr_pow2
+sgr_gt_used:
+    blt  s2, s7, sgr_vs_old
+    slli s7, s7, 1
+    j    sgr_gt_used
+sgr_vs_old:
+    beq  s1, x0, sgr_alloc
+    slli t0, s1, 1
+    bge  s7, t0, sgr_alloc
+    mv   s7, t0
+sgr_alloc:
+    lw   s4, MB_HEAP_PTR(s11)
+    slli t0, s7, 5
+    add  t0, s4, t0
+    li   t1, HEAP_LIMIT
+    bge  t1, t0, sgr_zero
+    j    fatal_mem
+sgr_zero:
+    li   s6, 0
+sgr_zero_loop:
+    beq  s6, s7, sgr_rehash
+    slli t0, s6, 5
+    add  a0, s4, t0
+    addi a0, a0, 16
+    li   t0, 0
+    sw   t0, SP_DATA0(s11)
+    sw   t0, SP_DATA1(s11)
+    sw   t0, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    addi s6, s6, 1
+    j    sgr_zero_loop
+sgr_rehash:
+    mv   s3, s4
+    beq  s1, x0, sgr_done
+    li   s6, 0
+sgr_rehash_loop:
+    beq  s6, s1, sgr_done
+    slli t0, s6, 5
+    add  t2, s5, t0
+    addi a0, t2, 16
+    sw   t2, SCR_A1(x0)
+    jal  ra, sp_read
+    lw   a1, SP_DATA0(s11)
+    beq  a1, x0, sgr_next
+    li   t0, TAG_TOMBSTONE
+    beq  a1, t0, sgr_next
+    lw   a0, SCR_A1(x0)
+    jal  ra, sp_read
+    # Temporarily use SK* for rehash source; keep K* intact via V*
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_SKVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_SKVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_SKVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_SKVAL3(x0)
+    sw   a1, SCR_SKTAG(x0)
+    # hash from SK — temporarily swap into K
+    lw   t0, SCR_KVAL0(x0)
+    sw   t0, SCR_VVAL0(x0)
+    lw   t0, SCR_KVAL1(x0)
+    sw   t0, SCR_VVAL1(x0)
+    lw   t0, SCR_KVAL2(x0)
+    sw   t0, SCR_VVAL2(x0)
+    lw   t0, SCR_KVAL3(x0)
+    sw   t0, SCR_VVAL3(x0)
+    lw   t0, SCR_KTAG(x0)
+    sw   t0, SCR_VTAG(x0)
+    lw   t0, SCR_SKVAL0(x0)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, SCR_SKVAL1(x0)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, SCR_SKVAL2(x0)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, SCR_SKVAL3(x0)
+    sw   t0, SCR_KVAL3(x0)
+    lw   t0, SCR_SKTAG(x0)
+    sw   t0, SCR_KTAG(x0)
+    sw   s6, SCR_IDX(x0)
+    jal  ra, hash_key
+    addi t0, s7, -1
+    and  a0, a0, t0
+sgr_ins_probe:
+    sw   a0, SCR_A0(x0)
+    slli t0, a0, 5
+    add  t2, s3, t0
+    addi a0, t2, 16
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    beq  t0, x0, sgr_ins_write
+    lw   a0, SCR_A0(x0)
+    addi a0, a0, 1
+    addi t0, s7, -1
+    and  a0, a0, t0
+    j    sgr_ins_probe
+sgr_ins_write:
+    lw   a0, SCR_A0(x0)
+    jal  ra, set_write_elem_at
+    # restore pending insert key
+    lw   t0, SCR_VVAL0(x0)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, SCR_VVAL1(x0)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, SCR_VVAL2(x0)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, SCR_VVAL3(x0)
+    sw   t0, SCR_KVAL3(x0)
+    lw   t0, SCR_VTAG(x0)
+    sw   t0, SCR_KTAG(x0)
+    lw   s6, SCR_IDX(x0)
+sgr_next:
+    addi s6, s6, 1
+    j    sgr_rehash_loop
+sgr_done:
+    # Install new table into object immediately so subsequent probes work.
+    # used unchanged; slots = s7
+    sw   s2, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   s7, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    mv   a0, s0
+    jal  ra, sp_write
+    addi a0, s0, 16
+    sw   s4, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   t0, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    mv   s1, s7
+    mv   s3, s4
+    mv   s5, s4
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+
+set_writeback_header:
+    # alias: header already written in set_grow_rehash; bump used after insert
+    sw   ra, SCR_RA(x0)
+    jal  ra, dict_write_used_slots
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+
+set_insert_from_scratch:
+    sw   ra, SCR_RA(x0)
+    jal  ra, set_probe
+    lw   t0, SCR_FOUND(x0)
+    bne  t0, x0, sifs_done
+    lw   a0, SCR_IDX(x0)
+    jal  ra, set_write_elem_at
+    addi s2, s2, 1
+sifs_done:
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+
+# set_probe: like dict_probe but stride 32
+set_probe:
+    sw   ra, SCR_RA2(x0)
+    li   t0, -1
+    sw   t0, SCR_TOMB(x0)
+    sw   x0, SCR_FOUND(x0)
+    jal  ra, hash_key
+    addi t0, s1, -1
+    and  a0, a0, t0
+    sw   a0, SCR_IDX(x0)
+    mv   s6, a0
+    li   s8, 0
+sprobe_loop:
+    slli t0, a0, 5
+    add  t2, s3, t0
+    sw   t2, SCR_A1(x0)
+    sw   a0, SCR_IDX(x0)
+    addi a0, t2, 16
+    jal  ra, sp_read
+    lw   a1, SP_DATA0(s11)
+    beq  a1, x0, sprobe_empty
+    li   t0, TAG_TOMBSTONE
+    beq  a1, t0, sprobe_tomb
+    lw   a0, SCR_A1(x0)
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_SKVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_SKVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_SKVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_SKVAL3(x0)
+    sw   a1, SCR_SKTAG(x0)
+    jal  ra, keys_rich_eq
+    bne  a0, x0, sprobe_hit
+    lw   a0, SCR_IDX(x0)
+    j    sprobe_advance
+sprobe_tomb:
+    lw   t0, SCR_TOMB(x0)
+    li   t1, -1
+    bne  t0, t1, sprobe_advance_ld
+    lw   a0, SCR_IDX(x0)
+    sw   a0, SCR_TOMB(x0)
+sprobe_advance_ld:
+    lw   a0, SCR_IDX(x0)
+    j    sprobe_advance
+sprobe_empty:
+    lw   t0, SCR_TOMB(x0)
+    li   t1, -1
+    beq  t0, t1, sprobe_empty_cur
+    sw   t0, SCR_IDX(x0)
+    j    sprobe_miss
+sprobe_empty_cur:
+    j    sprobe_miss
+sprobe_miss:
+    sw   x0, SCR_FOUND(x0)
+    lw   ra, SCR_RA2(x0)
+    jalr x0, ra, 0
+sprobe_hit:
+    li   t0, 1
+    sw   t0, SCR_FOUND(x0)
+    lw   ra, SCR_RA2(x0)
+    jalr x0, ra, 0
+sprobe_advance:
+    addi s8, s8, 1
+    bge  s8, s1, sprobe_exhausted
+    addi a0, a0, 1
+    addi t0, s1, -1
+    and  a0, a0, t0
+    j    sprobe_loop
+sprobe_exhausted:
+    lw   t0, SCR_TOMB(x0)
+    li   t1, -1
+    beq  t0, t1, sprobe_ex_start
+    sw   t0, SCR_IDX(x0)
+    j    sprobe_miss
+sprobe_ex_start:
+    sw   s6, SCR_IDX(x0)
+    j    sprobe_miss
+
+set_write_elem_at:
+    # a0 = index; write SCR_K* into s3 + idx*32
+    sw   ra, SCR_RA3(x0)
+    slli t0, a0, 5
+    add  t0, s3, t0
+    sw   t0, SCR_A0(x0)            # element base
+    lw   t1, SCR_KVAL0(x0)
+    sw   t1, SP_DATA0(s11)
+    lw   t1, SCR_KVAL1(x0)
+    sw   t1, SP_DATA1(s11)
+    lw   t1, SCR_KVAL2(x0)
+    sw   t1, SP_DATA2(s11)
+    lw   t1, SCR_KVAL3(x0)
+    sw   t1, SP_DATA3(s11)
+    mv   a0, t0
+    jal  ra, sp_write
+    lw   a0, SCR_A0(x0)
+    addi a0, a0, 16
+    lw   t1, SCR_KTAG(x0)
+    sw   t1, SP_DATA0(s11)
+    li   t1, 0
+    sw   t1, SP_DATA1(s11)
+    sw   t1, SP_DATA2(s11)
+    sw   t1, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   ra, SCR_RA3(x0)
     jalr x0, ra, 0

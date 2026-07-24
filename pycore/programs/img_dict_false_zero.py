@@ -1,6 +1,6 @@
-"""False / 0 cross-tag contains + subscript via DICT_COLLISION.
+"""False / 0 cross-tag contains + subscript via pycore rich_eq.
 
-Requires EXCORE_EN=1. Store INT 0, then False in d / d[False] → 7.
+Store INT 0, then False in d / d[False] → 7 (single-core).
 """
 
 

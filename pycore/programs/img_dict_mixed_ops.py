@@ -1,6 +1,6 @@
-"""End-to-end: grow + collision + delete + contains + CALL.
+"""End-to-end: grow + rich_eq + delete + contains + CALL.
 
-Requires EXCORE_EN=1.
+Grow still needs EXCORE_EN=1; rich_eq is on pycore.
 """
 
 

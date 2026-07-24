@@ -242,7 +242,7 @@ module tb_excore #(
     localparam logic [3:0] TRAP_LIST_GROW      = 4'd9;
     localparam logic [3:0] TRAP_LIST_EXTEND    = 4'd10;
     localparam logic [3:0] TRAP_DICT_GROW      = 4'd11;
-    localparam logic [3:0] TRAP_DICT_COLLISION = 4'd12;
+    localparam logic [3:0] TRAP_SET_GROW       = 4'd13;
     localparam logic [3:0] RES_COMPLETED       = 4'd0;
     localparam logic [3:0] RES_FATAL           = 4'd2;
 
@@ -277,26 +277,21 @@ module tb_excore #(
         $finish;
     endtask
 
-    // Present a DICT_COLLISION trap with opcode/arg.
-    task automatic run_dict_collision(
-        input logic [131:0] dict_entry,
-        input logic [131:0] key_entry,
-        input logic [131:0] val_entry,
-        input logic [2:0]   entry_count,
-        input logic [7:0]   opcode,
-        input logic [31:0]  arg,
+    // Present a SET_GROW trap (set + element).
+    task automatic run_set_grow(
+        input logic [131:0] set_entry,
+        input logic [131:0] elem_entry,
         input logic [31:0]  heap_ptr,
         input int max_cycles
     );
         int i;
-        mb_entries[0]  = dict_entry;
-        mb_entries[1]  = key_entry;
-        mb_entries[2]  = val_entry;
-        mb_entry_count = entry_count;
+        mb_entries[0]  = set_entry;
+        mb_entries[1]  = elem_entry;
+        mb_entry_count = 3'd2;
         mb_heap_ptr    = heap_ptr;
-        mb_trap_code   = TRAP_DICT_COLLISION;
-        mb_opcode      = opcode;
-        mb_arg         = arg;
+        mb_trap_code   = TRAP_SET_GROW;
+        mb_opcode      = 8'd107; // SET_ADD
+        mb_arg         = 32'd1;
         @(negedge clk);
         mb_trap_pending = 1'b1;
         for (i = 0; i < max_cycles; i++) begin
@@ -307,7 +302,7 @@ module tb_excore #(
                 return;
             end
         end
-        $error("[FAIL] timed out waiting for RES_GO (DICT_COLLISION)");
+        $error("[FAIL] timed out waiting for RES_GO (SET_GROW)");
         $finish;
     endtask
 
@@ -588,75 +583,28 @@ module tb_excore #(
         end
 
         // ------------------------------------------------------------------
-        // Scenario 11: DICT_COLLISION STORE_SUBSCR — BOOL True matches INT 1.
+        // Scenario 11: SET_GROW — empty 0-slot set → insert element 7.
         // ------------------------------------------------------------------
         do_reset();
         begin
-            logic [31:0] dobj, tbl;
-            dobj = 32'h0D00;
-            tbl  = 32'h0D20;
-            poke_slot(dobj, {64'd4, 64'd1});
-            poke_slot(dobj + 16, {96'd0, tbl});
-            // slot 1: key INT 1 → value 10; other ktags UNINIT
-            poke_slot(tbl + 0, 128'd0);
-            poke_slot(tbl + 16, 128'd0);
-            poke_slot(tbl + 64, 128'd1);
-            poke_slot(tbl + 80, {124'b0, PY_TAG_INT});
-            poke_slot(tbl + 96, 128'd10);
-            poke_slot(tbl + 112, {124'b0, PY_TAG_INT});
-            poke_slot(tbl + 128, 128'd0);
-            poke_slot(tbl + 144, 128'd0);
-            poke_slot(tbl + 192, 128'd0);
-            poke_slot(tbl + 208, 128'd0);
-            run_dict_collision(
-                {PY_TAG_DICT, {96{1'b0}}, dobj},
-                {PY_TAG_BOOL, 128'd1},
-                {PY_TAG_INT, 128'd77},
-                3'd3, 8'd38, 32'd0, 32'h0E00, 80000);
-            check(res_code == RES_COMPLETED, "scenario11: STORE COMPLETED");
-            check(res_pop_count == 3'd3, "scenario11: pop=3");
-            check(peek_slot(dobj) == {64'd4, 64'd1}, "scenario11: used unchanged");
-            check(peek_slot(tbl + 96) == 128'd77, "scenario11: value overwritten via rich eq");
-            $display("PASS: scenario11 (DICT_COLLISION STORE True==1)");
-        end
-
-        // ------------------------------------------------------------------
-        // Scenario 12: DICT_COLLISION BINARY_OP subscript hit + CONTAINS miss.
-        // ------------------------------------------------------------------
-        do_reset();
-        begin
-            logic [31:0] dobj, tbl;
-            dobj = 32'h0F00;
-            tbl  = 32'h0F20;
-            poke_slot(dobj, {64'd4, 64'd1});
-            poke_slot(dobj + 16, {96'd0, tbl});
-            poke_slot(tbl + 64, 128'd1);
-            poke_slot(tbl + 80, {124'b0, PY_TAG_INT});
-            poke_slot(tbl + 96, 128'd42);
-            poke_slot(tbl + 112, {124'b0, PY_TAG_INT});
-            // zero other ktags
-            poke_slot(tbl + 16, 128'd0);
-            poke_slot(tbl + 144, 128'd0);
-            poke_slot(tbl + 208, 128'd0);
-            run_dict_collision(
-                {PY_TAG_DICT, {96{1'b0}}, dobj},
-                {PY_TAG_BOOL, 128'd1},
-                132'd0,
-                3'd2, 8'd44, 32'd26, 32'h1000, 80000);
-            check(res_code == RES_COMPLETED, "scenario12a: SUBSCR COMPLETED");
-            check(res_pop_count == 3'd2, "scenario12a: pop=2");
-            check(res_push_count == 2'd1, "scenario12a: push=1");
-            check(res_entries[0] == {PY_TAG_INT, 128'd42}, "scenario12a: pushed value 42");
-            $display("PASS: scenario12a (DICT_COLLISION SUBSCR True→42)");
-
-            run_dict_collision(
-                {PY_TAG_DICT, {96{1'b0}}, dobj},
-                {PY_TAG_INT, 128'd2},
-                132'd0,
-                3'd2, 8'd57, 32'd0, 32'h1000, 80000);
-            check(res_code == RES_COMPLETED, "scenario12b: CONTAINS COMPLETED");
-            check(res_entries[0] == {PY_TAG_BOOL, 128'd0}, "scenario12b: 2 not in dict → False");
-            $display("PASS: scenario12b (DICT_COLLISION CONTAINS miss)");
+            logic [31:0] sobj, ntbl;
+            logic [127:0] shdr, sptr;
+            sobj = 32'h0D00;
+            poke_slot(sobj, {64'd0, 64'd0});
+            poke_slot(sobj + 16, 128'd0);
+            run_set_grow(
+                {4'd11, {96{1'b0}}, sobj},  // PY_TAG_SET
+                {PY_TAG_INT, 128'd7},
+                32'h0D40, 80000);
+            check(res_code == RES_COMPLETED, "scenario11: SET_GROW COMPLETED");
+            check(res_pop_count == 3'd1, "scenario11: pop=1");
+            shdr = peek_slot(sobj);
+            sptr = peek_slot(sobj + 16);
+            ntbl = sptr[31:0];
+            check(shdr[63:0] == 64'd1, "scenario11: used=1");
+            check(shdr[127:64] >= 64'd8, "scenario11: slots>=8");
+            check(ntbl != 32'd0, "scenario11: table_ptr set");
+            $display("PASS: scenario11 (SET_GROW empty -> insert)");
         end
 
         check(!cpu_fault, "excore_cpu raised an internal fault (unsupported instruction)");

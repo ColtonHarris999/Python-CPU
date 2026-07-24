@@ -27,10 +27,13 @@ from encoding import (
     TAG_INT,
     TAG_LIST,
     TAG_NULL,
+    TAG_SET,
+    TAG_TOMBSTONE,
     TAG_TUPLE,
     TAG_UNINIT,
     bool_value,
     dict_key_hash,
+    dict_key_rich_eq,
     dict_slot_count_for_stores,
     encode_short_str,
     int_value,
@@ -210,9 +213,9 @@ class HeapImageBuilder:
                         self._write_tagged(table + 32 + idx * 64, vtag, vval)
                         used += 1
                         break
-                    # Overwrite on key match (same tag + equality rules).
+                    # Overwrite on rich key match (incl. INT/BOOL/FLOAT cross).
                     existing_val = self.words.get(table + idx * 64, 0)
-                    if existing_tag == ktag and _key_equal(ktag, existing_val, kval):
+                    if dict_key_rich_eq(ktag, kval, existing_tag, existing_val):
                         self._write_tagged(table + 32 + idx * 64, vtag, vval)
                         break
                     idx = (idx + 1) & mask
@@ -225,6 +228,74 @@ class HeapImageBuilder:
             ((slot_count & ((1 << 64) - 1)) << 64) | (used & ((1 << 64) - 1)),
         )
         return TAG_DICT, obj
+
+    # ---- SET ----
+    # Element-only open addressing (see set_excore.md / pycore_defs.svh):
+    #   obj + 0  : header { slot_count[63:0], used[63:0] }
+    #   obj + 16 : { 64'd0, table_ptr[63:0] }
+    #   table + i*32 + 0/16 : element val/tag
+    SET_OBJ_BYTES = 32
+
+    def alloc_set(
+        self,
+        elements: list[Tagged],
+        slot_count: int | None = None,
+    ) -> Tagged:
+        n = len(elements)
+        if slot_count is None:
+            slot_count = dict_min_slots(n)
+        if slot_count < 0 or (
+            slot_count > 0 and (slot_count & (slot_count - 1)) != 0
+        ):
+            raise ValueError("slot_count must be 0 or a positive power of two")
+        if slot_count > 0 and n >= slot_count:
+            raise ValueError(
+                f"set would fill table completely ({n} elems, {slot_count} slots)"
+            )
+        if slot_count == 0 and n > 0:
+            raise ValueError("non-empty set requires slot_count > 0")
+
+        obj = self._alloc(self.SET_OBJ_BYTES)
+        table = 0
+        if slot_count:
+            table = self._alloc(slot_count * 32)
+            for i in range(slot_count):
+                self._write(table + i * 32, 0)
+                self._write(table + 16 + i * 32, TAG_UNINIT)
+
+        self._write(obj, ((slot_count & ((1 << 64) - 1)) << 64) | 0)
+        self._write(obj + 16, table & ((1 << 64) - 1))
+
+        used = 0
+        if slot_count:
+            mask = slot_count - 1
+            for etag, eval_ in elements:
+                h = dict_key_hash(etag, eval_) & mask
+                probes = 0
+                idx = h
+                while probes < slot_count:
+                    existing_tag = self.words.get(table + 16 + idx * 32, TAG_UNINIT) & 0xF
+                    if existing_tag == TAG_UNINIT:
+                        self._write_tagged(table + idx * 32, etag, eval_)
+                        used += 1
+                        break
+                    if existing_tag == TAG_TOMBSTONE:
+                        idx = (idx + 1) & mask
+                        probes += 1
+                        continue
+                    existing_val = self.words.get(table + idx * 32, 0)
+                    if dict_key_rich_eq(etag, eval_, existing_tag, existing_val):
+                        break  # duplicate
+                    idx = (idx + 1) & mask
+                    probes += 1
+                else:
+                    raise RuntimeError("set probe exhausted during image build")
+
+        self._write(
+            obj,
+            ((slot_count & ((1 << 64) - 1)) << 64) | (used & ((1 << 64) - 1)),
+        )
+        return TAG_SET, obj
 
     # ---- CODE OBJECT ----
     def add_code_object(
@@ -311,12 +382,5 @@ class HeapImageBuilder:
 
 
 def _key_equal(tag: int, a: int, b: int) -> bool:
-    a &= (1 << 128) - 1
-    b &= (1 << 128) - 1
-    if tag == TAG_INT:
-        return (a & ((1 << 64) - 1)) == (b & ((1 << 64) - 1))
-    if tag == TAG_BOOL:
-        return (a & 1) == (b & 1)
-    if tag in (TAG_SHORT_STR, TAG_LONG_STR):
-        return a == b
-    return False
+    """Same-tag equality (legacy); prefer dict_key_rich_eq for probes."""
+    return dict_key_rich_eq(tag, a, tag, b)

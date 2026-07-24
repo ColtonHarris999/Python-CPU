@@ -19,8 +19,13 @@ module pycore_trap (
     input  logic        list_extend_i,
     // PY_TRAP_DICT_GROW: new-key STORE at load ≥ 2/3 (or empty table).
     input  logic        dict_grow_i,
-    // PY_TRAP_DICT_COLLISION: cross-tag numeric probe needing rich equality.
+    // PY_TRAP_LIST_DELETE: list DELETE_SUBSCR shift (part 2; unused stub).
+    input  logic        list_delete_i,
+    // Legacy unused stub (dict collisions now resolved on pycore).
     input  logic        dict_collision_i,
+    // PY_TRAP_SET_GROW / PY_TRAP_SET_UPDATE.
+    input  logic        set_grow_i,
+    input  logic        set_update_i,
     // Phase C: the excore reported RES_FATAL for a recoverable trap it was
     // handed (S_TRAP_WAIT). excore_fatal_code_i is forwarded verbatim as
     // trap_code_o rather than mapped through a fixed one-hot condition,
@@ -44,7 +49,8 @@ module pycore_trap (
     always_comb begin
         next_trap = type_trap_i || stack_fault_i || div_zero_i || fpu_exception_i ||
                     illegal_opcode_i || call_filter_i || mem_fault_i || addr_align_i ||
-                    list_grow_i || list_extend_i || dict_grow_i || dict_collision_i ||
+                    list_grow_i || list_extend_i || dict_grow_i || list_delete_i ||
+                    dict_collision_i || set_grow_i || set_update_i ||
                     excore_fatal_i;
         if (excore_fatal_i) begin
             next_code = excore_fatal_code_i;
@@ -70,8 +76,15 @@ module pycore_trap (
             next_code = PY_TRAP_LIST_EXTEND;
         end else if (dict_grow_i) begin
             next_code = PY_TRAP_DICT_GROW;
+        end else if (list_delete_i) begin
+            next_code = PY_TRAP_LIST_DELETE;
         end else if (dict_collision_i) begin
-            next_code = PY_TRAP_DICT_COLLISION;
+            // Stale path: should not fire; report LIST_DELETE code if it does.
+            next_code = PY_TRAP_LIST_DELETE;
+        end else if (set_grow_i) begin
+            next_code = PY_TRAP_SET_GROW;
+        end else if (set_update_i) begin
+            next_code = PY_TRAP_SET_UPDATE;
         end else begin
             next_code = PY_TRAP_NONE;
         end

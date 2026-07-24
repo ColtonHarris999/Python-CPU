@@ -1,6 +1,6 @@
-"""INT/BOOL cross-tag STORE: d[1]=10 then d[True]=20 overwrites via COLLISION.
+"""INT/BOOL cross-tag STORE: d[1]=10 then d[True]=20 overwrites via rich_eq.
 
-Requires EXCORE_EN=1 (DICT_COLLISION). CPython: True == 1 → one entry, value 20.
+Rich equality runs on pycore (single-core). CPython: True == 1 → value 20.
 """
 
 
