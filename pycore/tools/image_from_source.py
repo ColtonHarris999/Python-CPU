@@ -96,8 +96,9 @@ SUPPORTED_OPS = {
     "STORE_GLOBAL",
     "PUSH_NULL",
     "MAKE_FUNCTION",
-    # LIST_APPEND / LIST_EXTEND fast-path (spare capacity) / grow-trap are
-    # implemented in CONT_LIST_APPEND / CONT_LIST_EXTEND (pycore_core.sv).
+    # LIST_APPEND spare-capacity fast path / grow-trap, and LIST_EXTEND
+    # (empty no-op / always-excore non-empty) are in CONT_LIST_APPEND /
+    # CONT_LIST_EXTEND (pycore_core.sv).
     # LIST_APPEND still only appears inside comprehensions (FOR_ITER/GET_ITER
     # deferred). LIST_EXTEND is emitted by list-display unpack forms such as
     # `[1, 2, *x]` and `[*a, *b]` — those are accepted here. Sources must be

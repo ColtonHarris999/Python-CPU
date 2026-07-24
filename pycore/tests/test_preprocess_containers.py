@@ -324,7 +324,7 @@ class TestListAppendAccepted(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# LIST_EXTEND acceptance (fast-path / grow-trap in CONT_LIST_EXTEND)
+# LIST_EXTEND acceptance (empty no-op / always-excore in CONT_LIST_EXTEND)
 # ---------------------------------------------------------------------------
 
 class TestListExtendAccepted(unittest.TestCase):

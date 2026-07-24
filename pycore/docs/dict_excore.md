@@ -7,13 +7,16 @@
 | `BUILD_MAP` | **pycore** | Allocates stable 32-byte object + relocatable table |
 | Hash INT/BOOL/FLOAT (simple) / SHORT_STR / LONG_STR | **pycore** | INT `-1 → -2` (CPython); BOOL 0/1; FLOAT integer-valued / ±0 match int hashes |
 | Same-tag probe (empty / exact match / unequal continue) | **pycore** | Cheap bit compares; linear probe |
-| Cross-tag probe hit (INT↔BOOL, INT↔FLOAT, …) | **excore** `DICT_COLLISION` | Rich equality (`True==1`, `1.0==1`); finish the opcode |
+| Cross-tag rich equality (INT↔BOOL, INT↔FLOAT, …) | **pycore** | Rich equality (`True==1`, `1.0==1`) on the probe path |
 | Tombstone skip / same-tag delete | **pycore** | `PY_TAG_TOMBSTONE` (= `PY_TAG_DICT` / 9; dicts cannot be keys) |
-| Cross-tag delete / contains | **excore** `DICT_COLLISION` | Same trap; opcode selects semantics |
+| Cross-tag delete / contains | **pycore** | Same rich-eq probe as STORE / SUBSCR |
 | Load ≥ 2/3 before new-key insert | **excore** `DICT_GROW` | Realloc table (`used*4` if used≤50k else `used*2`), rehash, complete STORE |
 | Complex object hashes | deferred | TYPE trap for unsupported key tags |
 
-**Why not send every linear-probe collision to excore?** Same-tag INT/INT clusters (`0` vs `4` on a 4-slot table) are common and only need a 64-bit compare. Handing those to excore would dominate the pipeline restart cost. Cross-tag / resize / rich equality are the expensive cases.
+**Why keep collisions on pycore?** Average probe chains are short; a same-tag
+or rich numeric compare is cheaper than a memory-ownership handoff. Only
+capacity-changing work (`DICT_GROW`) is offloaded. See also
+`pycore/docs/set_excore.md` for the shared hash-container / excore split.
 
 ## Layout v2
 
@@ -34,6 +37,6 @@ Handle address is stable across grows (like list `ob_item`).
 | Code | Name | Entries | COMPLETED |
 | --- | --- | --- | --- |
 | 11 | `DICT_GROW` | dict, key, value | pop 3 (finish STORE insert after rehash) |
-| 12 | `DICT_COLLISION` | dict, key [, value] | opcode-dependent (see firmware) |
 
-Opcode is in `MB_INSTR_*` so one COLLISION handler serves STORE / SUBSCR / DELETE / CONTAINS.
+Code 12 is `LIST_DELETE` (list shift-down), not dict collision — rich equality
+lives on pycore.

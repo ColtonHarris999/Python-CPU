@@ -242,9 +242,38 @@ module tb_excore #(
     localparam logic [3:0] TRAP_LIST_GROW      = 4'd9;
     localparam logic [3:0] TRAP_LIST_EXTEND    = 4'd10;
     localparam logic [3:0] TRAP_DICT_GROW      = 4'd11;
+    localparam logic [3:0] TRAP_LIST_DELETE    = 4'd12;
     localparam logic [3:0] TRAP_SET_GROW       = 4'd13;
     localparam logic [3:0] RES_COMPLETED       = 4'd0;
     localparam logic [3:0] RES_FATAL           = 4'd2;
+
+    // Present a LIST_DELETE trap (list + INT/BOOL index).
+    task automatic run_list_delete(
+        input logic [131:0] list_entry,
+        input logic [131:0] key_entry,
+        input logic [31:0]  heap_ptr,
+        input int max_cycles
+    );
+        int i;
+        mb_entries[0]  = list_entry;
+        mb_entries[1]  = key_entry;
+        mb_entry_count = 3'd2;
+        mb_heap_ptr    = heap_ptr;
+        mb_trap_code   = TRAP_LIST_DELETE;
+        @(negedge clk);
+        mb_trap_pending = 1'b1;
+
+        for (i = 0; i < max_cycles; i++) begin
+            @(posedge clk);
+            if (res_go) begin
+                @(negedge clk);
+                mb_trap_pending = 1'b0;
+                return;
+            end
+        end
+        $error("[FAIL] timed out waiting for RES_GO (LIST_DELETE)");
+        $finish;
+    endtask
 
     // Present a DICT_GROW trap (dict + key + value).
     task automatic run_dict_grow(
@@ -552,6 +581,74 @@ module tb_excore #(
         check(res_fatal_code == PY_TRAP_TYPE,
               "scenario9: expected fatal_code == PY_TRAP_TYPE");
         $display("PASS: scenario9 (LIST_EXTEND bad iterable -> FATAL(TYPE))");
+
+        // ------------------------------------------------------------------
+        // Scenario 9b: LIST_EXTEND in-place when capacity already sufficient.
+        // dst cap=8/len=1 [50]; src [60,70]; need=3 <= 8 → no realloc.
+        // ------------------------------------------------------------------
+        do_reset();
+        obj_addr = 32'h0B80;
+        old_buf  = 32'h0BA0;
+        src_addr = 32'h0CC0;
+        src_buf  = 32'h0CE0;
+        poke_slot(obj_addr, {64'd8, 64'd1});
+        poke_slot(obj_addr + 16, {96'd0, old_buf});
+        poke_slot(old_buf, 128'd50);
+        poke_slot(old_buf + 16, {124'b0, 4'd1});
+        poke_slot(src_addr, {64'd2, 64'd2});
+        poke_slot(src_addr + 16, {96'd0, src_buf});
+        poke_slot(src_buf, 128'd60);
+        poke_slot(src_buf + 16, {124'b0, 4'd1});
+        poke_slot(src_buf + 32, 128'd70);
+        poke_slot(src_buf + 48, {124'b0, 4'd1});
+
+        run_list_extend(
+            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            {PY_TAG_LIST, {96{1'b0}}, src_addr},
+            32'h0D00, 40000);
+
+        check(res_code == RES_COMPLETED, "scenario9b: expected RES_COMPLETED");
+        check(res_pop_count == 3'd1, "scenario9b: pop_count=1");
+        hdr = peek_slot(obj_addr);
+        check(hdr == {64'd8, 64'd3}, "scenario9b: header {cap=8, len=3}");
+        check(peek_slot(obj_addr + 16) == {96'd0, old_buf},
+              "scenario9b: ob_item unchanged");
+        check(peek_slot(old_buf) == 128'd50, "scenario9b: dst[0]");
+        check(peek_slot(old_buf + 32) == 128'd60, "scenario9b: dst[1]");
+        check(peek_slot(old_buf + 64) == 128'd70, "scenario9b: dst[2]");
+        $display("PASS: scenario9b (LIST_EXTEND in-place, capacity sufficient)");
+
+        // ------------------------------------------------------------------
+        // Scenario 9c: LIST_DELETE middle element (shift-down).
+        // [10,20,30,40] del[1] → [10,30,40]; COMPLETED pop=2.
+        // ------------------------------------------------------------------
+        do_reset();
+        obj_addr = 32'h0E00;
+        old_buf  = 32'h0E20;
+        poke_slot(obj_addr, {64'd4, 64'd4});
+        poke_slot(obj_addr + 16, {96'd0, old_buf});
+        poke_slot(old_buf, 128'd10);
+        poke_slot(old_buf + 16, {124'b0, 4'd1});
+        poke_slot(old_buf + 32, 128'd20);
+        poke_slot(old_buf + 48, {124'b0, 4'd1});
+        poke_slot(old_buf + 64, 128'd30);
+        poke_slot(old_buf + 80, {124'b0, 4'd1});
+        poke_slot(old_buf + 96, 128'd40);
+        poke_slot(old_buf + 112, {124'b0, 4'd1});
+
+        run_list_delete(
+            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            {PY_TAG_INT, 128'd1},
+            32'h0F00, 40000);
+
+        check(res_code == RES_COMPLETED, "scenario9c: expected RES_COMPLETED");
+        check(res_pop_count == 3'd2, "scenario9c: pop_count=2");
+        hdr = peek_slot(obj_addr);
+        check(hdr == {64'd4, 64'd3}, "scenario9c: header {cap=4, len=3}");
+        check(peek_slot(old_buf) == 128'd10, "scenario9c: [0]=10");
+        check(peek_slot(old_buf + 32) == 128'd30, "scenario9c: [1]=30");
+        check(peek_slot(old_buf + 64) == 128'd40, "scenario9c: [2]=40");
+        $display("PASS: scenario9c (LIST_DELETE middle shift)");
 
         // ------------------------------------------------------------------
         // Scenario 10: DICT_GROW from empty table; insert key=1 → value=99.

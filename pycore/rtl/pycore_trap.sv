@@ -15,11 +15,11 @@ module pycore_trap (
     // routed to the excore before reaching this module when EXCORE_EN and
     // pycore_trap_recoverable(code) both hold).
     input  logic        list_grow_i,
-    // PY_TRAP_LIST_EXTEND: LIST_EXTEND that needs a grow (same routing).
+    // PY_TRAP_LIST_EXTEND: non-empty LIST_EXTEND (always; same routing).
     input  logic        list_extend_i,
     // PY_TRAP_DICT_GROW: new-key STORE at load ≥ 2/3 (or empty table).
     input  logic        dict_grow_i,
-    // PY_TRAP_LIST_DELETE: list DELETE_SUBSCR shift (part 2; unused stub).
+    // PY_TRAP_LIST_DELETE: list DELETE_SUBSCR element shift (excore).
     input  logic        list_delete_i,
     // Legacy unused stub (dict collisions now resolved on pycore).
     input  logic        dict_collision_i,

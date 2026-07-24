@@ -81,10 +81,10 @@ localparam logic [3:0] PY_TRAP_ADDR_ALIGN     = 4'd8;
 // through the same halt path.  Raised before any RF/heap commit (see
 // pycore_trap_recoverable below and CONT_LIST_APPEND's CP_HDR phase).
 localparam logic [3:0] PY_TRAP_LIST_GROW      = 4'd9;
-// PY_TRAP_LIST_EXTEND: raised by CONT_LIST_EXTEND when
-// length + src_len > capacity. Recoverable — the excore grows-to-fit and
-// completes the extend (emulate-and-complete; not RETRY). Raised before
-// any RF/heap commit.
+// PY_TRAP_LIST_EXTEND: raised by CONT_LIST_EXTEND for every non-empty
+// LIST/TUPLE source (empty source is a no-op pop on pycore). Recoverable —
+// the excore grows-to-fit when needed (or copies in place when capacity
+// already suffices) and completes the extend. Raised before any commit.
 localparam logic [3:0] PY_TRAP_LIST_EXTEND    = 4'd10;
 // PY_TRAP_DICT_GROW: raised before a new-key dict insert when load ≥ 2/3
 // (or table empty). Recoverable — excore reallocates the relocatable table,

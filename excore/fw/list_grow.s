@@ -1,19 +1,23 @@
 # list_grow.s -- excore firmware: LIST_* + DICT_* + SET_* trap handlers.
 #
 # Dispatch loop, parked until MB_STATUS.trap_pending is set. Handles
-# PY_TRAP_LIST_GROW (9), LIST_EXTEND (10), DICT_GROW (11), SET_GROW (13),
-# SET_UPDATE (14). Code 12 (LIST_DELETE / former DICT_COLLISION) is FATAL
-# illegal — dict/set rich equality now runs on pycore.
-# Unknown codes -> FATAL(ILLEGAL_OPCODE).
+# PY_TRAP_LIST_GROW (9), LIST_EXTEND (10), DICT_GROW (11), LIST_DELETE (12),
+# SET_GROW (13), SET_UPDATE (14). Unknown codes -> FATAL(ILLEGAL_OPCODE).
+# Dict/set rich equality runs on pycore (former DICT_COLLISION retired).
 #
 # LIST_GROW (ENTRY[0]=list handle, ENTRY[1]=element):
 #   double (min 4), copy, append one element, COMPLETED pop 1.
 #
 # LIST_EXTEND (ENTRY[0]=list handle, ENTRY[1]=LIST or TUPLE iterable):
-#   grow-to-fit need=len+src_len (doubling from max(cap*2||4, need)),
-#   copy dst elements, copy src elements, COMPLETED pop 1.
+#   need=len+src_len. If need <= cap: in-place copy src onto dst buffer,
+#   write length, COMPLETED pop 1 (no grow). Else grow-to-fit
+#   (doubling from max(cap*2||4, need)), copy dst then src, COMPLETED pop 1.
 #   Self-extend is safe: src_len and old_buf are snapshotted before the
 #   ob_item rewrite; extend copies from the leaked old buffer.
+#
+# LIST_DELETE (ENTRY[0]=list, ENTRY[1]=key index): shift elements
+#   [idx+1 .. len) down one slot, write length-1, COMPLETED pop 2.
+#   Capacity unchanged. (Last-element delete stays on pycore.)
 #
 # DICT_GROW (E0=dict, E1=key, E2=value): realloc table, rehash, STORE insert,
 #   COMPLETED pop 3. INTENTIONALLY LEAKS the old table.
@@ -100,11 +104,6 @@
     # key-slot tag of 9 means deleted (see PY_TAG_TOMBSTONE in pycore_defs.svh).
     .equ TAG_TOMBSTONE,  9
 
-    .equ OP_DELETE_SUBSCR, 8
-    .equ OP_STORE_SUBSCR,  38
-    .equ OP_BINARY_OP,     44
-    .equ OP_CONTAINS_OP,   57
-
     .equ HEAP_LIMIT,     0x2000
 
     # Private scratch (CPU data RAM @ 0x0) for key/value + helper state.
@@ -151,14 +150,17 @@ wait_trap:
     beq  t0, t1, do_list_extend
     li   t1, TRAP_DICT_GROW
     beq  t0, t1, do_dict_grow
+    li   t1, TRAP_LIST_DELETE
+    beq  t0, t1, tramp_list_delete
     li   t1, TRAP_SET_GROW
     beq  t0, t1, tramp_set_grow
     li   t1, TRAP_SET_UPDATE
     beq  t0, t1, tramp_set_update
-    # LIST_DELETE (12) / unknown → FATAL illegal (dict collision retired).
     j    fatal_illegal
 
-# J-type trampolines: SET handlers live past B-type ±4KiB reach.
+# J-type trampolines: handlers past B-type ±4KiB reach.
+tramp_list_delete:
+    j    do_list_delete
 tramp_set_grow:
     j    do_set_grow
 tramp_set_update:
@@ -461,6 +463,9 @@ ext_need:
     # need = len + src_len (s6 temporarily)
     add  s6, s2, s7
 
+    # Capacity already sufficient: in-place append (no grow / no leak).
+    bge  s1, s6, ext_inplace
+
     # new_cap = max(cap ? cap*2 : 4, need), doubling until >= need
     beq  s1, x0, ext_cap_zero
     slli s3, s1, 1
@@ -628,6 +633,90 @@ poll_ext_ob_wb:
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
+
+# ---- in-place LIST_EXTEND when cap >= need (s5=dst buf, s8=src buf) ------
+ext_inplace:
+    # Copy src_len elements onto dst buffer at index len.. (no overlap for
+    # self-extend when 2*len <= cap — pycore only traps non-empty; firmware
+    # still requires need <= cap which implies the write window starts at len).
+    li   s6, 0
+ext_ip_src_loop:
+    beq  s6, s7, ext_ip_writeback
+    slli t0, s6, 5
+    add  t2, s8, t0                # src elem addr
+    slli t1, s2, 5
+    add  t3, s5, t1
+    add  t3, t3, t0                # dst = old_buf + (len+i)*32
+    sw   t2, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+poll_ip_sv_rd:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ip_sv_rd
+    lw   t4, SP_DATA0(s11)
+    lw   t5, SP_DATA1(s11)
+    lw   t6, SP_DATA2(s11)
+    lw   a0, SP_DATA3(s11)
+    sw   t3, SP_ADDR(s11)
+    sw   t4, SP_DATA0(s11)
+    sw   t5, SP_DATA1(s11)
+    sw   t6, SP_DATA2(s11)
+    sw   a0, SP_DATA3(s11)
+    li   t0, SP_CTRL_WRITE
+    sw   t0, SP_CTRL(s11)
+poll_ip_sv_wr:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ip_sv_wr
+    addi t2, t2, 16
+    addi t3, t3, 16
+    sw   t2, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+poll_ip_st_rd:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ip_st_rd
+    lw   t4, SP_DATA0(s11)
+    sw   t3, SP_ADDR(s11)
+    sw   t4, SP_DATA0(s11)
+    li   t0, SP_CTRL_WRITE
+    sw   t0, SP_CTRL(s11)
+poll_ip_st_wr:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ip_st_wr
+    addi s6, s6, 1
+    j    ext_ip_src_loop
+
+ext_ip_writeback:
+    add  t4, s2, s7                # new_len
+    sw   s0, SP_ADDR(s11)
+    sw   t4, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   s1, SP_DATA2(s11)         # capacity unchanged
+    sw   t0, SP_DATA3(s11)
+    li   t0, SP_CTRL_WRITE
+    sw   t0, SP_CTRL(s11)
+poll_ip_hdr_wb:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ip_hdr_wb
+
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 1
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 0
+    sw   t0, RES_PUSH_COUNT(s11)
+    lw   t0, MB_HEAP_PTR(s11)      # heap unchanged
+    sw   t0, RES_HEAP_PTR(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
 # ===========================================================================
 # DICT_GROW: E0=dict, E1=key, E2=value — realloc, rehash, STORE insert.
 # ===========================================================================
@@ -657,133 +746,116 @@ dg_tag_ok:
     j    wait_trap
 
 # ===========================================================================
-# DICT_COLLISION — STORE_SUBSCR / BINARY_OP / DELETE_SUBSCR / CONTAINS_OP
+# LIST_DELETE: E0=list, E1=key (INT/BOOL index) — shift-down, COMPLETED pop 2.
 # ===========================================================================
-do_dict_collision:
+do_list_delete:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_DICT
-    beq  t0, t1, dc_tag_ok
-    j    fatal_type
-dc_tag_ok:
-    lw   s0, MB_E0_VAL0(s11)
-    lw   t0, MB_E1_VAL0(s11)
-    sw   t0, SCR_KVAL0(x0)
-    lw   t0, MB_E1_VAL1(s11)
-    sw   t0, SCR_KVAL1(x0)
-    lw   t0, MB_E1_VAL2(s11)
-    sw   t0, SCR_KVAL2(x0)
-    lw   t0, MB_E1_VAL3(s11)
-    sw   t0, SCR_KVAL3(x0)
-    lw   t0, MB_E1_TAG(s11)
-    sw   t0, SCR_KTAG(x0)
-    jal  ra, dict_load_header_table
-    lw   t0, MB_INSTR_LO(s11)
-    andi s9, t0, 0xFF
-    srli s10, t0, 8
-    li   t1, OP_STORE_SUBSCR
-    beq  s9, t1, dcol_store
-    li   t1, OP_BINARY_OP
-    beq  s9, t1, dcol_subscr
-    li   t1, OP_DELETE_SUBSCR
-    beq  s9, t1, dcol_delete
-    li   t1, OP_CONTAINS_OP
-    beq  s9, t1, dcol_contains
-    j    fatal_illegal
+    li   t1, TAG_LIST
+    bne  t0, t1, fatal_type
+    lw   s0, MB_E0_VAL0(s11)       # s0 = obj_addr
 
-dcol_store:
-    lw   t0, MB_E2_VAL0(s11)
-    sw   t0, SCR_VVAL0(x0)
-    lw   t0, MB_E2_VAL1(s11)
-    sw   t0, SCR_VVAL1(x0)
-    lw   t0, MB_E2_VAL2(s11)
-    sw   t0, SCR_VVAL2(x0)
-    lw   t0, MB_E2_VAL3(s11)
-    sw   t0, SCR_VVAL3(x0)
-    lw   t0, MB_E2_TAG(s11)
-    sw   t0, SCR_VTAG(x0)
-    beq  s1, x0, dcol_store_grow
-    jal  ra, dict_probe
-    lw   t0, SCR_FOUND(x0)
-    bne  t0, x0, dcol_store_hit
-    mv   a0, s2
-    mv   a1, s1
-    jal  ra, dict_needs_grow
-    bne  a0, x0, dcol_store_grow
-    lw   a0, SCR_IDX(x0)
-    jal  ra, dict_write_kv_at
-    addi s2, s2, 1
-    jal  ra, dict_write_used_slots
-    j    dcol_store_done
-dcol_store_hit:
-    lw   a0, SCR_IDX(x0)
-    jal  ra, dict_write_val_at
-    j    dcol_store_done
-dcol_store_grow:
-    jal  ra, dict_grow_rehash
-    jal  ra, dict_insert_from_scratch
-    jal  ra, dict_writeback_header
-    li   t0, RES_COMPLETED
-    sw   t0, RES_CODE(s11)
-    li   t0, 3
-    sw   t0, RES_POP_COUNT(s11)
-    li   t0, 0
-    sw   t0, RES_PUSH_COUNT(s11)
-    slli t0, s7, 6
-    add  t0, s4, t0
-    sw   t0, RES_HEAP_PTR(s11)
-    li   t0, 1
-    sw   t0, RES_GO(s11)
-    j    wait_trap
-dcol_store_done:
-    li   t0, RES_COMPLETED
-    sw   t0, RES_CODE(s11)
-    li   t0, 3
-    sw   t0, RES_POP_COUNT(s11)
-    li   t0, 0
-    sw   t0, RES_PUSH_COUNT(s11)
-    lw   t0, MB_HEAP_PTR(s11)
-    sw   t0, RES_HEAP_PTR(s11)
-    li   t0, 1
-    sw   t0, RES_GO(s11)
-    j    wait_trap
+    # Index from ENTRY[1] value low word (INT/BOOL; pycore already type-checked).
+    lw   s9, MB_E1_VAL0(s11)       # s9 = idx
 
-dcol_subscr:
-    beq  s1, x0, dcol_mem_fault
-    jal  ra, dict_probe
-    lw   t0, SCR_FOUND(x0)
-    beq  t0, x0, dcol_mem_fault
-    lw   a0, SCR_IDX(x0)
-    jal  ra, dict_read_val_to_res
-    li   t0, RES_COMPLETED
-    sw   t0, RES_CODE(s11)
-    li   t0, 2
-    sw   t0, RES_POP_COUNT(s11)
-    li   t0, 1
-    sw   t0, RES_PUSH_COUNT(s11)
-    lw   t0, MB_HEAP_PTR(s11)
-    sw   t0, RES_HEAP_PTR(s11)
-    li   t0, 1
-    sw   t0, RES_GO(s11)
-    j    wait_trap
+    # Header -> len (s2), cap (s1)
+    sw   s0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+poll_ldel_hdr:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ldel_hdr
+    andi t1, t0, SP_STATUS_FAULT
+    bne  t1, x0, fatal_mem
+    lw   s2, SP_DATA0(s11)
+    lw   s1, SP_DATA2(s11)
 
-dcol_delete:
-    beq  s1, x0, dcol_mem_fault
-    jal  ra, dict_probe
-    lw   t0, SCR_FOUND(x0)
-    beq  t0, x0, dcol_mem_fault
-    lw   a0, SCR_IDX(x0)
-    slli t0, a0, 6
-    add  a0, s3, t0
-    addi a0, a0, 16
-    li   t0, TAG_TOMBSTONE
-    sw   t0, SP_DATA0(s11)
+    # Bounds (defensive; pycore checked before marshal).
+    bgeu s9, s2, fatal_mem
+
+    # ob_item -> buf (s5)
+    addi t0, s0, 16
+    sw   t0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+poll_ldel_ob:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ldel_ob
+    andi t1, t0, SP_STATUS_FAULT
+    bne  t1, x0, fatal_mem
+    lw   s5, SP_DATA0(s11)
+
+    # Shift [idx+1 .. len) down to [idx .. len-1). s6 = write index.
+    mv   s6, s9
+ldel_shift_loop:
+    addi t0, s6, 1
+    beq  t0, s2, ldel_writeback    # write_idx+1 == len → done
+    # read src = buf + (write_idx+1)*32
+    slli t1, t0, 5
+    add  t2, s5, t1
+    slli t1, s6, 5
+    add  t3, s5, t1                # dst = buf + write_idx*32
+    # value
+    sw   t2, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+poll_ldel_v_rd:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ldel_v_rd
+    lw   t4, SP_DATA0(s11)
+    lw   t5, SP_DATA1(s11)
+    lw   t6, SP_DATA2(s11)
+    lw   a0, SP_DATA3(s11)
+    sw   t3, SP_ADDR(s11)
+    sw   t4, SP_DATA0(s11)
+    sw   t5, SP_DATA1(s11)
+    sw   t6, SP_DATA2(s11)
+    sw   a0, SP_DATA3(s11)
+    li   t0, SP_CTRL_WRITE
+    sw   t0, SP_CTRL(s11)
+poll_ldel_v_wr:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ldel_v_wr
+    # tag
+    addi t2, t2, 16
+    addi t3, t3, 16
+    sw   t2, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+poll_ldel_t_rd:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ldel_t_rd
+    lw   t4, SP_DATA0(s11)
+    sw   t3, SP_ADDR(s11)
+    sw   t4, SP_DATA0(s11)
+    li   t0, SP_CTRL_WRITE
+    sw   t0, SP_CTRL(s11)
+poll_ldel_t_wr:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ldel_t_wr
+    addi s6, s6, 1
+    j    ldel_shift_loop
+
+ldel_writeback:
+    addi t4, s2, -1                # new_len = len - 1
+    sw   s0, SP_ADDR(s11)
+    sw   t4, SP_DATA0(s11)
     li   t0, 0
     sw   t0, SP_DATA1(s11)
-    sw   t0, SP_DATA2(s11)
+    sw   s1, SP_DATA2(s11)         # capacity unchanged
     sw   t0, SP_DATA3(s11)
-    jal  ra, sp_write
-    addi s2, s2, -1
-    jal  ra, dict_write_used_slots
+    li   t0, SP_CTRL_WRITE
+    sw   t0, SP_CTRL(s11)
+poll_ldel_hdr_wb:
+    lw   t0, SP_STATUS(s11)
+    andi t1, t0, SP_STATUS_BUSY
+    bne  t1, x0, poll_ldel_hdr_wb
+
     li   t0, RES_COMPLETED
     sw   t0, RES_CODE(s11)
     li   t0, 2
@@ -795,36 +867,6 @@ dcol_delete:
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
-
-dcol_contains:
-    li   s8, 0
-    beq  s1, x0, dcol_cont_result
-    jal  ra, dict_probe
-    lw   s8, SCR_FOUND(x0)
-dcol_cont_result:
-    andi t0, s10, 1
-    xor  t0, s8, t0
-    sw   t0, RES_E0_VAL0(s11)
-    li   t0, 0
-    sw   t0, RES_E0_VAL1(s11)
-    sw   t0, RES_E0_VAL2(s11)
-    sw   t0, RES_E0_VAL3(s11)
-    li   t0, TAG_BOOL
-    sw   t0, RES_E0_TAG(s11)
-    li   t0, RES_COMPLETED
-    sw   t0, RES_CODE(s11)
-    li   t0, 2
-    sw   t0, RES_POP_COUNT(s11)
-    li   t0, 1
-    sw   t0, RES_PUSH_COUNT(s11)
-    lw   t0, MB_HEAP_PTR(s11)
-    sw   t0, RES_HEAP_PTR(s11)
-    li   t0, 1
-    sw   t0, RES_GO(s11)
-    j    wait_trap
-
-dcol_mem_fault:
-    j    fatal_mem
 
 # ---------------------------------------------------------------------------
 # Shared helpers

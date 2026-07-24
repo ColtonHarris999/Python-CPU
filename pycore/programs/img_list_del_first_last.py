@@ -1,6 +1,7 @@
-"""DELETE_SUBSCR first and last elements.
+"""DELETE_SUBSCR first (LIST_DELETE trap) and last (O(1) on pycore).
 
 [1, 2, 3, 4] → del [0] → [2, 3, 4] → del last → [2, 3]; return 2+3=5.
+Needs EXCORE_EN=1 for the mid/first shift.
 """
 
 

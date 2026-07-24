@@ -165,10 +165,10 @@ SUPPORTED_OPS = {
     "STORE_SUBSCR",
     "DELETE_SUBSCR",
     "CONTAINS_OP",
-    # LIST_APPEND / LIST_EXTEND fast-path / grow-trap: see CONT_LIST_APPEND
-    # and CONT_LIST_EXTEND (pycore_core.sv). Comprehensions still fail
-    # validation on FOR_ITER/GET_ITER (deferred); LIST_EXTEND is also
-    # emitted by list-display unpack (`[a, *b]` / `[*a, *b]`).
+    # LIST_APPEND spare-capacity / grow-trap; LIST_EXTEND empty no-op /
+    # always-excore non-empty: see CONT_LIST_APPEND / CONT_LIST_EXTEND.
+    # Comprehensions still fail validation on FOR_ITER/GET_ITER (deferred);
+    # LIST_EXTEND is also emitted by list-display unpack (`[a, *b]` / `[*a, *b]`).
     "LIST_APPEND",
     "LIST_EXTEND",
     "BUILD_SET",

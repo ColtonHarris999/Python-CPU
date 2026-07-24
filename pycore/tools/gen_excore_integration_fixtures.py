@@ -379,7 +379,8 @@ def gen_extend_grow_tuple() -> None:
 
 
 def gen_extend_fast_no_trap() -> None:
-    """Spare capacity: cap=8/len=1 + extend [2,3] → no trap; return 2+3=5."""
+    """Spare capacity: cap=8/len=1 + extend [2,3] → one LIST_EXTEND trap
+    (in-place on excore); return 2+3=5."""
     heap = _new_heap()
     dst = heap.alloc_list_with_capacity([(TAG_INT, int_value(1))], capacity=8)
     src = heap.alloc_list([(TAG_INT, int_value(2)), (TAG_INT, int_value(3))])

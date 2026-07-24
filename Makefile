@@ -117,6 +117,7 @@ EXCORE_RTL_SRCS := \
 	pycore-excore-system \
 	pycore-img-list-extend-two-core \
 	pycore-img-list-del-simple pycore-img-list-del-first-last \
+	pycore-img-list-del-last-only pycore-img-list-del-shift-excore \
 	pycore-img-list-contains-simple pycore-img-list-contains-types \
 	pycore-img-tuple-contains pycore-img-dict-contains \
 	pycore-img-list-del-contains pycore-img-list-del-nested \
@@ -326,10 +327,9 @@ define PYCORE_IMAGE_RUN
 endef
 
 # Phase C full-regression companion to PYCORE_IMAGE_RUN: same image, run on
-# the two-core top (EXCORE_EN=1) instead of the legacy pycore_system. Most
-# img_* programs never emit LIST_APPEND/LIST_EXTEND grow traps (LIST_APPEND
-# still needs FOR_ITER/GET_ITER; LIST_EXTEND is covered by
-# img_list_extend.py on the two-core path only).
+# the two-core top (EXCORE_EN=1) instead of the legacy pycore_system.
+# Programs that need LIST_EXTEND / LIST_DELETE / DICT_GROW / SET_* traps
+# must use this path (or EXCORE_EN=1 fixtures).
 define PYCORE_IMAGE_RUN_TWOCORE
 	mkdir -p $(BUILD_DIR)/img_$(1)
 	$(PYTHON) pycore/tools/run_image_test.py \
@@ -500,11 +500,19 @@ pycore-img-nop:
 	$(call PYCORE_IMAGE_RUN,nop,50000)
 
 # DELETE_SUBSCR / CONTAINS_OP (list shift-down + membership; raw Python imgs)
-pycore-img-list-del-simple:
-	$(call PYCORE_IMAGE_RUN,list_del_simple,50000)
+# Mid-list delete raises LIST_DELETE (12) → two-core. Last-element stays
+# O(1) on pycore (single-core).
+pycore-img-list-del-simple: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_del_simple,100000)
 
-pycore-img-list-del-first-last:
-	$(call PYCORE_IMAGE_RUN,list_del_first_last,50000)
+pycore-img-list-del-first-last: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_del_first_last,100000)
+
+pycore-img-list-del-last-only:
+	$(call PYCORE_IMAGE_RUN,list_del_last_only,50000)
+
+pycore-img-list-del-shift-excore: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_del_shift_excore,100000)
 
 pycore-img-list-contains-simple:
 	$(call PYCORE_IMAGE_RUN,list_contains_simple,50000)
@@ -518,12 +526,13 @@ pycore-img-tuple-contains:
 pycore-img-dict-contains:
 	$(call PYCORE_IMAGE_RUN,dict_contains,50000)
 
-pycore-img-list-del-contains:
-	$(call PYCORE_IMAGE_RUN,list_del_contains,50000)
+pycore-img-list-del-contains: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_del_contains,100000)
 
-pycore-img-list-del-nested:
-	$(call PYCORE_IMAGE_RUN,list_del_nested,50000)
+pycore-img-list-del-nested: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_del_nested,100000)
 
+# helper deletes last element only → single-core O(1) path
 pycore-img-list-del-contains-call:
 	$(call PYCORE_IMAGE_RUN,list_del_contains_call,100000)
 
@@ -718,6 +727,11 @@ pycore-img-two-core: \
 	pycore-img-string-ops-two-core \
 	pycore-img-list-extend-two-core \
 	pycore-img-list-extend-del-contains-two-core \
+	pycore-img-list-del-simple \
+	pycore-img-list-del-first-last \
+	pycore-img-list-del-contains \
+	pycore-img-list-del-nested \
+	pycore-img-list-del-shift-excore \
 	pycore-img-dict-grow-basic \
 	pycore-img-dict-grow-large \
 	pycore-img-dict-mixed-ops \
@@ -760,14 +774,11 @@ pycore-img: \
 	pycore-img-is-op \
 	pycore-img-pop-jump-if-none \
 	pycore-img-nop \
-	pycore-img-list-del-simple \
-	pycore-img-list-del-first-last \
+	pycore-img-list-del-last-only \
 	pycore-img-list-contains-simple \
 	pycore-img-list-contains-types \
 	pycore-img-tuple-contains \
 	pycore-img-dict-contains \
-	pycore-img-list-del-contains \
-	pycore-img-list-del-nested \
 	pycore-img-list-del-contains-call \
 	pycore-img-list-del-oob \
 	pycore-img-list-del-tuple-trap \
@@ -916,9 +927,10 @@ pycore-container-list-append-full-fatal:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_append_full_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d9 -GSTRING_HEX=\"pycore/programs/list_append_full_fatal_str.hex\",pycore_container_list_append_full_fatal)
 
 # list_extend_* (LIST_EXTEND): hand-built fixtures — see
-# pycore/tools/gen_list_extend_fixtures.py. Fast-path cases need spare
-# capacity (BUILD_LIST never produces it). Grow-without-excore is fatal
-# trap code 10; unsupported iterable tags are TYPE (code 1).
+# pycore/tools/gen_list_extend_fixtures.py. Non-empty extend always traps
+# code 10 without excore (even with spare capacity). Empty source is a
+# no-op on pycore. Unsupported iterable tags are TYPE (code 1).
+# Functional spare-capacity extend is covered by pycore-excore-extend-fast-no-trap.
 pycore-list-extend-fixtures:
 	$(PYTHON) pycore/tools/gen_list_extend_fixtures.py
 
@@ -935,7 +947,7 @@ pycore-container-list-extend-fast:
 		-GBOOT_EN=1 \
 		-GCHECK_ENTRY_RETURN=0 \
 		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd19" \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d10 \
 		--Mdir $(BUILD_DIR)/pycore_container_list_extend_fast \
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
@@ -954,7 +966,7 @@ pycore-container-list-extend-fast-tuple:
 		-GBOOT_EN=1 \
 		-GCHECK_ENTRY_RETURN=0 \
 		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd23" \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d10 \
 		--Mdir $(BUILD_DIR)/pycore_container_list_extend_fast_tuple \
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
@@ -1083,8 +1095,9 @@ pycore-excore-extend-grow-list: excore-fw pycore-excore-integration-fixtures
 pycore-excore-extend-grow-tuple: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,extend_grow_tuple,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd60" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=50000)
 
+# Spare capacity still raises LIST_EXTEND (always-excore); firmware in-place copy.
 pycore-excore-extend-fast-no-trap: excore-fw pycore-excore-integration-fixtures
-	$(call PYCORE_EXCORE_RUN,extend_fast_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd5" -GEXPECTED_TRAP_REQ_COUNT=0)
+	$(call PYCORE_EXCORE_RUN,extend_fast_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd5" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=50000)
 
 pycore-excore-extend-empty-noop: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,extend_empty_noop,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd7" -GEXPECTED_TRAP_REQ_COUNT=0)
