@@ -583,6 +583,8 @@ function automatic logic pycore_dict_key_rich_maybe(
     end
 endfunction
 
+// True when a dict key-slot tag is a deleted-entry sentinel.
+// PY_TAG_TOMBSTONE == PY_TAG_DICT (dicts are not valid keys).
 function automatic logic pycore_dict_tombstone(input logic [3:0] tag);
     begin
         pycore_dict_tombstone = (tag == PY_TAG_TOMBSTONE);
