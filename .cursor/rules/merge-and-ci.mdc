@@ -1,0 +1,35 @@
+---
+description: Merge / PR / CI workflow — avoid CI babysitting to save tokens
+alwaysApply: true
+---
+
+# Merging and CI workflow
+
+When asked to merge a branch (e.g. `excore` → `main`) or land changes that go
+through a protected branch:
+
+1. **Do not poll or babysit CI.** Protected branches here require the
+   `all-tests` status check, which can take ~40 minutes. Do not repeatedly
+   sleep/poll waiting for it to finish.
+2. **Create the PR and hand off.** Push the branch, open the PR against the
+   target base, and end your turn with the PR link. State clearly that CI
+   must pass before it can merge and that the user (or auto-merge) will land
+   it once green.
+3. **Only enable auto-merge if explicitly authorized** by the user in the
+   request. Never enable it on your own initiative.
+4. **Do not merge, mark ready, or change merge state** unless the user
+   explicitly asks in the current request.
+
+# Avoid duplicate test runs
+
+- If CI will run `make all-tests` on the PR, do **not** also run the full
+  `make all-tests` locally first. Run only the targeted subset relevant to
+  your change (e.g. `make pycore-python-tests`, one `pycore-img-*`) to
+  sanity-check, and rely on CI for the full suite.
+
+# Keep command output small
+
+- Avoid commands that dump huge output. Prefer `git merge --no-edit` /
+  `git commit` without re-printing large diffstats; use `git merge --stat`
+  only when a summary is actually needed, and avoid streaming full compiler
+  logs (`tee` to a file and read the tail instead).
