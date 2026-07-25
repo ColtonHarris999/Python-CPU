@@ -233,14 +233,9 @@ module pycore_core #(
     //     length+1 after the element itself has been written).
     //   CP_SRC_HDR (22): CONT_LIST_EXTEND — waiting on source-list header
     //     (distinct LIST) before empty vs always-excore decision.
-    //   CP_EXT_SRC_BUF / CP_EXT_DST_VAL / CP_EXT_DST_TAG (23–25): unused by
-    //     current LIST_EXTEND (copy moved to excore); phase codes retained.
     localparam logic [4:0] CP_LIST_BUF    = 5'd20;
     localparam logic [4:0] CP_LIST_WB     = 5'd21;
     localparam logic [4:0] CP_SRC_HDR     = 5'd22;
-    localparam logic [4:0] CP_EXT_SRC_BUF = 5'd23;
-    localparam logic [4:0] CP_EXT_DST_VAL = 5'd24;
-    localparam logic [4:0] CP_EXT_DST_TAG = 5'd25;
 
     logic [3:0] state_r;
 
@@ -374,7 +369,6 @@ module pycore_core #(
     // addr) and source length, held across the destination copy loop.
     logic [31:0]                   container_src_buf_r;
     logic [31:0]                   container_src_len_r;
-    logic [31:0]                   container_dst_len_r;
     // One-cycle pulse: CONT_LIST_EXTEND non-empty source (always excore).
     logic                          container_list_extend_trap_r;
     // One-cycle pulse: CONT_DELETE_LIST needs an element shift (excore).
@@ -382,8 +376,6 @@ module pycore_core #(
     // One-cycle pulses: dict/set grow (fatal when EXCORE_EN=0; otherwise
     // marshaled like LIST_GROW before any commit).
     logic                          container_dict_grow_trap_r;
-    // Legacy stub (dict collisions resolved on pycore via rich_eq).
-    logic                          container_dict_collision_trap_r;
     logic                          container_set_grow_trap_r;
     logic                          container_set_update_trap_r;
     // Occupied probe slot tag latched at CP_DICT_PROBE for rich_eq at CHK_VAL.
@@ -496,11 +488,8 @@ module pycore_core #(
     logic        dec_is_call;
     logic        dec_is_return;
     logic        dec_is_container;
-    logic        dec_push;
-    logic        dec_pop;
     logic [2:0]  dec_mem_op;
     logic        dec_illegal;
-    logic [31:0] dec_pc;
 
     pycore_decode decode (
         .instr_valid_i(1'b1),
@@ -518,11 +507,11 @@ module pycore_core #(
         .is_call_o(dec_is_call),
         .is_return_o(dec_is_return),
         .is_container_o(dec_is_container),
-        .push_stack_o(dec_push),
-        .pop_stack_o(dec_pop),
+        .push_stack_o(),
+        .pop_stack_o(),
         .mem_op_o(dec_mem_op),
         .illegal_opcode_o(dec_illegal),
-        .decoded_pc_o(dec_pc)
+        .decoded_pc_o()
     );
 
     // Per-opcode writeback-enable and stack-pointer delta.
@@ -1018,12 +1007,10 @@ module pycore_core #(
     logic list_extend_sig;
     assign list_extend_sig = container_list_extend_trap_r;
     logic dict_grow_sig;
-    logic dict_collision_sig;
     logic list_delete_sig;
     logic set_grow_sig;
     logic set_update_sig;
     assign dict_grow_sig      = container_dict_grow_trap_r;
-    assign dict_collision_sig = container_dict_collision_trap_r; // unused stub
     assign list_delete_sig    = container_list_delete_trap_r;
     assign set_grow_sig       = container_set_grow_trap_r;
     assign set_update_sig     = container_set_update_trap_r;
@@ -1057,7 +1044,6 @@ module pycore_core #(
         .list_extend_i(list_extend_sig),
         .dict_grow_i(dict_grow_sig),
         .list_delete_i(list_delete_sig),
-        .dict_collision_i(dict_collision_sig),
         .set_grow_i(set_grow_sig),
         .set_update_i(set_update_sig),
         .excore_fatal_i(excore_fatal_sig),
@@ -1152,13 +1138,9 @@ module pycore_core #(
     logic [63:0]  cont_tuple_size_rs2;
     logic [31:0]  cont_tuple_addr_rs2;
     logic [63:0]  cont_ext_hdr_len;
-    logic [63:0]  cont_ext_hdr_cap;
-    logic [31:0]  cont_ext_dst_idx; // dst_len + copy idx for writes
     assign cont_tuple_size_rs2 = pycore_tuple_size(cont_rs2_val);
     assign cont_tuple_addr_rs2 = cont_rs2_val[31:0];
     assign cont_ext_hdr_len    = pycore_list_length(container_list_hdr_r);
-    assign cont_ext_hdr_cap    = pycore_list_capacity(container_list_hdr_r);
-    assign cont_ext_dst_idx    = container_dst_len_r + {25'b0, container_idx_r};
     assign cont_rs1_tag   = pycore_get_tag(rs1_r);
     assign cont_rs2_tag   = pycore_get_tag(rs2_r);
     assign cont_rf_rs1_val = pycore_get_val(rf_rs1);
@@ -1180,14 +1162,6 @@ module pycore_core #(
     logic [31:0] cont_dict_hash;
     assign cont_dict_hash = pycore_dict_key_hash(container_tag_r, container_val_r)
                           & (container_slot_count_r - 32'd1);
-
-    // Hash for a key in rs2 (NB_SUBSCR) and rs1 (STORE_SUBSCR).
-    logic [31:0] cont_dict_hash_rs2;
-    logic [31:0] cont_dict_hash_rs1;
-    assign cont_dict_hash_rs2 = pycore_dict_key_hash(cont_rs2_tag, cont_rs2_val)
-                              & (container_slot_count_r - 32'd1);
-    assign cont_dict_hash_rs1 = pycore_dict_key_hash(cont_rs1_tag, cont_rs1_val)
-                              & (container_slot_count_r - 32'd1);
 
     // Key comparison against the last kval read (container_rd_data_r).
     // INT: compare value[63:0]. BOOL: compare value[0].
@@ -1404,11 +1378,9 @@ module pycore_core #(
             container_list_grow_trap_r   <= 1'b0;
             container_src_buf_r          <= '0;
             container_src_len_r          <= '0;
-            container_dst_len_r          <= '0;
             container_list_extend_trap_r <= 1'b0;
             container_list_delete_trap_r <= 1'b0;
             container_dict_grow_trap_r      <= 1'b0;
-            container_dict_collision_trap_r <= 1'b0;
             container_set_grow_trap_r       <= 1'b0;
             container_set_update_trap_r     <= 1'b0;
             container_probe_tag_r           <= '0;
@@ -1447,7 +1419,6 @@ module pycore_core #(
             container_list_extend_trap_r <= 1'b0;
             container_list_delete_trap_r <= 1'b0;
             container_dict_grow_trap_r      <= 1'b0;
-            container_dict_collision_trap_r <= 1'b0;
             container_set_grow_trap_r       <= 1'b0;
             container_set_update_trap_r     <= 1'b0;
             excore_fatal_trap_r   <= 1'b0;
@@ -2321,7 +2292,6 @@ module pycore_core #(
                                         if (cont_key_u_st >= cont_hdr_len) begin
                                             container_mem_fault_r <= 1'b1;
                                         end else begin
-                                            container_dst_len_r <= cont_key_u_st[31:0];
                                             // Last element: length-- only (no
                                             // shift). Mid delete: trap before
                                             // any commit (no ob_item needed).
@@ -2540,7 +2510,6 @@ module pycore_core #(
                                         // Snapshot dst header (unused for the
                                         // trap path; kept for empty/self checks).
                                         container_list_hdr_r <= container_rd_data_r;
-                                        container_dst_len_r  <= cont_hdr_len[31:0];
                                         if (cont_rs2_tag == PY_TAG_TUPLE) begin
                                             container_src_len_r <=
                                                 cont_tuple_size_rs2[31:0];
@@ -2882,7 +2851,7 @@ module pycore_core #(
                         // rs1_r = dict handle; rs2_r = key.
                         // Layout v2: CP_HDR → CP_LIST_BUF reads table_ptr into
                         // container_buf_r; slot helpers use the table base.
-                        // Cross-tag numeric probe → DICT_COLLISION (before commit).
+                        // Cross-tag numeric probe → rich-eq on pycore.
                         // ===========================================================
                         CONT_SUBSCR_DICT: begin
                             unique case (container_phase_r)
@@ -3029,10 +2998,10 @@ module pycore_core #(
                         // CONT_STORE_DICT: dict key upsert (STORE_SUBSCR on DICT).
                         // rs1_r = key; rs2_r = dict handle; value = RF[tos-3]
                         // (latched via container_rf_addr_r set in CP_INIT so
-                        // cont_rf_rs1_* is ready by grow/collision trap time).
+                        // cont_rf_rs1_* is ready by grow trap time).
                         // New-key insert at empty/tombstone: DICT_GROW when
                         // pycore_dict_needs_grow; else write. Cross-tag numeric
-                        // → DICT_COLLISION before any commit.
+                        // → rich-eq on pycore before any commit.
                         // ===========================================================
                         CONT_STORE_DICT: begin
                             unique case (container_phase_r)
@@ -3043,8 +3012,8 @@ module pycore_core #(
                                     end else begin
                                         container_tag_r <= cont_rs1_tag;
                                         container_val_r <= cont_rs1_val;
-                                        // Point RF port at value early so grow /
-                                        // collision marshal can assemble entry2.
+                                        // Point RF port at value early so grow
+                                        // marshal can assemble entry2.
                                         container_rf_addr_r     <= RF_AW'(tos_r - RF_AW'(3));
                                         container_val_rf_addr_r <= RF_AW'(tos_r - RF_AW'(3));
                                         container_insert_new_r  <= 1'b0;
@@ -3679,7 +3648,7 @@ module pycore_core #(
                         // CONT_CONTAINS_DICT: CONTAINS_OP on DICT.
                         // Probe like SUBSCR_DICT but miss → False (not MEM_FAULT).
                         // Needle/key = rs1; dict = rs2. Cross-tag numeric →
-                        // DICT_COLLISION. Tombstones skipped.
+                        // rich-eq on pycore. Tombstones skipped.
                         // =====================================================
                         CONT_CONTAINS_DICT: begin
                             unique case (container_phase_r)
@@ -3847,7 +3816,7 @@ module pycore_core #(
                         // CONT_DELETE_DICT: DELETE_SUBSCR on DICT.
                         // rs1_r = key; rs2_r = dict. Same-tag hit → write
                         // TOMBSTONE to ktag, used--, pop 2. Cross-tag numeric →
-                        // DICT_COLLISION. Miss → MEM_FAULT. Tombstones skipped.
+                        // rich-eq on pycore. Miss → MEM_FAULT. Tombstones skipped.
                         // =====================================================
                         CONT_DELETE_DICT: begin
                             unique case (container_phase_r)
@@ -4973,7 +4942,7 @@ module pycore_core #(
                                             container_type_trap_r <= 1'b1;
                                         end else begin
                                             // Value @ RF[tos-1] — set RF addr early for
-                                            // grow/collision marshal entry2.
+                                            // grow marshal entry2.
                                             container_rf_addr_r      <= RF_AW'(tos_r - RF_AW'(1));
                                             container_val_rf_addr_r  <= RF_AW'(tos_r - RF_AW'(1));
                                             container_insert_new_r   <= 1'b0;

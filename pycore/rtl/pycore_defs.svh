@@ -194,7 +194,6 @@ localparam logic [7:0] PY_OP_POP_JUMP_IF_NONE     = 8'd101;
 localparam logic [7:0] PY_OP_POP_JUMP_IF_NOT_NONE = 8'd102;
 localparam logic [7:0] PY_OP_POP_JUMP_IF_TRUE     = 8'd103;
 localparam logic [7:0] PY_OP_SET_ADD          = 8'd107;
-localparam logic [7:0] PY_OP_SET_FUNCTION_ATTRIBUTE = 8'd108;
 localparam logic [7:0] PY_OP_SET_UPDATE       = 8'd109;
 localparam logic [7:0] PY_OP_STORE_FAST       = 8'd112;
 localparam logic [7:0] PY_OP_STORE_FAST_LOAD_FAST  = 8'd113;
@@ -226,8 +225,8 @@ localparam logic [7:0] PY_OP_CONTAINS_OP      = 8'd57;
 // DELETE_SUBSCR stack convention — verified 2026-07-21 against CPython 3.14.6:
 //   del a[i]  →  LOAD a; LOAD i; DELETE_SUBSCR
 //   container at RF[tos-2], key at RF[tos-1]; both popped. List: shift-down
-//   in place (capacity unchanged). Tuple/dict: TYPE trap (dict tombstones
-//   deferred).
+//   in place (capacity unchanged; mid-list → LIST_DELETE/excore). Tuple:
+//   TYPE trap. Dict: tombstone write on pycore.
 // -------------------------------------------------------------------------
 // CONTAINS_OP stack convention — verified 2026-07-21:
 //   x in a / x not in a  →  LOAD x; LOAD a; CONTAINS_OP oparg
@@ -590,20 +589,6 @@ function automatic logic pycore_dict_key_tag_ok(input logic [3:0] tag);
     end
 endfunction
 
-// Legacy helper: 1 when tags differ and both are numeric. Probe paths now
-// call pycore_dict_key_rich_eq instead of trapping on this condition.
-function automatic logic pycore_dict_key_rich_maybe(
-    input logic [3:0] tag_a,
-    input logic [3:0] tag_b
-);
-    begin
-        pycore_dict_key_rich_maybe =
-            (tag_a != tag_b) &&
-            pycore_is_numeric_tag(tag_a) &&
-            pycore_is_numeric_tag(tag_b);
-    end
-endfunction
-
 // Try to interpret a FLOAT value as a signed 64-bit integer.
 // ok=1 and out=int when integer-valued (incl. ±0.0); else ok=0.
 function automatic logic pycore_float_as_int64(
@@ -807,22 +792,6 @@ function automatic logic [31:0] pycore_dict_table_ptr_addr(
     end
 endfunction
 
-// Fixed size of the (stable) dict object: header (16B) + table_ptr (16B).
-function automatic logic [31:0] pycore_dict_obj_bytes();
-    begin
-        pycore_dict_obj_bytes = 32'd32;
-    end
-endfunction
-
-// Bytes for a table holding `slot_count` buckets.
-function automatic logic [31:0] pycore_dict_table_bytes(
-    input logic [31:0] slot_count
-);
-    begin
-        pycore_dict_table_bytes = slot_count << 6;
-    end
-endfunction
-
 function automatic logic [31:0] pycore_dict_alloc_bytes(
     input logic [31:0] slot_count
 );
@@ -910,20 +879,6 @@ function automatic logic [31:0] pycore_set_table_ptr_addr(
     end
 endfunction
 
-function automatic logic [31:0] pycore_set_obj_bytes();
-    begin
-        pycore_set_obj_bytes = 32'd32;
-    end
-endfunction
-
-function automatic logic [31:0] pycore_set_table_bytes(
-    input logic [31:0] slot_count
-);
-    begin
-        pycore_set_table_bytes = slot_count << 5;
-    end
-endfunction
-
 function automatic logic [31:0] pycore_set_alloc_bytes(
     input logic [31:0] slot_count
 );
@@ -939,22 +894,6 @@ function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_set_header(
 );
     begin
         pycore_set_header = {slot_count, used};
-    end
-endfunction
-
-function automatic logic [63:0] pycore_set_slot_count_from_hdr(
-    input logic [PYCORE_VAL_WIDTH-1:0] header
-);
-    begin
-        pycore_set_slot_count_from_hdr = header[127:64];
-    end
-endfunction
-
-function automatic logic [63:0] pycore_set_used_from_hdr(
-    input logic [PYCORE_VAL_WIDTH-1:0] header
-);
-    begin
-        pycore_set_used_from_hdr = header[63:0];
     end
 endfunction
 
@@ -1121,14 +1060,6 @@ function automatic logic [63:0] pycore_tuple_size(
     end
 endfunction
 
-function automatic logic [63:0] pycore_tuple_addr(
-    input logic [PYCORE_VAL_WIDTH-1:0] value
-);
-    begin
-        pycore_tuple_addr = value[63:0];
-    end
-endfunction
-
 function automatic logic [31:0] pycore_tuple_val_addr(
     input logic [31:0] addr,
     input logic [31:0] idx
@@ -1189,15 +1120,6 @@ function automatic logic [31:0] pycore_code_field_val_addr(
     end
 endfunction
 
-function automatic logic [31:0] pycore_code_field_tag_addr(
-    input logic [31:0] addr,
-    input logic [31:0] i
-);
-    begin
-        pycore_code_field_tag_addr = pycore_tuple_tag_addr(addr, i);
-    end
-endfunction
-
 function automatic logic [15:0] pycore_code_meta_argcount(
     input logic [PYCORE_VAL_WIDTH-1:0] meta
 );
@@ -1211,14 +1133,6 @@ function automatic logic [15:0] pycore_code_meta_nlocals(
 );
     begin
         pycore_code_meta_nlocals = meta[31:16];
-    end
-endfunction
-
-function automatic logic [15:0] pycore_code_meta_stacksize(
-    input logic [PYCORE_VAL_WIDTH-1:0] meta
-);
-    begin
-        pycore_code_meta_stacksize = meta[47:32];
     end
 endfunction
 
