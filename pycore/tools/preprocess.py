@@ -19,6 +19,8 @@ from typing import Iterable
 
 from encoding import (
     IMEM_SLOT_HEX_DIGITS,
+    SHORT_STR_DATA_SHIFT,
+    SHORT_STR_SIZE_SHIFT,
     STRING_MEM_BYTES,
     TAG_BOOL,
     TAG_CODE_OBJECT,
