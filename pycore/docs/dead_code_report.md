@@ -1,6 +1,9 @@
 # PyCore dead-code audit report
 
-Branch: `cursor/pycore-deadcode-09ee`  
+Historical audit from the `cursor/pycore-deadcode-09ee` cleanup (merged into
+`excore`). Kept as a record of what was removed and what was intentionally
+retained.
+
 Scope: entire `pycore/` tree (RTL, TB, tools, programs, docs, Makefile hooks).  
 Constraints applied:
 

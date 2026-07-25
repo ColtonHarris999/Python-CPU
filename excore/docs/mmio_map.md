@@ -7,9 +7,10 @@ word-aligned, accessed via `LW`/`SW` at `0xF000_0000 + offset` from
 
 ## Mailbox (read side — populated by the pycore trap message)
 
-Read-only from the CPU. In Phase B a testbench drives these directly with
-canned trap messages; in Phase C `trap_mailbox.sv` / `pycore_system` drive
-them on a real `trap_req` handshake (see `architecture.md`).
+Read-only from the CPU. Standalone excore tests (`tb_excore`) drive these
+with canned trap messages. On the two-core top, `trap_mailbox.sv` under
+`pycore_excore_system.sv` drives them on a real `trap_req` handshake (see
+`pycore/docs/architecture.md`).
 
 | Offset | Name | Fields |
 | --- | --- | --- |
@@ -27,8 +28,8 @@ them on a real `trap_req` handshake (see `architecture.md`).
 
 ## Result (write side)
 
-Written by firmware; consumed externally (testbench in Phase B,
-`trap_res` handshake in Phase C).
+Written by firmware; consumed by the mocked mailbox in standalone tests,
+or by the `trap_res` handshake on `pycore_excore_system`.
 
 | Offset | Name | Fields |
 | --- | --- | --- |

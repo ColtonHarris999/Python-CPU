@@ -11,35 +11,28 @@ preprocessing changes can be reviewed against one explicit matrix.
 
 ## Two-core system: pycore + excore
 
-The system is (as of Phase B) two cores: **pycore** (this document's
-subject — the CPython-bytecode hart) and **excore**, an RV32 multicycle hart
-under `excore/` that services *recoverable* traps in firmware instead of
-halting. `pycore_trap.sv` still halts on every trap today; growing this
-into a two-core system happens in three ordered phases:
+The system is two cores: **pycore** (this document's subject — the
+CPython-bytecode hart) and **excore**, an RV32 multicycle hart under
+`excore/` that services *recoverable* traps in firmware instead of
+halting. Fatal traps still go through `pycore_trap.sv` and halt. With
+`EXCORE_EN=1`, recoverable codes are intercepted before `pycore_trap` and
+routed through `S_TRAP_MARSHAL` / `S_TRAP_WAIT`.
 
-- **Phase A** (done): the LIST layout became growable (stable
-  object + relocatable buffer — see the LIST section below) and
-  `LIST_APPEND` gained a spare-capacity fast path plus a recoverable
-  `PY_TRAP_LIST_GROW` trap; `LIST_EXTEND` raises recoverable
-  `PY_TRAP_LIST_EXTEND` for every non-empty source (empty is a no-op
-  pop). Without `EXCORE_EN` recoverable traps are still fatal.
-- **Phase B** (done): the excore itself, standalone — `excore_cpu.sv`
-  (wrapper around the vendored singlecore `riscv_multicycle` RV32 hart),
-  `excore_mmio.sv` (the mailbox/result/slot-port MMIO peripheral), a
-  self-contained RV32I assembler (`excore/tools/asm_rv32.py`, no external
-  toolchain), and `excore/fw/list_grow.s` — the firmware that
-  emulates-and-completes `LIST_GROW` and `LIST_EXTEND` traps (allocate a
-  bigger buffer, copy, finish the append/extend, then tell pycore to
-  resume). Unit-tested against a mocked mailbox (canned trap messages
-  driven directly onto `excore_mmio`'s input ports) and a real
-  `pycore_mem_bank` instance. See `excore/docs/` and
-  `excore/rtl/singlecore/README.md` for excore-specific docs.
-- **Phase C** (done): the mailbox transport (`excore/rtl/trap_mailbox.sv`),
-  the memory-ownership grant mux in the new `pycore_excore_system.sv` top
-  level, and pycore's `S_TRAP_MARSHAL` / `S_TRAP_WAIT` states that hand a
-  recoverable trap to the excore instead of halting, then apply its result
-  (resume, retry, or forward a fatal code into `pycore_trap` as today's
-  ordinary halt). See "Two-core transport and integration" below.
+How the split landed (all phases shipped):
+
+- **Phase A**: growable LIST layout (stable object + relocatable buffer);
+  spare-capacity `LIST_APPEND` on pycore; `PY_TRAP_LIST_GROW` /
+  `PY_TRAP_LIST_EXTEND` (empty extend stays a no-op pop). Without
+  `EXCORE_EN`, recoverable traps are fatal.
+- **Phase B**: standalone excore — `excore_cpu.sv` (wrapper around the
+  vendored `riscv_multicycle` hart), `excore_mmio.sv`, self-contained
+  assembler (`excore/tools/asm_rv32.py`), and `excore/fw/list_grow.s`
+  (now also list-delete / dict-grow / set-grow / set-update). Unit-tested
+  against a mocked mailbox + real `pycore_mem_bank`. See `excore/docs/`
+  and `excore/rtl/singlecore/README.md`.
+- **Phase C**: mailbox transport (`trap_mailbox.sv`), memory-ownership
+  grant mux in `pycore_excore_system.sv`, and pycore marshal/wait that
+  apply `COMPLETED` / `RETRY` / `FATAL` results. See below.
 
 ### The excore contract: "complete the semantic effect"
 
@@ -62,8 +55,9 @@ refill). Grow-to-fit also matters: a single doubling can still undershoot
 `src_len` (e.g. cap=1, src_len=10 → need=11), so RETRY would cascade into
 multiple traps; COMPLETED finishes in one handoff. The protocol still
 defines `RETRY` for handlers where pycore state genuinely did not advance
-(e.g. emulating an unimplemented opcode from scratch) — but `LIST_GROW`,
-`LIST_EXTEND`, and `LIST_DELETE` always answer `COMPLETED`.
+(e.g. emulating an unimplemented opcode from scratch) — but every current
+handler (`LIST_GROW`, `LIST_EXTEND`, `LIST_DELETE`, `DICT_GROW`,
+`SET_GROW`, `SET_UPDATE`) answers `COMPLETED`.
 
 This "complete, don't retry" contract is only safe because every
 recoverable trap is raised **before any RF/heap/dmem commit** (see
@@ -72,10 +66,11 @@ recoverable trap is raised **before any RF/heap/dmem commit** (see
 container-op trap must preserve, since `RETRY` semantics depend on pycore
 state not having advanced when the trap fired.
 
-**Ownership split for list bulk / shift work:** empty `LIST_EXTEND` stays
-a no-op on pycore; every non-empty extend and every mid-list delete goes to
-excore so O(n) memmove / grow work is not duplicated in RTL. Spare-capacity
-`LIST_APPEND` remains on pycore (O(1)). See `pycore/docs/set_excore.md`.
+**Ownership split (containers):** hash + rich equality and open-addressed
+probes stay on pycore; capacity-changing and O(n) memmove work go to
+excore. Empty `LIST_EXTEND` is a no-op pop on pycore; spare-capacity
+`LIST_APPEND` and last-element list delete stay O(1) on pycore. See
+`pycore/docs/dict_excore.md` and `pycore/docs/set_excore.md`.
 
 ### Two-core transport and integration (Phase C)
 
@@ -165,11 +160,11 @@ values, and the restartability requirement each implies:
   cur_pc_r`, the same mechanism a taken branch uses). This is only
   semantically valid because the trap was raised before any commit — see
   the early-trap discipline above. No current handler returns `RETRY`
-  (`LIST_GROW` and `LIST_EXTEND` always complete); the code path exists
-  and is wired end to end (`S_TRAP_WAIT`'s `unique case` on
-  `trap_res_code_r2`) for a future handler where the excore does *not*
-  hold enough state to finish the semantic effect itself (e.g. an opcode
-  requiring iteration protocol support pycore doesn't have).
+  (all live handlers complete); the code path exists and is wired end to
+  end (`S_TRAP_WAIT`'s `unique case` on `trap_res_code_r2`) for a future
+  handler where the excore does *not* hold enough state to finish the
+  semantic effect itself (e.g. an opcode requiring iterator protocol
+  support pycore does not have).
 - **`FATAL`** — forwarded into `pycore_trap` as an ordinary halt via a new
   `excore_fatal_i`/`excore_fatal_code_i` input pair (bypassing the fixed
   one-hot condition list, since the code is data from firmware, not a
@@ -188,18 +183,15 @@ port is single-slot), then branches on `res_code` as described above.
 
 #### `pycore_excore_system.sv`
 
-The two-core top level. `pycore_system.sv` remains the single-core top for
-legacy testbenches (its `pycore_core` instantiation doesn't override
-`EXCORE_EN`, so it defaults to 0 and ties the new trap_req/trap_res ports
-off). `tb_container.sv` grows an `EXCORE_EN`/`FW_HEX` parameter pair and a
-`generate if` that instantiates `pycore_excore_system` instead of
-`pycore_system` when `EXCORE_EN=1`, wrapped in a fixed-name generate block
-(`g_dut`) so every existing hierarchical debug reference
-(`g_dut.dut.core.*`) resolves identically regardless of which top is
-selected — every pre-existing image-boot test can therefore run unchanged
-on the two-core system by simply adding `-GEXCORE_EN=1
--GFW_HEX=<assembled firmware>` (see `pycore-img-*-two-core` Makefile
-targets).
+The two-core top level. `pycore_system.sv` remains the single-core top
+(`EXCORE_EN` defaults to 0; trap_req/trap_res ports tied off) for
+`EXCORE_EN=0` runs and `tb_pycore_runfile`. `tb_container.sv` takes
+`EXCORE_EN`/`FW_HEX` and a `generate if` that instantiates
+`pycore_excore_system` when `EXCORE_EN=1`, wrapped in generate block
+`g_dut` so hierarchical debug refs (`g_dut.dut.core.*`) resolve for
+either top. Image-boot tests run on the two-core system with
+`-GEXCORE_EN=1 -GFW_HEX=<assembled firmware>` (see
+`pycore-img-*-two-core` Makefile targets).
 
 ## CPython image fidelity boundary
 
@@ -445,8 +437,8 @@ boot record at `PYCORE_BOOT_RECORD_ADDR = 0x0000_03e0`:
 
 The boot walker verifies `CODE_OBJECT`/`DICT`, caches the module code object's
 `co_consts` and `co_names`, latches `globals_base_r`, and redirects fetch to the
-module entry slot. `BOOT_EN=0` is retained only for legacy hand-authored hex
-fixtures.
+module entry slot. `BOOT_EN=0` remains available for hand-authored hex
+fixtures that skip the boot record.
 
 Serialized code objects are four tagged-entry fields (32 bytes per field):
 
@@ -485,8 +477,8 @@ globals dict) into tagged dmem slots, and writes the boot record. Branch
 arguments are not remapped because imem slot index equals CPython code-unit
 index.
 
-`pycore/tools/preprocess.py` is deprecated legacy tooling for older
-single-function hex fixtures and should not be used for new image-boot tests.
+`pycore/tools/preprocess.py` is deprecated (older single-function / `run-file`
+fixtures only) and should not be used for new image-boot tests.
 
 ## Container heap and object model
 
@@ -597,7 +589,7 @@ bounds checks on pycore; deleting the last element is O(1) length-- on
 pycore; mid-list delete raises `PY_TRAP_LIST_DELETE` (12) before any commit
 so excore shifts `[idx+1 .. len)` down and writes `length-1` (`COMPLETED`
 pop 2). Capacity unchanged; delete never reallocates. OOB / negative
-indices → `PY_TRAP_MEM_FAULT`. Tuple → `PY_TRAP_TYPE`.
+indices → `PY_TRAP_MEM_FAULT`. Tuple / set → `PY_TRAP_TYPE`.
 
 On a **DICT**, same-tag / rich-eq hits write `PY_TAG_TOMBSTONE`
 (`== PY_TAG_DICT`, since dicts cannot be keys) on the key tag and
@@ -610,8 +602,9 @@ membership never changes capacity:
 
 - **LIST / TUPLE**: linear scan on pycore; INT/BOOL cross-equality matches
   CPython (`True == 1`).
-- **DICT**: open-addressed probe; miss pushes `False` (unlike `NB_SUBSCR`,
-  which traps). Same-tag / rich-eq matches on pycore. Tombstones are skipped.
+- **DICT / SET**: open-addressed probe; miss pushes `False` (unlike
+  `NB_SUBSCR` on dict, which traps). Same-tag / rich-eq matches on
+  pycore. Tombstones are skipped.
 
 ### TUPLE in-dmem layout
 
@@ -694,6 +687,32 @@ reads `table_ptr` via `CP_LIST_BUF` after the header. `CONT_BUILD_TUPLE` and
   same-tag / rich-eq probe on pycore.
 - **`BUILD_TUPLE` / `NB_SUBSCR` on TUPLE**: no header; size is inline in the
   handle. `STORE_SUBSCR` on a TUPLE traps `PY_TRAP_TYPE` (immutable).
+
+### SET in-dmem layout
+
+Sets mirror dict layout v2 but store **elements only** (no value half):
+
+```text
+obj+0  : header { slot_count[63:0], used[63:0] }
+obj+16 : { 64'd0, table_ptr[63:0] }     // 0 if slot_count == 0
+
+table + i*32 + 0  : element value
+table + i*32 + 16 : element tag   (UNINIT=empty, TOMBSTONE=DICT=9 deleted)
+```
+
+Handle: `{ PY_TAG_SET, object_addr }`. Hash / rich-eq / tombstone policy
+match dict (`PY_TAG_TOMBSTONE == PY_TAG_DICT`). Slot count =
+`next_pow2(max(4, 2 × n_elems))`.
+
+| Op | Path |
+| --- | --- |
+| `BUILD_SET` | pycore alloc + insert (same-tag + rich numeric/str eq) |
+| `SET_ADD` | pycore probe/insert; load ≥ 2/3 → `SET_GROW` (13) |
+| `SET_UPDATE` | always `SET_UPDATE` (14) → excore bulk merge |
+| `CONTAINS_OP` | pycore probe + rich eq |
+| `DELETE_SUBSCR` / `STORE_SUBSCR` | `TYPE` (sets are not subscriptable) |
+
+Design notes: `pycore/docs/set_excore.md`.
 
 ### `S_CONTAINER` FSM state
 

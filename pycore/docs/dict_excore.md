@@ -39,4 +39,5 @@ Handle address is stable across grows (like list `ob_item`).
 | 11 | `DICT_GROW` | dict, key, value | pop 3 (finish STORE insert after rehash) |
 
 Code 12 is `LIST_DELETE` (list shift-down), not dict collision — rich equality
-lives on pycore.
+lives on pycore. Codes 13–14 are `SET_GROW` / `SET_UPDATE`; **15 is free**.
+See `pycore/docs/set_excore.md` for the shared hash-container split.

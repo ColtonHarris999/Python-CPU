@@ -54,13 +54,16 @@ Post dead-code cleanup plan. Each item is intentionally small-to-medium, low-ris
 
 ---
 
-## Opt-6 — Finish migration off legacy `preprocess.py` sidecars
+## Opt-6 — Finish migration off `preprocess.py` sidecars
 
-**Today:** `preprocess.py` is deprecated but still emits `.types` / `_cache.hex` (now uncommitted) and backs `run-file` / some container hex regeneration.
+**Today:** `preprocess.py` is deprecated but still emits `.types` / `_cache.hex`
+(uncommitted) and backs `run-file` / some container hex regeneration.
 
-**Change:** Point remaining container hex regeneration and `run-file` at `image_from_source` / `run_image_test`; stop writing unused sidecars.
+**Change:** Point remaining container hex regeneration and `run-file` at
+`image_from_source` / `run_image_test`; stop writing unused sidecars.
 
-**Why / result:** One image toolchain; smaller `programs/` surface; less confusion about which fixtures are authoritative.
+**Why / result:** One image toolchain; smaller `programs/` surface; less
+confusion about which fixtures are authoritative.
 
 ---
 
@@ -96,9 +99,11 @@ Post dead-code cleanup plan. Each item is intentionally small-to-medium, low-ris
 
 ## Opt-10 — Documentation / target surface hygiene (ongoing)
 
-**Today:** Root README and Makefile occasionally lag retired flows (const ROM, legacy TBs).
+**Today:** Const-ROM / legacy TBs (`tb_pycore`, `tb_multifn`) and unused
+sidecars are already removed; docs should stay aligned as new opcodes land.
 
-**Change:** Keep `bytecode_support.md` + architecture as the source of truth; Makefile `.PHONY` list and README examples track only live targets.
+**Change:** Keep `bytecode_support.md` + architecture as the source of truth;
+Makefile `.PHONY` list and README examples track only live targets.
 
 **Why / result:** Less agent/human thrash on dead entry points; faster onboarding.
 
