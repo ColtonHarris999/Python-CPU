@@ -52,7 +52,7 @@ Constraints applied:
 | `encoding.bool_value` | Defined/imported, never called |
 | `encoding.format_entry` | Only imported by preprocess; never called |
 | `heap_image._key_equal` | Legacy wrapper; never called (`dict_key_rich_eq` is the live path) |
-| Unused `preprocess.py` imports | `ENTRY_HEX_DIGITS`, short-str shift constants, `STRING_RUNTIME_BASE`, `TAG_NULL`, `TAG_UNINIT`, `VAL_*`, `float_bits`, `field` |
+| Unused `preprocess.py` imports | `ENTRY_HEX_DIGITS`, `STRING_RUNTIME_BASE`, `TAG_NULL`, `TAG_UNINIT`, `VAL_*`, `float_bits`, `field` (`SHORT_STR_*_SHIFT` kept — re-exported for unit tests) |
 | Unused `gen_excore_integration_fixtures.py` imports | `TAG_CODE_OBJECT`, `pack_code_metadata` |
 | Unused `test_preprocess_containers.py` import | `types` |
 
