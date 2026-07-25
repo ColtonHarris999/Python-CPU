@@ -455,11 +455,10 @@ CPython 3.14 non-method layout `callable, NULL, args...`, validates the callable
 tag and argcount, reads the callee code-object fields, then enters the frame
 manager.
 
-`LOAD_CONST` is now a normal one-slot CPython instruction. It indexes
+`LOAD_CONST` is a normal one-slot CPython instruction. It indexes
 `co_consts[arg]` and the container FSM performs two dmem reads (value slot then
-tag slot) before pushing the tagged entry. This raises CPO for constant-heavy
-programs versus the old inline literal path; an inline cache or small const
-cache is future work.
+tag slot) before pushing the tagged entry. An inline or small const cache is
+future work.
 
 `LOAD_GLOBAL` and `LOAD_NAME` read the name from `co_names`, then probe the
 module globals dict. There is no builtins fallback in this prototype: a missing
@@ -716,11 +715,11 @@ Design notes: `pycore/docs/set_excore.md`.
 
 ### `S_CONTAINER` FSM state
 
-`S_CONTAINER` is a new FSM state (value 8, requiring 4-bit `state_r`) entered
-directly from `S_EXEC` when `dec_is_container` is asserted.  It bypasses both
-`S_MEM` and `S_WB`; TOS and RF updates happen inside `S_CONTAINER`.
+`S_CONTAINER` (state value 8, 4-bit `state_r`) is entered from `S_EXEC` when
+`dec_is_container` is asserted. It bypasses both `S_MEM` and `S_WB`; TOS and
+RF updates happen inside `S_CONTAINER`.
 
-Sub-phases (stored in `container_phase_r [2:0]`):
+Sub-phases live in `container_phase_r[4:0]`. Shared phases include:
 
 | Phase | Name | Purpose |
 |-------|------|---------|
@@ -728,7 +727,11 @@ Sub-phases (stored in `container_phase_r [2:0]`):
 | 1 | `CP_HDR` | In-flight header read/write; wait for dmem ack. |
 | 2 | `CP_VAL` | In-flight element value read/write; wait for ack. |
 | 3 | `CP_TAG` | In-flight element tag read/write; wait for ack. |
-| 4 | `CP_DONE` | Terminal marker; `always_comb` transitions to `S_FETCH`. Empty in `always_ff`. |
+| 4 | `CP_DONE` | Terminal marker; `always_comb` transitions to `S_FETCH` (or trap marshal). |
+
+Additional phases cover list buffer / writeback, dict/set probe, name/const
+loads, and extend source-header reads — see `pycore_core.sv` for the full
+`CP_*` enumeration.
 
 The dmem port is arbitrated via `container_dmem_pending_r`, which mirrors
 `frame_dmem_pending_r` used by `S_CALL` and `S_RETURN`.
