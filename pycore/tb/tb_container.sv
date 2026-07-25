@@ -2,7 +2,7 @@
 
 // Testbench for container (LIST/DICT/TUPLE) operations.
 // Parameterized over PROG_HEX and the expected return tag+value.
-// Reuses the same run-until-RETURN_VALUE pattern as tb_multifn.
+// Runs until RETURN_VALUE (or EXPECT_TRAP) like other container/image TBs.
 //
 // When EXPECT_TRAP is set, the test PASSES iff trap_out fires with
 // trap_code == EXPECTED_TRAP_CODE before MAX_CYCLES, and FAILS on a clean

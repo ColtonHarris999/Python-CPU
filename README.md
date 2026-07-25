@@ -102,7 +102,8 @@ make pycore-type-pairs
 make pycore-mem
 make pycore-frame
 make pycore-frame-fib
-make pycore-top
+make pycore-container
+make pycore-img-smoke
 make pycore-python-tests
 make excore-asm-tests
 make excore-cpu-test
@@ -126,10 +127,10 @@ make run-file \
 
 This flow:
 
-1. preprocesses the requested function into program/const/string memory images;
+1. preprocesses the requested function into program/string memory images;
 2. runs PyCore simulation with those generated images;
 3. prints return entry information from the retired `RETURN_VALUE`;
-4. dumps memory image files (`program`, `const`, `string`) for inspection.
+4. dumps memory image files (`program`, `string`) for inspection.
 
 Optional output-path overrides:
 
@@ -138,7 +139,6 @@ make run-file \
   RUN_SOURCE=pycore/programs/smoke_return.py \
   RUN_FUNCTION=managed_entry \
   RUN_PROGRAM_HEX=pycore/programs/my_program.hex \
-  RUN_CONST_HEX=pycore/programs/my_consts.hex \
   RUN_STRING_HEX=pycore/programs/my_string_mem.hex
 ```
 
@@ -155,18 +155,6 @@ If needed, you can pass host-network flags:
 ```bash
 make docker-all-tests DOCKER_BUILD_FLAGS=--network=host DOCKER_RUN_FLAGS=--network=host
 ```
-
----
-
-## Legacy core quick reference
-
-`make sim` compiles/disassembles a Python function, emits:
-
-- program image (`programs/*_prog.hex`)
-- constant image (`programs/*_consts.hex`)
-- expected return (`programs/*_expected.txt`)
-
-and then runs Verilator (`tb/tb_pycpu.cpp`) to validate final behavior.
 
 ---
 

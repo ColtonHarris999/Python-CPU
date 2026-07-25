@@ -14,17 +14,12 @@ import importlib.util
 import opcode as _opcode_module
 import pathlib
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable
 
 from encoding import (
-    ENTRY_HEX_DIGITS,
     IMEM_SLOT_HEX_DIGITS,
-    SHORT_STR_DATA_SHIFT,
-    SHORT_STR_MAX_BYTES,
-    SHORT_STR_SIZE_SHIFT,
     STRING_MEM_BYTES,
-    STRING_RUNTIME_BASE,
     TAG_BOOL,
     TAG_CODE_OBJECT,
     TAG_DICT,
@@ -34,20 +29,14 @@ from encoding import (
     TAG_LIST,
     TAG_LONG_STR,
     TAG_NONE,
-    TAG_NULL,
     TAG_OBJECT,
     TAG_PTR,
     TAG_SET,
     TAG_SHORT_STR,
     TAG_TUPLE,
-    TAG_UNINIT,
     TAG_UNINITIALIZED,
     TAG_UNUSED,
-    VAL_MASK,
-    VAL_WIDTH,
     StringHeapBuilder,
-    float_bits,
-    format_entry,
     format_imem_slot,
     tag_constant,
 )

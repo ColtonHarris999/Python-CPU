@@ -625,7 +625,7 @@ allocation bytes : size * 32
 ```
 
 Helpers: `pycore_tuple_val_addr`, `pycore_tuple_tag_addr`,
-`pycore_tuple_alloc_bytes`, `pycore_tuple_size`, `pycore_tuple_addr`.
+`pycore_tuple_alloc_bytes`, `pycore_tuple_size`.
 
 ### DICT in-dmem layout (v2)
 

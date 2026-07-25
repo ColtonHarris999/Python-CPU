@@ -88,15 +88,6 @@ def int_value(n: int) -> int:
     return n & VAL_MASK
 
 
-def bool_value(b: bool) -> int:
-    return 1 if b else 0
-
-
-def format_entry(tag: int, value: int) -> str:
-    entry = ((tag & 0xF) << VAL_WIDTH) | (value & VAL_MASK)
-    return f"{entry:0{ENTRY_HEX_DIGITS}x}"
-
-
 def format_imem_slot(opcode: int, arg: int = 0) -> str:
     """One 8-byte imem slot: bits[39:8]=arg, bits[7:0]=opcode."""
     word = ((arg & 0xFFFFFFFF) << 8) | (opcode & 0xFF)

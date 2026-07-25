@@ -52,8 +52,6 @@ localparam int PYCORE_SHORT_STR_SIZE_MSB  = 127;
 localparam int PYCORE_SHORT_STR_SIZE_LSB  = 124;
 localparam int PYCORE_SHORT_STR_DATA_MSB  = 123;
 localparam int PYCORE_SHORT_STR_DATA_LSB  = 4;
-localparam int PYCORE_SHORT_STR_FLAG_MSB  = 3;
-localparam int PYCORE_SHORT_STR_FLAG_LSB  = 0;
 
 localparam logic [1:0] PY_EXEC_INT   = 2'd0;
 localparam logic [1:0] PY_EXEC_FLOAT = 2'd1;

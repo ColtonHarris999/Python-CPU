@@ -31,7 +31,6 @@ from encoding import (
     TAG_TOMBSTONE,
     TAG_TUPLE,
     TAG_UNINIT,
-    bool_value,
     dict_key_hash,
     dict_key_rich_eq,
     dict_slot_count_for_stores,
@@ -379,8 +378,3 @@ class HeapImageBuilder:
             word = self.words.get(addr, 0)
             lines.append(f"{word:032x}")
         path.write_text("\n".join(lines) + "\n", encoding="ascii")
-
-
-def _key_equal(tag: int, a: int, b: int) -> bool:
-    """Same-tag equality (legacy); prefer dict_key_rich_eq for probes."""
-    return dict_key_rich_eq(tag, a, tag, b)

@@ -71,7 +71,6 @@ EXCORE_RTL_SRCS := \
 .PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs \
 	pycore-python-tests pycore-mem pycore-frame pycore-frame-fib \
-	pycore-top pycore-multifn \
 	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
 	pycore-img-containers pycore-img-recursion pycore-img-extended-arg \
 	pycore-img-branchy pycore-img-undef-global pycore-img-noncallable \
@@ -272,23 +271,6 @@ pycore-frame-fib:
 pycore-python-tests:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
 
-pycore-top:
-	@echo "tb_pycore relies on the pre-3.14 inline 3-slot LOAD_CONST datapath."
-	@echo "End-to-end pipeline coverage is now provided by tb_container BOOT_EN=1"
-	@echo "with image-boot programs (img_smoke.py, img_call_chain.py, etc.)."
-
-# The old multifn hex fixtures used the pre-3.14 CALL encoding (opcode
-# 0xab with {argc, slot} arg) and the deprecated inline 3-slot LOAD_CONST
-# format.  Both are incompatible with the CPython 3.14.6 image-boot
-# datapath (single-slot LOAD_CONST that indexes co_consts, and raw-argc
-# CALL that reads a CODE_OBJECT off the RF).  Multi-function coverage
-# is now provided by image-boot programs (see img_call_chain.py,
-# img_recursion.py, img_smoke.py) run through tb_container with
-# BOOT_EN=1 and CHECK_ENTRY_RETURN=1.
-
-pycore-multifn:
-	@echo "Legacy multifn targets removed; use image-boot img_* programs instead."
-
 # ---- CPython image-boot differential tests ---------------------------------
 # Positive tests use run_image_test.py so EXPECTED_TAG / EXPECTED_VALUE are
 # derived from host CPython execution and then checked in hardware. Negative
@@ -435,9 +417,6 @@ pycore-img-bitwise-calls:
 
 pycore-img-globals-accum:
 	$(call PYCORE_IMAGE_RUN,globals_accum,100000)
-
-pycore-img-string-ops:
-	$(call PYCORE_IMAGE_RUN,string_ops,100000)
 
 pycore-img-string-ops:
 	$(call PYCORE_IMAGE_RUN,string_ops,100000)
@@ -1228,7 +1207,7 @@ excore-cpu-test: excore-fw
 
 excore-test: excore-asm-tests excore-cpu-test
 
-pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container pycore-img pycore-excore-system pycore-img-two-core
+pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-container pycore-img pycore-excore-system pycore-img-two-core
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .

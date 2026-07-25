@@ -12,7 +12,6 @@ Covers:
 from __future__ import annotations
 
 import sys
-import types
 import unittest
 
 # Guard: only run on Python 3.14 (preprocess is 3.14-only).

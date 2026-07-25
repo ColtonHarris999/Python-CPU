@@ -1,6 +1,0 @@
-inner: LIST
-outer: LIST
-
-# warnings
-OBJECT-typed value feeds BINARY_OP at bytecode offset 18
-OBJECT-typed value feeds BINARY_OP at bytecode offset 32

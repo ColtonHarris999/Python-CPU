@@ -652,7 +652,6 @@ module pycore_core #(
     logic        branch_take;
     logic [31:0] branch_tgt;
     logic        branch_trap;
-    logic [3:0]  branch_trap_code;
 
     pycore_branch branch (
         .opcode_i(cur_opcode_r),
@@ -662,7 +661,8 @@ module pycore_core #(
         .take_branch_o(branch_take),
         .branch_target_o(branch_tgt),
         .trap_o(branch_trap),
-        .trap_code_o(branch_trap_code)
+        // Branch traps always fold into PY_TRAP_TYPE via type_trap_sig.
+        .trap_code_o()
     );
 
     logic [PYCORE_ENTRY_WIDTH-1:0] ex_entry;
