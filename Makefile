@@ -71,7 +71,6 @@ EXCORE_RTL_SRCS := \
 .PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs \
 	pycore-python-tests pycore-mem pycore-frame pycore-frame-fib \
-	pycore-top pycore-multifn \
 	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
 	pycore-img-containers pycore-img-recursion pycore-img-extended-arg \
 	pycore-img-branchy pycore-img-undef-global pycore-img-noncallable \
@@ -117,12 +116,24 @@ EXCORE_RTL_SRCS := \
 	pycore-excore-system \
 	pycore-img-list-extend-two-core \
 	pycore-img-list-del-simple pycore-img-list-del-first-last \
+	pycore-img-list-del-last-only pycore-img-list-del-shift-excore \
 	pycore-img-list-contains-simple pycore-img-list-contains-types \
 	pycore-img-tuple-contains pycore-img-dict-contains \
 	pycore-img-list-del-contains pycore-img-list-del-nested \
 	pycore-img-list-del-contains-call pycore-img-list-extend-del-contains-two-core \
 	pycore-img-list-del-oob pycore-img-list-del-tuple-trap \
 	pycore-img-dict-del-trap \
+	pycore-img-dict-store-lookup pycore-img-dict-overwrite \
+	pycore-img-dict-del-simple pycore-img-dict-del-then-insert \
+	pycore-img-dict-hash-neg1 pycore-img-dict-str-keys \
+	pycore-img-dict-large-pycore pycore-img-dict-grow-fatal \
+	pycore-img-dict-bool-int-collision pycore-img-dict-false-zero \
+	pycore-img-dict-grow-basic pycore-img-dict-grow-large \
+	pycore-img-dict-del-collision pycore-img-dict-contains-collision \
+	pycore-img-dict-mixed-ops \
+	pycore-img-set-build-simple pycore-img-set-add-contains \
+	pycore-img-set-bool-int pycore-img-set-hash-neg1 pycore-img-set-str \
+	pycore-img-set-grow-fatal pycore-img-set-grow-basic pycore-img-set-update \
 	pycore-img-two-core \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
@@ -260,23 +271,6 @@ pycore-frame-fib:
 pycore-python-tests:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
 
-pycore-top:
-	@echo "tb_pycore relies on the pre-3.14 inline 3-slot LOAD_CONST datapath."
-	@echo "End-to-end pipeline coverage is now provided by tb_container BOOT_EN=1"
-	@echo "with image-boot programs (img_smoke.py, img_call_chain.py, etc.)."
-
-# The old multifn hex fixtures used the pre-3.14 CALL encoding (opcode
-# 0xab with {argc, slot} arg) and the deprecated inline 3-slot LOAD_CONST
-# format.  Both are incompatible with the CPython 3.14.6 image-boot
-# datapath (single-slot LOAD_CONST that indexes co_consts, and raw-argc
-# CALL that reads a CODE_OBJECT off the RF).  Multi-function coverage
-# is now provided by image-boot programs (see img_call_chain.py,
-# img_recursion.py, img_smoke.py) run through tb_container with
-# BOOT_EN=1 and CHECK_ENTRY_RETURN=1.
-
-pycore-multifn:
-	@echo "Legacy multifn targets removed; use image-boot img_* programs instead."
-
 # ---- CPython image-boot differential tests ---------------------------------
 # Positive tests use run_image_test.py so EXPECTED_TAG / EXPECTED_VALUE are
 # derived from host CPython execution and then checked in hardware. Negative
@@ -315,10 +309,9 @@ define PYCORE_IMAGE_RUN
 endef
 
 # Phase C full-regression companion to PYCORE_IMAGE_RUN: same image, run on
-# the two-core top (EXCORE_EN=1) instead of the legacy pycore_system. Most
-# img_* programs never emit LIST_APPEND/LIST_EXTEND grow traps (LIST_APPEND
-# still needs FOR_ITER/GET_ITER; LIST_EXTEND is covered by
-# img_list_extend.py on the two-core path only).
+# the two-core top (EXCORE_EN=1) instead of the legacy pycore_system.
+# Programs that need LIST_EXTEND / LIST_DELETE / DICT_GROW / SET_* traps
+# must use this path (or EXCORE_EN=1 fixtures).
 define PYCORE_IMAGE_RUN_TWOCORE
 	mkdir -p $(BUILD_DIR)/img_$(1)
 	$(PYTHON) pycore/tools/run_image_test.py \
@@ -428,9 +421,6 @@ pycore-img-globals-accum:
 pycore-img-string-ops:
 	$(call PYCORE_IMAGE_RUN,string_ops,100000)
 
-pycore-img-string-ops:
-	$(call PYCORE_IMAGE_RUN,string_ops,100000)
-
 pycore-img-copy:
 	$(call PYCORE_IMAGE_RUN,copy,50000)
 
@@ -489,11 +479,19 @@ pycore-img-nop:
 	$(call PYCORE_IMAGE_RUN,nop,50000)
 
 # DELETE_SUBSCR / CONTAINS_OP (list shift-down + membership; raw Python imgs)
-pycore-img-list-del-simple:
-	$(call PYCORE_IMAGE_RUN,list_del_simple,50000)
+# Mid-list delete raises LIST_DELETE (12) → two-core. Last-element stays
+# O(1) on pycore (single-core).
+pycore-img-list-del-simple: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_del_simple,100000)
 
-pycore-img-list-del-first-last:
-	$(call PYCORE_IMAGE_RUN,list_del_first_last,50000)
+pycore-img-list-del-first-last: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_del_first_last,100000)
+
+pycore-img-list-del-last-only:
+	$(call PYCORE_IMAGE_RUN,list_del_last_only,50000)
+
+pycore-img-list-del-shift-excore: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_del_shift_excore,100000)
 
 pycore-img-list-contains-simple:
 	$(call PYCORE_IMAGE_RUN,list_contains_simple,50000)
@@ -507,12 +505,13 @@ pycore-img-tuple-contains:
 pycore-img-dict-contains:
 	$(call PYCORE_IMAGE_RUN,dict_contains,50000)
 
-pycore-img-list-del-contains:
-	$(call PYCORE_IMAGE_RUN,list_del_contains,50000)
+pycore-img-list-del-contains: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_del_contains,100000)
 
-pycore-img-list-del-nested:
-	$(call PYCORE_IMAGE_RUN,list_del_nested,50000)
+pycore-img-list-del-nested: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_del_nested,100000)
 
+# helper deletes last element only → single-core O(1) path
 pycore-img-list-del-contains-call:
 	$(call PYCORE_IMAGE_RUN,list_del_contains_call,100000)
 
@@ -523,7 +522,82 @@ pycore-img-list-del-tuple-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,list_del_tuple_trap,1,50000)
 
 pycore-img-dict-del-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,dict_del_trap,1,50000)
+	# Same-tag dict delete is on-pycore (tombstone); no TYPE trap.
+	$(call PYCORE_IMAGE_RUN,dict_del_trap,50000)
+
+# Dict same-tag paths (single-core; no DICT_GROW / DICT_COLLISION).
+pycore-img-dict-store-lookup:
+	$(call PYCORE_IMAGE_RUN,dict_store_lookup,50000)
+
+pycore-img-dict-overwrite:
+	$(call PYCORE_IMAGE_RUN,dict_overwrite,50000)
+
+pycore-img-dict-del-simple:
+	$(call PYCORE_IMAGE_RUN,dict_del_simple,50000)
+
+pycore-img-dict-del-then-insert:
+	$(call PYCORE_IMAGE_RUN,dict_del_then_insert,50000)
+
+pycore-img-dict-hash-neg1:
+	$(call PYCORE_IMAGE_RUN,dict_hash_neg1,50000)
+
+pycore-img-dict-str-keys:
+	$(call PYCORE_IMAGE_RUN,dict_str_keys,50000)
+
+pycore-img-dict-large-pycore:
+	$(call PYCORE_IMAGE_RUN,dict_large_pycore,100000)
+
+# Empty dict + 4th new-key insert → fatal DICT_GROW without excore.
+pycore-img-dict-grow-fatal:
+	$(call PYCORE_IMAGE_TRAP_RUN,dict_grow_fatal,11,50000)
+
+# Cross-tag dict rich_eq now on pycore (single-core).
+pycore-img-dict-bool-int-collision:
+	$(call PYCORE_IMAGE_RUN,dict_bool_int_collision,100000)
+
+pycore-img-dict-false-zero:
+	$(call PYCORE_IMAGE_RUN,dict_false_zero,100000)
+
+pycore-img-dict-del-collision:
+	$(call PYCORE_IMAGE_RUN,dict_del_collision,100000)
+
+pycore-img-dict-contains-collision:
+	$(call PYCORE_IMAGE_RUN,dict_contains_collision,100000)
+
+# Dict grow still needs excore (two-core).
+pycore-img-dict-grow-basic: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_grow_basic,100000)
+
+pycore-img-dict-grow-large: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_grow_large,200000)
+
+pycore-img-dict-mixed-ops: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_mixed_ops,200000)
+
+# ---- Set tests -------------------------------------------------------------
+pycore-img-set-build-simple:
+	$(call PYCORE_IMAGE_RUN,set_build_simple,50000)
+
+pycore-img-set-add-contains:
+	$(call PYCORE_IMAGE_RUN,set_add_contains,50000)
+
+pycore-img-set-bool-int:
+	$(call PYCORE_IMAGE_RUN,set_bool_int,50000)
+
+pycore-img-set-hash-neg1:
+	$(call PYCORE_IMAGE_RUN,set_hash_neg1,50000)
+
+pycore-img-set-str:
+	$(call PYCORE_IMAGE_RUN,set_str,50000)
+
+pycore-img-set-grow-fatal:
+	$(call PYCORE_IMAGE_TRAP_RUN,set_grow_fatal,13,50000)
+
+pycore-img-set-grow-basic: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,set_grow_basic,100000)
+
+pycore-img-set-update: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,set_update,100000)
 
 # Extend (excore grow) then delete/contains — two-core only.
 pycore-img-list-extend-del-contains-two-core: excore-fw
@@ -631,7 +705,17 @@ pycore-img-two-core: \
 	pycore-img-globals-accum-two-core \
 	pycore-img-string-ops-two-core \
 	pycore-img-list-extend-two-core \
-	pycore-img-list-extend-del-contains-two-core
+	pycore-img-list-extend-del-contains-two-core \
+	pycore-img-list-del-simple \
+	pycore-img-list-del-first-last \
+	pycore-img-list-del-contains \
+	pycore-img-list-del-nested \
+	pycore-img-list-del-shift-excore \
+	pycore-img-dict-grow-basic \
+	pycore-img-dict-grow-large \
+	pycore-img-dict-mixed-ops \
+	pycore-img-set-grow-basic \
+	pycore-img-set-update
 
 pycore-img: \
 	pycore-img-smoke \
@@ -669,18 +753,33 @@ pycore-img: \
 	pycore-img-is-op \
 	pycore-img-pop-jump-if-none \
 	pycore-img-nop \
-	pycore-img-list-del-simple \
-	pycore-img-list-del-first-last \
+	pycore-img-list-del-last-only \
 	pycore-img-list-contains-simple \
 	pycore-img-list-contains-types \
 	pycore-img-tuple-contains \
 	pycore-img-dict-contains \
-	pycore-img-list-del-contains \
-	pycore-img-list-del-nested \
 	pycore-img-list-del-contains-call \
 	pycore-img-list-del-oob \
 	pycore-img-list-del-tuple-trap \
-	pycore-img-dict-del-trap
+	pycore-img-dict-del-trap \
+	pycore-img-dict-store-lookup \
+	pycore-img-dict-overwrite \
+	pycore-img-dict-del-simple \
+	pycore-img-dict-del-then-insert \
+	pycore-img-dict-hash-neg1 \
+	pycore-img-dict-str-keys \
+	pycore-img-dict-large-pycore \
+	pycore-img-dict-grow-fatal \
+	pycore-img-dict-bool-int-collision \
+	pycore-img-dict-false-zero \
+	pycore-img-dict-del-collision \
+	pycore-img-dict-contains-collision \
+	pycore-img-set-build-simple \
+	pycore-img-set-add-contains \
+	pycore-img-set-bool-int \
+	pycore-img-set-hash-neg1 \
+	pycore-img-set-str \
+	pycore-img-set-grow-fatal
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /
@@ -762,7 +861,8 @@ pycore-container-tuple-store-trap:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_store_trap.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d1 -GSTRING_HEX=\"pycore/programs/tuple_store_trap_str.hex\",pycore_container_tuple_store_trap)
 
 pycore-container-dict-full-insert:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/dict_full_insert_str.hex\" -GMAX_CYCLES=20000,pycore_container_dict_full_insert)
+	# Load ≥ 2/3 / last-slot insert → PY_TRAP_DICT_GROW (11), not MEM_FAULT.
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d11 -GSTRING_HEX=\"pycore/programs/dict_full_insert_str.hex\" -GMAX_CYCLES=20000,pycore_container_dict_full_insert)
 
 # HEAP_INIT_PTR = 0x1F9C so BUILD_LIST 3 (112 bytes) exceeds PYCORE_HEAP_LIMIT.
 pycore-container-list-oom:
@@ -806,9 +906,10 @@ pycore-container-list-append-full-fatal:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_append_full_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d9 -GSTRING_HEX=\"pycore/programs/list_append_full_fatal_str.hex\",pycore_container_list_append_full_fatal)
 
 # list_extend_* (LIST_EXTEND): hand-built fixtures — see
-# pycore/tools/gen_list_extend_fixtures.py. Fast-path cases need spare
-# capacity (BUILD_LIST never produces it). Grow-without-excore is fatal
-# trap code 10; unsupported iterable tags are TYPE (code 1).
+# pycore/tools/gen_list_extend_fixtures.py. Non-empty extend always traps
+# code 10 without excore (even with spare capacity). Empty source is a
+# no-op on pycore. Unsupported iterable tags are TYPE (code 1).
+# Functional spare-capacity extend is covered by pycore-excore-extend-fast-no-trap.
 pycore-list-extend-fixtures:
 	$(PYTHON) pycore/tools/gen_list_extend_fixtures.py
 
@@ -825,7 +926,7 @@ pycore-container-list-extend-fast:
 		-GBOOT_EN=1 \
 		-GCHECK_ENTRY_RETURN=0 \
 		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd19" \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d10 \
 		--Mdir $(BUILD_DIR)/pycore_container_list_extend_fast \
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
@@ -844,7 +945,7 @@ pycore-container-list-extend-fast-tuple:
 		-GBOOT_EN=1 \
 		-GCHECK_ENTRY_RETURN=0 \
 		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd23" \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d10 \
 		--Mdir $(BUILD_DIR)/pycore_container_list_extend_fast_tuple \
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
@@ -973,8 +1074,9 @@ pycore-excore-extend-grow-list: excore-fw pycore-excore-integration-fixtures
 pycore-excore-extend-grow-tuple: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,extend_grow_tuple,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd60" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=50000)
 
+# Spare capacity still raises LIST_EXTEND (always-excore); firmware in-place copy.
 pycore-excore-extend-fast-no-trap: excore-fw pycore-excore-integration-fixtures
-	$(call PYCORE_EXCORE_RUN,extend_fast_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd5" -GEXPECTED_TRAP_REQ_COUNT=0)
+	$(call PYCORE_EXCORE_RUN,extend_fast_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd5" -GEXPECTED_TRAP_REQ_COUNT=1 -GMAX_CYCLES=50000)
 
 pycore-excore-extend-empty-noop: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,extend_empty_noop,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd7" -GEXPECTED_TRAP_REQ_COUNT=0)
@@ -1105,7 +1207,7 @@ excore-cpu-test: excore-fw
 
 excore-test: excore-asm-tests excore-cpu-test
 
-pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-top pycore-multifn pycore-container pycore-img pycore-excore-system pycore-img-two-core
+pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-container pycore-img pycore-excore-system pycore-img-two-core
 
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .

@@ -14,17 +14,14 @@ import importlib.util
 import opcode as _opcode_module
 import pathlib
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable
 
 from encoding import (
-    ENTRY_HEX_DIGITS,
     IMEM_SLOT_HEX_DIGITS,
     SHORT_STR_DATA_SHIFT,
-    SHORT_STR_MAX_BYTES,
     SHORT_STR_SIZE_SHIFT,
     STRING_MEM_BYTES,
-    STRING_RUNTIME_BASE,
     TAG_BOOL,
     TAG_CODE_OBJECT,
     TAG_DICT,
@@ -34,20 +31,14 @@ from encoding import (
     TAG_LIST,
     TAG_LONG_STR,
     TAG_NONE,
-    TAG_NULL,
     TAG_OBJECT,
     TAG_PTR,
     TAG_SET,
     TAG_SHORT_STR,
     TAG_TUPLE,
-    TAG_UNINIT,
     TAG_UNINITIALIZED,
     TAG_UNUSED,
-    VAL_MASK,
-    VAL_WIDTH,
     StringHeapBuilder,
-    float_bits,
-    format_entry,
     format_imem_slot,
     tag_constant,
 )
@@ -108,9 +99,6 @@ DEFERRED_OPS: dict[str, str] = {
     "DICT_MERGE":    "dict merge not yet implemented",
     "BINARY_SLICE":  "slice notation not yet implemented",
     "STORE_SLICE":   "slice assignment not yet implemented",
-    "BUILD_SET":     "set literals not yet implemented",
-    "SET_ADD":       "set.add not yet implemented",
-    "SET_UPDATE":    "set.update not yet implemented",
     "LOAD_GLOBAL":   "module/global lookup is supported by image_from_source.py",
     "LOAD_NAME":     "module/name lookup is supported by image_from_source.py",
     "STORE_NAME":    "module/name stores are supported by image_from_source.py",
@@ -168,12 +156,15 @@ SUPPORTED_OPS = {
     "STORE_SUBSCR",
     "DELETE_SUBSCR",
     "CONTAINS_OP",
-    # LIST_APPEND / LIST_EXTEND fast-path / grow-trap: see CONT_LIST_APPEND
-    # and CONT_LIST_EXTEND (pycore_core.sv). Comprehensions still fail
-    # validation on FOR_ITER/GET_ITER (deferred); LIST_EXTEND is also
-    # emitted by list-display unpack (`[a, *b]` / `[*a, *b]`).
+    # LIST_APPEND spare-capacity / grow-trap; LIST_EXTEND empty no-op /
+    # always-excore non-empty: see CONT_LIST_APPEND / CONT_LIST_EXTEND.
+    # Comprehensions still fail validation on FOR_ITER/GET_ITER (deferred);
+    # LIST_EXTEND is also emitted by list-display unpack (`[a, *b]` / `[*a, *b]`).
     "LIST_APPEND",
     "LIST_EXTEND",
+    "BUILD_SET",
+    "SET_ADD",
+    "SET_UPDATE",
 }
 
 SUPPORTED_BINARY_ARGS = {

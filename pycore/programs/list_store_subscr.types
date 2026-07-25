@@ -1,7 +1,0 @@
-lst: LIST
-x: INT
-y: INT
-z: INT
-
-# warnings
-OBJECT-typed value feeds BINARY_OP at bytecode offset 36

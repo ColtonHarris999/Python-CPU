@@ -264,6 +264,10 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
+            PY_OP_BUILD_SET: begin
+                is_container_o = 1'b1;
+            end
+
             PY_OP_BUILD_TUPLE: begin
                 is_container_o = 1'b1;
             end
@@ -302,6 +306,20 @@ module pycore_decode (
             // (popped).  Same stack shape as LIST_APPEND.
             PY_OP_LIST_EXTEND: begin
                 rs1_sel_o = tos_index_i - 8'd1 - arg_i[7:0];  // list handle
+                rs2_sel_o = tos_index_i - 8'd1;               // iterable
+                is_container_o = 1'b1;
+            end
+
+            // SET_ADD: set handle at RF[tos-1-arg], element at RF[tos-1].
+            PY_OP_SET_ADD: begin
+                rs1_sel_o = tos_index_i - 8'd1 - arg_i[7:0];  // set handle
+                rs2_sel_o = tos_index_i - 8'd1;               // element
+                is_container_o = 1'b1;
+            end
+
+            // SET_UPDATE: set at RF[tos-1-arg], iterable at TOS; always traps.
+            PY_OP_SET_UPDATE: begin
+                rs1_sel_o = tos_index_i - 8'd1 - arg_i[7:0];  // set handle
                 rs2_sel_o = tos_index_i - 8'd1;               // iterable
                 is_container_o = 1'b1;
             end

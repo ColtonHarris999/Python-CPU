@@ -21,7 +21,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from encoding import TAG_CODE_OBJECT, TAG_INT, format_imem_slot, int_value, pack_code_metadata  # noqa: E402
+from encoding import TAG_INT, format_imem_slot, int_value  # noqa: E402
 from heap_image import HeapImageBuilder, Tagged  # noqa: E402
 from image_from_source import write_program_hex, write_text  # noqa: E402
 
@@ -379,7 +379,8 @@ def gen_extend_grow_tuple() -> None:
 
 
 def gen_extend_fast_no_trap() -> None:
-    """Spare capacity: cap=8/len=1 + extend [2,3] → no trap; return 2+3=5."""
+    """Spare capacity: cap=8/len=1 + extend [2,3] → one LIST_EXTEND trap
+    (in-place on excore); return 2+3=5."""
     heap = _new_heap()
     dst = heap.alloc_list_with_capacity([(TAG_INT, int_value(1))], capacity=8)
     src = heap.alloc_list([(TAG_INT, int_value(2)), (TAG_INT, int_value(3))])

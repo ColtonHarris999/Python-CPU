@@ -35,8 +35,8 @@ Excore firmware does **not** use:
 Harvard split: instruction fetch never touches the data bus. Implemented
 in `excore_cpu.sv` as slaves on the hart's `memory_io_*` ports:
 
-- **Instructions**: private 4 KB word array (`FW_HEX` / `$readmemh`),
-  addressed by PC. Not writable at runtime.
+- **Instructions**: private IMEM word array (`FW_HEX` / `$readmemh`,
+  default 8 KB / 2048 words), addressed by PC. Not writable at runtime.
 - **Data**:
   - `0x0000_0000` – `0x0000_03FF` (1 KB): private scratch RAM
   - `0xF000_0000` and up: external MMIO master port → `excore_mmio`

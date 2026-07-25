@@ -13,8 +13,18 @@ CPython bytecode/opcode facts, not to a fixed, publicly specified ISA).
 python3 excore/tools/asm_rv32.py excore/fw/list_grow.s -o build/excore_fw/list_grow.hex
 ```
 
-`list_grow.s` handles both `PY_TRAP_LIST_GROW` (append) and
-`PY_TRAP_LIST_EXTEND` (grow-to-fit + copy source LIST/TUPLE).
+`list_grow.s` is the current firmware image and dispatches:
+
+| Code | Trap |
+| --- | --- |
+| 9 | `PY_TRAP_LIST_GROW` |
+| 10 | `PY_TRAP_LIST_EXTEND` |
+| 11 | `PY_TRAP_DICT_GROW` |
+| 12 | `PY_TRAP_LIST_DELETE` |
+| 13 | `PY_TRAP_SET_GROW` |
+| 14 | `PY_TRAP_SET_UPDATE` |
+
+Dict/set rich equality stays on pycore (no collision trap).
 
 or via the Makefile step used by every excore RTL test target:
 

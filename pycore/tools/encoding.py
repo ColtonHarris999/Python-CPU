@@ -25,6 +25,9 @@ TAG_OBJECT = 0b1000
 TAG_DICT = 0b1001
 TAG_LIST = 0b1010
 TAG_SET = 0b1011
+# Dict deleted-key sentinel (= TAG_DICT). Dicts are mutable and cannot be
+# hash keys, so DICT in a key slot means tombstone (mirrors PY_TAG_TOMBSTONE).
+TAG_TOMBSTONE = TAG_DICT
 TAG_CODE_OBJECT = 0b1100
 TAG_FRAME_OBJECT = 0b1101
 TAG_NULL = 0b1110  # formerly TAG_UNUSED; CPython self_or_null sentinel
@@ -83,15 +86,6 @@ encode_short_str = encode_short_string
 
 def int_value(n: int) -> int:
     return n & VAL_MASK
-
-
-def bool_value(b: bool) -> int:
-    return 1 if b else 0
-
-
-def format_entry(tag: int, value: int) -> str:
-    entry = ((tag & 0xF) << VAL_WIDTH) | (value & VAL_MASK)
-    return f"{entry:0{ENTRY_HEX_DIGITS}x}"
 
 
 def format_imem_slot(opcode: int, arg: int = 0) -> str:
@@ -202,3 +196,123 @@ def next_pow2(n: int) -> int:
 def dict_slot_count_for_stores(n_names: int) -> int:
     """Pre-size globals dict: next_pow2(max(4, 2 * count))."""
     return next_pow2(max(4, 2 * max(n_names, 0)))
+
+
+def _float_key_hash(bits: int) -> int:
+    """IEEE754 binary64 hash matching pycore_dict_key_hash FLOAT path.
+
+    integer-valued / ±0 → same as INT (incl. -1.0 → -2);
+    NaN/Inf/non-integer/overflow → low32 ^ high32 bit-mix.
+    """
+    bits &= (1 << 64) - 1
+    sign = (bits >> 63) & 1
+    exp = (bits >> 52) & 0x7FF
+    frac = bits & ((1 << 52) - 1)
+    mix = ((bits & 0xFFFFFFFF) ^ ((bits >> 32) & 0xFFFFFFFF)) & 0xFFFFFFFF
+    if exp == 0x7FF:
+        return mix
+    if exp == 0 and frac == 0:
+        return 0
+    if exp < 1023:
+        return mix
+    uexp = exp - 1023
+    if uexp >= 63:
+        return mix
+    sig = (1 << 52) | frac
+    if uexp < 52:
+        frac_mask = (1 << (52 - uexp)) - 1
+        if frac & frac_mask:
+            return mix
+        mag = sig >> (52 - uexp)
+    else:
+        mag = sig << (uexp - 52)
+    if not sign:
+        return mag & 0xFFFFFFFF
+    if mag == 1:
+        return 0xFFFFFFFE
+    return (-mag) & 0xFFFFFFFF
+
+
+def dict_key_hash(tag: int, value: int) -> int:
+    """Mirror of pycore_dict_key_hash — returns unmasked 32-bit hash.
+
+    INT: -1 → 0xFFFFFFFE (-2); else value[31:0].
+    BOOL: value[0] as 0/1.
+    FLOAT: integer-valued / ±0 match int; else bit-mix.
+    SHORT_STR: XOR of four 32-bit words.
+    LONG_STR: low32(addr) ^ low32(size).
+    """
+    value &= VAL_MASK
+    if tag == TAG_INT:
+        low64 = value & ((1 << 64) - 1)
+        if low64 == (1 << 64) - 1:
+            return 0xFFFFFFFE
+        return value & 0xFFFFFFFF
+    if tag == TAG_BOOL:
+        return value & 1
+    if tag == TAG_FLOAT:
+        return _float_key_hash(value & ((1 << 64) - 1))
+    if tag == TAG_SHORT_STR:
+        w0 = value & 0xFFFFFFFF
+        w1 = (value >> 32) & 0xFFFFFFFF
+        w2 = (value >> 64) & 0xFFFFFFFF
+        w3 = (value >> 96) & 0xFFFFFFFF
+        return (w0 ^ w1 ^ w2 ^ w3) & 0xFFFFFFFF
+    if tag == TAG_LONG_STR:
+        # value = {size[63:0], addr[63:0]}; hash = value[31:0] ^ value[95:64]
+        low_addr = value & 0xFFFFFFFF
+        low_size = (value >> 64) & 0xFFFFFFFF
+        return (low_addr ^ low_size) & 0xFFFFFFFF
+    return value & 0xFFFFFFFF
+
+
+def _float_as_int64(bits: int) -> int | None:
+    """Mirror of pycore_float_as_int64; None if not integer-valued."""
+    bits &= (1 << 64) - 1
+    sign = (bits >> 63) & 1
+    exp = (bits >> 52) & 0x7FF
+    frac = bits & ((1 << 52) - 1)
+    if exp == 0x7FF:
+        return None
+    if exp == 0 and frac == 0:
+        return 0
+    if exp < 1023:
+        return None
+    uexp = exp - 1023
+    if uexp >= 63:
+        return None
+    sig = (1 << 52) | frac
+    if uexp < 52:
+        frac_mask = (1 << (52 - uexp)) - 1
+        if frac & frac_mask:
+            return None
+        mag = sig >> (52 - uexp)
+    else:
+        mag = sig << (uexp - 52)
+    if mag >= (1 << 63):
+        return None
+    return -mag if sign else mag
+
+
+def dict_key_rich_eq(tag_a: int, val_a: int, tag_b: int, val_b: int) -> bool:
+    """Mirror of pycore_dict_key_rich_eq."""
+    val_a &= VAL_MASK
+    val_b &= VAL_MASK
+    numeric = {TAG_INT, TAG_BOOL, TAG_FLOAT}
+    if tag_a in numeric and tag_b in numeric:
+        def as_int(tag: int, val: int) -> int | None:
+            if tag == TAG_INT:
+                return val & ((1 << 64) - 1)
+            if tag == TAG_BOOL:
+                return val & 1
+            return _float_as_int64(val)
+
+        ia, ib = as_int(tag_a, val_a), as_int(tag_b, val_b)
+        if ia is not None and ib is not None:
+            return ia == ib
+        if tag_a == TAG_FLOAT and tag_b == TAG_FLOAT:
+            return val_a == val_b
+        return False
+    if tag_a == tag_b and tag_a in (TAG_SHORT_STR, TAG_LONG_STR):
+        return val_a == val_b
+    return False

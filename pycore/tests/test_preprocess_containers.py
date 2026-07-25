@@ -12,7 +12,6 @@ Covers:
 from __future__ import annotations
 
 import sys
-import types
 import unittest
 
 # Guard: only run on Python 3.14 (preprocess is 3.14-only).
@@ -324,7 +323,7 @@ class TestListAppendAccepted(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# LIST_EXTEND acceptance (fast-path / grow-trap in CONT_LIST_EXTEND)
+# LIST_EXTEND acceptance (empty no-op / always-excore in CONT_LIST_EXTEND)
 # ---------------------------------------------------------------------------
 
 class TestListExtendAccepted(unittest.TestCase):
@@ -439,12 +438,6 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
     def test_dict_update_in_deferred_ops(self) -> None:
         self._assert_deferred_error("DICT_UPDATE")
 
-    def test_build_set_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("BUILD_SET")
-
-    def test_set_add_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("SET_ADD")
-
     def test_deferred_ops_not_in_supported_ops(self) -> None:
         """All deferred opcodes must be absent from SUPPORTED_OPS."""
         for opname in preprocess.DEFERRED_OPS:
@@ -453,14 +446,18 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
                 f"{opname} is in DEFERRED_OPS but also in SUPPORTED_OPS",
             )
 
-    def test_build_set_program_rejected(self) -> None:
-        """A real program returning a set literal should be rejected."""
-        fn = _compile_fn("def f():\n    return {1, 2}\n", "f")
-        with self.assertRaises(ValueError) as ctx:
-            list(preprocess.iter_filtered_instructions(fn))
-        msg = str(ctx.exception)
-        self.assertIn("Deferred opcode", msg)
-        self.assertIn("BUILD_SET", msg)
+    def test_build_set_supported(self) -> None:
+        """Non-constant set display emits BUILD_SET and is accepted."""
+        fn = _compile_fn(
+            "def managed_entry():\n"
+            "    a = 1\n"
+            "    b = 2\n"
+            "    return {a, b}\n"
+        )
+        opnames = _emitted_opnames(fn)
+        self.assertIn("BUILD_SET", opnames)
+        self.assertIn("BUILD_SET", preprocess.SUPPORTED_OPS)
+        self.assertNotIn("BUILD_SET", preprocess.DEFERRED_OPS)
 
 
 # ---------------------------------------------------------------------------

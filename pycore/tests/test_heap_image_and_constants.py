@@ -121,6 +121,37 @@ class TestDictKeyHashAgreement(unittest.TestCase):
     def test_int_bool(self) -> None:
         self.assertEqual(heap_image.dict_key_hash(heap_image.TAG_INT, 7), 7)
         self.assertEqual(heap_image.dict_key_hash(heap_image.TAG_BOOL, 1), 1)
+        # CPython: hash(-1) == -2
+        self.assertEqual(
+            heap_image.dict_key_hash(heap_image.TAG_INT, (-1) & ((1 << 128) - 1)),
+            0xFFFFFFFE,
+        )
+        # True and 1 share a hash (cross-tag rich-eq path in excore).
+        self.assertEqual(
+            heap_image.dict_key_hash(heap_image.TAG_BOOL, 1),
+            heap_image.dict_key_hash(heap_image.TAG_INT, 1),
+        )
+        self.assertEqual(heap_image.dict_key_hash(heap_image.TAG_BOOL, 0), 0)
+
+    def test_float_integer_valued(self) -> None:
+        from encoding import float_bits
+
+        self.assertEqual(
+            heap_image.dict_key_hash(heap_image.TAG_FLOAT, float_bits(1.0)), 1
+        )
+        self.assertEqual(
+            heap_image.dict_key_hash(heap_image.TAG_FLOAT, float_bits(-1.0)),
+            0xFFFFFFFE,
+        )
+        self.assertEqual(
+            heap_image.dict_key_hash(heap_image.TAG_FLOAT, float_bits(0.0)), 0
+        )
+        self.assertEqual(
+            heap_image.dict_key_hash(heap_image.TAG_FLOAT, float_bits(-0.0)), 0
+        )
+        self.assertEqual(
+            heap_image.dict_key_hash(heap_image.TAG_FLOAT, float_bits(2.0)), 2
+        )
 
     def test_short_str_fold(self) -> None:
         # "x" encoded the same way as preprocess / RTL SHORT_STR layout.
