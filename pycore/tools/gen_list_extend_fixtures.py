@@ -1,17 +1,12 @@
 #!/usr/bin/env python3.14
 """Generate LIST_EXTEND (single-core) hand-built test fixtures.
 
-LIST_EXTEND is emitted by compile() for list-display unpack forms, but the
-fast path needs spare capacity that BUILD_LIST never produces (capacity ==
-length).  These fixtures mirror gen_list_append_fixtures.py:
+Non-empty LIST_EXTEND always raises PY_TRAP_LIST_EXTEND (even with spare
+capacity); empty source remains a no-op on pycore. Functional spare-capacity
+extend is covered by the two-core extend_fast_no_trap fixture.
 
-  list_extend_fast.*:
-    Destination list with capacity=8, length=2 ([7, 8]); extend from a
-    length-2 list [9, 10] (fits: 2+2 <= 8). Subscript the two new slots
-    and return their sum (19). No trap expected.
-
-  list_extend_fast_tuple.*:
-    Same destination; source is the tuple (11, 12). Return 11+12 = 23.
+  list_extend_fast.* / list_extend_fast_tuple.*:
+    Spare-capacity destinations; without excore → trap code 10.
 
   list_extend_empty.*:
     Destination [42] with spare capacity; extend from []. No-op pop;
@@ -96,7 +91,7 @@ def gen_list_extend_fast() -> None:
     _emit(slots, OP_RESUME, 0)
     _emit(slots, OP_LOAD_CONST, 0)           # [dst]
     _emit(slots, OP_LOAD_CONST, 1)           # [dst, src]
-    _emit(slots, OP_LIST_EXTEND, 1)          # fast path → len=4
+    _emit(slots, OP_LIST_EXTEND, 1)          # non-empty → trap 10 (no excore)
     _emit(slots, OP_LOAD_CONST, 0)
     _emit(slots, OP_LOAD_SMALL_INT, 2)
     _emit(slots, OP_BINARY_OP, NBARG_SUBSCR)  # [9]

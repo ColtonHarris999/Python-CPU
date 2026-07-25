@@ -13,8 +13,9 @@ CPython bytecode/opcode facts, not to a fixed, publicly specified ISA).
 python3 excore/tools/asm_rv32.py excore/fw/list_grow.s -o build/excore_fw/list_grow.hex
 ```
 
-`list_grow.s` handles both `PY_TRAP_LIST_GROW` (append) and
-`PY_TRAP_LIST_EXTEND` (grow-to-fit + copy source LIST/TUPLE).
+`list_grow.s` handles `PY_TRAP_LIST_GROW` / `LIST_EXTEND` /
+`LIST_DELETE`, `PY_TRAP_DICT_GROW`, and `SET_GROW` / `SET_UPDATE`.
+Dict/set rich equality runs on pycore (former `DICT_COLLISION` retired).
 
 or via the Makefile step used by every excore RTL test target:
 

@@ -19,10 +19,10 @@ into a two-core system happens in three ordered phases:
 
 - **Phase A** (done): the LIST layout became growable (stable
   object + relocatable buffer — see the LIST section below) and
-  `LIST_APPEND` / `LIST_EXTEND` gained fast paths plus recoverable traps
-  (`PY_TRAP_LIST_GROW` / `PY_TRAP_LIST_EXTEND`) that are *classified*
-  recoverable (`pycore_trap_recoverable()`). Without `EXCORE_EN` they are
-  still reported fatally.
+  `LIST_APPEND` gained a spare-capacity fast path plus a recoverable
+  `PY_TRAP_LIST_GROW` trap; `LIST_EXTEND` raises recoverable
+  `PY_TRAP_LIST_EXTEND` for every non-empty source (empty is a no-op
+  pop). Without `EXCORE_EN` recoverable traps are still fatal.
 - **Phase B** (done): the excore itself, standalone — `excore_cpu.sv`
   (wrapper around the vendored singlecore `riscv_multicycle` RV32 hart),
   `excore_mmio.sv` (the mailbox/result/slot-port MMIO peripheral), a
@@ -48,9 +48,12 @@ it was trying to do." For `LIST_APPEND` this means the excore allocates a
 bigger buffer, copies the old elements, **and appends the new one** —
 because by the time the excore is invoked it already holds the element (in
 the trap message) and is already looping over the buffer, so the append
-itself is nearly free. For `LIST_EXTEND` the same rule applies with
-grow-to-fit: double until `new_cap >= len + src_len`, copy the destination
-prefix, then copy the source elements, and answer `COMPLETED` (pop 1).
+itself is nearly free. For `LIST_EXTEND` the same rule applies: if
+`need = len + src_len <= capacity`, copy source elements in place onto the
+existing buffer; otherwise grow-to-fit (double until `new_cap >= need`),
+copy destination then source, and answer `COMPLETED` (pop 1). Mid-list
+`DELETE_SUBSCR` similarly completes the shift on excore (`LIST_DELETE`,
+pop 2); last-element delete stays O(1) on pycore.
 
 A plain **RETRY** after resize-only would cost a second memory-ownership
 handoff plus a second `S_CONTAINER` dispatch. In the eventual pipelined
@@ -59,22 +62,20 @@ refill). Grow-to-fit also matters: a single doubling can still undershoot
 `src_len` (e.g. cap=1, src_len=10 → need=11), so RETRY would cascade into
 multiple traps; COMPLETED finishes in one handoff. The protocol still
 defines `RETRY` for handlers where pycore state genuinely did not advance
-(e.g. emulating an unimplemented opcode from scratch) — but `LIST_GROW`
-and `LIST_EXTEND` always answer `COMPLETED`.
+(e.g. emulating an unimplemented opcode from scratch) — but `LIST_GROW`,
+`LIST_EXTEND`, and `LIST_DELETE` always answer `COMPLETED`.
 
 This "complete, don't retry" contract is only safe because every
 recoverable trap is raised **before any RF/heap/dmem commit** (see
-`CONT_LIST_APPEND`'s `CP_HDR` / `CONT_LIST_EXTEND`'s capacity check) — a
-property every future recoverable container-op trap must preserve, since
-`RETRY` semantics depend on pycore state not having advanced when the trap
-fired.
+`CONT_LIST_APPEND`'s `CP_HDR` / `CONT_LIST_EXTEND`'s empty check /
+`CONT_DELETE_LIST`'s mid-delete path) — a property every future recoverable
+container-op trap must preserve, since `RETRY` semantics depend on pycore
+state not having advanced when the trap fired.
 
-**Why pycore still owns the fast path when there is spare capacity:**
-handing every extend to the excore would force a memory-ownership transfer
-even when a short copy loop on pycore would suffice. In a future pipelined
-design that transfer flushes in-flight work; keeping `len + src_len <= cap`
-(and the empty-source no-op) on pycore is the low-latency path. Resizing
-itself always stays on the excore — pycore never reallocates list buffers.
+**Ownership split for list bulk / shift work:** empty `LIST_EXTEND` stays
+a no-op on pycore; every non-empty extend and every mid-list delete goes to
+excore so O(n) memmove / grow work is not duplicated in RTL. Spare-capacity
+`LIST_APPEND` remains on pycore (O(1)). See `pycore/docs/set_excore.md`.
 
 ### Two-core transport and integration (Phase C)
 
@@ -137,17 +138,19 @@ whose ownership is being transferred.
 | 7 | `PY_TRAP_MEM_FAULT` | fatal | also the excore's OOM report (`FATAL(MEM_FAULT)`) |
 | 8 | `PY_TRAP_ADDR_ALIGN` | fatal | |
 | 9 | `PY_TRAP_LIST_GROW` | **recoverable** | `LIST_APPEND` at capacity; excore doubles + completes append |
-| 10 | `PY_TRAP_LIST_EXTEND` | **recoverable** | `LIST_EXTEND` when `len+src_len > cap`; excore grows-to-fit + completes extend |
-| 11–15 | *(free)* | — | reserved for future recoverable / fatal codes |
+| 10 | `PY_TRAP_LIST_EXTEND` | **recoverable** | non-empty `LIST_EXTEND`; excore in-place or grow-to-fit + completes extend |
+| 11 | `PY_TRAP_DICT_GROW` | **recoverable** | new-key dict insert at load ≥ 2/3; excore realloc + rehash + STORE |
+| 12 | `PY_TRAP_LIST_DELETE` | **recoverable** | mid-list `DELETE_SUBSCR` shift; excore COMPLETED pop 2 |
+| 13 | `PY_TRAP_SET_GROW` | **recoverable** | `SET_ADD` at load ≥ 2/3; excore realloc + insert |
+| 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | always; excore grow-to-fit + merge |
+| 15 | *(free)* | — | reserved |
 
 `pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
-truth for the fatal/recoverable split (today: `LIST_GROW` and
-`LIST_EXTEND`). `EXCORE_EN=1` intercepts a recoverable code in
-`CONT_LIST_APPEND` / `CONT_LIST_EXTEND` (in general: in whichever
-container-op phase first detects the condition) *before* it would have
-reached `pycore_trap`, and routes it to `S_TRAP_MARSHAL` instead.
-`EXCORE_EN=0`, or any non-recoverable code, is completely untouched —
-`pycore_trap` sees exactly what it always has.
+truth for the fatal/recoverable split. `EXCORE_EN=1` intercepts a recoverable
+code in the detecting container-op phase *before* it would have reached
+`pycore_trap`, and routes it to `S_TRAP_MARSHAL` instead. `EXCORE_EN=0`, or
+any non-recoverable code, is completely untouched — `pycore_trap` sees exactly
+what it always has.
 
 The excore's result (`RES_CODE`, `excore/docs/mmio_map.md`) has three
 values, and the restartability requirement each implies:
@@ -575,20 +578,40 @@ every grow.
 (other tags → `PY_TRAP_TYPE`; no iterator protocol yet):
 
 - **Empty source**: no-op pop of the iterable on pycore (no trap).
-- **Fast path** (`len + src_len <= capacity`, `CONT_LIST_EXTEND`): copy
-  `src_len` elements into the spare slots, write back the new length, pop
-  the iterable. Self-extend is safe when `2*len <= capacity` (write
-  indices do not overlap the read window).
-- **Grow path** (`len + src_len > capacity`): raises `PY_TRAP_LIST_EXTEND`
-  (trap code 10) before any commit. The excore grows-to-fit
+- **Non-empty**: always raises `PY_TRAP_LIST_EXTEND` (trap code 10) before
+  any commit. The excore either copies in place when
+  `need = len + src_len <= capacity`, or grows-to-fit
   (`new_cap = max(cap?cap*2:4, need)`, doubling until `>= need`), copies
   destination then source (self-extend snapshots `old_buf` before the
-  `ob_item` rewrite; old buffer is intentionally leaked), and returns
-  `COMPLETED` with pop 1.
+  `ob_item` rewrite; old buffer is intentionally leaked on grow), and
+  returns `COMPLETED` with pop 1.
 
 `compile()` emits `LIST_EXTEND` for list-display unpack (`[1, 2, *x]`,
 `[*a, *b]`). Method-style `a.extend(b)` still lowers via `LOAD_ATTR`+`CALL`
 and is unsupported.
+
+#### `DELETE_SUBSCR` (list / dict)
+
+`DELETE_SUBSCR` (opcode 8) on a **LIST** (`CONT_DELETE_LIST`): type and
+bounds checks on pycore; deleting the last element is O(1) length-- on
+pycore; mid-list delete raises `PY_TRAP_LIST_DELETE` (12) before any commit
+so excore shifts `[idx+1 .. len)` down and writes `length-1` (`COMPLETED`
+pop 2). Capacity unchanged; delete never reallocates. OOB / negative
+indices → `PY_TRAP_MEM_FAULT`. Tuple → `PY_TRAP_TYPE`.
+
+On a **DICT**, same-tag / rich-eq hits write `PY_TAG_TOMBSTONE`
+(`== PY_TAG_DICT`, since dicts cannot be keys) on the key tag and
+decrement `used` on pycore. Miss → `PY_TRAP_MEM_FAULT`.
+
+#### `CONTAINS_OP`
+
+`CONTAINS_OP` (opcode 57) implements `in` / `not in` (oparg bit 0) —
+membership never changes capacity:
+
+- **LIST / TUPLE**: linear scan on pycore; INT/BOOL cross-equality matches
+  CPython (`True == 1`).
+- **DICT**: open-addressed probe; miss pushes `False` (unlike `NB_SUBSCR`,
+  which traps). Same-tag / rich-eq matches on pycore. Tombstones are skipped.
 
 ### TUPLE in-dmem layout
 
@@ -602,36 +625,39 @@ allocation bytes : size * 32
 ```
 
 Helpers: `pycore_tuple_val_addr`, `pycore_tuple_tag_addr`,
-`pycore_tuple_alloc_bytes`, `pycore_tuple_size`, `pycore_tuple_addr`.
+`pycore_tuple_alloc_bytes`, `pycore_tuple_size`.
 
-### DICT in-dmem layout
+### DICT in-dmem layout (v2)
 
-All addresses are 16-byte aligned (128-bit dmem slot granularity).
+All addresses are 16-byte aligned (128-bit dmem slot granularity). Layout v2
+keeps a **stable 32-byte object** and a **relocatable table** (grow updates
+`table_ptr` only; the dict handle address does not move):
 
 ```text
-base + 0                 : header { slot_count[63:0], used[63:0] }
-base + 16*(1 + 4*i)      : slot[i] key   value[127:0]
-base + 16*(2 + 4*i)      : slot[i] key   tag   { 124'b0, key_tag[3:0] }
-base + 16*(3 + 4*i)      : slot[i] value value[127:0]
-base + 16*(4 + 4*i)      : slot[i] value tag   { 124'b0, val_tag[3:0] }
+obj+0  : header { slot_count[63:0], used[63:0] }
+obj+16 : { 64'd0, table_ptr[63:0] }     // 0 if slot_count == 0
+
+table + i*64 + 0  : key value
+table + i*64 + 16 : key tag   (UNINIT=empty, TOMBSTONE=DICT=9 deleted)
+table + i*64 + 32 : value value
+table + i*64 + 48 : value tag
 ```
 
-Each slot occupies **four 16-byte dmem slots** (slot stride = 64 bytes).
-Total allocation = `16 + slot_count × 64` bytes.
-
-Empty-bucket sentinel: key tag = `PY_TAG_UNINIT` (4'b0000).
-
-Slot count = `next_pow2(max(4, 2 × n_pairs))`, ensuring max load ≤ 50% at
-construction time. Hash = `pycore_dict_key_hash(tag, value) & (slot_count − 1)`:
+`BUILD_MAP` may allocate object+table contiguously
+(`pycore_dict_alloc_bytes`); slot helpers take the **table** base. Slot count
+= `next_pow2(max(4, 2 × n_pairs))` (including empty `BUILD_MAP 0` → 4 slots).
+Hash = `pycore_dict_key_hash(tag, value) & (slot_count − 1)`:
 
 | Key tag | Hash |
 | --- | --- |
-| `INT` / `BOOL` | `value[31:0]` (preserves existing images) |
+| `INT` | `value[31:0]`; CPython `-1 → -2` |
+| `BOOL` | `value[0]` as 0/1 |
+| `FLOAT` | integer-valued / ±0 match int hashes; else bit-mix |
 | `SHORT_STR` | XOR of the four 32-bit words of `value[127:0]` |
 | `LONG_STR` | `value[31:0] ^ value[95:64]` (low 32 of addr XOR low 32 of size) |
 
-Supported key tags: `INT`, `BOOL`, `SHORT_STR`, `LONG_STR`. Other key tags trap
-`PY_TRAP_TYPE`. Key-not-found traps `PY_TRAP_MEM_FAULT`.
+Supported key tags: `INT`, `BOOL`, `FLOAT`, `SHORT_STR`, `LONG_STR`. Other key
+tags trap `PY_TRAP_TYPE`. Key-not-found traps `PY_TRAP_MEM_FAULT`.
 
 `LONG_STR` equality is descriptor equality (`{size, addr}`). This relies on
 **interning**: `StringHeapBuilder` deduplicates identical long-string constants
@@ -639,14 +665,12 @@ so descriptor equality is string equality. Runtime-concatenated `LONG_STR`
 results (private to `pycore_exec` string memory, not interned) are not valid
 dict keys semantically; hardware cannot detect this.
 
-The header `used` field is maintained on insert. Probe loops are bounded by
-`slot_count` and trap `PY_TRAP_MEM_FAULT` on exhaustion. Interim insert policy
-(until rehash/grow): never fill the table completely — require
-`used + 1 < slot_count` before an empty-slot insert so at least one empty slot
-always remains.
-
-The implementation uses **tombstone-free open-addressed linear probing**.
-`DELETE_SUBSCR` is deferred; tombstone logic can be added later when needed.
+**Same-tag probe**, **cross-tag rich equality**, and **tombstone skip** stay
+on pycore. Before a new-key insert, load ≥ 2/3 (`used*3 >= slot_count*2`),
+empty table, or no free slot raises `PY_TRAP_DICT_GROW` (11); excore
+reallocates (`used*4` if `used≤50k` else `used*2`, floored/rounded to a
+power of two), rehashes, and completes the STORE. Without `EXCORE_EN` grow
+is fatal. Design notes: `pycore/docs/dict_excore.md`.
 
 Static heap images for dicts/tuples/lists can be built with
 `pycore/tools/heap_image.py` (`HeapImageBuilder`), which mirrors the RTL hash
@@ -654,18 +678,20 @@ and probe rules.
 
 ### DICT FSM path
 
-`CONT_BUILD_MAP`, `CONT_SUBSCR_DICT`, and `CONT_STORE_DICT` are three distinct
-container op codes (3-bit `container_op_r`) sharing the dict-specific phases
-`CP_DICT_HASH` (5) through `CP_DICT_RD_VTAG` (14). `CONT_BUILD_TUPLE` and
+`CONT_BUILD_MAP`, `CONT_SUBSCR_DICT`, `CONT_STORE_DICT`, plus dict
+`DELETE_SUBSCR` / `CONTAINS_OP` paths, share the dict probe phases. Layout v2
+reads `table_ptr` via `CP_LIST_BUF` after the header. `CONT_BUILD_TUPLE` and
 `CONT_SUBSCR_TUPLE` reuse the shared LIST-style phases without a header.
 
-- **`BUILD_MAP`**: allocates header, then for each pair reads key from RF,
-  probes for empty/matching slot, inserts key + value (4 dmem writes each),
-  rewrites `used` in the header once at the end.
-- **`NB_SUBSCR` on DICT**: reads header → slot_count, probes for matching key,
-  reads value value + tag, writes result to RF.
-- **`STORE_SUBSCR` on DICT**: reads header, probes for matching or empty slot,
-  writes key/value; bumps `used` on new-key insert.
+- **`BUILD_MAP`**: allocates 32B object + contiguous table, writes header +
+  `table_ptr`, then for each pair probes (same-tag only) and inserts; rewrites
+  `used` once at the end. Empty maps still get ≥4 slots.
+- **`NB_SUBSCR` on DICT**: reads header + `table_ptr`, probes; same-tag /
+  rich-eq hit returns value; miss → `MEM_FAULT`.
+- **`STORE_SUBSCR` on DICT**: same-tag / rich-eq upsert / tombstone reuse on
+  pycore; new-key insert may `DICT_GROW`.
+- **`DELETE_SUBSCR` / `CONTAINS_OP` on DICT**: tombstone / BOOL result via
+  same-tag / rich-eq probe on pycore.
 - **`BUILD_TUPLE` / `NB_SUBSCR` on TUPLE**: no header; size is inline in the
   handle. `STORE_SUBSCR` on a TUPLE traps `PY_TRAP_TYPE` (immutable).
 

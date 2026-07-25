@@ -96,27 +96,28 @@ SUPPORTED_OPS = {
     "STORE_GLOBAL",
     "PUSH_NULL",
     "MAKE_FUNCTION",
-    # LIST_APPEND / LIST_EXTEND fast-path (spare capacity) / grow-trap are
-    # implemented in CONT_LIST_APPEND / CONT_LIST_EXTEND (pycore_core.sv).
+    # LIST_APPEND spare-capacity fast path / grow-trap, and LIST_EXTEND
+    # (empty no-op / always-excore non-empty) are in CONT_LIST_APPEND /
+    # CONT_LIST_EXTEND (pycore_core.sv).
     # LIST_APPEND still only appears inside comprehensions (FOR_ITER/GET_ITER
     # deferred). LIST_EXTEND is emitted by list-display unpack forms such as
     # `[1, 2, *x]` and `[*a, *b]` — those are accepted here. Sources must be
     # LIST or TUPLE (no iterator protocol yet).
     "LIST_APPEND",
     "LIST_EXTEND",
+    "BUILD_SET",
+    "SET_ADD",
+    "SET_UPDATE",
+    "DELETE_SUBSCR",
+    "CONTAINS_OP",
 }
 
 DEFERRED_OPS: dict[str, str] = {
     "MAP_ADD": "dict-comprehension MAP_ADD lowering is deferred",
     "DICT_UPDATE": "dict update/unpack lowering is deferred",
     "DICT_MERGE": "dict merge lowering is deferred",
-    "DELETE_SUBSCR": "subscript deletion is deferred",
-    "CONTAINS_OP": "in / not-in operator support is deferred",
     "BINARY_SLICE": "slice notation support is deferred",
     "STORE_SLICE": "slice assignment support is deferred",
-    "BUILD_SET": "set literals are deferred",
-    "SET_ADD": "set.add/set-comprehension lowering is deferred",
-    "SET_UPDATE": "set.update lowering is deferred",
 }
 
 
@@ -445,9 +446,134 @@ def apply_lfac_injects(
     return result
 
 
+# Hand-assemble SET_ADD sequences (compile() only emits SET_ADD in
+# comprehensions that need FOR_ITER). Pragma:
+#   # pycore-inject: SET_ADD_SEQ <func> <int> <int> ...
+#   optional trailing keywords: RET=0 | CONTAINS
+# CONTAINS: after adds, return bitmask (1<<i) for each value present via `in`.
+_INJECT_SET_ADD_PREFIX = "# pycore-inject: SET_ADD_SEQ "
+_OP_RESUME = _OM["RESUME"]
+_OP_BUILD_SET = _OM["BUILD_SET"]
+_OP_SET_ADD = _OM["SET_ADD"]
+_OP_LOAD_SMALL_INT = _OM["LOAD_SMALL_INT"]
+_OP_STORE_FAST = _OM["STORE_FAST"]
+_OP_LOAD_FAST = _OM["LOAD_FAST"]
+_OP_CONTAINS_OP = _OM["CONTAINS_OP"]
+_OP_BINARY_OP = _OM["BINARY_OP"]
+_OP_RETURN_VALUE = _OM["RETURN_VALUE"]
+
+
+def parse_set_add_seq_pragmas(
+    source_text: str,
+) -> list[tuple[str, list[int], str]]:
+    """Return ``(func, ints, mode)`` with mode ``RET`` or ``CONTAINS``."""
+    out: list[tuple[str, list[int], str]] = []
+    for line in source_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(_INJECT_SET_ADD_PREFIX):
+            continue
+        rest = stripped[len(_INJECT_SET_ADD_PREFIX) :].strip().split()
+        if len(rest) < 2:
+            raise ValueError(
+                "pycore-inject SET_ADD_SEQ expects '<func> <int>...' "
+                f"got {stripped!r}"
+            )
+        func = rest[0]
+        mode = "RET"
+        nums: list[int] = []
+        for tok in rest[1:]:
+            if tok.startswith("MODE="):
+                mode = tok.split("=", 1)[1]
+            else:
+                nums.append(int(tok))
+        if mode not in ("RET", "CONTAINS"):
+            raise ValueError(f"SET_ADD_SEQ MODE must be RET or CONTAINS, got {mode}")
+        out.append((func, nums, mode))
+    return out
+
+
+def _build_set_add_seq_code(
+    template: types.CodeType, nums: list[int], mode: str
+) -> types.CodeType:
+    """Replace ``template`` bytecode with BUILD_SET0 + SET_ADDs (+ contains)."""
+    code = bytearray()
+    # CPython 3.14 CodeType.replace force-pads inline caches by overwriting the
+    # following word(s). Emit CACHE entries explicitly (same layout as compile()).
+    _contains_caches = sum(_opcode_module._cache_format["CONTAINS_OP"].values())
+    _binary_caches = sum(_opcode_module._cache_format["BINARY_OP"].values())
+
+    def emit(op: int, arg: int = 0) -> None:
+        if arg > 255:
+            raise ValueError(f"oparg {arg} exceeds 8 bits in SET_ADD_SEQ")
+        code.append(op)
+        code.append(arg & 0xFF)
+
+    def emit_caches(n: int) -> None:
+        for _ in range(n):
+            emit(OP_CACHE, 0)
+
+    emit(_OP_RESUME, 0)
+    emit(_OP_BUILD_SET, 0)
+    emit(_OP_STORE_FAST, 0)  # s
+    for n in nums:
+        if n < 0 or n > 255:
+            raise ValueError(f"SET_ADD_SEQ ints must be 0..255, got {n}")
+        emit(_OP_LOAD_FAST, 0)
+        emit(_OP_LOAD_SMALL_INT, n)
+        emit(_OP_SET_ADD, 1)
+    if mode == "CONTAINS":
+        # Start with INT 0 so BOOL+INT promotions yield INT (not BOOL).
+        emit(_OP_LOAD_SMALL_INT, 0)
+        for n in nums:
+            emit(_OP_LOAD_SMALL_INT, n)
+            emit(_OP_LOAD_FAST, 0)
+            emit(_OP_CONTAINS_OP, 0)  # bool
+            emit_caches(_contains_caches)
+            emit(_OP_BINARY_OP, 0)  # +
+            emit_caches(_binary_caches)
+        miss = (max(nums) + 1) if nums else 0
+        if miss <= 255:
+            emit(_OP_LOAD_SMALL_INT, miss)
+            emit(_OP_LOAD_FAST, 0)
+            emit(_OP_CONTAINS_OP, 1)  # not in → True
+            emit_caches(_contains_caches)
+            emit(_OP_BINARY_OP, 0)
+            emit_caches(_binary_caches)
+        emit(_OP_RETURN_VALUE, 0)
+    else:
+        emit(_OP_LOAD_SMALL_INT, 0)
+        emit(_OP_RETURN_VALUE, 0)
+
+    # Locals: one slot for the set. Stack size: generous.
+    return template.replace(
+        co_code=bytes(code),
+        co_varnames=("s",),
+        co_nlocals=1,
+        co_stacksize=max(8, template.co_stacksize),
+        co_names=(),
+        co_consts=(None,),
+    )
+
+
+def apply_set_add_seq_injects(
+    module_code: types.CodeType, source_text: str
+) -> types.CodeType:
+    result = module_code
+    for func_name, nums, mode in parse_set_add_seq_pragmas(source_text):
+        target = _find_code_by_name(result, func_name)
+        if target is None:
+            raise ValueError(
+                f"pycore-inject SET_ADD_SEQ target {func_name!r} not found"
+            )
+        rewritten = _build_set_add_seq_code(target, nums, mode)
+        result = _replace_code_by_name(result, func_name, rewritten)
+    return result
+
+
 def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildResult:
     module_code = compile(source_text, filename, "exec")
     module_code = apply_lfac_injects(module_code, source_text)
+    module_code = apply_set_add_seq_injects(module_code, source_text)
     return build_image_from_code(module_code)
 
 
