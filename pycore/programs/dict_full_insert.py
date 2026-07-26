@@ -1,7 +1,7 @@
-"""Insert until table would fill completely → MEM_FAULT (must not hang).
+"""Insert until load would fill / exceed grow threshold → DICT_GROW.
 
 2 pairs → 4 slots. After BUILD_MAP used=2. Insert key 2 → used=3.
-Insert key 3 would make used=4 (100% full) → trap.
+Insert key 3 would make used+1 >= slot_count → PY_TRAP_DICT_GROW.
 """
 
 def managed_entry() -> int:

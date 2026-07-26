@@ -34,6 +34,10 @@ localparam logic [3:0] PY_TAG_OBJECT       = 4'b1000;
 localparam logic [3:0] PY_TAG_DICT         = 4'b1001;
 localparam logic [3:0] PY_TAG_LIST         = 4'b1010;
 localparam logic [3:0] PY_TAG_SET          = 4'b1011;
+// Dict deleted-key sentinel. Reuses PY_TAG_DICT because dicts are mutable and
+// cannot be hash keys — a key-slot tag of DICT is never a live key, so it is
+// free to mean "tombstone" during open-addressed probe / insert.
+localparam logic [3:0] PY_TAG_TOMBSTONE    = PY_TAG_DICT;
 localparam logic [3:0] PY_TAG_CODE_OBJECT  = 4'b1100;
 localparam logic [3:0] PY_TAG_FRAME_OBJECT = 4'b1101;
 // PY_TAG_NULL: CPython self_or_null sentinel pushed for non-method calls
@@ -48,8 +52,6 @@ localparam int PYCORE_SHORT_STR_SIZE_MSB  = 127;
 localparam int PYCORE_SHORT_STR_SIZE_LSB  = 124;
 localparam int PYCORE_SHORT_STR_DATA_MSB  = 123;
 localparam int PYCORE_SHORT_STR_DATA_LSB  = 4;
-localparam int PYCORE_SHORT_STR_FLAG_MSB  = 3;
-localparam int PYCORE_SHORT_STR_FLAG_LSB  = 0;
 
 localparam logic [1:0] PY_EXEC_INT   = 2'd0;
 localparam logic [1:0] PY_EXEC_FLOAT = 2'd1;
@@ -77,11 +79,24 @@ localparam logic [3:0] PY_TRAP_ADDR_ALIGN     = 4'd8;
 // through the same halt path.  Raised before any RF/heap commit (see
 // pycore_trap_recoverable below and CONT_LIST_APPEND's CP_HDR phase).
 localparam logic [3:0] PY_TRAP_LIST_GROW      = 4'd9;
-// PY_TRAP_LIST_EXTEND: raised by CONT_LIST_EXTEND when
-// length + src_len > capacity. Recoverable — the excore grows-to-fit and
-// completes the extend (emulate-and-complete; not RETRY). Raised before
-// any RF/heap commit. Codes 11-15 remain free.
+// PY_TRAP_LIST_EXTEND: raised by CONT_LIST_EXTEND for every non-empty
+// LIST/TUPLE source (empty source is a no-op pop on pycore). Recoverable —
+// the excore grows-to-fit when needed (or copies in place when capacity
+// already suffices) and completes the extend. Raised before any commit.
 localparam logic [3:0] PY_TRAP_LIST_EXTEND    = 4'd10;
+// PY_TRAP_DICT_GROW: raised before a new-key dict insert when load ≥ 2/3
+// (or table empty). Recoverable — excore reallocates the relocatable table,
+// rehashes, and completes STORE. Handle address stays stable (layout v2).
+localparam logic [3:0] PY_TRAP_DICT_GROW      = 4'd11;
+// PY_TRAP_LIST_DELETE: list DELETE_SUBSCR element shift (excore; part 2).
+// Code 12 formerly DICT_COLLISION — dict/set rich equality now runs on pycore.
+localparam logic [3:0] PY_TRAP_LIST_DELETE    = 4'd12;
+// PY_TRAP_SET_GROW: SET_ADD at load ≥ 2/3 (or empty table). Recoverable —
+// excore reallocates the element table, rehashes, inserts, COMPLETED pop=1.
+localparam logic [3:0] PY_TRAP_SET_GROW       = 4'd13;
+// PY_TRAP_SET_UPDATE: always raised by SET_UPDATE (bulk merge). Recoverable —
+// excore grow-to-fit + insert from LIST/TUPLE/SET source, COMPLETED pop=1.
+localparam logic [3:0] PY_TRAP_SET_UPDATE     = 4'd14;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a
@@ -89,7 +104,11 @@ localparam logic [3:0] PY_TRAP_LIST_EXTEND    = 4'd10;
 function automatic logic pycore_trap_recoverable(input logic [3:0] code);
     begin
         pycore_trap_recoverable = (code == PY_TRAP_LIST_GROW) ||
-                                  (code == PY_TRAP_LIST_EXTEND);
+                                  (code == PY_TRAP_LIST_EXTEND) ||
+                                  (code == PY_TRAP_DICT_GROW) ||
+                                  (code == PY_TRAP_LIST_DELETE) ||
+                                  (code == PY_TRAP_SET_GROW) ||
+                                  (code == PY_TRAP_SET_UPDATE);
     end
 endfunction
 
@@ -130,7 +149,6 @@ localparam logic [4:0] PY_ALU_ILLEGAL   = 5'd31;
 //   python3.14 -c "import opcode; print({n:opcode.opmap[n] for n in [...]})"
 // -------------------------------------------------------------------------
 localparam logic [7:0] PY_OP_CACHE            = 8'd0;
-localparam logic [7:0] PY_OP_DELETE_SUBSCR    = 8'd8;
 localparam logic [7:0] PY_OP_END_FOR          = 8'd9;
 localparam logic [7:0] PY_OP_GET_ITER         = 8'd16;
 localparam logic [7:0] PY_OP_MAKE_FUNCTION    = 8'd23;
@@ -146,6 +164,12 @@ localparam logic [7:0] PY_OP_UNARY_NOT        = 8'd42;
 localparam logic [7:0] PY_OP_BINARY_OP        = 8'd44;
 localparam logic [7:0] PY_OP_BUILD_LIST       = 8'd46;
 localparam logic [7:0] PY_OP_BUILD_MAP        = 8'd47;
+// BUILD_SET / SET_ADD / SET_UPDATE — CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['BUILD_SET'],
+//                                       opcode.opmap['SET_ADD'],
+//                                       opcode.opmap['SET_UPDATE'])"
+//   -> 48, 107, 109
+localparam logic [7:0] PY_OP_BUILD_SET        = 8'd48;
 localparam logic [7:0] PY_OP_BUILD_TUPLE      = 8'd51;
 localparam logic [7:0] PY_OP_CALL             = 8'd52;
 localparam logic [7:0] PY_OP_COMPARE_OP       = 8'd56;
@@ -170,7 +194,8 @@ localparam logic [7:0] PY_OP_POP_JUMP_IF_FALSE    = 8'd100;
 localparam logic [7:0] PY_OP_POP_JUMP_IF_NONE     = 8'd101;
 localparam logic [7:0] PY_OP_POP_JUMP_IF_NOT_NONE = 8'd102;
 localparam logic [7:0] PY_OP_POP_JUMP_IF_TRUE     = 8'd103;
-localparam logic [7:0] PY_OP_SET_FUNCTION_ATTRIBUTE = 8'd108;
+localparam logic [7:0] PY_OP_SET_ADD          = 8'd107;
+localparam logic [7:0] PY_OP_SET_UPDATE       = 8'd109;
 localparam logic [7:0] PY_OP_STORE_FAST       = 8'd112;
 localparam logic [7:0] PY_OP_STORE_FAST_LOAD_FAST  = 8'd113;
 localparam logic [7:0] PY_OP_STORE_FAST_STORE_FAST = 8'd114;
@@ -190,7 +215,26 @@ localparam logic [7:0] PY_OP_LIST_APPEND      = 8'd78;
 //   -> 79
 localparam logic [7:0] PY_OP_LIST_EXTEND      = 8'd79;
 
+// DELETE_SUBSCR / CONTAINS_OP — CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['DELETE_SUBSCR'],
+//                                       opcode.opmap['CONTAINS_OP'])"
+//   -> 8, 57
+localparam logic [7:0] PY_OP_DELETE_SUBSCR    = 8'd8;
+localparam logic [7:0] PY_OP_CONTAINS_OP      = 8'd57;
+
 // -------------------------------------------------------------------------
+// DELETE_SUBSCR stack convention — verified 2026-07-21 against CPython 3.14.6:
+//   del a[i]  →  LOAD a; LOAD i; DELETE_SUBSCR
+//   container at RF[tos-2], key at RF[tos-1]; both popped. List: shift-down
+//   in place (capacity unchanged; mid-list → LIST_DELETE/excore). Tuple:
+//   TYPE trap. Dict: tombstone write on pycore.
+// -------------------------------------------------------------------------
+// CONTAINS_OP stack convention — verified 2026-07-21:
+//   x in a / x not in a  →  LOAD x; LOAD a; CONTAINS_OP oparg
+//   needle at RF[tos-2], container at RF[tos-1]; result BOOL at tos-2, pop 1.
+//   oparg[0]=0 → in; oparg[0]=1 → not in. LIST/TUPLE linear scan; DICT probe.
+// -------------------------------------------------------------------------
+
 // LIST_APPEND stack convention — verified 2026-07-15 against CPython 3.14.6:
 //
 //   python3.14 -c "
@@ -230,6 +274,12 @@ localparam logic [7:0] PY_OP_LIST_EXTEND      = 8'd79;
 // RF[tos-1-arg].  oparg=1 in every unpack form probed.  Only LIST and
 // TUPLE sources are implemented (TYPE trap otherwise — no iterator
 // protocol yet).  Empty source is a no-op pop.
+// -------------------------------------------------------------------------
+
+// -------------------------------------------------------------------------
+// SET_ADD stack convention — same shape as LIST_APPEND (CPython 3.14):
+//   set handle at RF[tos-1-arg], element at RF[tos-1]; only element popped.
+// SET_UPDATE: set at RF[tos-1-arg], iterable at TOS; always excore trap 14.
 // -------------------------------------------------------------------------
 
 // -------------------------------------------------------------------------
@@ -509,42 +559,108 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_long_str_entry(
 endfunction
 
 // -------------------------------------------------------------------------
-// DICT in-dmem layout (all addresses 16-byte aligned):
+// DICT in-dmem layout v2 (all addresses 16-byte aligned):
 //
-//   base + 0                  : header { slot_count[63:0], used[63:0] }
-//   base + 16*(1 + 4*i)       : slot[i] key   value[127:0]
-//   base + 16*(2 + 4*i)       : slot[i] key   tag   {124'b0, key_tag[3:0]}
-//   base + 16*(3 + 4*i)       : slot[i] value value[127:0]
-//   base + 16*(4 + 4*i)       : slot[i] value tag   {124'b0, val_tag[3:0]}
+// Stable 32-byte object (handle never moves across grows) + relocatable
+// open-addressed table (like list obj / ob_item):
 //
-// Slot stride = 4 * 16 = 64 bytes.
-// Empty-bucket sentinel: key tag == PY_TAG_UNINIT (4'b0000).
-// Slot count is always a power of two; probe mask = slot_count - 1.
+//   obj + 0  : header { slot_count[63:0], used[63:0] }
+//   obj + 16 : { 64'd0, table_ptr[63:0] }   // 0 if slot_count==0
+//
+//   table + i*64 + 0  : key   value[127:0]
+//   table + i*64 + 16 : key   tag   {124'b0, key_tag[3:0]}
+//   table + i*64 + 32 : value value[127:0]
+//   table + i*64 + 48 : value tag   {124'b0, val_tag[3:0]}
+//
+// Slot stride = 64 bytes. Empty: key tag == PY_TAG_UNINIT.
+// Deleted: key tag == PY_TAG_TOMBSTONE (== PY_TAG_DICT; skip during probe).
+// Dicts cannot be keys, so DICT in a key slot unambiguously means tombstone.
+// Slot count is a power of two (or 0); probe mask = slot_count - 1.
+//
+// BUILD_MAP may allocate object+table contiguously
+// (pycore_dict_alloc_bytes); grow relocates the table only and updates
+// table_ptr. Address helpers take the TABLE base, not the object base.
 //
 // Hash: pycore_dict_key_hash(tag, value) & (slot_count - 1).
-// Supported key tags: INT, BOOL, SHORT_STR, LONG_STR.
-// Unsupported key tags trap PY_TRAP_TYPE; key-not-found traps PY_TRAP_MEM_FAULT.
-//
-// Interim insert policy (until rehash/grow exists): never fill the table
-// completely — require used < slot_count after every insert so at least one
-// empty slot remains and absent-key probes always terminate.  Probe loops
-// are also bounded by slot_count and trap PY_TRAP_MEM_FAULT on exhaustion.
-//
-// Dict option: open-addressed linear probe with tombstone-free insert
-// (tombstone deletion deferred; DELETE_SUBSCR not yet implemented).
+// Supported key tags: INT, BOOL, FLOAT, SHORT_STR, LONG_STR.
+// Unsupported key tags trap PY_TRAP_TYPE.
+// Load ≥ 2/3 before new-key insert → PY_TRAP_DICT_GROW.
+// Probe equality (same-tag + INT/BOOL/FLOAT rich) → pycore_dict_key_rich_eq.
 // -------------------------------------------------------------------------
 
 // 32-bit key hash; caller masks with (slot_count - 1).
-// INT/BOOL use value[31:0] (preserves existing images).  SHORT_STR folds the
-// full 128-bit value field.  LONG_STR hashes low-32(addr) ^ low-32(size).
+// INT: CPython -1 → -2; else value[31:0].
+// BOOL: 0/1 from value[0].
+// FLOAT: integer-valued / ±0 match int hashes; NaN/Inf/non-int → bit mix.
+// SHORT_STR: XOR of four 32-bit words. LONG_STR: low32(addr) ^ low32(size).
 function automatic logic [31:0] pycore_dict_key_hash(
     input logic [3:0]                    tag,
     input logic [PYCORE_VAL_WIDTH-1:0]   value
 );
+    logic        f_sign;
+    logic [10:0] f_exp;
+    logic [51:0] f_frac;
+    logic [10:0] f_uexp;
+    logic [51:0] f_frac_mask;
+    logic [52:0] f_sig;
+    logic [63:0] f_mag;
+    logic        f_is_int;
     begin
+        f_sign      = value[63];
+        f_exp       = value[62:52];
+        f_frac      = value[51:0];
+        f_uexp      = f_exp - 11'd1023;
+        f_sig       = {1'b1, f_frac};
+        f_frac_mask = 52'd0;
+        f_mag       = 64'd0;
+        f_is_int    = 1'b0;
+
         unique case (tag)
-            PY_TAG_INT, PY_TAG_BOOL:
-                pycore_dict_key_hash = value[31:0];
+            PY_TAG_INT: begin
+                // CPython: hash(-1) == -2
+                if (value[63:0] == 64'hFFFFFFFFFFFFFFFF)
+                    pycore_dict_key_hash = 32'hFFFFFFFE;
+                else
+                    pycore_dict_key_hash = value[31:0];
+            end
+            PY_TAG_BOOL:
+                pycore_dict_key_hash = {31'b0, value[0]};
+            PY_TAG_FLOAT: begin
+                // value[63:0] = IEEE754 binary64
+                if (f_exp == 11'h7FF) begin
+                    // NaN / Inf — bit-mix; excore handles rich eq
+                    pycore_dict_key_hash = value[31:0] ^ value[63:32];
+                end else if ((f_exp == 11'd0) && (f_frac == 52'd0)) begin
+                    // ±0.0 → 0
+                    pycore_dict_key_hash = 32'd0;
+                end else if (f_exp < 11'd1023) begin
+                    // |x| < 1 (incl. subnormals): not integer-valued
+                    pycore_dict_key_hash = value[31:0] ^ value[63:32];
+                end else if (f_uexp >= 11'd63) begin
+                    // Magnitude does not fit in signed 64-bit int
+                    pycore_dict_key_hash = value[31:0] ^ value[63:32];
+                end else begin
+                    if (f_uexp < 11'd52) begin
+                        f_frac_mask = (52'h1 << (11'd52 - f_uexp)) - 52'h1;
+                        f_is_int    = ((f_frac & f_frac_mask) == 52'd0);
+                        f_mag       = {11'b0, f_sig} >> (11'd52 - f_uexp);
+                    end else begin
+                        f_is_int = 1'b1;
+                        f_mag    = {11'b0, f_sig} << (f_uexp - 11'd52);
+                    end
+                    if (!f_is_int)
+                        pycore_dict_key_hash = value[31:0] ^ value[63:32];
+                    else if (!f_sign)
+                        pycore_dict_key_hash = f_mag[31:0];
+                    else if (f_mag == 64'd1)
+                        pycore_dict_key_hash = 32'hFFFFFFFE; // hash(-1.0) == -2
+                    else begin
+                        // Negate then take low 32 (part-select needs a primary).
+                        f_mag = -f_mag;
+                        pycore_dict_key_hash = f_mag[31:0];
+                    end
+                end
+            end
             PY_TAG_SHORT_STR:
                 pycore_dict_key_hash = value[127:96] ^ value[95:64]
                                      ^ value[63:32]  ^ value[31:0];
@@ -560,41 +676,212 @@ endfunction
 function automatic logic pycore_dict_key_tag_ok(input logic [3:0] tag);
     begin
         pycore_dict_key_tag_ok = (tag == PY_TAG_INT) || (tag == PY_TAG_BOOL)
+                              || (tag == PY_TAG_FLOAT)
                               || (tag == PY_TAG_SHORT_STR)
                               || (tag == PY_TAG_LONG_STR);
     end
 endfunction
 
-function automatic logic [31:0] pycore_dict_kval_addr(
-    input logic [31:0] base, input logic [31:0] probe_idx
+// Try to interpret a FLOAT value as a signed 64-bit integer.
+// ok=1 and out=int when integer-valued (incl. ±0.0); else ok=0.
+function automatic logic pycore_float_as_int64(
+    input  logic [PYCORE_VAL_WIDTH-1:0] value,
+    output logic [63:0]                 out_int
+);
+    logic        f_sign;
+    logic [10:0] f_exp;
+    logic [51:0] f_frac;
+    logic [10:0] f_uexp;
+    logic [51:0] f_frac_mask;
+    logic [52:0] f_sig;
+    logic [63:0] f_mag;
+    logic        f_is_int;
+    begin
+        f_sign      = value[63];
+        f_exp       = value[62:52];
+        f_frac      = value[51:0];
+        f_uexp      = f_exp - 11'd1023;
+        f_sig       = {1'b1, f_frac};
+        f_frac_mask = 52'd0;
+        f_mag       = 64'd0;
+        f_is_int    = 1'b0;
+        out_int     = 64'd0;
+        pycore_float_as_int64 = 1'b0;
+
+        if (f_exp == 11'h7FF) begin
+            // NaN / Inf — not integer-valued
+        end else if ((f_exp == 11'd0) && (f_frac == 52'd0)) begin
+            out_int = 64'd0;
+            pycore_float_as_int64 = 1'b1;
+        end else if (f_exp < 11'd1023) begin
+            // |x| < 1
+        end else if (f_uexp >= 11'd63) begin
+            // Does not fit in signed 64-bit int
+        end else begin
+            if (f_uexp < 11'd52) begin
+                f_frac_mask = (52'h1 << (11'd52 - f_uexp)) - 52'h1;
+                f_is_int    = ((f_frac & f_frac_mask) == 52'd0);
+                f_mag       = {11'b0, f_sig} >> (11'd52 - f_uexp);
+            end else begin
+                f_is_int = 1'b1;
+                f_mag    = {11'b0, f_sig} << (f_uexp - 11'd52);
+            end
+            if (f_is_int) begin
+                out_int = f_sign ? (~f_mag + 64'd1) : f_mag;
+                pycore_float_as_int64 = 1'b1;
+            end
+        end
+    end
+endfunction
+
+// Dict/set key (element) rich equality for open-addressing probes.
+// INT/BOOL/FLOAT: True==1, 1.0==1, False==0 via integer normalization;
+// non-integer FLOAT compares bit-exact only when both tags are FLOAT.
+// Same-tag SHORT_STR/LONG_STR: full 128-bit value compare. Else false.
+function automatic logic pycore_dict_key_rich_eq(
+    input logic [3:0]                  tag_a,
+    input logic [PYCORE_VAL_WIDTH-1:0] val_a,
+    input logic [3:0]                  tag_b,
+    input logic [PYCORE_VAL_WIDTH-1:0] val_b
+);
+    logic        a_ok, b_ok;
+    logic [63:0] a_i, b_i;
+    begin
+        a_ok = 1'b0;
+        b_ok = 1'b0;
+        a_i  = 64'd0;
+        b_i  = 64'd0;
+
+        if (pycore_is_numeric_tag(tag_a) && pycore_is_numeric_tag(tag_b)) begin
+            if (tag_a == PY_TAG_INT) begin
+                a_ok = 1'b1;
+                a_i  = val_a[63:0];
+            end else if (tag_a == PY_TAG_BOOL) begin
+                a_ok = 1'b1;
+                a_i  = {63'b0, val_a[0]};
+            end else begin
+                a_ok = pycore_float_as_int64(val_a, a_i);
+            end
+
+            if (tag_b == PY_TAG_INT) begin
+                b_ok = 1'b1;
+                b_i  = val_b[63:0];
+            end else if (tag_b == PY_TAG_BOOL) begin
+                b_ok = 1'b1;
+                b_i  = {63'b0, val_b[0]};
+            end else begin
+                b_ok = pycore_float_as_int64(val_b, b_i);
+            end
+
+            if (a_ok && b_ok)
+                pycore_dict_key_rich_eq = (a_i == b_i);
+            else if ((tag_a == PY_TAG_FLOAT) && (tag_b == PY_TAG_FLOAT))
+                pycore_dict_key_rich_eq = (val_a == val_b);
+            else
+                pycore_dict_key_rich_eq = 1'b0;
+        end else if ((tag_a == tag_b) &&
+                     ((tag_a == PY_TAG_SHORT_STR) || (tag_a == PY_TAG_LONG_STR))) begin
+            pycore_dict_key_rich_eq = (val_a == val_b);
+        end else begin
+            pycore_dict_key_rich_eq = 1'b0;
+        end
+    end
+endfunction
+
+// True when a dict key-slot tag is a deleted-entry sentinel.
+// PY_TAG_TOMBSTONE == PY_TAG_DICT (dicts are not valid keys).
+function automatic logic pycore_dict_tombstone(input logic [3:0] tag);
+    begin
+        pycore_dict_tombstone = (tag == PY_TAG_TOMBSTONE);
+    end
+endfunction
+
+// Load factor check before a new-key insert: empty table, ≥ 2/3 full, or
+// would leave no empty slot for probe termination.
+function automatic logic pycore_dict_needs_grow(
+    input logic [63:0] used,
+    input logic [63:0] slot_count
 );
     begin
-        // base + 16 + probe_idx * 64
-        pycore_dict_kval_addr = base + 32'd16 + (probe_idx << 6);
+        pycore_dict_needs_grow =
+            (slot_count == 64'd0) ||
+            ((used * 64'd3) >= (slot_count * 64'd2)) ||
+            ((used + 64'd1) >= slot_count);
+    end
+endfunction
+
+// Element equality for CONTAINS_OP (list/tuple scan and dict key match).
+// INT/BOOL cross-compare as integers (True==1 / False==0), matching CPython.
+// Same-tag NONE is always equal. All other same-tag pairs compare the full
+// 128-bit value field (FLOAT bit-exact; SHORT_STR/LONG_STR; LIST/DICT/TUPLE
+// handles — identity via equal descriptors).
+function automatic logic pycore_elem_eq(
+    input logic [3:0]               tag_a,
+    input logic [PYCORE_VAL_WIDTH-1:0] val_a,
+    input logic [3:0]               tag_b,
+    input logic [PYCORE_VAL_WIDTH-1:0] val_b
+);
+    logic [63:0] ia, ib;
+    begin
+        if (((tag_a == PY_TAG_INT) || (tag_a == PY_TAG_BOOL)) &&
+            ((tag_b == PY_TAG_INT) || (tag_b == PY_TAG_BOOL))) begin
+            ia = (tag_a == PY_TAG_BOOL) ? {63'b0, val_a[0]} : val_a[63:0];
+            ib = (tag_b == PY_TAG_BOOL) ? {63'b0, val_b[0]} : val_b[63:0];
+            pycore_elem_eq = (ia == ib);
+        end else if (tag_a != tag_b) begin
+            pycore_elem_eq = 1'b0;
+        end else if (tag_a == PY_TAG_NONE) begin
+            pycore_elem_eq = 1'b1;
+        end else begin
+            pycore_elem_eq = (val_a == val_b);
+        end
+    end
+endfunction
+
+// Slot address helpers — `tbl` is the relocatable table base (obj.table_ptr),
+// not the dict object address. (Named `tbl` because `table` is an SV keyword.)
+function automatic logic [31:0] pycore_dict_kval_addr(
+    input logic [31:0] tbl, input logic [31:0] probe_idx
+);
+    begin
+        // tbl + probe_idx * 64
+        pycore_dict_kval_addr = tbl + (probe_idx << 6);
     end
 endfunction
 
 function automatic logic [31:0] pycore_dict_ktag_addr(
-    input logic [31:0] base, input logic [31:0] probe_idx
+    input logic [31:0] tbl, input logic [31:0] probe_idx
 );
     begin
-        pycore_dict_ktag_addr = base + 32'd32 + (probe_idx << 6);
+        // tbl + 16 + probe_idx * 64
+        pycore_dict_ktag_addr = tbl + 32'd16 + (probe_idx << 6);
     end
 endfunction
 
 function automatic logic [31:0] pycore_dict_vval_addr(
-    input logic [31:0] base, input logic [31:0] probe_idx
+    input logic [31:0] tbl, input logic [31:0] probe_idx
 );
     begin
-        pycore_dict_vval_addr = base + 32'd48 + (probe_idx << 6);
+        // tbl + 32 + probe_idx * 64
+        pycore_dict_vval_addr = tbl + 32'd32 + (probe_idx << 6);
     end
 endfunction
 
 function automatic logic [31:0] pycore_dict_vtag_addr(
-    input logic [31:0] base, input logic [31:0] probe_idx
+    input logic [31:0] tbl, input logic [31:0] probe_idx
 );
     begin
-        pycore_dict_vtag_addr = base + 32'd64 + (probe_idx << 6);
+        // tbl + 48 + probe_idx * 64
+        pycore_dict_vtag_addr = tbl + 32'd48 + (probe_idx << 6);
+    end
+endfunction
+
+// Byte address of the dict object's table_ptr slot.
+function automatic logic [31:0] pycore_dict_table_ptr_addr(
+    input logic [31:0] obj_addr
+);
+    begin
+        pycore_dict_table_ptr_addr = obj_addr + 32'd16;
     end
 endfunction
 
@@ -602,8 +889,9 @@ function automatic logic [31:0] pycore_dict_alloc_bytes(
     input logic [31:0] slot_count
 );
     begin
-        // 16-byte header + slot_count * 64-byte slot
-        pycore_dict_alloc_bytes = 32'd16 + (slot_count << 6);
+        // Contiguous BUILD_MAP layout: 32-byte object + slot_count * 64-byte table.
+        // Grow may relocate the table alone (object address stays stable).
+        pycore_dict_alloc_bytes = 32'd32 + (slot_count << 6);
     end
 endfunction
 
@@ -643,6 +931,80 @@ function automatic logic [31:0] pycore_dict_min_slots(
         else if (n_pairs <= 7'd16) pycore_dict_min_slots = 32'd32;
         else if (n_pairs <= 7'd32) pycore_dict_min_slots = 32'd64;
         else                       pycore_dict_min_slots = 32'd128;
+    end
+endfunction
+
+// -------------------------------------------------------------------------
+// SET in-dmem layout — element-only open addressing (see set_excore.md).
+//
+//   obj+0  : header { slot_count[63:0], used[63:0] }  (same as dict)
+//   obj+16 : { 64'd0, table_ptr[63:0] }
+//
+//   table + i*32 + 0  : element value
+//   table + i*32 + 16 : element tag   // UNINIT=empty; TOMBSTONE=DICT=9
+//
+// Handle: PY_TAG_SET + object address. Reuses dict key hash / tag_ok /
+// rich_eq / tombstone / needs_grow helpers for elements.
+// -------------------------------------------------------------------------
+function automatic logic [31:0] pycore_set_val_addr(
+    input logic [31:0] tbl, input logic [31:0] probe_idx
+);
+    begin
+        // tbl + probe_idx * 32
+        pycore_set_val_addr = tbl + (probe_idx << 5);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_set_tag_addr(
+    input logic [31:0] tbl, input logic [31:0] probe_idx
+);
+    begin
+        // tbl + 16 + probe_idx * 32
+        pycore_set_tag_addr = tbl + 32'd16 + (probe_idx << 5);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_set_table_ptr_addr(
+    input logic [31:0] obj_addr
+);
+    begin
+        pycore_set_table_ptr_addr = obj_addr + 32'd16;
+    end
+endfunction
+
+function automatic logic [31:0] pycore_set_alloc_bytes(
+    input logic [31:0] slot_count
+);
+    begin
+        // Contiguous BUILD_SET: 32-byte object + slot_count * 32-byte slots.
+        pycore_set_alloc_bytes = 32'd32 + (slot_count << 5);
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_set_header(
+    input logic [63:0] slot_count,
+    input logic [63:0] used
+);
+    begin
+        pycore_set_header = {slot_count, used};
+    end
+endfunction
+
+// Same sizing policy as dict (next_pow2(max(4, 2*n))).
+function automatic logic [31:0] pycore_set_min_slots(
+    input logic [6:0] n_elems
+);
+    begin
+        pycore_set_min_slots = pycore_dict_min_slots(n_elems);
+    end
+endfunction
+
+function automatic logic pycore_set_needs_grow(
+    input logic [63:0] used,
+    input logic [63:0] slot_count
+);
+    begin
+        pycore_set_needs_grow = pycore_dict_needs_grow(used, slot_count);
     end
 endfunction
 
@@ -791,14 +1153,6 @@ function automatic logic [63:0] pycore_tuple_size(
     end
 endfunction
 
-function automatic logic [63:0] pycore_tuple_addr(
-    input logic [PYCORE_VAL_WIDTH-1:0] value
-);
-    begin
-        pycore_tuple_addr = value[63:0];
-    end
-endfunction
-
 function automatic logic [31:0] pycore_tuple_val_addr(
     input logic [31:0] addr,
     input logic [31:0] idx
@@ -859,15 +1213,6 @@ function automatic logic [31:0] pycore_code_field_val_addr(
     end
 endfunction
 
-function automatic logic [31:0] pycore_code_field_tag_addr(
-    input logic [31:0] addr,
-    input logic [31:0] i
-);
-    begin
-        pycore_code_field_tag_addr = pycore_tuple_tag_addr(addr, i);
-    end
-endfunction
-
 function automatic logic [15:0] pycore_code_meta_argcount(
     input logic [PYCORE_VAL_WIDTH-1:0] meta
 );
@@ -881,14 +1226,6 @@ function automatic logic [15:0] pycore_code_meta_nlocals(
 );
     begin
         pycore_code_meta_nlocals = meta[31:16];
-    end
-endfunction
-
-function automatic logic [15:0] pycore_code_meta_stacksize(
-    input logic [PYCORE_VAL_WIDTH-1:0] meta
-);
-    begin
-        pycore_code_meta_stacksize = meta[47:32];
     end
 endfunction
 

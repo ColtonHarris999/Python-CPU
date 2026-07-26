@@ -239,10 +239,101 @@ module tb_excore #(
         $finish;
     endtask
 
-    localparam logic [3:0] TRAP_LIST_GROW   = 4'd9;
-    localparam logic [3:0] TRAP_LIST_EXTEND = 4'd10;
-    localparam logic [3:0] RES_COMPLETED    = 4'd0;
-    localparam logic [3:0] RES_FATAL        = 4'd2;
+    localparam logic [3:0] TRAP_LIST_GROW      = 4'd9;
+    localparam logic [3:0] TRAP_LIST_EXTEND    = 4'd10;
+    localparam logic [3:0] TRAP_DICT_GROW      = 4'd11;
+    localparam logic [3:0] TRAP_LIST_DELETE    = 4'd12;
+    localparam logic [3:0] TRAP_SET_GROW       = 4'd13;
+    localparam logic [3:0] RES_COMPLETED       = 4'd0;
+    localparam logic [3:0] RES_FATAL           = 4'd2;
+
+    // Present a LIST_DELETE trap (list + INT/BOOL index).
+    task automatic run_list_delete(
+        input logic [131:0] list_entry,
+        input logic [131:0] key_entry,
+        input logic [31:0]  heap_ptr,
+        input int max_cycles
+    );
+        int i;
+        mb_entries[0]  = list_entry;
+        mb_entries[1]  = key_entry;
+        mb_entry_count = 3'd2;
+        mb_heap_ptr    = heap_ptr;
+        mb_trap_code   = TRAP_LIST_DELETE;
+        @(negedge clk);
+        mb_trap_pending = 1'b1;
+
+        for (i = 0; i < max_cycles; i++) begin
+            @(posedge clk);
+            if (res_go) begin
+                @(negedge clk);
+                mb_trap_pending = 1'b0;
+                return;
+            end
+        end
+        $error("[FAIL] timed out waiting for RES_GO (LIST_DELETE)");
+        $finish;
+    endtask
+
+    // Present a DICT_GROW trap (dict + key + value).
+    task automatic run_dict_grow(
+        input logic [131:0] dict_entry,
+        input logic [131:0] key_entry,
+        input logic [131:0] val_entry,
+        input logic [31:0]  heap_ptr,
+        input int max_cycles
+    );
+        int i;
+        mb_entries[0]  = dict_entry;
+        mb_entries[1]  = key_entry;
+        mb_entries[2]  = val_entry;
+        mb_entry_count = 3'd3;
+        mb_heap_ptr    = heap_ptr;
+        mb_trap_code   = TRAP_DICT_GROW;
+        mb_opcode      = 8'd38; // STORE_SUBSCR
+        mb_arg         = 32'd0;
+        @(negedge clk);
+        mb_trap_pending = 1'b1;
+        for (i = 0; i < max_cycles; i++) begin
+            @(posedge clk);
+            if (res_go) begin
+                @(negedge clk);
+                mb_trap_pending = 1'b0;
+                return;
+            end
+        end
+        $error("[FAIL] timed out waiting for RES_GO (DICT_GROW)");
+        $finish;
+    endtask
+
+    // Present a SET_GROW trap (set + element).
+    task automatic run_set_grow(
+        input logic [131:0] set_entry,
+        input logic [131:0] elem_entry,
+        input logic [31:0]  heap_ptr,
+        input int max_cycles
+    );
+        int i;
+        mb_entries[0]  = set_entry;
+        mb_entries[1]  = elem_entry;
+        mb_entry_count = 3'd2;
+        mb_heap_ptr    = heap_ptr;
+        mb_trap_code   = TRAP_SET_GROW;
+        mb_opcode      = 8'd107; // SET_ADD
+        mb_arg         = 32'd1;
+        @(negedge clk);
+        mb_trap_pending = 1'b1;
+        for (i = 0; i < max_cycles; i++) begin
+            @(posedge clk);
+            if (res_go) begin
+                @(negedge clk);
+                mb_trap_pending = 1'b0;
+                return;
+            end
+        end
+        $error("[FAIL] timed out waiting for RES_GO (SET_GROW)");
+        $finish;
+    endtask
 
     initial begin
         logic [31:0] obj_addr, old_buf, new_buf, src_addr, src_buf;
@@ -491,9 +582,131 @@ module tb_excore #(
               "scenario9: expected fatal_code == PY_TRAP_TYPE");
         $display("PASS: scenario9 (LIST_EXTEND bad iterable -> FATAL(TYPE))");
 
+        // ------------------------------------------------------------------
+        // Scenario 9b: LIST_EXTEND in-place when capacity already sufficient.
+        // dst cap=8/len=1 [50]; src [60,70]; need=3 <= 8 → no realloc.
+        // ------------------------------------------------------------------
+        do_reset();
+        obj_addr = 32'h0B80;
+        old_buf  = 32'h0BA0;
+        src_addr = 32'h0CC0;
+        src_buf  = 32'h0CE0;
+        poke_slot(obj_addr, {64'd8, 64'd1});
+        poke_slot(obj_addr + 16, {96'd0, old_buf});
+        poke_slot(old_buf, 128'd50);
+        poke_slot(old_buf + 16, {124'b0, 4'd1});
+        poke_slot(src_addr, {64'd2, 64'd2});
+        poke_slot(src_addr + 16, {96'd0, src_buf});
+        poke_slot(src_buf, 128'd60);
+        poke_slot(src_buf + 16, {124'b0, 4'd1});
+        poke_slot(src_buf + 32, 128'd70);
+        poke_slot(src_buf + 48, {124'b0, 4'd1});
+
+        run_list_extend(
+            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            {PY_TAG_LIST, {96{1'b0}}, src_addr},
+            32'h0D00, 40000);
+
+        check(res_code == RES_COMPLETED, "scenario9b: expected RES_COMPLETED");
+        check(res_pop_count == 3'd1, "scenario9b: pop_count=1");
+        hdr = peek_slot(obj_addr);
+        check(hdr == {64'd8, 64'd3}, "scenario9b: header {cap=8, len=3}");
+        check(peek_slot(obj_addr + 16) == {96'd0, old_buf},
+              "scenario9b: ob_item unchanged");
+        check(peek_slot(old_buf) == 128'd50, "scenario9b: dst[0]");
+        check(peek_slot(old_buf + 32) == 128'd60, "scenario9b: dst[1]");
+        check(peek_slot(old_buf + 64) == 128'd70, "scenario9b: dst[2]");
+        $display("PASS: scenario9b (LIST_EXTEND in-place, capacity sufficient)");
+
+        // ------------------------------------------------------------------
+        // Scenario 9c: LIST_DELETE middle element (shift-down).
+        // [10,20,30,40] del[1] → [10,30,40]; COMPLETED pop=2.
+        // ------------------------------------------------------------------
+        do_reset();
+        obj_addr = 32'h0E00;
+        old_buf  = 32'h0E20;
+        poke_slot(obj_addr, {64'd4, 64'd4});
+        poke_slot(obj_addr + 16, {96'd0, old_buf});
+        poke_slot(old_buf, 128'd10);
+        poke_slot(old_buf + 16, {124'b0, 4'd1});
+        poke_slot(old_buf + 32, 128'd20);
+        poke_slot(old_buf + 48, {124'b0, 4'd1});
+        poke_slot(old_buf + 64, 128'd30);
+        poke_slot(old_buf + 80, {124'b0, 4'd1});
+        poke_slot(old_buf + 96, 128'd40);
+        poke_slot(old_buf + 112, {124'b0, 4'd1});
+
+        run_list_delete(
+            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            {PY_TAG_INT, 128'd1},
+            32'h0F00, 40000);
+
+        check(res_code == RES_COMPLETED, "scenario9c: expected RES_COMPLETED");
+        check(res_pop_count == 3'd2, "scenario9c: pop_count=2");
+        hdr = peek_slot(obj_addr);
+        check(hdr == {64'd4, 64'd3}, "scenario9c: header {cap=4, len=3}");
+        check(peek_slot(old_buf) == 128'd10, "scenario9c: [0]=10");
+        check(peek_slot(old_buf + 32) == 128'd30, "scenario9c: [1]=30");
+        check(peek_slot(old_buf + 64) == 128'd40, "scenario9c: [2]=40");
+        $display("PASS: scenario9c (LIST_DELETE middle shift)");
+
+        // ------------------------------------------------------------------
+        // Scenario 10: DICT_GROW from empty table; insert key=1 → value=99.
+        // new_slots = 8; used becomes 1.
+        // ------------------------------------------------------------------
+        do_reset();
+        begin
+            logic [31:0] dobj, ntbl;
+            dobj = 32'h0C00;
+            ntbl = 32'h0C20;
+            poke_slot(dobj, {64'd0, 64'd0});       // slots=0, used=0
+            poke_slot(dobj + 16, 128'd0);          // table_ptr=0
+            run_dict_grow(
+                {PY_TAG_DICT, {96{1'b0}}, dobj},
+                {PY_TAG_INT, 128'd1},
+                {PY_TAG_INT, 128'd99},
+                ntbl, 80000);
+            check(res_code == RES_COMPLETED, "scenario10: DICT_GROW COMPLETED");
+            check(res_pop_count == 3'd3, "scenario10: pop=3");
+            check(res_push_count == 2'd0, "scenario10: push=0");
+            check(peek_slot(dobj) == {64'd8, 64'd1}, "scenario10: header {8,1}");
+            check(peek_slot(dobj + 16) == {96'd0, ntbl}, "scenario10: table_ptr");
+            // key 1 hashes to slot 1
+            check(peek_slot(ntbl + 64) == 128'd1, "scenario10: kval");
+            check(peek_slot(ntbl + 80) == {124'b0, PY_TAG_INT}, "scenario10: ktag");
+            check(peek_slot(ntbl + 96) == 128'd99, "scenario10: vval");
+            check(peek_slot(ntbl + 112) == {124'b0, PY_TAG_INT}, "scenario10: vtag");
+            $display("PASS: scenario10 (DICT_GROW empty -> insert)");
+        end
+
+        // ------------------------------------------------------------------
+        // Scenario 11: SET_GROW — empty 0-slot set → insert element 7.
+        // ------------------------------------------------------------------
+        do_reset();
+        begin
+            logic [31:0] sobj, ntbl;
+            logic [127:0] shdr, sptr;
+            sobj = 32'h0D00;
+            poke_slot(sobj, {64'd0, 64'd0});
+            poke_slot(sobj + 16, 128'd0);
+            run_set_grow(
+                {4'd11, {96{1'b0}}, sobj},  // PY_TAG_SET
+                {PY_TAG_INT, 128'd7},
+                32'h0D40, 80000);
+            check(res_code == RES_COMPLETED, "scenario11: SET_GROW COMPLETED");
+            check(res_pop_count == 3'd1, "scenario11: pop=1");
+            shdr = peek_slot(sobj);
+            sptr = peek_slot(sobj + 16);
+            ntbl = sptr[31:0];
+            check(shdr[63:0] == 64'd1, "scenario11: used=1");
+            check(shdr[127:64] >= 64'd8, "scenario11: slots>=8");
+            check(ntbl != 32'd0, "scenario11: table_ptr set");
+            $display("PASS: scenario11 (SET_GROW empty -> insert)");
+        end
+
         check(!cpu_fault, "excore_cpu raised an internal fault (unsupported instruction)");
 
-        $display("PASS: tb_excore — all 9 scenarios green");
+        $display("PASS: tb_excore — all scenarios green");
         $finish;
     end
 endmodule

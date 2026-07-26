@@ -12,7 +12,6 @@ Covers:
 from __future__ import annotations
 
 import sys
-import types
 import unittest
 
 # Guard: only run on Python 3.14 (preprocess is 3.14-only).
@@ -322,7 +321,7 @@ class TestListAppendAccepted(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# LIST_EXTEND acceptance (fast-path / grow-trap in CONT_LIST_EXTEND)
+# LIST_EXTEND acceptance (empty no-op / always-excore in CONT_LIST_EXTEND)
 # ---------------------------------------------------------------------------
 
 class TestListExtendAccepted(unittest.TestCase):
@@ -374,6 +373,43 @@ class TestListExtendAccepted(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# DELETE_SUBSCR / CONTAINS_OP acceptance
+# ---------------------------------------------------------------------------
+
+class TestDeleteContainsAccepted(unittest.TestCase):
+    def test_delete_subscr_not_deferred(self) -> None:
+        self.assertNotIn("DELETE_SUBSCR", preprocess.DEFERRED_OPS)
+        self.assertIn("DELETE_SUBSCR", preprocess.SUPPORTED_OPS)
+        self.assertEqual(preprocess.OP_DELETE_SUBSCR, 8)
+
+    def test_contains_op_not_deferred(self) -> None:
+        self.assertNotIn("CONTAINS_OP", preprocess.DEFERRED_OPS)
+        self.assertIn("CONTAINS_OP", preprocess.SUPPORTED_OPS)
+        self.assertEqual(preprocess.OP_CONTAINS_OP, 57)
+
+    def test_delete_subscr_program_accepted(self) -> None:
+        fn = _compile_fn(
+            "def managed_entry():\n"
+            "    a = [1, 2, 3]\n"
+            "    del a[1]\n"
+            "    return a[0]\n",
+        )
+        list(preprocess.iter_filtered_instructions(fn))
+
+    def test_contains_op_program_accepted(self) -> None:
+        fn = _compile_fn(
+            "def managed_entry():\n"
+            "    a = [1, 2, 3]\n"
+            "    if 2 in a:\n"
+            "        if 9 not in a:\n"
+            "            return 1\n"
+            "        return 0\n"
+            "    return 0\n",
+        )
+        list(preprocess.iter_filtered_instructions(fn))
+
+
+# ---------------------------------------------------------------------------
 # Deferred-opcode rejection tests
 # ---------------------------------------------------------------------------
 
@@ -383,7 +419,7 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
     Because some source programs emit other unsupported opcodes (e.g.
     LOAD_ATTR) before reaching the deferred op, these tests check the
     DEFERRED_OPS dict directly for membership and message quality, and
-    supplement with a real BUILD_SET program test.
+    supplement with a real program test for BUILD_SET.
     """
 
     def _assert_deferred_error(self, opname: str) -> None:
@@ -399,15 +435,6 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
 
     def test_dict_update_in_deferred_ops(self) -> None:
         self._assert_deferred_error("DICT_UPDATE")
-
-    def test_contains_op_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("CONTAINS_OP")
-
-    def test_build_set_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("BUILD_SET")
-
-    def test_set_add_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("SET_ADD")
 
     def test_deferred_ops_not_in_supported_ops(self) -> None:
         """All deferred opcodes must be absent from SUPPORTED_OPS."""
@@ -426,14 +453,18 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
             [ins.opname for ins in preprocess.iter_filtered_instructions(fn)],
         )
 
-    def test_build_set_program_rejected(self) -> None:
-        """A real program returning a set literal should be rejected."""
-        fn = _compile_fn("def f():\n    return {1, 2}\n", "f")
-        with self.assertRaises(ValueError) as ctx:
-            list(preprocess.iter_filtered_instructions(fn))
-        msg = str(ctx.exception)
-        self.assertIn("Deferred opcode", msg)
-        self.assertIn("BUILD_SET", msg)
+    def test_build_set_supported(self) -> None:
+        """Non-constant set display emits BUILD_SET and is accepted."""
+        fn = _compile_fn(
+            "def managed_entry():\n"
+            "    a = 1\n"
+            "    b = 2\n"
+            "    return {a, b}\n"
+        )
+        opnames = _emitted_opnames(fn)
+        self.assertIn("BUILD_SET", opnames)
+        self.assertIn("BUILD_SET", preprocess.SUPPORTED_OPS)
+        self.assertNotIn("BUILD_SET", preprocess.DEFERRED_OPS)
 
 
 # ---------------------------------------------------------------------------

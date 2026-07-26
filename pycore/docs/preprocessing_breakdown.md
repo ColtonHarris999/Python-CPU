@@ -54,14 +54,16 @@ indexes `co_consts` and reads the value/tag pair from dmem.
 tests by executing `managed_entry()` on host CPython and writing
 `EXPECTED_TAG`/`EXPECTED_VALUE` into metadata.
 
-## 2) Deprecated legacy flow (`pycore/tools/preprocess.py`)
+## 2) Deprecated flow (`pycore/tools/preprocess.py`)
 
-`preprocess.py` is retained for old single-function and hand-authored hex
-fixtures. It performs semantic transformations that the image-boot flow no
-longer permits, including stripping cache/extended units, remapping branch
-arguments, and expanding `LOAD_CONST` into a three-slot inline literal format.
+`preprocess.py` remains only for a few older single-function / hand-authored
+hex fixtures and `make run-file`. It performs semantic transformations the
+image-boot flow does not permit (stripping cache/extended units, remapping
+branch arguments, expanding `LOAD_CONST` into a three-slot inline literal).
 
-Do not use `preprocess.py` for new image-boot tests.
+Do not use `preprocess.py` for new tests — use `image_from_source.py`
+(sets, dicts, lists, and the rest of the supported opcode matrix are
+accepted there when listed in `bytecode_support.md`).
 
 ## 3) Preprocessing budget rule
 

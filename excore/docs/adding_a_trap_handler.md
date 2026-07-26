@@ -1,12 +1,13 @@
 # Adding a new excore trap handler
 
-Checklist for a future recoverable trap (dict rehash, GC, emulating an
-unimplemented opcode, ...), following the pattern established by
-`PY_TRAP_LIST_GROW` / `PY_TRAP_LIST_EXTEND`:
+Checklist for a future recoverable trap (GC, unimplemented-opcode
+emulation, iterator helpers, …), following the pattern established by
+the live container handlers in `excore/fw/list_grow.s`:
 
-1. **Assign a trap code.** Add `PY_TRAP_<NAME>` to `pycore_defs.svh`
-   (codes 11-15 are free as of this writing — `9`/`10` are
-   `LIST_GROW`/`LIST_EXTEND`; `pycore_defs.svh` is the source of truth).
+1. **Assign a trap code.** Add `PY_TRAP_<NAME>` to `pycore_defs.svh`.
+   As of this writing codes **9–14 are taken** (`LIST_GROW`,
+   `LIST_EXTEND`, `DICT_GROW`, `LIST_DELETE`, `SET_GROW`, `SET_UPDATE`);
+   **code 15 is free**. `pycore_defs.svh` is the source of truth.
 
 2. **Classify it.** Add it to `pycore_trap_recoverable()` in
    `pycore_defs.svh`. This is the single gate that decides whether
@@ -49,11 +50,11 @@ unimplemented opcode, ...), following the pattern established by
 7. **Test at both layers.** Unit-test the new firmware against a mocked
    mailbox (extend `tb_excore.sv` or add a new `excore/tb/` testbench,
    canned trap messages, a real `pycore_mem_bank`) *before* wiring it into
-   pycore — this is exactly Phase B's relationship to Phase A/C. Then add
-   a hand-assembled pycore-side integration test (Phase C style,
-   `gen_excore_integration_fixtures.py`-style generator) exercising the
-   real trap path end to end, plus an `EXCORE_EN=0` companion proving the
-   legacy fatal behavior is unchanged when the excore is disabled.
+   pycore. Then add a pycore-side integration test
+   (`gen_excore_integration_fixtures.py`-style generator or
+   `img_*` image-boot program) exercising the real trap path end to end,
+   plus an `EXCORE_EN=0` companion proving the trap remains fatal when
+   the excore is disabled.
 
 8. **Widen the message if needed.** If the new handler needs more than 3
    trap-side or 2 result-side entries, bump `MAX_TRAP_ENTRIES` /

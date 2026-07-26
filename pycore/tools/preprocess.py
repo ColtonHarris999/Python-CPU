@@ -14,17 +14,14 @@ import importlib.util
 import opcode as _opcode_module
 import pathlib
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable
 
 from encoding import (
-    ENTRY_HEX_DIGITS,
     IMEM_SLOT_HEX_DIGITS,
     SHORT_STR_DATA_SHIFT,
-    SHORT_STR_MAX_BYTES,
     SHORT_STR_SIZE_SHIFT,
     STRING_MEM_BYTES,
-    STRING_RUNTIME_BASE,
     TAG_BOOL,
     TAG_CODE_OBJECT,
     TAG_DICT,
@@ -34,20 +31,14 @@ from encoding import (
     TAG_LIST,
     TAG_LONG_STR,
     TAG_NONE,
-    TAG_NULL,
     TAG_OBJECT,
     TAG_PTR,
     TAG_SET,
     TAG_SHORT_STR,
     TAG_TUPLE,
-    TAG_UNINIT,
     TAG_UNINITIALIZED,
     TAG_UNUSED,
-    VAL_MASK,
-    VAL_WIDTH,
     StringHeapBuilder,
-    float_bits,
-    format_entry,
     format_imem_slot,
     tag_constant,
 )
@@ -82,6 +73,8 @@ OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW = _OM.get(
 )
 OP_LIST_APPEND   = _OM["LIST_APPEND"]
 OP_LIST_EXTEND   = _OM["LIST_EXTEND"]
+OP_DELETE_SUBSCR = _OM["DELETE_SUBSCR"]
+OP_CONTAINS_OP   = _OM["CONTAINS_OP"]
 
 # NB_SUBSCR oparg: locate "NB_SUBSCR" in _nb_ops by searching for the entry
 # whose first element contains "SUBSCR".
@@ -104,12 +97,8 @@ DEFERRED_OPS: dict[str, str] = {
     "MAP_ADD":       "dict mutation not yet implemented",
     "DICT_UPDATE":   "dict.update not yet implemented",
     "DICT_MERGE":    "dict merge not yet implemented",
-    "CONTAINS_OP":   "in / not-in operator not yet implemented",
     "BINARY_SLICE":  "slice notation not yet implemented",
     "STORE_SLICE":   "slice assignment not yet implemented",
-    "BUILD_SET":     "set literals not yet implemented",
-    "SET_ADD":       "set.add not yet implemented",
-    "SET_UPDATE":    "set.update not yet implemented",
     "LOAD_GLOBAL":   "module/global lookup is supported by image_from_source.py",
     "LOAD_NAME":     "module/name lookup is supported by image_from_source.py",
     "STORE_NAME":    "module/name stores are supported by image_from_source.py",
@@ -169,12 +158,16 @@ SUPPORTED_OPS = {
     "BUILD_TUPLE",
     "STORE_SUBSCR",
     "DELETE_SUBSCR",
-    # LIST_APPEND / LIST_EXTEND fast-path / grow-trap: see CONT_LIST_APPEND
-    # and CONT_LIST_EXTEND (pycore_core.sv). LIST/TUPLE comprehensions use
-    # the native GET_ITER/FOR_ITER path. LIST_EXTEND is also emitted by
-    # list-display unpack (`[a, *b]` / `[*a, *b]`).
+    "CONTAINS_OP",
+    # LIST_APPEND spare-capacity / grow-trap; LIST_EXTEND empty no-op /
+    # always-excore non-empty: see CONT_LIST_APPEND / CONT_LIST_EXTEND.
+    # LIST/TUPLE comprehensions use the native GET_ITER/FOR_ITER path.
+    # LIST_EXTEND is also emitted by list-display unpack (`[a, *b]` / `[*a, *b]`).
     "LIST_APPEND",
     "LIST_EXTEND",
+    "BUILD_SET",
+    "SET_ADD",
+    "SET_UPDATE",
 }
 
 SUPPORTED_BINARY_ARGS = {
@@ -533,8 +526,16 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             for _ in range(min(3, len(stack))):
                 stack.pop()
         elif ins.opname == "DELETE_SUBSCR":
+            # Pops key and container (2 items); pushes nothing.
             for _ in range(min(2, len(stack))):
                 stack.pop()
+        elif ins.opname == "CONTAINS_OP":
+            # Pops needle + container; pushes BOOL.
+            if stack:
+                stack.pop()
+            if stack:
+                stack.pop()
+            stack.append(TAG_BOOL)
         elif ins.opname == "LIST_APPEND":
             # Pops only the appended element (TOS); the list handle,
             # `oparg - 1` slots further down, is left in place untouched.
