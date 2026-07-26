@@ -1,11 +1,10 @@
 #!/usr/bin/env python3.14
 """Generate the LIST_APPEND (Phase A) hand-built test fixtures.
 
-compile() only emits LIST_APPEND inside list comprehensions, and those
-require FOR_ITER / GET_ITER — still unsupported (see DEFERRED_OPS in
-image_from_source.py / preprocess.py) — so these two fixtures are
-hand-assembled directly against the CONT_LIST_APPEND opcode/stack contract
-documented in pycore_defs.svh, rather than produced by compile()+preprocess.
+compile() only emits LIST_APPEND inside list comprehensions. These fixtures
+remain hand-assembled because they require spare-capacity/full-list layouts
+that source compilation cannot express directly; they target the
+CONT_LIST_APPEND opcode/stack contract documented in pycore_defs.svh.
 
   list_append_fast.{hex,dmem.hex}:
     A hand-built image (BOOT_EN=1) whose co_consts[0] is a list literal with

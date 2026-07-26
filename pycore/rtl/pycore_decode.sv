@@ -49,7 +49,9 @@ module pycore_decode (
         end
     endfunction
 
-    // CPython 3.14 COMPARE_OP: comparison selector is oparg >> 5.
+    // CPython 3.14 COMPARE_OP: comparison selector is oparg >> 5.  Bits
+    // 4:0 carry the force-bool flag and quickening mask; the image builder
+    // validates those packed forms, and native compares already return BOOL.
     function automatic logic [4:0] decode_compare_op(input logic [7:0] cmp);
         begin
             unique case (cmp[7:5])
@@ -187,8 +189,16 @@ module pycore_decode (
                 rs1_sel_o = tos_index_i - 8'd1;
             end
 
-            PY_OP_POP_TOP, PY_OP_POP_ITER: begin
+            PY_OP_END_FOR, PY_OP_POP_TOP, PY_OP_POP_ITER: begin
                 pop_stack_o = 1'b1;
+            end
+
+            // GET_ITER rewrites the iterable at TOS with internal iterator
+            // state. FOR_ITER reads that state and either pushes the next
+            // element or redirects over END_FOR to POP_ITER on exhaustion.
+            PY_OP_GET_ITER, PY_OP_FOR_ITER: begin
+                rs1_sel_o      = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
             end
 
             PY_OP_BINARY_OP: begin
@@ -271,6 +281,12 @@ module pycore_decode (
             PY_OP_STORE_SUBSCR: begin
                 rs1_sel_o = tos_index_i - 8'd1;  // key
                 rs2_sel_o = tos_index_i - 8'd2;  // container
+                is_container_o = 1'b1;
+            end
+
+            PY_OP_DELETE_SUBSCR: begin
+                rs1_sel_o = tos_index_i - 8'd2;  // container
+                rs2_sel_o = tos_index_i - 8'd1;  // key
                 is_container_o = 1'b1;
             end
 

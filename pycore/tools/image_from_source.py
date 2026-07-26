@@ -61,6 +61,18 @@ SUPPORTED_BINARY_ARGS = {
     NBARG_SUBSCR,
 }
 
+# CPython 3.14 packs the selector in bits 7:5, a force-bool flag in bit 4,
+# and the quickened comparison mask in bits 3:0.  Accept only forms emitted
+# by this pinned interpreter rather than silently admitting future encodings.
+SUPPORTED_COMPARE_ARGS = {
+    2, 18,      # <
+    42, 58,     # <=
+    72, 88,     # ==
+    103, 119,   # !=
+    132, 148,   # >
+    172, 188,   # >=
+}
+
 SUPPORTED_OPS = {
     "RESUME",
     "CACHE",
@@ -74,6 +86,9 @@ SUPPORTED_OPS = {
     "LOAD_FAST_CHECK",
     "LOAD_SMALL_INT",
     "POP_TOP",
+    "END_FOR",
+    "GET_ITER",
+    "FOR_ITER",
     "POP_ITER",
     "NOP",
     "NOT_TAKEN",
@@ -86,6 +101,7 @@ SUPPORTED_OPS = {
     "BUILD_MAP",
     "BUILD_TUPLE",
     "STORE_SUBSCR",
+    "DELETE_SUBSCR",
     "COPY",
     "SWAP",
     "CALL",
@@ -98,10 +114,10 @@ SUPPORTED_OPS = {
     "MAKE_FUNCTION",
     # LIST_APPEND / LIST_EXTEND fast-path (spare capacity) / grow-trap are
     # implemented in CONT_LIST_APPEND / CONT_LIST_EXTEND (pycore_core.sv).
-    # LIST_APPEND still only appears inside comprehensions (FOR_ITER/GET_ITER
-    # deferred). LIST_EXTEND is emitted by list-display unpack forms such as
-    # `[1, 2, *x]` and `[*a, *b]` — those are accepted here. Sources must be
-    # LIST or TUPLE (no iterator protocol yet).
+    # LIST_APPEND appears inside comprehensions, whose GET_ITER/FOR_ITER path
+    # is accepted for LIST/TUPLE sources. LIST_EXTEND is emitted by list-display
+    # unpack forms such as `[1, 2, *x]` and `[*a, *b]` — those are accepted
+    # here. LIST_EXTEND sources must still be LIST or TUPLE.
     "LIST_APPEND",
     "LIST_EXTEND",
 }
@@ -110,7 +126,6 @@ DEFERRED_OPS: dict[str, str] = {
     "MAP_ADD": "dict-comprehension MAP_ADD lowering is deferred",
     "DICT_UPDATE": "dict update/unpack lowering is deferred",
     "DICT_MERGE": "dict merge lowering is deferred",
-    "DELETE_SUBSCR": "subscript deletion is deferred",
     "CONTAINS_OP": "in / not-in operator support is deferred",
     "BINARY_SLICE": "slice notation support is deferred",
     "STORE_SLICE": "slice assignment support is deferred",
@@ -217,6 +232,11 @@ def validate_code_object(co: types.CodeType) -> None:
         if ins.opname == "BINARY_OP" and ins.arg not in SUPPORTED_BINARY_ARGS:
             raise ValueError(
                 f"Unsupported BINARY_OP oparg {ins.arg} in code object "
+                f"{co.co_name!r} at bytecode offset {ins.offset}"
+            )
+        if ins.opname == "COMPARE_OP" and ins.arg not in SUPPORTED_COMPARE_ARGS:
+            raise ValueError(
+                f"Unsupported COMPARE_OP oparg {ins.arg} in code object "
                 f"{co.co_name!r} at bytecode offset {ins.offset}"
             )
         if ins.opname == "LOAD_CONST" and ins.arg >= len(co.co_consts):

@@ -280,10 +280,8 @@ class TestLFBLFBExpansion(unittest.TestCase):
 class TestListAppendAccepted(unittest.TestCase):
     """LIST_APPEND is no longer deferred (see CONT_LIST_APPEND, pycore_core.sv).
 
-    compile() only emits LIST_APPEND inside comprehensions, which still fail
-    validation on FOR_ITER/GET_ITER (correctly still deferred) — so these
-    tests exercise the opcode-table classification and type-sketch handling
-    directly rather than a real compiled comprehension.
+    compile() emits LIST_APPEND inside comprehensions, whose LIST/TUPLE
+    GET_ITER/FOR_ITER path is now supported.
     """
 
     def test_list_append_not_deferred(self) -> None:
@@ -296,10 +294,10 @@ class TestListAppendAccepted(unittest.TestCase):
         # python3.14 -c "import opcode; print(opcode.opmap['LIST_APPEND'])"
         self.assertEqual(preprocess.OP_LIST_APPEND, 78)
 
-    def test_for_iter_get_iter_still_deferred_or_unsupported(self) -> None:
-        # Comprehensions remain out of scope until FOR_ITER/GET_ITER land.
-        self.assertNotIn("FOR_ITER", preprocess.SUPPORTED_OPS)
-        self.assertNotIn("GET_ITER", preprocess.SUPPORTED_OPS)
+    def test_for_iter_get_iter_supported(self) -> None:
+        self.assertIn("END_FOR", preprocess.SUPPORTED_OPS)
+        self.assertIn("FOR_ITER", preprocess.SUPPORTED_OPS)
+        self.assertIn("GET_ITER", preprocess.SUPPORTED_OPS)
 
     def test_infer_types_pops_only_the_element(self) -> None:
         """LIST_APPEND pops just the element; the list beneath is untouched."""
@@ -385,8 +383,7 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
     Because some source programs emit other unsupported opcodes (e.g.
     LOAD_ATTR) before reaching the deferred op, these tests check the
     DEFERRED_OPS dict directly for membership and message quality, and
-    supplement with two real program tests for opcodes that can be reached
-    in isolation (DELETE_SUBSCR, BUILD_SET).
+    supplement with a real BUILD_SET program test.
     """
 
     def _assert_deferred_error(self, opname: str) -> None:
@@ -402,9 +399,6 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
 
     def test_dict_update_in_deferred_ops(self) -> None:
         self._assert_deferred_error("DICT_UPDATE")
-
-    def test_delete_subscr_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("DELETE_SUBSCR")
 
     def test_contains_op_in_deferred_ops(self) -> None:
         self._assert_deferred_error("CONTAINS_OP")
@@ -423,14 +417,14 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
                 f"{opname} is in DEFERRED_OPS but also in SUPPORTED_OPS",
             )
 
-    def test_delete_subscr_program_rejected(self) -> None:
-        """A real program using del d[k] should be rejected at preprocessing."""
-        fn = _compile_fn("def f(d, k):\n    del d[k]\n    return 0\n", "f")
-        with self.assertRaises(ValueError) as ctx:
-            list(preprocess.iter_filtered_instructions(fn))
-        msg = str(ctx.exception)
-        self.assertIn("Deferred opcode", msg)
-        self.assertIn("DELETE_SUBSCR", msg)
+    def test_delete_subscr_supported(self) -> None:
+        self.assertIn("DELETE_SUBSCR", preprocess.SUPPORTED_OPS)
+        self.assertNotIn("DELETE_SUBSCR", preprocess.DEFERRED_OPS)
+        fn = _compile_fn("def f(xs):\n    del xs[0]\n    return 0\n", "f")
+        self.assertIn(
+            "DELETE_SUBSCR",
+            [ins.opname for ins in preprocess.iter_filtered_instructions(fn)],
+        )
 
     def test_build_set_program_rejected(self) -> None:
         """A real program returning a set literal should be rejected."""

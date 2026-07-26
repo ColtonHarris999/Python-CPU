@@ -130,6 +130,9 @@ localparam logic [4:0] PY_ALU_ILLEGAL   = 5'd31;
 //   python3.14 -c "import opcode; print({n:opcode.opmap[n] for n in [...]})"
 // -------------------------------------------------------------------------
 localparam logic [7:0] PY_OP_CACHE            = 8'd0;
+localparam logic [7:0] PY_OP_DELETE_SUBSCR    = 8'd8;
+localparam logic [7:0] PY_OP_END_FOR          = 8'd9;
+localparam logic [7:0] PY_OP_GET_ITER         = 8'd16;
 localparam logic [7:0] PY_OP_MAKE_FUNCTION    = 8'd23;
 localparam logic [7:0] PY_OP_NOP              = 8'd27;
 localparam logic [7:0] PY_OP_NOT_TAKEN        = 8'd28;
@@ -149,6 +152,7 @@ localparam logic [7:0] PY_OP_COMPARE_OP       = 8'd56;
 localparam logic [7:0] PY_OP_COPY             = 8'd59;
 localparam logic [7:0] PY_OP_DELETE_FAST      = 8'd63;
 localparam logic [7:0] PY_OP_EXTENDED_ARG     = 8'd69;
+localparam logic [7:0] PY_OP_FOR_ITER         = 8'd70;
 localparam logic [7:0] PY_OP_IS_OP            = 8'd74;
 localparam logic [7:0] PY_OP_JUMP_BACKWARD    = 8'd75;
 localparam logic [7:0] PY_OP_JUMP_FORWARD     = 8'd77;
@@ -271,6 +275,7 @@ localparam logic [7:0] PY_NBARG_SUBSCR         = 8'd26;
 // Inline-cache unit counts for relative-jump target computation (3.14.6).
 localparam logic [7:0] PY_CACHE_JUMP_FORWARD         = 8'd0;
 localparam logic [7:0] PY_CACHE_JUMP_BACKWARD        = 8'd1;
+localparam logic [7:0] PY_CACHE_FOR_ITER              = 8'd1;
 localparam logic [7:0] PY_CACHE_POP_JUMP_IF_FALSE    = 8'd1;
 localparam logic [7:0] PY_CACHE_POP_JUMP_IF_NONE     = 8'd1;
 localparam logic [7:0] PY_CACHE_POP_JUMP_IF_NOT_NONE = 8'd1;
@@ -312,6 +317,97 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_entry(
 );
     begin
         pycore_make_entry = {tag, value};
+    end
+endfunction
+
+// Internal hybrid iterator carried in a PY_TAG_PTR entry.  PTR is not
+// emitted by the image serializer and is otherwise reserved in the current
+// hardware, so the magic byte distinguishes iterator state from malformed
+// or future pointer payloads.
+//
+//   [127:120] magic (8'hA5)
+//   [119:116] kind
+//   [115:96]  kind auxiliary data
+//   [95:64]   next index
+//   [63:32]   per-kind size / stop
+//   [31:0]    per-kind object / buffer address
+//
+// Current layouts:
+//   LIST:      index, size=0, aux=0, addr=list object
+//   TUPLE:     index, size=len, aux=0, addr=element buffer
+// Reserved sockets:
+//   RANGE:     index=current, size=stop, aux=step, addr=0
+//   STR:       index, size=len, addr=string descriptor / buffer
+//   HEAP_ITER: addr=heap iterator object; remaining fields are object-owned
+localparam logic [7:0] PY_ITER_MAGIC = 8'hA5;
+localparam logic [3:0] PY_ITER_KIND_LIST      = 4'd0;
+localparam logic [3:0] PY_ITER_KIND_TUPLE     = 4'd1;
+localparam logic [3:0] PY_ITER_KIND_RANGE     = 4'd2;
+localparam logic [3:0] PY_ITER_KIND_STR       = 4'd3;
+localparam logic [3:0] PY_ITER_KIND_HEAP_ITER = 4'd4;
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_iter_value(
+    input logic [3:0] kind,
+    input logic [31:0] index,
+    input logic [31:0] size,
+    input logic [31:0] addr
+);
+    begin
+        pycore_iter_value = {PY_ITER_MAGIC, kind, 20'b0, index, size, addr};
+    end
+endfunction
+
+function automatic logic pycore_iter_valid(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    logic common_valid;
+    begin
+        common_valid = (value[127:120] == PY_ITER_MAGIC) &&
+                       (value[115:96] == 20'b0) &&
+                       (value[3:0] == 4'b0);
+        unique case (value[119:116])
+            PY_ITER_KIND_LIST:
+                pycore_iter_valid = common_valid &&
+                                    (value[63:32] == 32'b0);
+            PY_ITER_KIND_TUPLE:
+                pycore_iter_valid = common_valid;
+            // Reserved kinds remain invalid until both GET_ITER and FOR_ITER
+            // implementations land.
+            default:
+                pycore_iter_valid = 1'b0;
+        endcase
+    end
+endfunction
+
+function automatic logic [3:0] pycore_iter_kind(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_iter_kind = value[119:116];
+    end
+endfunction
+
+function automatic logic [31:0] pycore_iter_index(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_iter_index = value[95:64];
+    end
+endfunction
+
+function automatic logic [31:0] pycore_iter_size(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_iter_size = value[63:32];
+    end
+endfunction
+
+function automatic logic [31:0] pycore_iter_addr(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_iter_addr = value[31:0];
     end
 endfunction
 

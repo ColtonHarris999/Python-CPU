@@ -193,6 +193,9 @@ module pycore_tag_decode (
                     end
                 end
 
+                // Native COMPARE_OP ceiling: numeric pairs return exact BOOL.
+                // Rich comparison for strings, containers, None, and generic
+                // objects is intentionally trap-until-complete.
                 PY_ALU_EQ, PY_ALU_NE, PY_ALU_LT, PY_ALU_LE, PY_ALU_GT, PY_ALU_GE: begin
                     if (rs1_tag_i == PY_TAG_FLOAT || rs2_tag_i == PY_TAG_FLOAT) begin
                         if (pycore_is_numeric_tag(rs1_tag_i) && pycore_is_numeric_tag(rs2_tag_i)) begin

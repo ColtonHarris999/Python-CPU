@@ -569,10 +569,50 @@ memory-ownership handoff plus `O(length)` element copy in firmware,
 amortized `O(1)` across appends because the excore doubles capacity on
 every grow.
 
+#### LIST/TUPLE iteration
+
+`GET_ITER` accepts LIST and TUPLE handles and rewrites TOS to an internal
+`PY_TAG_PTR` hybrid iterator. Its 128-bit payload is
+`magic[127:120], kind[119:116], aux[115:96], index[95:64],
+size/stop[63:32], addr[31:0]`. Kinds 0/1 are LIST/TUPLE; RANGE, STR, and
+HEAP_ITER reserve kinds 2/3/4. LIST stores `size=0, addr=list_object`;
+TUPLE stores its immutable length and element-buffer address. Reserved kinds
+remain invalid until both their `GET_ITER` and `FOR_ITER` paths land.
+Validity is per-kind rather than a global PTR rule. `PY_TAG_PTR` is not emitted
+by the image serializer, so malformed, unknown, or incomplete kinds raise
+`PY_TRAP_TYPE` in `FOR_ITER`.
+
+`FOR_ITER` runs in `S_CONTAINER`. TUPLE iteration compares the index with the
+captured immutable size and reads the inline element slots. LIST iteration
+re-reads the stable object header and `ob_item` each step, so length changes
+and buffer growth are observed like CPython list iterators. A yield updates
+the iterator and pushes the element in two RF beats. Exhaustion leaves the
+iterator at TOS and redirects over `END_FOR` to `POP_ITER`, which performs the
+single pop. Unsupported Python iterator types raise `PY_TRAP_TYPE`; there is
+no generic `__iter__` / `__next__` dispatch.
+
+Element rewrites through `STORE_SUBSCR` are visible when their index has not
+yet been yielded. Rebinding the Python source name does not affect the
+iterator, which retains the original object address. LIST `NB_INPLACE_ADD`
+routes to the existing LIST_EXTEND/excore grow path and leaves the same list
+handle in place; the next `FOR_ITER` observes the extended length and buffer.
+LIST `DELETE_SUBSCR` shifts following elements down and decrements the live
+length, so deletion can skip shifted elements or cause early exhaustion.
+
+The reserved kinds are deliberate trap-until-complete sockets, not partial
+implementations. RANGE comes next after a native range source/CALL
+representation exists. STR follows after `S_CONTAINER` can retain SHORT_STR
+payloads and read LONG_STR `string_mem`. Dict views use HEAP_ITER only after a
+heap iterator-object layout and insertion-order walk are defined. Generators
+remain last because they require YIELD and suspended-frame state. Until each
+prerequisite lands, both unsupported sources and forged reserved kinds
+TYPE-trap rather than taking a plausible but incomplete path.
+
 #### `LIST_EXTEND`
 
 `LIST_EXTEND` (opcode 79) extends a list from a **LIST or TUPLE** source
-(other tags → `PY_TRAP_TYPE`; no iterator protocol yet):
+(other tags → `PY_TRAP_TYPE`; it does not consume the internal iterator
+protocol described above):
 
 - **Empty source**: no-op pop of the iterable on pycore (no trap).
 - **Fast path** (`len + src_len <= capacity`, `CONT_LIST_EXTEND`): copy
