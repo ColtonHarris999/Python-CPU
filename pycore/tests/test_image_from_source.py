@@ -325,6 +325,37 @@ class ImageTranscodingTest(unittest.TestCase):
         result = image_from_source.build_image_from_source_text(src, "<to_bool>")
         self.assertGreater(len(result.program_slots), 0)
 
+    def test_to_bool_string_tags_now_supported(self) -> None:
+        # Mirrors img_to_bool_str.py. The final literal exceeds the 15-byte
+        # SHORT_STR ceiling, so image serialization exercises LONG_STR too.
+        src = (
+            "def managed_entry():\n"
+            "    empty = ''\n"
+            "    short = 'hi'\n"
+            "    long = 'this is a long string!!'\n"
+            "    out = 0\n"
+            "    if empty:\n"
+            "        out += 100\n"
+            "    if short:\n"
+            "        out += 1\n"
+            "    if long:\n"
+            "        out += 10\n"
+            "    return out\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertIn("TO_BOOL", opnames)
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<to_bool_strings>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+        self.assertGreater(result.string_heap.next_addr, 0)
+
     def test_unary_not_opcode_now_supported(self) -> None:
         src = (
             "def managed_entry():\n"
@@ -401,6 +432,62 @@ class ImageTranscodingTest(unittest.TestCase):
         result = image_from_source.build_image_from_source_text(src, "<is_op>")
         self.assertGreater(len(result.program_slots), 0)
 
+    def test_compare_op_packed_forms_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a = 2\n"
+            "    b = 3\n"
+            "    r0 = a < b\n"
+            "    r1 = a <= b\n"
+            "    r2 = a == b\n"
+            "    r3 = a != b\n"
+            "    r4 = a > b\n"
+            "    r5 = a >= b\n"
+            "    out = 0\n"
+            "    if a < b:\n"
+            "        out += 1\n"
+            "    if a <= b:\n"
+            "        out += 2\n"
+            "    if a == b:\n"
+            "        out += 4\n"
+            "    if a != b:\n"
+            "        out += 8\n"
+            "    if a > b:\n"
+            "        out += 16\n"
+            "    if a >= b:\n"
+            "        out += 32\n"
+            "    return out + r0 + r1 + r2 + r3 + r4 + r5\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        compare_args: set[int] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            instructions = list(image_from_source.iter_raw_instructions(co))
+            for index, ins in enumerate(instructions):
+                if ins.opname != "COMPARE_OP":
+                    continue
+                compare_args.add(ins.arg)
+                self.assertEqual(instructions[index + 1].opname, "CACHE")
+
+        self.assertEqual(compare_args, image_from_source.SUPPORTED_COMPARE_ARGS)
+        result = image_from_source.build_image_from_source_text(src, "<compare_op>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_compare_op_unknown_packed_form_rejected(self) -> None:
+        module = _compile_module("def cmp(a, b):\n    return a < b\n")
+        compare_code = next(co for co in module.co_consts if hasattr(co, "co_code"))
+        compare = next(
+            ins for ins in image_from_source.iter_raw_instructions(compare_code)
+            if ins.opname == "COMPARE_OP"
+        )
+        malformed = bytearray(compare_code.co_code)
+        malformed[compare.offset + 1] = 0
+        compare_code = compare_code.replace(co_code=bytes(malformed))
+
+        with self.assertRaisesRegex(ValueError, "Unsupported COMPARE_OP oparg 0"):
+            image_from_source.validate_code_object(compare_code)
+
     def test_pop_jump_if_none_opcodes_now_supported(self) -> None:
         src = (
             "def managed_entry():\n"
@@ -429,6 +516,46 @@ class ImageTranscodingTest(unittest.TestCase):
 
         result = image_from_source.build_image_from_source_text(
             src, "<pop_jump_if_none>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_for_iter_bundle_now_supported(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a = 1\n"
+            "    b = 2\n"
+            "    xs = [a, b]\n"
+            "    total = 0\n"
+            "    for x in xs:\n"
+            "        total += x\n"
+            "    return total\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertTrue(
+            {"GET_ITER", "FOR_ITER", "END_FOR", "POP_ITER"} <= opnames
+        )
+
+        result = image_from_source.build_image_from_source_text(src, "<for_iter>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_for_iter_type_trap_source_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    total = 0\n"
+            "    for value in 7:\n"
+            "        total += value\n"
+            "    return total\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<for_iter_type_trap>"
         )
         self.assertGreater(len(result.program_slots), 0)
 
@@ -495,15 +622,48 @@ class CPython314ConventionProbeTest(unittest.TestCase):
         )
         self.assertEqual(call.arg, 1)
 
-        def cmp(a, b):
-            return a < b
+        operators = ("<", "<=", "==", "!=", ">", ">=")
+        expression_args: list[int] = []
+        conditional_args: list[int] = []
+        for operator in operators:
+            namespace: dict[str, object] = {}
+            exec(f"def cmp(a, b): return a {operator} b", namespace)
+            compare = next(
+                ins
+                for ins in dis.get_instructions(
+                    namespace["cmp"], show_caches=True
+                )
+                if ins.opname == "COMPARE_OP"
+            )
+            expression_args.append(compare.arg)
+            self.assertEqual(dis.stack_effect(compare.opcode, compare.arg), -1)
 
-        compare = next(
-            ins for ins in dis.get_instructions(cmp, show_caches=True)
-            if ins.opname == "COMPARE_OP"
+            namespace = {}
+            exec(
+                f"def cmp(a, b):\n"
+                f"    if a {operator} b:\n"
+                f"        return 1\n"
+                f"    return 0\n",
+                namespace,
+            )
+            compare = next(
+                ins
+                for ins in dis.get_instructions(
+                    namespace["cmp"], show_caches=True
+                )
+                if ins.opname == "COMPARE_OP"
+            )
+            conditional_args.append(compare.arg)
+            self.assertEqual(dis.stack_effect(compare.opcode, compare.arg), -1)
+
+        self.assertEqual(expression_args, [2, 42, 72, 103, 132, 172])
+        self.assertEqual(conditional_args, [18, 58, 88, 119, 148, 188])
+        self.assertEqual(
+            {arg >> 5 for arg in expression_args + conditional_args},
+            set(range(6)),
         )
-        self.assertEqual(compare.arg >> 5, 0)
-        self.assertEqual(compare.arg & 0x1F, 2)
+        self.assertTrue(all((arg & 16) == 0 for arg in expression_args))
+        self.assertTrue(all((arg & 16) != 0 for arg in conditional_args))
 
 
 if __name__ == "__main__":

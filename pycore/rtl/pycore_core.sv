@@ -176,6 +176,8 @@ module pycore_core #(
     localparam logic [4:0] CONT_SET_ADD      = 5'd24;// SET_ADD probe/insert
     localparam logic [4:0] CONT_CONTAINS_SET = 5'd25;// CONTAINS_OP on SET
     localparam logic [4:0] CONT_SET_UPDATE   = 5'd26;// SET_UPDATE → always trap
+    localparam logic [4:0] CONT_GET_ITER     = 5'd27;// LIST/TUPLE -> internal PTR iterator
+    localparam logic [4:0] CONT_FOR_ITER     = 5'd28;// advance internal iterator
 
     // Container phases (stored in container_phase_r, 4-bit).
     //
@@ -236,6 +238,10 @@ module pycore_core #(
     localparam logic [4:0] CP_LIST_BUF    = 5'd20;
     localparam logic [4:0] CP_LIST_WB     = 5'd21;
     localparam logic [4:0] CP_SRC_HDR     = 5'd22;
+    // Iterator RF commit is deliberately two-beat: update iterator state,
+    // then push the yielded element through the single RF write port.
+    localparam logic [4:0] CP_ITER_WB     = 5'd23;
+    localparam logic [4:0] CP_ITEM_WB     = 5'd24;
 
     logic [3:0] state_r;
 
@@ -488,6 +494,8 @@ module pycore_core #(
     logic        dec_is_call;
     logic        dec_is_return;
     logic        dec_is_container;
+    logic        binary_list_iadd;
+    logic        route_container;
     logic [2:0]  dec_mem_op;
     logic        dec_illegal;
 
@@ -552,7 +560,7 @@ module pycore_core #(
             PY_OP_LOAD_FAST_AND_CLEAR,
             PY_OP_STORE_FAST_LOAD_FAST,
             PY_OP_STORE_FAST_STORE_FAST,
-            PY_OP_SWAP: begin
+            PY_OP_SWAP, PY_OP_GET_ITER, PY_OP_FOR_ITER: begin
                 id_rd_we = 1'b0; id_tos_delta = 3'sd0;
             end
             // PUSH_NULL: push sentinel {NULL, 0}, one RF write via WB stage.
@@ -571,7 +579,7 @@ module pycore_core #(
             end
             PY_OP_BINARY_OP: begin
                 // NB_SUBSCR routes to S_CONTAINER; arithmetic ops use S_WB.
-                if (dec_is_container) begin
+                if (route_container) begin
                     id_rd_we = 1'b0; id_tos_delta = 3'sd0;
                 end else begin
                     id_rd_we = !dec_illegal; id_tos_delta = -3'sd1;
@@ -580,7 +588,7 @@ module pycore_core #(
             PY_OP_COMPARE_OP, PY_OP_IS_OP: begin
                 id_rd_we = !dec_illegal; id_tos_delta = -3'sd1;
             end
-            PY_OP_POP_TOP, PY_OP_POP_ITER: begin
+            PY_OP_END_FOR, PY_OP_POP_TOP, PY_OP_POP_ITER: begin
                 id_tos_delta = -3'sd1;
             end
             PY_OP_RETURN_VALUE: begin
@@ -597,8 +605,10 @@ module pycore_core #(
                 id_tos_delta = -3'sd2;
             end
             // Container ops: TOS managed by S_CONTAINER, not S_WB.
+            // CONTAINS_OP / LIST_APPEND / LIST_EXTEND / SET_* fall through
+            // default (same id_rd_we/tos_delta) and route via dec_is_container.
             PY_OP_BUILD_LIST, PY_OP_BUILD_MAP, PY_OP_BUILD_SET, PY_OP_BUILD_TUPLE,
-            PY_OP_STORE_SUBSCR: begin
+            PY_OP_STORE_SUBSCR, PY_OP_DELETE_SUBSCR: begin
                 id_rd_we = 1'b0; id_tos_delta = 3'sd0;
             end
             default: begin
@@ -626,7 +636,11 @@ module pycore_core #(
     // NB_SUBSCR (BINARY_OP with oparg=PY_NBARG_SUBSCR) routes to S_CONTAINER,
     // not the execute fabric.  Exclude it from is_alu so exec.valid_i stays low
     // and no spurious trap fires.
-    assign is_alu = ((cur_opcode_r == PY_OP_BINARY_OP) && !dec_is_container) ||
+    assign binary_list_iadd = (cur_opcode_r == PY_OP_BINARY_OP) &&
+                              (cur_arg_r[7:0] == 8'd13) &&
+                              (pycore_get_tag(rs1_r) == PY_TAG_LIST);
+    assign route_container = dec_is_container || binary_list_iadd;
+    assign is_alu = ((cur_opcode_r == PY_OP_BINARY_OP) && !route_container) ||
                     (cur_opcode_r == PY_OP_COMPARE_OP);
 
     logic [PYCORE_ENTRY_WIDTH-1:0] exec_result;
@@ -705,13 +719,29 @@ module pycore_core #(
                 end
                 ex_entry = rs1_r;
             end
-            // TO_BOOL: convert INT / BOOL / FLOAT to BOOL in place; anything
-            // else raises PY_TRAP_TYPE via exec_type_trap_pulse.
+            // TO_BOOL: convert numeric and string scalars to BOOL in place;
+            // unsupported tags raise PY_TRAP_TYPE via exec_type_trap_pulse.
             PY_OP_TO_BOOL: begin
                 unique case (ex_rs1_tag)
                     PY_TAG_INT:   ex_rs1_bool = (rs1_r[PYCORE_VAL_MSB:0] != {PYCORE_VAL_WIDTH{1'b0}});
                     PY_TAG_BOOL:  ex_rs1_bool = ex_rs1_int[0];
                     PY_TAG_FLOAT: ex_rs1_bool = (ex_rs1_int[62:0] != 63'b0);
+                    PY_TAG_SHORT_STR: begin
+                        if (pycore_short_str_size(rs1_r[PYCORE_VAL_MSB:0])
+                                > PYCORE_SHORT_STR_MAX_BYTES) begin
+                            ex_rs1_bool          = 1'b0;
+                            exec_type_trap_pulse = (state_r == S_EXEC);
+                        end else begin
+                            ex_rs1_bool = (pycore_short_str_size(
+                                rs1_r[PYCORE_VAL_MSB:0]
+                            ) != 4'b0);
+                        end
+                    end
+                    PY_TAG_LONG_STR: begin
+                        ex_rs1_bool = (pycore_long_str_size(
+                            rs1_r[PYCORE_VAL_MSB:0]
+                        ) != 64'b0);
+                    end
                     default: begin
                         ex_rs1_bool          = 1'b0;
                         exec_type_trap_pulse = (state_r == S_EXEC);
@@ -986,7 +1016,7 @@ module pycore_core #(
                             exec_type_trap_pulse ||
                             container_type_trap_r;
     assign stack_fault_sig = (state_r == S_WB) && !dec_is_call && !dec_is_return &&
-                              !dec_is_container &&
+                              !route_container &&
                              ((next_tos < STACK_BASE) || (next_tos > STACK_TOP_MAX));
     assign div_zero_sig   = exec_in && exec_trap && (exec_trap_code == PY_TRAP_DIV_ZERO);
     assign fpu_exc_sig    = exec_in && exec_trap && (exec_trap_code == PY_TRAP_FPU_EXCEPTION);
@@ -1114,6 +1144,11 @@ module pycore_core #(
     logic [3:0]   cont_rs2_tag;   // tag of rs2_r
     logic [127:0] cont_rf_rs1_val; // value field of rf_rs1 (container RF read)
     logic [3:0]   cont_rf_rs1_tag; // tag of rf_rs1
+    logic         cont_iter_valid;
+    logic [3:0]   cont_iter_kind;
+    logic [31:0]  cont_iter_index;
+    logic [31:0]  cont_iter_size;
+    logic [31:0]  cont_iter_addr;
 
     assign cont_rs1_val   = pycore_get_val(rs1_r);
     assign cont_rs2_val   = pycore_get_val(rs2_r);
@@ -1145,6 +1180,11 @@ module pycore_core #(
     assign cont_rs2_tag   = pycore_get_tag(rs2_r);
     assign cont_rf_rs1_val = pycore_get_val(rf_rs1);
     assign cont_rf_rs1_tag = pycore_get_tag(rf_rs1);
+    assign cont_iter_valid    = pycore_iter_valid(cont_rs1_val);
+    assign cont_iter_kind     = pycore_iter_kind(cont_rs1_val);
+    assign cont_iter_index    = pycore_iter_index(cont_rs1_val);
+    assign cont_iter_size     = pycore_iter_size(cont_rs1_val);
+    assign cont_iter_addr     = pycore_iter_addr(cont_rs1_val);
 
     // Dict-specific combinational helpers.
     // Slot count computed from container_count_r (pairs), used during BUILD_MAP init.
@@ -1235,7 +1275,7 @@ module pycore_core #(
                 S_EXEC: begin
                     if (!exec_stall) begin
                         // Container ops bypass S_MEM and S_WB entirely.
-                        if (dec_is_container) state_next = S_CONTAINER;
+                        if (route_container) state_next = S_CONTAINER;
                         else                  state_next = S_MEM;
                     end
                 end
@@ -1461,7 +1501,7 @@ module pycore_core #(
                         // transitions to S_CONTAINER (dec_is_container).
                         // Decode which sub-operation we are entering and
                         // pre-clear the dmem/trap handshake registers.
-                        if (dec_is_container) begin
+                        if (route_container) begin
                             container_phase_r        <= CP_INIT;
                             container_dmem_pending_r <= 1'b0;
                             container_type_trap_r    <= 1'b0;
@@ -1528,7 +1568,8 @@ module pycore_core #(
                                 container_lfb_lo_r <= cur_arg_r[3:0];
                             end else if (cur_opcode_r == PY_OP_LIST_APPEND) begin
                                 container_op_r <= CONT_LIST_APPEND;
-                            end else if (cur_opcode_r == PY_OP_LIST_EXTEND) begin
+                            end else if ((cur_opcode_r == PY_OP_LIST_EXTEND) ||
+                                         binary_list_iadd) begin
                                 container_op_r <= CONT_LIST_EXTEND;
                             end else if (cur_opcode_r == PY_OP_SET_ADD) begin
                                 container_op_r <= CONT_SET_ADD;
@@ -1548,6 +1589,10 @@ module pycore_core #(
                                          PY_OP_LOAD_FAST_AND_CLEAR) begin
                                 // CONT_LFAC: rs1_r = latched local value.
                                 container_op_r <= CONT_LFAC;
+                            end else if (cur_opcode_r == PY_OP_GET_ITER) begin
+                                container_op_r <= CONT_GET_ITER;
+                            end else if (cur_opcode_r == PY_OP_FOR_ITER) begin
+                                container_op_r <= CONT_FOR_ITER;
                             end else if (cur_opcode_r == PY_OP_SWAP) begin
                                 container_op_r <= CONT_SWAP;
                             end else if (cur_opcode_r == PY_OP_BINARY_OP) begin
@@ -2167,6 +2212,169 @@ module pycore_core #(
 
                             endcase
                         end // CONT_SUBSCR_LIST
+
+                        // =====================================================
+                        // GET_ITER: replace a LIST/TUPLE handle at TOS with an
+                        // internal PY_TAG_PTR iterator. LIST length/ob_item are
+                        // deliberately not snapshotted; FOR_ITER re-reads them
+                        // so append/shrink behavior follows CPython.
+                        // =====================================================
+                        CONT_GET_ITER: begin
+                            unique case (container_phase_r)
+                                CP_INIT: begin
+                                    if (cont_rs1_tag == PY_TAG_LIST) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_PTR,
+                                            pycore_iter_value(
+                                                PY_ITER_KIND_LIST,
+                                                32'd0, 32'd0, cont_rs1_addr));
+                                        container_phase_r <= CP_ITER_WB;
+                                    end else if (cont_rs1_tag == PY_TAG_TUPLE) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_PTR,
+                                            pycore_iter_value(
+                                                PY_ITER_KIND_TUPLE, 32'd0,
+                                                cont_tuple_size[31:0],
+                                                cont_rs1_addr));
+                                        container_phase_r <= CP_ITER_WB;
+                                    end else begin
+                                        container_type_trap_r <= 1'b1;
+                                    end
+                                end
+
+                                CP_ITER_WB: begin
+                                    fetch_skip_r     <= 1'b1;
+                                    container_phase_r <= CP_DONE;
+                                end
+
+                                CP_DONE: ;
+                                default: ;
+                            endcase
+                        end // CONT_GET_ITER
+
+                        // =====================================================
+                        // FOR_ITER: advance the internal LIST/TUPLE iterator.
+                        // Yield commits iterator+element in two RF beats.
+                        // Exhaustion leaves the iterator at TOS and redirects
+                        // to POP_ITER, skipping END_FOR exactly as CPython 3.14.
+                        // =====================================================
+                        CONT_FOR_ITER: begin
+                            unique case (container_phase_r)
+                                CP_INIT: begin
+                                    if (cont_rs1_tag != PY_TAG_PTR ||
+                                        !cont_iter_valid) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        unique case (cont_iter_kind)
+                                            PY_ITER_KIND_TUPLE: begin
+                                                if (cont_iter_index >= cont_iter_size) begin
+                                                    redirect_pending_r <= 1'b1;
+                                                    redirect_tgt_r <= cur_pc_r + 32'd1 +
+                                                        {24'b0, PY_CACHE_FOR_ITER} +
+                                                        cur_arg_r + 32'd1;
+                                                    fetch_skip_r      <= 1'b1;
+                                                    container_phase_r <= CP_DONE;
+                                                end else begin
+                                                    container_dmem_addr_r <=
+                                                        pycore_tuple_val_addr(
+                                                            cont_iter_addr,
+                                                            cont_iter_index);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    container_phase_r        <= CP_VAL;
+                                                end
+                                            end
+                                            PY_ITER_KIND_LIST: begin
+                                                // LIST: read the current header first.
+                                                container_dmem_addr_r    <= cont_iter_addr;
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r        <= CP_HDR;
+                                            end
+                                            default: begin
+                                                container_type_trap_r <= 1'b1;
+                                            end
+                                        endcase
+                                    end
+                                end
+
+                                CP_HDR: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if ({32'b0, cont_iter_index} >= cont_hdr_len) begin
+                                            redirect_pending_r <= 1'b1;
+                                            redirect_tgt_r <= cur_pc_r + 32'd1 +
+                                                {24'b0, PY_CACHE_FOR_ITER} +
+                                                cur_arg_r + 32'd1;
+                                            fetch_skip_r      <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_list_obitem_addr(cont_iter_addr);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_LIST_BUF;
+                                        end
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r <= pycore_list_val_addr(
+                                            cont_obitem_buf, cont_iter_index);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_VAL;
+                                    end
+                                end
+
+                                CP_VAL: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_val_r       <= container_rd_data_r;
+                                        container_dmem_addr_r <= container_dmem_addr_r + 32'd16;
+                                        container_dmem_we_r   <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r     <= CP_TAG;
+                                    end
+                                end
+
+                                CP_TAG: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_tag_r     <= container_rd_data_r[3:0];
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_PTR,
+                                            pycore_iter_value(
+                                                cont_iter_kind,
+                                                cont_iter_index + 32'd1,
+                                                cont_iter_size,
+                                                cont_iter_addr));
+                                        container_phase_r <= CP_ITER_WB;
+                                    end
+                                end
+
+                                CP_ITER_WB: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(tos_r);
+                                    container_wb_data_r <= pycore_make_entry(
+                                        container_tag_r, container_val_r);
+                                    container_phase_r <= CP_ITEM_WB;
+                                end
+
+                                CP_ITEM_WB: begin
+                                    tos_r             <= tos_r + RF_AW'(1);
+                                    fetch_skip_r      <= 1'b1;
+                                    container_phase_r <= CP_DONE;
+                                end
+
+                                CP_DONE: ;
+                                default: ;
+                            endcase
+                        end // CONT_FOR_ITER
 
                         // =====================================================
                         CONT_STORE_LIST: begin
