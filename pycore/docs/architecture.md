@@ -760,7 +760,8 @@ Design notes: `pycore/docs/set_excore.md`.
 `dec_is_container` is asserted. It bypasses both `S_MEM` and `S_WB`; TOS and
 RF updates happen inside `S_CONTAINER`.
 
-Sub-phases live in `container_phase_r[4:0]`. Shared phases include:
+Sub-phases live in `container_phase_r[5:0]` (widened in M0 from 5 bits;
+selector `container_op_r` is likewise 6-bit). Shared phases include:
 
 | Phase | Name | Purpose |
 |-------|------|---------|
