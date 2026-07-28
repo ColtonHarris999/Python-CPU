@@ -1063,6 +1063,13 @@ endfunction
 localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0400;
 localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0000_2000;
 
+// Memory-manager metadata (excore/fw/mm.s). Lives in the reserved window
+// below the heap so both cores can reach it via the slot port.
+localparam logic [31:0] PYCORE_MM_BASE       = 32'h0000_0200;
+localparam logic [31:0] PYCORE_MM_HDR_BYTES  = 32'd16;
+localparam logic [31:0] PYCORE_MM_ALLOC_MAGIC = 32'hA110_CA7E;
+localparam logic [31:0] PYCORE_MM_FREE_MAGIC  = 32'hF2EE_F2EE;
+
 // -------------------------------------------------------------------------
 // LIST in-dmem layout v2 — growable split object/buffer (Phase A).
 //

@@ -21,15 +21,16 @@
 #   Capacity unchanged. (Last-element delete stays on pycore.)
 #
 # DICT_GROW (E0=dict, E1=key, E2=value): realloc table, rehash, STORE insert,
-#   COMPLETED pop 3. INTENTIONALLY LEAKS the old table.
+#   COMPLETED pop 3. Old table returned via mm_free when it was MM-backed.
 #
 # SET_GROW (E0=set, E1=element): realloc element table (stride 32), rehash,
-#   insert element, COMPLETED pop 1. INTENTIONALLY LEAKS the old table.
+#   insert element, COMPLETED pop 1. Old table freed when MM-backed.
 #
 # SET_UPDATE (E0=set, E1=LIST/TUPLE/SET): grow-to-fit as needed, insert all
 #   source elements, COMPLETED pop 1.
 #
-# List/dict/set grow paths INTENTIONALLY LEAK old buffers (bump allocator).
+# Grow/extend allocations go through mm_alloc (excore/fw/mm.s). Pre-MM
+# buffers (pycore bump without headers) are left in place by mm_free.
 
     .equ MMIO_BASE,      0xF0000000
 
@@ -264,14 +265,15 @@ cap_zero:
     li   s3, 4
 cap_done:
 
-    lw   s4, MB_HEAP_PTR(s11)      # s4 = new_buf
-
-    # ---- OOM check: new_buf + new_cap*32 > HEAP_LIMIT -> FATAL(MEM_FAULT)
-    slli t0, s3, 5
-    add  t0, s4, t0                # t0 = new_buf + new_cap*32
-    li   t1, HEAP_LIMIT
-    bge  t1, t0, copy_start        # HEAP_LIMIT >= t0  =>  fits, proceed
+    # ---- mm_alloc(new_cap * 32) → s4 = new_buf --------------------------
+    slli a0, s3, 5
+    li   a1, 0
+    li   a2, 0
+    jal  ra, mm_alloc
+    beq  a0, x0, lg_alloc_ok
     j    fatal_mem
+lg_alloc_ok:
+    mv   s4, a2
 
     # ---- copy `len` elements old_buf -> new_buf (s6 = index i) ----------
 copy_start:
@@ -395,16 +397,18 @@ poll_obitem_wb:
     andi t1, t0, SP_STATUS_BUSY
     bne  t1, x0, poll_obitem_wb
 
-    # ---- RES: COMPLETED, pop 1, push 0 -----------------------------------
+    # ---- free old buffer (no-op if pre-MM / null) + RES -------------------
+    beq  s5, x0, lg_nofree
+    mv   a0, s5
+    jal  ra, mm_free
+lg_nofree:
     li   t0, RES_COMPLETED
     sw   t0, RES_CODE(s11)
     li   t0, 1
     sw   t0, RES_POP_COUNT(s11)
     li   t0, 0
     sw   t0, RES_PUSH_COUNT(s11)
-    slli t0, s3, 5
-    add  t0, s4, t0                 # new_buf + new_cap*32
-    sw   t0, RES_HEAP_PTR(s11)
+    jal  ra, mm_store_res_heap
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
@@ -513,12 +517,15 @@ ext_cap_grow:
     blt  s3, s6, ext_cap_grow
 ext_cap_done:
 
-    lw   s4, MB_HEAP_PTR(s11)      # new_buf
-    slli t0, s3, 5
-    add  t0, s4, t0
-    li   t1, HEAP_LIMIT
-    bge  t1, t0, ext_copy_dst
+    # mm_alloc(new_cap * 32) → s4
+    slli a0, s3, 5
+    li   a1, 0
+    li   a2, 0
+    jal  ra, mm_alloc
+    beq  a0, x0, ext_alloc_ok
     j    fatal_mem
+ext_alloc_ok:
+    mv   s4, a2
 
     # ---- copy dst len elements old_buf -> new_buf ------------------------
 ext_copy_dst:
@@ -655,15 +662,17 @@ poll_ext_ob_wb:
     andi t1, t0, SP_STATUS_BUSY
     bne  t1, x0, poll_ext_ob_wb
 
+    beq  s5, x0, ext_nofree
+    mv   a0, s5
+    jal  ra, mm_free
+ext_nofree:
     li   t0, RES_COMPLETED
     sw   t0, RES_CODE(s11)
     li   t0, 1
     sw   t0, RES_POP_COUNT(s11)
     li   t0, 0
     sw   t0, RES_PUSH_COUNT(s11)
-    slli t0, s3, 5
-    add  t0, s4, t0
-    sw   t0, RES_HEAP_PTR(s11)
+    jal  ra, mm_store_res_heap
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
@@ -745,8 +754,7 @@ poll_ip_hdr_wb:
     sw   t0, RES_POP_COUNT(s11)
     li   t0, 0
     sw   t0, RES_PUSH_COUNT(s11)
-    lw   t0, MB_HEAP_PTR(s11)      # heap unchanged
-    sw   t0, RES_HEAP_PTR(s11)
+    jal  ra, mm_store_res_heap
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
@@ -773,9 +781,7 @@ dg_tag_ok:
     sw   t0, RES_POP_COUNT(s11)
     li   t0, 0
     sw   t0, RES_PUSH_COUNT(s11)
-    slli t0, s7, 6
-    add  t0, s4, t0
-    sw   t0, RES_HEAP_PTR(s11)
+    jal  ra, mm_store_res_heap
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
@@ -897,8 +903,7 @@ poll_ldel_hdr_wb:
     sw   t0, RES_POP_COUNT(s11)
     li   t0, 0
     sw   t0, RES_PUSH_COUNT(s11)
-    lw   t0, MB_HEAP_PTR(s11)
-    sw   t0, RES_HEAP_PTR(s11)
+    jal  ra, mm_store_res_heap
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
@@ -1030,12 +1035,17 @@ dgr_vs_old:
     bge  s7, t0, dgr_alloc
     mv   s7, t0
 dgr_alloc:
-    lw   s4, MB_HEAP_PTR(s11)
-    slli t0, s7, 6
-    add  t0, s4, t0
-    li   t1, HEAP_LIMIT
-    bge  t1, t0, dgr_zero
+    # mm_alloc(new_slots * 64); free old table after rehash
+    sw   s5, SCR_A0(x0)            # stash old table across alloc
+    slli a0, s7, 6
+    li   a1, 0
+    li   a2, 0
+    jal  ra, mm_alloc
+    beq  a0, x0, dgr_alloc_ok
     j    fatal_mem
+dgr_alloc_ok:
+    mv   s4, a2
+    lw   s5, SCR_A0(x0)
 dgr_zero:
     li   s6, 0
 dgr_zero_loop:
@@ -1118,6 +1128,12 @@ dgr_next:
     addi s6, s6, 1
     j    dgr_rehash_loop
 dgr_done:
+    # Free old table (s5) when we allocated a distinct new one (s4).
+    beq  s5, x0, dgr_ret
+    beq  s5, s4, dgr_ret
+    mv   a0, s5
+    jal  ra, mm_free
+dgr_ret:
     # Do NOT reload E1/E2 here — DICT_UPDATE grow-to-fit reuses this helper
     # and mailbox E1 is the source dict, not a key.  DICT_GROW reloads after
     # the jal returns (see do_dict_grow).
@@ -1619,9 +1635,7 @@ sg_tag_ok:
     sw   t0, RES_POP_COUNT(s11)
     li   t0, 0
     sw   t0, RES_PUSH_COUNT(s11)
-    slli t0, s7, 5
-    add  t0, s4, t0
-    sw   t0, RES_HEAP_PTR(s11)
+    jal  ra, mm_store_res_heap
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
@@ -1773,15 +1787,7 @@ su_done:
     sw   t0, RES_POP_COUNT(s11)
     li   t0, 0
     sw   t0, RES_PUSH_COUNT(s11)
-    beq  s4, x0, su_heap_mb
-    slli t0, s1, 5
-    add  t0, s4, t0
-    sw   t0, RES_HEAP_PTR(s11)
-    j    su_go
-su_heap_mb:
-    lw   t0, MB_HEAP_PTR(s11)
-    sw   t0, RES_HEAP_PTR(s11)
-su_go:
+    jal  ra, mm_store_res_heap
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
@@ -1818,12 +1824,17 @@ sgr_vs_old:
     bge  s7, t0, sgr_alloc
     mv   s7, t0
 sgr_alloc:
-    lw   s4, MB_HEAP_PTR(s11)
-    slli t0, s7, 5
-    add  t0, s4, t0
-    li   t1, HEAP_LIMIT
-    bge  t1, t0, sgr_zero
+    # mm_alloc(new_slots * 32); free old table after rehash
+    sw   s5, SCR_A0(x0)            # stash old table across alloc
+    slli a0, s7, 5
+    li   a1, 0
+    li   a2, 0
+    jal  ra, mm_alloc
+    beq  a0, x0, sgr_alloc_ok
     j    fatal_mem
+sgr_alloc_ok:
+    mv   s4, a2
+    lw   s5, SCR_A0(x0)
 sgr_zero:
     li   s6, 0
 sgr_zero_loop:
@@ -1923,6 +1934,12 @@ sgr_next:
     addi s6, s6, 1
     j    sgr_rehash_loop
 sgr_done:
+    # Free old table before installing the new one (s5 may be 0).
+    beq  s5, x0, sgr_install
+    beq  s5, s4, sgr_install
+    mv   a0, s5
+    jal  ra, mm_free
+sgr_install:
     # Install new table into object immediately so subsequent probes work.
     # used unchanged; slots = s7
     sw   s2, SP_DATA0(s11)
@@ -2196,15 +2213,7 @@ du_done:
     sw   t0, RES_POP_COUNT(s11)
     li   t0, 0
     sw   t0, RES_PUSH_COUNT(s11)
-    beq  s4, x0, du_heap_mb
-    slli t0, s1, 6
-    add  t0, s4, t0
-    sw   t0, RES_HEAP_PTR(s11)
-    j    du_go
-du_heap_mb:
-    lw   t0, MB_HEAP_PTR(s11)
-    sw   t0, RES_HEAP_PTR(s11)
-du_go:
+    jal  ra, mm_store_res_heap
     li   t0, 1
     sw   t0, RES_GO(s11)
     j    wait_trap
