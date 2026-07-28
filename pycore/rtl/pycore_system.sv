@@ -1,9 +1,14 @@
 `include "pycore_defs.svh"
 
 // Simulation/integration top: the CPU core wired to its instruction and data
-// memory banks and the constant ROM. The testbench instantiates this module, not
-// the core directly, so memory lives outside the core as real master/slave
-// connections instead of a loopback wire.
+// memory banks. The testbench instantiates this module, not the core directly,
+// so memory lives outside the core as real master/slave connections instead of
+// a loopback wire.
+//
+// The constant ROM has been removed.  LOAD_CONST reads co_consts through
+// S_CONTAINER; the module image builder (image_from_source.py) preloads
+// dmem with the code object + constants tuple + globals dict, and the CPU
+// walks the boot record at reset (S_BOOT) when BOOT_EN=1.
 module pycore_system #(
     parameter int    ADDR_WIDTH       = PYCORE_ADDR_WIDTH,
     parameter int    IMEM_DATA_W      = PYCORE_IMEM_DATA_WIDTH,
@@ -11,20 +16,20 @@ module pycore_system #(
     parameter int    BLOCK_SHIFT      = PYCORE_BLOCK_SHIFT,
     parameter int    IMEM_BLOCK_COUNT = PYCORE_IMEM_BLOCK_COUNT,
     parameter int    DMEM_BLOCK_COUNT = PYCORE_DMEM_BLOCK_COUNT,
-    parameter int    CONST_DEPTH      = 256,
-    parameter int    CONST_IDX_W      = 8,
     parameter string PROG_HEX         = "pycore/programs/program.hex",
-    parameter string CONST_HEX        = "pycore/programs/consts.hex",
-    parameter string STRING_HEX       = "pycore/programs/string_mem.hex"
+    parameter string STRING_HEX       = "pycore/programs/string_mem.hex",
+    parameter string DMEM_HEX         = "",
+    parameter logic [31:0] HEAP_INIT_PTR = PYCORE_HEAP_BASE,
+    parameter bit    BOOT_EN          = 1'b1
 ) (
-    input  logic        clk,
-    input  logic        rst_n,
-    output logic        trap_out,
-    output logic [3:0]  trap_code,
-    output logic [63:0] cycle_count,
-    output logic                          dbg_wb_we,
-    output logic [6:0]                    dbg_wb_addr,
-    output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry
+    input  logic        clk_i,
+    input  logic        rst_n_i,
+    output logic        trap_out_o,
+    output logic [3:0]  trap_code_o,
+    output logic [63:0] cycle_count_o,
+    output logic                          dbg_wb_we_o,
+    output logic [7:0]                    dbg_wb_addr_o,
+    output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry_o
 );
 
     // imem master <-> bank
@@ -45,41 +50,55 @@ module pycore_system #(
     logic [DMEM_DATA_W-1:0] dmem_rdata;
     logic                   dmem_fault;
 
-    // const ROM
-    logic [CONST_IDX_W-1:0]        const_idx;
-    logic [PYCORE_ENTRY_WIDTH-1:0] const_entry;
-
     pycore_core #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .IMEM_DATA_W(IMEM_DATA_W),
         .DMEM_DATA_W(DMEM_DATA_W),
-        .CONST_IDX_W(CONST_IDX_W),
-        .STRING_HEX(STRING_HEX)
+        .STRING_HEX(STRING_HEX),
+        .HEAP_INIT_PTR(HEAP_INIT_PTR),
+        .BOOT_EN(BOOT_EN)
     ) core (
-        .clk(clk),
-        .rst_n(rst_n),
-        .imem_req(imem_req),
-        .imem_we(imem_we),
-        .imem_addr(imem_addr),
-        .imem_wdata(imem_wdata),
-        .imem_ack(imem_ack),
-        .imem_rdata(imem_rdata),
-        .imem_fault(imem_fault),
-        .dmem_req(dmem_req),
-        .dmem_we(dmem_we),
-        .dmem_addr(dmem_addr),
-        .dmem_wdata(dmem_wdata),
-        .dmem_ack(dmem_ack),
-        .dmem_rdata(dmem_rdata),
-        .dmem_fault(dmem_fault),
-        .const_idx(const_idx),
-        .const_entry(const_entry),
-        .trap_out(trap_out),
-        .trap_code(trap_code),
-        .cycle_count(cycle_count),
-        .dbg_wb_we(dbg_wb_we),
-        .dbg_wb_addr(dbg_wb_addr),
-        .dbg_wb_entry(dbg_wb_entry)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .imem_req_o(imem_req),
+        .imem_we_o(imem_we),
+        .imem_addr_o(imem_addr),
+        .imem_wdata_o(imem_wdata),
+        .imem_ack_i(imem_ack),
+        .imem_rdata_i(imem_rdata),
+        .imem_fault_i(imem_fault),
+        .dmem_req_o(dmem_req),
+        .dmem_we_o(dmem_we),
+        .dmem_addr_o(dmem_addr),
+        .dmem_wdata_o(dmem_wdata),
+        .dmem_ack_i(dmem_ack),
+        .dmem_rdata_i(dmem_rdata),
+        .dmem_fault_i(dmem_fault),
+        // EXCORE_EN defaults to 0 (not overridden here): this legacy
+        // single-core top never enters S_TRAP_MARSHAL/S_TRAP_WAIT, so the
+        // trap_req/trap_res ports are simply tied off.
+        .trap_req_valid_o(),
+        .trap_req_ready_i(1'b0),
+        .trap_req_code_o(),
+        .trap_req_pc_o(),
+        .trap_req_instr_o(),
+        .trap_req_heap_ptr_o(),
+        .trap_req_entry_count_o(),
+        .trap_req_entries_o(),
+        .trap_res_valid_i(1'b0),
+        .trap_res_ready_o(),
+        .trap_res_code_i('0),
+        .trap_res_fatal_code_i('0),
+        .trap_res_pop_count_i('0),
+        .trap_res_push_count_i('0),
+        .trap_res_heap_ptr_i('0),
+        .trap_res_entries_i('{'0, '0}),
+        .trap_out_o(trap_out_o),
+        .trap_code_o(trap_code_o),
+        .cycle_count_o(cycle_count_o),
+        .dbg_wb_we_o(dbg_wb_we_o),
+        .dbg_wb_addr_o(dbg_wb_addr_o),
+        .dbg_wb_entry_o(dbg_wb_entry_o)
     );
 
     pycore_imem #(
@@ -89,40 +108,33 @@ module pycore_system #(
         .BLOCK_COUNT(IMEM_BLOCK_COUNT),
         .INIT_HEX(PROG_HEX)
     ) imem (
-        .clk(clk),
-        .rst_n(rst_n),
-        .req(imem_req),
-        .we(imem_we),
-        .addr(imem_addr),
-        .wdata(imem_wdata),
-        .ack(imem_ack),
-        .rdata(imem_rdata),
-        .fault(imem_fault)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .req_i(imem_req),
+        .we_i(imem_we),
+        .addr_i(imem_addr),
+        .wdata_i(imem_wdata),
+        .ack_o(imem_ack),
+        .rdata_o(imem_rdata),
+        .fault_o(imem_fault)
     );
 
     pycore_dmem #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .DATA_WIDTH(DMEM_DATA_W),
         .BLOCK_SHIFT(BLOCK_SHIFT),
-        .BLOCK_COUNT(DMEM_BLOCK_COUNT)
+        .BLOCK_COUNT(DMEM_BLOCK_COUNT),
+        .INIT_HEX(DMEM_HEX)
     ) dmem (
-        .clk(clk),
-        .rst_n(rst_n),
-        .req(dmem_req),
-        .we(dmem_we),
-        .addr(dmem_addr),
-        .wdata(dmem_wdata),
-        .ack(dmem_ack),
-        .rdata(dmem_rdata),
-        .fault(dmem_fault)
-    );
-
-    pycore_const_table #(
-        .CONST_DEPTH(CONST_DEPTH),
-        .CONST_HEX(CONST_HEX)
-    ) const_rom (
-        .const_idx(const_idx),
-        .const_entry(const_entry)
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .req_i(dmem_req),
+        .we_i(dmem_we),
+        .addr_i(dmem_addr),
+        .wdata_i(dmem_wdata),
+        .ack_o(dmem_ack),
+        .rdata_o(dmem_rdata),
+        .fault_o(dmem_fault)
     );
 
 endmodule

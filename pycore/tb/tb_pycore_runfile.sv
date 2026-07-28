@@ -1,8 +1,7 @@
 `include "pycore_defs.svh"
 
 module tb_pycore_runfile #(
-    parameter string PROG_HEX = "pycore/programs/run_program.hex",
-    parameter string CONST_HEX = "pycore/programs/run_consts.hex",
+    parameter string PROG_HEX   = "pycore/programs/run_program.hex",
     parameter string STRING_HEX = "pycore/programs/run_string_mem.hex",
     parameter int MAX_CYCLES = 2000
 );
@@ -14,27 +13,26 @@ module tb_pycore_runfile #(
     logic [3:0] trap_code;
     logic [63:0] cycle_count;
     logic dbg_wb_we;
-    logic [6:0] dbg_wb_addr;
+    logic [7:0] dbg_wb_addr;
     logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry;
 
     pycore_system #(
         .PROG_HEX(PROG_HEX),
-        .CONST_HEX(CONST_HEX),
         .STRING_HEX(STRING_HEX)
     ) dut (
-        .clk(clk),
-        .rst_n(rst_n),
-        .trap_out(trap_out),
-        .trap_code(trap_code),
-        .cycle_count(cycle_count),
-        .dbg_wb_we(dbg_wb_we),
-        .dbg_wb_addr(dbg_wb_addr),
-        .dbg_wb_entry(dbg_wb_entry)
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .trap_out_o(trap_out),
+        .trap_code_o(trap_code),
+        .cycle_count_o(cycle_count),
+        .dbg_wb_we_o(dbg_wb_we),
+        .dbg_wb_addr_o(dbg_wb_addr),
+        .dbg_wb_entry_o(dbg_wb_entry)
     );
 
     always #5 clk = ~clk;
 
-    logic [PYCORE_ENTRY_WIDTH-1:0] shadow [0:95];
+    logic [PYCORE_ENTRY_WIDTH-1:0] shadow [0:255];
 
     always_ff @(posedge clk) begin
         if (dbg_wb_we) begin
