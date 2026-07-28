@@ -144,6 +144,10 @@ EXCORE_RTL_SRCS := \
 	pycore-img-set-build-simple pycore-img-set-add-contains \
 	pycore-img-set-bool-int pycore-img-set-hash-neg1 pycore-img-set-str \
 	pycore-img-set-grow-fatal pycore-img-set-grow-basic pycore-img-set-update \
+	pycore-img-map-add pycore-img-map-add-overwrite pycore-img-map-add-grow \
+	pycore-img-dict-update \
+	pycore-img-unpack-sequence pycore-img-unpack-sequence-type-trap \
+	pycore-img-unpack-ex \
 	pycore-img-two-core \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
@@ -670,6 +674,34 @@ pycore-img-set-grow-basic: excore-fw
 pycore-img-set-update: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,set_update,100000)
 
+# MAP_ADD: dict-comprehension key/value insert.
+# img_map_add_overwrite inserts 2 distinct keys into 4-slot table → no grow,
+# single-core OK. img_map_add and img_map_add_grow trigger DICT_GROW → excore.
+pycore-img-map-add-overwrite:
+	$(call PYCORE_IMAGE_RUN,map_add_overwrite,100000)
+
+pycore-img-map-add: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,map_add,100000)
+
+pycore-img-map-add-grow: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,map_add_grow,100000)
+
+# DICT_UPDATE: {**a, **b} merge — always excore trap 15.
+pycore-img-dict-update: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_update,100000)
+
+# UNPACK_SEQUENCE: fixed-count list/tuple unpack (pycore only).
+pycore-img-unpack-sequence:
+	$(call PYCORE_IMAGE_RUN,unpack_sequence,50000)
+
+# UNPACK_SEQUENCE type trap: SET source → TYPE trap code 1.
+pycore-img-unpack-sequence-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,unpack_sequence_type_trap,1,50000)
+
+# UNPACK_EX: starred unpack with heap-allocated middle list (pycore only).
+pycore-img-unpack-ex:
+	$(call PYCORE_IMAGE_RUN,unpack_ex,100000)
+
 # Extend (excore grow) then delete/contains — two-core only.
 pycore-img-list-extend-del-contains-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,list_extend_del_contains,100000)
@@ -865,7 +897,10 @@ pycore-img: \
 	pycore-img-set-bool-int \
 	pycore-img-set-hash-neg1 \
 	pycore-img-set-str \
-	pycore-img-set-grow-fatal
+	pycore-img-set-grow-fatal \
+	pycore-img-map-add-overwrite \
+	pycore-img-unpack-sequence \
+	pycore-img-unpack-ex
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /

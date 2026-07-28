@@ -334,6 +334,29 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
+            // MAP_ADD: key at RF[tos-2], value at TOS (RF[tos-1]),
+            // dict handle at RF[tos-2-arg].  Pops key and value; dict stays.
+            // See pycore_defs.svh stack-convention comment.
+            PY_OP_MAP_ADD: begin
+                rs1_sel_o = tos_index_i - 8'd2;                // key
+                rs2_sel_o = tos_index_i - 8'd2 - arg_i[7:0];  // dict handle
+                is_container_o = 1'b1;
+            end
+
+            // DICT_UPDATE: dict at RF[tos-1-arg], iterable at TOS; always traps.
+            PY_OP_DICT_UPDATE: begin
+                rs1_sel_o = tos_index_i - 8'd1 - arg_i[7:0];  // dict handle
+                rs2_sel_o = tos_index_i - 8'd1;               // iterable
+                is_container_o = 1'b1;
+            end
+
+            // UNPACK_SEQUENCE / UNPACK_EX: sequence at TOS; container FSM
+            // reads elements and rewrites RF slots.
+            PY_OP_UNPACK_SEQUENCE, PY_OP_UNPACK_EX: begin
+                rs1_sel_o = tos_index_i - 8'd1;  // sequence handle
+                is_container_o = 1'b1;
+            end
+
             PY_OP_MEM_LOAD_PTR: begin
                 rs1_sel_o = tos_index_i - 8'd1;
                 rd_sel_o  = tos_index_i - 8'd1;

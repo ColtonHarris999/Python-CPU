@@ -97,6 +97,9 @@ localparam logic [3:0] PY_TRAP_SET_GROW       = 4'd13;
 // PY_TRAP_SET_UPDATE: always raised by SET_UPDATE (bulk merge). Recoverable —
 // excore grow-to-fit + insert from LIST/TUPLE/SET source, COMPLETED pop=1.
 localparam logic [3:0] PY_TRAP_SET_UPDATE     = 4'd14;
+// PY_TRAP_DICT_UPDATE: always raised by DICT_UPDATE / DICT_MERGE before any
+// commit.  Recoverable — excore merge-from-iterable, COMPLETED pop=1.
+localparam logic [3:0] PY_TRAP_DICT_UPDATE    = 4'd15;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a
@@ -108,7 +111,8 @@ function automatic logic pycore_trap_recoverable(input logic [3:0] code);
                                   (code == PY_TRAP_DICT_GROW) ||
                                   (code == PY_TRAP_LIST_DELETE) ||
                                   (code == PY_TRAP_SET_GROW) ||
-                                  (code == PY_TRAP_SET_UPDATE);
+                                  (code == PY_TRAP_SET_UPDATE) ||
+                                  (code == PY_TRAP_DICT_UPDATE);
     end
 endfunction
 
@@ -214,6 +218,40 @@ localparam logic [7:0] PY_OP_LIST_APPEND      = 8'd78;
 //   python3.14 -c "import opcode; print(opcode.opmap['LIST_EXTEND'])"
 //   -> 79
 localparam logic [7:0] PY_OP_LIST_EXTEND      = 8'd79;
+
+// MAP_ADD — CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['MAP_ADD'])"
+//   -> 98
+// Stack convention (verified 2026-07-28):
+//   key at RF[tos-2], value at RF[tos-1] (TOS), dict at RF[tos-2-arg].
+//   Pops key and value; dict handle stays.  oparg encodes nesting depth
+//   (matching LIST_APPEND / SET_ADD convention: dict at tos-1-(oparg+1)).
+localparam logic [7:0] PY_OP_MAP_ADD          = 8'd98;
+
+// DICT_UPDATE — CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['DICT_UPDATE'])"
+//   -> 67
+// Stack convention: dict at RF[tos-1-arg], iterable at TOS (RF[tos-1]).
+// Pops iterable only; dict stays.  Always traps to excore (PY_TRAP_DICT_UPDATE).
+localparam logic [7:0] PY_OP_DICT_UPDATE      = 8'd67;
+
+// UNPACK_SEQUENCE — CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['UNPACK_SEQUENCE'])"
+//   -> 119
+// Stack: sequence at TOS (RF[tos-1]).  oparg = expected count N.
+// Pops sequence; pushes N elements (rightmost deepest, leftmost on TOS).
+// LIST and TUPLE sources: on-pycore path.  Length != N: MEM_FAULT.
+localparam logic [7:0] PY_OP_UNPACK_SEQUENCE  = 8'd119;
+
+// UNPACK_EX — CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['UNPACK_EX'])"
+//   -> 118
+// Stack: sequence at TOS (RF[tos-1]).
+// oparg[7:0] = before_count, oparg[15:8] = after_count.
+// Pops sequence; pushes after_count (rightmost deepest) + starred_list +
+// before_count items (leftmost on TOS).  Starred list is a new LIST object
+// allocated on the pycore heap.  LIST and TUPLE sources: on-pycore path.
+localparam logic [7:0] PY_OP_UNPACK_EX        = 8'd118;
 
 // DELETE_SUBSCR / CONTAINS_OP — CPython 3.14.6 opmap:
 //   python3.14 -c "import opcode; print(opcode.opmap['DELETE_SUBSCR'],

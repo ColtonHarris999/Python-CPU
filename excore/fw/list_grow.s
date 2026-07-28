@@ -2,7 +2,8 @@
 #
 # Dispatch loop, parked until MB_STATUS.trap_pending is set. Handles
 # PY_TRAP_LIST_GROW (9), LIST_EXTEND (10), DICT_GROW (11), LIST_DELETE (12),
-# SET_GROW (13), SET_UPDATE (14). Unknown codes -> FATAL(ILLEGAL_OPCODE).
+# SET_GROW (13), SET_UPDATE (14), DICT_UPDATE (15).
+# Unknown codes -> FATAL(ILLEGAL_OPCODE).
 # Dict/set rich equality runs on pycore (former DICT_COLLISION retired).
 #
 # LIST_GROW (ENTRY[0]=list handle, ENTRY[1]=element):
@@ -82,6 +83,7 @@
     .equ TRAP_LIST_DELETE,   12
     .equ TRAP_SET_GROW,      13
     .equ TRAP_SET_UPDATE,    14
+    .equ TRAP_DICT_UPDATE,   15
 
     # fatal_code values mirror pycore_defs.svh's PY_TRAP_* codes exactly --
     # Phase C forwards this nibble straight into pycore_trap as a normal
@@ -156,6 +158,8 @@ wait_trap:
     beq  t0, t1, tramp_set_grow
     li   t1, TRAP_SET_UPDATE
     beq  t0, t1, tramp_set_update
+    li   t1, TRAP_DICT_UPDATE
+    beq  t0, t1, tramp_dict_update
     j    fatal_illegal
 
 # J-type trampolines: handlers past B-type ±4KiB reach.
@@ -165,6 +169,8 @@ tramp_set_grow:
     j    do_set_grow
 tramp_set_update:
     j    do_set_update
+tramp_dict_update:
+    j    do_dict_update
 
 fatal_type:
     li   t0, FATAL_TYPE
@@ -1969,6 +1975,273 @@ sprobe_exhausted:
 sprobe_ex_start:
     sw   s6, SCR_IDX(x0)
     j    sprobe_miss
+
+# ===========================================================================
+# DICT_UPDATE: E0=dst dict, E1=src dict — merge src into dst.
+# Iterates every live slot in E1 and inserts key/value into E0, growing
+# E0 as needed.  COMPLETED pop=1 (pop the iterable; dict stays).
+#
+# SCR reuse during loop: SCR_TMP_L0=src_slot_count, SCR_TMP_L1=src_table_ptr
+# ===========================================================================
+do_dict_update:
+    # Local trampolines so B-type branches don't exceed ±4KiB.
+du_fatal_type:
+    j    fatal_type
+du_fatal_mem:
+    j    fatal_mem
+du_start:
+    lw   t0, MB_E0_TAG(s11)
+    li   t1, TAG_DICT
+    bne  t0, t1, du_fatal_type
+    lw   t0, MB_E1_TAG(s11)
+    li   t1, TAG_DICT
+    bne  t0, t1, du_fatal_type
+
+    lw   s0, MB_E0_VAL0(s11)          # s0 = dst obj addr
+    jal  ra, dict_load_header_table   # s1=dst_slots, s2=dst_used, s3=s5=dst_tbl
+
+    # Load src header.
+    lw   t1, MB_E1_VAL0(s11)          # t1 = src obj addr
+    sw   t1, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+du_poll_src_hdr:
+    lw   t0, SP_STATUS(s11)
+    andi t2, t0, SP_STATUS_BUSY
+    bne  t2, x0, du_poll_src_hdr
+    andi t2, t0, SP_STATUS_FAULT
+    bne  t2, x0, du_fatal_mem
+    lw   t0, SP_DATA2(s11)            # src slot_count (low 32)
+    sw   t0, SCR_TMP_L0(x0)          # SCR_TMP_L0 = src_slot_count
+    lw   t1, MB_E1_VAL0(s11)
+    addi t1, t1, 16
+    sw   t1, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+du_poll_src_tbl:
+    lw   t0, SP_STATUS(s11)
+    andi t2, t0, SP_STATUS_BUSY
+    bne  t2, x0, du_poll_src_tbl
+    andi t2, t0, SP_STATUS_FAULT
+    bne  t2, x0, du_fatal_mem
+    lw   t0, SP_DATA0(s11)            # src table_ptr
+    sw   t0, SCR_TMP_L1(x0)          # SCR_TMP_L1 = src_table_ptr
+
+    # Pre-emptive grow: estimate up to src_slot_count new entries.
+    # Use dict_needs_grow(used + src_slot_count, slots) as upper bound.
+    lw   t0, SCR_TMP_L0(x0)
+    add  t1, s2, t0                   # upper bound on new used
+    mv   a0, t1
+    mv   a1, s1
+    jal  ra, dict_needs_grow
+    beq  a0, x0, du_loop_init
+    # Grow: temporarily inflate s2 for sizing, then restore after grow.
+    sw   s2, SCR_FTI0(x0)
+    lw   t0, SCR_TMP_L0(x0)
+    add  s2, s2, t0
+    # Clear key/value scratch (dummy for grow/rehash only).
+    sw   x0, SCR_KVAL0(x0)
+    sw   x0, SCR_KVAL1(x0)
+    sw   x0, SCR_KVAL2(x0)
+    sw   x0, SCR_KVAL3(x0)
+    sw   x0, SCR_KTAG(x0)
+    sw   x0, SCR_VVAL0(x0)
+    sw   x0, SCR_VVAL1(x0)
+    sw   x0, SCR_VVAL2(x0)
+    sw   x0, SCR_VVAL3(x0)
+    sw   x0, SCR_VTAG(x0)
+    jal  ra, dict_grow_rehash         # s4=new_tbl, s7=new_slots; s2 already inflated
+    # dict_grow_rehash calls load_e1e2_to_scratch at end — reload from E0 below.
+    jal  ra, dict_writeback_header    # writes new header/table_ptr; s1=s7, s3=s4
+    lw   s2, SCR_FTI0(x0)            # restore actual used
+
+du_loop_init:
+    # s0=dst obj, s1=dst slots, s2=dst used, s3=dst table
+    li   s6, 0
+du_loop:
+    lw   t0, SCR_TMP_L0(x0)          # src_slot_count
+    beq  s6, t0, du_done
+    lw   t1, SCR_TMP_L1(x0)          # src_table_ptr
+    slli t0, s6, 6
+    add  t2, t1, t0                   # t2 = src slot i base (addr of kval)
+
+    # Read src key tag at slot i (+16).
+    addi a0, t2, 16
+    sw   a0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+du_poll_ktag:
+    lw   t0, SP_STATUS(s11)
+    andi t3, t0, SP_STATUS_BUSY
+    bne  t3, x0, du_poll_ktag
+    lw   t0, SP_DATA0(s11)            # key tag
+    beq  t0, x0, du_next              # UNINIT → skip
+    li   t3, TAG_TOMBSTONE
+    beq  t0, t3, du_next              # tombstone → skip
+
+    # Live slot: read key val (at t2), value val (at t2+32), value tag (t2+48).
+    sw   t0, SCR_KTAG(x0)
+    sw   t2, SCR_A1(x0)               # save base addr
+    mv   a0, t2
+    sw   a0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+du_poll_kval:
+    lw   t0, SP_STATUS(s11)
+    andi t3, t0, SP_STATUS_BUSY
+    bne  t3, x0, du_poll_kval
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_KVAL3(x0)
+
+    lw   a0, SCR_A1(x0)
+    addi a0, a0, 32
+    sw   a0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+du_poll_vval:
+    lw   t0, SP_STATUS(s11)
+    andi t3, t0, SP_STATUS_BUSY
+    bne  t3, x0, du_poll_vval
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_VVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_VVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_VVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_VVAL3(x0)
+
+    lw   a0, SCR_A1(x0)
+    addi a0, a0, 48
+    sw   a0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+du_poll_vtag:
+    lw   t0, SP_STATUS(s11)
+    andi t3, t0, SP_STATUS_BUSY
+    bne  t3, x0, du_poll_vtag
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_VTAG(x0)
+
+    # Probe dst dict (s1=dst_slots, s3=dst_table, SCR_K*=key).
+    # Save s6 (loop counter) across probe/insert.
+    sw   s6, SCR_FTI0(x0)
+    jal  ra, dict_probe
+    lw   s6, SCR_FTI0(x0)
+    lw   t0, SCR_FOUND(x0)
+    bne  t0, x0, du_overwrite
+    # New key: check needs_grow before inserting.
+    mv   a0, s2
+    mv   a1, s1
+    sw   s6, SCR_FTI1(x0)
+    jal  ra, dict_needs_grow
+    lw   s6, SCR_FTI1(x0)
+    beq  a0, x0, du_insert_new
+    # Need grow: re-grow; dict_grow_rehash restores SCR_K/V from E* mailbox
+    # (calls load_e1e2_to_scratch) — but E* has the mailbox entries, not loop.
+    # Re-save K/V to scratch before grow clobbers it.
+    jal  ra, dict_grow_rehash
+    # dict_grow_rehash reloaded E1/E2 into scratch, clobbering our K/V.
+    # We need to reload this slot's key/value again.  Reload from heap.
+    lw   t1, SCR_TMP_L1(x0)
+    slli t0, s6, 6
+    add  t2, t1, t0
+    addi a0, t2, 16
+    sw   a0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+du_regrow_ktag:
+    lw   t0, SP_STATUS(s11)
+    andi t3, t0, SP_STATUS_BUSY
+    bne  t3, x0, du_regrow_ktag
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_KTAG(x0)
+    sw   t2, SCR_A1(x0)
+    mv   a0, t2
+    sw   a0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+du_regrow_kval:
+    lw   t0, SP_STATUS(s11)
+    andi t3, t0, SP_STATUS_BUSY
+    bne  t3, x0, du_regrow_kval
+    lw   t0, SP_DATA0(s11); sw t0, SCR_KVAL0(x0)
+    lw   t0, SP_DATA1(s11); sw t0, SCR_KVAL1(x0)
+    lw   t0, SP_DATA2(s11); sw t0, SCR_KVAL2(x0)
+    lw   t0, SP_DATA3(s11); sw t0, SCR_KVAL3(x0)
+    lw   a0, SCR_A1(x0)
+    addi a0, a0, 32
+    sw   a0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+du_regrow_vval:
+    lw   t0, SP_STATUS(s11)
+    andi t3, t0, SP_STATUS_BUSY
+    bne  t3, x0, du_regrow_vval
+    lw   t0, SP_DATA0(s11); sw t0, SCR_VVAL0(x0)
+    lw   t0, SP_DATA1(s11); sw t0, SCR_VVAL1(x0)
+    lw   t0, SP_DATA2(s11); sw t0, SCR_VVAL2(x0)
+    lw   t0, SP_DATA3(s11); sw t0, SCR_VVAL3(x0)
+    lw   a0, SCR_A1(x0)
+    addi a0, a0, 48
+    sw   a0, SP_ADDR(s11)
+    li   t0, SP_CTRL_READ
+    sw   t0, SP_CTRL(s11)
+du_regrow_vtag:
+    lw   t0, SP_STATUS(s11)
+    andi t3, t0, SP_STATUS_BUSY
+    bne  t3, x0, du_regrow_vtag
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_VTAG(x0)
+    jal  ra, dict_writeback_header    # commit new table/slots
+    sw   s6, SCR_FTI0(x0)
+    jal  ra, dict_probe
+    lw   s6, SCR_FTI0(x0)
+    lw   t0, SCR_FOUND(x0)
+    bne  t0, x0, du_overwrite
+du_insert_new:
+    lw   a0, SCR_IDX(x0)
+    sw   s6, SCR_FTI0(x0)
+    jal  ra, dict_write_kv_at
+    lw   s6, SCR_FTI0(x0)
+    addi s2, s2, 1
+    j    du_next
+du_overwrite:
+    lw   a0, SCR_IDX(x0)
+    sw   s6, SCR_FTI0(x0)
+    jal  ra, dict_write_val_at
+    lw   s6, SCR_FTI0(x0)
+du_next:
+    addi s6, s6, 1
+    j    du_loop
+
+du_done:
+    jal  ra, dict_writeback_header    # commit final used count
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 1
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 0
+    sw   t0, RES_PUSH_COUNT(s11)
+    # heap_ptr = s4*slots_stride if grew, else unchanged
+    beq  s4, x0, du_heap_mb
+    slli t0, s1, 6
+    add  t0, s4, t0
+    sw   t0, RES_HEAP_PTR(s11)
+    j    du_go
+du_heap_mb:
+    lw   t0, MB_HEAP_PTR(s11)
+    sw   t0, RES_HEAP_PTR(s11)
+du_go:
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
 
 set_write_elem_at:
     # a0 = index; write SCR_K* into s3 + idx*32

@@ -94,8 +94,6 @@ if NBARG_SUBSCR is None:
 # Preprocess raises a specific error when it encounters any of these so the
 # user knows to use a supported alternative.
 DEFERRED_OPS: dict[str, str] = {
-    "MAP_ADD":       "dict mutation not yet implemented",
-    "DICT_UPDATE":   "dict.update not yet implemented",
     "DICT_MERGE":    "dict merge not yet implemented",
     "BINARY_SLICE":  "slice notation not yet implemented",
     "STORE_SLICE":   "slice assignment not yet implemented",
@@ -168,6 +166,12 @@ SUPPORTED_OPS = {
     "BUILD_SET",
     "SET_ADD",
     "SET_UPDATE",
+    # Dict comprehensions: MAP_ADD probe/insert; DICT_UPDATE → always excore.
+    "MAP_ADD",
+    "DICT_UPDATE",
+    # Sequence unpack: UNPACK_SEQUENCE (fixed-count) and UNPACK_EX (starred).
+    "UNPACK_SEQUENCE",
+    "UNPACK_EX",
 }
 
 SUPPORTED_BINARY_ARGS = {
@@ -536,6 +540,27 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             if stack:
                 stack.pop()
             stack.append(TAG_BOOL)
+        elif ins.opname == "MAP_ADD":
+            # Pops key and value (TOS and TOS-1); dict at RF[tos-2-arg] stays.
+            for _ in range(min(2, len(stack))):
+                stack.pop()
+        elif ins.opname == "DICT_UPDATE":
+            # Pops iterable (TOS); dict at RF[tos-1-arg] stays.
+            if stack:
+                stack.pop()
+        elif ins.opname == "UNPACK_SEQUENCE":
+            count = ins.arg or 0
+            if stack:
+                stack.pop()
+            for _ in range(count):
+                stack.append(TAG_OBJECT)
+        elif ins.opname == "UNPACK_EX":
+            before_count = (ins.arg or 0) & 0xFF
+            after_count  = (ins.arg or 0) >> 8
+            if stack:
+                stack.pop()
+            for _ in range(after_count + 1 + before_count):
+                stack.append(TAG_OBJECT)
         elif ins.opname == "LIST_APPEND":
             # Pops only the appended element (TOS); the list handle,
             # `oparg - 1` slots further down, is left in place untouched.

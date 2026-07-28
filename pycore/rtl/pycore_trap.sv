@@ -24,6 +24,8 @@ module pycore_trap (
     // PY_TRAP_SET_GROW / PY_TRAP_SET_UPDATE.
     input  logic        set_grow_i,
     input  logic        set_update_i,
+    // PY_TRAP_DICT_UPDATE: always-excore DICT_UPDATE before any commit.
+    input  logic        dict_update_i,
     // Phase C: the excore reported RES_FATAL for a recoverable trap it was
     // handed (S_TRAP_WAIT). excore_fatal_code_i is forwarded verbatim as
     // trap_code_o rather than mapped through a fixed one-hot condition,
@@ -48,7 +50,7 @@ module pycore_trap (
         next_trap = type_trap_i || stack_fault_i || div_zero_i || fpu_exception_i ||
                     illegal_opcode_i || call_filter_i || mem_fault_i || addr_align_i ||
                     list_grow_i || list_extend_i || dict_grow_i || list_delete_i ||
-                    set_grow_i || set_update_i ||
+                    set_grow_i || set_update_i || dict_update_i ||
                     excore_fatal_i;
         if (excore_fatal_i) begin
             next_code = excore_fatal_code_i;
@@ -80,6 +82,8 @@ module pycore_trap (
             next_code = PY_TRAP_SET_GROW;
         end else if (set_update_i) begin
             next_code = PY_TRAP_SET_UPDATE;
+        end else if (dict_update_i) begin
+            next_code = PY_TRAP_DICT_UPDATE;
         end else begin
             next_code = PY_TRAP_NONE;
         end

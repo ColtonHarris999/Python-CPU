@@ -579,6 +579,145 @@ class ImageTranscodingTest(unittest.TestCase):
         self.assertEqual(globals_header >> 64, 8)
 
 
+class MapAddTest(unittest.TestCase):
+    """MAP_ADD is supported: CONT_MAP_ADD on pycore, DICT_GROW → excore."""
+
+    def test_map_add_in_supported_ops(self) -> None:
+        self.assertIn("MAP_ADD", image_from_source.SUPPORTED_OPS)
+        self.assertNotIn("MAP_ADD", image_from_source.DEFERRED_OPS)
+
+    def test_map_add_seq_pragma_builds(self) -> None:
+        src = (
+            "# pycore-inject: MAP_ADD_SEQ managed_entry (1,10) (2,20) MODE=SUBSCR\n"
+            "def managed_entry():\n"
+            "    d = {}\n"
+            "    d[1] = 10\n"
+            "    d[2] = 20\n"
+            "    return d[1] + d[2]\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        result = image_from_source.build_image_from_source_text(src, "<map_add>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_map_add_seq_injects_map_add_opcode(self) -> None:
+        import opcode as _opcode_module
+        src = (
+            "# pycore-inject: MAP_ADD_SEQ managed_entry (5,50) MODE=SUBSCR\n"
+            "def managed_entry():\n"
+            "    return 0\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        module_code = compile(src, "<map_add>", "exec")
+        module_code = image_from_source.apply_map_add_seq_injects(module_code, src)
+        target = image_from_source._find_code_by_name(module_code, "managed_entry")
+        self.assertIsNotNone(target)
+        opnames = {dis.opname[b] for b in target.co_code[0::2]}  # type: ignore[union-attr]
+        self.assertIn("MAP_ADD", opnames)
+
+
+class DictUpdateTest(unittest.TestCase):
+    """DICT_UPDATE is supported: always-excore CONT_DICT_UPDATE."""
+
+    def test_dict_update_in_supported_ops(self) -> None:
+        self.assertIn("DICT_UPDATE", image_from_source.SUPPORTED_OPS)
+        self.assertNotIn("DICT_UPDATE", image_from_source.DEFERRED_OPS)
+
+    def test_dict_update_program_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a = {1: 10, 2: 20}\n"
+            "    b = {3: 30}\n"
+            "    result = {**a, **b}\n"
+            "    return result[1] + result[2] + result[3]\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        result = image_from_source.build_image_from_source_text(src, "<dict_update>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_dict_update_opcode_present(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a = {1: 10}\n"
+            "    b = {2: 20}\n"
+            "    result = {**a, **b}\n"
+            "    return result[1]\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        module_code = compile(src, "<dict_update>", "exec")
+        target = image_from_source._find_code_by_name(module_code, "managed_entry")
+        self.assertIsNotNone(target)
+        opnames = [dis.opname[b] for b in target.co_code[0::2]]  # type: ignore[union-attr]
+        self.assertIn("DICT_UPDATE", opnames)
+
+
+class UnpackSequenceTest(unittest.TestCase):
+    """UNPACK_SEQUENCE: fixed-count unpack from LIST and TUPLE."""
+
+    def test_unpack_sequence_in_supported_ops(self) -> None:
+        self.assertIn("UNPACK_SEQUENCE", image_from_source.SUPPORTED_OPS)
+        self.assertNotIn("UNPACK_SEQUENCE", image_from_source.DEFERRED_OPS)
+
+    def test_unpack_sequence_list_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    lst = [10, 20]\n"
+            "    a, b = lst\n"
+            "    return a + b\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        result = image_from_source.build_image_from_source_text(src, "<unpack_seq>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_unpack_sequence_tuple_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    x, y, z = (1, 2, 3)\n"
+            "    return x + y + z\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        result = image_from_source.build_image_from_source_text(src, "<unpack_seq2>")
+        self.assertGreater(len(result.program_slots), 0)
+
+
+class UnpackExTest(unittest.TestCase):
+    """UNPACK_EX: starred unpack from LIST and TUPLE."""
+
+    def test_unpack_ex_in_supported_ops(self) -> None:
+        self.assertIn("UNPACK_EX", image_from_source.SUPPORTED_OPS)
+        self.assertNotIn("UNPACK_EX", image_from_source.DEFERRED_OPS)
+
+    def test_unpack_ex_list_tail_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a, *b = [1, 2, 3]\n"
+            "    return a + b[0] + b[1]\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        result = image_from_source.build_image_from_source_text(src, "<unpack_ex>")
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_unpack_ex_opcode_present(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a, *b, c = [1, 2, 3, 4]\n"
+            "    return a + c\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        module_code = compile(src, "<unpack_ex>", "exec")
+        target = image_from_source._find_code_by_name(module_code, "managed_entry")
+        self.assertIsNotNone(target)
+        opnames = [dis.opname[b] for b in target.co_code[0::2]]  # type: ignore[union-attr]
+        self.assertIn("UNPACK_EX", opnames)
+
+
 class CPython314ConventionProbeTest(unittest.TestCase):
     def test_opcode_numbers_used_by_image_decode(self) -> None:
         self.assertEqual(opcode.opmap["PUSH_NULL"], 33)

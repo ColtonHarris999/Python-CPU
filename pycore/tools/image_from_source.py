@@ -125,11 +125,18 @@ SUPPORTED_OPS = {
     "BUILD_SET",
     "SET_ADD",
     "SET_UPDATE",
+    # Dict comprehensions: MAP_ADD probe/insert (CONT_MAP_ADD on pycore;
+    # DICT_GROW → excore when load ≥ 2/3). DICT_UPDATE is always excore
+    # (PY_TRAP_DICT_UPDATE).
+    "MAP_ADD",
+    "DICT_UPDATE",
+    # Sequence unpack: UNPACK_SEQUENCE (fixed-count, LIST/TUPLE sources) and
+    # UNPACK_EX (starred unpack; builds middle list on-pycore heap).
+    "UNPACK_SEQUENCE",
+    "UNPACK_EX",
 }
 
 DEFERRED_OPS: dict[str, str] = {
-    "MAP_ADD": "dict-comprehension MAP_ADD lowering is deferred",
-    "DICT_UPDATE": "dict update/unpack lowering is deferred",
     "DICT_MERGE": "dict merge lowering is deferred",
     "BINARY_SLICE": "slice notation support is deferred",
     "STORE_SLICE": "slice assignment support is deferred",
@@ -590,10 +597,126 @@ def apply_set_add_seq_injects(
     return result
 
 
+# Hand-assemble MAP_ADD sequences (dict comprehensions emit RERAISE/exception
+# handling that pycore does not support).  Pragma:
+#   # pycore-inject: MAP_ADD_SEQ <func> (<key>,<value>) (<key>,<value>) ...
+#   optional trailing keyword: SUBSCR (verify result by reading dict[key])
+# SUBSCR: after adds, return sum of result[key] for each pair.
+_INJECT_MAP_ADD_PREFIX = "# pycore-inject: MAP_ADD_SEQ "
+_OP_BUILD_MAP = _OM["BUILD_MAP"]
+_OP_MAP_ADD   = _OM["MAP_ADD"]
+
+
+def parse_map_add_seq_pragmas(
+    source_text: str,
+) -> list[tuple[str, list[tuple[int, int]], str]]:
+    """Return ``(func, pairs, mode)`` with mode ``RET`` or ``SUBSCR``."""
+    out: list[tuple[str, list[tuple[int, int]], str]] = []
+    for line in source_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(_INJECT_MAP_ADD_PREFIX):
+            continue
+        rest = stripped[len(_INJECT_MAP_ADD_PREFIX) :].strip()
+        tokens = rest.split()
+        if not tokens:
+            raise ValueError(f"MAP_ADD_SEQ expects '<func> (k,v)...' got {stripped!r}")
+        func = tokens[0]
+        mode = "RET"
+        pairs: list[tuple[int, int]] = []
+        for tok in tokens[1:]:
+            if tok.startswith("MODE="):
+                mode = tok.split("=", 1)[1]
+            else:
+                if not (tok.startswith("(") and tok.endswith(")") and "," in tok):
+                    raise ValueError(f"MAP_ADD_SEQ pair must be '(k,v)', got {tok!r}")
+                k_s, v_s = tok[1:-1].split(",", 1)
+                pairs.append((int(k_s.strip()), int(v_s.strip())))
+        if mode not in ("RET", "SUBSCR"):
+            raise ValueError(f"MAP_ADD_SEQ MODE must be RET or SUBSCR, got {mode}")
+        out.append((func, pairs, mode))
+    return out
+
+
+def _build_map_add_seq_code(
+    template: types.CodeType, pairs: list[tuple[int, int]], mode: str
+) -> types.CodeType:
+    """Replace template bytecode with BUILD_MAP + MAP_ADD sequence."""
+    code = bytearray()
+    _subscr_caches = sum(_opcode_module._cache_format.get("BINARY_OP", {}).values())
+    _binary_caches = _subscr_caches
+
+    def emit(op: int, arg: int = 0) -> None:
+        if arg > 255:
+            raise ValueError(f"oparg {arg} exceeds 8 bits in MAP_ADD_SEQ")
+        code.append(op)
+        code.append(arg & 0xFF)
+
+    def emit_caches(n: int) -> None:
+        for _ in range(n):
+            emit(OP_CACHE, 0)
+
+    emit(_OP_RESUME, 0)
+    emit(_OP_BUILD_MAP, 0)
+    emit(_OP_STORE_FAST, 0)  # d (local 0)
+    for k, v in pairs:
+        if not (0 <= k <= 255 and 0 <= v <= 255):
+            raise ValueError(f"MAP_ADD_SEQ key/val must be 0..255, got ({k},{v})")
+        # Stack before MAP_ADD 1: [dict, key, value]
+        #   tos_r=3; dict at RF[3-2-1]=RF[0]; key at RF[1]; value at RF[2].
+        emit(_OP_LOAD_FAST, 0)       # push dict handle
+        emit(_OP_LOAD_SMALL_INT, k)  # push key
+        emit(_OP_LOAD_SMALL_INT, v)  # push value (TOS)
+        emit(_OP_MAP_ADD, 1)         # dict at RF[tos-2-1]=RF[tos-3]; pop key+val
+    if mode == "SUBSCR":
+        # Sum up d[k] for each pair.  BINARY_OP NB_SUBSCR (oparg=26).
+        _nbarg_subscr: int = 0
+        for i, entry in enumerate(getattr(_opcode_module, "_nb_ops", [])):
+            if "SUBSCR" in str(entry[0]).upper():
+                _nbarg_subscr = i
+                break
+        emit(_OP_LOAD_SMALL_INT, 0)  # accumulator
+        for k, _ in pairs:
+            emit(_OP_LOAD_FAST, 0)
+            emit(_OP_LOAD_SMALL_INT, k)
+            emit(_OP_BINARY_OP, _nbarg_subscr)  # d[k]
+            emit_caches(_binary_caches)
+            emit(_OP_BINARY_OP, 0)  # +
+            emit_caches(_binary_caches)
+        emit(_OP_RETURN_VALUE, 0)
+    else:
+        emit(_OP_LOAD_SMALL_INT, 0)
+        emit(_OP_RETURN_VALUE, 0)
+
+    return template.replace(
+        co_code=bytes(code),
+        co_varnames=("d",),
+        co_nlocals=1,
+        co_stacksize=max(8, template.co_stacksize),
+        co_names=(),
+        co_consts=(None,),
+    )
+
+
+def apply_map_add_seq_injects(
+    module_code: types.CodeType, source_text: str
+) -> types.CodeType:
+    result = module_code
+    for func_name, pairs, mode in parse_map_add_seq_pragmas(source_text):
+        target = _find_code_by_name(result, func_name)
+        if target is None:
+            raise ValueError(
+                f"pycore-inject MAP_ADD_SEQ target {func_name!r} not found"
+            )
+        rewritten = _build_map_add_seq_code(target, pairs, mode)
+        result = _replace_code_by_name(result, func_name, rewritten)
+    return result
+
+
 def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildResult:
     module_code = compile(source_text, filename, "exec")
     module_code = apply_lfac_injects(module_code, source_text)
     module_code = apply_set_add_seq_injects(module_code, source_text)
+    module_code = apply_map_add_seq_injects(module_code, source_text)
     return build_image_from_code(module_code)
 
 
