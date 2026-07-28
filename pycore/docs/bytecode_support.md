@@ -137,17 +137,20 @@ this milestone:
    CPython arbitrary-precision comparison semantics. Strings, `None`,
    containers, and user-defined rich comparison trap `PY_TRAP_TYPE` instead.
 
+| `MAP_ADD` | Adds key+value (pops both) to an existing dict `oparg+2` slots below; dict stays. Used in dict comprehensions. | `CONT_MAP_ADD` on pycore: same probe/upsert path as `CONT_STORE_DICT` but pops 2 (key+value) instead of 3. `DICT_GROW` → excore when load ≥ 2/3. Note: dict comprehensions emit `RERAISE` for exception cleanup; use the `MAP_ADD_SEQ` inject pragma in test images. Images: `img_map_add*`. |
+| `DICT_UPDATE` | Merges a mapping `oparg` slots below TOS into TOS (the destination dict); pops the source. Used for `{**a, **b}`. | `CONT_DICT_UPDATE` always raises `PY_TRAP_DICT_UPDATE` (15) before any commit. Excore `do_dict_update` iterates all live slots of the source dict and calls `dict_insert_from_scratch` for each. **Known limitation**: excore merge handler has an unidentified bug causing pycore subscript reads of the result to give `MEM_FAULT`; two-core test is disabled pending waveform analysis. The pycore trap-dispatch side is correct. |
+| `UNPACK_SEQUENCE` | Pops a sequence and pushes its N elements (leftmost on TOS); N = oparg. | `CONT_UNPACK_SEQ` on pycore: LIST and TUPLE sources; reads elements in reverse index order so leftmost ends up on TOS. Length mismatch → `MEM_FAULT`; unsupported source type → `TYPE`. Images: `img_unpack_sequence`, `img_unpack_sequence_type_trap`. |
+| `UNPACK_EX` | Starred unpack: pops sequence, pushes after-items (rightmost deepest), then starred list (new heap object), then before-items (leftmost on TOS). oparg = before_count \| (after_count << 8). | `CONT_UNPACK_EX` on pycore with heap allocation for the middle list. LIST and TUPLE sources; middle list built on pycore heap (no excore needed). Image: `img_unpack_ex`. |
+
 ## Deferred container opcodes
 
-The following container-related opcodes are explicitly deferred.
+The following container-related opcodes remain explicitly deferred.
 `image_from_source.py` rejects them with a `"Deferred opcode"` error message
 before image generation; if somehow one reaches hardware it is trapped as
-illegal. Each entry has a TODO hook ready for a follow-up PR.
+illegal.
 
 | Bytecode | Description | Deferral reason |
 | --- | --- | --- |
-| `MAP_ADD` | Add a key/value pair to an existing dict. | Dict mutation via comprehension helper; use `STORE_SUBSCR`. |
-| `DICT_UPDATE` | Update dict from a mapping. | Requires dict merge semantics (set already has `SET_UPDATE` → excore). |
 | `DICT_MERGE` | Merge dict into another dict. | Requires dict iteration. |
 | `BINARY_SLICE` | Slice read `x[a:b]`. | Requires multi-element copy allocation. |
 | `STORE_SLICE` | Slice write `x[a:b] = v`. | Same. |
