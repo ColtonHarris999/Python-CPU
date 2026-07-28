@@ -687,12 +687,11 @@ pycore-img-map-add-grow: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,map_add_grow,100000)
 
 # DICT_UPDATE: {**a, **b} merge — always excore trap 15.
-# NOTE: The excore do_dict_update firmware handler has a known bug where
-# pycore subscript reads of the merged dict give MEM_FAULT (trap code 7).
-# The pycore CONT_DICT_UPDATE trap dispatch is correct; only the firmware
-# merge loop is faulty. This test is disabled pending waveform analysis.
-# pycore-img-dict-update: excore-fw
-# 	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_update,100000)
+# DICT_UPDATE: {**a, **b} merge — always excore trap 15.
+# Fix: save s1 (dst slot_count) to scratch[0x08] rather than SCR_A1,
+# because dict_probe clobbers SCR_A1 in dprobe_loop.
+pycore-img-dict-update: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_update,100000)
 
 # UNPACK_SEQUENCE: fixed-count list/tuple unpack (pycore only).
 pycore-img-unpack-sequence:
