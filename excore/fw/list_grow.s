@@ -85,6 +85,29 @@
     .equ TRAP_SET_UPDATE,    14
     .equ TRAP_DICT_UPDATE,   15
 
+    # ---- Per-trap software stack (shared-dmem region from pycore) ----------
+    # Call-graph analysis of this firmware (jal depth):
+    #   do_dict_grow / do_set_grow : depth 6
+    #     e.g. insert -> probe -> keys_rich_eq -> norm_numeric -> float_to_int
+    #   do_set_update               : depth 5
+    #   do_dict_update              : depth 3 (mostly inlined)
+    #   list_* handlers             : depth 1 (no jal helpers)
+    # Worst-case simultaneous call frames (ra + a few callee/arg saves) along
+    # the deepest path is ~40 bytes; 128 leaves margin for future helpers.
+    #
+    # Model (matches pycore_core.sv EXCORE_STACK_BYTES):
+    #   - pycore snapshots heap_ptr as MB_HEAP_PTR, then advances heap_ptr by
+    #     EXCORE_STACK_BYTES so concurrent pycore allocs cannot land in the
+    #     stack window.
+    #   - excore sets sp = MB_HEAP_PTR + EXCORE_STACK_BYTES (grows down).
+    #   - Grow buffers allocate at MB_HEAP_PTR + EXCORE_STACK_BYTES.
+    #   - No-alloc RES_HEAP_PTR returns MB_HEAP_PTR (reclaims the window).
+    #   - Grow RES_HEAP_PTR returns alloc_end (leaves a STACK_BYTES hole —
+    #     acceptable for a bump allocator; stack was live during the alloc).
+    # Private SCR_* at dmem 0x00..0x70 stays for key/value/probe payload
+    # (below PYCORE_HEAP_BASE 0x400); only call frames use this region.
+    .equ EXCORE_STACK_BYTES, 128
+
     # fatal_code values mirror pycore_defs.svh's PY_TRAP_* codes exactly --
     # Phase C forwards this nibble straight into pycore_trap as a normal
     # halt (see architecture.md's trap taxonomy).
@@ -144,6 +167,12 @@ wait_trap:
     lw   t0, MB_STATUS(s11)
     andi t0, t0, 1
     beq  t0, x0, wait_trap
+
+    # Set up the software stack for this trap invocation.
+    # MB_HEAP_PTR points to a 128-byte region pycore reserved for us;
+    # the stack grows downward from the top of that region.
+    lw   sp, MB_HEAP_PTR(s11)
+    addi sp, sp, EXCORE_STACK_BYTES  # sp = base + 128 (initial stack top)
 
     lw   t0, MB_TRAP_CODE(s11)
     li   t1, TRAP_LIST_GROW
@@ -237,6 +266,7 @@ cap_zero:
 cap_done:
 
     lw   s4, MB_HEAP_PTR(s11)      # s4 = new_buf
+    addi s4, s4, EXCORE_STACK_BYTES  # alloc past stack window
 
     # ---- OOM check: new_buf + new_cap*32 > HEAP_LIMIT -> FATAL(MEM_FAULT)
     slli t0, s3, 5
@@ -486,6 +516,7 @@ ext_cap_grow:
 ext_cap_done:
 
     lw   s4, MB_HEAP_PTR(s11)      # new_buf
+    addi s4, s4, EXCORE_STACK_BYTES  # alloc past stack window
     slli t0, s3, 5
     add  t0, s4, t0
     li   t1, HEAP_LIMIT
@@ -929,7 +960,8 @@ load_e1e2_to_scratch:
 
 # → s1=slots, s2=used, s5/s3=table
 dict_load_header_table:
-    sw   ra, SCR_RA(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)
     mv   a0, s0
     jal  ra, sp_read
     lw   s2, SP_DATA0(s11)
@@ -938,11 +970,13 @@ dict_load_header_table:
     jal  ra, sp_read
     lw   s5, SP_DATA0(s11)
     mv   s3, s5
-    lw   ra, SCR_RA(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jalr x0, ra, 0
 
 dict_write_used_slots:
-    sw   ra, SCR_RA3(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)
     sw   s2, SP_DATA0(s11)
     li   t0, 0
     sw   t0, SP_DATA1(s11)
@@ -950,7 +984,8 @@ dict_write_used_slots:
     sw   t0, SP_DATA3(s11)
     mv   a0, s0
     jal  ra, sp_write
-    lw   ra, SCR_RA3(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jalr x0, ra, 0
 
 dict_needs_grow:
@@ -969,7 +1004,8 @@ dng_yes:
 
 # grow+rehash: s1/s2/s5 → s4/s7/s3=new table; restores E1/E2 into scratch
 dict_grow_rehash:
-    sw   ra, SCR_RA(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)
     li   t0, 50000
     bltu t0, s2, dgr_mul2
     slli a0, s2, 2
@@ -997,6 +1033,7 @@ dgr_vs_old:
     mv   s7, t0
 dgr_alloc:
     lw   s4, MB_HEAP_PTR(s11)
+    addi s4, s4, EXCORE_STACK_BYTES  # alloc past stack window
     slli t0, s7, 6
     add  t0, s4, t0
     li   t1, HEAP_LIMIT
@@ -1085,30 +1122,37 @@ dgr_next:
     j    dgr_rehash_loop
 dgr_done:
     jal  ra, load_e1e2_to_scratch
-    lw   ra, SCR_RA(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jalr x0, ra, 0
 
 dict_insert_from_scratch:
-    sw   ra, SCR_RA(x0)
-    sw   s1, SCR_A1(x0)
+    # BUG FIX: was sw s1, SCR_A1(x0) — SCR_A1 is clobbered by dict_probe's
+    # dprobe_loop.  Use the stack instead.  ra is also now stack-saved.
+    addi sp, sp, -8
+    sw   ra, 4(sp)
+    sw   s1, 0(sp)             # save old s1 (slot_count) on stack
     mv   s1, s7
     jal  ra, dict_probe
-    lw   s1, SCR_A1(x0)
+    lw   s1, 0(sp)             # restore s1 from stack (SCR_A1 is now garbage but irrelevant)
     lw   t0, SCR_FOUND(x0)
     bne  t0, x0, difs_over
     lw   a0, SCR_IDX(x0)
     jal  ra, dict_write_kv_at
     addi s2, s2, 1
-    lw   ra, SCR_RA(x0)
+    lw   ra, 4(sp)
+    addi sp, sp, 8
     jalr x0, ra, 0
 difs_over:
     lw   a0, SCR_IDX(x0)
     jal  ra, dict_write_val_at
-    lw   ra, SCR_RA(x0)
+    lw   ra, 4(sp)
+    addi sp, sp, 8
     jalr x0, ra, 0
 
 dict_writeback_header:
-    sw   ra, SCR_RA(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)
     sw   s2, SP_DATA0(s11)
     li   t0, 0
     sw   t0, SP_DATA1(s11)
@@ -1125,12 +1169,16 @@ dict_writeback_header:
     jal  ra, sp_write
     mv   s1, s7
     mv   s3, s4
-    lw   ra, SCR_RA(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jalr x0, ra, 0
 
 # probe s3/s1 with SCR_K* → SCR_FOUND / SCR_IDX / SCR_TOMB
 dict_probe:
-    sw   ra, SCR_RA2(x0)
+    addi sp, sp, -12
+    sw   ra,  8(sp)            # stack-saved: no more SCR_RA2 aliasing
+    sw   s6,  4(sp)            # callee-save s6 (probe start index)
+    sw   s8,  0(sp)            # callee-save s8 (probe count)
     li   t0, -1
     sw   t0, SCR_TOMB(x0)
     sw   x0, SCR_FOUND(x0)
@@ -1186,12 +1234,18 @@ dprobe_empty_cur:
     j    dprobe_miss
 dprobe_miss:
     sw   x0, SCR_FOUND(x0)
-    lw   ra, SCR_RA2(x0)
+    lw   s8,  0(sp)
+    lw   s6,  4(sp)
+    lw   ra,  8(sp)
+    addi sp, sp, 12
     jalr x0, ra, 0
 dprobe_hit:
     li   t0, 1
     sw   t0, SCR_FOUND(x0)
-    lw   ra, SCR_RA2(x0)
+    lw   s8,  0(sp)
+    lw   s6,  4(sp)
+    lw   ra,  8(sp)
+    addi sp, sp, 12
     jalr x0, ra, 0
 dprobe_advance:
     addi s8, s8, 1
@@ -1211,11 +1265,12 @@ dprobe_ex_start:
     j    dprobe_miss
 
 dict_write_kv_at:
-    sw   ra, SCR_RA3(x0)
-    sw   a0, SCR_A0(x0)
+    addi sp, sp, -8
+    sw   ra, 4(sp)             # stack-save ra (no more SCR_RA3 aliasing)
+    sw   a0, 0(sp)             # stack-save insertion slot index
     slli t0, a0, 6
     add  t2, s3, t0
-    sw   t2, SCR_A1(x0)
+    sw   t2, SCR_A1(x0)       # SCR_A1 = slot base for ktag/vval reads
     lw   t0, SCR_KVAL0(x0)
     sw   t0, SP_DATA0(s11)
     lw   t0, SCR_KVAL1(x0)
@@ -1235,13 +1290,15 @@ dict_write_kv_at:
     sw   t0, SP_DATA2(s11)
     sw   t0, SP_DATA3(s11)
     jal  ra, sp_write
-    lw   a0, SCR_A0(x0)
+    lw   a0, 0(sp)             # reload insertion slot index
     jal  ra, dict_write_val_at
-    lw   ra, SCR_RA3(x0)
+    lw   ra, 4(sp)
+    addi sp, sp, 8
     jalr x0, ra, 0
 
 dict_write_val_at:
-    sw   ra, SCR_FTI0(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)             # stack-save ra (no more SCR_FTI0 aliasing)
     slli t0, a0, 6
     add  t2, s3, t0
     addi a0, t2, 32
@@ -1264,11 +1321,13 @@ dict_write_val_at:
     sw   t0, SP_DATA2(s11)
     sw   t0, SP_DATA3(s11)
     jal  ra, sp_write
-    lw   ra, SCR_FTI0(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jalr x0, ra, 0
 
 dict_read_val_to_res:
-    sw   ra, SCR_RA3(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)
     slli t0, a0, 6
     add  t2, s3, t0
     sw   t2, SCR_A1(x0)
@@ -1287,7 +1346,8 @@ dict_read_val_to_res:
     jal  ra, sp_read
     lw   t0, SP_DATA0(s11)
     sw   t0, RES_E0_TAG(s11)
-    lw   ra, SCR_RA3(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jalr x0, ra, 0
 
 hash_key:
@@ -1332,7 +1392,8 @@ hash_lstr:
     xor  a0, a0, t0
     jalr x0, ra, 0
 hash_float:
-    sw   ra, SCR_RA3(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)
     lw   t3, SCR_KVAL0(x0)
     lw   t4, SCR_KVAL1(x0)
     jal  ra, float_to_int
@@ -1349,12 +1410,15 @@ hash_fmix:
     lw   t0, SCR_KVAL1(x0)
     xor  a0, a0, t0
 hash_fret:
-    lw   ra, SCR_RA3(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jalr x0, ra, 0
 
 # keys_rich_eq: SCR_K* vs SCR_SK* → a0
 keys_rich_eq:
-    sw   ra, SCR_A0(x0)
+    addi sp, sp, -8
+    sw   ra, 4(sp)
+    sw   x0, 0(sp)            # slot for first norm a1
     lw   a2, SCR_KTAG(x0)
     lw   a3, SCR_SKTAG(x0)
     mv   a4, a2
@@ -1362,7 +1426,7 @@ keys_rich_eq:
     lw   t4, SCR_KVAL1(x0)
     jal  ra, norm_numeric
     beq  a0, x0, kreq_bits
-    sw   a1, SCR_A1(x0)
+    sw   a1, 0(sp)
     sw   t3, SCR_TMP_L0(x0)
     sw   t4, SCR_TMP_L1(x0)
     mv   a4, a3
@@ -1370,7 +1434,7 @@ keys_rich_eq:
     lw   t4, SCR_SKVAL1(x0)
     jal  ra, norm_numeric
     beq  a0, x0, kreq_bits
-    lw   t0, SCR_A1(x0)
+    lw   t0, 0(sp)
     bne  t0, x0, kreq_fb
     bne  a1, x0, kreq_fb
     lw   t5, SCR_TMP_L0(x0)
@@ -1378,7 +1442,8 @@ keys_rich_eq:
     bne  t3, t5, kreq_no
     bne  t4, t6, kreq_no
     li   a0, 1
-    lw   ra, SCR_A0(x0)
+    lw   ra, 4(sp)
+    addi sp, sp, 8
     jalr x0, ra, 0
 kreq_fb:
     bne  t0, a1, kreq_no
@@ -1400,11 +1465,13 @@ kreq_bits:
     lw   t1, SCR_SKVAL3(x0)
     bne  t0, t1, kreq_no
     li   a0, 1
-    lw   ra, SCR_A0(x0)
+    lw   ra, 4(sp)
+    addi sp, sp, 8
     jalr x0, ra, 0
 kreq_no:
     li   a0, 0
-    lw   ra, SCR_A0(x0)
+    lw   ra, 4(sp)
+    addi sp, sp, 8
     jalr x0, ra, 0
 
 norm_numeric:
@@ -1427,9 +1494,11 @@ norm_bool:
     li   a1, 0
     jalr x0, ra, 0
 norm_float:
-    sw   ra, SCR_RA3(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)
     jal  ra, float_to_int
-    lw   ra, SCR_RA3(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     beq  a0, x0, norm_fbits
     li   a1, 0
     li   a0, 1
@@ -1722,7 +1791,8 @@ su_go:
 # Does NOT call load_e1e2 (preserves SCR_K*).
 set_grow_rehash_keep:
 set_grow_rehash:
-    sw   ra, SCR_RA(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)
     li   t0, 50000
     bltu t0, s2, sgr_mul2
     slli a0, s2, 2
@@ -1750,6 +1820,7 @@ sgr_vs_old:
     mv   s7, t0
 sgr_alloc:
     lw   s4, MB_HEAP_PTR(s11)
+    addi s4, s4, EXCORE_STACK_BYTES  # alloc past stack window
     slli t0, s7, 5
     add  t0, s4, t0
     li   t1, HEAP_LIMIT
@@ -1873,18 +1944,22 @@ sgr_done:
     mv   s1, s7
     mv   s3, s4
     mv   s5, s4
-    lw   ra, SCR_RA(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jalr x0, ra, 0
 
 set_writeback_header:
     # alias: header already written in set_grow_rehash; bump used after insert
-    sw   ra, SCR_RA(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)
     jal  ra, dict_write_used_slots
-    lw   ra, SCR_RA(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jalr x0, ra, 0
 
 set_insert_from_scratch:
-    sw   ra, SCR_RA(x0)
+    addi sp, sp, -4
+    sw   ra, 0(sp)
     jal  ra, set_probe
     lw   t0, SCR_FOUND(x0)
     bne  t0, x0, sifs_done
@@ -1892,12 +1967,16 @@ set_insert_from_scratch:
     jal  ra, set_write_elem_at
     addi s2, s2, 1
 sifs_done:
-    lw   ra, SCR_RA(x0)
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jalr x0, ra, 0
 
 # set_probe: like dict_probe but stride 32
 set_probe:
-    sw   ra, SCR_RA2(x0)
+    addi sp, sp, -12
+    sw   ra,  8(sp)
+    sw   s6,  4(sp)
+    sw   s8,  0(sp)
     li   t0, -1
     sw   t0, SCR_TOMB(x0)
     sw   x0, SCR_FOUND(x0)
@@ -1952,12 +2031,18 @@ sprobe_empty_cur:
     j    sprobe_miss
 sprobe_miss:
     sw   x0, SCR_FOUND(x0)
-    lw   ra, SCR_RA2(x0)
+    lw   s8,  0(sp)
+    lw   s6,  4(sp)
+    lw   ra,  8(sp)
+    addi sp, sp, 12
     jalr x0, ra, 0
 sprobe_hit:
     li   t0, 1
     sw   t0, SCR_FOUND(x0)
-    lw   ra, SCR_RA2(x0)
+    lw   s8,  0(sp)
+    lw   s6,  4(sp)
+    lw   ra,  8(sp)
+    addi sp, sp, 12
     jalr x0, ra, 0
 sprobe_advance:
     addi s8, s8, 1
@@ -2267,10 +2352,11 @@ du_go:
 
 set_write_elem_at:
     # a0 = index; write SCR_K* into s3 + idx*32
-    sw   ra, SCR_RA3(x0)
+    addi sp, sp, -8
+    sw   ra, 4(sp)
     slli t0, a0, 5
     add  t0, s3, t0
-    sw   t0, SCR_A0(x0)            # element base
+    sw   t0, 0(sp)                 # element base
     lw   t1, SCR_KVAL0(x0)
     sw   t1, SP_DATA0(s11)
     lw   t1, SCR_KVAL1(x0)
@@ -2281,7 +2367,7 @@ set_write_elem_at:
     sw   t1, SP_DATA3(s11)
     mv   a0, t0
     jal  ra, sp_write
-    lw   a0, SCR_A0(x0)
+    lw   a0, 0(sp)
     addi a0, a0, 16
     lw   t1, SCR_KTAG(x0)
     sw   t1, SP_DATA0(s11)
@@ -2290,5 +2376,6 @@ set_write_elem_at:
     sw   t1, SP_DATA2(s11)
     sw   t1, SP_DATA3(s11)
     jal  ra, sp_write
-    lw   ra, SCR_RA3(x0)
+    lw   ra, 4(sp)
+    addi sp, sp, 8
     jalr x0, ra, 0
