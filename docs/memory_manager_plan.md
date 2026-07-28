@@ -1,9 +1,24 @@
 # Implementation plan: PyCore memory manager + excore allocation handoff
 
+> **SUPERSEDED (target design).** Do not implement further workstreams from this
+> document as written. Allocator **authority** must move to **pycore** (pre-size
+> + allocate, then send the grant with the trap). Excore must not own freelists.
+>
+> **Active plan:** [`docs/pycore_owned_allocator_plan.md`](pycore_owned_allocator_plan.md)
+>
+> A full **bytecode-native** MM on pycore is **not** possible with current ISA
+> support; that plan therefore stages RTL ownership first and defers Python MM.
+> Keep this file only as historical context for the DICT_UPDATE fix and the
+> experimental excore `mm.s` that shipped in PR #43.
+
+---
+
+# (Historical) Implementation plan: excore-centric memory manager
+
 **Audience:** a dedicated Cursor coding agent working in this repo.
-**Status:** ready to implement. Bug #1 below is already fixed and verified on
-this branch; it is documented here so the agent understands the regression
-surface it must not reintroduce.
+**Status:** **superseded** — see `docs/pycore_owned_allocator_plan.md`.
+Bug #1 (DICT_UPDATE / assembler `;`) is fixed; workstreams 1–4 below describe
+the excore-`mm.s` experiment, not the target architecture.
 
 This plan has five workstreams. They are ordered so each builds on a *verified*
 predecessor. Do not start a workstream until the previous one's tests are green.

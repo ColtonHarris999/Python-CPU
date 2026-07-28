@@ -29,13 +29,13 @@ ownership, enabling concurrent pycore+excore heap use, or ASIC clock/DRAM work.
 
 | Topic | Current state |
 | --- | --- |
-| Heap | Firmware MM (`mm.s`): size-class freelist + wilderness; pycore still bumps wilderness |
-| Free / reclaim | Grow paths `mm_free` old MM-backed buffers; coalesce-forward on free |
+| Heap | **Prototype:** excore `mm.s` freelist + wilderness; pycore still bumps. **Target:** pycore-owned alloc (see `docs/pycore_owned_allocator_plan.md`) |
+| Free / reclaim | **Prototype:** excore `mm_free` on grow. **Target:** pycore frees `RES_OLD_PTR` after `COMPLETED` |
 | Shared dmem | One bank; exclusive `mem_owner` mux (`PYCORE` \| `EXCORE`) |
 | Clocks | Single shared clock (FPGA / sim prototype) |
 | Excore → dmem | Slot port only (16-byte aligned MMIO bridge); CPU `lw`/`sw` cannot address shared heap |
 | Excore stack | Private 1KB scratch (`sp` grows down from scratch top); not heap-backed yet |
-| Allocator policy | Excore firmware MM v1; pycore BUILD_* wilderness bump (carve-from-MM follow-up) |
+| Allocator policy | **Target redesign:** pycore pre-allocates trap grants; excore never allocates (plan only; not implemented) |
 
 ---
 
@@ -63,7 +63,7 @@ truth vs `heap_ptr_r` alone.
 
 | | |
 | --- | --- |
-| **Status** | `accepted` (excore firmware MM v1) |
+| **Status** | `accepted` (excore firmware MM v1) · **proposed supersession** → pycore-owned |
 | **Area** | `heap` |
 | **Recorded** | 2026-07-28 |
 | **Last review** | 2026-07-28 |
@@ -74,6 +74,14 @@ truth vs `heap_ptr_r` alone.
 bump; excore syncs `max(wilderness, MB_HEAP_PTR)` each trap. Full pycore
 carve-from-MM (plan workstream 2.1) remains a follow-up. The Python-bytecode
 and dedicated-hardware options stay deferred.
+
+**Proposed supersession (plan only — not implemented):** allocator authority
+moves to **pycore**. For every recoverable trap that needs new memory, pycore
+computes size (exact or upper bound), allocates, and marshals `{NEW_PTR,
+NEW_SIZE}` with the task; excore fills that region only and never calls
+`mm_alloc`. A bytecode-native MM is blocked by current ISA gaps. Full plan:
+`docs/pycore_owned_allocator_plan.md`. Flip this entry to `superseded` /
+re-`accepted` under pycore when Phase 0 of that plan lands.
 
 ---
 
@@ -136,6 +144,10 @@ service a pycore malloc. Heap access is already serialized by ownership/grant
 - Excore needs alloc during a trap handler → **in-process** `heap_alloc` in
   firmware (same grant), not an upcall and not a nested IRQ.
 
+**Proposed under pycore-owned plan:** excore never needs mid-handler alloc —
+pycore pre-grants `{NEW_PTR, NEW_SIZE}` before the ownership flip
+(`docs/pycore_owned_allocator_plan.md`).
+
 ---
 
 ### C-HEAP-006 — Excore must not depend on Python upcall for grow alloc (v1)
@@ -157,6 +169,9 @@ that keep this true:
   excore walker for the same format (dual code, one metadata format).
 
 Nested ownership / Python upcall mid-trap is out of scope for v1.
+
+**Proposed under pycore-owned plan:** satisfy this by eliminating excore alloc
+entirely (pre-sized mailbox grant), not by keeping an in-process excore malloc.
 
 ---
 
