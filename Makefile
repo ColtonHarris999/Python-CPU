@@ -145,6 +145,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-set-bool-int pycore-img-set-hash-neg1 pycore-img-set-str \
 	pycore-img-set-grow-fatal pycore-img-set-grow-basic pycore-img-set-update \
 	pycore-img-two-core \
+	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
 
@@ -277,6 +278,51 @@ pycore-frame-fib:
 		pycore/rtl/pycore_frame.sv \
 		pycore/tb/tb_frame_fib_recursion.sv
 	./$(BUILD_DIR)/pycore_frame_fib/Vtb_frame_fib_recursion
+
+
+# ---- Broad-object-support milestone targets (M6 / M8) ---------------------
+# Host smoke always runs. Image-boot targets are wired now but fail until
+# LOAD_ATTR / classes / bound-method CALL land (M2–M6 / M8).
+pycore-allocator-host:
+	$(PYTHON) -c "import runpy; ns=runpy.run_path('pycore/programs/allocator_list.py'); assert isinstance(ns['managed_entry'](), int); ns=runpy.run_path('pycore/programs/allocator_bytes.py'); assert isinstance(ns['managed_entry'](), int); print('allocator host smoke ok')"
+
+define PYCORE_IMAGE_RUN_SRC
+	mkdir -p $(BUILD_DIR)/$(1)
+	$(PYTHON) pycore/tools/run_image_test.py \
+		--source pycore/programs/$(2) \
+		--entry managed_entry \
+		--program-hex $(BUILD_DIR)/$(1)/program.hex \
+		--dmem-hex $(BUILD_DIR)/$(1)/dmem.hex \
+		--string-hex $(BUILD_DIR)/$(1)/string_mem.hex \
+		--meta $(BUILD_DIR)/$(1)/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/$(1)/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/$(1)/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/$(1)/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d$$EXPECTED_TAG \
+		"-GEXPECTED_VALUE=128'd$$EXPECTED_VALUE" \
+		-GMAX_CYCLES=$(3) \
+		--Mdir $(BUILD_DIR)/$(1)/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/$(1)/verilator/Vtb_container
+endef
+
+# Failing until M6 / M8 — kept as visible milestone targets.
+pycore-img-allocator-list:
+	$(call PYCORE_IMAGE_RUN_SRC,img_allocator_list,allocator_list.py,200000)
+
+pycore-img-allocator-bytes:
+	$(call PYCORE_IMAGE_RUN_SRC,img_allocator_bytes,allocator_bytes.py,400000)
 
 pycore-python-tests:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"

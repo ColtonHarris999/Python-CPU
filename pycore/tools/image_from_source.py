@@ -133,6 +133,35 @@ DEFERRED_OPS: dict[str, str] = {
     "DICT_MERGE": "dict merge lowering is deferred",
     "BINARY_SLICE": "slice notation support is deferred",
     "STORE_SLICE": "slice assignment support is deferred",
+    # Classes are emitted at image-build time (M4 ClassImageBuilder); hardware
+    # LOAD_BUILD_CLASS needs frame-local namespaces and is intentionally out.
+    "LOAD_BUILD_CLASS": (
+        "dynamic class creation is deferred; module-level classes are "
+        "serialized at image-build time"
+    ),
+    "LOAD_COMMON_CONSTANT": "LOAD_COMMON_CONSTANT is not part of the image-boot subset",
+    "LOAD_SPECIAL": "LOAD_SPECIAL is not part of the image-boot subset",
+    "LOAD_SUPER_ATTR": "super() attribute lookup is deferred",
+    "CALL_KW": "keyword calls are deferred",
+    "CALL_FUNCTION_EX": "variadic calls are deferred",
+    "CALL_INTRINSIC_1": "CALL_INTRINSIC_1 is deferred",
+    "CALL_INTRINSIC_2": "CALL_INTRINSIC_2 is deferred",
+    "IMPORT_NAME": "imports are deferred",
+    "IMPORT_FROM": "imports are deferred",
+    "SETUP_FINALLY": "exception handling is deferred",
+    "PUSH_EXC_INFO": "exception handling is deferred",
+    "CHECK_EXC_MATCH": "exception handling is deferred",
+    "RERAISE": "exception handling is deferred",
+    "WITH_EXCEPT_START": "context-manager exception path is deferred",
+    "YIELD_VALUE": "generators are deferred",
+    "SEND": "generators/coroutines are deferred",
+    "GET_AWAITABLE": "async/await is deferred",
+    "UNPACK_EX": "starred unpack is deferred",
+    "FORMAT_WITH_SPEC": "format-spec f-strings are deferred",
+    "MATCH_CLASS": "structural pattern matching is deferred",
+    "MATCH_KEYS": "structural pattern matching is deferred",
+    "MATCH_MAPPING": "structural pattern matching is deferred",
+    "MATCH_SEQUENCE": "structural pattern matching is deferred",
 }
 
 
