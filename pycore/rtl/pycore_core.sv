@@ -1126,23 +1126,7 @@ module pycore_core #(
     assign trap_req_code_o         = trap_marshal_code_r;
     assign trap_req_pc_o           = cur_pc_r;
     assign trap_req_instr_o        = {cur_arg_r, cur_opcode_r};
-    // EXCORE_STACK_BYTES: amount pre-reserved from heap_ptr_r before every
-    // recoverable trap so the excore firmware has a private software-stack
-    // region to work with.  The excore receives trap_marshal_heap_base_r
-    // (= old heap_ptr_r) as MB_HEAP_PTR and sets sp = MB_HEAP_PTR +
-    // EXCORE_STACK_BYTES, growing the stack downward.  Heap allocations
-    // start at MB_HEAP_PTR + EXCORE_STACK_BYTES, same as heap_ptr_r on
-    // entry to S_TRAP_MARSHAL.  When they eventually run simultaneously,
-    // pycore's heap_ptr_r is already past the stack region so the two
-    // allocation spaces never overlap.
-    localparam logic [31:0] EXCORE_STACK_BYTES = 32'd128;
-    // trap_marshal_heap_base_r: heap pointer BEFORE the stack reservation.
-    // Cleared to 0 at reset; written once per trap (when trap_marshal_pending_r
-    // fires at CP_DONE) with the current heap_ptr_r.  At the same edge
-    // heap_ptr_r is advanced by EXCORE_STACK_BYTES so the stack region is
-    // reserved before the excore ever sees MB_HEAP_PTR.
-    logic [31:0] trap_marshal_heap_base_r;
-    assign trap_req_heap_ptr_o     = trap_marshal_heap_base_r;
+    assign trap_req_heap_ptr_o     = heap_ptr_r;
     assign trap_req_entry_count_o  = trap_marshal_entry_count_r;
     assign trap_req_entries_o      = trap_marshal_entries_r;
 
@@ -1475,7 +1459,6 @@ module pycore_core #(
             trap_marshal_entries_r[0]  <= '0;
             trap_marshal_entries_r[1]  <= '0;
             trap_marshal_entries_r[2]  <= '0;
-            trap_marshal_heap_base_r   <= '0;
             trap_wait_push_idx_r       <= '0;
             trap_res_seen_r            <= 1'b0;
             trap_res_code_r2           <= '0;
@@ -2574,8 +2557,6 @@ module pycore_core #(
                                             end else if (EXCORE_EN &&
                                                 pycore_trap_recoverable(
                                                     PY_TRAP_LIST_DELETE)) begin
-                                                trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                 trap_marshal_code_r        <=
                                                     PY_TRAP_LIST_DELETE;
@@ -2670,8 +2651,6 @@ module pycore_core #(
                                             // decoded for this op) and hand off
                                             // instead of halting.  No RF, heap,
                                             // or dmem-write commit has happened.
-                                            trap_marshal_heap_base_r   <= heap_ptr_r;
-                                            heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                             trap_marshal_pending_r    <= 1'b1;
                                             trap_marshal_code_r       <= PY_TRAP_LIST_GROW;
                                             trap_marshal_entry_count_r <= 3'd2;
@@ -2820,8 +2799,6 @@ module pycore_core #(
                                         end else if (EXCORE_EN &&
                                             pycore_trap_recoverable(
                                                 PY_TRAP_LIST_EXTEND)) begin
-                                            trap_marshal_heap_base_r   <= heap_ptr_r;
-                                            heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                             trap_marshal_code_r        <=
                                                 PY_TRAP_LIST_EXTEND;
@@ -3325,8 +3302,6 @@ module pycore_core #(
                                             // Empty table → DICT_GROW before insert.
                                             if (EXCORE_EN &&
                                                 pycore_trap_recoverable(PY_TRAP_DICT_GROW)) begin
-                                                trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                 trap_marshal_code_r        <= PY_TRAP_DICT_GROW;
                                                 trap_marshal_entry_count_r <= 3'd3;
@@ -3368,8 +3343,6 @@ module pycore_core #(
                                                     if (EXCORE_EN &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_DICT_GROW)) begin
-                                                        trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                        heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                         trap_marshal_code_r        <=
                                                             PY_TRAP_DICT_GROW;
@@ -3401,8 +3374,6 @@ module pycore_core #(
                                                 if (EXCORE_EN &&
                                                     pycore_trap_recoverable(
                                                         PY_TRAP_DICT_GROW)) begin
-                                                    trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                    heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                     trap_marshal_code_r        <=
                                                         PY_TRAP_DICT_GROW;
@@ -3426,8 +3397,6 @@ module pycore_core #(
                                                     if (EXCORE_EN &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_DICT_GROW)) begin
-                                                        trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                        heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                         trap_marshal_code_r        <=
                                                             PY_TRAP_DICT_GROW;
@@ -4532,8 +4501,6 @@ module pycore_core #(
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             if (EXCORE_EN &&
                                                 pycore_trap_recoverable(PY_TRAP_SET_GROW)) begin
-                                                trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                 trap_marshal_code_r        <= PY_TRAP_SET_GROW;
                                                 trap_marshal_entry_count_r <= 3'd2;
@@ -4570,8 +4537,6 @@ module pycore_core #(
                                                     if (EXCORE_EN &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_SET_GROW)) begin
-                                                        trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                        heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                         trap_marshal_code_r        <=
                                                             PY_TRAP_SET_GROW;
@@ -4599,8 +4564,6 @@ module pycore_core #(
                                                 if (EXCORE_EN &&
                                                     pycore_trap_recoverable(
                                                         PY_TRAP_SET_GROW)) begin
-                                                    trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                    heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                     trap_marshal_code_r        <=
                                                         PY_TRAP_SET_GROW;
@@ -4619,8 +4582,6 @@ module pycore_core #(
                                                     if (EXCORE_EN &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_SET_GROW)) begin
-                                                        trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                        heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                         trap_marshal_code_r        <=
                                                             PY_TRAP_SET_GROW;
@@ -4914,8 +4875,6 @@ module pycore_core #(
                                     end else if (EXCORE_EN &&
                                                  pycore_trap_recoverable(
                                                      PY_TRAP_SET_UPDATE)) begin
-                                        trap_marshal_heap_base_r   <= heap_ptr_r;
-                                        heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                         trap_marshal_code_r        <= PY_TRAP_SET_UPDATE;
                                         trap_marshal_entry_count_r <= 3'd2;
@@ -5272,8 +5231,6 @@ module pycore_core #(
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             if (EXCORE_EN &&
                                                 pycore_trap_recoverable(PY_TRAP_DICT_GROW)) begin
-                                                trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                 trap_marshal_code_r        <= PY_TRAP_DICT_GROW;
                                                 trap_marshal_entry_count_r <= 3'd3;
@@ -5318,8 +5275,6 @@ module pycore_core #(
                                                     if (EXCORE_EN &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_DICT_GROW)) begin
-                                                        trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                        heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                         trap_marshal_code_r        <=
                                                             PY_TRAP_DICT_GROW;
@@ -5358,8 +5313,6 @@ module pycore_core #(
                                                 if (EXCORE_EN &&
                                                     pycore_trap_recoverable(
                                                         PY_TRAP_DICT_GROW)) begin
-                                                    trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                    heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                     trap_marshal_code_r        <=
                                                         PY_TRAP_DICT_GROW;
@@ -5386,8 +5339,6 @@ module pycore_core #(
                                                     if (EXCORE_EN &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_DICT_GROW)) begin
-                                                        trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                        heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                         trap_marshal_code_r        <=
                                                             PY_TRAP_DICT_GROW;
@@ -5797,8 +5748,6 @@ module pycore_core #(
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             if (EXCORE_EN &&
                                                 pycore_trap_recoverable(PY_TRAP_DICT_GROW)) begin
-                                                trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                 trap_marshal_code_r        <= PY_TRAP_DICT_GROW;
                                                 trap_marshal_entry_count_r <= 3'd3;
@@ -5838,8 +5787,6 @@ module pycore_core #(
                                                     if (EXCORE_EN &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_DICT_GROW)) begin
-                                                        trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                        heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                         trap_marshal_code_r        <=
                                                             PY_TRAP_DICT_GROW;
@@ -5870,8 +5817,6 @@ module pycore_core #(
                                                 if (EXCORE_EN &&
                                                     pycore_trap_recoverable(
                                                         PY_TRAP_DICT_GROW)) begin
-                                                    trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                    heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                     trap_marshal_code_r        <=
                                                         PY_TRAP_DICT_GROW;
@@ -5894,8 +5839,6 @@ module pycore_core #(
                                                     if (EXCORE_EN &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_DICT_GROW)) begin
-                                                        trap_marshal_heap_base_r   <= heap_ptr_r;
-                                                        heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                                         trap_marshal_code_r        <=
                                                             PY_TRAP_DICT_GROW;
@@ -6068,8 +6011,6 @@ module pycore_core #(
                                     end else if (EXCORE_EN &&
                                                  pycore_trap_recoverable(
                                                      PY_TRAP_DICT_UPDATE)) begin
-                                        trap_marshal_heap_base_r   <= heap_ptr_r;
-                                        heap_ptr_r                 <= heap_ptr_r + EXCORE_STACK_BYTES;
                                                 trap_marshal_pending_r     <= 1'b1;
                                         trap_marshal_code_r        <= PY_TRAP_DICT_UPDATE;
                                         trap_marshal_entry_count_r <= 3'd2;

@@ -85,7 +85,7 @@
     .equ TRAP_SET_UPDATE,    14
     .equ TRAP_DICT_UPDATE,   15
 
-    # ---- Per-trap software stack (shared-dmem region from pycore) ----------
+    # ---- Software call stack (private scratch) ----------------------------
     # Call-graph analysis of this firmware (jal depth):
     #   do_dict_grow / do_set_grow : depth 6
     #     e.g. insert -> probe -> keys_rich_eq -> norm_numeric -> float_to_int
@@ -93,20 +93,21 @@
     #   do_dict_update              : depth 3 (mostly inlined)
     #   list_* handlers             : depth 1 (no jal helpers)
     # Worst-case simultaneous call frames (ra + a few callee/arg saves) along
-    # the deepest path is ~40 bytes; 128 leaves margin for future helpers.
+    # the deepest path is ~40 bytes.  Reserve EXCORE_STACK_BYTES=128 with
+    # margin for future helpers.
     #
-    # Model (matches pycore_core.sv EXCORE_STACK_BYTES):
-    #   - pycore snapshots heap_ptr as MB_HEAP_PTR, then advances heap_ptr by
-    #     EXCORE_STACK_BYTES so concurrent pycore allocs cannot land in the
-    #     stack window.
-    #   - excore sets sp = MB_HEAP_PTR + EXCORE_STACK_BYTES (grows down).
-    #   - Grow buffers allocate at MB_HEAP_PTR + EXCORE_STACK_BYTES.
-    #   - No-alloc RES_HEAP_PTR returns MB_HEAP_PTR (reclaims the window).
-    #   - Grow RES_HEAP_PTR returns alloc_end (leaves a STACK_BYTES hole —
-    #     acceptable for a bump allocator; stack was live during the alloc).
-    # Private SCR_* at dmem 0x00..0x70 stays for key/value/probe payload
-    # (below PYCORE_HEAP_BASE 0x400); only call frames use this region.
+    # WHY private scratch (not the shared heap) today:
+    #   excore_cpu only serves lw/sw to (1) private 1 KB scratch at 0x0 and
+    #   (2) MMIO at 0xF000_0000. Shared pycore dmem is reachable only via the
+    #   128-bit slot-port MMIO bridge — so a heap-backed `sp` faults.
+    #
+    # Concurrent plan (matches the pycore reservation idea):
+    #   When excore gains a 32-bit path into shared dmem, pycore can hand
+    #   MB_HEAP_PTR + EXCORE_STACK_BYTES each trap, set sp to the top of that
+    #   window, and keep its bump pointer past it. Until then: stack lives at
+    #   the high end of private scratch; SCR_* payload stays in 0x00..0x7F.
     .equ EXCORE_STACK_BYTES, 128
+    .equ SCRATCH_TOP,        0x400   # exclusive end of private 1 KB scratch
 
     # fatal_code values mirror pycore_defs.svh's PY_TRAP_* codes exactly --
     # Phase C forwards this nibble straight into pycore_trap as a normal
@@ -168,11 +169,9 @@ wait_trap:
     andi t0, t0, 1
     beq  t0, x0, wait_trap
 
-    # Set up the software stack for this trap invocation.
-    # MB_HEAP_PTR points to a 128-byte region pycore reserved for us;
-    # the stack grows downward from the top of that region.
-    lw   sp, MB_HEAP_PTR(s11)
-    addi sp, sp, EXCORE_STACK_BYTES  # sp = base + 128 (initial stack top)
+    # Software stack in private scratch: grows down from SCRATCH_TOP.
+    # SCR_* payload occupies 0x00..0x7F; frames use 0x80..0x3FF.
+    li   sp, SCRATCH_TOP
 
     lw   t0, MB_TRAP_CODE(s11)
     li   t1, TRAP_LIST_GROW
@@ -266,7 +265,6 @@ cap_zero:
 cap_done:
 
     lw   s4, MB_HEAP_PTR(s11)      # s4 = new_buf
-    addi s4, s4, EXCORE_STACK_BYTES  # alloc past stack window
 
     # ---- OOM check: new_buf + new_cap*32 > HEAP_LIMIT -> FATAL(MEM_FAULT)
     slli t0, s3, 5
@@ -516,7 +514,6 @@ ext_cap_grow:
 ext_cap_done:
 
     lw   s4, MB_HEAP_PTR(s11)      # new_buf
-    addi s4, s4, EXCORE_STACK_BYTES  # alloc past stack window
     slli t0, s3, 5
     add  t0, s4, t0
     li   t1, HEAP_LIMIT
@@ -1033,7 +1030,6 @@ dgr_vs_old:
     mv   s7, t0
 dgr_alloc:
     lw   s4, MB_HEAP_PTR(s11)
-    addi s4, s4, EXCORE_STACK_BYTES  # alloc past stack window
     slli t0, s7, 6
     add  t0, s4, t0
     li   t1, HEAP_LIMIT
@@ -1820,7 +1816,6 @@ sgr_vs_old:
     mv   s7, t0
 sgr_alloc:
     lw   s4, MB_HEAP_PTR(s11)
-    addi s4, s4, EXCORE_STACK_BYTES  # alloc past stack window
     slli t0, s7, 5
     add  t0, s4, t0
     li   t1, HEAP_LIMIT
