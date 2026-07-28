@@ -764,6 +764,7 @@ dg_tag_ok:
     jal  ra, load_e1e2_to_scratch
     jal  ra, dict_load_header_table
     jal  ra, dict_grow_rehash
+    jal  ra, load_e1e2_to_scratch
     jal  ra, dict_insert_from_scratch
     jal  ra, dict_writeback_header
     li   t0, RES_COMPLETED
@@ -1117,7 +1118,9 @@ dgr_next:
     addi s6, s6, 1
     j    dgr_rehash_loop
 dgr_done:
-    jal  ra, load_e1e2_to_scratch
+    # Do NOT reload E1/E2 here — DICT_UPDATE grow-to-fit reuses this helper
+    # and mailbox E1 is the source dict, not a key.  DICT_GROW reloads after
+    # the jal returns (see do_dict_grow).
     lw   ra, 0(sp)
     addi sp, sp, 4
     jalr x0, ra, 0
@@ -2107,220 +2110,73 @@ du_poll_src_tbl:
     andi t2, t0, SP_STATUS_FAULT
     bne  t2, x0, du_fatal_mem
     lw   t0, SP_DATA0(s11)            # src table_ptr
-    sw   t0, SCR_TMP_L1(x0)          # SCR_TMP_L1 = src_table_ptr
+    mv   s10, t0                      # s10 = src_table_ptr (not SCR — rich_eq
+                                      # clobbers SCR_TMP_L0/L1)
 
-    # Note: no pre-emptive grow here. The pycore (CONT_MAP_ADD) already ensures
-    # that the dst dict has enough capacity before firing the trap (via DICT_GROW).
-    # For DICT_UPDATE, we rely on the fact that the loop will use dict_probe
-    # which finds free or tombstone slots in the table. If the table is full,
-    # dict_probe will return an invalid index (behavior undefined for truly full
-    # tables, but DICT_UPDATE should only be called when enough capacity exists).
-    li   s4, 0                        # s4=0: no grow
+    # Grow dst if used + src_used would exceed load factor.
+    lw   t0, SCR_FTI1(x0)            # src_used
+    add  t1, s2, t0                  # upper bound on post-merge used
+    mv   a0, t1
+    mv   a1, s1
+    jal  ra, dict_needs_grow
+    beq  a0, x0, du_loop_init
+    sw   s2, SCR_FTI0(x0)            # save real used across sizing
+    lw   t0, SCR_FTI1(x0)
+    add  s2, s2, t0                  # size grow for need_used
+    jal  ra, dict_grow_rehash        # s4=new table base, s7=new slots
+    lw   s2, SCR_FTI0(x0)            # restore actual used
+    jal  ra, dict_writeback_header   # commit table_ptr; s1=s7, s3=s4
+    j    du_loop_init_grew           # s4 remains new-table base (nonzero)
 
 du_loop_init:
-    # Scratch addresses used here (not used by any helper function):
-    #   8(x0)  = saved src key tag (TAG_INT etc.)
-    #   12(x0) = saved src val tag
-    lw   s9, SCR_TMP_L0(x0)   # s9 = src_slot_count (countdown)
+    li   s4, 0                        # s4=0: no grow → reclaim MB_HEAP_PTR
+du_loop_init_grew:
+    lw   s9, SCR_TMP_L0(x0)           # s9 = src_slot_count (countdown)
 du_loop:
-    beq  s9, x0, du_done      # exit when countdown reaches 0 (x0 constant)
-    addi s9, s9, -1            # pre-decrement: slot_idx = s9 (after decr)
-    lw   t5, SCR_TMP_L1(x0)   # t5 = src_table_ptr (saved at loop start)
+    beq  s9, x0, du_done
+    addi s9, s9, -1
     slli t6, s9, 6
-    add  t5, t5, t6            # t5 = src slot [s9] base addr
+    add  s8, s10, t6                 # s8 = src slot [s9] base (callee-safe)
 
-    # ---- Read src ktag -------------------------------------------------------
-    addi a0, t5, 16
-    sw   a0, SP_ADDR(s11)
-    li   a1, SP_CTRL_READ
-    sw   a1, SP_CTRL(s11)
-du_ktag_poll:
-    lw   a0, SP_STATUS(s11)
-    andi a1, a0, SP_STATUS_BUSY
-    bne  a1, x0, du_ktag_poll
-    lw   a0, SP_DATA0(s11)     # a0 = src ktag
-    beq  a0, x0, du_next       # UNINIT → skip
+    # ktag
+    addi a0, s8, 16
+    jal  ra, sp_read
+    lw   a0, SP_DATA0(s11)
+    andi a0, a0, 0xF                 # tag nibble only
+    beq  a0, x0, du_next              # UNINIT
     li   a1, TAG_TOMBSTONE
-    beq  a0, a1, du_next       # tombstone → skip
-    sw   a0, 8(x0)             # save src ktag to private scratch[8]
+    beq  a0, a1, du_next
+    sw   a0, SCR_KTAG(x0)
 
-    # ---- Read src kval -------------------------------------------------------
-    sw   t5, SP_ADDR(s11)      # kval is at slot base
-    li   a1, SP_CTRL_READ
-    sw   a1, SP_CTRL(s11)
-du_kval_poll:
-    lw   a0, SP_STATUS(s11)
-    andi a1, a0, SP_STATUS_BUSY
-    bne  a1, x0, du_kval_poll
+    # kval
+    mv   a0, s8
+    jal  ra, sp_read
     lw   a0, SP_DATA0(s11); sw a0, SCR_KVAL0(x0)
     lw   a0, SP_DATA1(s11); sw a0, SCR_KVAL1(x0)
     lw   a0, SP_DATA2(s11); sw a0, SCR_KVAL2(x0)
     lw   a0, SP_DATA3(s11); sw a0, SCR_KVAL3(x0)
 
-    # ---- Read src vval -------------------------------------------------------
-    addi a0, t5, 32
-    sw   a0, SP_ADDR(s11)
-    li   a1, SP_CTRL_READ
-    sw   a1, SP_CTRL(s11)
-du_vval_poll:
-    lw   a0, SP_STATUS(s11)
-    andi a1, a0, SP_STATUS_BUSY
-    bne  a1, x0, du_vval_poll
+    # vval
+    addi a0, s8, 32
+    jal  ra, sp_read
     lw   a0, SP_DATA0(s11); sw a0, SCR_VVAL0(x0)
     lw   a0, SP_DATA1(s11); sw a0, SCR_VVAL1(x0)
     lw   a0, SP_DATA2(s11); sw a0, SCR_VVAL2(x0)
     lw   a0, SP_DATA3(s11); sw a0, SCR_VVAL3(x0)
 
-    # ---- Read src vtag -------------------------------------------------------
-    addi a0, t5, 48
-    sw   a0, SP_ADDR(s11)
-    li   a1, SP_CTRL_READ
-    sw   a1, SP_CTRL(s11)
-du_vtag_poll:
-    lw   a0, SP_STATUS(s11)
-    andi a1, a0, SP_STATUS_BUSY
-    bne  a1, x0, du_vtag_poll
+    # vtag
+    addi a0, s8, 48
+    jal  ra, sp_read
     lw   a0, SP_DATA0(s11)
-    sw   a0, 12(x0)            # save src vtag to private scratch[12]
+    andi a0, a0, 0xF
+    sw   a0, SCR_VTAG(x0)
 
-    # ---- Probe dst dict for this key ----------------------------------------
-    # We call hash_key (uses SCR_KTAG, SCR_KVAL0/1) then do inline probe.
-    # s1 = dst slot count; s3 = dst table.
-    # IMPORTANT: SCR_KTAG must be set before hash_key.
-    lw   a0, 8(x0)             # reload src ktag
-    sw   a0, SCR_KTAG(x0)      # set SCR_KTAG for hash_key
-    sw   s9, SCR_IDX(x0)       # save s9 (loop counter) across jal ra, hash_key
-    jal  ra, hash_key           # a0 = hash(key)  [uses SCR_KTAG, SCR_KVAL0/1]
-    lw   s9, SCR_IDX(x0)       # restore s9
-    addi t6, s1, -1
-    and  a0, a0, t6             # a0 = probe_idx = hash & (slot_count-1)
-
-    # Inline open-address probe: find UNINIT slot (FOUND=0) or matching key.
-    # For DICT_UPDATE we only need to find empty slots (insert) or existing
-    # keys (overwrite).  Full rich-eq is not needed since source and dest dicts
-    # share the same key types and we are merging, not looking up.
-    # For correctness we do a simple linear search for UNINIT or exact key match.
-    li   t6, 0                  # probe count
-du_probe_loop:
-    slli t4, a0, 6
-    add  t4, s3, t4             # t4 = dst slot [a0] base
-    addi t3, t4, 16             # t3 = dst ktag addr
-    sw   t3, SP_ADDR(s11)
-    li   t3, SP_CTRL_READ
-    sw   t3, SP_CTRL(s11)
-du_probe_poll:
-    lw   t3, SP_STATUS(s11)
-    andi t3, t3, SP_STATUS_BUSY
-    bne  t3, x0, du_probe_poll
-    lw   t3, SP_DATA0(s11)     # t3 = dst ktag at probe slot
-    beq  t3, x0, du_probe_empty  # UNINIT → insert here
-    # Slot occupied: check if same key (for overwrite).
-    lw   t3, 8(x0)             # t3 = our src ktag
-    # Compare ktag + kval for exact match (works for INT/BOOL/FLOAT/STR).
-    # Load dst kval:
-    sw   t4, SP_ADDR(s11)
-    li   t3, SP_CTRL_READ
-    sw   t3, SP_CTRL(s11)
-du_probe_kval_poll:
-    lw   t3, SP_STATUS(s11)
-    andi t3, t3, SP_STATUS_BUSY
-    bne  t3, x0, du_probe_kval_poll
-    lw   t3, SP_DATA0(s11)     # dst kval[31:0]
-    lw   t4, SCR_KVAL0(x0)    # src kval[31:0]
-    bne  t3, t4, du_probe_next # different → keep probing
-    # Same low word; full equality done via helper for correctness.
-    # Re-load t4 (was overwritten by sp_read ack → STATUS was in t3).
-    # Actually: we just need to check all 4 words + ktag match.
-    # For simplicity (INT/BOOL keys are 64-bit): check words 0 and 1 only.
-    lw   t3, SP_DATA1(s11)
-    lw   t4, SCR_KVAL1(x0)
-    beq  t3, t4, du_probe_found  # match on low 64 bits → overwrite
-
-du_probe_next:
-    addi t6, t6, 1             # increment probe count
-    bge  t6, s1, du_probe_exhaust  # exhausted all slots (no empty/match)
-    addi a0, a0, 1
-    addi t3, s1, -1
-    and  a0, a0, t3            # wrap probe_idx
-    # Reload t4 = dst slot base for next iteration
-    slli t4, a0, 6
-    add  t4, s3, t4
-    j    du_probe_loop
-
-du_probe_exhaust:
-    # No free slot found — dict was full (shouldn't happen if no grow needed).
-    # Skip this key silently and continue with next source slot.
-    j    du_next
-
-du_probe_empty:
-    # Found an empty slot at index a0.  Insert key/value.
-    # t4 = dst slot [a0] base.  Write kval, ktag, vval, vtag inline.
-    # kval:
-    lw   t3, SCR_KVAL0(x0); sw t3, SP_DATA0(s11)
-    lw   t3, SCR_KVAL1(x0); sw t3, SP_DATA1(s11)
-    lw   t3, SCR_KVAL2(x0); sw t3, SP_DATA2(s11)
-    lw   t3, SCR_KVAL3(x0); sw t3, SP_DATA3(s11)
-    sw   t4, SP_ADDR(s11)
-    li   t3, SP_CTRL_WRITE
-    sw   t3, SP_CTRL(s11)
-du_wr_kval_poll:
-    lw   t3, SP_STATUS(s11)
-    andi t3, t3, SP_STATUS_BUSY
-    bne  t3, x0, du_wr_kval_poll
-    # ktag:
-    lw   t3, 8(x0)             # src ktag
-    sw   t3, SP_DATA0(s11)
-    li   t3, 0
-    sw   t3, SP_DATA1(s11)
-    sw   t3, SP_DATA2(s11)
-    sw   t3, SP_DATA3(s11)
-    addi t3, t4, 16
-    sw   t3, SP_ADDR(s11)
-    li   t3, SP_CTRL_WRITE
-    sw   t3, SP_CTRL(s11)
-du_wr_ktag_poll:
-    lw   t3, SP_STATUS(s11)
-    andi t3, t3, SP_STATUS_BUSY
-    bne  t3, x0, du_wr_ktag_poll
-    addi s2, s2, 1             # increment used count
-    j    du_write_vval
-
-du_probe_found:
-    # Key already exists at slot a0 (overwrite value).
-    # t4 = dst slot [a0] base.  Fall through to value write.
-
-du_write_vval:
-    # vval:
-    lw   t3, SCR_VVAL0(x0); sw t3, SP_DATA0(s11)
-    lw   t3, SCR_VVAL1(x0); sw t3, SP_DATA1(s11)
-    lw   t3, SCR_VVAL2(x0); sw t3, SP_DATA2(s11)
-    lw   t3, SCR_VVAL3(x0); sw t3, SP_DATA3(s11)
-    addi t3, t4, 32
-    sw   t3, SP_ADDR(s11)
-    li   t3, SP_CTRL_WRITE
-    sw   t3, SP_CTRL(s11)
-du_wr_vval_poll:
-    lw   t3, SP_STATUS(s11)
-    andi t3, t3, SP_STATUS_BUSY
-    bne  t3, x0, du_wr_vval_poll
-    # vtag:
-    lw   t3, 12(x0)            # src vtag
-    sw   t3, SP_DATA0(s11)
-    li   t3, 0
-    sw   t3, SP_DATA1(s11)
-    sw   t3, SP_DATA2(s11)
-    sw   t3, SP_DATA3(s11)
-    addi t3, t4, 48
-    sw   t3, SP_ADDR(s11)
-    li   t3, SP_CTRL_WRITE
-    sw   t3, SP_CTRL(s11)
-du_wr_vtag_poll:
-    lw   t3, SP_STATUS(s11)
-    andi t3, t3, SP_STATUS_BUSY
-    bne  t3, x0, du_wr_vtag_poll
-
-du_insert_new:
-du_overwrite:
+    # Insert/overwrite into dst via the shared helper (stack-safe).
+    addi sp, sp, -4
+    sw   s9, 0(sp)                    # preserve loop countdown
+    jal  ra, dict_insert_from_scratch
+    lw   s9, 0(sp)
+    addi sp, sp, 4
 du_next:
     j    du_loop
 
