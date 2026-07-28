@@ -127,6 +127,9 @@ SUPPORTED_OPS = {
     "LOAD_SMALL_INT",
     "LOAD_CONST",
     "POP_TOP",
+    "END_FOR",
+    "GET_ITER",
+    "FOR_ITER",
     "NOP",
     "COPY",
     "SWAP",
@@ -158,7 +161,7 @@ SUPPORTED_OPS = {
     "CONTAINS_OP",
     # LIST_APPEND spare-capacity / grow-trap; LIST_EXTEND empty no-op /
     # always-excore non-empty: see CONT_LIST_APPEND / CONT_LIST_EXTEND.
-    # Comprehensions still fail validation on FOR_ITER/GET_ITER (deferred);
+    # LIST/TUPLE comprehensions use the native GET_ITER/FOR_ITER path.
     # LIST_EXTEND is also emitted by list-display unpack (`[a, *b]` / `[*a, *b]`).
     "LIST_APPEND",
     "LIST_EXTEND",
@@ -442,6 +445,8 @@ def write_cache_map(path: pathlib.Path) -> None:
 
 
 def merge_numeric(tag_a: int, tag_b: int, op_arg: int) -> int:
+    if op_arg == 13 and tag_a == TAG_LIST and tag_b in (TAG_LIST, TAG_TUPLE):
+        return TAG_LIST
     if op_arg in (0, 13) and tag_a in (TAG_SHORT_STR, TAG_LONG_STR) and tag_b in (TAG_SHORT_STR, TAG_LONG_STR):
         # Hardware resolves short-vs-long at runtime from operand sizes.
         return TAG_LONG_STR
@@ -483,6 +488,17 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
         elif ins.opname == "POP_TOP" or ins.opname == "POP_ITER":
             if stack:
                 stack.pop()
+        elif ins.opname == "END_FOR":
+            if stack:
+                stack.pop()
+        elif ins.opname == "GET_ITER":
+            # Replaces the iterable with an internal iterator in place.
+            if stack:
+                stack[-1] = TAG_OBJECT
+        elif ins.opname == "FOR_ITER":
+            # The fallthrough edge pushes the yielded element. Exhaustion
+            # branches to loop cleanup; this linear sketch follows fallthrough.
+            stack.append(TAG_OBJECT)
         elif ins.opname == "COPY":
             idx = ins.arg or 0
             stack.append(stack[-idx] if 0 < idx <= len(stack) else TAG_OBJECT)

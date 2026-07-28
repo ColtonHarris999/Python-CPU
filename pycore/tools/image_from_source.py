@@ -61,6 +61,18 @@ SUPPORTED_BINARY_ARGS = {
     NBARG_SUBSCR,
 }
 
+# CPython 3.14 packs the selector in bits 7:5, a force-bool flag in bit 4,
+# and the quickened comparison mask in bits 3:0.  Accept only forms emitted
+# by this pinned interpreter rather than silently admitting future encodings.
+SUPPORTED_COMPARE_ARGS = {
+    2, 18,      # <
+    42, 58,     # <=
+    72, 88,     # ==
+    103, 119,   # !=
+    132, 148,   # >
+    172, 188,   # >=
+}
+
 SUPPORTED_OPS = {
     "RESUME",
     "CACHE",
@@ -74,6 +86,9 @@ SUPPORTED_OPS = {
     "LOAD_FAST_CHECK",
     "LOAD_SMALL_INT",
     "POP_TOP",
+    "END_FOR",
+    "GET_ITER",
+    "FOR_ITER",
     "POP_ITER",
     "NOP",
     "NOT_TAKEN",
@@ -86,6 +101,8 @@ SUPPORTED_OPS = {
     "BUILD_MAP",
     "BUILD_TUPLE",
     "STORE_SUBSCR",
+    "DELETE_SUBSCR",
+    "CONTAINS_OP",
     "COPY",
     "SWAP",
     "CALL",
@@ -98,18 +115,16 @@ SUPPORTED_OPS = {
     "MAKE_FUNCTION",
     # LIST_APPEND spare-capacity fast path / grow-trap, and LIST_EXTEND
     # (empty no-op / always-excore non-empty) are in CONT_LIST_APPEND /
-    # CONT_LIST_EXTEND (pycore_core.sv).
-    # LIST_APPEND still only appears inside comprehensions (FOR_ITER/GET_ITER
-    # deferred). LIST_EXTEND is emitted by list-display unpack forms such as
+    # CONT_LIST_EXTEND (pycore_core.sv). LIST_APPEND appears inside
+    # comprehensions whose GET_ITER/FOR_ITER path is accepted for LIST/TUPLE
+    # sources. LIST_EXTEND is emitted by list-display unpack forms such as
     # `[1, 2, *x]` and `[*a, *b]` — those are accepted here. Sources must be
-    # LIST or TUPLE (no iterator protocol yet).
+    # LIST or TUPLE.
     "LIST_APPEND",
     "LIST_EXTEND",
     "BUILD_SET",
     "SET_ADD",
     "SET_UPDATE",
-    "DELETE_SUBSCR",
-    "CONTAINS_OP",
 }
 
 DEFERRED_OPS: dict[str, str] = {
@@ -218,6 +233,11 @@ def validate_code_object(co: types.CodeType) -> None:
         if ins.opname == "BINARY_OP" and ins.arg not in SUPPORTED_BINARY_ARGS:
             raise ValueError(
                 f"Unsupported BINARY_OP oparg {ins.arg} in code object "
+                f"{co.co_name!r} at bytecode offset {ins.offset}"
+            )
+        if ins.opname == "COMPARE_OP" and ins.arg not in SUPPORTED_COMPARE_ARGS:
+            raise ValueError(
+                f"Unsupported COMPARE_OP oparg {ins.arg} in code object "
                 f"{co.co_name!r} at bytecode offset {ins.offset}"
             )
         if ins.opname == "LOAD_CONST" and ins.arg >= len(co.co_consts):

@@ -83,10 +83,19 @@ EXCORE_RTL_SRCS := \
 	pycore-img-load-fast-and-clear pycore-img-load-fast-and-clear-cleared \
 	pycore-img-load-fast-check pycore-img-load-fast-check-unbound \
 	pycore-img-to-bool pycore-img-to-bool-type-trap \
-	pycore-img-to-bool-str-trap pycore-img-to-bool-list-trap \
+	pycore-img-to-bool-str pycore-img-to-bool-list-trap \
 	pycore-img-unary-not \
 	pycore-img-is-op \
+	pycore-img-compare-op pycore-img-compare-op-type-trap \
 	pycore-img-pop-jump-if-none \
+	pycore-img-for-iter pycore-img-for-iter-type-trap \
+	pycore-img-for-iter-nested pycore-img-for-iter-edges \
+	pycore-img-for-iter-branch pycore-img-for-iter-mutate \
+	pycore-img-for-iter-mutate-visited pycore-img-for-iter-rebind \
+	pycore-img-for-iter-grow \
+	pycore-img-for-iter-delete pycore-img-for-iter-clear \
+	pycore-img-for-iter-subscr pycore-img-for-iter-build-tuple \
+	pycore-img-for-iter-all \
 	pycore-img-nop \
 	pycore-container pycore-container-build-index pycore-container-store-subscr \
 	pycore-container-dict-lookup pycore-container-dict-store \
@@ -99,6 +108,7 @@ EXCORE_RTL_SRCS := \
 	pycore-container-dict-full-insert pycore-container-list-oom \
 	pycore-container-list-append-fast pycore-container-list-append-full-fatal \
 	pycore-list-append-fixtures \
+	pycore-for-iter-fixtures pycore-container-for-iter-end-for \
 	pycore-container-list-extend-fast pycore-container-list-extend-fast-tuple \
 	pycore-container-list-extend-empty \
 	pycore-container-list-extend-full-fatal pycore-container-list-extend-type-fatal \
@@ -460,8 +470,8 @@ pycore-img-to-bool:
 pycore-img-to-bool-type-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,to_bool_type_trap,1,50000)
 
-pycore-img-to-bool-str-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,to_bool_str_trap,1,50000)
+pycore-img-to-bool-str:
+	$(call PYCORE_IMAGE_RUN,to_bool_str,50000)
 
 pycore-img-to-bool-list-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,to_bool_list_trap,1,50000)
@@ -472,8 +482,69 @@ pycore-img-unary-not:
 pycore-img-is-op:
 	$(call PYCORE_IMAGE_RUN,is_op,50000)
 
+pycore-img-compare-op:
+	$(call PYCORE_IMAGE_RUN,compare_op,50000)
+
+pycore-img-compare-op-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,compare_op_type_trap,1,50000)
+
 pycore-img-pop-jump-if-none:
 	$(call PYCORE_IMAGE_RUN,pop_jump_if_none,50000)
+
+pycore-img-for-iter:
+	$(call PYCORE_IMAGE_RUN,for_iter,100000)
+
+pycore-img-for-iter-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_type_trap,1,50000)
+
+pycore-img-for-iter-nested:
+	$(call PYCORE_IMAGE_RUN,for_iter_nested,100000)
+
+pycore-img-for-iter-edges:
+	$(call PYCORE_IMAGE_RUN,for_iter_edges,100000)
+
+pycore-img-for-iter-branch:
+	$(call PYCORE_IMAGE_RUN,for_iter_branch,100000)
+
+pycore-img-for-iter-mutate:
+	$(call PYCORE_IMAGE_RUN,for_iter_mutate,100000)
+
+pycore-img-for-iter-mutate-visited:
+	$(call PYCORE_IMAGE_RUN,for_iter_mutate_visited,100000)
+
+pycore-img-for-iter-rebind:
+	$(call PYCORE_IMAGE_RUN,for_iter_rebind,100000)
+
+pycore-img-for-iter-grow: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,for_iter_grow,150000)
+
+pycore-img-for-iter-delete: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,for_iter_delete,150000)
+
+pycore-img-for-iter-clear: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,for_iter_clear,150000)
+
+pycore-img-for-iter-subscr:
+	$(call PYCORE_IMAGE_RUN,for_iter_subscr,100000)
+
+pycore-img-for-iter-build-tuple:
+	$(call PYCORE_IMAGE_RUN,for_iter_build_tuple,100000)
+
+pycore-img-for-iter-all: \
+	pycore-img-for-iter \
+	pycore-img-for-iter-type-trap \
+	pycore-img-for-iter-nested \
+	pycore-img-for-iter-edges \
+	pycore-img-for-iter-branch \
+	pycore-img-for-iter-mutate \
+	pycore-img-for-iter-mutate-visited \
+	pycore-img-for-iter-rebind \
+	pycore-img-for-iter-grow \
+	pycore-img-for-iter-delete \
+	pycore-img-for-iter-clear \
+	pycore-img-for-iter-subscr \
+	pycore-img-for-iter-build-tuple \
+	pycore-container-for-iter-end-for
 
 pycore-img-nop:
 	$(call PYCORE_IMAGE_RUN,nop,50000)
@@ -747,11 +818,26 @@ pycore-img: \
 	pycore-img-load-fast-check-unbound \
 	pycore-img-to-bool \
 	pycore-img-to-bool-type-trap \
-	pycore-img-to-bool-str-trap \
+	pycore-img-to-bool-str \
 	pycore-img-to-bool-list-trap \
 	pycore-img-unary-not \
 	pycore-img-is-op \
+	pycore-img-compare-op \
+	pycore-img-compare-op-type-trap \
 	pycore-img-pop-jump-if-none \
+	pycore-img-for-iter \
+	pycore-img-for-iter-type-trap \
+	pycore-img-for-iter-nested \
+	pycore-img-for-iter-edges \
+	pycore-img-for-iter-branch \
+	pycore-img-for-iter-mutate \
+	pycore-img-for-iter-mutate-visited \
+	pycore-img-for-iter-rebind \
+	pycore-img-for-iter-grow \
+	pycore-img-for-iter-delete \
+	pycore-img-for-iter-clear \
+	pycore-img-for-iter-subscr \
+	pycore-img-for-iter-build-tuple \
 	pycore-img-nop \
 	pycore-img-list-del-last-only \
 	pycore-img-list-contains-simple \
@@ -868,10 +954,17 @@ pycore-container-dict-full-insert:
 pycore-container-list-oom:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h00001f9c",pycore_container_list_oom)
 
+# Natural FOR_ITER exhaustion skips END_FOR, so this raw stream executes
+# END_FOR directly and verifies its POP_TOP-equivalent stack effect.
+pycore-for-iter-fixtures:
+	$(PYTHON) pycore/tools/gen_for_iter_fixtures.py
+
+pycore-container-for-iter-end-for: pycore-for-iter-fixtures
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/for_iter_end_for.hex,-GEXPECTED_TAG=4\'b0001 "-GEXPECTED_VALUE=128\'d7",pycore_container_for_iter_end_for)
+
 # list_append_fast / list_append_full_fatal (Phase A, LIST_APPEND): hand-
-# built fixtures — compile() can only emit LIST_APPEND inside comprehensions,
-# which still require unimplemented FOR_ITER/GET_ITER, so these cannot go
-# through preprocess.py / image_from_source.py.  See
+# built fixtures with spare-capacity/full-list layouts that source compilation
+# cannot express directly. See
 # pycore/tools/gen_list_append_fixtures.py for the generator (imem/dmem hex
 # outputs are committed fixtures, like the other list_*.hex files).
 pycore-list-append-fixtures:
@@ -1177,6 +1270,7 @@ pycore-container: \
 	pycore-container-tuple-store-trap \
 	pycore-container-dict-full-insert \
 	pycore-container-list-oom \
+	pycore-container-for-iter-end-for \
 	pycore-container-list-append-fast \
 	pycore-container-list-append-full-fatal \
 	pycore-container-list-extend-fast \

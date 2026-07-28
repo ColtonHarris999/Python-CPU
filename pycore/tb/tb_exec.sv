@@ -88,6 +88,61 @@ module tb_exec;
         #1;
         check(trap && trap_code == PY_TRAP_TYPE, "PTR arithmetic should type trap");
 
+        // COMPARE_OP's six selectors share this execute path.  Exercise each
+        // predicate with values that distinguish its result.
+        rs1 = entry(PY_TAG_INT, 64'd2);
+        rs2 = entry(PY_TAG_INT, 64'd3);
+        alu_op = PY_ALU_LT;
+        #1;
+        check(!trap, "INT less-than should not trap");
+        check(pycore_get_tag(result) == PY_TAG_BOOL, "less-than should tag BOOL");
+        check(result[63:0] == 64'd1, "INT less-than value mismatch");
+
+        alu_op = PY_ALU_LE;
+        #1;
+        check(!trap && result[63:0] == 64'd1, "INT less-equal value mismatch");
+
+        alu_op = PY_ALU_EQ;
+        #1;
+        check(!trap && result[63:0] == 64'd0, "INT equality value mismatch");
+
+        alu_op = PY_ALU_NE;
+        #1;
+        check(!trap && result[63:0] == 64'd1, "INT inequality value mismatch");
+
+        alu_op = PY_ALU_GT;
+        #1;
+        check(!trap && result[63:0] == 64'd0, "INT greater-than value mismatch");
+
+        alu_op = PY_ALU_GE;
+        #1;
+        check(!trap && result[63:0] == 64'd0, "INT greater-equal value mismatch");
+        check(result[PYCORE_VAL_MSB:64] == 64'b0,
+              "comparison BOOL upper bits should be zero");
+
+        rs1 = entry(PY_TAG_BOOL, 64'd1);
+        rs2 = entry(PY_TAG_INT, 64'd0);
+        alu_op = PY_ALU_GT;
+        #1;
+        check(!trap && pycore_get_tag(result) == PY_TAG_BOOL,
+              "BOOL/INT compare should produce BOOL");
+        check(result[63:0] == 64'd1, "BOOL/INT comparison value mismatch");
+
+        rs1 = entry(PY_TAG_INT, 64'd2);
+        rs2 = entry(PY_TAG_FLOAT, $realtobits(2.5));
+        alu_op = PY_ALU_LT;
+        #1;
+        check(!trap && pycore_get_tag(result) == PY_TAG_BOOL,
+              "INT/FLOAT compare should produce BOOL");
+        check(result[63:0] == 64'd1, "INT/FLOAT comparison value mismatch");
+
+        rs1 = entry(PY_TAG_SHORT_STR, 64'd0);
+        rs2 = entry(PY_TAG_SHORT_STR, 64'd0);
+        alu_op = PY_ALU_EQ;
+        #1;
+        check(trap && trap_code == PY_TRAP_TYPE,
+              "unsupported string equality should type trap");
+
         $display("PASS: execute fabric smoke tests complete");
         $finish;
     end

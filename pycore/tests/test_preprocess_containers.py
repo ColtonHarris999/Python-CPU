@@ -279,10 +279,8 @@ class TestLFBLFBExpansion(unittest.TestCase):
 class TestListAppendAccepted(unittest.TestCase):
     """LIST_APPEND is no longer deferred (see CONT_LIST_APPEND, pycore_core.sv).
 
-    compile() only emits LIST_APPEND inside comprehensions, which still fail
-    validation on FOR_ITER/GET_ITER (correctly still deferred) — so these
-    tests exercise the opcode-table classification and type-sketch handling
-    directly rather than a real compiled comprehension.
+    compile() emits LIST_APPEND inside comprehensions, whose LIST/TUPLE
+    GET_ITER/FOR_ITER path is now supported.
     """
 
     def test_list_append_not_deferred(self) -> None:
@@ -295,10 +293,10 @@ class TestListAppendAccepted(unittest.TestCase):
         # python3.14 -c "import opcode; print(opcode.opmap['LIST_APPEND'])"
         self.assertEqual(preprocess.OP_LIST_APPEND, 78)
 
-    def test_for_iter_get_iter_still_deferred_or_unsupported(self) -> None:
-        # Comprehensions remain out of scope until FOR_ITER/GET_ITER land.
-        self.assertNotIn("FOR_ITER", preprocess.SUPPORTED_OPS)
-        self.assertNotIn("GET_ITER", preprocess.SUPPORTED_OPS)
+    def test_for_iter_get_iter_supported(self) -> None:
+        self.assertIn("END_FOR", preprocess.SUPPORTED_OPS)
+        self.assertIn("FOR_ITER", preprocess.SUPPORTED_OPS)
+        self.assertIn("GET_ITER", preprocess.SUPPORTED_OPS)
 
     def test_infer_types_pops_only_the_element(self) -> None:
         """LIST_APPEND pops just the element; the list beneath is untouched."""
@@ -445,6 +443,15 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
                 opname, preprocess.SUPPORTED_OPS,
                 f"{opname} is in DEFERRED_OPS but also in SUPPORTED_OPS",
             )
+
+    def test_delete_subscr_supported(self) -> None:
+        self.assertIn("DELETE_SUBSCR", preprocess.SUPPORTED_OPS)
+        self.assertNotIn("DELETE_SUBSCR", preprocess.DEFERRED_OPS)
+        fn = _compile_fn("def f(xs):\n    del xs[0]\n    return 0\n", "f")
+        self.assertIn(
+            "DELETE_SUBSCR",
+            [ins.opname for ins in preprocess.iter_filtered_instructions(fn)],
+        )
 
     def test_build_set_supported(self) -> None:
         """Non-constant set display emits BUILD_SET and is accepted."""

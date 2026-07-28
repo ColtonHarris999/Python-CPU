@@ -96,6 +96,31 @@ module tb_tag_decode;
         #1;
         check(is_trap && trap_code == PY_TRAP_TYPE, "PTR compare should type trap");
 
+        rs1_tag = PY_TAG_INT;
+        rs2_tag = PY_TAG_FLOAT;
+        alu_op = PY_ALU_LT;
+        #1;
+        check(!is_trap, "INT/FLOAT compare should not trap");
+        check(exec_unit_sel == PY_EXEC_FLOAT, "INT/FLOAT compare should route to FPU");
+        check(result_tag == PY_TAG_BOOL, "numeric compare should produce BOOL");
+        check(promote_rs1 && promote_rs1_mode == PY_PROMOTE_INT_TO_FLOAT,
+              "INT compare operand should promote to FLOAT");
+
+        rs1_tag = PY_TAG_BOOL;
+        rs2_tag = PY_TAG_INT;
+        alu_op = PY_ALU_GE;
+        #1;
+        check(!is_trap, "BOOL/INT compare should not trap");
+        check(exec_unit_sel == PY_EXEC_INT, "BOOL/INT compare should route to INT");
+        check(result_tag == PY_TAG_BOOL, "BOOL/INT compare should produce BOOL");
+
+        rs1_tag = PY_TAG_SHORT_STR;
+        rs2_tag = PY_TAG_LONG_STR;
+        alu_op = PY_ALU_EQ;
+        #1;
+        check(is_trap && trap_code == PY_TRAP_TYPE,
+              "string comparison should type trap until rich compare exists");
+
         rs1_tag = PY_TAG_OBJECT;
         rs2_tag = PY_TAG_INT;
         alu_op = PY_ALU_ADD;
