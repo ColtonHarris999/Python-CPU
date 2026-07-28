@@ -14,7 +14,7 @@
 // doubling formula `new_cap = cap ? cap<<1 : 4` (B.4): starting capacity 2
 // (not 1) produces exactly a "-> 4" result while remaining faithful to the
 // documented doubling rule; "cap 0 -> 4" and "cap 4 -> 8" match literally.
-module tb_excore #(
+module tb_excore_hashupdate #(
     parameter string FW_HEX = "build/excore_fw/list_grow.hex"
 );
     localparam int DATA_W = 128;
@@ -139,6 +139,48 @@ module tb_excore #(
         for (off = 0; off < bytes; off += 16)
             mem_bank.gen_block[0].blk.mem[(base + off) >> 4] = 128'd0;
     endtask
+
+    int soft_fails = 0;
+    task automatic softcheck(input bit condition, input string message);
+        if (!condition) begin
+            $display("  [SOFTFAIL] %s", message);
+            soft_fails = soft_fails + 1;
+        end else begin
+            $display("  [ok] %s", message);
+        end
+    endtask
+
+    function automatic logic [63:0] dget_kval(input logic [31:0] tbl, input int slot);
+        logic [127:0] w; w = peek_slot(tbl + slot*64);      dget_kval = w[63:0];
+    endfunction
+    function automatic logic [3:0] dget_ktag(input logic [31:0] tbl, input int slot);
+        logic [127:0] w; w = peek_slot(tbl + slot*64 + 16);  dget_ktag = w[3:0];
+    endfunction
+    function automatic logic [63:0] dget_vval(input logic [31:0] tbl, input int slot);
+        logic [127:0] w; w = peek_slot(tbl + slot*64 + 32);  dget_vval = w[63:0];
+    endfunction
+    function automatic logic [63:0] dused(input logic [31:0] obj);
+        logic [127:0] w; w = peek_slot(obj);                 dused = w[63:0];
+    endfunction
+    function automatic logic [63:0] dslots(input logic [31:0] obj);
+        logic [127:0] w; w = peek_slot(obj);                 dslots = w[127:64];
+    endfunction
+    function automatic logic [31:0] dtblptr(input logic [31:0] obj);
+        logic [127:0] w; w = peek_slot(obj + 16);            dtblptr = w[31:0];
+    endfunction
+    function automatic int dfind_int_key(input logic [31:0] tbl, input logic [63:0] slots,
+                                         input logic [63:0] key);
+        int s; logic [127:0] kt, kv;
+        dfind_int_key = -1;
+        for (s = 0; s < slots; s++) begin
+            kt = peek_slot(tbl + s*64 + 16);
+            kv = peek_slot(tbl + s*64);
+            if (kt[3:0] == PY_TAG_INT && kv[63:0] == key) dfind_int_key = s;
+        end
+    endfunction
+    function automatic logic [63:0] dval_at(input logic [31:0] tbl, input int slot);
+        logic [127:0] w; w = peek_slot(tbl + slot*64 + 32);  dval_at = w[63:0];
+    endfunction
 
     function automatic logic [127:0] peek_slot(input logic [31:0] addr);
         peek_slot = mem_bank.gen_block[0].blk.mem[addr[12:4]];
@@ -342,6 +384,50 @@ module tb_excore #(
         $error("[FAIL] timed out waiting for RES_GO (SET_GROW)");
         $finish;
     endtask
+
+    localparam logic [3:0] TRAP_DICT_UPDATE_L = 4'd15;
+    task automatic run_dict_update(
+        input logic [131:0] dst_entry, input logic [131:0] src_entry,
+        input logic [31:0] heap_ptr, input int max_cycles);
+        int i;
+        mb_entries[0]=dst_entry; mb_entries[1]=src_entry; mb_entry_count=3'd2;
+        mb_heap_ptr=heap_ptr; mb_trap_code=TRAP_DICT_UPDATE_L;
+        mb_opcode=8'd67; mb_arg=32'd0;
+        @(negedge clk); mb_trap_pending=1'b1;
+        for (i=0;i<max_cycles;i++) begin
+            @(posedge clk);
+            if (res_go) begin @(negedge clk); mb_trap_pending=1'b0; return; end
+        end
+        $error("[FAIL] timed out waiting for RES_GO (DICT_UPDATE)"); $finish;
+    endtask
+
+    localparam logic [3:0] TRAP_SET_UPDATE_L = 4'd14;
+    task automatic run_set_update(
+        input logic [131:0] dst_entry, input logic [131:0] src_entry,
+        input logic [31:0] heap_ptr, input int max_cycles);
+        int i;
+        mb_entries[0]=dst_entry; mb_entries[1]=src_entry; mb_entry_count=3'd2;
+        mb_heap_ptr=heap_ptr; mb_trap_code=TRAP_SET_UPDATE_L;
+        mb_opcode=8'd109; mb_arg=32'd0;
+        @(negedge clk); mb_trap_pending=1'b1;
+        for (i=0;i<max_cycles;i++) begin
+            @(posedge clk);
+            if (res_go) begin @(negedge clk); mb_trap_pending=1'b0; return; end
+        end
+        $error("[FAIL] timed out waiting for RES_GO (SET_UPDATE)"); $finish;
+    endtask
+
+    // set table: stride 32; elem value at tbl+i*32, tag at tbl+i*32+16
+    function automatic int sfind_int_elem(input logic [31:0] tbl, input logic [63:0] slots,
+                                          input logic [63:0] key);
+        int s; logic [127:0] et, ev;
+        sfind_int_elem = -1;
+        for (s = 0; s < slots; s++) begin
+            et = peek_slot(tbl + s*32 + 16);
+            ev = peek_slot(tbl + s*32);
+            if (et[3:0] == PY_TAG_INT && ev[63:0] == key) sfind_int_elem = s;
+        end
+    endfunction
 
     initial begin
         logic [31:0] obj_addr, old_buf, new_buf, src_addr, src_buf;
@@ -714,6 +800,228 @@ module tb_excore #(
             check(shdr[127:64] >= 64'd8, "scenario11: slots>=8");
             check(ntbl != 32'd0, "scenario11: table_ptr set");
             $display("PASS: scenario11 (SET_GROW empty -> insert)");
+        end
+
+        // ==================================================================
+        // PROBE D0: DICT_UPDATE as the VERY FIRST dict trap (no stale scratch).
+        // dst {} (empty, slots=8), src {7:77}. Expect dst {7:77}, used=1.
+        // Isolate: nothing dict ran before, so scratch cannot supply a stale key.
+        // ==================================================================
+        do_reset();
+        begin
+            logic [31:0] dobj, dtbl, sobj, stbl;
+            int f7, k;
+            dobj=32'h0400; dtbl=32'h0500; sobj=32'h0A00; stbl=32'h0B00;
+            clear_region(32'h0400, 32'h1C00);
+            poke_slot(dobj, {64'd8, 64'd0}); poke_slot(dobj+16, {96'd0, dtbl});
+            poke_slot(sobj, {64'd8, 64'd1}); poke_slot(sobj+16, {96'd0, stbl});
+            poke_slot(stbl+7*64,    {64'd0,64'd7});
+            poke_slot(stbl+7*64+16, {124'b0,PY_TAG_INT});
+            poke_slot(stbl+7*64+32, {64'd0,64'd77});
+            poke_slot(stbl+7*64+48, {124'b0,PY_TAG_INT});
+            run_dict_update({PY_TAG_DICT,{96{1'b0}},dobj},
+                            {PY_TAG_DICT,{96{1'b0}},sobj}, 32'h0C00, 300000);
+            softcheck(res_code == RES_COMPLETED, "D0: COMPLETED");
+            $display("D0: slots=%0d used=%0d", dslots(dobj), dused(dobj));
+            for (k=0;k<8;k++)
+                $display("   D0 dst slot %0d: ktag=%0d kval=%0d vval=%0d",
+                         k, dget_ktag(dtbl,k), dget_kval(dtbl,k), dget_vval(dtbl,k));
+            softcheck(dused(dobj) == 64'd1, "D0: used=1");
+            f7 = dfind_int_key(dtbl, 64'd8, 64'd7);
+            softcheck(f7 != -1, "D0: key7 present");
+            if (f7 != -1) softcheck(dval_at(dtbl,f7)==64'd77, "D0: key7 val=77");
+            $display("PROBE D0 done");
+        end
+
+        // ==================================================================
+        // PROBE D1: DICT_GROW that rehashes EXISTING entries (5) + inserts new.
+        // ==================================================================
+        do_reset();
+        begin
+            logic [31:0] dobj, tbl, ntbl;
+            logic [63:0] gslots, gused;
+            logic [31:0] gtbl;
+            int k, found;
+            dobj = 32'h0400; tbl = 32'h0500; ntbl = 32'h0800;
+            clear_region(32'h0400, 32'h1C00);
+            poke_slot(dobj, {64'd8, 64'd5});
+            poke_slot(dobj + 16, {96'd0, tbl});
+            for (k = 0; k < 5; k++) begin
+                poke_slot(tbl + k*64,      {64'd0, 32'd0, k[31:0]});
+                poke_slot(tbl + k*64 + 16, {124'b0, PY_TAG_INT});
+                poke_slot(tbl + k*64 + 32, {64'd0, 32'd0, (k+100)});
+                poke_slot(tbl + k*64 + 48, {124'b0, PY_TAG_INT});
+            end
+            run_dict_grow({PY_TAG_DICT, {96{1'b0}}, dobj},
+                          {PY_TAG_INT, 128'd5}, {PY_TAG_INT, 128'd555},
+                          ntbl, 300000);
+            softcheck(res_code == RES_COMPLETED, "D1: COMPLETED");
+            softcheck(res_pop_count == 3'd3, "D1: pop=3");
+            gslots = dslots(dobj); gused = dused(dobj); gtbl = dtblptr(dobj);
+            $display("D1: slots=%0d used=%0d tbl=0x%0h", gslots, gused, gtbl);
+            softcheck(gused == 64'd6, "D1: used=6");
+            for (k = 0; k <= 5; k++) begin
+                logic [63:0] want; logic [63:0] gotv;
+                want = (k == 5) ? 64'd555 : (k + 100);
+                found = dfind_int_key(gtbl, gslots, k);
+                softcheck(found != -1, $sformatf("D1: key %0d present", k));
+                if (found != -1) begin
+                    gotv = dval_at(gtbl, found);
+                    softcheck(gotv == want, $sformatf("D1: key %0d value=%0d want=%0d", k, gotv, want));
+                end
+            end
+            $display("PROBE D1 done");
+        end
+
+        // ==================================================================
+        // PROBE D2: DICT_UPDATE, no grow. dst {1:10}, src {2:20} → {1:10,2:20}
+        // ==================================================================
+        do_reset();
+        begin
+            logic [31:0] dobj, dtbl, sobj, stbl;
+            int k, f1, f2;
+            dobj=32'h0400; dtbl=32'h0500; sobj=32'h0A00; stbl=32'h0B00;
+            clear_region(32'h0400, 32'h1C00);
+            poke_slot(dobj, {64'd8, 64'd1}); poke_slot(dobj+16, {96'd0, dtbl});
+            poke_slot(dtbl+1*64,    {64'd0,64'd1});
+            poke_slot(dtbl+1*64+16, {124'b0,PY_TAG_INT});
+            poke_slot(dtbl+1*64+32, {64'd0,64'd10});
+            poke_slot(dtbl+1*64+48, {124'b0,PY_TAG_INT});
+            poke_slot(sobj, {64'd8, 64'd1}); poke_slot(sobj+16, {96'd0, stbl});
+            poke_slot(stbl+2*64,    {64'd0,64'd2});
+            poke_slot(stbl+2*64+16, {124'b0,PY_TAG_INT});
+            poke_slot(stbl+2*64+32, {64'd0,64'd20});
+            poke_slot(stbl+2*64+48, {124'b0,PY_TAG_INT});
+            run_dict_update({PY_TAG_DICT,{96{1'b0}},dobj},
+                            {PY_TAG_DICT,{96{1'b0}},sobj}, 32'h0C00, 300000);
+            softcheck(res_code == RES_COMPLETED, "D2: COMPLETED");
+            softcheck(res_pop_count == 3'd1, "D2: pop=1");
+            $display("D2: slots=%0d used=%0d", dslots(dobj), dused(dobj));
+            for (k=0;k<8;k++)
+                $display("   D2 dst slot %0d: ktag=%0d kval=%0d vval=%0d",
+                         k, dget_ktag(dtbl,k), dget_kval(dtbl,k), dget_vval(dtbl,k));
+            softcheck(dused(dobj) == 64'd2, "D2: used=2");
+            f1 = dfind_int_key(dtbl, 64'd8, 64'd1);
+            f2 = dfind_int_key(dtbl, 64'd8, 64'd2);
+            softcheck(f1 != -1, "D2: key1 present");
+            softcheck(f2 != -1, "D2: key2 present (merged)");
+            if (f1 != -1) softcheck(dval_at(dtbl,f1)==64'd10, "D2: key1 val=10");
+            if (f2 != -1) softcheck(dval_at(dtbl,f2)==64'd20, "D2: key2 val=20");
+            $display("PROBE D2 done");
+        end
+
+        // ==================================================================
+        // PROBE D3: DICT_UPDATE overwrite. dst {1:10}, src {1:99} → {1:99}
+        // ==================================================================
+        do_reset();
+        begin
+            logic [31:0] dobj, dtbl, sobj, stbl;
+            int f1;
+            dobj=32'h0400; dtbl=32'h0500; sobj=32'h0A00; stbl=32'h0B00;
+            clear_region(32'h0400, 32'h1C00);
+            poke_slot(dobj, {64'd8, 64'd1}); poke_slot(dobj+16, {96'd0, dtbl});
+            poke_slot(dtbl+1*64,    {64'd0,64'd1});
+            poke_slot(dtbl+1*64+16, {124'b0,PY_TAG_INT});
+            poke_slot(dtbl+1*64+32, {64'd0,64'd10});
+            poke_slot(dtbl+1*64+48, {124'b0,PY_TAG_INT});
+            poke_slot(sobj, {64'd8, 64'd1}); poke_slot(sobj+16, {96'd0, stbl});
+            poke_slot(stbl+1*64,    {64'd0,64'd1});
+            poke_slot(stbl+1*64+16, {124'b0,PY_TAG_INT});
+            poke_slot(stbl+1*64+32, {64'd0,64'd99});
+            poke_slot(stbl+1*64+48, {124'b0,PY_TAG_INT});
+            run_dict_update({PY_TAG_DICT,{96{1'b0}},dobj},
+                            {PY_TAG_DICT,{96{1'b0}},sobj}, 32'h0C00, 300000);
+            softcheck(res_code == RES_COMPLETED, "D3: COMPLETED");
+            $display("D3: used=%0d val@1=%0d", dused(dobj), dget_vval(dtbl,1));
+            softcheck(dused(dobj) == 64'd1, "D3: used stays 1 (overwrite)");
+            f1 = dfind_int_key(dtbl, 64'd8, 64'd1);
+            if (f1 != -1) softcheck(dval_at(dtbl,f1)==64'd99, "D3: val overwritten to 99");
+            $display("PROBE D3 done");
+        end
+
+        // ==================================================================
+        // PROBE D4: DICT_UPDATE forcing grow. dst {1:10}, src {2..6}→{k+200}
+        // ==================================================================
+        do_reset();
+        begin
+            logic [31:0] dobj, dtbl, sobj, stbl, gtbl;
+            logic [63:0] gslots, gused;
+            int k, found;
+            dobj=32'h0400; dtbl=32'h0500; sobj=32'h0700; stbl=32'h0800;
+            clear_region(32'h0400, 32'h1C00);
+            poke_slot(dobj, {64'd8, 64'd1}); poke_slot(dobj+16, {96'd0, dtbl});
+            poke_slot(dtbl+1*64,    {64'd0,64'd1});
+            poke_slot(dtbl+1*64+16, {124'b0,PY_TAG_INT});
+            poke_slot(dtbl+1*64+32, {64'd0,64'd10});
+            poke_slot(dtbl+1*64+48, {124'b0,PY_TAG_INT});
+            poke_slot(sobj, {64'd8, 64'd5}); poke_slot(sobj+16, {96'd0, stbl});
+            for (k=2;k<=6;k++) begin
+                poke_slot(stbl+k*64,    {64'd0,32'd0,k[31:0]});
+                poke_slot(stbl+k*64+16, {124'b0,PY_TAG_INT});
+                poke_slot(stbl+k*64+32, {64'd0,32'd0,(k+200)});
+                poke_slot(stbl+k*64+48, {124'b0,PY_TAG_INT});
+            end
+            run_dict_update({PY_TAG_DICT,{96{1'b0}},dobj},
+                            {PY_TAG_DICT,{96{1'b0}},sobj}, 32'h0A00, 600000);
+            softcheck(res_code == RES_COMPLETED, "D4: COMPLETED");
+            gslots=dslots(dobj); gused=dused(dobj); gtbl=dtblptr(dobj);
+            $display("D4: slots=%0d used=%0d tbl=0x%0h", gslots, gused, gtbl);
+            softcheck(gused == 64'd6, "D4: used=6");
+            for (k=1;k<=6;k++) begin
+                logic [63:0] want, gotv;
+                want = (k==1) ? 64'd10 : (k+200);
+                found = dfind_int_key(gtbl, gslots, k);
+                softcheck(found != -1, $sformatf("D4: key %0d present", k));
+                if (found != -1) begin
+                    gotv = dval_at(gtbl, found);
+                    softcheck(gotv==want, $sformatf("D4: key %0d val=%0d want=%0d", k, gotv, want));
+                end
+            end
+            $display("PROBE D4 done");
+        end
+
+        // ==================================================================
+        // PROBE S1: SET_UPDATE from a LIST source. dst set {1} slots=8,
+        // src list [2,3,4] → dst {1,2,3,4}, used=4. (Element-only, stride 32.)
+        // ==================================================================
+        do_reset();
+        begin
+            logic [31:0] sobj, stbl, lobj, lbuf;
+            logic [63:0] gslots, gused;
+            logic [31:0] gtbl;
+            int k, found;
+            sobj=32'h0400; stbl=32'h0500; lobj=32'h0A00; lbuf=32'h0B00;
+            clear_region(32'h0400, 32'h1C00);
+            // dst set: slots=8 used=1, elem 1 at slot 1 (stride 32)
+            poke_slot(sobj, {64'd8, 64'd1}); poke_slot(sobj+16, {96'd0, stbl});
+            poke_slot(stbl+1*32,    {64'd0,64'd1});
+            poke_slot(stbl+1*32+16, {124'b0,PY_TAG_INT});
+            // src LIST object: header {cap,len}, ob_item→buf; elements stride 32
+            poke_slot(lobj, {64'd3, 64'd3});          // cap=3 len=3
+            poke_slot(lobj+16, {96'd0, lbuf});
+            for (k=0;k<3;k++) begin
+                poke_slot(lbuf+k*32,    {64'd0,32'd0,(k+2)});   // 2,3,4
+                poke_slot(lbuf+k*32+16, {124'b0,PY_TAG_INT});
+            end
+            run_set_update({4'd11,{96{1'b0}},sobj},          // PY_TAG_SET dst
+                           {PY_TAG_LIST,{96{1'b0}},lobj},    // LIST src
+                           32'h0C00, 400000);
+            softcheck(res_code == RES_COMPLETED, "S1: COMPLETED");
+            softcheck(res_pop_count == 3'd1, "S1: pop=1");
+            gslots=dslots(sobj); gused=dused(sobj); gtbl=dtblptr(sobj);
+            $display("S1: slots=%0d used=%0d tbl=0x%0h", gslots, gused, gtbl);
+            softcheck(gused == 64'd4, "S1: used=4");
+            for (k=1;k<=4;k++) begin
+                found = sfind_int_elem(gtbl, gslots, k);
+                softcheck(found != -1, $sformatf("S1: elem %0d present", k));
+            end
+            $display("PROBE S1 done");
+        end
+
+        if (soft_fails != 0) begin
+            $display("*** %0d SOFTFAIL(s) — see above ***", soft_fails);
+        end else begin
+            $display("ALL PROBE SCENARIOS PASSED");
         end
 
         check(!cpu_fault, "excore_cpu raised an internal fault (unsupported instruction)");

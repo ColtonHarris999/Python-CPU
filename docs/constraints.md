@@ -29,13 +29,13 @@ ownership, enabling concurrent pycore+excore heap use, or ASIC clock/DRAM work.
 
 | Topic | Current state |
 | --- | --- |
-| Heap | Bump pointer (`heap_ptr_r`); grows up; OOM → `PY_TRAP_MEM_FAULT` |
-| Free / reclaim | None; list/dict/set grow **intentionally leaks** old buffers |
+| Heap | Firmware MM (`mm.s`): size-class freelist + wilderness; pycore still bumps wilderness |
+| Free / reclaim | Grow paths `mm_free` old MM-backed buffers; coalesce-forward on free |
 | Shared dmem | One bank; exclusive `mem_owner` mux (`PYCORE` \| `EXCORE`) |
 | Clocks | Single shared clock (FPGA / sim prototype) |
 | Excore → dmem | Slot port only (16-byte aligned MMIO bridge); CPU `lw`/`sw` cannot address shared heap |
 | Excore stack | Private 1KB scratch (`sp` grows down from scratch top); not heap-backed yet |
-| Allocator policy | Undecided for production; design options recorded below |
+| Allocator policy | Excore firmware MM v1; pycore BUILD_* wilderness bump (carve-from-MM follow-up) |
 
 ---
 
@@ -63,31 +63,17 @@ truth vs `heap_ptr_r` alone.
 
 | | |
 | --- | --- |
-| **Status** | `open` |
+| **Status** | `accepted` (excore firmware MM v1) |
 | **Area** | `heap` |
 | **Recorded** | 2026-07-28 |
 | **Last review** | 2026-07-28 |
 
-Three directions under consideration (may combine):
-
-1. **Python firmware malloc (pycore)**  
-   Cached / fixed-location bytecode implementing an explicit free-list style
-   allocator. Returns a register-sized result (e.g. upper size, lower pointer,
-   or `{status, size, ptr}`). Novelty: more policy in Python; avoids a trap for
-   pycore-local allocs if the routine stays on-core.
-
-2. **Excore firmware (RV/C)**  
-   Same policy in excore. Natural fit for grow/rehash (already holds heap
-   grant). Concern if **every** hot `BUILD_*` becomes a cross-core round-trip.
-
-3. **Dedicated allocator hardware**  
-   Not an MMU: a heap engine (size-class heads, optional background coalesce,
-   scratch of common sizes). Highest area/power/verify cost; defer until a
-   software ABI and profiles exist.
-
-**Working lean (not final):** coalesced free list + **common-size cache** for
-hot hits; decide which core is **authority** for metadata updates under the
-heap grant. Revisit before implementation.
+**Resolution (2026-07-28):** v1 ships an **excore firmware allocator**
+(`excore/fw/mm.s`) with size-class free lists + wilderness bump; metadata at
+`PYCORE_MM_BASE`. Pycore `BUILD_*` still uses the inline `heap_ptr_r` wilderness
+bump; excore syncs `max(wilderness, MB_HEAP_PTR)` each trap. Full pycore
+carve-from-MM (plan workstream 2.1) remains a follow-up. The Python-bytecode
+and dedicated-hardware options stay deferred.
 
 ---
 
@@ -178,35 +164,32 @@ Nested ownership / Python upcall mid-trap is out of scope for v1.
 
 | | |
 | --- | --- |
-| **Status** | `open` |
+| **Status** | `accepted` |
 | **Area** | `heap` |
 | **Recorded** | 2026-07-28 |
 | **Last review** | 2026-07-28 |
 
-Today grow **leaks** old tables/buffers by design (bump model). Any real
-allocator project must replace that with `free` of the old region in the same
-handler that installs the new one. Allocator rollout and leak-fix are one
-workstream.
+Grow handlers call `mm_free` on the previous buffer/table after installing the
+new region (`excore/fw/list_grow.s` + `excore/fw/mm.s`). Pre-MM buffers that
+lack an alloc-header magic are left in place (no-op free) so pycore bump-built
+objects remain safe until BUILD_* also routes through the MM.
+
+**Closed:** 2026-07-28 with firmware MM free-on-resize.
 
 ---
 
-### C-HEAP-008 — Allocator return ABI (draft)
+### C-HEAP-008 — Allocator return ABI
 
 | | |
 | --- | --- |
-| **Status** | `open` |
+| **Status** | `accepted` |
 | **Area** | `heap` |
 | **Recorded** | 2026-07-28 |
 | **Last review** | 2026-07-28 |
 
-Draft result shapes (pick one before implement):
-
-- `{ size[63:0], ptr[63:0] }` with OOM as `ptr == 0`, or
-- `{ status[31:0], size[31:0], ptr[63:0] }` (preferred for explicit OOM/fault).
-
-Alignment remains **16-byte** (dmem slot granularity). Pointer width may stay
-32-bit while the prototype address space is 32-bit; zero-extend in the wide
-result.
+excore in-process: `mm_alloc` → `{status, size, ptr}` in `a0/a1/a2`
+(`status=0` ok, `1` OOM; `ptr=0` on OOM). Alignment **16-byte**. Payload
+address is returned (header is 16B before payload).
 
 ---
 

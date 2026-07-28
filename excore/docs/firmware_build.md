@@ -23,6 +23,7 @@ python3 excore/tools/asm_rv32.py excore/fw/list_grow.s -o build/excore_fw/list_g
 | 12 | `PY_TRAP_LIST_DELETE` |
 | 13 | `PY_TRAP_SET_GROW` |
 | 14 | `PY_TRAP_SET_UPDATE` |
+| 15 | `PY_TRAP_DICT_UPDATE` |
 
 Dict/set rich equality stays on pycore (no collision trap).
 

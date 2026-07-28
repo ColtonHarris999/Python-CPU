@@ -149,7 +149,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-unpack-sequence pycore-img-unpack-sequence-type-trap \
 	pycore-img-unpack-ex \
 	pycore-img-two-core \
-	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
+	excore-fw excore-asm-tests excore-cpu-test excore-hashupdate-test \
+	excore-mm-test excore-mm-fw excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
 
 pycore-preprocess:
@@ -1319,9 +1320,11 @@ pycore-container: \
 
 # excore-fw: assemble excore firmware as a build step. Generated hex is
 # never committed (see excore/tools/asm_rv32.py) — no external toolchain.
+# list_grow.s + mm.s are concatenated (assembler has no .include).
 excore-fw:
 	mkdir -p $(dir $(EXCORE_FW_HEX))
-	$(PYTHON3) excore/tools/asm_rv32.py $(EXCORE_FW_SRC) -o $(EXCORE_FW_HEX)
+	cat $(EXCORE_FW_SRC) excore/fw/mm.s > $(BUILD_DIR)/excore_fw/combined.s
+	$(PYTHON3) excore/tools/asm_rv32.py $(BUILD_DIR)/excore_fw/combined.s -o $(EXCORE_FW_HEX)
 
 excore-asm-tests:
 	$(PYTHON3) -m unittest discover -s excore/tests -p "test_*.py"
@@ -1337,7 +1340,35 @@ excore-cpu-test: excore-fw
 		$(EXCORE_RTL_SRCS) excore/tb/tb_excore.sv
 	./$(BUILD_DIR)/excore_cpu_test/Vtb_excore
 
-excore-test: excore-asm-tests excore-cpu-test
+excore-hashupdate-test: excore-fw
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore +incdir+excore/rtl \
+		--top-module tb_excore_hashupdate \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		--Mdir $(BUILD_DIR)/excore_hashupdate_test \
+		-Wall -Wno-fatal \
+		$(EXCORE_RTL_SRCS) excore/tb/tb_excore_hashupdate.sv
+	./$(BUILD_DIR)/excore_hashupdate_test/Vtb_excore_hashupdate
+
+EXCORE_MM_TEST_HEX ?= $(BUILD_DIR)/excore_fw/mm_test.hex
+excore-mm-fw:
+	mkdir -p $(dir $(EXCORE_MM_TEST_HEX))
+	cat excore/fw/mm_test.s excore/fw/mm.s > $(BUILD_DIR)/excore_fw/mm_test_combined.s
+	$(PYTHON3) excore/tools/asm_rv32.py $(BUILD_DIR)/excore_fw/mm_test_combined.s -o $(EXCORE_MM_TEST_HEX)
+
+excore-mm-test: excore-mm-fw
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore +incdir+excore/rtl \
+		--top-module tb_mm \
+		-GFW_HEX=\"$(EXCORE_MM_TEST_HEX)\" \
+		--Mdir $(BUILD_DIR)/excore_mm_test \
+		-Wall -Wno-fatal \
+		$(EXCORE_RTL_SRCS) excore/tb/tb_mm.sv
+	./$(BUILD_DIR)/excore_mm_test/Vtb_mm
+
+excore-test: excore-asm-tests excore-cpu-test excore-hashupdate-test excore-mm-test
 
 pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-container pycore-img pycore-excore-system pycore-img-two-core
 

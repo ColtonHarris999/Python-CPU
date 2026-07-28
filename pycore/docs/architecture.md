@@ -57,7 +57,7 @@ multiple traps; COMPLETED finishes in one handoff. The protocol still
 defines `RETRY` for handlers where pycore state genuinely did not advance
 (e.g. emulating an unimplemented opcode from scratch) — but every current
 handler (`LIST_GROW`, `LIST_EXTEND`, `LIST_DELETE`, `DICT_GROW`,
-`SET_GROW`, `SET_UPDATE`) answers `COMPLETED`.
+`SET_GROW`, `SET_UPDATE`, `DICT_UPDATE`) answers `COMPLETED`.
 
 This "complete, don't retry" contract is only safe because every
 recoverable trap is raised **before any RF/heap/dmem commit** (see
@@ -138,7 +138,7 @@ whose ownership is being transferred.
 | 12 | `PY_TRAP_LIST_DELETE` | **recoverable** | mid-list `DELETE_SUBSCR` shift; excore COMPLETED pop 2 |
 | 13 | `PY_TRAP_SET_GROW` | **recoverable** | `SET_ADD` at load ≥ 2/3; excore realloc + insert |
 | 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | always; excore grow-to-fit + merge |
-| 15 | *(free)* | — | reserved |
+| 15 | `PY_TRAP_DICT_UPDATE` | **recoverable** | `{**a, **b}` / `DICT_UPDATE`; excore merge (4-bit trap space full) |
 
 `pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
 truth for the fatal/recoverable split. `EXCORE_EN=1` intercepts a recoverable
