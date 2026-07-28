@@ -46,3 +46,4 @@ Handle: `PY_TAG_SET` + object address. Tombstone remains `PY_TAG_DICT` (sets/dic
 | 12 | `LIST_DELETE` (shift-down; was DICT_COLLISION — collisions now on pycore) |
 | 13 | `SET_GROW` |
 | 14 | `SET_UPDATE` |
+| 15 | `DICT_UPDATE` (`{**a, **b}` merge; 4-bit trap space full) |

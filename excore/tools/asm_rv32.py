@@ -199,7 +199,7 @@ class SourceLine:
 
 
 def strip_comment(text: str) -> str:
-    for marker in ("#", ";", "//"):
+    for marker in ("#", "//"):
         idx = text.find(marker)
         if idx != -1:
             text = text[:idx]
@@ -229,17 +229,24 @@ def parse_lines(text: str) -> list[SourceLine]:
                 lines.append(SourceLine(lineno, label, None, []))
                 continue
 
-        if code.startswith("."):
-            parts = code.split(None, 1)
-            directive = parts[0][1:]
-            args = split_operands(parts[1]) if len(parts) > 1 else []
-            lines.append(SourceLine(lineno, label, None, [], directive, args))
-            continue
+        # A single source line may carry several statements separated by ';'.
+        # The label (if any) attaches to the first statement only.
+        statements = [s.strip() for s in code.split(";")]
+        statements = [s for s in statements if s]
+        for si, stmt in enumerate(statements):
+            stmt_label = label if si == 0 else None
 
-        parts = code.split(None, 1)
-        mnemonic = parts[0].lower()
-        operands = split_operands(parts[1]) if len(parts) > 1 else []
-        lines.append(SourceLine(lineno, label, mnemonic, operands))
+            if stmt.startswith("."):
+                parts = stmt.split(None, 1)
+                directive = parts[0][1:]
+                args = split_operands(parts[1]) if len(parts) > 1 else []
+                lines.append(SourceLine(lineno, stmt_label, None, [], directive, args))
+                continue
+
+            parts = stmt.split(None, 1)
+            mnemonic = parts[0].lower()
+            operands = split_operands(parts[1]) if len(parts) > 1 else []
+            lines.append(SourceLine(lineno, stmt_label, mnemonic, operands))
     return lines
 
 

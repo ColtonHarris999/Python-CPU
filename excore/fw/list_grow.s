@@ -2151,18 +2151,26 @@ du_loop:
     # kval
     mv   a0, s8
     jal  ra, sp_read
-    lw   a0, SP_DATA0(s11); sw a0, SCR_KVAL0(x0)
-    lw   a0, SP_DATA1(s11); sw a0, SCR_KVAL1(x0)
-    lw   a0, SP_DATA2(s11); sw a0, SCR_KVAL2(x0)
-    lw   a0, SP_DATA3(s11); sw a0, SCR_KVAL3(x0)
+    lw   a0, SP_DATA0(s11)
+    sw   a0, SCR_KVAL0(x0)
+    lw   a0, SP_DATA1(s11)
+    sw   a0, SCR_KVAL1(x0)
+    lw   a0, SP_DATA2(s11)
+    sw   a0, SCR_KVAL2(x0)
+    lw   a0, SP_DATA3(s11)
+    sw   a0, SCR_KVAL3(x0)
 
     # vval
     addi a0, s8, 32
     jal  ra, sp_read
-    lw   a0, SP_DATA0(s11); sw a0, SCR_VVAL0(x0)
-    lw   a0, SP_DATA1(s11); sw a0, SCR_VVAL1(x0)
-    lw   a0, SP_DATA2(s11); sw a0, SCR_VVAL2(x0)
-    lw   a0, SP_DATA3(s11); sw a0, SCR_VVAL3(x0)
+    lw   a0, SP_DATA0(s11)
+    sw   a0, SCR_VVAL0(x0)
+    lw   a0, SP_DATA1(s11)
+    sw   a0, SCR_VVAL1(x0)
+    lw   a0, SP_DATA2(s11)
+    sw   a0, SCR_VVAL2(x0)
+    lw   a0, SP_DATA3(s11)
+    sw   a0, SCR_VVAL3(x0)
 
     # vtag
     addi a0, s8, 48

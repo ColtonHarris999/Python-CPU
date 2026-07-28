@@ -149,7 +149,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-unpack-sequence pycore-img-unpack-sequence-type-trap \
 	pycore-img-unpack-ex \
 	pycore-img-two-core \
-	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
+	excore-fw excore-asm-tests excore-cpu-test excore-hashupdate-test \
+	excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
 
 pycore-preprocess:
@@ -1337,7 +1338,18 @@ excore-cpu-test: excore-fw
 		$(EXCORE_RTL_SRCS) excore/tb/tb_excore.sv
 	./$(BUILD_DIR)/excore_cpu_test/Vtb_excore
 
-excore-test: excore-asm-tests excore-cpu-test
+excore-hashupdate-test: excore-fw
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore +incdir+excore/rtl \
+		--top-module tb_excore_hashupdate \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		--Mdir $(BUILD_DIR)/excore_hashupdate_test \
+		-Wall -Wno-fatal \
+		$(EXCORE_RTL_SRCS) excore/tb/tb_excore_hashupdate.sv
+	./$(BUILD_DIR)/excore_hashupdate_test/Vtb_excore_hashupdate
+
+excore-test: excore-asm-tests excore-cpu-test excore-hashupdate-test
 
 pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-container pycore-img pycore-excore-system pycore-img-two-core
 

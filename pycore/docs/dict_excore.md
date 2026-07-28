@@ -37,7 +37,9 @@ Handle address is stable across grows (like list `ob_item`).
 | Code | Name | Entries | COMPLETED |
 | --- | --- | --- | --- |
 | 11 | `DICT_GROW` | dict, key, value | pop 3 (finish STORE insert after rehash) |
+| 15 | `DICT_UPDATE` | dst dict, src dict | pop 1 (merge `{**a, **b}`) |
 
 Code 12 is `LIST_DELETE` (list shift-down), not dict collision — rich equality
-lives on pycore. Codes 13–14 are `SET_GROW` / `SET_UPDATE`; **15 is free**.
+lives on pycore. Codes 13–14 are `SET_GROW` / `SET_UPDATE`; code 15 is
+`DICT_UPDATE` (the 4-bit trap-code space is full).
 See `pycore/docs/set_excore.md` for the shared hash-container split.

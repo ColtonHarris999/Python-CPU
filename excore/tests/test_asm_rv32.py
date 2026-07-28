@@ -184,5 +184,59 @@ class TestEndToEndProgram(unittest.TestCase):
         self.assertEqual(len(words), 7)
 
 
+class TestSemicolonSeparator(unittest.TestCase):
+    """`;` is a statement separator (not a comment). `#` / `//` remain comments."""
+
+    def test_three_instructions_on_one_line(self) -> None:
+        got = asm.assemble("addi x1, x0, 1; addi x2, x0, 2; addi x3, x0, 3\n")
+        self.assertEqual(
+            got,
+            [
+                asm.enc_i(asm.OPC_OP_IMM, 1, 0, 0, 1),
+                asm.enc_i(asm.OPC_OP_IMM, 2, 0, 0, 2),
+                asm.enc_i(asm.OPC_OP_IMM, 3, 0, 0, 3),
+            ],
+        )
+
+    def test_label_binds_to_first_of_semicolon_group(self) -> None:
+        src = "label: addi x1, x0, 1; addi x2, x0, 2\nnop\n"
+        words = asm.assemble(src)
+        self.assertEqual(len(words), 3)
+        self.assertEqual(words[0], asm.enc_i(asm.OPC_OP_IMM, 1, 0, 0, 1))
+        self.assertEqual(words[1], asm.enc_i(asm.OPC_OP_IMM, 2, 0, 0, 2))
+        # `%hi/%lo(label)` must resolve to address of the first insn (0).
+        src2 = (
+            "label: addi x1, x0, 1; addi x2, x0, 2\n"
+            "lui x3, %hi(label)\n"
+            "addi x3, x3, %lo(label)\n"
+        )
+        words2 = asm.assemble(src2)
+        lui_word, addi_word = words2[2], words2[3]
+        hi20 = (lui_word >> 12) & 0xFFFFF
+        lo12 = (addi_word >> 20) & 0xFFF
+        lo_signed = lo12 - 0x1000 if lo12 & 0x800 else lo12
+        self.assertEqual(((hi20 << 12) + lo_signed) & 0xFFFFFFFF, 0)
+
+    def test_hash_and_slash_comments_still_strip(self) -> None:
+        got = asm.assemble("addi x1, x0, 1  # foo ; bar\naddi x2, x0, 2 // x;y\n")
+        self.assertEqual(
+            got,
+            [
+                asm.enc_i(asm.OPC_OP_IMM, 1, 0, 0, 1),
+                asm.enc_i(asm.OPC_OP_IMM, 2, 0, 0, 2),
+            ],
+        )
+
+    def test_equ_unaffected_by_semicolon_separator(self) -> None:
+        got = asm.assemble(".equ FOO, 7\naddi x1, x0, FOO; addi x2, x0, FOO\n")
+        self.assertEqual(
+            got,
+            [
+                asm.enc_i(asm.OPC_OP_IMM, 1, 0, 0, 7),
+                asm.enc_i(asm.OPC_OP_IMM, 2, 0, 0, 7),
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
