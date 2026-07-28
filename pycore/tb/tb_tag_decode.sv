@@ -11,7 +11,7 @@ module tb_tag_decode;
     logic [1:0] promote_rs2_mode;
     logic [3:0] result_tag;
     logic is_trap;
-    logic [3:0] trap_code;
+    logic [4:0] trap_code;
 
     pycore_tag_decode dut (
         .rs1_tag_i(rs1_tag),

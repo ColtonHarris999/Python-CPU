@@ -63,45 +63,45 @@ localparam logic [1:0] PY_PROMOTE_INT_TO_FLOAT  = 2'd1;
 localparam logic [1:0] PY_PROMOTE_BOOL_TO_INT   = 2'd2;
 localparam logic [1:0] PY_PROMOTE_BOOL_TO_FLOAT = 2'd3;
 
-localparam logic [3:0] PY_TRAP_NONE           = 4'd0;
-localparam logic [3:0] PY_TRAP_TYPE           = 4'd1;
-localparam logic [3:0] PY_TRAP_STACK          = 4'd2;
-localparam logic [3:0] PY_TRAP_DIV_ZERO       = 4'd3;
-localparam logic [3:0] PY_TRAP_FPU_EXCEPTION  = 4'd4;
-localparam logic [3:0] PY_TRAP_ILLEGAL_OPCODE = 4'd5;
-localparam logic [3:0] PY_TRAP_CALL_FILTER    = 4'd6;
-localparam logic [3:0] PY_TRAP_MEM_FAULT      = 4'd7;
-localparam logic [3:0] PY_TRAP_ADDR_ALIGN     = 4'd8;
+localparam logic [4:0] PY_TRAP_NONE = 5'd0;
+localparam logic [4:0] PY_TRAP_TYPE = 5'd1;
+localparam logic [4:0] PY_TRAP_STACK = 5'd2;
+localparam logic [4:0] PY_TRAP_DIV_ZERO = 5'd3;
+localparam logic [4:0] PY_TRAP_FPU_EXCEPTION = 5'd4;
+localparam logic [4:0] PY_TRAP_ILLEGAL_OPCODE = 5'd5;
+localparam logic [4:0] PY_TRAP_CALL_FILTER = 5'd6;
+localparam logic [4:0] PY_TRAP_MEM_FAULT = 5'd7;
+localparam logic [4:0] PY_TRAP_ADDR_ALIGN = 5'd8;
 // PY_TRAP_LIST_GROW: raised by CONT_LIST_APPEND when the target list is at
 // capacity (length == capacity).  Recoverable in principle (Phase C hands it
 // to the excore, which grows the buffer and completes the append); Phase A
 // has no excore, so this trap is fatal like any other and is reported
 // through the same halt path.  Raised before any RF/heap commit (see
 // pycore_trap_recoverable below and CONT_LIST_APPEND's CP_HDR phase).
-localparam logic [3:0] PY_TRAP_LIST_GROW      = 4'd9;
+localparam logic [4:0] PY_TRAP_LIST_GROW = 5'd9;
 // PY_TRAP_LIST_EXTEND: raised by CONT_LIST_EXTEND for every non-empty
 // LIST/TUPLE source (empty source is a no-op pop on pycore). Recoverable —
 // the excore grows-to-fit when needed (or copies in place when capacity
 // already suffices) and completes the extend. Raised before any commit.
-localparam logic [3:0] PY_TRAP_LIST_EXTEND    = 4'd10;
+localparam logic [4:0] PY_TRAP_LIST_EXTEND = 5'd10;
 // PY_TRAP_DICT_GROW: raised before a new-key dict insert when load ≥ 2/3
 // (or table empty). Recoverable — excore reallocates the relocatable table,
 // rehashes, and completes STORE. Handle address stays stable (layout v2).
-localparam logic [3:0] PY_TRAP_DICT_GROW      = 4'd11;
+localparam logic [4:0] PY_TRAP_DICT_GROW = 5'd11;
 // PY_TRAP_LIST_DELETE: list DELETE_SUBSCR element shift (excore; part 2).
 // Code 12 formerly DICT_COLLISION — dict/set rich equality now runs on pycore.
-localparam logic [3:0] PY_TRAP_LIST_DELETE    = 4'd12;
+localparam logic [4:0] PY_TRAP_LIST_DELETE = 5'd12;
 // PY_TRAP_SET_GROW: SET_ADD at load ≥ 2/3 (or empty table). Recoverable —
 // excore reallocates the element table, rehashes, inserts, COMPLETED pop=1.
-localparam logic [3:0] PY_TRAP_SET_GROW       = 4'd13;
+localparam logic [4:0] PY_TRAP_SET_GROW = 5'd13;
 // PY_TRAP_SET_UPDATE: always raised by SET_UPDATE (bulk merge). Recoverable —
 // excore grow-to-fit + insert from LIST/TUPLE/SET source, COMPLETED pop=1.
-localparam logic [3:0] PY_TRAP_SET_UPDATE     = 4'd14;
+localparam logic [4:0] PY_TRAP_SET_UPDATE = 5'd14;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a
 // hard fatal condition that always halts?
-function automatic logic pycore_trap_recoverable(input logic [3:0] code);
+function automatic logic pycore_trap_recoverable(input logic [4:0] code);
     begin
         pycore_trap_recoverable = (code == PY_TRAP_LIST_GROW) ||
                                   (code == PY_TRAP_LIST_EXTEND) ||

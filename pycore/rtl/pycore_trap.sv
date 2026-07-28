@@ -29,12 +29,12 @@ module pycore_trap (
     // trap_code_o rather than mapped through a fixed one-hot condition,
     // since it can be any PY_TRAP_* code the firmware chooses to report.
     input  logic        excore_fatal_i,
-    input  logic [3:0]  excore_fatal_code_i,
+    input  logic [4:0]  excore_fatal_code_i,
     input  logic [31:0] fault_pc_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs1_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs2_i,
     output logic        trap_out_o,
-    output logic [3:0]  trap_code_o,
+    output logic [4:0]  trap_code_o,
     output logic [31:0] trap_pc_o,
     output logic [PYCORE_ENTRY_WIDTH-1:0] trap_rs1_o,
     output logic [PYCORE_ENTRY_WIDTH-1:0] trap_rs2_o,
@@ -42,7 +42,7 @@ module pycore_trap (
 );
 
     logic next_trap;
-    logic [3:0] next_code;
+    logic [4:0] next_code;
 
     always_comb begin
         next_trap = type_trap_i || stack_fault_i || div_zero_i || fpu_exception_i ||

@@ -25,7 +25,7 @@ module pycore_system #(
     input  logic        clk_i,
     input  logic        rst_n_i,
     output logic        trap_out_o,
-    output logic [3:0]  trap_code_o,
+    output logic [4:0]  trap_code_o,
     output logic [63:0] cycle_count_o,
     output logic                          dbg_wb_we_o,
     output logic [7:0]                    dbg_wb_addr_o,

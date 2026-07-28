@@ -18,7 +18,7 @@ module pycore_exec #(
     output logic [PYCORE_ENTRY_WIDTH-1:0] result_o,
     output logic        stall_o,
     output logic        trap_o,
-    output logic [3:0]  trap_code_o
+    output logic [4:0]  trap_code_o
 );
 
     logic [3:0] rs1_tag;
@@ -34,7 +34,7 @@ module pycore_exec #(
     logic [1:0] promote_rs2_mode;
     logic [3:0] result_tag;
     logic       tag_trap;
-    logic [3:0] tag_trap_code;
+    logic [4:0] tag_trap_code;
 
     logic [63:0] promoted_rs1;
     logic [63:0] promoted_rs2;
@@ -62,7 +62,7 @@ module pycore_exec #(
     logic [PYCORE_ENTRY_WIDTH-1:0] string_result_entry;
     logic string_path_valid;
     logic string_path_trap;
-    logic [3:0] string_path_trap_code;
+    logic [4:0] string_path_trap_code;
     logic string_store_fire;
     longint unsigned string_lhs_len;
     longint unsigned string_rhs_len;

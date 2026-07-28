@@ -84,8 +84,9 @@
     .equ TRAP_SET_UPDATE,    14
 
     # fatal_code values mirror pycore_defs.svh's PY_TRAP_* codes exactly --
-    # Phase C forwards this nibble straight into pycore_trap as a normal
-    # halt (see architecture.md's trap taxonomy).
+    # Phase C forwards this 5-bit field (RES_CODE[8:4]) straight into
+    # pycore_trap as a normal halt (see architecture.md's trap taxonomy).
+    # do_fatal still uses slli-by-4; codes >= 16 occupy bit 8.
     .equ FATAL_TYPE,           1
     .equ FATAL_ILLEGAL_OPCODE, 5
     .equ FATAL_MEM_FAULT,      7

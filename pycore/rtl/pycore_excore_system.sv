@@ -32,13 +32,13 @@ module pycore_excore_system #(
     // relies on).
     parameter bit    EXCORE_EN        = 1'b1,
     parameter string FW_HEX           = "",
-    parameter int    MAX_TRAP_ENTRIES = 3,
+    parameter int    MAX_TRAP_ENTRIES = 4,
     parameter int    MAX_RES_ENTRIES  = 2
 ) (
     input  logic        clk_i,
     input  logic        rst_n_i,
     output logic        trap_out_o,
-    output logic [3:0]  trap_code_o,
+    output logic [4:0]  trap_code_o,
     output logic [63:0] cycle_count_o,
     output logic                          dbg_wb_we_o,
     output logic [7:0]                    dbg_wb_addr_o,
@@ -62,7 +62,7 @@ module pycore_excore_system #(
 
     // ---- trap_req / trap_res between pycore_core and trap_mailbox --------
     logic          trap_req_valid, trap_req_ready;
-    logic [3:0]    trap_req_code;
+    logic [4:0]    trap_req_code;
     logic [31:0]   trap_req_pc;
     logic [39:0]   trap_req_instr;
     logic [31:0]   trap_req_heap_ptr;
@@ -70,7 +70,8 @@ module pycore_excore_system #(
     logic [PYCORE_ENTRY_WIDTH-1:0] trap_req_entries [0:MAX_TRAP_ENTRIES-1];
 
     logic          trap_res_valid, trap_res_ready;
-    logic [3:0]    trap_res_code, trap_res_fatal_code;
+    logic [3:0]    trap_res_code;
+    logic [4:0]    trap_res_fatal_code;
     logic [2:0]    trap_res_pop_count;
     logic [1:0]    trap_res_push_count;
     logic [31:0]   trap_res_heap_ptr;
@@ -78,7 +79,7 @@ module pycore_excore_system #(
 
     // ---- mailbox <-> excore_mmio -------------------------------------------
     logic          mb_trap_pending;
-    logic [3:0]    mb_trap_code;
+    logic [4:0]    mb_trap_code;
     logic [31:0]   mb_pc;
     logic [7:0]    mb_opcode;
     logic [31:0]   mb_arg;
@@ -87,7 +88,8 @@ module pycore_excore_system #(
     logic [PYCORE_ENTRY_WIDTH-1:0] mb_entries [0:MAX_TRAP_ENTRIES-1];
 
     logic          res_go;
-    logic [3:0]    res_code, res_fatal_code;
+    logic [3:0]    res_code;
+    logic [4:0]    res_fatal_code;
     logic [2:0]    res_pop_count;
     logic [1:0]    res_push_count;
     logic [31:0]   res_heap_ptr;

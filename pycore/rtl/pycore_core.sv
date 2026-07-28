@@ -60,7 +60,7 @@ module pycore_core #(
     //                 pycore_core (via pycore_system) without overriding
     //                 this, so trap behavior is byte-identical to Phase A.
     parameter bit EXCORE_EN = 1'b0,
-    parameter int MAX_TRAP_ENTRIES = 3,
+    parameter int MAX_TRAP_ENTRIES = 4,
     parameter int MAX_RES_ENTRIES  = 2
 ) (
     input  logic                          clk_i,
@@ -85,7 +85,7 @@ module pycore_core #(
     // when EXCORE_EN=0.
     output logic                          trap_req_valid_o,
     input  logic                          trap_req_ready_i,
-    output logic [3:0]                    trap_req_code_o,
+    output logic [4:0]                    trap_req_code_o,
     output logic [31:0]                   trap_req_pc_o,
     output logic [39:0]                   trap_req_instr_o,
     output logic [31:0]                   trap_req_heap_ptr_o,
@@ -95,14 +95,14 @@ module pycore_core #(
     input  logic                          trap_res_valid_i,
     output logic                          trap_res_ready_o,
     input  logic [3:0]                    trap_res_code_i,
-    input  logic [3:0]                    trap_res_fatal_code_i,
+    input  logic [4:0]                    trap_res_fatal_code_i,
     input  logic [2:0]                    trap_res_pop_count_i,
     input  logic [1:0]                    trap_res_push_count_i,
     input  logic [31:0]                   trap_res_heap_ptr_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] trap_res_entries_i [0:MAX_RES_ENTRIES-1],
     // status
     output logic                          trap_out_o,
-    output logic [3:0]                    trap_code_o,
+    output logic [4:0]                    trap_code_o,
     output logic [63:0]                   cycle_count_o,
     // debug writeback snoop (for verification; mirrors the RF write port)
     output logic                          dbg_wb_we_o,
@@ -148,38 +148,38 @@ module pycore_core #(
     localparam logic [3:0] TRAP_RES_RETRY     = 4'd1;
     localparam logic [3:0] TRAP_RES_FATAL     = 4'd2;
 
-    // Container sub-operation codes (stored in container_op_r, 5-bit).
-    localparam logic [4:0] CONT_BUILD_LIST   = 5'd0;
-    localparam logic [4:0] CONT_SUBSCR_LIST  = 5'd1; // NB_SUBSCR on LIST
-    localparam logic [4:0] CONT_STORE_LIST   = 5'd2; // STORE_SUBSCR on LIST
-    localparam logic [4:0] CONT_BUILD_MAP    = 5'd3; // BUILD_MAP (dict construction)
-    localparam logic [4:0] CONT_SUBSCR_DICT  = 5'd4; // NB_SUBSCR on DICT
-    localparam logic [4:0] CONT_STORE_DICT   = 5'd5; // STORE_SUBSCR on DICT
-    localparam logic [4:0] CONT_BUILD_TUPLE  = 5'd6; // BUILD_TUPLE
-    localparam logic [4:0] CONT_SUBSCR_TUPLE = 5'd7; // NB_SUBSCR on TUPLE
-    localparam logic [4:0] CONT_LOAD_CONST   = 5'd8; // LOAD_CONST co_consts[arg]
-    localparam logic [4:0] CONT_LOAD_GLOBAL  = 5'd9; // LOAD_GLOBAL / LOAD_NAME
-    localparam logic [4:0] CONT_STORE_NAME   = 5'd10;// STORE_NAME / STORE_GLOBAL
-    localparam logic [4:0] CONT_LFB_PAIR     = 5'd11;// LFB_LFB / LFLF combined load
-    localparam logic [4:0] CONT_LIST_APPEND  = 5'd12;// LIST_APPEND fast path (Phase A)
-    localparam logic [4:0] CONT_LIST_EXTEND  = 5'd13;// LIST_EXTEND empty no-op / always excore
-    localparam logic [4:0] CONT_SWAP         = 5'd14;// SWAP two-beat RF exchange
-    localparam logic [4:0] CONT_SFLF         = 5'd15;// STORE_FAST_LOAD_FAST
-    localparam logic [4:0] CONT_SFSF         = 5'd16;// STORE_FAST_STORE_FAST
-    localparam logic [4:0] CONT_LFAC         = 5'd17;// LOAD_FAST_AND_CLEAR
-    localparam logic [4:0] CONT_DELETE_LIST  = 5'd18;// DELETE_SUBSCR on LIST
-    localparam logic [4:0] CONT_CONTAINS_LIST  = 5'd19;// CONTAINS_OP on LIST
-    localparam logic [4:0] CONT_CONTAINS_TUPLE = 5'd20;// CONTAINS_OP on TUPLE
-    localparam logic [4:0] CONT_CONTAINS_DICT  = 5'd21;// CONTAINS_OP on DICT
-    localparam logic [4:0] CONT_DELETE_DICT  = 5'd22;// DELETE_SUBSCR on DICT
-    localparam logic [4:0] CONT_BUILD_SET    = 5'd23;// BUILD_SET
-    localparam logic [4:0] CONT_SET_ADD      = 5'd24;// SET_ADD probe/insert
-    localparam logic [4:0] CONT_CONTAINS_SET = 5'd25;// CONTAINS_OP on SET
-    localparam logic [4:0] CONT_SET_UPDATE   = 5'd26;// SET_UPDATE → always trap
-    localparam logic [4:0] CONT_GET_ITER     = 5'd27;// LIST/TUPLE -> internal PTR iterator
-    localparam logic [4:0] CONT_FOR_ITER     = 5'd28;// advance internal iterator
+    // Container sub-operation codes (stored in container_op_r, 6-bit).
+    localparam logic [5:0] CONT_BUILD_LIST = 6'd0;
+    localparam logic [5:0] CONT_SUBSCR_LIST = 6'd1; // NB_SUBSCR on LIST
+    localparam logic [5:0] CONT_STORE_LIST = 6'd2; // STORE_SUBSCR on LIST
+    localparam logic [5:0] CONT_BUILD_MAP = 6'd3; // BUILD_MAP (dict construction)
+    localparam logic [5:0] CONT_SUBSCR_DICT = 6'd4; // NB_SUBSCR on DICT
+    localparam logic [5:0] CONT_STORE_DICT = 6'd5; // STORE_SUBSCR on DICT
+    localparam logic [5:0] CONT_BUILD_TUPLE = 6'd6; // BUILD_TUPLE
+    localparam logic [5:0] CONT_SUBSCR_TUPLE = 6'd7; // NB_SUBSCR on TUPLE
+    localparam logic [5:0] CONT_LOAD_CONST = 6'd8; // LOAD_CONST co_consts[arg]
+    localparam logic [5:0] CONT_LOAD_GLOBAL = 6'd9; // LOAD_GLOBAL / LOAD_NAME
+    localparam logic [5:0] CONT_STORE_NAME = 6'd10;// STORE_NAME / STORE_GLOBAL
+    localparam logic [5:0] CONT_LFB_PAIR = 6'd11;// LFB_LFB / LFLF combined load
+    localparam logic [5:0] CONT_LIST_APPEND = 6'd12;// LIST_APPEND fast path (Phase A)
+    localparam logic [5:0] CONT_LIST_EXTEND = 6'd13;// LIST_EXTEND empty no-op / always excore
+    localparam logic [5:0] CONT_SWAP = 6'd14;// SWAP two-beat RF exchange
+    localparam logic [5:0] CONT_SFLF = 6'd15;// STORE_FAST_LOAD_FAST
+    localparam logic [5:0] CONT_SFSF = 6'd16;// STORE_FAST_STORE_FAST
+    localparam logic [5:0] CONT_LFAC = 6'd17;// LOAD_FAST_AND_CLEAR
+    localparam logic [5:0] CONT_DELETE_LIST = 6'd18;// DELETE_SUBSCR on LIST
+    localparam logic [5:0] CONT_CONTAINS_LIST = 6'd19;// CONTAINS_OP on LIST
+    localparam logic [5:0] CONT_CONTAINS_TUPLE = 6'd20;// CONTAINS_OP on TUPLE
+    localparam logic [5:0] CONT_CONTAINS_DICT = 6'd21;// CONTAINS_OP on DICT
+    localparam logic [5:0] CONT_DELETE_DICT = 6'd22;// DELETE_SUBSCR on DICT
+    localparam logic [5:0] CONT_BUILD_SET = 6'd23;// BUILD_SET
+    localparam logic [5:0] CONT_SET_ADD = 6'd24;// SET_ADD probe/insert
+    localparam logic [5:0] CONT_CONTAINS_SET = 6'd25;// CONTAINS_OP on SET
+    localparam logic [5:0] CONT_SET_UPDATE = 6'd26;// SET_UPDATE → always trap
+    localparam logic [5:0] CONT_GET_ITER = 6'd27;// LIST/TUPLE -> internal PTR iterator
+    localparam logic [5:0] CONT_FOR_ITER = 6'd28;// advance internal iterator
 
-    // Container phases (stored in container_phase_r, 4-bit).
+    // Container phases (stored in container_phase_r, 6-bit).
     //
     //   Shared / LIST phases:
     //     CP_INIT (0): First active cycle — set up the first dmem/RF op.
@@ -200,31 +200,31 @@ module pycore_core #(
     //     CP_DICT_RD_VVAL (13): acked → save val; issue vtag read.
     //     CP_DICT_RD_VTAG (14): vtag read acked → assemble result; done.
     //     (15 reserved)
-    localparam logic [4:0] CP_INIT        = 5'd0;
-    localparam logic [4:0] CP_HDR         = 5'd1;
-    localparam logic [4:0] CP_VAL         = 5'd2;
-    localparam logic [4:0] CP_TAG         = 5'd3;
-    localparam logic [4:0] CP_DONE        = 5'd4;
-    localparam logic [4:0] CP_DICT_HASH   = 5'd5;
-    localparam logic [4:0] CP_DICT_PROBE  = 5'd6;
-    localparam logic [4:0] CP_DICT_CHK_VAL= 5'd7;
-    localparam logic [4:0] CP_DICT_WR_KVAL= 5'd8;
-    localparam logic [4:0] CP_DICT_WR_KTAG= 5'd9;
-    localparam logic [4:0] CP_DICT_RD_VAL = 5'd10;
-    localparam logic [4:0] CP_DICT_WR_VVAL= 5'd11;
-    localparam logic [4:0] CP_DICT_WR_VTAG= 5'd12;
-    localparam logic [4:0] CP_DICT_RD_VVAL= 5'd13;
-    localparam logic [4:0] CP_DICT_RD_VTAG= 5'd14;
+    localparam logic [5:0] CP_INIT = 6'd0;
+    localparam logic [5:0] CP_HDR = 6'd1;
+    localparam logic [5:0] CP_VAL = 6'd2;
+    localparam logic [5:0] CP_TAG = 6'd3;
+    localparam logic [5:0] CP_DONE = 6'd4;
+    localparam logic [5:0] CP_DICT_HASH = 6'd5;
+    localparam logic [5:0] CP_DICT_PROBE = 6'd6;
+    localparam logic [5:0] CP_DICT_CHK_VAL = 6'd7;
+    localparam logic [5:0] CP_DICT_WR_KVAL = 6'd8;
+    localparam logic [5:0] CP_DICT_WR_KTAG = 6'd9;
+    localparam logic [5:0] CP_DICT_RD_VAL = 6'd10;
+    localparam logic [5:0] CP_DICT_WR_VVAL = 6'd11;
+    localparam logic [5:0] CP_DICT_WR_VTAG = 6'd12;
+    localparam logic [5:0] CP_DICT_RD_VVAL = 6'd13;
+    localparam logic [5:0] CP_DICT_RD_VTAG = 6'd14;
     // LOAD_GLOBAL: after the primary value writeback completes we may need a
     // second pulse to push a NULL sentinel (self_or_null) at the new TOS.
-    localparam logic [4:0] CP_LG_WB_NULL  = 5'd15;
+    localparam logic [5:0] CP_LG_WB_NULL = 6'd15;
     // LFB_LFB two-beat local read: first RF settle → wb; second RF settle → wb.
-    localparam logic [4:0] CP_LFB_FIRST   = 5'd16;
-    localparam logic [4:0] CP_LFB_SECOND  = 5'd17;
+    localparam logic [5:0] CP_LFB_FIRST = 6'd16;
+    localparam logic [5:0] CP_LFB_SECOND = 6'd17;
     // LOAD_GLOBAL / STORE_NAME name-tuple read prelude.  Distinct from
     // CP_HDR/CP_VAL/CP_TAG so the always_ff case tables stay legible.
-    localparam logic [4:0] CP_NAME_VAL    = 5'd18;
-    localparam logic [4:0] CP_NAME_TAG    = 5'd19;
+    localparam logic [5:0] CP_NAME_VAL = 6'd18;
+    localparam logic [5:0] CP_NAME_TAG = 6'd19;
     // LIST v2 / DICT v2 shared phases:
     //   CP_LIST_BUF (20): list ob_item OR dict table_ptr at obj_addr+16 —
     //     WRITE while installing (CONT_BUILD_LIST / CONT_BUILD_MAP) or READ
@@ -235,13 +235,13 @@ module pycore_core #(
     //     length+1 after the element itself has been written).
     //   CP_SRC_HDR (22): CONT_LIST_EXTEND — waiting on source-list header
     //     (distinct LIST) before empty vs always-excore decision.
-    localparam logic [4:0] CP_LIST_BUF    = 5'd20;
-    localparam logic [4:0] CP_LIST_WB     = 5'd21;
-    localparam logic [4:0] CP_SRC_HDR     = 5'd22;
+    localparam logic [5:0] CP_LIST_BUF = 6'd20;
+    localparam logic [5:0] CP_LIST_WB = 6'd21;
+    localparam logic [5:0] CP_SRC_HDR = 6'd22;
     // Iterator RF commit is deliberately two-beat: update iterator state,
     // then push the yielded element through the single RF write port.
-    localparam logic [4:0] CP_ITER_WB     = 5'd23;
-    localparam logic [4:0] CP_ITEM_WB     = 5'd24;
+    localparam logic [5:0] CP_ITER_WB = 6'd23;
+    localparam logic [5:0] CP_ITEM_WB = 6'd24;
 
     logic [3:0] state_r;
 
@@ -316,9 +316,9 @@ module pycore_core #(
     logic [31:0]                   heap_ptr_r;
 
     // Which container operation is in flight (CONT_* constants above).
-    logic [4:0]                    container_op_r;
+    logic [5:0]                    container_op_r;
     // Which phase within the current operation (CP_* constants above).
-    logic [4:0]                    container_phase_r;
+    logic [5:0]                    container_phase_r;
     // LOAD_GLOBAL push-null bit (oparg & 1 in CPython 3.14).  Sampled at
     // container init so the CP_LG_WB_NULL follow-up knows whether to push
     // the sentinel after the primary value writeback.
@@ -400,9 +400,9 @@ module pycore_core #(
     // S_TRAP_MARSHAL over S_FETCH as the CP_DONE exit target; cleared on
     // entry to S_TRAP_MARSHAL.
     logic                          trap_marshal_pending_r;
-    logic [3:0]                    trap_marshal_code_r;
+    logic [4:0]                    trap_marshal_code_r;
     logic [2:0]                    trap_marshal_entry_count_r;
-    logic [PYCORE_ENTRY_WIDTH-1:0] trap_marshal_entries_r [0:2]; // MAX_TRAP_ENTRIES
+    logic [PYCORE_ENTRY_WIDTH-1:0] trap_marshal_entries_r [0:3]; // MAX_TRAP_ENTRIES
     // S_TRAP_WAIT: sequences push_count_i RF writes (one per cycle) after
     // popping pop_count_i, before applying COMPLETED/RETRY/FATAL.
     logic [1:0]                    trap_wait_push_idx_r;
@@ -411,13 +411,13 @@ module pycore_core #(
     // resume/retry/fatal decision has been applied.
     logic                          trap_res_seen_r;
     logic [3:0]                    trap_res_code_r2;
-    logic [3:0]                    trap_res_fatal_r2;
+    logic [4:0]                    trap_res_fatal_r2;
     logic [1:0]                    trap_res_push_r;
     logic [PYCORE_ENTRY_WIDTH-1:0] trap_res_entries_r2 [0:1]; // MAX_RES_ENTRIES
     // One-cycle pulse: forward an excore-reported FATAL code into
     // pycore_trap as a normal halt.
     logic                          excore_fatal_trap_r;
-    logic [3:0]                    excore_fatal_code_r;
+    logic [4:0]                    excore_fatal_code_r;
 
     // S_CONTAINER dmem handshake (mirrors frame_dmem_pending_r for S_CALL).
     logic                          container_dmem_pending_r;
@@ -646,7 +646,7 @@ module pycore_core #(
     logic [PYCORE_ENTRY_WIDTH-1:0] exec_result;
     logic                          exec_stall;
     logic                          exec_trap;
-    logic [3:0]                    exec_trap_code;
+    logic [4:0]                    exec_trap_code;
 
     pycore_exec #(
         .STRING_HEX(STRING_HEX)
@@ -786,7 +786,7 @@ module pycore_core #(
     logic [PYCORE_ENTRY_WIDTH-1:0] mem_wb_entry;
     logic                          mem_stall;
     logic                          mem_trap;
-    logic [3:0]                    mem_trap_code;
+    logic [4:0]                    mem_trap_code;
 
     // Intermediate wires: mem_stage drives these; mux below selects.
     logic                   ms_dmem_req;
@@ -1432,6 +1432,7 @@ module pycore_core #(
             trap_marshal_entries_r[0]  <= '0;
             trap_marshal_entries_r[1]  <= '0;
             trap_marshal_entries_r[2]  <= '0;
+            trap_marshal_entries_r[3]  <= '0;
             trap_wait_push_idx_r       <= '0;
             trap_res_seen_r            <= 1'b0;
             trap_res_code_r2           <= '0;

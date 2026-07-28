@@ -46,7 +46,7 @@ module tb_excore #(
 
     // ---- Mailbox stimulus (driven directly by this TB) ------------------
     logic         mb_trap_pending;
-    logic [3:0]   mb_trap_code;
+    logic [4:0]   mb_trap_code;
     logic [31:0]  mb_pc;
     logic [7:0]   mb_opcode;
     logic [31:0]  mb_arg;
@@ -56,7 +56,8 @@ module tb_excore #(
 
     // ---- Result observation ----------------------------------------------
     logic         res_go;
-    logic [3:0]   res_code, res_fatal_code;
+    logic [3:0]   res_code;
+    logic [4:0]   res_fatal_code;
     logic [2:0]   res_pop_count;
     logic [1:0]   res_push_count;
     logic [31:0]  res_heap_ptr;
@@ -220,7 +221,7 @@ module tb_excore #(
         $finish;
     endtask
 
-    task automatic run_unknown_trap(input logic [3:0] code, input int max_cycles);
+    task automatic run_unknown_trap(input logic [4:0] code, input int max_cycles);
         int i;
         mb_entry_count = 3'd0;
         mb_trap_code   = code;

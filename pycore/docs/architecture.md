@@ -80,17 +80,17 @@ excore. Empty `LIST_EXTEND` is a no-op pop on pycore; spare-capacity
 `trap_req`/`trap_res` are proper wide-parallel valid/ready handshakes;
 `excore_mmio`'s mailbox is level-held (`MB_STATUS.trap_pending` stays
 asserted until firmware reports a result via `RES_GO`) and its result is a
-one-cycle pulse. Field widths (`MAX_TRAP_ENTRIES = 3`, `MAX_RES_ENTRIES =
+one-cycle pulse. Field widths (`MAX_TRAP_ENTRIES = 4`, `MAX_RES_ENTRIES =
 2`) are module parameters on `pycore_core`, `trap_mailbox`, and
 `excore_mmio` alike, so a future handler needing more operands widens them
 in one place.
 
 ```text
 trap_req_valid / trap_req_ready
-  trap_code[3:0], pc[31:0], instr[39:0] ({arg[31:0], opcode[7:0]}),
-  heap_ptr[31:0], entry_count[2:0], entries[3][131:0]
+  trap_code[4:0], pc[31:0], instr[39:0] ({arg[31:0], opcode[7:0]}),
+  heap_ptr[31:0], entry_count[2:0], entries[4][131:0]
 trap_res_valid / trap_res_ready
-  res_code[3:0], fatal_code[3:0], pop_count[2:0], push_count[1:0],
+  res_code[3:0], fatal_code[4:0], pop_count[2:0], push_count[1:0],
   heap_ptr[31:0], entries[2][131:0]
 ```
 

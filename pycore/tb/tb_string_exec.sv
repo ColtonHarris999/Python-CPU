@@ -16,7 +16,7 @@ module tb_string_exec;
     logic [PYCORE_ENTRY_WIDTH-1:0] result;
     logic stall;
     logic trap;
-    logic [3:0] trap_code;
+    logic [4:0] trap_code;
     int tests_run;
     longint unsigned last_long_addr;
 
@@ -98,7 +98,7 @@ module tb_string_exec;
         input logic [PYCORE_ENTRY_WIDTH-1:0] lhs,
         input logic [PYCORE_ENTRY_WIDTH-1:0] rhs,
         input bit expect_trap,
-        input logic [3:0] expected_trap_code,
+        input logic [4:0] expected_trap_code,
         input string expected_value
     );
         int i;

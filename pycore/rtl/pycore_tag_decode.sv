@@ -11,7 +11,7 @@ module pycore_tag_decode (
     output logic [1:0] promote_rs2_mode_o,
     output logic [3:0] result_tag_o,
     output logic       is_trap_o,
-    output logic [3:0] trap_code_o
+    output logic [4:0] trap_code_o
 );
 
     function automatic logic is_compare(input logic [4:0] op);

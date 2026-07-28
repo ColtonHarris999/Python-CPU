@@ -16,7 +16,7 @@ module tb_container #(
     parameter logic [3:0]                  EXPECTED_TAG   = PY_TAG_INT,
     parameter logic [PYCORE_VAL_WIDTH-1:0] EXPECTED_VALUE = 128'd99,
     parameter bit    EXPECT_TRAP         = 1'b0,
-    parameter logic [3:0] EXPECTED_TRAP_CODE = PY_TRAP_MEM_FAULT,
+    parameter logic [4:0] EXPECTED_TRAP_CODE = PY_TRAP_MEM_FAULT,
     // BOOT_EN passes through to pycore_system.  Legacy hand-assembled
     // container fixtures use BOOT_EN=0 (no image-boot walk); real image
     // programs built by image_from_source.py use BOOT_EN=1.
@@ -43,7 +43,7 @@ module tb_container #(
     logic clk;
     logic rst_n;
     logic trap_out;
-    logic [3:0]  trap_code;
+    logic [4:0]  trap_code;
     logic [63:0] cycle_count;
     logic dbg_wb_we;
     logic [7:0]  dbg_wb_addr;
@@ -127,7 +127,7 @@ module tb_container #(
         logic [PYCORE_ENTRY_WIDTH-1:0] return_entry;
         logic [3:0]                    got_tag;
         logic [PYCORE_VAL_WIDTH-1:0]   got_val;
-        logic [3:0]                    got_trap;
+        logic [4:0]                    got_trap;
 
         clk = 1'b0;
         rst_n = 1'b0;
