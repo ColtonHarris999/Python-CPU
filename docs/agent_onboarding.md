@@ -50,7 +50,8 @@ on. Both are explained in `pycore/docs/architecture.md` §"The excore contract".
 | Image tooling (bytecode → dmem) | `pycore/tools/image_from_source.py`, `run_image_test.py` |
 | Static heap image construction | `pycore/tools/heap_image.py` (mirrors RTL hash/probe/size rules) |
 | **Architectural constraints & deferred decisions** | `docs/constraints.md` — read before heap/trap/allocator work |
-| **The active memory-manager project** | `docs/memory_manager_plan.md` |
+| **Active allocator redesign (pycore-owned)** | **`docs/pycore_owned_allocator_plan.md`** |
+| Historical excore `mm.s` plan (superseded) | `docs/memory_manager_plan.md` |
 
 ## Build & test (what actually runs)
 
@@ -72,8 +73,9 @@ make all-tests
 make run-file RUN_SOURCE=pycore/programs/smoke_return.py RUN_FUNCTION=managed_entry
 ```
 
-Three test layers, cheapest first (details in
-`docs/memory_manager_plan.md` §"Test design"):
+Three test layers, cheapest first (details historically in
+`docs/memory_manager_plan.md` §"Test design"; target allocator work follows
+`docs/pycore_owned_allocator_plan.md`):
 - **A** — assembler unit tests, pure Python, `excore/tests/test_*.py`.
 - **B** — excore mocked-mailbox RTL TBs (Verilator), `excore/tb/tb_excore*.sv`.
   You control every dmem byte via `poke_slot`/`peek_slot`. This is where
@@ -130,13 +132,12 @@ proving it stays fatal when excore is off.
 
 ## Current active work
 
-The **memory manager** project (`docs/memory_manager_plan.md`): a firmware
-allocator with a size-class cache and object-header pre-fill, routing all
-`BUILD_*`/grow allocations through it, making excore self-sufficient for grow
-allocations, and adding free-on-resize + coalescing to stop the intentional
-bump-allocator leaks. Workstream 0 (assembler fix + DICT_UPDATE fix + hash-
-container regression tests) is done and verified; start by re-running its tests
-green, then proceed in order.
+**Pycore-owned allocator** (`docs/pycore_owned_allocator_plan.md`): pycore
+computes size (or a safe upper bound), allocates, and marshals the buffer with
+the trap; excore only fills the granted region. A Python/bytecode MM is blocked
+by current ISA gaps (see that plan §1); implement RTL ownership only when
+approved. The earlier excore-`mm.s` experiment (`docs/memory_manager_plan.md`,
+PR #43) is superseded as allocator authority and should be unwound in Phase 1.
 
 ## Quick sanity commands
 
