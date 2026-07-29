@@ -1213,27 +1213,29 @@ function automatic logic [31:0] pycore_tuple_alloc_bytes(
 endfunction
 
 // -------------------------------------------------------------------------
-// CODE OBJECT in-dmem layout (tuple-element convention, 4 fields = 128 bytes):
+// CODE OBJECT in-dmem layout (tuple-element convention, 5 fields = 192 bytes):
 //
 //   Handle: { PY_TAG_CODE_OBJECT, {64'd0, addr[63:0]} }
 //
-//   field 0 : entry_slot (INT)  — imem slot index of first code unit
-//   field 1 : co_consts  (TUPLE handle; empty tuple allowed)
-//   field 2 : co_names   (TUPLE handle; empty tuple allowed)
-//   field 3 : metadata   (INT)  — packed
+//   field 0 : entry_slot  (INT)  — imem slot index of first code unit
+//   field 1 : co_consts   (TUPLE handle; empty tuple allowed)
+//   field 2 : co_names    (TUPLE handle; empty tuple allowed)
+//   field 3 : metadata    (INT)  — packed
 //               value[15:0]  = argcount
 //               value[31:16] = nlocals
 //               value[47:32] = stacksize
+//   field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
 //
 // Interim model: a "function object" IS a code-object handle (function ≡ code).
-// Per-function globals / defaults / closures are future work.
+// Defaults live on the code object; closures / kwdefaults are future work.
 // -------------------------------------------------------------------------
-localparam logic [31:0] PYCORE_CODE_FIELD_ENTRY_SLOT = 32'd0;
-localparam logic [31:0] PYCORE_CODE_FIELD_CO_CONSTS  = 32'd1;
-localparam logic [31:0] PYCORE_CODE_FIELD_CO_NAMES   = 32'd2;
-localparam logic [31:0] PYCORE_CODE_FIELD_METADATA   = 32'd3;
-localparam logic [31:0] PYCORE_CODE_NFIELDS          = 32'd4;
-localparam logic [31:0] PYCORE_CODE_OBJECT_BYTES     = 32'd128;
+localparam logic [31:0] PYCORE_CODE_FIELD_ENTRY_SLOT  = 32'd0;
+localparam logic [31:0] PYCORE_CODE_FIELD_CO_CONSTS   = 32'd1;
+localparam logic [31:0] PYCORE_CODE_FIELD_CO_NAMES    = 32'd2;
+localparam logic [31:0] PYCORE_CODE_FIELD_METADATA    = 32'd3;
+localparam logic [31:0] PYCORE_CODE_FIELD_CO_DEFAULTS = 32'd4;
+localparam logic [31:0] PYCORE_CODE_NFIELDS           = 32'd5;
+localparam logic [31:0] PYCORE_CODE_OBJECT_BYTES      = 32'd192;
 
 function automatic logic [31:0] pycore_code_field_val_addr(
     input logic [31:0] addr,

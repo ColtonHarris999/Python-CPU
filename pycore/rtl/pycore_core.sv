@@ -183,7 +183,7 @@ module pycore_core #(
     logic [31:0]                   globals_base_r;
 
     // One-cycle RF write issued from S_RETURN to deposit the callee's return
-    // value at tos_base on the caller's stack before resuming fetch.
+    // value (or saved instance under ret_discard_push_self) at tos_base.
     logic             return_wb_we_r;
     logic [RF_AW-1:0] return_wb_addr_r;
 
@@ -206,14 +206,38 @@ module pycore_core #(
     logic [63:0]                   call_entry_slot_r;  // entry slot index
     logic [127:0]                  call_consts_r;      // callee co_consts TUPLE
     logic [127:0]                  call_names_r;       // callee co_names TUPLE
-    logic [15:0]                   call_argcount_r;    // callee metadata argcount
+    logic [15:0]                   call_argcount_r;    // effective/supplied argc
+    logic [15:0]                   call_meta_argc_r;   // co_argcount from metadata
     logic [15:0]                   call_nlocals_r;     // callee metadata nlocals
-    logic [RF_AW-1:0]              call_new_locals_r;  // tos - argc
-    logic [RF_AW-1:0]              call_tos_base_r;    // tos - argc - 2
+    logic [RF_AW-1:0]              call_new_locals_r;  // locals base (self or arg0)
+    logic [RF_AW-1:0]              call_tos_base_r;    // tos - oparg - 2 (callable)
+    // OBJECT callable address (BOUND_METHOD / TYPE); code addr for CODE_OBJECT.
+    logic [31:0]                   call_obj_addr_r;
+    // co_defaults TUPLE handle {size[63:0], addr[63:0]}.
+    logic [127:0]                  call_defaults_r;
+    logic [15:0]                   call_defaults_len_r;
+    logic [15:0]                   call_min_argc_r;
+    // Defaults-fill / TYPE-setup sub-phase (used under call_phase 8–14).
+    logic [5:0]                    call_sub_r;
+    // Self entry while unwrapping BOUND_METHOD / installing TYPE instance.
+    logic [3:0]                    call_self_tag_r;
+    logic [127:0]                  call_self_val_r;
+    // Instance byte address for TYPE instantiation / ret_discard_push_self.
+    logic [31:0]                   call_inst_addr_r;
+    // Mode installed for the frame being pushed (1 ⇒ discard return, push self).
+    logic                          call_ret_mode_r;
+    logic [63:0]                   call_saved_inst_r;
+    // Live / latched ret-mode for S_RETURN writeback (from frame pop).
+    logic                          frame_ret_mode_r;
+    logic [63:0]                   frame_saved_inst_r;
     // One-cycle pulse: raise PY_TRAP_CALL_FILTER for callable checks and
     // frame_fault so the trap block sees a proper CALL_FILTER code rather
     // than being multiplexed through ILLEGAL_OPCODE.
     logic                          call_filter_trap_r;
+    // One-cycle pulse: __init__ returned a non-NONE value.
+    logic                          return_type_trap_r;
+    // RETURN writeback data (normal rs1, or saved instance under ret_discard).
+    logic [PYCORE_ENTRY_WIDTH-1:0] return_wb_data_r;
 
     // -----------------------------------------------------------------------
     // S_CONTAINER state — heap allocator and container operation registers.
@@ -755,6 +779,8 @@ module pycore_core #(
     logic [RF_AW-1:0]      frame_tos_base_out;
     logic [RF_AW-1:0]      frame_locals_base_out;
     logic [31:0]           frame_cur_code_out;
+    logic                  frame_ret_mode_out;
+    logic [63:0]           frame_saved_inst_out;
     logic [$clog2(MAX_CALL_DEPTH_CORE+1)-1:0] frame_active_depth;
 
     // Push handshake (CALL path).
@@ -790,11 +816,15 @@ module pycore_core #(
         .tos_base_in_i(call_tos_base_r),
         .locals_base_in_i(cur_locals_base_r),
         .cur_code_in_i(cur_code_r),
+        .ret_mode_in_i(call_ret_mode_r),
+        .saved_inst_in_i(call_saved_inst_r),
         .new_locals_base_in_i(call_new_locals_r),
         .pc_return_out_o(frame_pc_return_out),
         .tos_base_out_o(frame_tos_base_out),
         .locals_base_out_o(frame_locals_base_out),
         .cur_code_out_o(frame_cur_code_out),
+        .ret_mode_out_o(frame_ret_mode_out),
+        .saved_inst_out_o(frame_saved_inst_out),
         .next_locals_base_o(frame_next_locals_base),
         .init_new_frame_o(frame_init_new_frame),
         .return_done_o(frame_return_done),
@@ -830,7 +860,7 @@ module pycore_core #(
                             return_wb_we_r    ? return_wb_addr_r    :
                                                 dec_rd_sel[RF_AW-1:0];
     assign rf_rd_data_mux = container_wb_we_r ? container_wb_data_r :
-                            return_wb_we_r    ? rs1_r               :
+                            return_wb_we_r    ? return_wb_data_r    :
                                                 wb_entry_r;
     assign dbg_wb_we_o    = rf_we;
     assign dbg_wb_addr_o  = 8'(rf_rd_addr_mux);
@@ -924,7 +954,8 @@ module pycore_core #(
     assign type_trap_sig  = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_TYPE)) ||
                             (exec_in && dec_is_branch && branch_trap) ||
                             exec_type_trap_pulse ||
-                            container_type_trap_r;
+                            container_type_trap_r ||
+                            return_type_trap_r;
     assign stack_fault_sig = (state_r == S_WB) && !dec_is_call && !dec_is_return &&
                               !route_container &&
                              ((next_tos < STACK_BASE) || (next_tos > STACK_TOP_MAX));
@@ -1171,6 +1202,13 @@ module pycore_core #(
     localparam logic [3:0] CALL_PHASE_DONE = 4'd15;
     localparam logic [2:0] RET_PHASE_DONE  = 3'd7;
     localparam logic [3:0] BOOT_PHASE_DONE = 4'd15;
+    // SHORT_STR value for "__init__" (size=8); used by TYPE-call tp_dict probe.
+    localparam logic [127:0] CALL_INIT_NAME_VAL =
+        128'h85f5f696e69745f5f000000000000000;
+    // Empty dict for new instances: 4 slots (BUILD_MAP min for 0 pairs).
+    localparam logic [31:0] CALL_EMPTY_DICT_SLOTS = 32'd4;
+    localparam logic [31:0] CALL_TYPE_ALLOC_BYTES =
+        32'd32 + (CALL_EMPTY_DICT_SLOTS << 6) + PYCORE_OBJ_INSTANCE_BYTES;
 
     always_comb begin
         state_next = state_r;  // default: hold current state
@@ -1292,10 +1330,25 @@ module pycore_core #(
             call_consts_r        <= '0;
             call_names_r         <= '0;
             call_argcount_r      <= '0;
+            call_meta_argc_r     <= '0;
             call_nlocals_r       <= '0;
             call_new_locals_r    <= '0;
             call_tos_base_r      <= '0;
+            call_obj_addr_r      <= '0;
+            call_defaults_r      <= '0;
+            call_defaults_len_r  <= '0;
+            call_min_argc_r      <= '0;
+            call_sub_r           <= '0;
+            call_self_tag_r      <= '0;
+            call_self_val_r      <= '0;
+            call_inst_addr_r     <= '0;
+            call_ret_mode_r      <= 1'b0;
+            call_saved_inst_r    <= '0;
+            frame_ret_mode_r     <= 1'b0;
+            frame_saved_inst_r   <= '0;
             call_filter_trap_r   <= 1'b0;
+            return_type_trap_r   <= 1'b0;
+            return_wb_data_r     <= '0;
             // Container / heap allocator reset.
             heap_ptr_r               <= HEAP_INIT_PTR;
             container_op_r           <= '0;
@@ -1367,6 +1420,7 @@ module pycore_core #(
             rf_set_locals_r      <= 1'b0;
             rf_init_frame_r      <= 1'b0;
             return_wb_we_r       <= 1'b0;
+            return_type_trap_r   <= 1'b0;
             container_wb_we_r     <= 1'b0;
             container_type_trap_r <= 1'b0;
             container_mem_fault_r <= 1'b0;
@@ -1560,6 +1614,9 @@ module pycore_core #(
                         call_sent_r          <= 1'b0;
                         frame_dmem_pending_r <= 1'b0;
                         call_phase_r         <= 4'd0;
+                        call_sub_r           <= 6'd0;
+                        call_ret_mode_r      <= 1'b0;
+                        call_saved_inst_r    <= 64'b0;
                         container_dmem_pending_r <= 1'b0;
                         fetch_skip_r         <= 1'b1;
                         // state_next = S_CALL (from always_comb)
@@ -1585,249 +1642,7 @@ module pycore_core #(
                     end
                 end
 
-                // ----------------------------------------------------------
-                // S_CALL: real CPython CALL, multi-phase.
-                //
-                //   Layout at CALL entry with argc=arg:
-                //     callable @ RF[tos - argc - 2]
-                //     null      @ RF[tos - argc - 1]
-                //     args      @ RF[tos - argc .. tos - 1]
-                //
-                //   Phase  0: settle rf_addr = callable slot.
-                //   Phase  1: latch callable; type-check CODE_OBJECT.
-                //             Set rf_addr = null slot.
-                //   Phase  2: latch null; type-check PY_TAG_NULL.
-                //             Issue dmem read of code_field 0 (entry_slot).
-                //   Phase  3: latch entry_slot; issue field 1 (co_consts).
-                //   Phase  4: latch consts; issue field 2 (co_names).
-                //   Phase  5: latch names; issue field 3 (metadata).
-                //   Phase  6: latch metadata; argcount check.  Pulse
-                //             frame_call_valid_r and drive the frame push
-                //             beat0.
-                //   Phase  7: mirror old-style frame-push handshake until
-                //             init_new_frame_o.  On init, commit callee
-                //             cur_code / consts / names / locals_base and
-                //             redirect fetch to entry_slot.
-                //   Phase 15: terminal marker; state_next → S_FETCH.
-                //
-                // A single dmem transaction is in flight at a time.  The
-                // container_dmem_* handshake is reused for code-field reads.
-                // ----------------------------------------------------------
-                S_CALL: begin
-                    if (container_dmem_pending_r && dmem_ack_i) begin
-                        container_dmem_pending_r <= 1'b0;
-                        container_rd_data_r      <= dmem_rdata_i;
-                    end
-
-                    unique case (call_phase_r)
-
-                        4'd0: begin
-                            // Compute helper indices; kick RF read for callable.
-                            call_new_locals_r <= RF_AW'(
-                                {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]});
-                            call_tos_base_r   <= RF_AW'(
-                                {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd2);
-                            container_rf_addr_r <= RF_AW'(
-                                {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd2);
-                            call_phase_r <= 4'd1;
-                        end
-
-                        4'd1: begin
-                            // rf_rs1 = callable — check tag CODE_OBJECT.
-                            if (cont_rf_rs1_tag != PY_TAG_CODE_OBJECT) begin
-                                call_filter_trap_r <= 1'b1;
-                            end else begin
-                                call_code_addr_r    <= cont_rf_rs1_val[31:0];
-                                container_rf_addr_r <= RF_AW'(
-                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd1);
-                                call_phase_r        <= 4'd2;
-                            end
-                        end
-
-                        4'd2: begin
-                            // rf_rs1 = null sentinel.
-                            if (cont_rf_rs1_tag != PY_TAG_NULL) begin
-                                call_filter_trap_r <= 1'b1;
-                            end else begin
-                                // Issue field 0 (entry_slot) VAL read.
-                                container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                    call_code_addr_r, PYCORE_CODE_FIELD_ENTRY_SLOT);
-                                container_dmem_we_r      <= 1'b0;
-                                container_dmem_pending_r <= 1'b1;
-                                call_phase_r             <= 4'd3;
-                            end
-                        end
-
-                        4'd3: begin
-                            if (!container_dmem_pending_r) begin
-                                call_entry_slot_r <= container_rd_data_r[63:0];
-                                container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                    call_code_addr_r, PYCORE_CODE_FIELD_CO_CONSTS);
-                                container_dmem_we_r      <= 1'b0;
-                                container_dmem_pending_r <= 1'b1;
-                                call_phase_r             <= 4'd4;
-                            end
-                        end
-
-                        4'd4: begin
-                            if (!container_dmem_pending_r) begin
-                                call_consts_r <= container_rd_data_r;
-                                container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                    call_code_addr_r, PYCORE_CODE_FIELD_CO_NAMES);
-                                container_dmem_we_r      <= 1'b0;
-                                container_dmem_pending_r <= 1'b1;
-                                call_phase_r             <= 4'd5;
-                            end
-                        end
-
-                        4'd5: begin
-                            if (!container_dmem_pending_r) begin
-                                call_names_r <= container_rd_data_r;
-                                container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                    call_code_addr_r, PYCORE_CODE_FIELD_METADATA);
-                                container_dmem_we_r      <= 1'b0;
-                                container_dmem_pending_r <= 1'b1;
-                                call_phase_r             <= 4'd6;
-                            end
-                        end
-
-                        4'd6: begin
-                            if (!container_dmem_pending_r) begin
-                                call_argcount_r <= pycore_code_meta_argcount(container_rd_data_r);
-                                call_nlocals_r  <= pycore_code_meta_nlocals(container_rd_data_r);
-                                // Argcount preflight: mismatched arity → CALL_FILTER.
-                                if (pycore_code_meta_argcount(container_rd_data_r)
-                                    != cur_arg_r[15:0]) begin
-                                    call_filter_trap_r <= 1'b1;
-                                end else if ((9'(call_new_locals_r)
-                                              + 9'(pycore_code_meta_nlocals(
-                                                    container_rd_data_r)))
-                                             > 9'(STACK_TOP_MAX)) begin
-                                    call_filter_trap_r <= 1'b1;
-                                end else begin
-                                    call_phase_r <= 4'd7;
-                                end
-                            end
-                        end
-
-                        4'd7: begin
-                            // Frame push mirrors the previous single-phase impl.
-                            if (!call_sent_r && !frame_busy) begin
-                                frame_call_valid_r   <= 1'b1;
-                                call_sent_r          <= 1'b1;
-                            end
-
-                            if (call_sent_r && frame_push_req && !frame_dmem_pending_r) begin
-                                frame_dmem_pending_r <= 1'b1;
-                            end
-
-                            if (frame_dmem_pending_r && dmem_ack_i) begin
-                                frame_dmem_pending_r <= 1'b0;
-                            end
-
-                            if (frame_init_new_frame) begin
-                                cur_locals_base_r    <= frame_next_locals_base;
-                                rf_set_locals_r      <= 1'b1;
-                                rf_new_locals_r      <= frame_next_locals_base;
-                                rf_init_frame_r      <= (call_argcount_r == 16'd0);
-                                tos_r                <= frame_next_locals_base
-                                                        + call_nlocals_r[6:0];
-                                call_sent_r          <= 1'b0;
-                                frame_dmem_pending_r <= 1'b0;
-                                // Commit callee code-object caches.
-                                cur_code_r           <= call_code_addr_r;
-                                consts_base_r        <= call_consts_r;
-                                names_base_r         <= call_names_r;
-                                redirect_pending_r   <= 1'b1;
-                                redirect_tgt_r       <= call_entry_slot_r[31:0];
-                                call_phase_r         <= CALL_PHASE_DONE;
-                            end
-                        end
-
-                        default: ;
-                    endcase
-                end
-
-                // ----------------------------------------------------------
-                // S_RETURN: pop caller frame, re-read consts/names for the
-                // restored code object, then commit return value at tos_base
-                // and redirect fetch to pc_return.
-                //
-                //   Phase 0: frame pop handshake (mirrors prior impl).
-                //            On return_done_o: cur_code_r <= frame_cur_code_out.
-                //            Issue dmem read of consts VAL from restored code.
-                //   Phase 1: latch consts; issue names VAL read.
-                //   Phase 2: latch names; commit return value, redirect fetch.
-                //   Phase 7: terminal marker.
-                // ----------------------------------------------------------
-                S_RETURN: begin
-                    if (container_dmem_pending_r && dmem_ack_i) begin
-                        container_dmem_pending_r <= 1'b0;
-                        container_rd_data_r      <= dmem_rdata_i;
-                    end
-
-                    unique case (return_phase_r)
-
-                        3'd0: begin
-                            if (!call_sent_r && !frame_busy) begin
-                                frame_return_valid_r <= 1'b1;
-                                call_sent_r          <= 1'b1;
-                            end
-
-                            if (call_sent_r && frame_pop_req && !frame_dmem_pending_r) begin
-                                frame_dmem_pending_r <= 1'b1;
-                            end
-
-                            if (frame_dmem_pending_r && dmem_ack_i) begin
-                                frame_dmem_pending_r <= 1'b0;
-                            end
-
-                            if (frame_return_done) begin
-                                // Latch restored caller state.
-                                cur_locals_base_r    <= frame_locals_base_out;
-                                rf_set_locals_r      <= 1'b1;
-                                rf_new_locals_r      <= frame_locals_base_out;
-                                cur_code_r           <= frame_cur_code_out;
-                                call_tos_base_r      <= frame_tos_base_out;
-                                call_entry_slot_r    <= {32'b0, frame_pc_return_out};
-                                call_sent_r          <= 1'b0;
-                                frame_dmem_pending_r <= 1'b0;
-                                // Kick consts VAL read from restored code.
-                                container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                    frame_cur_code_out, PYCORE_CODE_FIELD_CO_CONSTS);
-                                container_dmem_we_r      <= 1'b0;
-                                container_dmem_pending_r <= 1'b1;
-                                return_phase_r <= 3'd1;
-                            end
-                        end
-
-                        3'd1: begin
-                            if (!container_dmem_pending_r) begin
-                                consts_base_r <= container_rd_data_r;
-                                container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                    cur_code_r, PYCORE_CODE_FIELD_CO_NAMES);
-                                container_dmem_we_r      <= 1'b0;
-                                container_dmem_pending_r <= 1'b1;
-                                return_phase_r <= 3'd2;
-                            end
-                        end
-
-                        3'd2: begin
-                            if (!container_dmem_pending_r) begin
-                                names_base_r <= container_rd_data_r;
-                                // Commit return value at caller's tos_base.
-                                return_wb_we_r     <= 1'b1;
-                                return_wb_addr_r   <= call_tos_base_r;
-                                tos_r              <= call_tos_base_r + RF_AW'(1);
-                                redirect_pending_r <= 1'b1;
-                                redirect_tgt_r     <= call_entry_slot_r[31:0];
-                                return_phase_r     <= RET_PHASE_DONE;
-                            end
-                        end
-
-                        default: ;
-                    endcase
-                end
+                `include "pycore_call_fsm.svh"
 
                 // ----------------------------------------------------------
                 // S_CONTAINER: multi-cycle handler for container operations.

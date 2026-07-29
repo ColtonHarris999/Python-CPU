@@ -24,10 +24,14 @@ module tb_frame;
     logic [RF_AW-1:0] locals_base_in;
     logic [RF_AW-1:0] new_locals_base_in;
     logic [31:0]   cur_code_in;
+    logic          ret_mode_in;
+    logic [63:0]   saved_inst_in;
     logic [31:0]   pc_return_out;
     logic [RF_AW-1:0] tos_base_out;
     logic [RF_AW-1:0] locals_base_out;
     logic [31:0]   cur_code_out;
+    logic          ret_mode_out;
+    logic [63:0]   saved_inst_out;
     logic [RF_AW-1:0] next_locals_base;
     logic          init_new_frame;
     logic          return_done;
@@ -59,11 +63,15 @@ module tb_frame;
         .tos_base_in_i(tos_base_in),
         .locals_base_in_i(locals_base_in),
         .cur_code_in_i(cur_code_in),
+        .ret_mode_in_i(ret_mode_in),
+        .saved_inst_in_i(saved_inst_in),
         .new_locals_base_in_i(new_locals_base_in),
         .pc_return_out_o(pc_return_out),
         .tos_base_out_o(tos_base_out),
         .locals_base_out_o(locals_base_out),
         .cur_code_out_o(cur_code_out),
+        .ret_mode_out_o(ret_mode_out),
+        .saved_inst_out_o(saved_inst_out),
         .next_locals_base_o(next_locals_base),
         .init_new_frame_o(init_new_frame),
         .return_done_o(return_done),
@@ -192,6 +200,8 @@ module tb_frame;
         locals_base_in   = '0;
         new_locals_base_in = '0;
         cur_code_in      = '0;
+        ret_mode_in      = 1'b0;
+        saved_inst_in    = 64'b0;
 
         #20;
         rst_n = 1'b1;

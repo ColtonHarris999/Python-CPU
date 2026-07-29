@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from encoding import (
     BOOT_RECORD_ADDR,
     CODE_FIELD_CO_CONSTS,
+    CODE_FIELD_CO_DEFAULTS,
     CODE_FIELD_CO_NAMES,
     CODE_FIELD_ENTRY_SLOT,
     CODE_FIELD_METADATA,
@@ -321,29 +322,37 @@ class HeapImageBuilder:
         stacksize: int,
         nlocals: int,
         argcount: int,
+        co_defaults: Tagged | None = None,
     ) -> Tagged:
-        """Allocate a 128-byte code object (4 tagged-entry fields).
+        """Allocate a 192-byte code object (5 tagged-entry fields).
 
-        field 0 : entry_slot (INT) — imem slot index of the first code unit
-        field 1 : co_consts  (TUPLE handle)
-        field 2 : co_names   (TUPLE handle)
-        field 3 : metadata   (INT) — packed {stacksize, nlocals, argcount}
+        field 0 : entry_slot  (INT) — imem slot index of the first code unit
+        field 1 : co_consts   (TUPLE handle)
+        field 2 : co_names    (TUPLE handle)
+        field 3 : metadata    (INT) — packed {stacksize, nlocals, argcount}
+        field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
         """
-        assert CODE_OBJECT_NFIELDS == 4
+        assert CODE_OBJECT_NFIELDS == 5
         assert co_consts[0] == TAG_TUPLE
         assert co_names[0] == TAG_TUPLE
+        if co_defaults is None:
+            co_defaults = self.alloc_tuple([])
+        if co_defaults[0] != TAG_TUPLE:
+            raise ValueError("co_defaults must be a TUPLE handle")
         addr = self._alloc(CODE_OBJECT_BYTES)
         fields: list[Tagged] = [
             (TAG_INT, int_value(entry_slot)),  # field 0
             co_consts,                         # field 1
             co_names,                          # field 2
             (TAG_INT, pack_code_metadata(stacksize, nlocals, argcount)),  # field 3
+            co_defaults,                       # field 4
         ]
         # Silence unused-import lint for field index constants (documented API).
         assert CODE_FIELD_ENTRY_SLOT == 0
         assert CODE_FIELD_CO_CONSTS == 1
         assert CODE_FIELD_CO_NAMES == 2
         assert CODE_FIELD_METADATA == 3
+        assert CODE_FIELD_CO_DEFAULTS == 4
         for i, (tag, val) in enumerate(fields):
             self._write_tagged(addr + i * 32, tag, val)
         return TAG_CODE_OBJECT, addr & ((1 << 64) - 1)
