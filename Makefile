@@ -85,6 +85,11 @@ EXCORE_RTL_SRCS := \
 	pycore-img-to-bool pycore-img-to-bool-type-trap \
 	pycore-img-to-bool-str pycore-img-to-bool-list-trap \
 	pycore-img-unary-not \
+	pycore-img-unary-invert pycore-img-align-mask pycore-img-unary-negative \
+	pycore-img-unary-invert-float-trap \
+	pycore-img-unpack-tuple pycore-img-unpack-list pycore-img-unpack-len-trap \
+	pycore-img-str-eq pycore-img-str-lt-trap \
+	pycore-img-scalar-all \
 	pycore-img-is-op \
 	pycore-img-compare-op pycore-img-compare-op-type-trap \
 	pycore-img-pop-jump-if-none \
@@ -537,6 +542,44 @@ pycore-img-to-bool-list-trap:
 pycore-img-unary-not:
 	$(call PYCORE_IMAGE_RUN,unary_not,50000)
 
+pycore-img-unary-invert:
+	$(call PYCORE_IMAGE_RUN,unary_invert,50000)
+
+pycore-img-align-mask:
+	$(call PYCORE_IMAGE_RUN,align_mask,50000)
+
+pycore-img-unary-negative:
+	$(call PYCORE_IMAGE_RUN,unary_negative,50000)
+
+pycore-img-unary-invert-float-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,unary_invert_float_trap,1,50000)
+
+pycore-img-unpack-tuple:
+	$(call PYCORE_IMAGE_RUN,unpack_tuple,50000)
+
+pycore-img-unpack-list:
+	$(call PYCORE_IMAGE_RUN,unpack_list,50000)
+
+pycore-img-unpack-len-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,unpack_len_trap,1,50000)
+
+pycore-img-str-eq:
+	$(call PYCORE_IMAGE_RUN,str_eq,50000)
+
+pycore-img-str-lt-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,str_lt_trap,1,50000)
+
+pycore-img-scalar-all: \
+	pycore-img-unary-invert \
+	pycore-img-align-mask \
+	pycore-img-unary-negative \
+	pycore-img-unary-invert-float-trap \
+	pycore-img-unpack-tuple \
+	pycore-img-unpack-list \
+	pycore-img-unpack-len-trap \
+	pycore-img-str-eq \
+	pycore-img-str-lt-trap
+
 pycore-img-is-op:
 	$(call PYCORE_IMAGE_RUN,is_op,50000)
 
@@ -880,6 +923,7 @@ pycore-img: \
 	pycore-img-to-bool-str \
 	pycore-img-to-bool-list-trap \
 	pycore-img-unary-not \
+	pycore-img-scalar-all \
 	pycore-img-is-op \
 	pycore-img-compare-op \
 	pycore-img-compare-op-type-trap \

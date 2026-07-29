@@ -33,6 +33,7 @@
     localparam logic [5:0] CONT_LOAD_ATTR = 6'd29;// LOAD_ATTR (MRO + method form)
     localparam logic [5:0] CONT_STORE_ATTR = 6'd30;// STORE_ATTR → instance __dict__
     localparam logic [5:0] CONT_DELETE_ATTR = 6'd31;// DELETE_ATTR → instance __dict__
+    localparam logic [5:0] CONT_UNPACK_SEQ = 6'd32;// UNPACK_SEQUENCE LIST/TUPLE
 
     // Container phases (stored in container_phase_r, 6-bit).
     //

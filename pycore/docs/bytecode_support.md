@@ -35,6 +35,9 @@ fully unsupported for the current PyCore implementation.
 | `CALL` | Invokes a callable with positional arguments. | Free-function (`NULL` sentinel) and method form (non-`NULL` self); `OBK_BOUND_METHOD` unwrap; `OBK_TYPE` instantiation (`__init__` + `ret_discard_push_self`). Argcount range uses `co_defaults`. Images: `img_method_*`, `img_ctor_*`, `img_default_*`, `img_class_*`. |
 | `TO_BOOL` | Converts TOS to exact bool for branch helpers. | Rewrites TOS in place to `BOOL` for `INT`/`BOOL`/`FLOAT`/`SHORT_STR`/`LONG_STR` (string truthiness is `size != 0`; corrupt short-string sizes above 15 trap `PY_TRAP_TYPE`); other tags (incl. `None` and containers) trap `PY_TRAP_TYPE`. Layer D: `img_to_bool` (INT/BOOL/FLOAT, incl. `0.0` falsy), `img_to_bool_str` (empty/nonempty short and nonempty long strings), `img_to_bool_type_trap` (None), `img_to_bool_list_trap` (list). |
 | `UNARY_NOT` | Invert TOS bool (`not` after `TO_BOOL`). | `BOOL` bit invert in place; non-`BOOL` → `PY_TRAP_TYPE`. Layer D: `img_unary_not`. |
+| `UNARY_INVERT` | Bitwise invert TOS (`~x`). | `PY_ALU_INVERT`: `INT`/`BOOL` only (`BOOL` promotes to `INT`); `FLOAT` and other tags → `PY_TRAP_TYPE`. Layer D: `img_unary_invert`, `img_align_mask`, `img_unary_invert_float_trap`. |
+| `UNARY_NEGATIVE` | Negate TOS (`-x`). | `PY_ALU_NEG`: `INT`/`BOOL`/`FLOAT` (`BOOL` → `INT`); other tags → `PY_TRAP_TYPE`. Layer D: `img_unary_negative`. |
+| `UNPACK_SEQUENCE` | Pop one sequence; push `count` items right-to-left (`seq[0]` at TOS). | `CONT_UNPACK_SEQ`: `TUPLE` (size from handle) and `LIST` (header length); length ≠ `oparg` → `PY_TRAP_TYPE`; 1 `CACHE` unit. Layer D: `img_unpack_tuple`, `img_unpack_list`, `img_unpack_len_trap`. |
 | `IS_OP` | `is` / `is not` (oparg 0/1). | Full RF-entry identity → `BOOL`; all tags; no trap. Layer D: `img_is_op`. |
 | `NOT_TAKEN` | CPython branch prediction/adaptation marker. | Treated as a no-op marker. |
 | `POP_TOP` | Pops and discards the top stack value. | Implemented as a stack-pointer decrement. |
@@ -61,7 +64,7 @@ fully unsupported for the current PyCore implementation.
 | Bytecode | Description | Current limitation |
 | --- | --- | --- |
 | `BINARY_OP` | Performs binary arithmetic/bitwise operation selected by `oparg`. | Arithmetic/bitwise opargs use the existing ALU path; `NB_SUBSCR` (oparg 26) routes to `S_CONTAINER`. `NB_INPLACE_ADD` (13) with a LIST lhs routes to LIST_EXTEND semantics and supports LIST/TUPLE rhs, including the existing excore grow path. Unsupported variants trap or are rejected by preprocess. |
-| `COMPARE_OP` | Compares TOS-2 and TOS-1 using the packed CPython 3.14 `oparg`, replacing both with `BOOL`. | Selectors `0..5` (`<,<=,==,!=,>,>=`); native `INT`/`BOOL`/`FLOAT` fast path, net stack −1. Non-numeric tags trap `PY_TRAP_TYPE` (1); there is no generic rich-compare protocol. Layer D: `img_compare_op`, `img_compare_op_type_trap`. |
+| `COMPARE_OP` | Compares TOS-2 and TOS-1 using the packed CPython 3.14 `oparg`, replacing both with `BOOL`. | Selectors `0..5` (`<,<=,==,!=,>,>=`); native `INT`/`BOOL`/`FLOAT` plus same-tag `SHORT_STR`/`LONG_STR` for `==`/`!=` only (full 128-bit value / descriptor compare); string ordering and other tags → `PY_TRAP_TYPE` (1). Layer D: `img_compare_op`, `img_str_eq`, `img_str_lt_trap`, `img_compare_op_type_trap`. |
 | `GET_ITER` | Replaces TOS with iterator state. | Native LIST/TUPLE sources become an internal hybrid `PY_TAG_PTR` iterator. RANGE, STR, and HEAP_ITER kind values are reserved sockets; unsupported sources raise `PY_TRAP_TYPE`. No generic iterator protocol. |
 | `FOR_ITER` | Advances the iterator at TOS, pushing one value or taking the exhaustion edge. | Internal LIST/TUPLE kinds only. Validity and field interpretation are per-kind; reserved/unknown/malformed kinds TYPE-trap. Exhaustion skips `END_FOR` and redirects to `POP_ITER`. Layer D: `img_for_iter*`. |
 | `JUMP_IF_TRUE_OR_POP` | Jumps if truthy else pops TOS. | Not part of the current image-boot subset. |
@@ -141,8 +144,14 @@ this milestone:
 14. **`COMPARE_OP` numeric ceiling.** Native comparison uses the signed 64-bit
    INT fast path and existing INT/BOOL-to-FLOAT promotion. Integers outside
    that range and mixed large-INT/FLOAT precision boundaries do not provide
-   CPython arbitrary-precision comparison semantics. Strings, `None`,
-   containers, and user-defined rich comparison trap `PY_TRAP_TYPE` instead.
+   CPython arbitrary-precision comparison semantics. `None`, containers, and
+   user-defined rich comparison trap `PY_TRAP_TYPE`. Same-tag string `==`/`!=`
+   is supported; ordering on strings still traps.
+15. **`COMPARE_OP` / `LONG_STR` descriptor equality.** Same-tag `LONG_STR`
+   equality compares the `{size, addr}` descriptor, not byte contents. This
+   matches dict-key / contains semantics and relies on image-time string
+   interning; distinct runtime-concatenated long strings with equal text may
+   compare unequal (see deviation 4).
 
 ## Deferred container opcodes
 

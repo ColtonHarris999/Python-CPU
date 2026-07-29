@@ -175,6 +175,12 @@ localparam logic [7:0] PY_OP_PUSH_NULL        = 8'd33;
 localparam logic [7:0] PY_OP_RETURN_VALUE     = 8'd35;
 localparam logic [7:0] PY_OP_STORE_SUBSCR     = 8'd38;
 localparam logic [7:0] PY_OP_TO_BOOL          = 8'd39;
+// UNARY_INVERT / UNARY_NEGATIVE — resolved from CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['UNARY_INVERT'],
+//                                       opcode.opmap['UNARY_NEGATIVE'])"
+//   -> 40, 41
+localparam logic [7:0] PY_OP_UNARY_INVERT     = 8'd40;
+localparam logic [7:0] PY_OP_UNARY_NEGATIVE   = 8'd41;
 localparam logic [7:0] PY_OP_UNARY_NOT        = 8'd42;
 localparam logic [7:0] PY_OP_BINARY_OP        = 8'd44;
 localparam logic [7:0] PY_OP_BUILD_LIST       = 8'd46;
@@ -217,6 +223,10 @@ localparam logic [7:0] PY_OP_STORE_FAST_STORE_FAST = 8'd114;
 localparam logic [7:0] PY_OP_STORE_GLOBAL     = 8'd115;
 localparam logic [7:0] PY_OP_STORE_NAME       = 8'd116;
 localparam logic [7:0] PY_OP_SWAP             = 8'd117;
+// UNPACK_SEQUENCE — resolved from CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['UNPACK_SEQUENCE'])"
+//   -> 119
+localparam logic [7:0] PY_OP_UNPACK_SEQUENCE  = 8'd119;
 localparam logic [7:0] PY_OP_RESUME           = 8'd128;
 
 // LIST_APPEND: resolved from opcode.opmap at tool-import time (see
@@ -361,6 +371,11 @@ localparam logic [7:0] PY_CACHE_POP_JUMP_IF_TRUE     = 8'd1;
 // documentation / jump math parity with opcode._inline_cache_entries).
 localparam logic [7:0] PY_CACHE_LOAD_ATTR             = 8'd9;
 localparam logic [7:0] PY_CACHE_STORE_ATTR            = 8'd4;
+// UNPACK_SEQUENCE inline-cache unit count (fetch skips CACHE by opcode 0;
+// kept for documentation / jump-math parity with _inline_cache_entries).
+//   python3.14 -c "import dis; print(dis._inline_cache_entries['UNPACK_SEQUENCE'])"
+//   -> 1
+localparam logic [7:0] PY_CACHE_UNPACK_SEQUENCE       = 8'd1;
 
 // Internal-only memory opcodes. These are not part of the CPython 3.14 opcode
 // space and are never emitted by the image builder; they exist so hand-written

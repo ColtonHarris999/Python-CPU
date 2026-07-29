@@ -1070,3 +1070,128 @@
                             endcase
                         end // CONT_CONTAINS_TUPLE
 
+                        // UNPACK_SEQUENCE: pop LIST/TUPLE at TOS; push
+                        // container_count_r elements right-to-left so
+                        // seq[0] lands at TOS. Length mismatch → TYPE.
+                        CONT_UNPACK_SEQ: begin
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    if (cont_rs1_tag == PY_TAG_TUPLE) begin
+                                        if (cont_tuple_size !=
+                                                {57'b0, container_count_r}) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else if (container_count_r == 7'd0) begin
+                                            tos_r             <= tos_r - RF_AW'(1);
+                                            fetch_skip_r      <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            container_base_r  <= cont_rs1_addr;
+                                            container_tag_r   <= PY_TAG_TUPLE;
+                                            container_idx_r   <= container_count_r - 7'd1;
+                                            tos_r             <= tos_r - RF_AW'(1);
+                                            container_dmem_addr_r <=
+                                                pycore_tuple_val_addr(
+                                                    cont_rs1_addr,
+                                                    {25'b0, container_count_r - 7'd1});
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_VAL;
+                                        end
+                                    end else if (cont_rs1_tag == PY_TAG_LIST) begin
+                                        container_base_r         <= cont_rs1_addr;
+                                        container_tag_r          <= PY_TAG_LIST;
+                                        container_dmem_addr_r    <= cont_rs1_addr;
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_HDR;
+                                    end else begin
+                                        container_type_trap_r <= 1'b1;
+                                    end
+                                end
+
+                                CP_HDR: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (cont_hdr_len !=
+                                                {57'b0, container_count_r}) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else if (container_count_r == 7'd0) begin
+                                            tos_r             <= tos_r - RF_AW'(1);
+                                            fetch_skip_r      <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_list_obitem_addr(
+                                                    container_base_r);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_LIST_BUF;
+                                        end
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_buf_r   <= cont_obitem_buf;
+                                        container_idx_r   <= container_count_r - 7'd1;
+                                        tos_r             <= tos_r - RF_AW'(1);
+                                        container_dmem_addr_r <=
+                                            pycore_list_val_addr(
+                                                cont_obitem_buf,
+                                                {25'b0, container_count_r - 7'd1});
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_VAL;
+                                    end
+                                end
+
+                                CP_VAL: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_val_r       <= container_rd_data_r;
+                                        container_dmem_addr_r <=
+                                            container_dmem_addr_r + 32'd16;
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_TAG;
+                                    end
+                                end
+
+                                CP_TAG: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(tos_r);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            container_rd_data_r[3:0],
+                                            container_val_r);
+                                        tos_r <= tos_r + RF_AW'(1);
+                                        if (container_idx_r == 7'd0) begin
+                                            fetch_skip_r      <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            container_idx_r <= container_idx_r - 7'd1;
+                                            if (container_tag_r == PY_TAG_TUPLE) begin
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_val_addr(
+                                                        container_base_r,
+                                                        {25'b0,
+                                                         container_idx_r - 7'd1});
+                                            end else begin
+                                                container_dmem_addr_r <=
+                                                    pycore_list_val_addr(
+                                                        container_buf_r,
+                                                        {25'b0,
+                                                         container_idx_r - 7'd1});
+                                            end
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_VAL;
+                                        end
+                                    end
+                                end
+
+                                CP_DONE: ;
+                                default: ;
+
+                            endcase
+                        end // CONT_UNPACK_SEQ
+

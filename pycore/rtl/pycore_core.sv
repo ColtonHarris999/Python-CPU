@@ -494,15 +494,17 @@ module pycore_core #(
             PY_OP_LOAD_FAST_AND_CLEAR,
             PY_OP_STORE_FAST_LOAD_FAST,
             PY_OP_STORE_FAST_STORE_FAST,
-            PY_OP_SWAP, PY_OP_GET_ITER, PY_OP_FOR_ITER: begin
+            PY_OP_SWAP, PY_OP_GET_ITER, PY_OP_FOR_ITER,
+            PY_OP_UNPACK_SEQUENCE: begin
                 id_rd_we = 1'b0; id_tos_delta = 3'sd0;
             end
             // PUSH_NULL: push sentinel {NULL, 0}, one RF write via WB stage.
             PY_OP_PUSH_NULL: begin
                 id_rd_we = 1'b1; id_tos_delta = 3'sd1;
             end
-            // TO_BOOL / UNARY_NOT: rewrite TOS in place; net stack effect 0.
-            PY_OP_TO_BOOL, PY_OP_UNARY_NOT: begin
+            // TO_BOOL / UNARY_*: rewrite TOS in place; net stack effect 0.
+            PY_OP_TO_BOOL, PY_OP_UNARY_NOT,
+            PY_OP_UNARY_INVERT, PY_OP_UNARY_NEGATIVE: begin
                 id_rd_we = 1'b1; id_tos_delta = 3'sd0;
             end
             // MAKE_FUNCTION: function ≡ code object; net effect 0 with no
@@ -575,7 +577,9 @@ module pycore_core #(
                               (pycore_get_tag(rs1_r) == PY_TAG_LIST);
     assign route_container = dec_is_container || binary_list_iadd;
     assign is_alu = ((cur_opcode_r == PY_OP_BINARY_OP) && !route_container) ||
-                    (cur_opcode_r == PY_OP_COMPARE_OP);
+                    (cur_opcode_r == PY_OP_COMPARE_OP) ||
+                    (cur_opcode_r == PY_OP_UNARY_INVERT) ||
+                    (cur_opcode_r == PY_OP_UNARY_NEGATIVE);
 
     logic [PYCORE_ENTRY_WIDTH-1:0] exec_result;
     logic                          exec_stall;
@@ -628,7 +632,8 @@ module pycore_core #(
         ex_rs1_bool = 1'b0;
         unique case (cur_opcode_r)
             PY_OP_LOAD_SMALL_INT: ex_entry = pycore_int_entry({32'b0, cur_arg_r});
-            PY_OP_BINARY_OP, PY_OP_COMPARE_OP: ex_entry = exec_result;
+            PY_OP_BINARY_OP, PY_OP_COMPARE_OP,
+            PY_OP_UNARY_INVERT, PY_OP_UNARY_NEGATIVE: ex_entry = exec_result;
             PY_OP_MEM_LOAD_PTR: begin
                 ex_entry      = rs1_r;
                 ex_addr_entry = rs1_r;
@@ -1573,6 +1578,10 @@ module pycore_core #(
                                 container_op_r <= CONT_STORE_ATTR;
                             end else if (cur_opcode_r == PY_OP_DELETE_ATTR) begin
                                 container_op_r <= CONT_DELETE_ATTR;
+                            end else if (cur_opcode_r == PY_OP_UNPACK_SEQUENCE) begin
+                                container_op_r    <= CONT_UNPACK_SEQ;
+                                container_count_r <= cur_arg_r[6:0];
+                                container_idx_r   <= 7'd0;
                             end else if (cur_opcode_r == PY_OP_BINARY_OP) begin
                                 // BINARY_OP/NB_SUBSCR: rs1 = container.
                                 if (cont_rs1_tag == PY_TAG_DICT)

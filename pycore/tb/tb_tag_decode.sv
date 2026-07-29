@@ -119,7 +119,21 @@ module tb_tag_decode;
         alu_op = PY_ALU_EQ;
         #1;
         check(is_trap && trap_code == PY_TRAP_TYPE,
-              "string comparison should type trap until rich compare exists");
+              "cross-tag string EQ should type trap");
+
+        rs1_tag = PY_TAG_SHORT_STR;
+        rs2_tag = PY_TAG_SHORT_STR;
+        alu_op = PY_ALU_EQ;
+        #1;
+        check(!is_trap, "same-tag SHORT_STR EQ should not trap");
+        check(result_tag == PY_TAG_BOOL, "string EQ should produce BOOL");
+
+        rs1_tag = PY_TAG_LONG_STR;
+        rs2_tag = PY_TAG_LONG_STR;
+        alu_op = PY_ALU_LT;
+        #1;
+        check(is_trap && trap_code == PY_TRAP_TYPE,
+              "string ordering should type trap");
 
         rs1_tag = PY_TAG_OBJECT;
         rs2_tag = PY_TAG_INT;

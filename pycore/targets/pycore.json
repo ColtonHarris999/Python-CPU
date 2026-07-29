@@ -427,7 +427,8 @@
         3,
         4,
         5
-      ]
+      ],
+      "note": "Numeric + same-tag SHORT_STR/LONG_STR ==/!=; string ordering TYPE-traps; LONG_STR uses descriptor equality"
     },
     "POP_JUMP_IF_TRUE": {
       "support": "execute",
@@ -568,6 +569,12 @@
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR"
+    },
+    "UNPACK_SEQUENCE": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "LIST/TUPLE only; length mismatch → TYPE; 1 CACHE unit"
     },
     "BUILD_MAP": {
       "support": "execute",

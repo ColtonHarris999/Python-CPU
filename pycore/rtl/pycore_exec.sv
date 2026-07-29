@@ -378,6 +378,16 @@ module pycore_exec #(
     always_comb begin
         logic [63:0] selected_value;
         logic [PYCORE_VAL_WIDTH-1:0] wide_value;
+        logic        string_cmp_valid;
+        logic        string_cmp_eq;
+
+        // Same-tag SHORT_STR / LONG_STR ==/!= : full 128-bit descriptor/
+        // payload compare (LONG_STR is interned-descriptor equality).
+        string_cmp_valid = valid_i &&
+                           ((alu_op_i == PY_ALU_EQ) || (alu_op_i == PY_ALU_NE)) &&
+                           (rs1_tag == rs2_tag) &&
+                           pycore_is_string_tag(rs1_tag);
+        string_cmp_eq = (rs1_value_wide == rs2_value_wide);
 
         selected_value = 64'b0;
         stall_o = mul_stall || div_stall || fpu_stall;
@@ -385,7 +395,15 @@ module pycore_exec #(
         trap_code_o = tag_trap_code;
         result_o = pycore_make_entry(PY_TAG_OBJECT, '0);
 
-        if (string_path_valid) begin
+        if (string_cmp_valid) begin
+            stall_o = 1'b0;
+            trap_o = 1'b0;
+            trap_code_o = PY_TRAP_NONE;
+            result_o = pycore_make_entry(
+                PY_TAG_BOOL,
+                {{(PYCORE_VAL_WIDTH-1){1'b0}},
+                 (alu_op_i == PY_ALU_EQ) ? string_cmp_eq : !string_cmp_eq});
+        end else if (string_path_valid) begin
             stall_o = 1'b0;
             trap_o = valid_i && string_path_trap;
             trap_code_o = string_path_trap_code;
