@@ -254,11 +254,20 @@ def validate_code_object(co: types.CodeType) -> None:
                 f"at bytecode offset {ins.offset}: {DEFERRED_OPS[ins.opname]}"
             )
         if ins.opname == "SET_FUNCTION_ATTRIBUTE":
+            # Folded to NOP before validate when flag==defaults (1). Any other
+            # flag (closure/annotations/kwdefaults) is rejected here.
+            if ins.arg != 1:
+                raise ValueError(
+                    "Unsupported SET_FUNCTION_ATTRIBUTE flag "
+                    f"{ins.arg} in code object {co.co_name!r} at bytecode "
+                    f"offset {ins.offset}: only defaults (flag 1) are folded "
+                    "at image-build time; closures/annotations/kwdefaults "
+                    "are not supported"
+                )
             raise ValueError(
-                "Unsupported opcode 'SET_FUNCTION_ATTRIBUTE' in code object "
-                f"{co.co_name!r} at bytecode offset {ins.offset}: function "
-                "defaults, annotations, and closures are not supported by the "
-                "image-boot serializer"
+                "Internal error: SET_FUNCTION_ATTRIBUTE (defaults) should have "
+                f"been folded before validate in {co.co_name!r} at offset "
+                f"{ins.offset}"
             )
         if not _is_supported_opname(ins.opname):
             raise ValueError(
@@ -339,7 +348,7 @@ def count_global_store_names(module_code: types.CodeType) -> set[str]:
 
 
 class _ImageSerializer:
-    def __init__(self) -> None:
+    def __init__(self, defaults_map: dict[int, tuple] | None = None) -> None:
         # BOOT_RECORD_ADDR is 0x03e0 and the two tagged entries occupy 64 bytes,
         # so static image allocations must not start at the nominal 0x0400 base.
         static_base = max(HEAP_BASE, BOOT_RECORD_ADDR + 64)
@@ -348,6 +357,7 @@ class _ImageSerializer:
         self.program_slots: list[str] = []
         self.code_handles: dict[int, Tagged] = {}
         self.entry_slots: dict[int, int] = {}
+        self.defaults_map: dict[int, tuple] = defaults_map or {}
 
     def serialize_code(self, co: types.CodeType) -> Tagged:
         co_id = id(co)
@@ -371,6 +381,10 @@ class _ImageSerializer:
         co_names = self.heap.alloc_tuple(
             [tag_constant(name, self.string_heap) for name in co.co_names]
         )
+        defaults_py = self.defaults_map.get(co_id, ())
+        co_defaults = self.heap.alloc_tuple(
+            [self.serialize_constant(d, co) for d in defaults_py]
+        )
         handle = self.heap.add_code_object(
             entry_slot,
             co_consts,
@@ -378,6 +392,7 @@ class _ImageSerializer:
             stacksize=co.co_stacksize,
             nlocals=co.co_nlocals,
             argcount=co.co_argcount,
+            co_defaults=co_defaults,
         )
         self.code_handles[co_id] = handle
         return handle
@@ -408,6 +423,18 @@ class SeedTypeSpec:
 
 
 @dataclass(frozen=True)
+class SeedTypeMethodSpec:
+    """Attach a module-level function to a seeded type's tp_dict.
+
+    ``# pycore-inject: SEED_TYPE_METHOD T meth = helper``
+    """
+
+    type_name: str
+    attr_name: str
+    func_name: str
+
+
+@dataclass(frozen=True)
 class SeedInstanceSpec:
     """Build-time OBK_INSTANCE seed.
 
@@ -423,6 +450,7 @@ class SeedInstanceSpec:
 @dataclass(frozen=True)
 class SeedSpecs:
     types: tuple[SeedTypeSpec, ...] = ()
+    type_methods: tuple[SeedTypeMethodSpec, ...] = ()
     instances: tuple[SeedInstanceSpec, ...] = ()
 
     @property
@@ -433,7 +461,13 @@ class SeedSpecs:
 
 
 _INJECT_SEED_TYPE_PREFIX = "# pycore-inject: SEED_TYPE "
+_INJECT_SEED_TYPE_METHOD_PREFIX = "# pycore-inject: SEED_TYPE_METHOD "
 _INJECT_SEED_INSTANCE_PREFIX = "# pycore-inject: SEED_INSTANCE "
+_OP_NOP = _OM["NOP"]
+_OP_MAKE_FUNCTION = _OM["MAKE_FUNCTION"]
+_OP_SET_FUNCTION_ATTRIBUTE = _OM["SET_FUNCTION_ATTRIBUTE"]
+_OP_LOAD_CONST = _OM["LOAD_CONST"]
+_SFA_FLAG_DEFAULTS = 1
 
 
 def _parse_seed_kv_tokens(tokens: list[str]) -> tuple[dict[str, str], list[tuple[str, int]]]:
@@ -452,12 +486,30 @@ def _parse_seed_kv_tokens(tokens: list[str]) -> tuple[dict[str, str], list[tuple
 
 
 def parse_seed_pragmas(source_text: str) -> SeedSpecs:
-    """Parse SEED_TYPE / SEED_INSTANCE pragmas from source comments."""
+    """Parse SEED_TYPE / SEED_TYPE_METHOD / SEED_INSTANCE pragmas."""
     types: list[SeedTypeSpec] = []
+    type_methods: list[SeedTypeMethodSpec] = []
     instances: list[SeedInstanceSpec] = []
     for line in source_text.splitlines():
         stripped = line.strip()
-        if stripped.startswith(_INJECT_SEED_TYPE_PREFIX):
+        if stripped.startswith(_INJECT_SEED_TYPE_METHOD_PREFIX):
+            rest = stripped[len(_INJECT_SEED_TYPE_METHOD_PREFIX) :].strip()
+            if "=" not in rest:
+                raise ValueError(
+                    "SEED_TYPE_METHOD expects '<Type> <attr> = <func>', "
+                    f"got {stripped!r}"
+                )
+            left, func = rest.split("=", 1)
+            parts = left.split()
+            if len(parts) != 2 or not func.strip():
+                raise ValueError(
+                    "SEED_TYPE_METHOD expects '<Type> <attr> = <func>', "
+                    f"got {stripped!r}"
+                )
+            type_methods.append(
+                SeedTypeMethodSpec(parts[0], parts[1], func.strip())
+            )
+        elif stripped.startswith(_INJECT_SEED_TYPE_PREFIX):
             rest = stripped[len(_INJECT_SEED_TYPE_PREFIX) :].strip().split()
             if not rest:
                 raise ValueError("SEED_TYPE expects '<Name> [attr=int ...]'")
@@ -472,7 +524,9 @@ def parse_seed_pragmas(source_text: str) -> SeedSpecs:
             opts, attrs = _parse_seed_kv_tokens(rest[1:])
             slots = int(opts.get("slots", "4"))
             if slots < 0 or (slots > 0 and (slots & (slots - 1)) != 0):
-                raise ValueError(f"SEED_INSTANCE slots must be 0 or power of two, got {slots}")
+                raise ValueError(
+                    f"SEED_INSTANCE slots must be 0 or power of two, got {slots}"
+                )
             instances.append(
                 SeedInstanceSpec(
                     rest[0],
@@ -481,17 +535,119 @@ def parse_seed_pragmas(source_text: str) -> SeedSpecs:
                     attrs=tuple(attrs),
                 )
             )
-    return SeedSpecs(tuple(types), tuple(instances))
+    return SeedSpecs(tuple(types), tuple(type_methods), tuple(instances))
+
+
+def fold_function_defaults(
+    module_code: types.CodeType,
+) -> tuple[types.CodeType, dict[int, tuple]]:
+    """Fold ``SET_FUNCTION_ATTRIBUTE`` defaults into a map; NOP-pad the ops.
+
+    Pattern (CPython 3.14)::
+
+        LOAD_CONST <defaults_tuple>
+        LOAD_CONST <code>
+        MAKE_FUNCTION
+        SET_FUNCTION_ATTRIBUTE 1 (defaults)
+
+    Becomes::
+
+        NOP
+        LOAD_CONST <code>
+        MAKE_FUNCTION
+        NOP
+
+    Returns ``(rewritten_module, {id(code): defaults_tuple})``.
+    """
+    defaults_map: dict[int, tuple] = {}
+
+    def fold_one(co: types.CodeType) -> types.CodeType:
+        code = bytearray(co.co_code)
+        consts = list(co.co_consts)
+        # Recurse into nested code objects first (identity-stable replace).
+        changed_consts = False
+        for i, const in enumerate(consts):
+            if isinstance(const, types.CodeType):
+                new_c = fold_one(const)
+                if new_c is not const:
+                    consts[i] = new_c
+                    changed_consts = True
+
+        i = 0
+        n = len(code)
+        while i + 7 < n:
+            op0, a0 = code[i], code[i + 1]
+            op1, a1 = code[i + 2], code[i + 3]
+            op2, _a2 = code[i + 4], code[i + 5]
+            op3, a3 = code[i + 6], code[i + 7]
+            if (
+                op0 == _OP_LOAD_CONST
+                and op1 == _OP_LOAD_CONST
+                and op2 == _OP_MAKE_FUNCTION
+                and op3 == _OP_SET_FUNCTION_ATTRIBUTE
+            ):
+                if a3 != _SFA_FLAG_DEFAULTS:
+                    raise ValueError(
+                        f"SET_FUNCTION_ATTRIBUTE flag {a3} in {co.co_name!r} "
+                        f"at offset {i + 6}: only defaults (1) supported"
+                    )
+                defaults = consts[a0]
+                func_co = consts[a1]
+                if not isinstance(defaults, tuple):
+                    raise ValueError(
+                        f"defaults const at index {a0} in {co.co_name!r} "
+                        f"is {type(defaults).__name__}, expected tuple"
+                    )
+                if not isinstance(func_co, types.CodeType):
+                    raise ValueError(
+                        f"MAKE_FUNCTION target at const {a1} in {co.co_name!r} "
+                        "is not a code object"
+                    )
+                defaults_map[id(func_co)] = defaults
+                code[i] = _OP_NOP
+                code[i + 1] = 0
+                code[i + 6] = _OP_NOP
+                code[i + 7] = 0
+                i += 8
+                continue
+            i += 2
+
+        new_co = co
+        if changed_consts or bytes(code) != co.co_code:
+            new_co = co.replace(co_code=bytes(code), co_consts=tuple(consts))
+            # Remap defaults_map keys if nested codes were replaced.
+            # fold_one already keyed nested by their (possibly new) ids when
+            # fold_one ran on them; the MAKE_FUNCTION target id is from the
+            # consts list after nested rewrite, so id(func_co) is correct.
+        return new_co
+
+    return fold_one(module_code), defaults_map
+
+
+def _code_handles_by_name(
+    module_code: types.CodeType, code_handles: dict[int, Tagged]
+) -> dict[str, Tagged]:
+    out: dict[str, Tagged] = {}
+    for co in iter_code_objects(module_code):
+        handle = code_handles.get(id(co))
+        if handle is not None:
+            out[co.co_name] = handle
+    return out
 
 
 def _seed_globals_pairs(
     heap: HeapImageBuilder,
     string_heap: StringHeapBuilder,
     seeds: SeedSpecs,
+    code_by_name: dict[str, Tagged],
 ) -> list[tuple[Tagged, Tagged]]:
     """Allocate seeded TYPE/INSTANCE objects and return globals key/value pairs."""
     type_handles: dict[str, Tagged] = {}
     pairs: list[tuple[Tagged, Tagged]] = []
+
+    methods_by_type: dict[str, list[SeedTypeMethodSpec]] = {}
+    for m in seeds.type_methods:
+        methods_by_type.setdefault(m.type_name, []).append(m)
 
     for spec in seeds.types:
         attr_pairs: list[tuple[Tagged, Tagged]] = []
@@ -502,14 +658,32 @@ def _seed_globals_pairs(
                     (TAG_INT, int_value(attr_val)),
                 )
             )
+        for mspec in methods_by_type.get(spec.name, []):
+            handle = code_by_name.get(mspec.func_name)
+            if handle is None:
+                raise ValueError(
+                    f"SEED_TYPE_METHOD {spec.name}.{mspec.attr_name}: "
+                    f"function {mspec.func_name!r} not found among code objects"
+                )
+            attr_pairs.append(
+                (tag_constant(mspec.attr_name, string_heap), handle)
+            )
+        n_keys = max(len(attr_pairs), 1)
         tp_dict = heap.alloc_dict(
             attr_pairs,
-            slot_count=dict_min_slots(max(len(attr_pairs), 1)),
+            slot_count=dict_min_slots(n_keys),
         )
         tp_name = tag_constant(spec.name, string_heap)
         handle = heap.alloc_type(tp_name, tp_dict=tp_dict)
         type_handles[spec.name] = handle
         pairs.append((tag_constant(spec.name, string_heap), handle))
+
+    for mspec in seeds.type_methods:
+        if mspec.type_name not in type_handles:
+            raise ValueError(
+                f"SEED_TYPE_METHOD references unknown type {mspec.type_name!r}; "
+                "declare SEED_TYPE first"
+            )
 
     for spec in seeds.instances:
         type_addr = 0
@@ -546,6 +720,7 @@ def build_image_from_code(
     module_code: types.CodeType,
     *,
     seeds: SeedSpecs | None = None,
+    defaults_map: dict[int, tuple] | None = None,
 ) -> ImageBuildResult:
     require_python_3_14()
     validate_code_tree(module_code)
@@ -556,11 +731,15 @@ def build_image_from_code(
     n_for_slots = len(stored_names | seeds.global_names)
     globals_slot_count = dict_slot_count_for_stores(n_for_slots)
 
-    serializer = _ImageSerializer()
-    seed_pairs = _seed_globals_pairs(serializer.heap, serializer.string_heap, seeds)
+    serializer = _ImageSerializer(defaults_map=defaults_map)
+    # Serialize first so SEED_TYPE_METHOD can resolve CODE_OBJECT handles.
+    module_handle = serializer.serialize_code(module_code)
+    code_by_name = _code_handles_by_name(module_code, serializer.code_handles)
+    seed_pairs = _seed_globals_pairs(
+        serializer.heap, serializer.string_heap, seeds, code_by_name
+    )
     if seed_pairs:
         if len(seed_pairs) >= globals_slot_count:
-            # Keep the interim "at least one empty slot" policy.
             globals_slot_count = dict_slot_count_for_stores(len(seed_pairs) + 1)
         globals_dict = serializer.heap.alloc_dict(
             seed_pairs, slot_count=globals_slot_count
@@ -569,7 +748,6 @@ def build_image_from_code(
         globals_dict = serializer.heap.alloc_empty_globals(len(stored_names))
         globals_slot_count = dict_slot_count_for_stores(len(stored_names))
 
-    module_handle = serializer.serialize_code(module_code)
     serializer.heap.write_boot_record(module_handle, globals_dict)
 
     return ImageBuildResult(
@@ -804,7 +982,10 @@ def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildR
     module_code = compile(source_text, filename, "exec")
     module_code = apply_lfac_injects(module_code, source_text)
     module_code = apply_set_add_seq_injects(module_code, source_text)
-    return build_image_from_code(module_code, seeds=seeds)
+    module_code, defaults_map = fold_function_defaults(module_code)
+    return build_image_from_code(
+        module_code, seeds=seeds, defaults_map=defaults_map
+    )
 
 
 def build_image_from_source(source: pathlib.Path) -> ImageBuildResult:

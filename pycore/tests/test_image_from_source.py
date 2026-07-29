@@ -75,20 +75,42 @@ class ImageTranscodingTest(unittest.TestCase):
         self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
         self.assertGreater(len(result.program_slots), 0)
 
-    def test_set_function_attribute_rejected_specifically(self) -> None:
+    def test_function_defaults_folded_at_build_time(self) -> None:
+        result = image_from_source.build_image_from_source_text(
+            "def f(a, b=5):\n"
+            "    return a + b\n"
+            "\n"
+            "def managed_entry():\n"
+            "    return f(1)\n"
+            "\n"
+            "managed_entry()\n",
+            "<defaults>",
+        )
+        self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
+
+    def test_set_function_attribute_closure_rejected(self) -> None:
         with self.assertRaises(ValueError) as ctx:
             image_from_source.build_image_from_source_text(
-                "def managed_entry(x=1):\n"
-                "    return x\n"
+                "def managed_entry():\n"
+                "    x = 1\n"
+                "    def inner():\n"
+                "        return x\n"
+                "    return inner()\n"
                 "\n"
                 "managed_entry()\n",
-                "<defaults>",
+                "<closure>",
             )
 
         msg = str(ctx.exception)
-        self.assertIn("SET_FUNCTION_ATTRIBUTE", msg)
-        self.assertIn("defaults", msg)
-        self.assertIn("closures", msg)
+        self.assertTrue(
+            "SET_FUNCTION_ATTRIBUTE" in msg
+            or "LOAD_CLOSURE" in msg
+            or "MAKE_CELL" in msg
+            or "COPY_FREE_VARS" in msg
+            or "Unsupported" in msg
+            or "Deferred" in msg,
+            msg,
+        )
 
     def test_nop_opcode_now_supported(self) -> None:
         src = (

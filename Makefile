@@ -150,6 +150,10 @@ EXCORE_RTL_SRCS := \
 	pycore-img-attr-del pycore-img-attr-del-reinsert \
 	pycore-img-attr-shadow pycore-img-attr-mro \
 	pycore-img-attr-all \
+	pycore-img-method-call pycore-img-method-nested \
+	pycore-img-ctor-noinit pycore-img-ctor-init \
+	pycore-img-default-arg pycore-img-default-arg-argc-trap \
+	pycore-img-bound-method-obj pycore-img-method-all \
 	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
@@ -918,7 +922,8 @@ pycore-img: \
 	pycore-img-set-hash-neg1 \
 	pycore-img-set-str \
 	pycore-img-set-grow-fatal \
-	pycore-img-attr-all
+	pycore-img-attr-all \
+	pycore-img-method-all
 
 # Attribute protocol (M2): LOAD/STORE/DELETE_ATTR via seeded OBK_INSTANCE.
 pycore-img-attr-basic:
@@ -958,6 +963,37 @@ pycore-img-attr-all: \
 	pycore-img-attr-del-reinsert \
 	pycore-img-attr-shadow \
 	pycore-img-attr-mro
+
+# Generalized CALL (M3): method form, type ctor, defaults, bound-method obj.
+pycore-img-method-call:
+	$(call PYCORE_IMAGE_RUN,method_call,50000)
+
+pycore-img-method-nested:
+	$(call PYCORE_IMAGE_RUN,method_nested,100000)
+
+pycore-img-ctor-noinit:
+	$(call PYCORE_IMAGE_RUN,ctor_noinit,50000)
+
+pycore-img-ctor-init:
+	$(call PYCORE_IMAGE_RUN,ctor_init,100000)
+
+pycore-img-default-arg:
+	$(call PYCORE_IMAGE_RUN,default_arg,50000)
+
+pycore-img-default-arg-argc-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,default_arg_argc_trap,6,50000)
+
+pycore-img-bound-method-obj:
+	$(call PYCORE_IMAGE_RUN,bound_method_obj,100000)
+
+pycore-img-method-all: \
+	pycore-img-method-call \
+	pycore-img-method-nested \
+	pycore-img-ctor-noinit \
+	pycore-img-ctor-init \
+	pycore-img-default-arg \
+	pycore-img-default-arg-argc-trap \
+	pycore-img-bound-method-obj
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /
