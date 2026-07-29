@@ -386,8 +386,8 @@ word_idx  = block_off >> log2(DATA_WIDTH/8)
   value per transaction, 16-byte aligned in v1.
 
 Default memory map (all parameters in `pycore_defs.svh`): `ADDR_WIDTH = 32`,
-`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 4` (16 KB), `DMEM_BLOCK_COUNT = 4`
-(16 KB). Out-of-range or misaligned data accesses raise `MEM_FAULT` /
+`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 4` (16 KB), `DMEM_BLOCK_COUNT = 16`
+(64 KB). Out-of-range or misaligned data accesses raise `MEM_FAULT` /
 `ADDR_ALIGN`.
 
 PTR load/store reach data memory through two internal-only opcodes
@@ -417,7 +417,7 @@ slot 1: { zero padding, caller cur_code[31:0] }
 Each RETURN pops slot 1 then slot 0, restores the caller's code object pointer,
 PC, TOS base, and locals base, then reloads the caller's `co_consts` and
 `co_names` from the code object before fetch resumes. Frame depth is bounded by
-the reserved frame-stack region (`0x2000`-`0x3FFF`).
+the reserved frame-stack region (`0xC000`-`0xFFFF`).
 
 > **Future work:** an earlier design study (`pycore/rtl/attic/pycore_frame_buffer.sv`)
 > explored a ring-buffer RF window with memory spill so call depth could scale
@@ -489,10 +489,10 @@ container objects.  The heap occupies a fixed region of data memory:
 
 ```text
 PYCORE_HEAP_BASE  = 0x0000_0400  (1 KB offset from dmem start)
-PYCORE_HEAP_LIMIT = 0x0000_2000  (just below the call-frame stack)
+PYCORE_HEAP_LIMIT = 0x0000_C000  (just below the call-frame stack)
 ```
 
-Capacity: ~7 KB.  A `heap_ptr_r` register in `pycore_core.sv` starts at
+Capacity: ~47 KB.  A `heap_ptr_r` register in `pycore_core.sv` starts at
 `HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE`) and advances monotonically; there
 is no free list (no object reclamation in this prototype).  Overflow traps
 `PY_TRAP_MEM_FAULT`.  A preloaded static heap image sets `HEAP_INIT_PTR` to the

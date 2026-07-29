@@ -52,7 +52,8 @@ IMEM_SLOT_BITS = 64
 IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
 
 HEAP_BASE = 0x0400
-HEAP_LIMIT = 0x2000
+# Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (below frame stack at 0xC000).
+HEAP_LIMIT = 0xC000
 BOOT_RECORD_ADDR = 0x03E0
 
 # Code-object field indices (tuple-element convention at code addr).

@@ -20,9 +20,25 @@ def _align(n):
     return (n + (DSIZE - 1)) & ~(DSIZE - 1)
 
 
+def _zeros(n):
+    """Build a zero-filled list without LIST * INT (unsupported in PyCore).
+
+    CPython 3.14 lowers ``[0] * n`` to BINARY_OP NB_MULTIPLY.  PyCore only
+    multiplies numeric tags, so M6 builds via inplace LIST_EXTEND of a
+    16-zero chunk (excore path).  Callers must pass a multiple of 16.
+    """
+    z16 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    out = []
+    filled = 0
+    while filled < n:
+        out += z16
+        filled += 16
+    return out
+
+
 class Allocator:
     def __init__(self, capacity=512):
-        self.mem = [0] * capacity
+        self.mem = _zeros(capacity)
         self.mem_max = capacity
         self.brk = 0
         self.free_listp = NULL

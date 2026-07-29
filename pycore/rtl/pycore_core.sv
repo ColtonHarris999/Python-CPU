@@ -765,15 +765,15 @@ module pycore_core #(
     // two slots are popped back and the core reloads caller code-object fields.
     // The core mediates those dmem transactions through the push/pop handshake.
     //
-    // The frame stack lives in the upper half of the 16 KB data memory
-    // (byte addresses 0x2000–0x3FFF), leaving the lower 8 KB for user-level
-    // pointer data.  STACK_BASE_ADDR must be within the dmem address window
-    // (BLOCK_COUNT × 2^BLOCK_SHIFT = 4 × 4 KB = 16 KB).
+    // The frame stack lives at the top of the 64 KB data memory
+    // (byte addresses 0xC000–0xFFFF), leaving ~47 KB below for the object
+    // heap.  STACK_BASE_ADDR must be within the dmem address window
+    // (BLOCK_COUNT × 2^BLOCK_SHIFT = 16 × 4 KB = 64 KB).
     // ---------------------------------------------------------------------
     localparam int    RF_BASE_CORE          = STACK_BASE;
     localparam int    MAX_CALL_DEPTH_CORE   = 128;
-    localparam logic [ADDR_WIDTH-1:0] FRAME_STACK_BASE = 32'h0000_2000;
-    localparam int    FRAME_STACK_BYTES     = 32'h0000_2000;  // 8 KB, 256 frames
+    localparam logic [ADDR_WIDTH-1:0] FRAME_STACK_BASE = 32'h0000_C000;
+    localparam int    FRAME_STACK_BYTES     = 32'h0000_4000;  // 16 KB, 512 frames
 
     logic [RF_AW-1:0]      frame_next_locals_base;
     logic                  frame_init_new_frame;

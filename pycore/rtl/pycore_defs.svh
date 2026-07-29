@@ -18,7 +18,7 @@ localparam int PYCORE_VAL_LSB = 0;                            // 0
 localparam int PYCORE_ADDR_WIDTH       = 32;
 localparam int PYCORE_BLOCK_SHIFT      = 12;   // 4096 bytes / block
 localparam int PYCORE_IMEM_BLOCK_COUNT = 4;    // 16 KB instruction memory
-localparam int PYCORE_DMEM_BLOCK_COUNT = 4;    // 16 KB data memory
+localparam int PYCORE_DMEM_BLOCK_COUNT = 16;   // 64 KB data memory
 localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
 localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot
 
@@ -1058,18 +1058,18 @@ endfunction
 // Heap allocator address-space parameters.
 //
 // The object heap lives at the bottom of dmem, below the frame stack which
-// starts at FRAME_STACK_BASE (0x2000).  PYCORE_HEAP_BASE is left at 0x0400
+// starts at FRAME_STACK_BASE (0xC000).  PYCORE_HEAP_BASE is left at 0x0400
 // to leave a 1 KB buffer at address 0 for any PTR-based user data.  The
 // bump pointer starts at PYCORE_HEAP_BASE and grows upward; a trap is
 // raised when it would exceed PYCORE_HEAP_LIMIT.
 //
-// Default memory map:
-//   0x0000 – 0x03FF  (1 KB)  reserved / user PTR data
-//   0x0400 – 0x1FFF  (7 KB)  container heap (this region)
-//   0x2000 – 0x3FFF  (8 KB)  call-frame stack
+// Default memory map (DMEM_BLOCK_COUNT=16 → 64 KB):
+//   0x0000 – 0x03FF  (1 KB)   reserved / user PTR data
+//   0x0400 – 0xBFFF  (~47 KB) container heap (this region)
+//   0xC000 – 0xFFFF  (16 KB)  call-frame stack
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0400;
-localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0000_2000;
+localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0000_C000;
 
 // -------------------------------------------------------------------------
 // LIST in-dmem layout v2 — growable split object/buffer (Phase A).

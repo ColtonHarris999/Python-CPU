@@ -334,9 +334,44 @@ define PYCORE_IMAGE_RUN_SRC
 	./$(BUILD_DIR)/$(1)/verilator/Vtb_container
 endef
 
-# Failing until M6 / M8 — kept as visible milestone targets.
-pycore-img-allocator-list:
-	$(call PYCORE_IMAGE_RUN_SRC,img_allocator_list,allocator_list.py,200000)
+# Same as PYCORE_IMAGE_RUN_SRC but on the two-core top (LIST_EXTEND / grow).
+define PYCORE_IMAGE_RUN_SRC_TWOCORE
+	mkdir -p $(BUILD_DIR)/$(1)
+	$(PYTHON) pycore/tools/run_image_test.py \
+		--source pycore/programs/$(2) \
+		--entry managed_entry \
+		--program-hex $(BUILD_DIR)/$(1)/program.hex \
+		--dmem-hex $(BUILD_DIR)/$(1)/dmem.hex \
+		--string-hex $(BUILD_DIR)/$(1)/string_mem.hex \
+		--meta $(BUILD_DIR)/$(1)/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/$(1)/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/$(1)/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/$(1)/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GEXCORE_EN=1 \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d$$EXPECTED_TAG \
+		"-GEXPECTED_VALUE=128'd$$EXPECTED_VALUE" \
+		-GMAX_CYCLES=$(3) \
+		--Mdir $(BUILD_DIR)/$(1)/verilator_twocore \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/$(1)/verilator_twocore/Vtb_container
+endef
+
+# M6 target: allocator_list needs LIST_EXTEND (excore) for _zeros().
+# M8 target remains deferred until builtins/slices land.
+pycore-img-allocator-list: excore-fw
+	$(call PYCORE_IMAGE_RUN_SRC_TWOCORE,img_allocator_list,allocator_list.py,5000000)
 
 pycore-img-allocator-bytes:
 	$(call PYCORE_IMAGE_RUN_SRC,img_allocator_bytes,allocator_bytes.py,400000)
@@ -1145,9 +1180,10 @@ pycore-container-dict-full-insert:
 	# Load ≥ 2/3 / last-slot insert → PY_TRAP_DICT_GROW (11), not MEM_FAULT.
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d11 -GSTRING_HEX=\"pycore/programs/dict_full_insert_str.hex\" -GMAX_CYCLES=20000,pycore_container_dict_full_insert)
 
-# HEAP_INIT_PTR = 0x1F9C so BUILD_LIST 3 (112 bytes) exceeds PYCORE_HEAP_LIMIT.
+# HEAP_INIT_PTR = 0xBF9C so BUILD_LIST 3 (112 bytes) exceeds PYCORE_HEAP_LIMIT
+# (0xC000 after the 64 KB dmem / heap widen for object programs).
 pycore-container-list-oom:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h00001f9c",pycore_container_list_oom)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h0000bf9c",pycore_container_list_oom)
 
 # Natural FOR_ITER exhaustion skips END_FOR, so this raw stream executes
 # END_FOR directly and verifies its POP_TOP-equivalent stack effect.
@@ -1300,7 +1336,7 @@ pycore-excore-grow-from-zero: excore-fw pycore-excore-integration-fixtures
 pycore-excore-fast-path-no-trap: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,fast_path_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd9" -GEXPECTED_TRAP_REQ_COUNT=0)
 
-# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0x2000) so the excore's
+# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0xC000) so the excore's
 # doubled buffer (cap 4 -> 8, 256 bytes) cannot fit -> FATAL(MEM_FAULT).
 pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 	mkdir -p $(BUILD_DIR)/grow_oom_fatal
@@ -1314,7 +1350,7 @@ pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXCORE_EN=1 \
 		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
-		"-GHEAP_INIT_PTR=32'h00001f80" \
+		"-GHEAP_INIT_PTR=32'h0000bf80" \
 		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 \
 		--Mdir $(BUILD_DIR)/grow_oom_fatal/verilator \
 		-Wall -Wno-fatal \
@@ -1390,7 +1426,7 @@ pycore-excore-extend-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXCORE_EN=1 \
 		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
-		"-GHEAP_INIT_PTR=32'h00001f80" \
+		"-GHEAP_INIT_PTR=32'h0000bf80" \
 		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 \
 		--Mdir $(BUILD_DIR)/extend_oom_fatal/verilator \
 		-Wall -Wno-fatal \
