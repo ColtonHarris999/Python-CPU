@@ -138,6 +138,7 @@ whose ownership is being transferred.
 | 12 | `PY_TRAP_LIST_DELETE` | **recoverable** | mid-list `DELETE_SUBSCR` shift; excore COMPLETED pop 2 |
 | 13 | `PY_TRAP_SET_GROW` | **recoverable** | `SET_ADD` at load ≥ 2/3; excore realloc + insert |
 | 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | always; excore grow-to-fit + merge |
+| 15 | `PY_TRAP_ATTR_ERROR` | fatal | `LOAD_ATTR` / `DELETE_ATTR` miss after instance `__dict__` + MRO |
 | 15 | *(free)* | — | reserved |
 
 `pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of

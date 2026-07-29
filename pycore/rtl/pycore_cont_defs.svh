@@ -30,6 +30,9 @@
     localparam logic [5:0] CONT_SET_UPDATE = 6'd26;// SET_UPDATE → always trap
     localparam logic [5:0] CONT_GET_ITER = 6'd27;// LIST/TUPLE -> internal PTR iterator
     localparam logic [5:0] CONT_FOR_ITER = 6'd28;// advance internal iterator
+    localparam logic [5:0] CONT_LOAD_ATTR = 6'd29;// LOAD_ATTR (MRO + method form)
+    localparam logic [5:0] CONT_STORE_ATTR = 6'd30;// STORE_ATTR → instance __dict__
+    localparam logic [5:0] CONT_DELETE_ATTR = 6'd31;// DELETE_ATTR → instance __dict__
 
     // Container phases (stored in container_phase_r, 6-bit).
     //
@@ -94,4 +97,22 @@
     // then push the yielded element through the single RF write port.
     localparam logic [5:0] CP_ITER_WB = 6'd23;
     localparam logic [5:0] CP_ITEM_WB = 6'd24;
+    // Attribute protocol (LOAD/STORE/DELETE_ATTR):
+    //   CP_ATTR_HEAD     : ob_head ack — INSTANCE vs TYPE vs trap
+    //   CP_ATTR_IDICT    : instance/type field0 (__dict__/tp_dict) val+tag
+    //   CP_ATTR_TYPE     : MRO step — guard depth, issue type ob_head read
+    //   CP_ATTR_TDICT    : type ob_head ack → verify OBK_TYPE → field0
+    //   CP_ATTR_WB       : writeback attr / func / bound-method handle
+    //   CP_ATTR_WB_SELF  : method_flag follow-up (self or NULL)
+    //   CP_ATTR_BOUND*   : allocate OBK_BOUND_METHOD (96B) field writes
+    localparam logic [5:0] CP_ATTR_HEAD = 6'd25;
+    localparam logic [5:0] CP_ATTR_IDICT = 6'd26;
+    localparam logic [5:0] CP_ATTR_TYPE = 6'd27;
+    localparam logic [5:0] CP_ATTR_TDICT = 6'd28;
+    localparam logic [5:0] CP_ATTR_WB = 6'd29;
+    localparam logic [5:0] CP_ATTR_WB_SELF = 6'd30;
+    localparam logic [5:0] CP_ATTR_BOUND0 = 6'd31;
+    localparam logic [5:0] CP_ATTR_BOUND1 = 6'd32;
+    localparam logic [5:0] CP_ATTR_BOUND2 = 6'd33;
+    localparam logic [5:0] CP_ATTR_BOUND3 = 6'd34;
 

@@ -108,6 +108,10 @@ localparam logic [4:0] PY_TRAP_SET_GROW = 5'd13;
 // PY_TRAP_SET_UPDATE: always raised by SET_UPDATE (bulk merge). Recoverable —
 // excore grow-to-fit + insert from LIST/TUPLE/SET source, COMPLETED pop=1.
 localparam logic [4:0] PY_TRAP_SET_UPDATE = 5'd14;
+// PY_TRAP_ATTR_ERROR: attribute missing after instance __dict__ + MRO walk
+// (LOAD_ATTR / DELETE_ATTR), or equivalent AttributeError. Fatal — no excore
+// recovery. Raised before any RF/heap/dmem commit.
+localparam logic [4:0] PY_TRAP_ATTR_ERROR = 5'd15;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a
@@ -233,6 +237,18 @@ localparam logic [7:0] PY_OP_LIST_EXTEND      = 8'd79;
 localparam logic [7:0] PY_OP_DELETE_SUBSCR    = 8'd8;
 localparam logic [7:0] PY_OP_CONTAINS_OP      = 8'd57;
 
+// LOAD_ATTR / STORE_ATTR / DELETE_ATTR — CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['LOAD_ATTR'],
+//                                       opcode.opmap['STORE_ATTR'],
+//                                       opcode.opmap['DELETE_ATTR'])"
+//   -> 80, 110, 61
+// LOAD_ATTR: namei = oparg >> 1; method_flag = oparg & 1 (push [func,self]
+//   or [attr,NULL] without allocating a bound method on the hot path).
+// STORE_ATTR / DELETE_ATTR: namei = oparg (no low-bit encoding).
+localparam logic [7:0] PY_OP_LOAD_ATTR        = 8'd80;
+localparam logic [7:0] PY_OP_STORE_ATTR       = 8'd110;
+localparam logic [7:0] PY_OP_DELETE_ATTR      = 8'd61;
+
 // -------------------------------------------------------------------------
 // DELETE_SUBSCR stack convention — verified 2026-07-21 against CPython 3.14.6:
 //   del a[i]  →  LOAD a; LOAD i; DELETE_SUBSCR
@@ -341,6 +357,10 @@ localparam logic [7:0] PY_CACHE_POP_JUMP_IF_FALSE    = 8'd1;
 localparam logic [7:0] PY_CACHE_POP_JUMP_IF_NONE     = 8'd1;
 localparam logic [7:0] PY_CACHE_POP_JUMP_IF_NOT_NONE = 8'd1;
 localparam logic [7:0] PY_CACHE_POP_JUMP_IF_TRUE     = 8'd1;
+// ATTR inline-cache unit counts (fetch skips CACHE by opcode; kept for
+// documentation / jump math parity with opcode._inline_cache_entries).
+localparam logic [7:0] PY_CACHE_LOAD_ATTR             = 8'd9;
+localparam logic [7:0] PY_CACHE_STORE_ATTR            = 8'd4;
 
 // Internal-only memory opcodes. These are not part of the CPython 3.14 opcode
 // space and are never emitted by the image builder; they exist so hand-written

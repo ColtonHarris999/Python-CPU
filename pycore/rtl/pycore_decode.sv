@@ -266,6 +266,24 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
+            // LOAD_ATTR: receiver at tos-1; name from co_names[oparg>>1].
+            // STORE_ATTR: obj at tos-1, value at tos-2; namei = oparg.
+            // DELETE_ATTR: obj at tos-1; namei = oparg.
+            PY_OP_LOAD_ATTR: begin
+                rs1_sel_o      = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
+            end
+
+            PY_OP_STORE_ATTR: begin
+                rs1_sel_o      = tos_index_i - 8'd1;  // object
+                is_container_o = 1'b1;
+            end
+
+            PY_OP_DELETE_ATTR: begin
+                rs1_sel_o      = tos_index_i - 8'd1;  // object
+                is_container_o = 1'b1;
+            end
+
             PY_OP_BUILD_LIST: begin
                 is_container_o = 1'b1;
             end

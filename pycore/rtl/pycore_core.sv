@@ -342,6 +342,8 @@ module pycore_core #(
     // value persists for exactly one clock cycle.
     logic                          container_type_trap_r;
     logic                          container_mem_fault_r;
+    // One-cycle pulse: LOAD/DELETE_ATTR miss after __dict__ + MRO → ATTR_ERROR.
+    logic                          container_attr_error_r;
 
     // One-cycle pulse outputs to frame manager (registered).
     logic                          frame_call_valid_r;
@@ -462,6 +464,7 @@ module pycore_core #(
             // (S_CONTAINER manages tos and RF writes).
             PY_OP_LOAD_CONST, PY_OP_LOAD_GLOBAL, PY_OP_LOAD_NAME,
             PY_OP_STORE_NAME, PY_OP_STORE_GLOBAL,
+            PY_OP_LOAD_ATTR, PY_OP_STORE_ATTR, PY_OP_DELETE_ATTR,
             PY_OP_LOAD_FAST_BORROW_LOAD_FAST_BORROW,
             PY_OP_LOAD_FAST_LOAD_FAST,
             PY_OP_LOAD_FAST_AND_CLEAR,
@@ -951,6 +954,8 @@ module pycore_core #(
     assign list_delete_sig    = container_list_delete_trap_r;
     assign set_grow_sig       = container_set_grow_trap_r;
     assign set_update_sig     = container_set_update_trap_r;
+    logic attr_error_sig;
+    assign attr_error_sig     = container_attr_error_r;
     // Phase C: excore reported RES_FATAL for a trap it was handed — forward
     // its fatal_code as a normal halt (see S_TRAP_WAIT).
     logic excore_fatal_sig;
@@ -983,6 +988,7 @@ module pycore_core #(
         .list_delete_i(list_delete_sig),
         .set_grow_i(set_grow_sig),
         .set_update_i(set_update_sig),
+        .attr_error_i(attr_error_sig),
         .excore_fatal_i(excore_fatal_sig),
         .excore_fatal_code_i(excore_fatal_code_r),
         .fault_pc_i(fault_pc),
@@ -1320,6 +1326,7 @@ module pycore_core #(
             container_wb_data_r      <= '0;
             container_type_trap_r    <= 1'b0;
             container_mem_fault_r    <= 1'b0;
+            container_attr_error_r   <= 1'b0;
             container_buf_r          <= '0;
             container_list_hdr_r     <= '0;
             container_list_grow_trap_r   <= 1'b0;
@@ -1363,6 +1370,7 @@ module pycore_core #(
             container_wb_we_r     <= 1'b0;
             container_type_trap_r <= 1'b0;
             container_mem_fault_r <= 1'b0;
+            container_attr_error_r <= 1'b0;
             container_list_grow_trap_r   <= 1'b0;
             container_list_extend_trap_r <= 1'b0;
             container_list_delete_trap_r <= 1'b0;
@@ -1414,6 +1422,7 @@ module pycore_core #(
                             container_dmem_pending_r <= 1'b0;
                             container_type_trap_r    <= 1'b0;
                             container_mem_fault_r    <= 1'b0;
+                            container_attr_error_r   <= 1'b0;
                             container_wb_we_r        <= 1'b0;
                             trap_marshal_pending_r   <= 1'b0;
 
@@ -1503,6 +1512,13 @@ module pycore_core #(
                                 container_op_r <= CONT_FOR_ITER;
                             end else if (cur_opcode_r == PY_OP_SWAP) begin
                                 container_op_r <= CONT_SWAP;
+                            end else if (cur_opcode_r == PY_OP_LOAD_ATTR) begin
+                                container_op_r        <= CONT_LOAD_ATTR;
+                                container_push_null_r <= cur_arg_r[0]; // method_flag
+                            end else if (cur_opcode_r == PY_OP_STORE_ATTR) begin
+                                container_op_r <= CONT_STORE_ATTR;
+                            end else if (cur_opcode_r == PY_OP_DELETE_ATTR) begin
+                                container_op_r <= CONT_DELETE_ATTR;
                             end else if (cur_opcode_r == PY_OP_BINARY_OP) begin
                                 // BINARY_OP/NB_SUBSCR: rs1 = container.
                                 if (cont_rs1_tag == PY_TAG_DICT)
