@@ -39,6 +39,25 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | `BYTEARRAY` | 5 | `length` | `buf_addr` | `capacity` | 128 B |
 | `EXCEPTION` | 6 | `exc_type` | `args` (TUPLE) | — | 96 B |
 
+### Builtin ids (`PY_BI_*` / `BI_*`)
+
+| Id | Name | Notes |
+| --- | --- | --- |
+| 0 | `STATICMETHOD` | Image-time `@staticmethod` wrapper; `bound_self` = CODE |
+| 1 | `BYTEARRAY` | Constructor |
+| 2 | `FROM_BYTES` | `int.from_bytes` |
+| 3 | `TO_BYTES` | `int.to_bytes` |
+| 4 | `MAX` | |
+| 5 | `LIST_APPEND` | |
+| 6 | `PRINT` | |
+| 7 | `LEN` | |
+
+Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
+module **builtins** dict (`DICT`). The seeded builtins dict holds
+`bytearray` / `max` / `len` / `print` as `OBK_BUILTIN` handles and `int` as
+an `OBK_TYPE` whose `tp_dict` contains `from_bytes` / `to_bytes`. Total boot
+record size is `BOOT_RECORD_BYTES = 96`.
+
 ## D3 — `__dict__` is a real DICT
 
 Instance and class attributes are ordinary PyCore dicts with string keys.

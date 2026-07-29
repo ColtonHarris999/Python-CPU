@@ -40,6 +40,7 @@ NBARG_SUBSCR = 26
 NBARG_ADD = 0
 
 BOOT_RECORD_ADDR = 0x03E0
+BOOT_RECORD_BYTES = 96
 
 
 def _emit(slots: list[str], opcode: int, arg: int = 0) -> None:
@@ -64,7 +65,10 @@ def _write_image(
         argcount=0,
     )
     globals_dict = heap.alloc_dict([], slot_count=4)
-    heap.write_boot_record(module_code, globals_dict, addr=BOOT_RECORD_ADDR)
+    builtins_dict = heap.alloc_dict([], slot_count=4)
+    heap.write_boot_record(
+        module_code, globals_dict, builtins_dict, addr=BOOT_RECORD_ADDR
+    )
 
     write_program_hex(PROGRAMS_DIR / f"{name}.hex", slots)
     heap.write_hex(PROGRAMS_DIR / f"{name}_dmem.hex")
@@ -73,7 +77,7 @@ def _write_image(
 
 
 def _new_heap() -> HeapImageBuilder:
-    return HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + 64))
+    return HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + BOOT_RECORD_BYTES))
 
 
 def gen_grow_from_zero() -> None:

@@ -55,6 +55,8 @@ HEAP_BASE = 0x0400
 # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (below frame stack at 0x1C000).
 HEAP_LIMIT = 0x1C000
 BOOT_RECORD_ADDR = 0x03E0
+# Three tagged-entry pairs (code, globals, builtins); mirror PYCORE_BOOT_RECORD_BYTES.
+BOOT_RECORD_BYTES = 96
 
 # Code-object field indices (tuple-element convention at code addr).
 CODE_FIELD_ENTRY_SLOT = 0
@@ -72,6 +74,16 @@ OBK_BOUND_METHOD = 3
 OBK_BUILTIN = 4
 OBK_BYTEARRAY = 5
 OBK_EXCEPTION = 6
+
+# Builtin ids under OBK_BUILTIN (mirror PY_BI_* in pycore_defs.svh).
+BI_STATICMETHOD = 0
+BI_BYTEARRAY = 1
+BI_FROM_BYTES = 2
+BI_TO_BYTES = 3
+BI_MAX = 4
+BI_LIST_APPEND = 5
+BI_PRINT = 6
+BI_LEN = 7
 
 OBJ_HDR_BYTES = 32
 OBJ_INSTANCE_BYTES = 64

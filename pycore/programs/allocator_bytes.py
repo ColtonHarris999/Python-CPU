@@ -32,7 +32,8 @@ class Allocator:
         return int.from_bytes(self.mem[addr : addr + WSIZE], "little")
 
     def _put(self, addr, val):
-        self.mem[addr : addr + WSIZE] = int(val).to_bytes(WSIZE, "little", signed=False)
+        # Positional only — avoid CALL_KW (deferred). val is already int in this program.
+        self.mem[addr : addr + WSIZE] = val.to_bytes(WSIZE, "little")
 
     def _pack(self, size, alloc):
         return size | (1 if alloc else 0)

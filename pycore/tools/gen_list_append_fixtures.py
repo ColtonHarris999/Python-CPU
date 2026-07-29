@@ -49,6 +49,7 @@ NBARG_ADD = 0
 
 # pycore_defs.svh boot-record / code-object layout constants.
 BOOT_RECORD_ADDR = 0x03E0
+BOOT_RECORD_BYTES = 96
 
 
 def _emit(slots: list[str], opcode: int, arg: int = 0) -> None:
@@ -57,7 +58,7 @@ def _emit(slots: list[str], opcode: int, arg: int = 0) -> None:
 
 def gen_list_append_fast() -> None:
     """[7] with hand-set capacity 4; append 8, 9; subscript both; return 17."""
-    heap = HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + 64))
+    heap = HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + BOOT_RECORD_BYTES))
 
     list_handle = heap.alloc_list_with_capacity(
         [(TAG_INT, int_value(7))], capacity=4
@@ -90,7 +91,10 @@ def gen_list_append_fast() -> None:
         argcount=0,
     )
     globals_dict = heap.alloc_dict([], slot_count=4)
-    heap.write_boot_record(module_code, globals_dict, addr=BOOT_RECORD_ADDR)
+    builtins_dict = heap.alloc_dict([], slot_count=4)
+    heap.write_boot_record(
+        module_code, globals_dict, builtins_dict, addr=BOOT_RECORD_ADDR
+    )
 
     write_program_hex(PROGRAMS_DIR / "list_append_fast.hex", slots)
     heap.write_hex(PROGRAMS_DIR / "list_append_fast_dmem.hex")

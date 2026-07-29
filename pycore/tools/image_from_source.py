@@ -18,7 +18,14 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 from encoding import (
+    BI_BYTEARRAY,
+    BI_FROM_BYTES,
+    BI_LEN,
+    BI_MAX,
+    BI_PRINT,
+    BI_TO_BYTES,
     BOOT_RECORD_ADDR,
+    BOOT_RECORD_BYTES,
     HEAP_BASE,
     STRING_MEM_BYTES,
     TAG_INT,
@@ -188,6 +195,7 @@ class RawInstruction:
 class ImageBuildResult:
     module_code: Tagged
     globals_dict: Tagged
+    builtins_dict: Tagged
     program_slots: list[str]
     heap: HeapImageBuilder
     string_heap: StringHeapBuilder
@@ -357,9 +365,9 @@ class _ImageSerializer:
         defaults_map: dict[int, tuple] | None = None,
         type_refs: dict[str, Tagged] | None = None,
     ) -> None:
-        # BOOT_RECORD_ADDR is 0x03e0 and the two tagged entries occupy 64 bytes,
+        # BOOT_RECORD_ADDR is 0x03e0 and the three tagged pairs occupy 96 bytes,
         # so static image allocations must not start at the nominal 0x0400 base.
-        static_base = max(HEAP_BASE, BOOT_RECORD_ADDR + 64)
+        static_base = max(HEAP_BASE, BOOT_RECORD_ADDR + BOOT_RECORD_BYTES)
         self.heap = HeapImageBuilder(base=static_base)
         self.string_heap = StringHeapBuilder()
         self.program_slots: list[str] = []
@@ -798,6 +806,39 @@ def _seed_globals_pairs(
     return pairs
 
 
+def build_builtins_dict(
+    heap: HeapImageBuilder,
+    string_heap: StringHeapBuilder,
+) -> Tagged:
+    """Allocate the module builtins dict for the boot-record pair-2 slot.
+
+    Entries:
+      bytearray / max / len / print → OBK_BUILTIN with bound_self=NULL
+      int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
+    """
+    from_bytes = heap.alloc_builtin(BI_FROM_BYTES)
+    to_bytes = heap.alloc_builtin(BI_TO_BYTES)
+    int_tp_dict = heap.alloc_dict(
+        [
+            (tag_constant("from_bytes", string_heap), from_bytes),
+            (tag_constant("to_bytes", string_heap), to_bytes),
+        ],
+        slot_count=dict_min_slots(2),
+    )
+    int_type = heap.alloc_type(
+        tag_constant("int", string_heap),
+        tp_dict=int_tp_dict,
+    )
+    pairs: list[tuple[Tagged, Tagged]] = [
+        (tag_constant("bytearray", string_heap), heap.alloc_builtin(BI_BYTEARRAY)),
+        (tag_constant("max", string_heap), heap.alloc_builtin(BI_MAX)),
+        (tag_constant("len", string_heap), heap.alloc_builtin(BI_LEN)),
+        (tag_constant("print", string_heap), heap.alloc_builtin(BI_PRINT)),
+        (tag_constant("int", string_heap), int_type),
+    ]
+    return heap.alloc_dict(pairs, slot_count=dict_min_slots(len(pairs)))
+
+
 def build_image_from_code(
     module_code: types.CodeType,
     *,
@@ -834,11 +875,13 @@ def build_image_from_code(
         globals_dict = serializer.heap.alloc_empty_globals(len(stored_names))
         globals_slot_count = dict_slot_count_for_stores(len(stored_names))
 
-    serializer.heap.write_boot_record(module_handle, globals_dict)
+    builtins_dict = build_builtins_dict(serializer.heap, serializer.string_heap)
+    serializer.heap.write_boot_record(module_handle, globals_dict, builtins_dict)
 
     return ImageBuildResult(
         module_code=module_handle,
         globals_dict=globals_dict,
+        builtins_dict=builtins_dict,
         program_slots=serializer.program_slots,
         heap=serializer.heap,
         string_heap=serializer.string_heap,

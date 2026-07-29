@@ -48,6 +48,7 @@ NBARG_SUBSCR = 26
 NBARG_ADD = 0
 
 BOOT_RECORD_ADDR = 0x03E0
+BOOT_RECORD_BYTES = 96
 
 
 def _emit(slots: list[str], opcode: int, arg: int = 0) -> None:
@@ -71,7 +72,10 @@ def _write_boot_image(
         argcount=0,
     )
     globals_dict = heap.alloc_dict([], slot_count=4)
-    heap.write_boot_record(module_code, globals_dict, addr=BOOT_RECORD_ADDR)
+    builtins_dict = heap.alloc_dict([], slot_count=4)
+    heap.write_boot_record(
+        module_code, globals_dict, builtins_dict, addr=BOOT_RECORD_ADDR
+    )
     write_program_hex(PROGRAMS_DIR / f"{name}.hex", slots)
     heap.write_hex(PROGRAMS_DIR / f"{name}_dmem.hex")
     write_text(PROGRAMS_DIR / f"{name}_str.hex", "00\n")
@@ -80,7 +84,7 @@ def _write_boot_image(
 
 def gen_list_extend_fast() -> None:
     """cap=8/len=2 list; extend [9,10]; return new[2]+new[3] = 19."""
-    heap = HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + 64))
+    heap = HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + BOOT_RECORD_BYTES))
     dst = heap.alloc_list_with_capacity(
         [(TAG_INT, int_value(7)), (TAG_INT, int_value(8))], capacity=8
     )
@@ -106,7 +110,7 @@ def gen_list_extend_fast() -> None:
 
 def gen_list_extend_fast_tuple() -> None:
     """cap=8/len=2 list; extend tuple (11, 12); return 11+12 = 23."""
-    heap = HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + 64))
+    heap = HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + BOOT_RECORD_BYTES))
     dst = heap.alloc_list_with_capacity(
         [(TAG_INT, int_value(7)), (TAG_INT, int_value(8))], capacity=8
     )
@@ -132,7 +136,7 @@ def gen_list_extend_fast_tuple() -> None:
 
 def gen_list_extend_empty() -> None:
     """Extend with empty list — no-op pop; return original element 42."""
-    heap = HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + 64))
+    heap = HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + BOOT_RECORD_BYTES))
     dst = heap.alloc_list_with_capacity([(TAG_INT, int_value(42))], capacity=4)
     src = heap.alloc_list([])
     co_consts = heap.alloc_tuple([dst, src])

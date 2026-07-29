@@ -112,6 +112,15 @@ localparam logic [4:0] PY_TRAP_SET_UPDATE = 5'd14;
 // (LOAD_ATTR / DELETE_ATTR), or equivalent AttributeError. Fatal — no excore
 // recovery. Raised before any RF/heap/dmem commit.
 localparam logic [4:0] PY_TRAP_ATTR_ERROR = 5'd15;
+// PY_TRAP_BUILTIN_CALL: CALL on OBJECT/OBK_BUILTIN (non-zero builtin_id).
+// Recoverable — excore implements bytearray / from_bytes / to_bytes / print;
+// pycore may complete max/len/list.append without trapping.
+localparam logic [4:0] PY_TRAP_BUILTIN_CALL = 5'd16;
+// PY_TRAP_RAISE: RAISE_VARARGS built an OBK_EXCEPTION (unhandled). Fatal.
+localparam logic [4:0] PY_TRAP_RAISE = 5'd17;
+// PY_TRAP_SLICE: BINARY_SLICE / STORE_SLICE on OBK_BYTEARRAY (O(n) copy).
+// Recoverable — excore allocates/copies and returns COMPLETED.
+localparam logic [4:0] PY_TRAP_SLICE = 5'd18;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a
@@ -123,9 +132,21 @@ function automatic logic pycore_trap_recoverable(input logic [4:0] code);
                                   (code == PY_TRAP_DICT_GROW) ||
                                   (code == PY_TRAP_LIST_DELETE) ||
                                   (code == PY_TRAP_SET_GROW) ||
-                                  (code == PY_TRAP_SET_UPDATE);
+                                  (code == PY_TRAP_SET_UPDATE) ||
+                                  (code == PY_TRAP_BUILTIN_CALL) ||
+                                  (code == PY_TRAP_SLICE);
     end
 endfunction
+
+// Builtin ids for OBK_BUILTIN field0 (INT). id=0 is the @staticmethod wrapper.
+localparam logic [31:0] PY_BI_STATICMETHOD = 32'd0;
+localparam logic [31:0] PY_BI_BYTEARRAY    = 32'd1;
+localparam logic [31:0] PY_BI_FROM_BYTES   = 32'd2;
+localparam logic [31:0] PY_BI_TO_BYTES     = 32'd3;
+localparam logic [31:0] PY_BI_MAX          = 32'd4;
+localparam logic [31:0] PY_BI_LIST_APPEND  = 32'd5;
+localparam logic [31:0] PY_BI_PRINT        = 32'd6;
+localparam logic [31:0] PY_BI_LEN          = 32'd7;
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;
@@ -1363,14 +1384,15 @@ function automatic logic [31:0] pycore_obj_field_tag_addr(
 endfunction
 
 // -------------------------------------------------------------------------
-// Boot record — two tagged-entry pairs just below the heap base, inside the
-// reserved low region:
+// Boot record — three tagged-entry pairs just below the heap base:
 //
 //   PYCORE_BOOT_RECORD_ADDR + 0  : module code object handle (CODE_OBJECT)
 //   PYCORE_BOOT_RECORD_ADDR + 32 : globals dict handle (DICT)
+//   PYCORE_BOOT_RECORD_ADDR + 64 : builtins dict handle (DICT)
 //
 // Written by image_from_source.py; read by S_BOOT at reset when BOOT_EN=1.
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_BOOT_RECORD_ADDR = 32'h0000_03E0;
+localparam logic [31:0] PYCORE_BOOT_RECORD_BYTES = 32'd96;
 
 `endif

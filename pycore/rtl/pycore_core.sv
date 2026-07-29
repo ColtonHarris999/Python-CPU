@@ -181,6 +181,7 @@ module pycore_core #(
     // STORE_NAME / STORE_GLOBAL.  Zero when BOOT_EN=0 — legacy container
     // tests that never touch a global will not read this register.
     logic [31:0]                   globals_base_r;
+    logic [31:0]                   builtins_base_r;
 
     // One-cycle RF write issued from S_RETURN to deposit the callee's return
     // value (or saved instance under ret_discard_push_self) at tos_base.
@@ -1253,7 +1254,11 @@ module pycore_core #(
                     // Multi-phase CALL: callable/null RF settle, four code-
                     // field dmem reads, frame push, then init.  Exit only
                     // after the whole sequence commits (CALL_PHASE_DONE).
-                    if (call_phase_r == CALL_PHASE_DONE) state_next = S_FETCH;
+                    // Builtin CALL may raise PY_TRAP_BUILTIN_CALL via
+                    // trap_marshal_pending_r before CALL_PHASE_DONE.
+                    if (call_phase_r == CALL_PHASE_DONE)
+                        state_next = trap_marshal_pending_r ? S_TRAP_MARSHAL
+                                                           : S_FETCH;
                 end
                 S_RETURN: begin
                     // Multi-phase RETURN: frame pop, then two dmem reads to
@@ -1327,6 +1332,7 @@ module pycore_core #(
             consts_base_r        <= '0;
             names_base_r         <= '0;
             globals_base_r       <= '0;
+            builtins_base_r      <= '0;
             call_phase_r         <= '0;
             return_phase_r       <= '0;
             boot_phase_r         <= '0;
@@ -1736,13 +1742,13 @@ module pycore_core #(
                 //   Phase 1 : latch code_obj addr; issue pair0 TAG read.
                 //   Phase 2 : verify tag == CODE_OBJECT; issue pair1 VAL.
                 //   Phase 3 : latch globals dict addr; issue pair1 TAG.
-                //   Phase 4 : verify tag == DICT; latch globals_base_r,
-                //             cur_code_r.  Issue code field 0 (entry_slot).
-                //   Phase 5 : latch entry_slot; issue field 1 (co_consts).
-                //   Phase 6 : latch consts_base_r; issue field 2 (co_names).
-                //   Phase 7 : latch names_base_r; issue field 3 (metadata).
-                //             (Metadata read discarded — module argcount=0.)
-                //   Phase 8 : redirect fetch to entry_slot; go DONE.
+                //   Phase 4 : verify globals DICT; issue builtins VAL (+64).
+                //   Phase 5 : latch builtins_base_r; issue builtins TAG (+80).
+                //   Phase 6 : verify builtins DICT; issue entry_slot.
+                //   Phase 7 : latch entry_slot; issue co_consts.
+                //   Phase 8 : latch consts_base_r; issue co_names.
+                //   Phase 9 : latch names_base_r; go to redirect.
+                //   Phase 10: redirect fetch to entry_slot; go DONE.
                 //   Phase 15: terminal marker → S_FETCH.
                 //
                 // Boot record layout (see pycore_defs.svh):
@@ -1750,6 +1756,8 @@ module pycore_core #(
                 //   PYCORE_BOOT_RECORD_ADDR + 16 : module code object TAG
                 //   PYCORE_BOOT_RECORD_ADDR + 32 : globals dict VAL
                 //   PYCORE_BOOT_RECORD_ADDR + 48 : globals dict TAG
+                //   PYCORE_BOOT_RECORD_ADDR + 64 : builtins dict VAL
+                //   PYCORE_BOOT_RECORD_ADDR + 80 : builtins dict TAG
                 // ----------------------------------------------------------
                 S_BOOT: begin
                     if (container_dmem_pending_r && dmem_ack_i) begin
@@ -1804,9 +1812,7 @@ module pycore_core #(
                                 if (container_rd_data_r[3:0] != PY_TAG_DICT) begin
                                     container_mem_fault_r <= 1'b1;
                                 end else begin
-                                    // Kick code field 0 (entry_slot VAL).
-                                    container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                        cur_code_r, PYCORE_CODE_FIELD_ENTRY_SLOT);
+                                    container_dmem_addr_r    <= PYCORE_BOOT_RECORD_ADDR + 32'd64;
                                     container_dmem_we_r      <= 1'b0;
                                     container_dmem_pending_r <= 1'b1;
                                     boot_phase_r             <= 4'd5;
@@ -1816,9 +1822,8 @@ module pycore_core #(
 
                         4'd5: begin
                             if (!container_dmem_pending_r) begin
-                                call_entry_slot_r <= container_rd_data_r[63:0];
-                                container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                    cur_code_r, PYCORE_CODE_FIELD_CO_CONSTS);
+                                builtins_base_r <= container_rd_data_r[31:0];
+                                container_dmem_addr_r    <= PYCORE_BOOT_RECORD_ADDR + 32'd80;
                                 container_dmem_we_r      <= 1'b0;
                                 container_dmem_pending_r <= 1'b1;
                                 boot_phase_r             <= 4'd6;
@@ -1827,25 +1832,48 @@ module pycore_core #(
 
                         4'd6: begin
                             if (!container_dmem_pending_r) begin
-                                consts_base_r <= container_rd_data_r;
-                                container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                    cur_code_r, PYCORE_CODE_FIELD_CO_NAMES);
-                                container_dmem_we_r      <= 1'b0;
-                                container_dmem_pending_r <= 1'b1;
-                                boot_phase_r             <= 4'd7;
+                                if (container_rd_data_r[3:0] != PY_TAG_DICT) begin
+                                    container_mem_fault_r <= 1'b1;
+                                end else begin
+                                    container_dmem_addr_r    <= pycore_code_field_val_addr(
+                                        cur_code_r, PYCORE_CODE_FIELD_ENTRY_SLOT);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    boot_phase_r             <= 4'd7;
+                                end
                             end
                         end
 
                         4'd7: begin
                             if (!container_dmem_pending_r) begin
-                                names_base_r <= container_rd_data_r;
-                                // Skip metadata read for the module frame —
-                                // module code always has argcount=0.
-                                boot_phase_r <= 4'd8;
+                                call_entry_slot_r <= container_rd_data_r[63:0];
+                                container_dmem_addr_r    <= pycore_code_field_val_addr(
+                                    cur_code_r, PYCORE_CODE_FIELD_CO_CONSTS);
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_pending_r <= 1'b1;
+                                boot_phase_r             <= 4'd8;
                             end
                         end
 
                         4'd8: begin
+                            if (!container_dmem_pending_r) begin
+                                consts_base_r <= container_rd_data_r;
+                                container_dmem_addr_r    <= pycore_code_field_val_addr(
+                                    cur_code_r, PYCORE_CODE_FIELD_CO_NAMES);
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_pending_r <= 1'b1;
+                                boot_phase_r             <= 4'd9;
+                            end
+                        end
+
+                        4'd9: begin
+                            if (!container_dmem_pending_r) begin
+                                names_base_r <= container_rd_data_r;
+                                boot_phase_r <= 4'd10;
+                            end
+                        end
+
+                        4'd10: begin
                             redirect_pending_r <= 1'b1;
                             redirect_tgt_r     <= call_entry_slot_r[31:0];
                             boot_phase_r       <= BOOT_PHASE_DONE;

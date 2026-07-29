@@ -155,7 +155,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-attr-del pycore-img-attr-del-reinsert \
 	pycore-img-attr-shadow pycore-img-attr-mro \
 	pycore-img-attr-grow-global pycore-img-seed-grow-global \
-	pycore-img-load-global-namei \
+	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
 	pycore-img-attr-all \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
@@ -1051,7 +1051,9 @@ pycore-img-attr-all: \
 	pycore-img-attr-mro \
 	pycore-img-attr-grow-global \
 	pycore-img-seed-grow-global \
-	pycore-img-load-global-namei
+	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
+	pycore-img-builtin-max \
+	pycore-img-builtin-len-list
 
 # Generalized CALL (M3): method form, type ctor, defaults, bound-method obj.
 pycore-img-method-call:
@@ -1074,6 +1076,12 @@ pycore-img-seed-grow-global: excore-fw
 
 pycore-img-load-global-namei:
 	$(call PYCORE_IMAGE_RUN,load_global_namei,50000)
+
+pycore-img-builtin-max:
+	$(call PYCORE_IMAGE_RUN,builtin_max,50000)
+
+pycore-img-builtin-len-list:
+	$(call PYCORE_IMAGE_RUN,builtin_len_list,50000)
 
 pycore-img-default-arg:
 	$(call PYCORE_IMAGE_RUN,default_arg,50000)

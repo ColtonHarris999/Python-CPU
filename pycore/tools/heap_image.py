@@ -527,21 +527,26 @@ class HeapImageBuilder:
         self,
         module_code: Tagged,
         globals_dict: Tagged,
+        builtins_dict: Tagged,
         addr: int = BOOT_RECORD_ADDR,
     ) -> None:
-        """Write the two-pair boot record below the heap base.
+        """Write the three-pair boot record below the heap base.
 
         pair 0 : module code object handle (CODE_OBJECT)
         pair 1 : globals dict handle (DICT)
+        pair 2 : builtins dict handle (DICT) at addr+64
         """
         if module_code[0] != TAG_CODE_OBJECT:
             raise ValueError("boot record pair 0 must be CODE_OBJECT")
         if globals_dict[0] != TAG_DICT:
             raise ValueError("boot record pair 1 must be DICT")
+        if builtins_dict[0] != TAG_DICT:
+            raise ValueError("boot record pair 2 must be DICT")
         if addr % 16 != 0:
             raise ValueError(f"boot record addr must be 16-byte aligned, got {addr:#x}")
         self._write_tagged(addr, module_code[0], module_code[1])
         self._write_tagged(addr + 32, globals_dict[0], globals_dict[1])
+        self._write_tagged(addr + 64, builtins_dict[0], builtins_dict[1])
 
     def alloc_empty_globals(self, n_store_names: int) -> Tagged:
         """Empty dict pre-sized for runtime STORE_NAME / STORE_GLOBAL inserts."""

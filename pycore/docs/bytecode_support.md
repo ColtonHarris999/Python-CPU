@@ -23,7 +23,7 @@ fully unsupported for the current PyCore implementation.
 | `LOAD_FAST_CHECK` | Push local `oparg`; trap if unbound. | Same datapath as `LOAD_FAST`; `UNINIT` → `PY_TRAP_MEM_FAULT` (7). Layer D: `img_load_fast_check`, `img_load_fast_check_unbound`. |
 | `LOAD_SMALL_INT` | Pushes a small immediate integer encoded in `oparg`. | Fully supported fast-path immediate load. |
 | `LOAD_CONST` | Pushes `co_consts[oparg]` onto the value stack. | One CPython code unit; hardware reads value+tag from the serialized `co_consts` tuple in dmem. |
-| `LOAD_GLOBAL` | Loads a global by name. | `namei = oparg >> 1` always; `oparg & 1` only controls the optional trailing `NULL` push. Probes module globals. No builtins fallback. Images: `img_load_global_namei`, `img_seed_grow_global`. |
+| `LOAD_GLOBAL` | Loads a global by name. | `namei = oparg >> 1` always; `oparg & 1` only controls the optional trailing `NULL` push. Probes module globals, then the boot-record builtins dict. Images: `img_load_global_namei`, `img_seed_grow_global`, `img_builtin_*`. |
 | `LOAD_NAME` | Loads a name by index. | Same globals lookup path as `LOAD_GLOBAL` at module scope; no locals/builtins chain. |
 | `STORE_NAME` | Stores TOS into a module/global name. | Updates the serialized globals dict, popping one value. |
 | `STORE_GLOBAL` | Stores TOS into a global name. | Same hardware path as `STORE_NAME`. |
@@ -110,7 +110,7 @@ this milestone:
    a new-key insert raises `DICT_GROW` (11). With `EXCORE_EN=1` excore
    reallocates the table, rehashes, and completes the STORE; without excore
    the trap is fatal. See `pycore/docs/dict_excore.md`.
-6. **No builtins fallback for names.** `LOAD_GLOBAL` / `LOAD_NAME` probe only
+6. **Builtins fallback (partial).** `LOAD_GLOBAL` / `LOAD_NAME` probe
    the serialized module globals dict; missing names trap `PY_TRAP_MEM_FAULT`.
 6a. **`AttributeError` → `PY_TRAP_ATTR_ERROR` (15).** Missing attributes after
    instance `__dict__` + MRO halt fatally; there is no exception object.

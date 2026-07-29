@@ -97,6 +97,7 @@
                                         if (!pycore_dict_key_tag_ok(container_rd_data_r[3:0])) begin
                                             container_type_trap_r <= 1'b1;
                                         end else begin
+                                            container_lfb_lo_r[1]    <= 1'b0; // builtins-tried
                                             container_base_r         <= globals_base_r;
                                             container_dmem_addr_r    <= globals_base_r;
                                             container_dmem_we_r      <= 1'b0;
@@ -123,7 +124,18 @@
                                         container_buf_r <= cont_dict_table_ptr;
                                         if ((container_slot_count_r == 32'd0) ||
                                             (cont_dict_table_ptr == 32'd0)) begin
-                                            container_mem_fault_r <= 1'b1;
+                                            if (!container_lfb_lo_r[1] &&
+                                                (builtins_base_r != 32'd0)) begin
+                                                container_lfb_lo_r[1]    <= 1'b1;
+                                                container_base_r         <= builtins_base_r;
+                                                container_tomb_valid_r   <= 1'b0;
+                                                container_dmem_addr_r    <= builtins_base_r;
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r        <= CP_HDR;
+                                            end else begin
+                                                container_mem_fault_r <= 1'b1;
+                                            end
                                         end else begin
                                             begin
                                                 logic [31:0] probe0;
@@ -146,17 +158,50 @@
                                 CP_DICT_PROBE: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_probe_n_r >= container_slot_count_r) begin
-                                            container_mem_fault_r <= 1'b1;
+                                            if (!container_lfb_lo_r[1] &&
+                                                (builtins_base_r != 32'd0)) begin
+                                                container_lfb_lo_r[1]    <= 1'b1;
+                                                container_base_r         <= builtins_base_r;
+                                                container_tomb_valid_r   <= 1'b0;
+                                                container_dmem_addr_r    <= builtins_base_r;
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r        <= CP_HDR;
+                                            end else begin
+                                                container_mem_fault_r <= 1'b1;
+                                            end
                                         end else begin
                                             container_probe_n_r <= container_probe_n_r + 32'd1;
                                             if (container_rd_data_r[3:0] == PY_TAG_UNINIT) begin
-                                                // Name not found — NameError analog.
-                                                container_mem_fault_r <= 1'b1;
+                                                // Name not found — try builtins once.
+                                                if (!container_lfb_lo_r[1] &&
+                                                    (builtins_base_r != 32'd0)) begin
+                                                    container_lfb_lo_r[1]    <= 1'b1;
+                                                    container_base_r         <= builtins_base_r;
+                                                    container_tomb_valid_r   <= 1'b0;
+                                                    container_dmem_addr_r    <= builtins_base_r;
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    container_phase_r        <= CP_HDR;
+                                                end else begin
+                                                    container_mem_fault_r <= 1'b1;
+                                                end
                                             end else if (pycore_dict_tombstone(
                                                             container_rd_data_r[3:0])) begin
                                                 if (container_probe_n_r + 32'd1
                                                         >= container_slot_count_r) begin
-                                                    container_mem_fault_r <= 1'b1;
+                                                    if (!container_lfb_lo_r[1] &&
+                                                        (builtins_base_r != 32'd0)) begin
+                                                        container_lfb_lo_r[1]    <= 1'b1;
+                                                        container_base_r         <= builtins_base_r;
+                                                        container_tomb_valid_r   <= 1'b0;
+                                                        container_dmem_addr_r    <= builtins_base_r;
+                                                        container_dmem_we_r      <= 1'b0;
+                                                        container_dmem_pending_r <= 1'b1;
+                                                        container_phase_r        <= CP_HDR;
+                                                    end else begin
+                                                        container_mem_fault_r <= 1'b1;
+                                                    end
                                                 end else begin
                                                     container_probe_r <= cont_probe_next;
                                                     container_dmem_addr_r <=
@@ -188,7 +233,18 @@
                                             container_phase_r <= CP_DICT_RD_VVAL;
                                         end else if (container_probe_n_r
                                                      >= container_slot_count_r) begin
-                                            container_mem_fault_r <= 1'b1;
+                                            if (!container_lfb_lo_r[1] &&
+                                                (builtins_base_r != 32'd0)) begin
+                                                container_lfb_lo_r[1]    <= 1'b1;
+                                                container_base_r         <= builtins_base_r;
+                                                container_tomb_valid_r   <= 1'b0;
+                                                container_dmem_addr_r    <= builtins_base_r;
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r        <= CP_HDR;
+                                            end else begin
+                                                container_mem_fault_r <= 1'b1;
+                                            end
                                         end else begin
                                             container_probe_r <= cont_probe_next;
                                             container_dmem_addr_r <= pycore_dict_ktag_addr(

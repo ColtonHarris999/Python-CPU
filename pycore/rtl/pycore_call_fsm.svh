@@ -10,6 +10,7 @@
 //   7  : frame push + init
 //   8–11: BOUND_METHOD unwrap (NULL sentinel required) → join 3
 //   12 : TYPE instantiate + __init__ lookup (call_sub_r) → 3 or DONE
+//   13 : OBK_BUILTIN — max/len on-core; else PY_TRAP_BUILTIN_CALL
 //   14 : defaults arity check + fill missing locals → 7
 //   15 : CALL_PHASE_DONE
                 // ----------------------------------------------------------
@@ -191,6 +192,16 @@
                                              PY_OBK_TYPE) begin
                                     call_sub_r   <= 6'd0;
                                     call_phase_r <= 4'd12;
+                                end else if (pycore_ob_kind(container_rd_data_r) ==
+                                             PY_OBK_BUILTIN) begin
+                                    // field0 = builtin_id
+                                    container_dmem_addr_r <=
+                                        pycore_obj_field_val_addr(
+                                            call_obj_addr_r, 32'd0);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    call_sub_r               <= 6'd0;
+                                    call_phase_r             <= 4'd13;
                                 end else begin
                                     call_filter_trap_r <= 1'b1;
                                 end
@@ -261,6 +272,229 @@
                                     call_phase_r             <= 4'd3;
                                 end
                             end
+                        end
+
+
+                        // --------------------------------------------------
+                        // Phase 13: OBK_BUILTIN dispatch
+                        //   sub0: latch builtin_id (field0 val), read field0 tag
+                        //   sub1: confirm INT id; read field1 (bound_self) val
+                        //   sub2: read bound_self tag; branch by id
+                        //   sub3: MAX — read arg0 from RF
+                        //   sub4: MAX — read arg1; compare; writeback
+                        //   sub5: LEN — read arg0; dispatch by tag
+                        //   sub6: LEN — list/dict header ready → push length
+                        //   else: marshal PY_TRAP_BUILTIN_CALL
+                        // --------------------------------------------------
+                        4'd13: begin
+                            unique case (call_sub_r)
+                                6'd0: begin
+                                    if (!container_dmem_pending_r) begin
+                                        call_entry_slot_r[31:0] <= container_rd_data_r[31:0]; // id
+                                        container_dmem_addr_r <=
+                                            pycore_obj_field_tag_addr(
+                                                call_obj_addr_r, 32'd0);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r               <= 6'd1;
+                                    end
+                                end
+                                6'd1: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_rd_data_r[3:0] != PY_TAG_INT) begin
+                                            call_filter_trap_r <= 1'b1;
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_obj_field_val_addr(
+                                                    call_obj_addr_r, 32'd1);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_sub_r               <= 6'd2;
+                                        end
+                                    end
+                                end
+                                6'd2: begin
+                                    if (!container_dmem_pending_r) begin
+                                        call_self_val_r <= container_rd_data_r;
+                                        container_dmem_addr_r <=
+                                            pycore_obj_field_tag_addr(
+                                                call_obj_addr_r, 32'd1);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r               <= 6'd3;
+                                    end
+                                end
+                                6'd3: begin
+                                    if (!container_dmem_pending_r) begin
+                                        call_self_tag_r <= container_rd_data_r[3:0];
+                                        // Free-function form requires NULL sentinel.
+                                        // Method form (non-NULL) still OK for bound builtins.
+                                        if (call_entry_slot_r[31:0] == PY_BI_MAX) begin
+                                            if (cur_arg_r[15:0] != 16'd2) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {2'b0, tos_r} - 9'd2);
+                                                call_sub_r <= 6'd4;
+                                            end
+                                        end else if (call_entry_slot_r[31:0] == PY_BI_LEN) begin
+                                            if (cur_arg_r[15:0] != 16'd1) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {2'b0, tos_r} - 9'd1);
+                                                call_sub_r <= 6'd6;
+                                            end
+                                        end else if (EXCORE_EN &&
+                                            pycore_trap_recoverable(PY_TRAP_BUILTIN_CALL)) begin
+                                            // E0=builtin handle, E1=bound_self,
+                                            // E2=arg0, E3=arg1 (if present)
+                                            trap_marshal_pending_r     <= 1'b1;
+                                            trap_marshal_code_r        <= PY_TRAP_BUILTIN_CALL;
+                                            trap_marshal_entry_count_r <=
+                                                (cur_arg_r[15:0] >= 16'd2) ? 3'd4 :
+                                                (cur_arg_r[15:0] == 16'd1) ? 3'd3 : 3'd2;
+                                            trap_marshal_entries_r[0]  <= pycore_make_entry(
+                                                PY_TAG_OBJECT,
+                                                {{96{1'b0}}, call_obj_addr_r});
+                                            trap_marshal_entries_r[1]  <= pycore_make_entry(
+                                                container_rd_data_r[3:0], call_self_val_r);
+                                            // Stash argc in call_argcount; read args next.
+                                            call_argcount_r <= cur_arg_r[15:0];
+                                            if (cur_arg_r[15:0] == 16'd0) begin
+                                                call_phase_r <= CALL_PHASE_DONE;
+                                                call_sub_r   <= 6'd0;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]});
+                                                call_sub_r <= 6'd10;
+                                            end
+                                        end else begin
+                                            call_filter_trap_r <= 1'b1;
+                                        end
+                                    end
+                                end
+                                // MAX arg0 — scratch in return_wb_data_r (entry-width).
+                                6'd4: begin
+                                    return_wb_data_r    <= rf_rs1;
+                                    container_rf_addr_r <= RF_AW'({2'b0, tos_r} - 9'd1);
+                                    call_sub_r          <= 6'd5;
+                                end
+                                6'd5: begin
+                                    // arg0 in return_wb_data_r, arg1 in rf_rs1
+                                    if ((pycore_get_tag(return_wb_data_r) != PY_TAG_INT &&
+                                         pycore_get_tag(return_wb_data_r) != PY_TAG_BOOL) ||
+                                        (cont_rf_rs1_tag != PY_TAG_INT &&
+                                         cont_rf_rs1_tag != PY_TAG_BOOL)) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        begin
+                                            logic signed [127:0] a, b, m;
+                                            a = $signed(pycore_get_val(return_wb_data_r));
+                                            b = $signed(cont_rf_rs1_val);
+                                            m = (a > b) ? a : b;
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                {2'b0, tos_r} - 9'd4);
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_INT, m);
+                                            tos_r <= RF_AW'({2'b0, tos_r} - 9'd3);
+                                            fetch_skip_r <= 1'b1;
+                                            call_phase_r <= CALL_PHASE_DONE;
+                                            call_sub_r   <= 6'd0;
+                                        end
+                                    end
+                                end
+                                // LEN arg0
+                                6'd6: begin
+                                    if (cont_rf_rs1_tag == PY_TAG_LIST) begin
+                                        container_dmem_addr_r    <= cont_rf_rs1_val[31:0];
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r               <= 6'd7;
+                                    end else if (cont_rf_rs1_tag == PY_TAG_TUPLE) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_INT,
+                                            {{64{1'b0}},
+                                             pycore_tuple_size(cont_rf_rs1_val)});
+                                        tos_r <= RF_AW'({2'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 6'd0;
+                                    end else if (cont_rf_rs1_tag == PY_TAG_DICT ||
+                                                 cont_rf_rs1_tag == PY_TAG_SET) begin
+                                        container_dmem_addr_r    <= cont_rf_rs1_val[31:0];
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r               <= 6'd8;
+                                    end else if (cont_rf_rs1_tag == PY_TAG_SHORT_STR) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_INT,
+                                            {{120{1'b0}},
+                                             pycore_short_str_size(cont_rf_rs1_val)});
+                                        tos_r <= RF_AW'({2'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 6'd0;
+                                    end else begin
+                                        container_type_trap_r <= 1'b1;
+                                    end
+                                end
+                                6'd7: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_INT,
+                                            {{64{1'b0}}, cont_hdr_len});
+                                        tos_r <= RF_AW'({2'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 6'd0;
+                                    end
+                                end
+                                6'd8: begin
+                                    if (!container_dmem_pending_r) begin
+                                        // dict/set header: used in low 64 of first word
+                                        // via cont_dict_hdr_used
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_INT,
+                                            {{64{1'b0}}, cont_dict_hdr_used});
+                                        tos_r <= RF_AW'({2'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 6'd0;
+                                    end
+                                end
+                                // Marshal remaining CALL args into trap entries.
+                                6'd10: begin
+                                    trap_marshal_entries_r[2] <= rf_rs1;
+                                    if (call_argcount_r >= 16'd2) begin
+                                        container_rf_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd1);
+                                        call_sub_r <= 6'd11;
+                                    end else begin
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 6'd0;
+                                    end
+                                end
+                                6'd11: begin
+                                    trap_marshal_entries_r[3] <= rf_rs1;
+                                    call_phase_r <= CALL_PHASE_DONE;
+                                    call_sub_r   <= 6'd0;
+                                end
+                                default: call_filter_trap_r <= 1'b1;
+                            endcase
                         end
 
                         // --------------------------------------------------
