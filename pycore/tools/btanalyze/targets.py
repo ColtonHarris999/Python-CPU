@@ -53,7 +53,8 @@ INTERNAL_OPNAMES = {n for n in opcode.opmap if n.startswith("INSTRUMENTED_")} | 
 
 # fold dataflow-shape membership (the scalar cells of the lattice; rest = BAR).
 FOLD_SRC = {
-    "LOAD_FAST", "LOAD_FAST_BORROW", "LOAD_FAST_CHECK", "LOAD_SMALL_INT",
+    "LOAD_FAST", "LOAD_FAST_BORROW", "LOAD_FAST_CHECK", "LOAD_FAST_AND_CLEAR",
+    "LOAD_SMALL_INT",
     "LOAD_CONST", "COPY", "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
     "LOAD_FAST_LOAD_FAST",
 }

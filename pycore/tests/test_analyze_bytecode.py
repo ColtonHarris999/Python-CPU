@@ -15,6 +15,7 @@ _TOOLS_DIR = _REPO_ROOT / "pycore" / "tools"
 sys.path.insert(0, str(_TOOLS_DIR))
 
 import preprocess  # noqa: E402
+import image_from_source as image_src  # noqa: E402
 import analyze_bytecode  # noqa: E402
 from btanalyze import gaps as gaps_mod  # noqa: E402
 from btanalyze import report as report_mod  # noqa: E402
@@ -86,41 +87,35 @@ class FoldTest(unittest.TestCase):
 
     def test_fib_fold_needs_ops(self) -> None:
         folds = folds_by_name(load(FIB))
-        self.assertIn(
-            "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
-            folds["F1-expr-store"].needs_ops,
-        )
+        # Fused dual-load now executes; needs_ops is empty when all ops execute.
+        self.assertEqual(folds["F1-expr-store"].needs_ops, [])
 
-    def test_bubble_falls_back_to_f2_when_branch_unbuildable(self) -> None:
-        # bubble_sort compares via LOAD_FAST_BORROW_LOAD_FAST_BORROW (reject), so
-        # the requires_support F3 cannot emit; it must degrade to F2-expr.
+    def test_bubble_emits_full_compare_branch(self) -> None:
+        # Fused dual-load executes, so requires_support F3 can emit.
         folds = folds_by_name(load(BUBBLE))
-        self.assertIn("F2-expr", folds)
-        self.assertIn(18, folds["F2-expr"].offsets)
-        self.assertNotIn("F3-cmp-branch-full", folds)
+        self.assertIn("F3-cmp-branch-full", folds)
         self.assertIn("F4-move", folds)
 
 
 class GapTest(unittest.TestCase):
-    def test_flagship_fused_load_is_error(self) -> None:
+    def test_flagship_fused_load_executes(self) -> None:
         result = findings(load(FIB))
         errors = [f for f in result.findings if f.severity == "error"]
         names = {f.opname for f in errors}
-        self.assertIn("LOAD_FAST_BORROW_LOAD_FAST_BORROW", names)
+        self.assertNotIn("LOAD_FAST_BORROW_LOAD_FAST_BORROW", names)
 
-    def test_compare_op_partial_warns(self) -> None:
+    def test_compare_op_executes_without_warn(self) -> None:
         result = findings(load(FIB))
         warns = {f.opname for f in result.findings if f.severity == "warn"}
-        self.assertIn("COMPARE_OP", warns)
+        self.assertNotIn("COMPARE_OP", warns)
 
-    def test_partial_ops_warn_via_matrix(self) -> None:
+    def test_copy_swap_execute_without_warn(self) -> None:
         for opname in ("COPY", "SWAP"):
             info = TARGET.classify(opname)
             finding = gaps_mod._finding_for(
                 info, offset=0, line=1, in_loop=False, include_out_of_scope=False
             )
-            self.assertIsNotNone(finding)
-            self.assertEqual(finding.severity, "warn")
+            self.assertIsNone(finding)
 
     def test_costly_in_loop_is_hotspot(self) -> None:
         fn = make_fn(
@@ -137,14 +132,10 @@ class GapTest(unittest.TestCase):
         self.assertTrue(hotspots)
         self.assertTrue(any(f.hw_class == "ALUN" for f in hotspots))
 
-    def test_object_opcode_suppressed_by_default(self) -> None:
+    def test_load_global_executes(self) -> None:
         fn = make_fn("def managed_entry():\n    return len\n")
         default = findings(fn)
         self.assertFalse(any(f.opname == "LOAD_GLOBAL" for f in default.findings))
-        shown = findings(fn, include_out_of_scope=True)
-        info = [f for f in shown.findings if f.opname == "LOAD_GLOBAL"]
-        self.assertTrue(info)
-        self.assertEqual(info[0].severity, "info")
 
 
 class HwClassTest(unittest.TestCase):
@@ -168,11 +159,10 @@ class HwClassTest(unittest.TestCase):
         self.assertEqual(sub.fold, "BAR")
         self.assertEqual(TARGET.classify("BINARY_OP", 4).hw_class, "OBJECT")
 
-    def test_load_global_is_infeasible_object(self) -> None:
+    def test_load_global_is_object_class(self) -> None:
         info = TARGET.classify("LOAD_GLOBAL")
-        self.assertEqual(info.fit, "infeasible")
-        self.assertTrue(info.suppress)
-        self.assertEqual(info.obj_group, "OBJ_NS")
+        self.assertEqual(info.hw_class, "OBJECT")
+        self.assertEqual(info.support, "execute")
 
 
 class ObjGroupTest(unittest.TestCase):
@@ -189,6 +179,8 @@ class ObjGroupTest(unittest.TestCase):
         self.assertNotIn("CALL", union)
 
     def test_roadmap_orders_by_distance(self) -> None:
+        # BUILD_LIST now executes; only BINARY_OP[NB_SUBSCR] remains on the
+        # infeasible OBJECT roadmap via oparg routing.
         fn = make_fn(
             "def managed_entry(x, i):\n"
             "    y = x[i]\n"
@@ -198,33 +190,41 @@ class ObjGroupTest(unittest.TestCase):
         self.assertEqual(findings(fn).roadmap, [])
         roadmap = findings(fn, include_out_of_scope=True).roadmap
         groups = [item.obj_group for item in roadmap]
-        self.assertEqual(groups, ["OBJ_SEQ", "OBJ_BUILD"])  # D1 before D2
+        self.assertEqual(groups, ["OBJ_SEQ"])
 
 
 class BacklogTest(unittest.TestCase):
-    def test_swap_and_delete_are_backlog_items(self) -> None:
+    def test_swap_and_delete_execute_without_backlog(self) -> None:
+        """Post-container merge: fused locals + DELETE_FAST execute on image-boot."""
         swap = make_fn(
             "def managed_entry(a, b):\n    a, b = b, a\n    return a\n"
         )
-        backlog = {b.opcode: b for b in findings(swap).backlog}
+        backlog = {b.opcode for b in findings(swap).backlog}
         for opcode in ("LOAD_FAST_LOAD_FAST", "STORE_FAST_STORE_FAST"):
-            self.assertIn(opcode, backlog)
-            self.assertNotEqual(backlog[opcode].fit, "infeasible")
-            self.assertIsNotNone(backlog[opcode].needs_leaf)
+            self.assertNotIn(opcode, backlog)
 
         deleter = make_fn(
             "def managed_entry():\n    x = 1\n    del x\n    return 0\n"
         )
         del_backlog = {b.opcode for b in findings(deleter).backlog}
-        self.assertIn("DELETE_FAST", del_backlog)
+        self.assertNotIn("DELETE_FAST", del_backlog)
 
 
 class TargetConsistencyTest(unittest.TestCase):
-    def test_binary_args_match_preprocess(self) -> None:
+    def test_binary_args_match_image_gate(self) -> None:
         self.assertEqual(
             set(TARGET.opcodes["BINARY_OP"]["args"]["supported"]),
-            set(preprocess.SUPPORTED_BINARY_ARGS),
+            set(image_src.SUPPORTED_BINARY_ARGS),
         )
+
+    def test_image_supported_never_trap_or_reject(self) -> None:
+        for opname in image_src.SUPPORTED_OPS:
+            if opname not in dis.opmap:
+                continue
+            self.assertNotIn(
+                TARGET.classify(opname).support, ("trap", "reject"),
+                f"{opname} supported by image_from_source but trap/reject in target",
+            )
 
     def test_preprocess_supported_never_trap_or_reject(self) -> None:
         for opname in preprocess.SUPPORTED_OPS:

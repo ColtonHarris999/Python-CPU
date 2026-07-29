@@ -1,218 +1,171 @@
 # PyCore Bytecode Support Lists (CPython 3.14)
 
-This file lists **all 154** CPython 3.14 opcodes and classifies each for
-the current PyCore implementation. Hardware-fit categories come from
-`pycore/targets/pycore.json` (the same taxonomy used by
-`pycore/tools/analyze_bytecode.py`).
+This file classifies bytecodes into fully supported, partially supported, and
+fully unsupported for the current PyCore implementation.
 
-## Hardware-fit categories (`hw_class`)
+## Fully supported bytecodes
 
-| hw_class | fit | Meaning |
+| Bytecode | Description | PyCore-specific note |
 | --- | --- | --- |
-| `REG` | native | register-file index read/write; no compute |
-| `IMM` | native | value materialized from oparg at decode |
-| `CONST` | costly | ROM read; loop-hoistable |
-| `ALU1` | native | single-cycle integer/bitwise leaf |
-| `ALUN` | costly | multi-cycle bounded numeric (mul/div/rem/pow/fpu) |
-| `PRED` | native | comparison/truthiness producing a bool |
-| `BRANCH` | native | static-target control transfer / markers |
-| `FRAME` | heavy | call/return needs frame alloc + spill (intrinsically heavy on any target) |
-| `OBJECT` | infeasible | needs runtime objects/dicts/iterators; cannot map to a scalar tagged-value datapath |
-| `INTERNAL` | n/a | interpreter plumbing (INSTRUMENTED_*, CACHE, RESERVED, EXTENDED_ARG, ENTER_EXECUTOR, INTERPRETER_EXIT, JUMP/JUMP_NO_INTERRUPT pseudo, ANNOTATIONS_PLACEHOLDER); never reaches a hardware target -> strip, not a gap |
+| `CACHE` | Inline cache entry used by CPython adaptive interpreter. | Preserved in the image and skipped by fetch; slot order remains CPython-identical. |
+| `EXTENDED_ARG` | Extends argument width of the following opcode. | Preserved in the image and folded by fetch; following opcode sees the full argument. |
+| `RESUME` | Marks function entry/resume points in CPython bytecode. | Treated as a no-op control marker. |
+| `NOP` | Explicit no-op left by dead-code elimination (e.g. `if False:`). | Decode empty case clone of `RESUME`/`NOT_TAKEN`; stack 0, no trap. Layer D: `img_nop`. |
+| `LOAD_FAST` | Pushes a local variable onto the value stack. | Mapped directly to local-window reads. |
+| `LOAD_FAST_BORROW` | Pushes a local variable with CPython borrow semantics. | Executed the same as `LOAD_FAST` in current hardware. |
+| `STORE_FAST` | Pops the top stack value into a local variable slot. | Writes local-window storage directly. |
+| `LOAD_FAST_LOAD_FAST` | Push two locals; oparg `(hi<<4)\|lo`. | Aliases `CONT_LFB_PAIR` (same as LFB_LFB); tag-agnostic; stack +2. |
+| `LOAD_FAST_BORROW_LOAD_FAST_BORROW` | Push two locals; oparg `(hi<<4)\|lo`. | Native `CONT_LFB_PAIR` on image-boot (same FSM as LFLF); borrow≡owned; stack +2. Legacy preprocess still expands to two `LOAD_FAST_BORROW`. |
+| `STORE_FAST_LOAD_FAST` | Pop → `locals[hi]`, push `locals[lo]`. | New `CONT_SFLF`; net stack 0; `hi==lo` reloads stored value. |
+| `STORE_FAST_STORE_FAST` | Pop → `locals[hi]`, pop → `locals[lo]`. | New `CONT_SFSF`; net stack −2; unlocks LFLF-emitting swap/parallel assign. |
+| `DELETE_FAST` | Clears local slot `oparg` to unbound. | Writes `PY_TAG_UNINIT`; already-unbound traps `PY_TRAP_MEM_FAULT` (7). |
+| `LOAD_FAST_AND_CLEAR` | Push local `oparg`, then clear slot to unbound. | New `CONT_LFAC`; stack +1; unbound does not trap (unlike `DELETE_FAST`); unbound push is `UNINIT` not `NULL`. Layer D: `img_load_fast_and_clear` (push half), `img_load_fast_and_clear_cleared` (clear half: a following `del` on the cleared slot traps 7). |
+| `LOAD_FAST_CHECK` | Push local `oparg`; trap if unbound. | Same datapath as `LOAD_FAST`; `UNINIT` → `PY_TRAP_MEM_FAULT` (7). Layer D: `img_load_fast_check`, `img_load_fast_check_unbound`. |
+| `LOAD_SMALL_INT` | Pushes a small immediate integer encoded in `oparg`. | Fully supported fast-path immediate load. |
+| `LOAD_CONST` | Pushes `co_consts[oparg]` onto the value stack. | One CPython code unit; hardware reads value+tag from the serialized `co_consts` tuple in dmem. |
+| `LOAD_GLOBAL` | Loads a global by name. | `namei = oparg >> 1` always; `oparg & 1` only controls the optional trailing `NULL` push. Probes module globals, then the boot-record builtins dict. Images: `img_load_global_namei`, `img_seed_grow_global`, `img_builtin_*`. |
+| `LOAD_NAME` | Loads a name by index. | Same globals lookup path as `LOAD_GLOBAL` at module scope; no locals/builtins chain. |
+| `STORE_NAME` | Stores TOS into a module/global name. | Updates the serialized globals dict, popping one value. |
+| `STORE_GLOBAL` | Stores TOS into a global name. | Same hardware path as `STORE_NAME`. |
+| `LOAD_ATTR` | Loads attribute `co_names[namei]` from TOS. | `namei = oparg >> 1`, `method_flag = oparg & 1`. Receiver must be `OBJECT` (`INSTANCE`/`TYPE`); probes instance `__dict__` then single-inheritance MRO on `tp_dict`. Miss → `PY_TRAP_ATTR_ERROR` (15). Method form pushes `[func, self]` or `[attr, NULL]` without allocating; non-method TYPE-sourced `CODE_OBJECT` allocates `OBK_BOUND_METHOD`. `OBK_BUILTIN` with `builtin_id=0` is a build-time `@staticmethod` wrapper (`bound_self`=CODE); unwraps to CODE and pushes `NULL` (no self bind). Images: `img_attr_*`, `img_class_*`, `img_staticmethod`. |
+| `STORE_ATTR` | Stores value into `obj.name` (`value, obj --`). | `OBK_INSTANCE` only; upserts into `__dict__` (existing dict path). Grow → `DICT_GROW` (11); excore pop count is 2 when opcode is `STORE_ATTR`. Images: `img_attr_basic`, `img_attr_many`. |
+| `DELETE_ATTR` | Deletes `obj.name` (`obj --`). | Tombstones `__dict__` entry; miss → `PY_TRAP_ATTR_ERROR` (15) not `MEM_FAULT`. Images: `img_attr_del`, `img_attr_del_reinsert`. |
+| `PUSH_NULL` | Pushes CPython's non-method call sentinel. | Writes `{PY_TAG_NULL, 0}` to TOS. |
+| `MAKE_FUNCTION` | Builds a function object from a code object. | Interim model: function is the `CODE_OBJECT` handle itself. Defaults are folded at image-build time into `co_defaults` (field 4); closures/annotations still rejected. Module-level `class` bodies are folded away (body const → `None`) so class plumbing never reaches `MAKE_FUNCTION` at runtime. |
+| `CALL` | Invokes a callable with positional arguments. | Free-function (`NULL` sentinel) and method form (non-`NULL` self); `OBK_BOUND_METHOD` unwrap; `OBK_TYPE` instantiation (`__init__` + `ret_discard_push_self`). Argcount range uses `co_defaults`. Images: `img_method_*`, `img_ctor_*`, `img_default_*`, `img_class_*`. |
+| `TO_BOOL` | Converts TOS to exact bool for branch helpers. | Rewrites TOS in place to `BOOL` for `INT`/`BOOL`/`FLOAT`/`SHORT_STR`/`LONG_STR` (string truthiness is `size != 0`; corrupt short-string sizes above 15 trap `PY_TRAP_TYPE`); other tags (incl. `None` and containers) trap `PY_TRAP_TYPE`. Layer D: `img_to_bool` (INT/BOOL/FLOAT, incl. `0.0` falsy), `img_to_bool_str` (empty/nonempty short and nonempty long strings), `img_to_bool_type_trap` (None), `img_to_bool_list_trap` (list). |
+| `UNARY_NOT` | Invert TOS bool (`not` after `TO_BOOL`). | `BOOL` bit invert in place; non-`BOOL` → `PY_TRAP_TYPE`. Layer D: `img_unary_not`. |
+| `UNARY_INVERT` | Bitwise invert TOS (`~x`). | `PY_ALU_INVERT`: `INT`/`BOOL` only (`BOOL` promotes to `INT`); `FLOAT` and other tags → `PY_TRAP_TYPE`. Layer D: `img_unary_invert`, `img_align_mask`, `img_unary_invert_float_trap`. |
+| `UNARY_NEGATIVE` | Negate TOS (`-x`). | `PY_ALU_NEG`: `INT`/`BOOL`/`FLOAT` (`BOOL` → `INT`); other tags → `PY_TRAP_TYPE`. Layer D: `img_unary_negative`. |
+| `UNPACK_SEQUENCE` | Pop one sequence; push `count` items right-to-left (`seq[0]` at TOS). | `CONT_UNPACK_SEQ`: `TUPLE` (size from handle) and `LIST` (header length); length ≠ `oparg` → `PY_TRAP_TYPE`; 1 `CACHE` unit. Layer D: `img_unpack_tuple`, `img_unpack_list`, `img_unpack_len_trap`. |
+| `IS_OP` | `is` / `is not` (oparg 0/1). | Full RF-entry identity → `BOOL`; all tags; no trap. Layer D: `img_is_op`. |
+| `NOT_TAKEN` | CPython branch prediction/adaptation marker. | Treated as a no-op marker. |
+| `POP_TOP` | Pops and discards the top stack value. | Implemented as a stack-pointer decrement. |
+| `END_FOR` | Removes one loop-cleanup value. | `POP_TOP`-equivalent. Natural FOR_ITER exhaustion skips it; direct RTL coverage: `for_iter_end_for`. |
+| `POP_ITER` | Pops iterator state in loop/iteration sequences. | Stack-pointer decrement at the FOR_ITER exhaustion target. Layer D: `img_for_iter`. |
+| `RETURN_VALUE` | Returns the top-of-stack value from a function. | Implemented return datapath is active. |
+| `JUMP_FORWARD` | Unconditionally jumps forward by relative offset. | Fully handled by branch unit. |
+| `JUMP_BACKWARD` | Unconditionally jumps backward by relative offset. | Fully handled by branch unit. |
+| `POP_JUMP_IF_TRUE` | Pops TOS and jumps if truthy. | Supported with numeric/bool truthiness rules. |
+| `POP_JUMP_IF_FALSE` | Pops TOS and jumps if falsy. | Supported with numeric/bool truthiness rules. |
+| `POP_JUMP_IF_NONE` | Pops TOS; jumps if tag is `NONE`. | Tag-only (`PY_TAG_NONE`); all other tags fall through; no TYPE trap. Layer D: `img_pop_jump_if_none`. |
+| `POP_JUMP_IF_NOT_NONE` | Pops TOS; jumps if tag is not `NONE`. | Same tag-only rule. Layer D: `img_pop_jump_if_none`. |
+| `BUILD_LIST` | Pops `count` values, allocates a list object, pushes a `LIST`-tagged handle. | Multi-cycle `S_CONTAINER` FSM; heap bump-allocator at `HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE` 0x0400). Layout v2 (Phase A): allocates a stable 32-byte object + a `count`-sized element buffer (`capacity == count` exactly) in one combined OOM check. Index must be `INT` or `BOOL`; out-of-range or OOM traps `PY_TRAP_MEM_FAULT`. Empty list (`count=0`) allocates the object only (`ob_item=0`). |
+| `BUILD_TUPLE` | Pops `count` values, allocates a tuple (no header), pushes a `TUPLE` handle `{size, addr}`. | Opcode 51 (resolved from CPython 3.14). Same index rules as LIST for `NB_SUBSCR`. |
+| `BUILD_MAP` | Pops `2*count` items (interleaved key/value), allocates a dict, pushes `DICT`. | Open-addressed linear-probe insert. Keys: `INT`, `BOOL`, `FLOAT`, `SHORT_STR`, `LONG_STR`. Slot count = `next_pow2(max(4, 2*count))`. Layout v2: stable 32B object + relocatable table. |
+| `BUILD_SET` | Pops `count` values, allocates a set, pushes `SET`. | Open-addressed element table (32B/slot). Same hash/rich-eq key rules as dict (no values). Tombstone tag = `PY_TAG_DICT`. Images: `img_set_*`. |
+| `BINARY_OP` with oparg `NB_SUBSCR` (26) | Subscript read `x[k]`. | `LIST`/`TUPLE`: unsigned bounds-checked index read. `DICT`: linear-probe lookup; missing key traps `PY_TRAP_MEM_FAULT`. Dict keys may be `INT`/`BOOL`/`FLOAT`/`SHORT_STR`/`LONG_STR`; other key tags trap `PY_TRAP_TYPE`. |
+| `STORE_SUBSCR` | Subscript write `x[k] = v`. | `LIST`: bounds-checked index write. `DICT`: same-tag / rich-eq upsert on pycore (tombstone reuse); new-key insert at load ≥ 2/3 → `DICT_GROW` (11). `TUPLE`/`SET`: `TYPE`. Pops key, container, value (3 items). Prefer `d={}` + stores or locals for `BUILD_MAP` (CPython 3.14 may emit `BUILD_CONST_KEY_MAP` for constant `{k:v}`). |
+| `COPY` | Duplicates the stack entry at depth `oparg`, pushing a copy to TOS. | Clone of the `LOAD_FAST` datapath: reads RF slot `tos_index - oparg` and pushes the `{tag, value}` entry verbatim. Tag-agnostic, no trap. Value-stack-overflow is not detected (see deviation 10). |
+| `SWAP` | Swaps TOS with the stack entry at depth `oparg`. | Two-beat `S_CONTAINER` RF exchange (`CONT_LFB_PAIR` clone): writes deep→TOS then TOS→deep; tag-agnostic, net stack 0, no trap. |
+
+## Partially supported bytecodes
+
+| Bytecode | Description | Current limitation |
+| --- | --- | --- |
+| `BINARY_OP` | Performs binary arithmetic/bitwise operation selected by `oparg`. | Arithmetic/bitwise opargs use the existing ALU path; `NB_SUBSCR` (oparg 26) routes to `S_CONTAINER`. `NB_INPLACE_ADD` (13) with a LIST lhs routes to LIST_EXTEND semantics and supports LIST/TUPLE rhs, including the existing excore grow path. Unsupported variants trap or are rejected by preprocess. |
+| `COMPARE_OP` | Compares TOS-2 and TOS-1 using the packed CPython 3.14 `oparg`, replacing both with `BOOL`. | Selectors `0..5` (`<,<=,==,!=,>,>=`); native `INT`/`BOOL`/`FLOAT` plus same-tag `SHORT_STR`/`LONG_STR` for `==`/`!=` only (full 128-bit value / descriptor compare); string ordering and other tags → `PY_TRAP_TYPE` (1). Layer D: `img_compare_op`, `img_str_eq`, `img_str_lt_trap`, `img_compare_op_type_trap`. |
+| `GET_ITER` | Replaces TOS with iterator state. | Native LIST/TUPLE sources become an internal hybrid `PY_TAG_PTR` iterator. RANGE, STR, and HEAP_ITER kind values are reserved sockets; unsupported sources raise `PY_TRAP_TYPE`. No generic iterator protocol. |
+| `FOR_ITER` | Advances the iterator at TOS, pushing one value or taking the exhaustion edge. | Internal LIST/TUPLE kinds only. Validity and field interpretation are per-kind; reserved/unknown/malformed kinds TYPE-trap. Exhaustion skips `END_FOR` and redirects to `POP_ITER`. Layer D: `img_for_iter*`. |
+| `JUMP_IF_TRUE_OR_POP` | Jumps if truthy else pops TOS. | Not part of the current image-boot subset. |
+| `JUMP_IF_FALSE_OR_POP` | Jumps if falsy else pops TOS. | Not part of the current image-boot subset. |
+| `LIST_APPEND` | Appends TOS to the list `oparg` slots below it (`list, unused[oparg-1], v -- list, unused[oparg-1]`); pops only `v`. | Fast path (`CONT_LIST_APPEND`, opcode 78): spare capacity (`length < capacity`) appends in place, 5 dmem ops, no trap. Grow path (`length == capacity`) raises `PY_TRAP_LIST_GROW` (trap 9) before any commit. With `EXCORE_EN=1` the excore doubles the buffer (floor 4), copies, appends, and returns `COMPLETED`. With `EXCORE_EN=0` it is fatal. Comprehensions serialize through GET_ITER/FOR_ITER for LIST/TUPLE sources; a non-empty result still needs this grow/excore path. Spare-capacity coverage remains hand-assembled. |
+| `LIST_EXTEND` | Extends the list `oparg` slots below TOS with the iterable at TOS; pops only the iterable. | Empty LIST/TUPLE source is a no-op pop on pycore. Non-empty always raises `PY_TRAP_LIST_EXTEND` (trap 10); with `EXCORE_EN=1` the excore copies in place when `need <= cap`, else grows-to-fit, then `COMPLETED` pop 1. Unsupported iterable tags → `PY_TRAP_TYPE`. Emitted by compile() for list-display unpack (`[1,2,*x]`, `[*a,*b]`); `list.extend` method calls still need `LOAD_ATTR`. LIST `NB_INPLACE_ADD` (`+=`) also routes here. Fixtures: `list_extend_empty` / fatal (single-core), `extend_*` + `img_list_extend` / `img_for_iter_grow` (two-core). |
+| `DELETE_SUBSCR` | `del container[key]` — pops container and key. | List: type/bounds on pycore; last element → O(1) length-- on pycore; mid delete → `PY_TRAP_LIST_DELETE` (12) for excore shift-down (`COMPLETED` pop 2); capacity unchanged; OOB → `MEM_FAULT`. Tuple / set → `TYPE`. Dict: same-tag / rich-eq hit writes `PY_TAG_TOMBSTONE` (`== PY_TAG_DICT` / 9) and decrements `used` on pycore; miss → `MEM_FAULT`. Delete never reallocates. Images: `img_list_del_*`, `img_dict_del_*`, `img_for_iter_delete`, `img_for_iter_clear`. |
+| `CONTAINS_OP` | `x in container` / `x not in container` (oparg 0/1); needle then container on stack; pushes BOOL. | List/tuple: linear scan with INT/BOOL cross-equality (`True == 1`). Dict/set: hash probe + rich-eq on pycore; miss → False (not KeyError). Tombstones are skipped. Images: `img_dict_contains*`, `img_set_*`, `img_list_contains_*`, `img_tuple_contains`. |
+| `SET_ADD` | Adds TOS to the set `oparg` slots below; pops only the element. | Probe/insert on pycore (same hash/rich-eq as dict). Load ≥ 2/3 (or empty table) → `SET_GROW` (13); excore reallocates, rehashes, completes insert (`COMPLETED`). Emitted inside set comprehensions; LIST/TUPLE sources now have GET_ITER/FOR_ITER, but set-source iteration still needs HEAP_ITER. Coverage via `img_set_*` / hand fixtures. |
+| `SET_UPDATE` | Updates the set `oparg` slots below TOS from the iterable at TOS; pops the iterable. | Always raises `PY_TRAP_SET_UPDATE` (14) before commit; excore grow-to-fit + merge (`COMPLETED` pop 1). Unsupported iterable → `TYPE`. |
+
+## Fully unsupported bytecodes
+
+Any CPython 3.14 opcode **not listed in the first two tables** is fully
+unsupported in the current PyCore flow.
 
 For unsupported bytecodes, behavior is strict:
 
-1. preprocess rejects the program before artifact generation when possible (`reject`);
-2. if one still reaches decode, it is treated as illegal and traps (`trap`).
+1. preprocess rejects the program before artifact generation when possible;
+2. if one still reaches decode, it is treated as illegal and traps.
 
-In short, unsupported bytecodes do not have in-hardware fallback emulation today.
-Object-protocol opcodes (`hw_class=OBJECT`) are intended for a RISC-V trap handler.
+In short, unsupported bytecodes do not have fallback emulation in hardware.
 
-## Fully supported bytecodes (17)
+## Semantic deviations from CPython
 
-Executed correctly on the current PyCore scalar fast path.
+These are intentional or interim differences; they are not bugs to "fix" in
+this milestone:
 
-| Bytecode | Description | hw_class | PyCore-specific note |
-| --- | --- | --- | --- |
-| `BINARY_OP` | Implements binary and in-place operators selected by oparg.<br><br>`rhs = STACK.pop()`<br>`lhs = STACK.pop()`<br>`STACK.append(lhs op rhs)` | `ALU1 (native)` | Fully supported on the current scalar stack (INT, BOOL, FLOAT, SHORT_STR, LONG_STR); generic OBJECT values cannot reach the stack today. preprocess rejects opargs 4/17/26 (@ and subscript read). hw_class varies by oparg: ALU1 for cheap ops, ALUN for mul/div/rem/pow. Strings: only oparg 0/13 (`+`, `+=`) concatenates SHORT_STR/LONG_STR pairs in hardware (result ≤15 bytes → SHORT_STR, else LONG_STR); other BINARY_OP opargs on strings trap. |
-| `JUMP_BACKWARD` | Decrements bytecode counter by delta. Checks for interrupts. | `BRANCH (native)` | Executed on the PyCore scalar fast path. |
-| `JUMP_FORWARD` | Increments bytecode counter by delta. | `BRANCH (native)` | Executed on the PyCore scalar fast path. |
-| `LOAD_CONST` | Pushes co_consts[consti] onto the stack. | `CONST (costly)` | Executed on the PyCore scalar fast path. |
-| `LOAD_FAST` | Pushes a reference to the local co_varnames[var_num] onto the stack. | `REG (native)` | Executed on the PyCore scalar fast path. |
-| `LOAD_FAST_BORROW` | Pushes a borrowed reference to the local co_varnames[var_num] onto the stack. | `REG (native)` | Treated as `LOAD_FAST`. |
-| `LOAD_FAST_CHECK` | Loads a fast local, raising UnboundLocalError if uninitialized. | `REG (native)` | == LOAD_FAST under PyCore UNINITIALIZED-trap policy. |
-| `LOAD_SMALL_INT` | Pushes a small immediate integer encoded in oparg. | `IMM (native)` | Executed on the PyCore scalar fast path. |
-| `POP_ITER` | Removes the iterator from the top of the stack. | `BRANCH (native)` | Executed on the PyCore scalar fast path. |
-| `POP_JUMP_IF_FALSE` | If STACK[-1] is false, increments the bytecode counter by delta. | `BRANCH (native)` | Executed on the PyCore scalar fast path. |
-| `POP_JUMP_IF_TRUE` | If STACK[-1] is true, increments the bytecode counter by delta. | `BRANCH (native)` | Executed on the PyCore scalar fast path. |
-| `POP_TOP` | Removes the top-of-stack item. | `BRANCH (native)` | Executed on the PyCore scalar fast path. |
-| `RETURN_VALUE` | Returns with STACK[-1] to the caller of the function. | `BRANCH (native)` | Executed on the PyCore scalar fast path. |
-| `STORE_FAST` | Stores STACK.pop() into the local co_varnames[var_num]. | `REG (native)` | Executed on the PyCore scalar fast path. |
-| `UNARY_INVERT` | Implements STACK[-1] = ~STACK[-1]. | `ALU1 (native)` | Executed on the PyCore scalar fast path. |
-| `UNARY_NEGATIVE` | Implements STACK[-1] = -STACK[-1]. | `ALU1 (native)` | Executed on the PyCore scalar fast path. |
-| `UNARY_NOT` | Implements STACK[-1] = not STACK[-1]. | `PRED (native)` | Executed on the PyCore scalar fast path. |
+1. **INT/BOOL/FLOAT cross-tag keys stay on pycore.** Rich equality
+   (`True == 1`, `1.0 == 1`, …) runs on the probe path for dict and set.
+   Only capacity-changing / O(n) memmove work is offloaded to excore.
+2. **Missing dict key → `PY_TRAP_MEM_FAULT`.** There is no `KeyError` object;
+   absent keys raise the memory-fault trap (KeyError analog). `CONTAINS_OP`
+   misses push `False` instead.
+3. **Negative list/tuple indices trap.** Bounds checks are unsigned; negative
+   INT indices do not wrap to `size + idx`.
+4. **Non-interned runtime strings as dict keys.** `LONG_STR` equality is
+   descriptor (`{size, addr}`) equality and relies on tooling interning.
+   Runtime-concatenated long strings live in the exec unit's private
+   `string_mem` and are not interned; using them as dict keys is not
+   semantically valid. Hardware cannot detect this.
+5. **Dict grow via excore.** Load ≥ 2/3 (or empty table / no free slot) before
+   a new-key insert raises `DICT_GROW` (11). With `EXCORE_EN=1` excore
+   reallocates the table, rehashes, and completes the STORE; without excore
+   the trap is fatal. See `pycore/docs/dict_excore.md`.
+6. **Builtins fallback (partial).** `LOAD_GLOBAL` / `LOAD_NAME` probe
+   the serialized module globals dict; missing names trap `PY_TRAP_MEM_FAULT`.
+6a. **`AttributeError` → `PY_TRAP_ATTR_ERROR` (15).** Missing attributes after
+   instance `__dict__` + MRO halt fatally; there is no exception object.
+7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
+   the stack and `CALL` treats that handle as the function. Defaults,
+   annotations, closures, and callable objects beyond code handles are still
+   out of scope. `LOAD_ATTR` can materialize an `OBK_BOUND_METHOD` for the
+   non-method form; calling it is M3.
+8. **`LOAD_NAME` module-scope behavior.** The current hardware treats
+   `LOAD_NAME` as a globals lookup, matching the image-boot module programs but
+   not CPython's full locals/globals/builtins search chain.
+9. **Image fidelity scope.** Images preserve the `compile()` object graph and
+   bytecode-unit order, including `CACHE` and `EXTENDED_ARG`, but use PyCore's
+   tagged 128-bit-slot layout rather than CPython C structs.
+10. **No value-stack-overflow detection.** Pushing opcodes (`COPY`,
+   `LOAD_FAST`, `LOAD_SMALL_INT`, `PUSH_NULL`, etc.) advance `tos_index`
+   without a capacity check; an over-deep stack silently overruns RF slots
+   instead of raising. The flow relies on `co_stacksize`-valid bytecode. A
+   stack-limit trap is future work.
+11. **Unbound local → `PY_TRAP_MEM_FAULT`.** CPython raises
+   `UnboundLocalError`; PyCore has no exception objects, so a second `del`
+   (`DELETE_FAST` on `UNINIT`) and use-after-`del` / maybe-unbound loads
+   (`LOAD_FAST_CHECK` on `UNINIT`) both trap memory-fault (7).
+12. **`LOAD_FAST_AND_CLEAR` unbound ≠ `DELETE_FAST`.** CPython pushes
+   `NULL` and clears; PyCore pushes `PY_TAG_UNINIT` and clears. Already-unbound
+   slots do not trap (comprehension save of a maybe-unbound outer local).
+13. **`IS_OP` tagged-scalar identity.** PyCore compares full RF entries
+   (tag + payload). Equal unboxed `INT`/`FLOAT`/`SHORT_STR` values always
+   `is`; CPython heap objects with equal value may not. Handle tags
+   (`LIST`/`DICT`/`TUPLE`/…) remain pointer-identity.
+14. **`COMPARE_OP` numeric ceiling.** Native comparison uses the signed 64-bit
+   INT fast path and existing INT/BOOL-to-FLOAT promotion. Integers outside
+   that range and mixed large-INT/FLOAT precision boundaries do not provide
+   CPython arbitrary-precision comparison semantics. `None`, containers, and
+   user-defined rich comparison trap `PY_TRAP_TYPE`. Same-tag string `==`/`!=`
+   is supported; ordering on strings still traps.
+15. **`COMPARE_OP` / `LONG_STR` descriptor equality.** Same-tag `LONG_STR`
+   equality compares the `{size, addr}` descriptor, not byte contents. This
+   matches dict-key / contains semantics and relies on image-time string
+   interning; distinct runtime-concatenated long strings with equal text may
+   compare unequal (see deviation 4).
 
-## Partially supported bytecodes (4)
+## Deferred container opcodes
 
-Recognized but incomplete or limited on the current PyCore datapath.
+The following container-related opcodes are explicitly deferred.
+`image_from_source.py` rejects them with a `"Deferred opcode"` error message
+before image generation; if somehow one reaches hardware it is trapped as
+illegal. Each entry has a TODO hook ready for a follow-up PR.
 
-| Bytecode | Description | hw_class | PyCore-specific note |
-| --- | --- | --- | --- |
-| `CALL` | Calls a callable object with the number of arguments specified by argc. | `FRAME (heavy)` | Decoded but incomplete on the current PyCore datapath. |
-| `COMPARE_OP` | Performs a Boolean operation. The operation name can be found in cmp_op[opname >> 5]. If the fifth-lowest bit of opname is set (opname & 16), the result should be coerced to bool. | `PRED (native)` | Decoded but incomplete on the current PyCore datapath. |
-| `COPY` | Duplicates the i-th stack item to the top without removing it. | `REG (native)` | add COPY to decode (stack-pointer-relative read). |
-| `SWAP` | Swaps the top of the stack with the i-th element below it. | `REG (native)` | Decoded but incomplete on the current PyCore datapath. |
-
-## Stripped bytecodes (interpreter plumbing) (32)
-
-Removed or absorbed by preprocess/fetch; never executed architecturally.
-
-| Bytecode | Description | hw_class | PyCore-specific note |
-| --- | --- | --- | --- |
-| `ANNOTATIONS_PLACEHOLDER` | Placeholder opcode for annotation metadata; not executed. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `CACHE` | Rather than being an actual instruction, this opcode is used to mark extra space for the interpreter to cache useful data directly in the bytecode itself. It is automatically hidden by all dis utilities, but can be viewed with show_caches=True. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `ENTER_EXECUTOR` | Enters a tier-2 executor; interpreter internal. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `EXTENDED_ARG` | Prefixes any opcode which has an argument too big to fit into the default one byte. ext holds an additional byte which act as higher bits in the argument. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_CALL` | Instrumented variant of CALL. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_CALL_FUNCTION_EX` | Instrumented variant of CALL_FUNCTION_EX. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_CALL_KW` | Instrumented variant of CALL_KW. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_END_ASYNC_FOR` | Instrumented variant of END_ASYNC_FOR. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_END_FOR` | Instrumented variant of END_FOR. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_END_SEND` | Instrumented variant of END_SEND. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_FOR_ITER` | Instrumented variant of FOR_ITER. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_INSTRUCTION` | Per-instruction tracing hook. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_JUMP_BACKWARD` | Instrumented variant of JUMP_BACKWARD. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_JUMP_FORWARD` | Instrumented variant of JUMP_FORWARD. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_LINE` | Line-tracing instrumentation hook. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_LOAD_SUPER_ATTR` | Instrumented variant of LOAD_SUPER_ATTR. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_NOT_TAKEN` | Instrumented variant of NOT_TAKEN. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_POP_ITER` | Instrumented variant of POP_ITER. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_POP_JUMP_IF_FALSE` | Instrumented variant of POP_JUMP_IF_FALSE. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_POP_JUMP_IF_NONE` | Instrumented variant of POP_JUMP_IF_NONE. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_POP_JUMP_IF_NOT_NONE` | Instrumented variant of POP_JUMP_IF_NOT_NONE. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_POP_JUMP_IF_TRUE` | Instrumented variant of POP_JUMP_IF_TRUE. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_RESUME` | Instrumented variant of RESUME. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_RETURN_VALUE` | Instrumented variant of RETURN_VALUE. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INSTRUMENTED_YIELD_VALUE` | Instrumented variant of YIELD_VALUE. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `INTERPRETER_EXIT` | Exits the interpreter with a return value; internal. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `JUMP` | Undirected relative jump pseudo-instruction; replaced by forward/backward jumps in the assembler. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `JUMP_NO_INTERRUPT` | Undirected relative jump pseudo-instruction that does not allow interrupts. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `NOP` | Do nothing code. Used as a placeholder by the bytecode optimizer, and to generate line tracing events. | `BRANCH (native)` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `NOT_TAKEN` | Do nothing code. | `BRANCH (native)` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `RESERVED` | Reserved opcode slot; not used. | `INTERNAL` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-| `RESUME` | A no-op. Performs internal tracing, debugging and optimization checks. | `BRANCH (native)` | Stripped or folded by preprocess/fetch; never executed in hardware. |
-
-## Fully unsupported bytecodes (preprocess reject) (13)
-
-Rejected by preprocess before artifact generation.
-
-| Bytecode | Description | hw_class | PyCore-specific note |
-| --- | --- | --- | --- |
-| `DELETE_FAST` | Deletes (clears) a fast local variable slot. | `REG (native)` | RF-domain local delete (mark UNINITIALIZED); cheap to add. |
-| `JUMP_BACKWARD_NO_INTERRUPT` | Decrements bytecode counter by delta without checking for interrupts. | `BRANCH (native)` | Rejected by preprocess before artifact generation. |
-| `JUMP_IF_FALSE` | Conditional jump if TOS is falsy without popping the stack (pseudo-instruction). | `BRANCH (native)` | 3.14 peek-branch (net 0, does not pop); replaces 3.13 JUMP_IF_FALSE_OR_POP. |
-| `JUMP_IF_TRUE` | Conditional jump if TOS is truthy without popping the stack (pseudo-instruction). | `BRANCH (native)` | 3.14 peek-branch (net 0, does not pop). |
-| `LOAD_FAST_AND_CLEAR` | Loads a fast local and clears the slot to NULL (compiler temp semantics). | `REG (native)` | Rejected by preprocess before artifact generation. |
-| `LOAD_FAST_BORROW_LOAD_FAST_BORROW` | Pushes two borrowed fast locals (compiler-fused dual load). | `REG (native)` | compiler-fused dual load not executed. fused dual-local read, or split in preprocess. |
-| `LOAD_FAST_LOAD_FAST` | Pushes two fast locals (compiler-fused dual load). | `REG (native)` | Rejected by preprocess before artifact generation. |
-| `POP_JUMP_IF_NONE` | If TOS is None, increments the bytecode counter by delta. | `BRANCH (native)` | None identity test; no None scalar in PyCore. |
-| `POP_JUMP_IF_NOT_NONE` | If TOS is not None, increments the bytecode counter by delta. | `BRANCH (native)` | None identity test; no None scalar in PyCore. |
-| `STORE_FAST_LOAD_FAST` | Stores one fast local and loads another (fused store/load). | `REG (native)` | executes fine (two RF accesses) but is a fold boundary. |
-| `STORE_FAST_MAYBE_NULL` | Stores a fast local that may be NULL. | `REG (native)` | Rejected by preprocess before artifact generation. |
-| `STORE_FAST_STORE_FAST` | Stores two fast locals (compiler-fused dual store). | `REG (native)` | compiler-fused dual store not executed. |
-| `TO_BOOL` | Implements STACK[-1] = bool(STACK[-1]). | `PRED (native)` | truthiness coercion before branch not executed. add TO_BOOL (scalar truthiness already in branch unit). |
-
-## Fully unsupported bytecodes (runtime trap) (88)
-
-Not implemented in hardware; traps if reached (intended for RISC-V trap handler).
-
-| Bytecode | Description | hw_class | PyCore-specific note |
-| --- | --- | --- | --- |
-| `BINARY_SLICE` | Implements container[start:end] (binary slice load). | `OBJECT` | Object subsystem OBJ_SEQ (distance 1; needs typed array/memory unit + bounds check). |
-| `BUILD_INTERPOLATION` | Constructs a new string.templatelib.Interpolation instance from a value and its source expression and pushes the resulting object onto the stack. | `OBJECT` | Object subsystem OBJ_STR (distance 2; needs string buffer + format runtime). |
-| `BUILD_LIST` | Works as BUILD_TUPLE, but creates a list. | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `BUILD_MAP` | Pushes a new dictionary object onto the stack. Pops 2 * count items so that the dictionary holds count entries: {..., STACK[-4]: STACK[-3], STACK[-2]: STACK[-1]}. | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `BUILD_SET` | Works as BUILD_TUPLE, but creates a set. | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `BUILD_SLICE` | Pushes a slice object on the stack (argc 2 or 3). | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `BUILD_STRING` | Concatenates count strings from the stack and pushes the resulting string onto the stack. | `OBJECT` | Object subsystem OBJ_STR (distance 2; needs string buffer + format runtime). |
-| `BUILD_TEMPLATE` | Constructs a new string.templatelib.Template instance from a tuple of strings and a tuple of interpolations and pushes the resulting object onto the stack | `OBJECT` | Object subsystem OBJ_STR (distance 2; needs string buffer + format runtime). |
-| `BUILD_TUPLE` | Creates a tuple consuming count items from the stack, and pushes the resulting tuple onto the stack | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `CALL_FUNCTION_EX` | Calls a callable object with variable set of positional and keyword arguments. If the lowest bit of flags is set, the top of the stack contains a mapping object containing additional keyword arguments. | `OBJECT` | Object subsystem OBJ_CALL (distance 5; needs full call/object-construction protocol (variadic + func-object creation; plain CALL is FRAME, in-scope)). |
-| `CALL_INTRINSIC_1` | Calls an intrinsic function with one argument. Passes STACK[-1] as the argument and sets STACK[-1] to the result. Used to implement functionality that is not performance critical. | `OBJECT` | Object subsystem OBJ_CALL (distance 5; needs full call/object-construction protocol (variadic + func-object creation; plain CALL is FRAME, in-scope)). |
-| `CALL_INTRINSIC_2` | Calls an intrinsic function with two arguments. Used to implement functionality that is not performance critical | `OBJECT` | Object subsystem OBJ_CALL (distance 5; needs full call/object-construction protocol (variadic + func-object creation; plain CALL is FRAME, in-scope)). |
-| `CALL_KW` | Calls a callable with positional and named keyword arguments. | `OBJECT` | Object subsystem OBJ_CALL (distance 5; needs full call/object-construction protocol (variadic + func-object creation; plain CALL is FRAME, in-scope)). |
-| `CHECK_EG_MATCH` | Performs exception matching for except*. Applies split(STACK[-1]) on the exception group representing STACK[-2]. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `CHECK_EXC_MATCH` | Performs exception matching for except. Tests whether the STACK[-2] is an exception matching STACK[-1]. Pops STACK[-1] and pushes the boolean result of the test. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `CLEANUP_THROW` | Handles an exception raised during a generator.throw or generator.close call through the current frame. If STACK[-1] is an instance of StopIteration, pop three values from the stack and push its value member. Otherwise, re-raise STACK[-1]. | `OBJECT` | Object subsystem OBJ_GEN (distance 5; needs suspendable/resumable frames). |
-| `CONTAINS_OP` | Performs in comparison, or not in if invert is 1. | `OBJECT` | Object subsystem OBJ_DYN (distance 1; needs reference identity / container membership). |
-| `CONVERT_VALUE` | Convert value to a string, depending on oparg | `OBJECT` | Object subsystem OBJ_STR (distance 2; needs string buffer + format runtime). |
-| `COPY_FREE_VARS` | Copies the n free (closure) variables from the closure into the frame. Removes the need for special code on the caller's side when calling closures. | `OBJECT` | Object subsystem OBJ_CLOSURE (distance 2; needs heap cell boxes for free vars). |
-| `DELETE_ATTR` | Implements: obj = STACK.pop() del obj.name. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `DELETE_DEREF` | Empties the cell contained in slot i of the "fast locals" storage. | `OBJECT` | Object subsystem OBJ_CLOSURE (distance 2; needs heap cell boxes for free vars). |
-| `DELETE_GLOBAL` | Works as DELETE_NAME, but deletes a global name. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `DELETE_NAME` | Implements del name, where namei is the index into codeobject.co_names attribute of the :ref:`code object `. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `DELETE_SUBSCR` | Implements del container[key]. | `OBJECT` | Object subsystem OBJ_SEQ (distance 1; needs typed array/memory unit + bounds check). |
-| `DICT_MERGE` | Like DICT_UPDATE but raises an exception for duplicate keys. | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `DICT_UPDATE` | Implements: map = STACK.pop() dict.update(STACK[-i], map). | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `END_ASYNC_FOR` | Terminates an :keyword:`async for` loop. Handles an exception raised when awaiting a next item. The stack contains the async iterable in STACK[-2] and the raised exception in STACK[-1]. Both are popped. | `OBJECT` | Object subsystem OBJ_ITER (distance 4; needs iterator-protocol dispatch (tp_iter/tp_next)). |
-| `END_FOR` | Removes the top-of-stack item. | `OBJECT` | Object subsystem OBJ_ITER (distance 4; needs iterator-protocol dispatch (tp_iter/tp_next)). |
-| `END_SEND` | Implements del STACK[-2]. | `OBJECT` | Object subsystem OBJ_GEN (distance 5; needs suspendable/resumable frames). |
-| `EXIT_INIT_CHECK` | Verifies __init__() returned None after object construction. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `FORMAT_SIMPLE` | Formats the value on top of stack | `OBJECT` | Object subsystem OBJ_STR (distance 2; needs string buffer + format runtime). |
-| `FORMAT_WITH_SPEC` | Formats the given value with the given format spec | `OBJECT` | Object subsystem OBJ_STR (distance 2; needs string buffer + format runtime). |
-| `FOR_ITER` | STACK[-1] is an iterator. Call its iterator.__next__ method. | `OBJECT` | Object subsystem OBJ_ITER (distance 4; needs iterator-protocol dispatch (tp_iter/tp_next)). |
-| `GET_AITER` | Implements STACK[-1] = STACK[-1].__aiter__(). | `OBJECT` | Object subsystem OBJ_ITER (distance 4; needs iterator-protocol dispatch (tp_iter/tp_next)). |
-| `GET_ANEXT` | Implement STACK.append(get_awaitable(STACK[-1].__anext__())) to the stack. | `OBJECT` | Object subsystem OBJ_ITER (distance 4; needs iterator-protocol dispatch (tp_iter/tp_next)). |
-| `GET_AWAITABLE` | Implements STACK[-1] = get_awaitable(STACK[-1]), where get_awaitable(o) returns o if o is a coroutine object or a generator object with the inspect.CO_ITERABLE_COROUTINE flag, or resolves o.__await__. | `OBJECT` | Object subsystem OBJ_ITER (distance 4; needs iterator-protocol dispatch (tp_iter/tp_next)). |
-| `GET_ITER` | Implements STACK[-1] = iter(STACK[-1]). | `OBJECT` | Object subsystem OBJ_ITER (distance 4; needs iterator-protocol dispatch (tp_iter/tp_next)). |
-| `GET_LEN` | Perform STACK.append(len(STACK[-1])). Used in :keyword:`match` statements where comparison with structure of pattern is needed. | `OBJECT` | Object subsystem OBJ_SEQ (distance 1; needs typed array/memory unit + bounds check). |
-| `GET_YIELD_FROM_ITER` | If STACK[-1] is a generator iterator or coroutine object it is left as is. Otherwise, implements STACK[-1] = iter(STACK[-1]). | `OBJECT` | Object subsystem OBJ_ITER (distance 4; needs iterator-protocol dispatch (tp_iter/tp_next)). |
-| `IMPORT_FROM` | Loads the attribute co_names[namei] from the module found in STACK[-1]. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `IMPORT_NAME` | Imports the module co_names[namei]. STACK[-1] and STACK[-2] are popped and provide the fromlist and level arguments of __import__. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `IS_OP` | Performs is comparison, or is not if invert is 1. | `OBJECT` | Object subsystem OBJ_DYN (distance 1; needs reference identity / container membership). |
-| `LIST_APPEND` | Implements: item = STACK.pop() list.append(STACK[-i], item). | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `LIST_EXTEND` | Implements: seq = STACK.pop() list.extend(STACK[-i], seq). | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `LOAD_ATTR` | If the low bit of namei is not set, this replaces STACK[-1] with getattr(STACK[-1], co_names[namei>>1]). | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `LOAD_BUILD_CLASS` | Pushes !builtins.__build_class__ onto the stack. It is later called to construct a class. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `LOAD_CLOSURE` | Pushes a cell reference from fast locals; replaced with LOAD_FAST in the assembler. | `OBJECT` | Object subsystem OBJ_CLOSURE (distance 2; needs heap cell boxes for free vars). |
-| `LOAD_COMMON_CONSTANT` | Pushes a common constant onto the stack. The interpreter contains a hardcoded list of constants supported by this instruction. Used by the :keyword:`assert` statement to load AssertionError. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `LOAD_DEREF` | Loads the cell contained in slot i of the "fast locals" storage. | `OBJECT` | Object subsystem OBJ_CLOSURE (distance 2; needs heap cell boxes for free vars). |
-| `LOAD_FROM_DICT_OR_DEREF` | Pops a mapping off the stack and looks up the name associated with slot i of the "fast locals" storage in this mapping. | `OBJECT` | Object subsystem OBJ_CLOSURE (distance 2; needs heap cell boxes for free vars). |
-| `LOAD_FROM_DICT_OR_GLOBALS` | Pops a mapping off the stack and looks up the value for co_names[namei]. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `LOAD_GLOBAL` | Loads the global named co_names[namei>>1] onto the stack. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `LOAD_LOCALS` | Pushes a reference to the locals dictionary onto the stack. This is used to prepare namespace dictionaries for LOAD_FROM_DICT_OR_DEREF and LOAD_FROM_DICT_OR_GLOBALS. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `LOAD_NAME` | Pushes the value associated with co_names[namei] onto the stack. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `LOAD_SPECIAL` | Performs special method lookup on STACK[-1]. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `LOAD_SUPER_ATTR` | This opcode implements super, both in its zero-argument and two-argument forms (e.g. super().method(), super().attr and super(cls, self).method(), super(cls, self).attr). | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `MAKE_CELL` | Creates a new cell in slot i. If that slot is nonempty then that value is stored into the new cell. | `OBJECT` | Object subsystem OBJ_CLOSURE (distance 2; needs heap cell boxes for free vars). |
-| `MAKE_FUNCTION` | Pushes a new function object on the stack built from the code object at STACK[-1]. | `OBJECT` | Object subsystem OBJ_CALL (distance 5; needs full call/object-construction protocol (variadic + func-object creation; plain CALL is FRAME, in-scope)). |
-| `MAP_ADD` | Implements: value = STACK.pop() key = STACK.pop() dict.__setitem__(STACK[-i], key, value). | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `MATCH_CLASS` | STACK[-1] is a tuple of keyword attribute names, STACK[-2] is the class being matched against, and STACK[-3] is the match subject. count is the number of positional sub-patterns. | `OBJECT` | Object subsystem OBJ_MATCH (distance 4; needs type introspection + container probing). |
-| `MATCH_KEYS` | STACK[-1] is a tuple of mapping keys, and STACK[-2] is the match subject. | `OBJECT` | Object subsystem OBJ_MATCH (distance 4; needs type introspection + container probing). |
-| `MATCH_MAPPING` | If STACK[-1] is an instance of collections.abc.Mapping (or, more technically: if it has the :c:macro:`Py_TPFLAGS_MAPPING` flag set in its :c:member:`~PyTypeObject.tp_flags`), push True onto the stack. Otherwise, push False. | `OBJECT` | Object subsystem OBJ_MATCH (distance 4; needs type introspection + container probing). |
-| `MATCH_SEQUENCE` | If STACK[-1] is an instance of collections.abc.Sequence and is not an instance of str/bytes/bytearray (or, more technically: if it has the :c:macro:`Py_TPFLAGS_SEQUENCE` flag set in its :c:member:`~PyTypeObject.tp_flags`), push True onto the stack. Otherwise, push False. | `OBJECT` | Object subsystem OBJ_MATCH (distance 4; needs type introspection + container probing). |
-| `POP_BLOCK` | Pops a block from the block stack; exception/frame plumbing. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `POP_EXCEPT` | Pops a value from the stack, which is used to restore the exception state. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `PUSH_EXC_INFO` | Pops a value from the stack. Pushes the current exception to the top of the stack. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `PUSH_NULL` | Pushes a NULL to the stack. | `OBJECT` | Object subsystem OBJ_CALL (distance 5; needs full call/object-construction protocol (variadic + func-object creation; plain CALL is FRAME, in-scope)). |
-| `RAISE_VARARGS` | Raises an exception (0, 1, or 2 stack arguments depending on oparg). | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `RERAISE` | Re-raises the exception currently on top of the stack. If oparg is non-zero, pops an additional value from the stack which is used to set frame.f_lasti of the current frame. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `RETURN_GENERATOR` | Create a generator, coroutine, or async generator from the current frame. | `OBJECT` | Object subsystem OBJ_GEN (distance 5; needs suspendable/resumable frames). |
-| `SEND` | Equivalent to STACK[-1] = STACK[-2].send(STACK[-1]). Used in yield from and await statements. | `OBJECT` | Object subsystem OBJ_GEN (distance 5; needs suspendable/resumable frames). |
-| `SETUP_ANNOTATIONS` | Checks whether __annotations__ is defined in locals(), if not it is set up to an empty dict. This opcode is only emitted if a class or module body contains variable annotations statically. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `SETUP_CLEANUP` | Sets up a cleanup block for with/try-finally style unwinding. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `SETUP_FINALLY` | Sets up a finally block on the block stack. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `SETUP_WITH` | Sets up a with-block context manager exit handler. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `SET_ADD` | Implements: item = STACK.pop() set.add(STACK[-i], item). | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `SET_FUNCTION_ATTRIBUTE` | Sets a function attribute from a flag-encoded oparg (name, defaults, annotations, etc.). | `OBJECT` | Object subsystem OBJ_CALL (distance 5; needs full call/object-construction protocol (variadic + func-object creation; plain CALL is FRAME, in-scope)). |
-| `SET_UPDATE` | Implements: seq = STACK.pop() set.update(STACK[-i], seq). | `OBJECT` | Object subsystem OBJ_BUILD (distance 2; needs heap allocator + container reprs). |
-| `STORE_ATTR` | Implements: obj = STACK.pop() value = STACK.pop() obj.name = value. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `STORE_DEREF` | Stores STACK.pop() into the cell contained in slot i of the "fast locals" storage. | `OBJECT` | Object subsystem OBJ_CLOSURE (distance 2; needs heap cell boxes for free vars). |
-| `STORE_GLOBAL` | Works as STORE_NAME, but stores the name as a global. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `STORE_NAME` | Implements name = STACK.pop(). namei is the index of name in the attribute codeobject.co_names of the :ref:`code object `. | `OBJECT` | Object subsystem OBJ_NS (distance 3; needs dict + hashing (+ descriptor/MRO for attrs)). |
-| `STORE_SLICE` | Implements container[start:end] = value (slice store). | `OBJECT` | Object subsystem OBJ_SEQ (distance 1; needs typed array/memory unit + bounds check). |
-| `STORE_SUBSCR` | Implements container[key] = value. | `OBJECT` | Object subsystem OBJ_SEQ (distance 1; needs typed array/memory unit + bounds check). |
-| `UNPACK_EX` | Implements assignment with a starred target: Unpacks an iterable in STACK[-1] into individual values, where the total number of values can be smaller than the number of items in the iterable: one of the new values will be a list of all leftover items. | `OBJECT` | Object subsystem OBJ_SEQ (distance 1; needs typed array/memory unit + bounds check). |
-| `UNPACK_SEQUENCE` | Unpacks STACK[-1] into count individual values, which are put onto the stack right-to-left. Require there to be exactly count values. | `OBJECT` | Object subsystem OBJ_SEQ (distance 1; needs typed array/memory unit + bounds check). |
-| `WITH_EXCEPT_START` | Calls the function in position 4 on the stack with arguments (type, val, tb) representing the exception at the top of the stack. | `OBJECT` | Object subsystem OBJ_EXC (distance 5; needs exception state + stack unwinder). |
-| `YIELD_VALUE` | Yields STACK.pop() from a generator. | `OBJECT` | Object subsystem OBJ_GEN (distance 5; needs suspendable/resumable frames). |
+| Bytecode | Description | Deferral reason |
+| --- | --- | --- |
+| `MAP_ADD` | Add a key/value pair to an existing dict. | Dict mutation via comprehension helper; use `STORE_SUBSCR`. |
+| `DICT_UPDATE` | Update dict from a mapping. | Requires dict merge semantics (set already has `SET_UPDATE` → excore). |
+| `DICT_MERGE` | Merge dict into another dict. | Requires dict iteration. |
+| `BINARY_SLICE` | Slice read `x[a:b]`. | Requires multi-element copy allocation. |
+| `STORE_SLICE` | Slice write `x[a:b] = v`. | Same. |
+| `BUILD_CONST_KEY_MAP` | Const-key map literal. | Use `BUILD_MAP` + stores, or empty dict + `STORE_SUBSCR`. |
+| `LOAD_BUILD_CLASS` | Begin CPython class creation. | Module-level `class` is folded at image-build time (`fold_module_classes` → `OBK_TYPE` + NOP-padded `LOAD_CONST`/`STORE_NAME`). Nested/dynamic class creation stays deferred until frame-local namespaces exist. |

@@ -10,20 +10,20 @@ module tb_type_pairs;
     logic [PYCORE_ENTRY_WIDTH-1:0] result;
     logic stall;
     logic trap;
-    logic [3:0] trap_code;
+    logic [4:0] trap_code;
     int tests_run;
 
     pycore_exec dut (
-        .clk(clk),
-        .rst_n(rst_n),
-        .valid(valid),
-        .alu_op(alu_op),
-        .rs1(rs1),
-        .rs2(rs2),
-        .result(result),
-        .stall(stall),
-        .trap(trap),
-        .trap_code(trap_code)
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .valid_i(valid),
+        .alu_op_i(alu_op),
+        .rs1_i(rs1),
+        .rs2_i(rs2),
+        .result_o(result),
+        .stall_o(stall),
+        .trap_o(trap),
+        .trap_code_o(trap_code)
     );
 
     always #5 clk = ~clk;
@@ -38,14 +38,14 @@ module tb_type_pairs;
     endtask
 
     function automatic logic [PYCORE_ENTRY_WIDTH-1:0] entry(
-        input logic [2:0] tag, input logic [63:0] value
+        input logic [3:0] tag, input logic [63:0] value
     );
         begin
             entry = pycore_make_entry(tag, {64'b0, value});
         end
     endfunction
 
-    function automatic logic [2:0] tag_by_index(input int idx);
+    function automatic logic [3:0] tag_by_index(input int idx);
         begin
             unique case (idx)
                 0: tag_by_index = PY_TAG_UNINIT;
@@ -59,7 +59,7 @@ module tb_type_pairs;
         end
     endfunction
 
-    function automatic string tag_name(input logic [2:0] tag);
+    function automatic string tag_name(input logic [3:0] tag);
         begin
             unique case (tag)
                 PY_TAG_UNINIT: tag_name = "UNINITIALIZED";
@@ -83,13 +83,13 @@ module tb_type_pairs;
         end
     endfunction
 
-    function automatic logic is_numeric(input logic [2:0] tag);
+    function automatic logic is_numeric(input logic [3:0] tag);
         begin
             is_numeric = (tag == PY_TAG_INT) || (tag == PY_TAG_FLOAT) || (tag == PY_TAG_BOOL);
         end
     endfunction
 
-    function automatic logic [63:0] value_for_tag(input logic [2:0] tag);
+    function automatic logic [63:0] value_for_tag(input logic [3:0] tag);
         begin
             unique case (tag)
                 PY_TAG_INT: value_for_tag = 64'd2;
@@ -101,7 +101,7 @@ module tb_type_pairs;
         end
     endfunction
 
-    function automatic real real_for_tag(input logic [2:0] tag);
+    function automatic real real_for_tag(input logic [3:0] tag);
         begin
             unique case (tag)
                 PY_TAG_INT: real_for_tag = 2.0;
@@ -112,7 +112,7 @@ module tb_type_pairs;
         end
     endfunction
 
-    function automatic longint signed int_for_tag(input logic [2:0] tag);
+    function automatic longint signed int_for_tag(input logic [3:0] tag);
         begin
             unique case (tag)
                 PY_TAG_INT: int_for_tag = 2;
@@ -122,13 +122,13 @@ module tb_type_pairs;
         end
     endfunction
 
-    function automatic logic expect_trap(input logic [2:0] tag_a, input logic [2:0] tag_b);
+    function automatic logic expect_trap(input logic [3:0] tag_a, input logic [3:0] tag_b);
         begin
             expect_trap = !(is_numeric(tag_a) && is_numeric(tag_b));
         end
     endfunction
 
-    function automatic logic [2:0] expected_tag(input logic [2:0] tag_a, input logic [2:0] tag_b);
+    function automatic logic [3:0] expected_tag(input logic [3:0] tag_a, input logic [3:0] tag_b);
         begin
             if (tag_a == PY_TAG_FLOAT || tag_b == PY_TAG_FLOAT) begin
                 expected_tag = PY_TAG_FLOAT;
@@ -140,8 +140,8 @@ module tb_type_pairs;
 
     function automatic logic [63:0] expected_value(
         input logic [4:0] op,
-        input logic [2:0] tag_a,
-        input logic [2:0] tag_b
+        input logic [3:0] tag_a,
+        input logic [3:0] tag_b
     );
         real a_real;
         real b_real;
@@ -162,7 +162,7 @@ module tb_type_pairs;
         end
     endfunction
 
-    task automatic run_pair(input logic [4:0] op, input logic [2:0] tag_a, input logic [2:0] tag_b);
+    task automatic run_pair(input logic [4:0] op, input logic [3:0] tag_a, input logic [3:0] tag_b);
         string label;
         begin
             label = $sformatf("%s %s x %s", op_name(op), tag_name(tag_a), tag_name(tag_b));
