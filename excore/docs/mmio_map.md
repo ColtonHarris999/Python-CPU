@@ -15,13 +15,13 @@ with canned trap messages. On the two-core top, `trap_mailbox.sv` under
 | Offset | Name | Fields |
 | --- | --- | --- |
 | `0x00` | `MB_STATUS` | bit0 `trap_pending` (RO), bit1 `result_accepted` (RO) |
-| `0x04` | `MB_TRAP_CODE` | `[3:0]` |
+| `0x04` | `MB_TRAP_CODE` | `[4:0]` |
 | `0x08` | `MB_PC` | trapping pc (slot index) |
 | `0x0C` | `MB_INSTR_LO` | `{arg[23:0], opcode[7:0]}` |
 | `0x10` | `MB_INSTR_HI` | `{24'd0, arg[31:24]}` |
 | `0x14` | `MB_HEAP_PTR` | |
 | `0x18` | `MB_ENTRY_COUNT` | `[2:0]` |
-| `0x20..` | `MB_ENTRY[i]` | `i = 0..MAX_TRAP_ENTRIES-1` (default 3), 5 words each: `VAL0..VAL3` (LSW first), `TAG`. Stride 0x14 (20 bytes). |
+| `0x20..` | `MB_ENTRY[i]` | `i = 0..MAX_TRAP_ENTRIES-1` (default 4), 5 words each: `VAL0..VAL3` (LSW first), `TAG`. Stride 0x14 (20 bytes). |
 
 `result_accepted` is set the cycle `RES_GO` commits and clears whenever
 `trap_pending` is not asserted (a fresh trap starts from a clean status).
@@ -33,7 +33,7 @@ or by the `trap_res` handshake on `pycore_excore_system`.
 
 | Offset | Name | Fields |
 | --- | --- | --- |
-| `0x80` | `RES_CODE` | `[3:0]` code: 0=COMPLETED, 1=RETRY, 2=FATAL; `[7:4]` `fatal_code` (meaningful only when code=FATAL) |
+| `0x80` | `RES_CODE` | `[3:0]` code: 0=COMPLETED, 1=RETRY, 2=FATAL; `[8:4]` `fatal_code` (meaningful only when code=FATAL; 5-bit trap codes) |
 | `0x84` | `RES_POP_COUNT` | `[2:0]` |
 | `0x88` | `RES_PUSH_COUNT` | `[1:0]` |
 | `0x8C` | `RES_HEAP_PTR` | |
@@ -61,7 +61,7 @@ bit0 set, poll `SP_STATUS.busy` until clear, check `SP_STATUS.fault`, read
 
 ## Message field widths (parameterized for future handlers)
 
-`MAX_TRAP_ENTRIES = 3`, `MAX_RES_ENTRIES = 2` — both are `excore_mmio`
+`MAX_TRAP_ENTRIES = 4`, `MAX_RES_ENTRIES = 2` — both are `excore_mmio`
 module parameters so a later trap handler that needs more operands widens
 them in one place (and in the mirrored `trap_mailbox.sv` bus widths, Phase
 C).

@@ -17,8 +17,8 @@ localparam int PYCORE_VAL_LSB = 0;                            // 0
 // derive port widths without magic numbers.
 localparam int PYCORE_ADDR_WIDTH       = 32;
 localparam int PYCORE_BLOCK_SHIFT      = 12;   // 4096 bytes / block
-localparam int PYCORE_IMEM_BLOCK_COUNT = 4;    // 16 KB instruction memory
-localparam int PYCORE_DMEM_BLOCK_COUNT = 4;    // 16 KB data memory
+localparam int PYCORE_IMEM_BLOCK_COUNT = 8;    // 32 KB instruction memory
+localparam int PYCORE_DMEM_BLOCK_COUNT = 32;   // 128 KB data memory
 localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
 localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot
 
@@ -47,6 +47,17 @@ localparam logic [3:0] PY_TAG_FRAME_OBJECT = 4'b1101;
 localparam logic [3:0] PY_TAG_NULL         = 4'b1110;
 localparam logic [3:0] PY_TAG_NONE         = 4'b1111;
 
+// -------------------------------------------------------------------------
+// General heap-object kinds under PY_TAG_OBJECT (M1). The 4-bit tag space is
+// full; OBJECT means "read ob_head for the kind" (CPython's PyObject model).
+// -------------------------------------------------------------------------
+localparam logic [31:0] PY_OBK_INSTANCE     = 32'd1;
+localparam logic [31:0] PY_OBK_TYPE         = 32'd2;
+localparam logic [31:0] PY_OBK_BOUND_METHOD = 32'd3;
+localparam logic [31:0] PY_OBK_BUILTIN      = 32'd4;
+localparam logic [31:0] PY_OBK_BYTEARRAY    = 32'd5;
+localparam logic [31:0] PY_OBK_EXCEPTION    = 32'd6;
+
 localparam int PYCORE_SHORT_STR_MAX_BYTES = 15;
 localparam int PYCORE_SHORT_STR_SIZE_MSB  = 127;
 localparam int PYCORE_SHORT_STR_SIZE_LSB  = 124;
@@ -63,54 +74,79 @@ localparam logic [1:0] PY_PROMOTE_INT_TO_FLOAT  = 2'd1;
 localparam logic [1:0] PY_PROMOTE_BOOL_TO_INT   = 2'd2;
 localparam logic [1:0] PY_PROMOTE_BOOL_TO_FLOAT = 2'd3;
 
-localparam logic [3:0] PY_TRAP_NONE           = 4'd0;
-localparam logic [3:0] PY_TRAP_TYPE           = 4'd1;
-localparam logic [3:0] PY_TRAP_STACK          = 4'd2;
-localparam logic [3:0] PY_TRAP_DIV_ZERO       = 4'd3;
-localparam logic [3:0] PY_TRAP_FPU_EXCEPTION  = 4'd4;
-localparam logic [3:0] PY_TRAP_ILLEGAL_OPCODE = 4'd5;
-localparam logic [3:0] PY_TRAP_CALL_FILTER    = 4'd6;
-localparam logic [3:0] PY_TRAP_MEM_FAULT      = 4'd7;
-localparam logic [3:0] PY_TRAP_ADDR_ALIGN     = 4'd8;
+localparam logic [4:0] PY_TRAP_NONE = 5'd0;
+localparam logic [4:0] PY_TRAP_TYPE = 5'd1;
+localparam logic [4:0] PY_TRAP_STACK = 5'd2;
+localparam logic [4:0] PY_TRAP_DIV_ZERO = 5'd3;
+localparam logic [4:0] PY_TRAP_FPU_EXCEPTION = 5'd4;
+localparam logic [4:0] PY_TRAP_ILLEGAL_OPCODE = 5'd5;
+localparam logic [4:0] PY_TRAP_CALL_FILTER = 5'd6;
+localparam logic [4:0] PY_TRAP_MEM_FAULT = 5'd7;
+localparam logic [4:0] PY_TRAP_ADDR_ALIGN = 5'd8;
 // PY_TRAP_LIST_GROW: raised by CONT_LIST_APPEND when the target list is at
 // capacity (length == capacity).  Recoverable in principle (Phase C hands it
 // to the excore, which grows the buffer and completes the append); Phase A
 // has no excore, so this trap is fatal like any other and is reported
 // through the same halt path.  Raised before any RF/heap commit (see
 // pycore_trap_recoverable below and CONT_LIST_APPEND's CP_HDR phase).
-localparam logic [3:0] PY_TRAP_LIST_GROW      = 4'd9;
+localparam logic [4:0] PY_TRAP_LIST_GROW = 5'd9;
 // PY_TRAP_LIST_EXTEND: raised by CONT_LIST_EXTEND for every non-empty
 // LIST/TUPLE source (empty source is a no-op pop on pycore). Recoverable —
 // the excore grows-to-fit when needed (or copies in place when capacity
 // already suffices) and completes the extend. Raised before any commit.
-localparam logic [3:0] PY_TRAP_LIST_EXTEND    = 4'd10;
+localparam logic [4:0] PY_TRAP_LIST_EXTEND = 5'd10;
 // PY_TRAP_DICT_GROW: raised before a new-key dict insert when load ≥ 2/3
 // (or table empty). Recoverable — excore reallocates the relocatable table,
 // rehashes, and completes STORE. Handle address stays stable (layout v2).
-localparam logic [3:0] PY_TRAP_DICT_GROW      = 4'd11;
+localparam logic [4:0] PY_TRAP_DICT_GROW = 5'd11;
 // PY_TRAP_LIST_DELETE: list DELETE_SUBSCR element shift (excore; part 2).
 // Code 12 formerly DICT_COLLISION — dict/set rich equality now runs on pycore.
-localparam logic [3:0] PY_TRAP_LIST_DELETE    = 4'd12;
+localparam logic [4:0] PY_TRAP_LIST_DELETE = 5'd12;
 // PY_TRAP_SET_GROW: SET_ADD at load ≥ 2/3 (or empty table). Recoverable —
 // excore reallocates the element table, rehashes, inserts, COMPLETED pop=1.
-localparam logic [3:0] PY_TRAP_SET_GROW       = 4'd13;
+localparam logic [4:0] PY_TRAP_SET_GROW = 5'd13;
 // PY_TRAP_SET_UPDATE: always raised by SET_UPDATE (bulk merge). Recoverable —
 // excore grow-to-fit + insert from LIST/TUPLE/SET source, COMPLETED pop=1.
-localparam logic [3:0] PY_TRAP_SET_UPDATE     = 4'd14;
+localparam logic [4:0] PY_TRAP_SET_UPDATE = 5'd14;
+// PY_TRAP_ATTR_ERROR: attribute missing after instance __dict__ + MRO walk
+// (LOAD_ATTR / DELETE_ATTR), or equivalent AttributeError. Fatal — no excore
+// recovery. Raised before any RF/heap/dmem commit.
+localparam logic [4:0] PY_TRAP_ATTR_ERROR = 5'd15;
+// PY_TRAP_BUILTIN_CALL: CALL on OBJECT/OBK_BUILTIN (non-zero builtin_id).
+// Recoverable — excore implements bytearray / from_bytes / to_bytes / print;
+// pycore may complete max/len/list.append without trapping.
+localparam logic [4:0] PY_TRAP_BUILTIN_CALL = 5'd16;
+// PY_TRAP_RAISE: RAISE_VARARGS built an OBK_EXCEPTION (unhandled). Fatal.
+localparam logic [4:0] PY_TRAP_RAISE = 5'd17;
+// PY_TRAP_SLICE: BINARY_SLICE / STORE_SLICE on OBK_BYTEARRAY (O(n) copy).
+// Recoverable — excore allocates/copies and returns COMPLETED.
+localparam logic [4:0] PY_TRAP_SLICE = 5'd18;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a
 // hard fatal condition that always halts?
-function automatic logic pycore_trap_recoverable(input logic [3:0] code);
+function automatic logic pycore_trap_recoverable(input logic [4:0] code);
     begin
         pycore_trap_recoverable = (code == PY_TRAP_LIST_GROW) ||
                                   (code == PY_TRAP_LIST_EXTEND) ||
                                   (code == PY_TRAP_DICT_GROW) ||
                                   (code == PY_TRAP_LIST_DELETE) ||
                                   (code == PY_TRAP_SET_GROW) ||
-                                  (code == PY_TRAP_SET_UPDATE);
+                                  (code == PY_TRAP_SET_UPDATE) ||
+                                  (code == PY_TRAP_BUILTIN_CALL) ||
+                                  (code == PY_TRAP_SLICE);
     end
 endfunction
+
+// Builtin ids for OBK_BUILTIN field0 (INT). id=0 is the @staticmethod wrapper.
+localparam logic [31:0] PY_BI_STATICMETHOD = 32'd0;
+localparam logic [31:0] PY_BI_BYTEARRAY    = 32'd1;
+localparam logic [31:0] PY_BI_FROM_BYTES   = 32'd2;
+localparam logic [31:0] PY_BI_TO_BYTES     = 32'd3;
+localparam logic [31:0] PY_BI_MAX          = 32'd4;
+localparam logic [31:0] PY_BI_LIST_APPEND  = 32'd5;
+localparam logic [31:0] PY_BI_PRINT        = 32'd6;
+localparam logic [31:0] PY_BI_LEN          = 32'd7;
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;
@@ -160,6 +196,12 @@ localparam logic [7:0] PY_OP_PUSH_NULL        = 8'd33;
 localparam logic [7:0] PY_OP_RETURN_VALUE     = 8'd35;
 localparam logic [7:0] PY_OP_STORE_SUBSCR     = 8'd38;
 localparam logic [7:0] PY_OP_TO_BOOL          = 8'd39;
+// UNARY_INVERT / UNARY_NEGATIVE — resolved from CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['UNARY_INVERT'],
+//                                       opcode.opmap['UNARY_NEGATIVE'])"
+//   -> 40, 41
+localparam logic [7:0] PY_OP_UNARY_INVERT     = 8'd40;
+localparam logic [7:0] PY_OP_UNARY_NEGATIVE   = 8'd41;
 localparam logic [7:0] PY_OP_UNARY_NOT        = 8'd42;
 localparam logic [7:0] PY_OP_BINARY_OP        = 8'd44;
 localparam logic [7:0] PY_OP_BUILD_LIST       = 8'd46;
@@ -202,6 +244,10 @@ localparam logic [7:0] PY_OP_STORE_FAST_STORE_FAST = 8'd114;
 localparam logic [7:0] PY_OP_STORE_GLOBAL     = 8'd115;
 localparam logic [7:0] PY_OP_STORE_NAME       = 8'd116;
 localparam logic [7:0] PY_OP_SWAP             = 8'd117;
+// UNPACK_SEQUENCE — resolved from CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['UNPACK_SEQUENCE'])"
+//   -> 119
+localparam logic [7:0] PY_OP_UNPACK_SEQUENCE  = 8'd119;
 localparam logic [7:0] PY_OP_RESUME           = 8'd128;
 
 // LIST_APPEND: resolved from opcode.opmap at tool-import time (see
@@ -221,6 +267,18 @@ localparam logic [7:0] PY_OP_LIST_EXTEND      = 8'd79;
 //   -> 8, 57
 localparam logic [7:0] PY_OP_DELETE_SUBSCR    = 8'd8;
 localparam logic [7:0] PY_OP_CONTAINS_OP      = 8'd57;
+
+// LOAD_ATTR / STORE_ATTR / DELETE_ATTR — CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['LOAD_ATTR'],
+//                                       opcode.opmap['STORE_ATTR'],
+//                                       opcode.opmap['DELETE_ATTR'])"
+//   -> 80, 110, 61
+// LOAD_ATTR: namei = oparg >> 1; method_flag = oparg & 1 (push [func,self]
+//   or [attr,NULL] without allocating a bound method on the hot path).
+// STORE_ATTR / DELETE_ATTR: namei = oparg (no low-bit encoding).
+localparam logic [7:0] PY_OP_LOAD_ATTR        = 8'd80;
+localparam logic [7:0] PY_OP_STORE_ATTR       = 8'd110;
+localparam logic [7:0] PY_OP_DELETE_ATTR      = 8'd61;
 
 // -------------------------------------------------------------------------
 // DELETE_SUBSCR stack convention — verified 2026-07-21 against CPython 3.14.6:
@@ -330,6 +388,15 @@ localparam logic [7:0] PY_CACHE_POP_JUMP_IF_FALSE    = 8'd1;
 localparam logic [7:0] PY_CACHE_POP_JUMP_IF_NONE     = 8'd1;
 localparam logic [7:0] PY_CACHE_POP_JUMP_IF_NOT_NONE = 8'd1;
 localparam logic [7:0] PY_CACHE_POP_JUMP_IF_TRUE     = 8'd1;
+// ATTR inline-cache unit counts (fetch skips CACHE by opcode; kept for
+// documentation / jump math parity with opcode._inline_cache_entries).
+localparam logic [7:0] PY_CACHE_LOAD_ATTR             = 8'd9;
+localparam logic [7:0] PY_CACHE_STORE_ATTR            = 8'd4;
+// UNPACK_SEQUENCE inline-cache unit count (fetch skips CACHE by opcode 0;
+// kept for documentation / jump-math parity with _inline_cache_entries).
+//   python3.14 -c "import dis; print(dis._inline_cache_entries['UNPACK_SEQUENCE'])"
+//   -> 1
+localparam logic [7:0] PY_CACHE_UNPACK_SEQUENCE       = 8'd1;
 
 // Internal-only memory opcodes. These are not part of the CPython 3.14 opcode
 // space and are never emitted by the image builder; they exist so hand-written
@@ -1012,18 +1079,18 @@ endfunction
 // Heap allocator address-space parameters.
 //
 // The object heap lives at the bottom of dmem, below the frame stack which
-// starts at FRAME_STACK_BASE (0x2000).  PYCORE_HEAP_BASE is left at 0x0400
+// starts at FRAME_STACK_BASE (0x1C000).  PYCORE_HEAP_BASE is left at 0x0400
 // to leave a 1 KB buffer at address 0 for any PTR-based user data.  The
 // bump pointer starts at PYCORE_HEAP_BASE and grows upward; a trap is
 // raised when it would exceed PYCORE_HEAP_LIMIT.
 //
-// Default memory map:
-//   0x0000 – 0x03FF  (1 KB)  reserved / user PTR data
-//   0x0400 – 0x1FFF  (7 KB)  container heap (this region)
-//   0x2000 – 0x3FFF  (8 KB)  call-frame stack
+// Default memory map (DMEM_BLOCK_COUNT=32 → 128 KB):
+//   0x00000 – 0x003FF  (1 KB)    reserved / user PTR data
+//   0x00400 – 0x1BFFF  (~110 KB) container heap (this region)
+//   0x1C000 – 0x1FFFF  (16 KB)   call-frame stack
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0400;
-localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0000_2000;
+localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0001_C000;
 
 // -------------------------------------------------------------------------
 // LIST in-dmem layout v2 — growable split object/buffer (Phase A).
@@ -1182,27 +1249,29 @@ function automatic logic [31:0] pycore_tuple_alloc_bytes(
 endfunction
 
 // -------------------------------------------------------------------------
-// CODE OBJECT in-dmem layout (tuple-element convention, 4 fields = 128 bytes):
+// CODE OBJECT in-dmem layout (tuple-element convention, 5 fields = 192 bytes):
 //
 //   Handle: { PY_TAG_CODE_OBJECT, {64'd0, addr[63:0]} }
 //
-//   field 0 : entry_slot (INT)  — imem slot index of first code unit
-//   field 1 : co_consts  (TUPLE handle; empty tuple allowed)
-//   field 2 : co_names   (TUPLE handle; empty tuple allowed)
-//   field 3 : metadata   (INT)  — packed
+//   field 0 : entry_slot  (INT)  — imem slot index of first code unit
+//   field 1 : co_consts   (TUPLE handle; empty tuple allowed)
+//   field 2 : co_names    (TUPLE handle; empty tuple allowed)
+//   field 3 : metadata    (INT)  — packed
 //               value[15:0]  = argcount
 //               value[31:16] = nlocals
 //               value[47:32] = stacksize
+//   field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
 //
 // Interim model: a "function object" IS a code-object handle (function ≡ code).
-// Per-function globals / defaults / closures are future work.
+// Defaults live on the code object; closures / kwdefaults are future work.
 // -------------------------------------------------------------------------
-localparam logic [31:0] PYCORE_CODE_FIELD_ENTRY_SLOT = 32'd0;
-localparam logic [31:0] PYCORE_CODE_FIELD_CO_CONSTS  = 32'd1;
-localparam logic [31:0] PYCORE_CODE_FIELD_CO_NAMES   = 32'd2;
-localparam logic [31:0] PYCORE_CODE_FIELD_METADATA   = 32'd3;
-localparam logic [31:0] PYCORE_CODE_NFIELDS          = 32'd4;
-localparam logic [31:0] PYCORE_CODE_OBJECT_BYTES     = 32'd128;
+localparam logic [31:0] PYCORE_CODE_FIELD_ENTRY_SLOT  = 32'd0;
+localparam logic [31:0] PYCORE_CODE_FIELD_CO_CONSTS   = 32'd1;
+localparam logic [31:0] PYCORE_CODE_FIELD_CO_NAMES    = 32'd2;
+localparam logic [31:0] PYCORE_CODE_FIELD_METADATA    = 32'd3;
+localparam logic [31:0] PYCORE_CODE_FIELD_CO_DEFAULTS = 32'd4;
+localparam logic [31:0] PYCORE_CODE_NFIELDS           = 32'd5;
+localparam logic [31:0] PYCORE_CODE_OBJECT_BYTES      = 32'd192;
 
 function automatic logic [31:0] pycore_code_field_val_addr(
     input logic [31:0] addr,
@@ -1230,14 +1299,100 @@ function automatic logic [15:0] pycore_code_meta_nlocals(
 endfunction
 
 // -------------------------------------------------------------------------
-// Boot record — two tagged-entry pairs just below the heap base, inside the
-// reserved low region:
+// General OBJECT layout under PY_TAG_OBJECT (M1):
+//
+//   Handle: { PY_TAG_OBJECT, {64'd0, obj_addr[63:0]} }
+//
+//   obj + 0  : ob_head (raw, untagged 128-bit word)
+//                [127:96] ob_kind  (PY_OBK_*)
+//                [95:64]  ob_flags
+//                [63:0]   ob_type  (byte addr of TYPE object; 0 = none)
+//   obj + 16 : { 124'b0, PY_TAG_OBJECT }   // self-tag; preserves 32B stride
+//   obj + 32 : field0 value      obj + 48 : field0 tag
+//   obj + 64 : field1 value      ...
+//
+// Field *i* lives at pycore_tuple_val_addr(obj, i+1).  pycore_obj_field_*
+// helpers are thin aliases so call sites read clearly.
+//
+// Kind field tables:
+//   OBK_INSTANCE     field0=__dict__ (DICT)
+//   OBK_TYPE         field0=tp_dict, field1=tp_base, field2=tp_name
+//   OBK_BOUND_METHOD field0=__func__, field1=__self__
+//   OBK_BUILTIN      field0=builtin_id (INT), field1=bound_self
+//   OBK_BYTEARRAY    field0=length, field1=buf_addr, field2=capacity
+//   OBK_EXCEPTION    field0=exc_type, field1=args
+// -------------------------------------------------------------------------
+localparam logic [31:0] PYCORE_OBJ_HDR_BYTES        = 32'd32;
+localparam logic [31:0] PYCORE_OBJ_INSTANCE_BYTES   = 32'd64;   // hdr + 1 field
+localparam logic [31:0] PYCORE_OBJ_TYPE_BYTES       = 32'd128;  // hdr + 3 fields
+localparam logic [31:0] PYCORE_OBJ_BOUND_METHOD_BYTES = 32'd96; // hdr + 2
+localparam logic [31:0] PYCORE_OBJ_BUILTIN_BYTES    = 32'd96;
+localparam logic [31:0] PYCORE_OBJ_BYTEARRAY_BYTES  = 32'd128;  // hdr + 3
+localparam logic [31:0] PYCORE_OBJ_EXCEPTION_BYTES  = 32'd96;
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_pack_ob_head(
+    input logic [31:0] kind,
+    input logic [31:0] flags,
+    input logic [63:0] type_addr
+);
+    begin
+        pycore_pack_ob_head = {kind, flags, type_addr};
+    end
+endfunction
+
+function automatic logic [31:0] pycore_ob_kind(
+    input logic [PYCORE_VAL_WIDTH-1:0] head
+);
+    begin
+        pycore_ob_kind = head[127:96];
+    end
+endfunction
+
+function automatic logic [31:0] pycore_ob_flags(
+    input logic [PYCORE_VAL_WIDTH-1:0] head
+);
+    begin
+        pycore_ob_flags = head[95:64];
+    end
+endfunction
+
+function automatic logic [63:0] pycore_ob_type(
+    input logic [PYCORE_VAL_WIDTH-1:0] head
+);
+    begin
+        pycore_ob_type = head[63:0];
+    end
+endfunction
+
+// Field i value/tag — alias of tuple helpers with the +1 header offset.
+function automatic logic [31:0] pycore_obj_field_val_addr(
+    input logic [31:0] obj,
+    input logic [31:0] i
+);
+    begin
+        pycore_obj_field_val_addr = pycore_tuple_val_addr(obj, i + 32'd1);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_obj_field_tag_addr(
+    input logic [31:0] obj,
+    input logic [31:0] i
+);
+    begin
+        pycore_obj_field_tag_addr = pycore_tuple_tag_addr(obj, i + 32'd1);
+    end
+endfunction
+
+// -------------------------------------------------------------------------
+// Boot record — three tagged-entry pairs just below the heap base:
 //
 //   PYCORE_BOOT_RECORD_ADDR + 0  : module code object handle (CODE_OBJECT)
 //   PYCORE_BOOT_RECORD_ADDR + 32 : globals dict handle (DICT)
+//   PYCORE_BOOT_RECORD_ADDR + 64 : builtins dict handle (DICT)
 //
 // Written by image_from_source.py; read by S_BOOT at reset when BOOT_EN=1.
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_BOOT_RECORD_ADDR = 32'h0000_03E0;
+localparam logic [31:0] PYCORE_BOOT_RECORD_BYTES = 32'd96;
 
 `endif

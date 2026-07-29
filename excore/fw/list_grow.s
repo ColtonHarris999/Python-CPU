@@ -20,7 +20,8 @@
 #   Capacity unchanged. (Last-element delete stays on pycore.)
 #
 # DICT_GROW (E0=dict, E1=key, E2=value): realloc table, rehash, STORE insert,
-#   COMPLETED pop 3. INTENTIONALLY LEAKS the old table.
+#   COMPLETED pop 3 for STORE_SUBSCR / STORE_NAME; pop 2 for STORE_ATTR (110).
+#   INTENTIONALLY LEAKS the old table.
 #
 # SET_GROW (E0=set, E1=element): realloc element table (stride 32), rehash,
 #   insert element, COMPLETED pop 1. INTENTIONALLY LEAKS the old table.
@@ -84,8 +85,9 @@
     .equ TRAP_SET_UPDATE,    14
 
     # fatal_code values mirror pycore_defs.svh's PY_TRAP_* codes exactly --
-    # Phase C forwards this nibble straight into pycore_trap as a normal
-    # halt (see architecture.md's trap taxonomy).
+    # Phase C forwards this 5-bit field (RES_CODE[8:4]) straight into
+    # pycore_trap as a normal halt (see architecture.md's trap taxonomy).
+    # do_fatal still uses slli-by-4; codes >= 16 occupy bit 8.
     .equ FATAL_TYPE,           1
     .equ FATAL_ILLEGAL_OPCODE, 5
     .equ FATAL_MEM_FAULT,      7
@@ -104,7 +106,8 @@
     # key-slot tag of 9 means deleted (see PY_TAG_TOMBSTONE in pycore_defs.svh).
     .equ TAG_TOMBSTONE,  9
 
-    .equ HEAP_LIMIT,     0x2000
+    # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (frame stack at 0x1C000).
+    .equ HEAP_LIMIT,     0x1C000
 
     # Private scratch (CPU data RAM @ 0x0) for key/value + helper state.
     .equ SCR_RA,         0x00
@@ -734,7 +737,17 @@ dg_tag_ok:
     jal  ra, dict_writeback_header
     li   t0, RES_COMPLETED
     sw   t0, RES_CODE(s11)
+    # STORE_ATTR (opcode 110): value+obj on stack → pop 2; else STORE_SUBSCR
+    # (value+key+container) / STORE_NAME → pop 3.
+    lw   t0, MB_INSTR_LO(s11)
+    andi t0, t0, 0xFF
+    li   t1, 110
+    beq  t0, t1, dg_pop_store_attr
     li   t0, 3
+    j    dg_pop_store
+dg_pop_store_attr:
+    li   t0, 2
+dg_pop_store:
     sw   t0, RES_POP_COUNT(s11)
     li   t0, 0
     sw   t0, RES_PUSH_COUNT(s11)

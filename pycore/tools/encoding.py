@@ -52,16 +52,76 @@ IMEM_SLOT_BITS = 64
 IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
 
 HEAP_BASE = 0x0400
-HEAP_LIMIT = 0x2000
+# Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (below frame stack at 0x1C000).
+HEAP_LIMIT = 0x1C000
 BOOT_RECORD_ADDR = 0x03E0
+# Three tagged-entry pairs (code, globals, builtins); mirror PYCORE_BOOT_RECORD_BYTES.
+BOOT_RECORD_BYTES = 96
 
 # Code-object field indices (tuple-element convention at code addr).
 CODE_FIELD_ENTRY_SLOT = 0
 CODE_FIELD_CO_CONSTS = 1
 CODE_FIELD_CO_NAMES = 2
 CODE_FIELD_METADATA = 3
-CODE_OBJECT_NFIELDS = 4
-CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 128
+CODE_FIELD_CO_DEFAULTS = 4
+CODE_OBJECT_NFIELDS = 5
+CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 192
+
+# General OBJECT kinds under TAG_OBJECT (mirror PY_OBK_* in pycore_defs.svh).
+OBK_INSTANCE = 1
+OBK_TYPE = 2
+OBK_BOUND_METHOD = 3
+OBK_BUILTIN = 4
+OBK_BYTEARRAY = 5
+OBK_EXCEPTION = 6
+
+# Builtin ids under OBK_BUILTIN (mirror PY_BI_* in pycore_defs.svh).
+BI_STATICMETHOD = 0
+BI_BYTEARRAY = 1
+BI_FROM_BYTES = 2
+BI_TO_BYTES = 3
+BI_MAX = 4
+BI_LIST_APPEND = 5
+BI_PRINT = 6
+BI_LEN = 7
+
+OBJ_HDR_BYTES = 32
+OBJ_INSTANCE_BYTES = 64
+OBJ_TYPE_BYTES = 128
+OBJ_BOUND_METHOD_BYTES = 96
+OBJ_BUILTIN_BYTES = 96
+OBJ_BYTEARRAY_BYTES = 128
+OBJ_EXCEPTION_BYTES = 96
+
+
+def pack_ob_head(kind: int, flags: int = 0, type_addr: int = 0) -> int:
+    """Pack ob_head: [127:96]=kind, [95:64]=flags, [63:0]=type_addr."""
+    return (
+        ((kind & 0xFFFFFFFF) << 96)
+        | ((flags & 0xFFFFFFFF) << 64)
+        | (type_addr & ((1 << 64) - 1))
+    )
+
+
+def ob_kind(head: int) -> int:
+    return (head >> 96) & 0xFFFFFFFF
+
+
+def ob_flags(head: int) -> int:
+    return (head >> 64) & 0xFFFFFFFF
+
+
+def ob_type(head: int) -> int:
+    return head & ((1 << 64) - 1)
+
+
+def obj_field_val_addr(obj: int, i: int) -> int:
+    """Byte address of field *i* value (header occupies stride index 0)."""
+    return obj + (i + 1) * 32
+
+
+def obj_field_tag_addr(obj: int, i: int) -> int:
+    return obj_field_val_addr(obj, i) + 16
 
 
 def float_bits(value: float) -> int:

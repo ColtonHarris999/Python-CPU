@@ -24,17 +24,19 @@ module pycore_trap (
     // PY_TRAP_SET_GROW / PY_TRAP_SET_UPDATE.
     input  logic        set_grow_i,
     input  logic        set_update_i,
+    // PY_TRAP_ATTR_ERROR: missing attribute after __dict__ + MRO (fatal).
+    input  logic        attr_error_i,
     // Phase C: the excore reported RES_FATAL for a recoverable trap it was
     // handed (S_TRAP_WAIT). excore_fatal_code_i is forwarded verbatim as
     // trap_code_o rather than mapped through a fixed one-hot condition,
     // since it can be any PY_TRAP_* code the firmware chooses to report.
     input  logic        excore_fatal_i,
-    input  logic [3:0]  excore_fatal_code_i,
+    input  logic [4:0]  excore_fatal_code_i,
     input  logic [31:0] fault_pc_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs1_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs2_i,
     output logic        trap_out_o,
-    output logic [3:0]  trap_code_o,
+    output logic [4:0]  trap_code_o,
     output logic [31:0] trap_pc_o,
     output logic [PYCORE_ENTRY_WIDTH-1:0] trap_rs1_o,
     output logic [PYCORE_ENTRY_WIDTH-1:0] trap_rs2_o,
@@ -42,11 +44,12 @@ module pycore_trap (
 );
 
     logic next_trap;
-    logic [3:0] next_code;
+    logic [4:0] next_code;
 
     always_comb begin
         next_trap = type_trap_i || stack_fault_i || div_zero_i || fpu_exception_i ||
                     illegal_opcode_i || call_filter_i || mem_fault_i || addr_align_i ||
+                    attr_error_i ||
                     list_grow_i || list_extend_i || dict_grow_i || list_delete_i ||
                     set_grow_i || set_update_i ||
                     excore_fatal_i;
@@ -68,6 +71,8 @@ module pycore_trap (
             next_code = PY_TRAP_ADDR_ALIGN;
         end else if (mem_fault_i) begin
             next_code = PY_TRAP_MEM_FAULT;
+        end else if (attr_error_i) begin
+            next_code = PY_TRAP_ATTR_ERROR;
         end else if (list_grow_i) begin
             next_code = PY_TRAP_LIST_GROW;
         end else if (list_extend_i) begin

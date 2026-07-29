@@ -19,7 +19,7 @@
 // protocol) means exactly: idle->wait_res is the trap_req handshake;
 // res_valid->idle is the trap_res handshake.
 module trap_mailbox #(
-    parameter int MAX_TRAP_ENTRIES = 3,
+    parameter int MAX_TRAP_ENTRIES = 4,
     parameter int MAX_RES_ENTRIES  = 2
 ) (
     input  logic         clk_i,
@@ -28,7 +28,7 @@ module trap_mailbox #(
     // ---- pycore side (trap_req: pycore is the requester) ----------------
     input  logic          trap_req_valid_i,
     output logic          trap_req_ready_o,
-    input  logic [3:0]    trap_req_code_i,
+    input  logic [4:0]    trap_req_code_i,
     input  logic [31:0]   trap_req_pc_i,
     input  logic [39:0]   trap_req_instr_i,
     input  logic [31:0]   trap_req_heap_ptr_i,
@@ -39,7 +39,7 @@ module trap_mailbox #(
     output logic          trap_res_valid_o,
     input  logic           trap_res_ready_i,
     output logic [3:0]     trap_res_code_o,
-    output logic [3:0]     trap_res_fatal_code_o,
+    output logic [4:0]     trap_res_fatal_code_o,
     output logic [2:0]     trap_res_pop_count_o,
     output logic [1:0]     trap_res_push_count_o,
     output logic [31:0]    trap_res_heap_ptr_o,
@@ -47,7 +47,7 @@ module trap_mailbox #(
 
     // ---- excore side (mailbox, read side of excore_mmio) -----------------
     output logic          mb_trap_pending_o,
-    output logic [3:0]    mb_trap_code_o,
+    output logic [4:0]    mb_trap_code_o,
     output logic [31:0]   mb_pc_o,
     output logic [7:0]    mb_opcode_o,
     output logic [31:0]   mb_arg_o,
@@ -58,7 +58,7 @@ module trap_mailbox #(
     // ---- excore side (result, write side of excore_mmio) ------------------
     input  logic          res_go_i,
     input  logic [3:0]    ex_res_code_i,
-    input  logic [3:0]    ex_res_fatal_code_i,
+    input  logic [4:0]    ex_res_fatal_code_i,
     input  logic [2:0]    ex_res_pop_count_i,
     input  logic [1:0]    ex_res_push_count_i,
     input  logic [31:0]   ex_res_heap_ptr_i,
@@ -73,7 +73,7 @@ module trap_mailbox #(
 
     // Latched request (presented to excore_mmio's mailbox inputs while
     // mb_trap_pending_o is asserted).
-    logic [3:0]   mb_trap_code_r;
+    logic [4:0]   mb_trap_code_r;
     logic [31:0]  mb_pc_r;
     logic [7:0]   mb_opcode_r;
     logic [31:0]  mb_arg_r;
@@ -84,7 +84,7 @@ module trap_mailbox #(
     // Latched result (presented to pycore while trap_res_valid_o is
     // asserted).
     logic [3:0]   res_code_r;
-    logic [3:0]   res_fatal_code_r;
+    logic [4:0]   res_fatal_code_r;
     logic [2:0]   res_pop_count_r;
     logic [1:0]   res_push_count_r;
     logic [31:0]  res_heap_ptr_r;
@@ -119,7 +119,7 @@ module trap_mailbox #(
             mb_heap_ptr_r    <= 32'h0;
             mb_entry_count_r <= 3'h0;
             res_code_r       <= 4'h0;
-            res_fatal_code_r <= 4'h0;
+            res_fatal_code_r <= 5'h0;
             res_pop_count_r  <= 3'h0;
             res_push_count_r <= 2'h0;
             res_heap_ptr_r   <= 32'h0;

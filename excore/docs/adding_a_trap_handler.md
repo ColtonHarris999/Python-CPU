@@ -5,9 +5,10 @@ emulation, iterator helpers, …), following the pattern established by
 the live container handlers in `excore/fw/list_grow.s`:
 
 1. **Assign a trap code.** Add `PY_TRAP_<NAME>` to `pycore_defs.svh`.
-   As of this writing codes **9–14 are taken** (`LIST_GROW`,
-   `LIST_EXTEND`, `DICT_GROW`, `LIST_DELETE`, `SET_GROW`, `SET_UPDATE`);
-   **code 15 is free**. `pycore_defs.svh` is the source of truth.
+   As of this writing codes **9–18 are taken** (`LIST_GROW`,
+   `LIST_EXTEND`, `DICT_GROW`, `LIST_DELETE`, `SET_GROW`, `SET_UPDATE`,
+   `ATTR_ERROR`=15, `BUILTIN_CALL`=16, `RAISE`=17, `SLICE`=18);
+   **code 19 is free**. `pycore_defs.svh` is the source of truth.
 
 2. **Classify it.** Add it to `pycore_trap_recoverable()` in
    `pycore_defs.svh`. This is the single gate that decides whether

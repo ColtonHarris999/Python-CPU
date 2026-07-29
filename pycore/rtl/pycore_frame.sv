@@ -14,11 +14,14 @@
 //
 //   Slot 1 (push second / pop first):
 //     bits [31:0]    caller cur_code_r (code-object byte address)
+//     bit  [32]      ret_discard_push_self for the frame being entered
+//     bits [96:33]   saved_instance_addr (64 bits) for that frame
 //     remaining      zero
 //
 // On return the core re-reads the caller's co_consts / co_names from the
-// restored code object (2 field reads). Storing only cur_code_r keeps the
-// descriptor to exactly two slots as required.
+// restored code object (2 field reads). Slot1's ret-mode / saved-instance
+// describe what S_RETURN should do for the function that just returned
+// (e.g. TYPE.__init__ discards NONE and pushes the instance).
 //
 // The stack grows upward from STACK_BASE_ADDR; sp_r always points to the
 // NEXT free byte. Depth is bounded by MAX_CALL_DEPTH.
@@ -51,11 +54,15 @@ module pycore_frame #(
     input  logic [$clog2(RF_DEPTH)-1:0]  tos_base_in_i,
     input  logic [$clog2(RF_DEPTH)-1:0]  locals_base_in_i,
     input  logic [31:0]                  cur_code_in_i,
+    input  logic                         ret_mode_in_i,
+    input  logic [63:0]                  saved_inst_in_i,
     input  logic [$clog2(RF_DEPTH)-1:0]  new_locals_base_in_i,
     output logic [31:0]                  pc_return_out_o,
     output logic [$clog2(RF_DEPTH)-1:0]  tos_base_out_o,
     output logic [$clog2(RF_DEPTH)-1:0]  locals_base_out_o,
     output logic [31:0]                  cur_code_out_o,
+    output logic                         ret_mode_out_o,
+    output logic [63:0]                  saved_inst_out_o,
     output logic [$clog2(RF_DEPTH)-1:0]  next_locals_base_o,
     output logic                         init_new_frame_o,
     output logic                         return_done_o,
@@ -100,6 +107,8 @@ module pycore_frame #(
     logic [RF_AW-1:0]     tos_base_r;
     logic [RF_AW-1:0]     locals_base_r;
     logic [31:0]          cur_code_r;
+    logic                 ret_mode_r;
+    logic [63:0]          saved_inst_r;
 
     logic init_new_frame_r;
     logic return_done_r;
@@ -115,15 +124,21 @@ module pycore_frame #(
     assign tos_base_out_o      = tos_base_r;
     assign locals_base_out_o   = locals_base_r;
     assign cur_code_out_o      = cur_code_r;
+    assign ret_mode_out_o      = ret_mode_r;
+    assign saved_inst_out_o    = saved_inst_r;
     assign head_ptr_out_o      = (depth_r > 0) ? STACK_BASE_ADDR : '0;
     assign tail_ptr_out_o      = (depth_r > 0) ?
                                (sp_r - FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0]) : '0;
 
     // Push: beat0 writes slot0 at sp_r; beat1 writes slot1 at sp_r+16.
+    // Slot1: [31:0]=cur_code, [32]=ret_mode, [96:33]=saved_inst.
     assign push_req_o  = (state_r == FS_PUSHING);
     assign push_addr_o = beat_r ? (sp_r + FRAME_SLOT_BYTES[ADDR_WIDTH-1:0]) : sp_r;
     assign push_data_o = beat_r ?
-        {{(PYCORE_DMEM_DATA_WIDTH-32){1'b0}}, cur_code_in_i} :
+        {{(PYCORE_DMEM_DATA_WIDTH-97){1'b0}},
+         saved_inst_in_i,
+         ret_mode_in_i,
+         cur_code_in_i} :
         {pc_return_in_i,
          tos_base_in_i,
          locals_base_in_i,
@@ -166,6 +181,8 @@ module pycore_frame #(
             tos_base_r       <= '0;
             locals_base_r    <= '0;
             cur_code_r       <= 32'b0;
+            ret_mode_r       <= 1'b0;
+            saved_inst_r     <= 64'b0;
             init_new_frame_r <= 1'b0;
             return_done_r    <= 1'b0;
             frame_fault_r    <= 1'b0;
@@ -216,10 +233,12 @@ module pycore_frame #(
                 FS_POPPING: begin
                     if (pop_ack_i) begin
                         if (!beat_r) begin
-                            // First beat: slot1 → cur_code
-                            cur_code_r <= pop_data_i[31:0];
-                            beat_r     <= 1'b1;
-                            pop_addr_r <= sp_r - FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0];
+                            // First beat: slot1 → cur_code / ret_mode / saved_inst
+                            cur_code_r   <= pop_data_i[31:0];
+                            ret_mode_r   <= pop_data_i[32];
+                            saved_inst_r <= pop_data_i[96:33];
+                            beat_r       <= 1'b1;
+                            pop_addr_r   <= sp_r - FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0];
                         end else begin
                             // Second beat: slot0 → pc/tos/locals
                             sp_r          <= sp_r - FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0];

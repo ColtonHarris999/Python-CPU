@@ -37,7 +37,7 @@ module pycore_mem_stage #(
     output logic [PYCORE_ENTRY_WIDTH-1:0] wb_entry_o,
     output logic                          mem_stall_o,
     output logic                          mem_trap_o,
-    output logic [3:0]                    mem_trap_code_o
+    output logic [4:0]                    mem_trap_code_o
 );
 
     logic                          is_load_ptr;

@@ -11,7 +11,7 @@ module tb_tag_decode;
     logic [1:0] promote_rs2_mode;
     logic [3:0] result_tag;
     logic is_trap;
-    logic [3:0] trap_code;
+    logic [4:0] trap_code;
 
     pycore_tag_decode dut (
         .rs1_tag_i(rs1_tag),
@@ -119,7 +119,21 @@ module tb_tag_decode;
         alu_op = PY_ALU_EQ;
         #1;
         check(is_trap && trap_code == PY_TRAP_TYPE,
-              "string comparison should type trap until rich compare exists");
+              "cross-tag string EQ should type trap");
+
+        rs1_tag = PY_TAG_SHORT_STR;
+        rs2_tag = PY_TAG_SHORT_STR;
+        alu_op = PY_ALU_EQ;
+        #1;
+        check(!is_trap, "same-tag SHORT_STR EQ should not trap");
+        check(result_tag == PY_TAG_BOOL, "string EQ should produce BOOL");
+
+        rs1_tag = PY_TAG_LONG_STR;
+        rs2_tag = PY_TAG_LONG_STR;
+        alu_op = PY_ALU_LT;
+        #1;
+        check(is_trap && trap_code == PY_TRAP_TYPE,
+              "string ordering should type trap");
 
         rs1_tag = PY_TAG_OBJECT;
         rs2_tag = PY_TAG_INT;
