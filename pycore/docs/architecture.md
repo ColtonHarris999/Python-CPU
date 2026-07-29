@@ -427,27 +427,31 @@ the reserved frame-stack region (`0x1C000`-`0x1FFFF`).
 ## Image boot and code objects
 
 When `BOOT_EN=1`, reset enters `S_BOOT` before normal fetch. The core reads the
-boot record at `PYCORE_BOOT_RECORD_ADDR = 0x0000_03e0`:
+boot record at `PYCORE_BOOT_RECORD_ADDR = 0x0000_03e0` (96 bytes):
 
 ```text
 0x3e0: module code object value
 0x3f0: module code object tag
 0x400: globals dict value
 0x410: globals dict tag
+0x420: builtins dict value
+0x430: builtins dict tag
 ```
 
-The boot walker verifies `CODE_OBJECT`/`DICT`, caches the module code object's
-`co_consts` and `co_names`, latches `globals_base_r`, and redirects fetch to the
-module entry slot. `BOOT_EN=0` remains available for hand-authored hex
-fixtures that skip the boot record.
+The boot walker verifies `CODE_OBJECT` / globals `DICT` / builtins `DICT`,
+caches the module code object's `co_consts` and `co_names`, latches
+`globals_base_r` and `builtins_base_r`, and redirects fetch to the module
+entry slot. `BOOT_EN=0` remains available for hand-authored hex fixtures that
+skip the boot record.
 
-Serialized code objects are four tagged-entry fields (32 bytes per field):
+Serialized code objects are five tagged-entry fields (32 bytes per field):
 
 ```text
 field 0: entry_slot  (INT, imem slot index)
 field 1: co_consts   (TUPLE handle)
 field 2: co_names    (TUPLE handle)
 field 3: metadata    (INT, packed {stacksize, nlocals, argcount})
+field 4: co_defaults (TUPLE handle)
 ```
 
 The interim function model is **function == code object**: `MAKE_FUNCTION`
@@ -462,10 +466,10 @@ tag slot) before pushing the tagged entry. An inline or small const cache is
 future work.
 
 `LOAD_GLOBAL` and `LOAD_NAME` read the name from `co_names`, then probe the
-module globals dict. There is no builtins fallback in this prototype: a missing
-name traps `PY_TRAP_MEM_FAULT`. `LOAD_NAME` is currently equivalent to globals
-lookup at module scope. `STORE_NAME` and `STORE_GLOBAL` update the same globals
-dict.
+module globals dict; on a miss they fall back once to the boot-record builtins
+dict. A name missing from both traps `PY_TRAP_MEM_FAULT`. `LOAD_NAME` is
+currently equivalent to globals-then-builtins lookup at module scope.
+`STORE_NAME` and `STORE_GLOBAL` update the globals dict only.
 
 ## CPython 3.14 image tooling
 
@@ -488,7 +492,7 @@ The core carries a **bump-pointer heap allocator** for dynamically allocated
 container objects.  The heap occupies a fixed region of data memory:
 
 ```text
-PYCORE_HEAP_BASE  = 0x0000_0400  (1 KB offset from dmem start)
+PYCORE_HEAP_BASE  = 0x0000_0440  (first byte after the 96-byte boot record)
 PYCORE_HEAP_LIMIT = 0x0001_C000  (just below the call-frame stack)
 ```
 
@@ -498,7 +502,8 @@ is no free list (no object reclamation in this prototype).  Overflow traps
 `PY_TRAP_MEM_FAULT`.  A preloaded static heap image sets `HEAP_INIT_PTR` to the
 first free byte above the static objects so bump allocation does not overwrite
 them.  `DMEM_HEX` on `pycore_system` / `pycore_dmem` preloads the whole dmem
-bank (not just the first 4 KB block).
+bank (not just the first 4 KB block).  The boot record occupies
+`[0x3e0, 0x440)` and must not overlap heap objects.
 
 ### LIST in-dmem layout (v2 — growable split object/buffer)
 

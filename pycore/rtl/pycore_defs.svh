@@ -1079,17 +1079,20 @@ endfunction
 // Heap allocator address-space parameters.
 //
 // The object heap lives at the bottom of dmem, below the frame stack which
-// starts at FRAME_STACK_BASE (0x1C000).  PYCORE_HEAP_BASE is left at 0x0400
-// to leave a 1 KB buffer at address 0 for any PTR-based user data.  The
-// bump pointer starts at PYCORE_HEAP_BASE and grows upward; a trap is
+// starts at FRAME_STACK_BASE (0x1C000).  The low region holds the image boot
+// record (see PYCORE_BOOT_RECORD_* below); PYCORE_HEAP_BASE begins at the
+// first byte after that record so bump/static allocations never overlap it.
+// The bump pointer starts at PYCORE_HEAP_BASE and grows upward; a trap is
 // raised when it would exceed PYCORE_HEAP_LIMIT.
 //
 // Default memory map (DMEM_BLOCK_COUNT=32 → 128 KB):
-//   0x00000 – 0x003FF  (1 KB)    reserved / user PTR data
-//   0x00400 – 0x1BFFF  (~110 KB) container heap (this region)
+//   0x00000 – 0x003DF  reserved / user PTR data
+//   0x003E0 – 0x003FF  boot record pair 0/1 (code + globals) start
+//   0x003E0 – 0x0043F  boot record (96 B: code / globals / builtins)
+//   0x00440 – 0x1BFFF  container heap (this region)
 //   0x1C000 – 0x1FFFF  (16 KB)   call-frame stack
 // -------------------------------------------------------------------------
-localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0400;
+localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0440;
 localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0001_C000;
 
 // -------------------------------------------------------------------------
@@ -1384,12 +1387,13 @@ function automatic logic [31:0] pycore_obj_field_tag_addr(
 endfunction
 
 // -------------------------------------------------------------------------
-// Boot record — three tagged-entry pairs just below the heap base:
+// Boot record — three tagged-entry pairs immediately below the heap base:
 //
 //   PYCORE_BOOT_RECORD_ADDR + 0  : module code object handle (CODE_OBJECT)
 //   PYCORE_BOOT_RECORD_ADDR + 32 : globals dict handle (DICT)
 //   PYCORE_BOOT_RECORD_ADDR + 64 : builtins dict handle (DICT)
 //
+// PYCORE_HEAP_BASE == PYCORE_BOOT_RECORD_ADDR + PYCORE_BOOT_RECORD_BYTES.
 // Written by image_from_source.py; read by S_BOOT at reset when BOOT_EN=1.
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_BOOT_RECORD_ADDR = 32'h0000_03E0;

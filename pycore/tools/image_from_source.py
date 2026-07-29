@@ -24,8 +24,6 @@ from encoding import (
     BI_MAX,
     BI_PRINT,
     BI_TO_BYTES,
-    BOOT_RECORD_ADDR,
-    BOOT_RECORD_BYTES,
     HEAP_BASE,
     STRING_MEM_BYTES,
     TAG_INT,
@@ -365,9 +363,8 @@ class _ImageSerializer:
         defaults_map: dict[int, tuple] | None = None,
         type_refs: dict[str, Tagged] | None = None,
     ) -> None:
-        # BOOT_RECORD_ADDR is 0x03e0 and the three tagged pairs occupy 96 bytes,
-        # so static image allocations must not start at the nominal 0x0400 base.
-        static_base = max(HEAP_BASE, BOOT_RECORD_ADDR + BOOT_RECORD_BYTES)
+        # HEAP_BASE is defined as the first byte after the boot record.
+        static_base = HEAP_BASE
         self.heap = HeapImageBuilder(base=static_base)
         self.string_heap = StringHeapBuilder()
         self.program_slots: list[str] = []

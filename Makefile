@@ -1227,7 +1227,7 @@ pycore-list-append-fixtures:
 # list_append_fast: [7] with hand-set capacity 4 (BUILD_LIST alone can never
 # produce spare capacity); appends 8 and 9 via the fast path (no trap),
 # subscripts both back, returns their sum (17).
-pycore-container-list-append-fast:
+pycore-container-list-append-fast: pycore-list-append-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_append_fast.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
@@ -1260,7 +1260,7 @@ pycore-container-list-append-full-fatal:
 pycore-list-extend-fixtures:
 	$(PYTHON) pycore/tools/gen_list_extend_fixtures.py
 
-pycore-container-list-extend-fast:
+pycore-container-list-extend-fast: pycore-list-extend-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_fast.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
@@ -1279,7 +1279,7 @@ pycore-container-list-extend-fast:
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
 	./$(BUILD_DIR)/pycore_container_list_extend_fast/Vtb_container
 
-pycore-container-list-extend-fast-tuple:
+pycore-container-list-extend-fast-tuple: pycore-list-extend-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_fast_tuple.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
@@ -1298,7 +1298,7 @@ pycore-container-list-extend-fast-tuple:
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
 	./$(BUILD_DIR)/pycore_container_list_extend_fast_tuple/Vtb_container
 
-pycore-container-list-extend-empty:
+pycore-container-list-extend-empty: pycore-list-extend-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_empty.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \

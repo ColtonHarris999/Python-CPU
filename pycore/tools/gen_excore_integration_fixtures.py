@@ -21,7 +21,13 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from encoding import TAG_INT, format_imem_slot, int_value  # noqa: E402
+from encoding import (  # noqa: E402
+    BOOT_RECORD_ADDR,
+    HEAP_BASE,
+    TAG_INT,
+    format_imem_slot,
+    int_value,
+)
 from heap_image import HeapImageBuilder, Tagged  # noqa: E402
 from image_from_source import write_program_hex, write_text  # noqa: E402
 
@@ -38,9 +44,6 @@ OP_PUSH_NULL = 33
 OP_CALL = 52
 NBARG_SUBSCR = 26
 NBARG_ADD = 0
-
-BOOT_RECORD_ADDR = 0x03E0
-BOOT_RECORD_BYTES = 96
 
 
 def _emit(slots: list[str], opcode: int, arg: int = 0) -> None:
@@ -77,7 +80,7 @@ def _write_image(
 
 
 def _new_heap() -> HeapImageBuilder:
-    return HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + BOOT_RECORD_BYTES))
+    return HeapImageBuilder(base=HEAP_BASE)
 
 
 def gen_grow_from_zero() -> None:

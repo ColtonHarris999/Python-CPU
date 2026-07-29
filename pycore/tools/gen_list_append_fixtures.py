@@ -30,7 +30,13 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from encoding import TAG_INT, format_imem_slot, int_value  # noqa: E402
+from encoding import (  # noqa: E402
+    BOOT_RECORD_ADDR,
+    HEAP_BASE,
+    TAG_INT,
+    format_imem_slot,
+    int_value,
+)
 from heap_image import HeapImageBuilder  # noqa: E402
 from image_from_source import write_program_hex, write_text  # noqa: E402
 
@@ -47,10 +53,6 @@ OP_RETURN_VALUE = 35
 NBARG_SUBSCR = 26
 NBARG_ADD = 0
 
-# pycore_defs.svh boot-record / code-object layout constants.
-BOOT_RECORD_ADDR = 0x03E0
-BOOT_RECORD_BYTES = 96
-
 
 def _emit(slots: list[str], opcode: int, arg: int = 0) -> None:
     slots.append(format_imem_slot(opcode, arg))
@@ -58,7 +60,7 @@ def _emit(slots: list[str], opcode: int, arg: int = 0) -> None:
 
 def gen_list_append_fast() -> None:
     """[7] with hand-set capacity 4; append 8, 9; subscript both; return 17."""
-    heap = HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + BOOT_RECORD_BYTES))
+    heap = HeapImageBuilder(base=HEAP_BASE)
 
     list_handle = heap.alloc_list_with_capacity(
         [(TAG_INT, int_value(7))], capacity=4

@@ -51,12 +51,14 @@ ENTRY_HEX_DIGITS = (TAG_WIDTH + VAL_WIDTH + 3) // 4  # ceil(132/4) == 33
 IMEM_SLOT_BITS = 64
 IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
 
-HEAP_BASE = 0x0400
+# Boot record occupies [BOOT_RECORD_ADDR, BOOT_RECORD_ADDR+BOOT_RECORD_BYTES).
+# HEAP_BASE is the first byte after that record so static/bump allocations never
+# overlap the three boot pairs (code / globals / builtins).
+BOOT_RECORD_ADDR = 0x03E0
+BOOT_RECORD_BYTES = 96
+HEAP_BASE = BOOT_RECORD_ADDR + BOOT_RECORD_BYTES  # 0x0440
 # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (below frame stack at 0x1C000).
 HEAP_LIMIT = 0x1C000
-BOOT_RECORD_ADDR = 0x03E0
-# Three tagged-entry pairs (code, globals, builtins); mirror PYCORE_BOOT_RECORD_BYTES.
-BOOT_RECORD_BYTES = 96
 
 # Code-object field indices (tuple-element convention at code addr).
 CODE_FIELD_ENTRY_SLOT = 0

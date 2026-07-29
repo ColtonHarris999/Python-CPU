@@ -969,11 +969,15 @@ module pycore_core #(
     assign fpu_exc_sig    = exec_in && exec_trap && (exec_trap_code == PY_TRAP_FPU_EXCEPTION);
     assign illegal_sig    = (exec_in && dec_illegal) ||
                             (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ILLEGAL_OPCODE));
+    // Container/boot/frame dmem transactions bypass pycore_mem_stage, so
+    // dmem_fault_i must be folded in here whenever those owners hold the port.
     assign mem_fault_sig  = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_MEM_FAULT)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_MEM_FAULT)) ||
                             exec_mem_fault_pulse ||
                             container_mem_fault_r ||
-                            imem_fault_i;
+                            imem_fault_i ||
+                            ((container_dmem_active || frame_dmem_active) &&
+                             dmem_ack_i && dmem_fault_i);
     assign addr_align_sig = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ADDR_ALIGN)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_ADDR_ALIGN));
     // CONT_LIST_APPEND raises this before any RF/heap commit (see
