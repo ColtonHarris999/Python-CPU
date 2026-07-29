@@ -109,6 +109,8 @@ this milestone:
    the trap is fatal. See `pycore/docs/dict_excore.md`.
 6. **No builtins fallback for names.** `LOAD_GLOBAL` / `LOAD_NAME` probe only
    the serialized module globals dict; missing names trap `PY_TRAP_MEM_FAULT`.
+6a. **`AttributeError` → `PY_TRAP_ATTR_ERROR` (15).** Missing attributes after
+   instance `__dict__` + MRO halt fatally; there is no exception object.
 7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
    the stack and `CALL` treats that handle as the function. Defaults,
    annotations, closures, and callable objects beyond code handles are still

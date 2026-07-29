@@ -57,6 +57,23 @@ Module-level `class` idioms are recognized by `image_from_source.py`, executed
 on the host, and emitted as fully-formed `OBK_TYPE` objects. Dynamic
 `LOAD_BUILD_CLASS` stays in `DEFERRED_OPS` until frame-local namespaces exist.
 
+## LOAD_ATTR algorithm (M2)
+
+1. Resolve `co_names[namei]` (`namei = oparg >> 1`).
+2. Receiver must be `PY_TAG_OBJECT`; else `PY_TRAP_TYPE`.
+3. Read `ob_head`. `OBK_INSTANCE`: probe `__dict__` (field0). `OBK_TYPE`:
+   start the MRO at the type itself. Other kinds → `PY_TRAP_TYPE`.
+4. On instance miss, walk `ob_type` → `tp_base` (depth guard 8), probing each
+   `tp_dict`. Miss → `PY_TRAP_ATTR_ERROR` (15).
+5. Writeback:
+   - `method_flag = 0`: replace TOS; if source is TYPE and value is
+     `CODE_OBJECT`, allocate `OBK_BOUND_METHOD`.
+   - `method_flag = 1`: replace TOS with attr/func and push `self` or `NULL`
+     (no allocation on this path).
+
+`STORE_ATTR` / `DELETE_ATTR` require `OBK_INSTANCE` and operate on `__dict__`
+only (type mutation is build-time).
+
 ## Tooling
 
 `HeapImageBuilder` in `pycore/tools/heap_image.py` provides:
@@ -64,9 +81,19 @@ on the host, and emitted as fully-formed `OBK_TYPE` objects. Dynamic
 - `alloc_instance` / `alloc_type` / `alloc_bound_method`
 - `alloc_builtin` / `alloc_bytearray` / `alloc_exception`
 
+Until M4 ClassImageBuilder lands, attribute image tests seed objects via:
+
+```
+# pycore-inject: SEED_TYPE T [attr=int ...]
+# pycore-inject: SEED_INSTANCE o [type=T] [slots=N] [attr=int ...]
+```
+
+`run_image_test.py` mirrors those seeds with host `SimpleNamespace` / `type`
+objects so differential `managed_entry()` still works.
+
 Python-side layout constants live in `pycore/tools/encoding.py`
 (`OBK_*`, `pack_ob_head`, `obj_field_val_addr`). RTL mirrors are in
 `pycore/rtl/pycore_defs.svh` (`PY_OBK_*`, `pycore_pack_ob_head`,
 `pycore_obj_field_val_addr`).
 
-Coverage: `pycore/tests/test_object_image.py`.
+Coverage: `pycore/tests/test_object_image.py`, `img_attr_*`.
