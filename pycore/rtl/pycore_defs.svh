@@ -1087,10 +1087,9 @@ endfunction
 //
 // Default memory map (DMEM_BLOCK_COUNT=32 → 128 KB):
 //   0x00000 – 0x003DF  reserved / user PTR data
-//   0x003E0 – 0x003FF  boot record pair 0/1 (code + globals) start
 //   0x003E0 – 0x0043F  boot record (96 B: code / globals / builtins)
 //   0x00440 – 0x1BFFF  container heap (this region)
-//   0x1C000 – 0x1FFFF  (16 KB)   call-frame stack
+//   0x1C000 – 0x1FFFF  (16 KB) call-frame stack
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0440;
 localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0001_C000;
