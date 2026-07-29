@@ -734,12 +734,6 @@ module pycore_core #(
     logic [ADDR_WIDTH-1:0]  ms_dmem_addr;
     logic [DMEM_DATA_W-1:0] ms_dmem_wdata;
 
-    // Intermediate wires: mem_stage drives these; mux below selects.
-    logic                   ms_dmem_req;
-    logic                   ms_dmem_we;
-    logic [ADDR_WIDTH-1:0]  ms_dmem_addr;
-    logic [DMEM_DATA_W-1:0] ms_dmem_wdata;
-
     pycore_mem_stage #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .DMEM_DATA_W(DMEM_DATA_W)
