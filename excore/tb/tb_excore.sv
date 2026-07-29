@@ -5,7 +5,7 @@
 // LIST_EXTEND trap messages driven directly onto the mailbox input ports
 // (no trap_mailbox.sv / pycore integration yet -- that is Phase C).
 //
-// pycore_mem_bank is configured as a single 8 KB block (BLOCK_SHIFT=13,
+// pycore_mem_bank is configured as a single 128 KB block (BLOCK_SHIFT=17,
 // BLOCK_COUNT=1) covering the whole heap [0, PYCORE_HEAP_LIMIT), so scenario
 // setup/verification can poke/peek `mem_bank.gen_block[0].blk.mem[...]`
 // directly instead of arbitrating a second bus master.
@@ -46,17 +46,18 @@ module tb_excore #(
 
     // ---- Mailbox stimulus (driven directly by this TB) ------------------
     logic         mb_trap_pending;
-    logic [3:0]   mb_trap_code;
+    logic [4:0]   mb_trap_code;
     logic [31:0]  mb_pc;
     logic [7:0]   mb_opcode;
     logic [31:0]  mb_arg;
     logic [31:0]  mb_heap_ptr;
     logic [2:0]   mb_entry_count;
-    logic [131:0] mb_entries [0:2];
+    logic [131:0] mb_entries [0:3];
 
     // ---- Result observation ----------------------------------------------
     logic         res_go;
-    logic [3:0]   res_code, res_fatal_code;
+    logic [3:0]   res_code;
+    logic [4:0]   res_fatal_code;
     logic [2:0]   res_pop_count;
     logic [1:0]   res_push_count;
     logic [31:0]  res_heap_ptr;
@@ -104,7 +105,7 @@ module tb_excore #(
     pycore_mem_bank #(
         .DATA_WIDTH(DATA_W),
         .ADDR_WIDTH(32),
-        .BLOCK_SHIFT(13),   // 8 KB single block == PYCORE_HEAP_LIMIT
+        .BLOCK_SHIFT(17),   // 128 KB single block covers PYCORE_HEAP_LIMIT
         .BLOCK_COUNT(1),
         .READ_ONLY(0),
         .INIT_HEX("")
@@ -130,12 +131,16 @@ module tb_excore #(
         if (sp_req && sp_we)  write_count <= write_count + 1;
     end
 
+    // Word index inside the single 128 KB block: addr[BLOCK_SHIFT-1:4]
+    // with BLOCK_SHIFT=17 and 16-byte (128-bit) slots → addr[16:4].
+    // (addr[12:4] was correct only for the old 8 KB tile and aliases high
+    // heap addresses used by the OOM scenarios.)
     task automatic poke_slot(input logic [31:0] addr, input logic [127:0] data);
-        mem_bank.gen_block[0].blk.mem[addr[12:4]] = data;
+        mem_bank.gen_block[0].blk.mem[addr[16:4]] = data;
     endtask
 
     function automatic logic [127:0] peek_slot(input logic [31:0] addr);
-        peek_slot = mem_bank.gen_block[0].blk.mem[addr[12:4]];
+        peek_slot = mem_bank.gen_block[0].blk.mem[addr[16:4]];
     endfunction
 
     task automatic check(input bit condition, input string message);
@@ -157,6 +162,7 @@ module tb_excore #(
         mb_entries[0]   = 132'h0;
         mb_entries[1]   = 132'h0;
         mb_entries[2]   = 132'h0;
+        mb_entries[3]   = 132'h0;
         read_count      = 0;
         write_count     = 0;
         repeat (4) @(negedge clk);
@@ -220,7 +226,7 @@ module tb_excore #(
         $finish;
     endtask
 
-    task automatic run_unknown_trap(input logic [3:0] code, input int max_cycles);
+    task automatic run_unknown_trap(input logic [4:0] code, input int max_cycles);
         int i;
         mb_entry_count = 3'd0;
         mb_trap_code   = code;
@@ -434,10 +440,10 @@ module tb_excore #(
         // Scenario 4: OOM -> FATAL(MEM_FAULT), memory untouched.
         // ------------------------------------------------------------------
         do_reset();
-        obj_addr = 32'h1F00;
-        old_buf  = 32'h1F20;
+        obj_addr = 32'h1BF00;
+        old_buf  = 32'h1BF20;
         // new_cap would be 8 (doubling from 4); 8*32=256B from a heap_ptr
-        // near the limit overflows PYCORE_HEAP_LIMIT (0x2000).
+        // near the limit overflows PYCORE_HEAP_LIMIT (0x1C000).
         poke_slot(obj_addr, {64'd4, 64'd2});
         poke_slot(obj_addr + 16, {96'd0, old_buf});
         poke_slot(old_buf,      128'd1);
@@ -445,7 +451,7 @@ module tb_excore #(
         poke_slot(old_buf + 32, 128'd2);
         poke_slot(old_buf + 48, {124'b0, 4'd1});
 
-        run_list_grow(obj_addr, {4'd1, 128'd7}, 32'h1F80, 20000);
+        run_list_grow(obj_addr, {4'd1, 128'd7}, 32'h1BF80, 20000);
 
         check(res_code == RES_FATAL, "scenario4: expected RES_FATAL");
         check(res_fatal_code == PY_TRAP_MEM_FAULT,

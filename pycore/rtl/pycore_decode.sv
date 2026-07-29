@@ -183,6 +183,26 @@ module pycore_decode (
                 alu_op_o  = PY_ALU_PASS;  // invert done in core EX
             end
 
+            // UNARY_INVERT / UNARY_NEGATIVE: rewrite TOS via ALU fabric
+            // (PY_ALU_INVERT / PY_ALU_NEG). Net stack 0.
+            PY_OP_UNARY_INVERT: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                rd_sel_o  = tos_index_i - 8'd1;
+                alu_op_o  = PY_ALU_INVERT;
+            end
+
+            PY_OP_UNARY_NEGATIVE: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                rd_sel_o  = tos_index_i - 8'd1;
+                alu_op_o  = PY_ALU_NEG;
+            end
+
+            // UNPACK_SEQUENCE: pop LIST/TUPLE, push count items right-to-left.
+            PY_OP_UNPACK_SEQUENCE: begin
+                rs1_sel_o      = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
+            end
+
             // MAKE_FUNCTION: pop code / push function (≡ code). Net effect 0.
             // Verified in EXEC: trap TYPE if TOS is not CODE_OBJECT.
             PY_OP_MAKE_FUNCTION: begin
@@ -263,6 +283,24 @@ module pycore_decode (
             end
 
             PY_OP_STORE_NAME, PY_OP_STORE_GLOBAL: begin
+                is_container_o = 1'b1;
+            end
+
+            // LOAD_ATTR: receiver at tos-1; name from co_names[oparg>>1].
+            // STORE_ATTR: obj at tos-1, value at tos-2; namei = oparg.
+            // DELETE_ATTR: obj at tos-1; namei = oparg.
+            PY_OP_LOAD_ATTR: begin
+                rs1_sel_o      = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
+            end
+
+            PY_OP_STORE_ATTR: begin
+                rs1_sel_o      = tos_index_i - 8'd1;  // object
+                is_container_o = 1'b1;
+            end
+
+            PY_OP_DELETE_ATTR: begin
+                rs1_sel_o      = tos_index_i - 8'd1;  // object
                 is_container_o = 1'b1;
             end
 

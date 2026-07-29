@@ -9,7 +9,7 @@
 // driven by trap_mailbox.sv / pycore_system on a real trap_req handshake,
 // and result_* outputs feed the trap_res handshake back to pycore.
 module excore_mmio #(
-    parameter int MAX_TRAP_ENTRIES = 3,
+    parameter int MAX_TRAP_ENTRIES = 4,
     parameter int MAX_RES_ENTRIES  = 2
 ) (
     input  logic        clk_i,
@@ -25,7 +25,7 @@ module excore_mmio #(
 
     // ---- Mailbox (read side) — populated externally --------------------
     input  logic         mb_trap_pending_i,
-    input  logic [3:0]   mb_trap_code_i,
+    input  logic [4:0]   mb_trap_code_i,
     input  logic [31:0]  mb_pc_i,
     input  logic [7:0]   mb_opcode_i,
     input  logic [31:0]  mb_arg_i,
@@ -36,7 +36,7 @@ module excore_mmio #(
     // ---- Result (write side) — consumed externally ----------------------
     output logic         res_go_o,       // one-cycle pulse on RES_GO write
     output logic [3:0]   res_code_o,
-    output logic [3:0]   res_fatal_code_o,
+    output logic [4:0]   res_fatal_code_o,
     output logic [2:0]   res_pop_count_o,
     output logic [1:0]   res_push_count_o,
     output logic [31:0]  res_heap_ptr_o,
@@ -89,7 +89,8 @@ module excore_mmio #(
     // -------------------------------------------------------------------
     // Result staging registers (written by firmware SW before RES_GO).
     // -------------------------------------------------------------------
-    logic [3:0]   res_code_r, res_fatal_code_r;
+    logic [3:0]   res_code_r;
+    logic [4:0]   res_fatal_code_r;
     logic [2:0]   res_pop_count_r;
     logic [1:0]   res_push_count_r;
     logic [31:0]  res_heap_ptr_r;
@@ -169,7 +170,7 @@ module excore_mmio #(
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
             res_code_r        <= 4'h0;
-            res_fatal_code_r  <= 4'h0;
+            res_fatal_code_r  <= 5'h0;
             res_pop_count_r   <= 3'h0;
             res_push_count_r  <= 2'h0;
             res_heap_ptr_r    <= 32'h0;
@@ -192,7 +193,7 @@ module excore_mmio #(
                 unique case (off)
                     OFF_RES_CODE: begin
                         res_code_r       <= cpu_wdata_i[3:0];
-                        res_fatal_code_r <= cpu_wdata_i[7:4];
+                        res_fatal_code_r <= cpu_wdata_i[8:4];
                     end
                     OFF_RES_POP_COUNT:  res_pop_count_r  <= cpu_wdata_i[2:0];
                     OFF_RES_PUSH_COUNT: res_push_count_r <= cpu_wdata_i[1:0];
@@ -240,7 +241,7 @@ module excore_mmio #(
         if (off == OFF_MB_STATUS) begin
             rdata_comb = {30'b0, result_accepted_r, mb_trap_pending_i};
         end else if (off == OFF_MB_TRAP_CODE) begin
-            rdata_comb = {28'b0, mb_trap_code_i};
+            rdata_comb = {27'b0, mb_trap_code_i};
         end else if (off == OFF_MB_PC) begin
             rdata_comb = mb_pc_i;
         end else if (off == OFF_MB_INSTR_LO) begin
@@ -252,7 +253,7 @@ module excore_mmio #(
         end else if (off == OFF_MB_ENTRY_COUNT) begin
             rdata_comb = {29'b0, mb_entry_count_i};
         end else if (off == OFF_RES_CODE) begin
-            rdata_comb = {24'b0, res_fatal_code_r, res_code_r};
+            rdata_comb = {23'b0, res_fatal_code_r, res_code_r};
         end else if (off == OFF_RES_POP_COUNT) begin
             rdata_comb = {29'b0, res_pop_count_r};
         end else if (off == OFF_RES_PUSH_COUNT) begin

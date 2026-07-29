@@ -156,6 +156,7 @@ SUPPORTED_OPS = {
     "BUILD_LIST",
     "BUILD_MAP",
     "BUILD_TUPLE",
+    "UNPACK_SEQUENCE",
     "STORE_SUBSCR",
     "DELETE_SUBSCR",
     "CONTAINS_OP",
@@ -572,6 +573,13 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
         elif ins.opname in ("UNARY_NEGATIVE", "UNARY_POSITIVE", "UNARY_INVERT", "UNARY_NOT"):
             operand = stack.pop() if stack else TAG_OBJECT
             stack.append(TAG_BOOL if ins.opname == "UNARY_NOT" else operand)
+        elif ins.opname == "UNPACK_SEQUENCE":
+            # Pop one sequence; push `count` unknown-typed values.
+            count = ins.arg or 0
+            if stack:
+                stack.pop()
+            for _ in range(count):
+                stack.append(TAG_OBJECT)
         elif ins.opname.startswith("POP_JUMP"):
             if stack:
                 stack.pop()

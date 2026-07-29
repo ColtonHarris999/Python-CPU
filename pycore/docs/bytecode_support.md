@@ -23,15 +23,21 @@ fully unsupported for the current PyCore implementation.
 | `LOAD_FAST_CHECK` | Push local `oparg`; trap if unbound. | Same datapath as `LOAD_FAST`; `UNINIT` → `PY_TRAP_MEM_FAULT` (7). Layer D: `img_load_fast_check`, `img_load_fast_check_unbound`. |
 | `LOAD_SMALL_INT` | Pushes a small immediate integer encoded in `oparg`. | Fully supported fast-path immediate load. |
 | `LOAD_CONST` | Pushes `co_consts[oparg]` onto the value stack. | One CPython code unit; hardware reads value+tag from the serialized `co_consts` tuple in dmem. |
-| `LOAD_GLOBAL` | Loads a global by name. | Reads `co_names[namei]`, probes module globals, and optionally pushes `NULL` when `oparg & 1`. No builtins fallback. |
+| `LOAD_GLOBAL` | Loads a global by name. | `namei = oparg >> 1` always; `oparg & 1` only controls the optional trailing `NULL` push. Probes module globals, then the boot-record builtins dict. Images: `img_load_global_namei`, `img_seed_grow_global`, `img_builtin_*`. |
 | `LOAD_NAME` | Loads a name by index. | Same globals lookup path as `LOAD_GLOBAL` at module scope; no locals/builtins chain. |
 | `STORE_NAME` | Stores TOS into a module/global name. | Updates the serialized globals dict, popping one value. |
 | `STORE_GLOBAL` | Stores TOS into a global name. | Same hardware path as `STORE_NAME`. |
+| `LOAD_ATTR` | Loads attribute `co_names[namei]` from TOS. | `namei = oparg >> 1`, `method_flag = oparg & 1`. Receiver must be `OBJECT` (`INSTANCE`/`TYPE`); probes instance `__dict__` then single-inheritance MRO on `tp_dict`. Miss → `PY_TRAP_ATTR_ERROR` (15). Method form pushes `[func, self]` or `[attr, NULL]` without allocating; non-method TYPE-sourced `CODE_OBJECT` allocates `OBK_BOUND_METHOD`. `OBK_BUILTIN` with `builtin_id=0` is a build-time `@staticmethod` wrapper (`bound_self`=CODE); unwraps to CODE and pushes `NULL` (no self bind). Images: `img_attr_*`, `img_class_*`, `img_staticmethod`. |
+| `STORE_ATTR` | Stores value into `obj.name` (`value, obj --`). | `OBK_INSTANCE` only; upserts into `__dict__` (existing dict path). Grow → `DICT_GROW` (11); excore pop count is 2 when opcode is `STORE_ATTR`. Images: `img_attr_basic`, `img_attr_many`. |
+| `DELETE_ATTR` | Deletes `obj.name` (`obj --`). | Tombstones `__dict__` entry; miss → `PY_TRAP_ATTR_ERROR` (15) not `MEM_FAULT`. Images: `img_attr_del`, `img_attr_del_reinsert`. |
 | `PUSH_NULL` | Pushes CPython's non-method call sentinel. | Writes `{PY_TAG_NULL, 0}` to TOS. |
-| `MAKE_FUNCTION` | Builds a function object from a code object. | Interim model: function is the `CODE_OBJECT` handle itself; defaults/closures are rejected by tooling. |
-| `CALL` | Invokes a callable with positional arguments. | Supports CPython 3.14 non-method layout `callable, NULL, args...`; validates callable tag and argcount, pushes/pops hardware frames. |
+| `MAKE_FUNCTION` | Builds a function object from a code object. | Interim model: function is the `CODE_OBJECT` handle itself. Defaults are folded at image-build time into `co_defaults` (field 4); closures/annotations still rejected. Module-level `class` bodies are folded away (body const → `None`) so class plumbing never reaches `MAKE_FUNCTION` at runtime. |
+| `CALL` | Invokes a callable with positional arguments. | Free-function (`NULL` sentinel) and method form (non-`NULL` self); `OBK_BOUND_METHOD` unwrap; `OBK_TYPE` instantiation (`__init__` + `ret_discard_push_self`). Argcount range uses `co_defaults`. Images: `img_method_*`, `img_ctor_*`, `img_default_*`, `img_class_*`. |
 | `TO_BOOL` | Converts TOS to exact bool for branch helpers. | Rewrites TOS in place to `BOOL` for `INT`/`BOOL`/`FLOAT`/`SHORT_STR`/`LONG_STR` (string truthiness is `size != 0`; corrupt short-string sizes above 15 trap `PY_TRAP_TYPE`); other tags (incl. `None` and containers) trap `PY_TRAP_TYPE`. Layer D: `img_to_bool` (INT/BOOL/FLOAT, incl. `0.0` falsy), `img_to_bool_str` (empty/nonempty short and nonempty long strings), `img_to_bool_type_trap` (None), `img_to_bool_list_trap` (list). |
 | `UNARY_NOT` | Invert TOS bool (`not` after `TO_BOOL`). | `BOOL` bit invert in place; non-`BOOL` → `PY_TRAP_TYPE`. Layer D: `img_unary_not`. |
+| `UNARY_INVERT` | Bitwise invert TOS (`~x`). | `PY_ALU_INVERT`: `INT`/`BOOL` only (`BOOL` promotes to `INT`); `FLOAT` and other tags → `PY_TRAP_TYPE`. Layer D: `img_unary_invert`, `img_align_mask`, `img_unary_invert_float_trap`. |
+| `UNARY_NEGATIVE` | Negate TOS (`-x`). | `PY_ALU_NEG`: `INT`/`BOOL`/`FLOAT` (`BOOL` → `INT`); other tags → `PY_TRAP_TYPE`. Layer D: `img_unary_negative`. |
+| `UNPACK_SEQUENCE` | Pop one sequence; push `count` items right-to-left (`seq[0]` at TOS). | `CONT_UNPACK_SEQ`: `TUPLE` (size from handle) and `LIST` (header length); length ≠ `oparg` → `PY_TRAP_TYPE`; 1 `CACHE` unit. Layer D: `img_unpack_tuple`, `img_unpack_list`, `img_unpack_len_trap`. |
 | `IS_OP` | `is` / `is not` (oparg 0/1). | Full RF-entry identity → `BOOL`; all tags; no trap. Layer D: `img_is_op`. |
 | `NOT_TAKEN` | CPython branch prediction/adaptation marker. | Treated as a no-op marker. |
 | `POP_TOP` | Pops and discards the top stack value. | Implemented as a stack-pointer decrement. |
@@ -44,7 +50,7 @@ fully unsupported for the current PyCore implementation.
 | `POP_JUMP_IF_FALSE` | Pops TOS and jumps if falsy. | Supported with numeric/bool truthiness rules. |
 | `POP_JUMP_IF_NONE` | Pops TOS; jumps if tag is `NONE`. | Tag-only (`PY_TAG_NONE`); all other tags fall through; no TYPE trap. Layer D: `img_pop_jump_if_none`. |
 | `POP_JUMP_IF_NOT_NONE` | Pops TOS; jumps if tag is not `NONE`. | Same tag-only rule. Layer D: `img_pop_jump_if_none`. |
-| `BUILD_LIST` | Pops `count` values, allocates a list object, pushes a `LIST`-tagged handle. | Multi-cycle `S_CONTAINER` FSM; heap bump-allocator at `HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE` 0x0400). Layout v2 (Phase A): allocates a stable 32-byte object + a `count`-sized element buffer (`capacity == count` exactly) in one combined OOM check. Index must be `INT` or `BOOL`; out-of-range or OOM traps `PY_TRAP_MEM_FAULT`. Empty list (`count=0`) allocates the object only (`ob_item=0`). |
+| `BUILD_LIST` | Pops `count` values, allocates a list object, pushes a `LIST`-tagged handle. | Multi-cycle `S_CONTAINER` FSM; heap bump-allocator at `HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE` 0x0440). Layout v2 (Phase A): allocates a stable 32-byte object + a `count`-sized element buffer (`capacity == count` exactly) in one combined OOM check. Index must be `INT` or `BOOL`; out-of-range or OOM traps `PY_TRAP_MEM_FAULT`. Empty list (`count=0`) allocates the object only (`ob_item=0`). |
 | `BUILD_TUPLE` | Pops `count` values, allocates a tuple (no header), pushes a `TUPLE` handle `{size, addr}`. | Opcode 51 (resolved from CPython 3.14). Same index rules as LIST for `NB_SUBSCR`. |
 | `BUILD_MAP` | Pops `2*count` items (interleaved key/value), allocates a dict, pushes `DICT`. | Open-addressed linear-probe insert. Keys: `INT`, `BOOL`, `FLOAT`, `SHORT_STR`, `LONG_STR`. Slot count = `next_pow2(max(4, 2*count))`. Layout v2: stable 32B object + relocatable table. |
 | `BUILD_SET` | Pops `count` values, allocates a set, pushes `SET`. | Open-addressed element table (32B/slot). Same hash/rich-eq key rules as dict (no values). Tombstone tag = `PY_TAG_DICT`. Images: `img_set_*`. |
@@ -58,7 +64,7 @@ fully unsupported for the current PyCore implementation.
 | Bytecode | Description | Current limitation |
 | --- | --- | --- |
 | `BINARY_OP` | Performs binary arithmetic/bitwise operation selected by `oparg`. | Arithmetic/bitwise opargs use the existing ALU path; `NB_SUBSCR` (oparg 26) routes to `S_CONTAINER`. `NB_INPLACE_ADD` (13) with a LIST lhs routes to LIST_EXTEND semantics and supports LIST/TUPLE rhs, including the existing excore grow path. Unsupported variants trap or are rejected by preprocess. |
-| `COMPARE_OP` | Compares TOS-2 and TOS-1 using the packed CPython 3.14 `oparg`, replacing both with `BOOL`. | Selectors `0..5` (`<,<=,==,!=,>,>=`); native `INT`/`BOOL`/`FLOAT` fast path, net stack −1. Non-numeric tags trap `PY_TRAP_TYPE` (1); there is no generic rich-compare protocol. Layer D: `img_compare_op`, `img_compare_op_type_trap`. |
+| `COMPARE_OP` | Compares TOS-2 and TOS-1 using the packed CPython 3.14 `oparg`, replacing both with `BOOL`. | Selectors `0..5` (`<,<=,==,!=,>,>=`); native `INT`/`BOOL`/`FLOAT` plus same-tag `SHORT_STR`/`LONG_STR` for `==`/`!=` only (full 128-bit value / descriptor compare); string ordering and other tags → `PY_TRAP_TYPE` (1). Layer D: `img_compare_op`, `img_str_eq`, `img_str_lt_trap`, `img_compare_op_type_trap`. |
 | `GET_ITER` | Replaces TOS with iterator state. | Native LIST/TUPLE sources become an internal hybrid `PY_TAG_PTR` iterator. RANGE, STR, and HEAP_ITER kind values are reserved sockets; unsupported sources raise `PY_TRAP_TYPE`. No generic iterator protocol. |
 | `FOR_ITER` | Advances the iterator at TOS, pushing one value or taking the exhaustion edge. | Internal LIST/TUPLE kinds only. Validity and field interpretation are per-kind; reserved/unknown/malformed kinds TYPE-trap. Exhaustion skips `END_FOR` and redirects to `POP_ITER`. Layer D: `img_for_iter*`. |
 | `JUMP_IF_TRUE_OR_POP` | Jumps if truthy else pops TOS. | Not part of the current image-boot subset. |
@@ -104,11 +110,15 @@ this milestone:
    a new-key insert raises `DICT_GROW` (11). With `EXCORE_EN=1` excore
    reallocates the table, rehashes, and completes the STORE; without excore
    the trap is fatal. See `pycore/docs/dict_excore.md`.
-6. **No builtins fallback for names.** `LOAD_GLOBAL` / `LOAD_NAME` probe only
+6. **Builtins fallback (partial).** `LOAD_GLOBAL` / `LOAD_NAME` probe
    the serialized module globals dict; missing names trap `PY_TRAP_MEM_FAULT`.
+6a. **`AttributeError` → `PY_TRAP_ATTR_ERROR` (15).** Missing attributes after
+   instance `__dict__` + MRO halt fatally; there is no exception object.
 7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
    the stack and `CALL` treats that handle as the function. Defaults,
-   annotations, closures, bound methods, and callable objects are out of scope.
+   annotations, closures, and callable objects beyond code handles are still
+   out of scope. `LOAD_ATTR` can materialize an `OBK_BOUND_METHOD` for the
+   non-method form; calling it is M3.
 8. **`LOAD_NAME` module-scope behavior.** The current hardware treats
    `LOAD_NAME` as a globals lookup, matching the image-boot module programs but
    not CPython's full locals/globals/builtins search chain.
@@ -134,8 +144,14 @@ this milestone:
 14. **`COMPARE_OP` numeric ceiling.** Native comparison uses the signed 64-bit
    INT fast path and existing INT/BOOL-to-FLOAT promotion. Integers outside
    that range and mixed large-INT/FLOAT precision boundaries do not provide
-   CPython arbitrary-precision comparison semantics. Strings, `None`,
-   containers, and user-defined rich comparison trap `PY_TRAP_TYPE` instead.
+   CPython arbitrary-precision comparison semantics. `None`, containers, and
+   user-defined rich comparison trap `PY_TRAP_TYPE`. Same-tag string `==`/`!=`
+   is supported; ordering on strings still traps.
+15. **`COMPARE_OP` / `LONG_STR` descriptor equality.** Same-tag `LONG_STR`
+   equality compares the `{size, addr}` descriptor, not byte contents. This
+   matches dict-key / contains semantics and relies on image-time string
+   interning; distinct runtime-concatenated long strings with equal text may
+   compare unequal (see deviation 4).
 
 ## Deferred container opcodes
 
@@ -152,3 +168,4 @@ illegal. Each entry has a TODO hook ready for a follow-up PR.
 | `BINARY_SLICE` | Slice read `x[a:b]`. | Requires multi-element copy allocation. |
 | `STORE_SLICE` | Slice write `x[a:b] = v`. | Same. |
 | `BUILD_CONST_KEY_MAP` | Const-key map literal. | Use `BUILD_MAP` + stores, or empty dict + `STORE_SUBSCR`. |
+| `LOAD_BUILD_CLASS` | Begin CPython class creation. | Module-level `class` is folded at image-build time (`fold_module_classes` → `OBK_TYPE` + NOP-padded `LOAD_CONST`/`STORE_NAME`). Nested/dynamic class creation stays deferred until frame-local namespaces exist. |

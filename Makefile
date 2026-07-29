@@ -85,6 +85,11 @@ EXCORE_RTL_SRCS := \
 	pycore-img-to-bool pycore-img-to-bool-type-trap \
 	pycore-img-to-bool-str pycore-img-to-bool-list-trap \
 	pycore-img-unary-not \
+	pycore-img-unary-invert pycore-img-align-mask pycore-img-unary-negative \
+	pycore-img-unary-invert-float-trap \
+	pycore-img-unpack-tuple pycore-img-unpack-list pycore-img-unpack-len-trap \
+	pycore-img-str-eq pycore-img-str-lt-trap \
+	pycore-img-scalar-all \
 	pycore-img-is-op \
 	pycore-img-compare-op pycore-img-compare-op-type-trap \
 	pycore-img-pop-jump-if-none \
@@ -145,6 +150,21 @@ EXCORE_RTL_SRCS := \
 	pycore-img-set-bool-int pycore-img-set-hash-neg1 pycore-img-set-str \
 	pycore-img-set-grow-fatal pycore-img-set-grow-basic pycore-img-set-update \
 	pycore-img-two-core \
+	pycore-img-attr-basic pycore-img-attr-overwrite pycore-img-attr-many \
+	pycore-img-attr-missing pycore-img-attr-type-trap \
+	pycore-img-attr-del pycore-img-attr-del-reinsert \
+	pycore-img-attr-shadow pycore-img-attr-mro \
+	pycore-img-attr-grow-global pycore-img-seed-grow-global \
+	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
+	pycore-img-attr-all \
+	pycore-img-method-call pycore-img-method-nested \
+	pycore-img-ctor-noinit pycore-img-ctor-init \
+	pycore-img-default-arg pycore-img-default-arg-argc-trap \
+	pycore-img-bound-method-obj pycore-img-method-all \
+	pycore-img-class-simple pycore-img-class-const \
+	pycore-img-staticmethod pycore-img-class-two-instances \
+	pycore-img-class-all \
+	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
 
@@ -278,6 +298,86 @@ pycore-frame-fib:
 		pycore/tb/tb_frame_fib_recursion.sv
 	./$(BUILD_DIR)/pycore_frame_fib/Vtb_frame_fib_recursion
 
+
+# ---- Broad-object-support milestone targets (M6 / M8) ---------------------
+# Host smoke always runs. Image-boot targets are wired now but fail until
+# LOAD_ATTR / classes / bound-method CALL land (M2–M6 / M8).
+pycore-allocator-host:
+	$(PYTHON) -c "import runpy; ns=runpy.run_path('pycore/programs/allocator_list.py'); assert isinstance(ns['managed_entry'](), int); ns=runpy.run_path('pycore/programs/allocator_bytes.py'); assert isinstance(ns['managed_entry'](), int); print('allocator host smoke ok')"
+
+define PYCORE_IMAGE_RUN_SRC
+	mkdir -p $(BUILD_DIR)/$(1)
+	$(PYTHON) pycore/tools/run_image_test.py \
+		--source pycore/programs/$(2) \
+		--entry managed_entry \
+		--program-hex $(BUILD_DIR)/$(1)/program.hex \
+		--dmem-hex $(BUILD_DIR)/$(1)/dmem.hex \
+		--string-hex $(BUILD_DIR)/$(1)/string_mem.hex \
+		--meta $(BUILD_DIR)/$(1)/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/$(1)/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/$(1)/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/$(1)/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d$$EXPECTED_TAG \
+		"-GEXPECTED_VALUE=128'd$$EXPECTED_VALUE" \
+		-GMAX_CYCLES=$(3) \
+		--Mdir $(BUILD_DIR)/$(1)/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/$(1)/verilator/Vtb_container
+endef
+
+# Same as PYCORE_IMAGE_RUN_SRC but on the two-core top (LIST_EXTEND / grow).
+define PYCORE_IMAGE_RUN_SRC_TWOCORE
+	mkdir -p $(BUILD_DIR)/$(1)
+	$(PYTHON) pycore/tools/run_image_test.py \
+		--source pycore/programs/$(2) \
+		--entry managed_entry \
+		--program-hex $(BUILD_DIR)/$(1)/program.hex \
+		--dmem-hex $(BUILD_DIR)/$(1)/dmem.hex \
+		--string-hex $(BUILD_DIR)/$(1)/string_mem.hex \
+		--meta $(BUILD_DIR)/$(1)/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/$(1)/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/$(1)/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/$(1)/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GEXCORE_EN=1 \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d$$EXPECTED_TAG \
+		"-GEXPECTED_VALUE=128'd$$EXPECTED_VALUE" \
+		-GMAX_CYCLES=$(3) \
+		--Mdir $(BUILD_DIR)/$(1)/verilator_twocore \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/$(1)/verilator_twocore/Vtb_container
+endef
+
+# M6 target: allocator_list needs LIST_EXTEND (excore) for _zeros().
+# M8 target remains deferred until builtins/slices land.
+pycore-img-allocator-list: excore-fw
+	$(call PYCORE_IMAGE_RUN_SRC_TWOCORE,img_allocator_list,allocator_list.py,5000000)
+
+pycore-img-allocator-bytes:
+	$(call PYCORE_IMAGE_RUN_SRC,img_allocator_bytes,allocator_bytes.py,400000)
+
 pycore-python-tests:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
 
@@ -374,7 +474,7 @@ define PYCORE_IMAGE_TRAP_RUN
 		-GBOOT_EN=1 \
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXPECT_TRAP=1 \
-		-GEXPECTED_TRAP_CODE=4\'d$(2) \
+		-GEXPECTED_TRAP_CODE=5\'d$(2) \
 		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
 		-GMAX_CYCLES=$(3) \
 		--Mdir $(BUILD_DIR)/img_$(1)/verilator \
@@ -478,6 +578,44 @@ pycore-img-to-bool-list-trap:
 
 pycore-img-unary-not:
 	$(call PYCORE_IMAGE_RUN,unary_not,50000)
+
+pycore-img-unary-invert:
+	$(call PYCORE_IMAGE_RUN,unary_invert,50000)
+
+pycore-img-align-mask:
+	$(call PYCORE_IMAGE_RUN,align_mask,50000)
+
+pycore-img-unary-negative:
+	$(call PYCORE_IMAGE_RUN,unary_negative,50000)
+
+pycore-img-unary-invert-float-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,unary_invert_float_trap,1,50000)
+
+pycore-img-unpack-tuple:
+	$(call PYCORE_IMAGE_RUN,unpack_tuple,50000)
+
+pycore-img-unpack-list:
+	$(call PYCORE_IMAGE_RUN,unpack_list,50000)
+
+pycore-img-unpack-len-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,unpack_len_trap,1,50000)
+
+pycore-img-str-eq:
+	$(call PYCORE_IMAGE_RUN,str_eq,50000)
+
+pycore-img-str-lt-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,str_lt_trap,1,50000)
+
+pycore-img-scalar-all: \
+	pycore-img-unary-invert \
+	pycore-img-align-mask \
+	pycore-img-unary-negative \
+	pycore-img-unary-invert-float-trap \
+	pycore-img-unpack-tuple \
+	pycore-img-unpack-list \
+	pycore-img-unpack-len-trap \
+	pycore-img-str-eq \
+	pycore-img-str-lt-trap
 
 pycore-img-is-op:
 	$(call PYCORE_IMAGE_RUN,is_op,50000)
@@ -695,7 +833,7 @@ define PYCORE_IMAGE_TRAP_RUN_TWOCORE
 		-GEXCORE_EN=1 \
 		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
 		-GEXPECT_TRAP=1 \
-		-GEXPECTED_TRAP_CODE=4\'d$(2) \
+		-GEXPECTED_TRAP_CODE=5\'d$(2) \
 		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
 		-GMAX_CYCLES=$(3) \
 		--Mdir $(BUILD_DIR)/img_$(1)/verilator_twocore \
@@ -786,7 +924,8 @@ pycore-img-two-core: \
 	pycore-img-dict-grow-large \
 	pycore-img-dict-mixed-ops \
 	pycore-img-set-grow-basic \
-	pycore-img-set-update
+	pycore-img-set-update \
+	pycore-img-attr-many
 
 pycore-img: \
 	pycore-img-smoke \
@@ -821,6 +960,7 @@ pycore-img: \
 	pycore-img-to-bool-str \
 	pycore-img-to-bool-list-trap \
 	pycore-img-unary-not \
+	pycore-img-scalar-all \
 	pycore-img-is-op \
 	pycore-img-compare-op \
 	pycore-img-compare-op-type-trap \
@@ -865,7 +1005,120 @@ pycore-img: \
 	pycore-img-set-bool-int \
 	pycore-img-set-hash-neg1 \
 	pycore-img-set-str \
-	pycore-img-set-grow-fatal
+	pycore-img-set-grow-fatal \
+	pycore-img-attr-all \
+	pycore-img-method-all \
+	pycore-img-class-all \
+	pycore-img-allocator-list
+
+# Attribute protocol (M2): LOAD/STORE/DELETE_ATTR via seeded OBK_INSTANCE.
+pycore-img-attr-basic:
+	$(call PYCORE_IMAGE_RUN,attr_basic,50000)
+
+pycore-img-attr-overwrite:
+	$(call PYCORE_IMAGE_RUN,attr_overwrite,50000)
+
+pycore-img-attr-many: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,attr_many,100000)
+
+pycore-img-attr-missing:
+	$(call PYCORE_IMAGE_TRAP_RUN,attr_missing,15,50000)
+
+pycore-img-attr-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,attr_type_trap,1,50000)
+
+pycore-img-attr-del:
+	$(call PYCORE_IMAGE_TRAP_RUN,attr_del,15,50000)
+
+pycore-img-attr-del-reinsert:
+	$(call PYCORE_IMAGE_RUN,attr_del_reinsert,50000)
+
+pycore-img-attr-shadow:
+	$(call PYCORE_IMAGE_RUN,attr_shadow,50000)
+
+pycore-img-attr-mro:
+	$(call PYCORE_IMAGE_RUN,attr_mro,50000)
+
+pycore-img-attr-all: \
+	pycore-img-attr-basic \
+	pycore-img-attr-overwrite \
+	pycore-img-attr-many \
+	pycore-img-attr-missing \
+	pycore-img-attr-type-trap \
+	pycore-img-attr-del \
+	pycore-img-attr-del-reinsert \
+	pycore-img-attr-shadow \
+	pycore-img-attr-mro \
+	pycore-img-attr-grow-global \
+	pycore-img-seed-grow-global \
+	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
+	pycore-img-builtin-max \
+	pycore-img-builtin-len-list
+
+# Generalized CALL (M3): method form, type ctor, defaults, bound-method obj.
+pycore-img-method-call:
+	$(call PYCORE_IMAGE_RUN,method_call,50000)
+
+pycore-img-method-nested:
+	$(call PYCORE_IMAGE_RUN,method_nested,100000)
+
+pycore-img-ctor-noinit:
+	$(call PYCORE_IMAGE_RUN,ctor_noinit,50000)
+
+pycore-img-ctor-init:
+	$(call PYCORE_IMAGE_RUN,ctor_init,100000)
+
+pycore-img-attr-grow-global: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,attr_grow_global,200000)
+
+pycore-img-seed-grow-global: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,seed_grow_global,200000)
+
+pycore-img-load-global-namei:
+	$(call PYCORE_IMAGE_RUN,load_global_namei,50000)
+
+pycore-img-builtin-max:
+	$(call PYCORE_IMAGE_RUN,builtin_max,50000)
+
+pycore-img-builtin-len-list:
+	$(call PYCORE_IMAGE_RUN,builtin_len_list,50000)
+
+pycore-img-default-arg:
+	$(call PYCORE_IMAGE_RUN,default_arg,50000)
+
+pycore-img-default-arg-argc-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,default_arg_argc_trap,6,50000)
+
+pycore-img-bound-method-obj:
+	$(call PYCORE_IMAGE_RUN,bound_method_obj,100000)
+
+pycore-img-method-all: \
+	pycore-img-method-call \
+	pycore-img-method-nested \
+	pycore-img-ctor-noinit \
+	pycore-img-ctor-init \
+	pycore-img-default-arg \
+	pycore-img-default-arg-argc-trap \
+	pycore-img-bound-method-obj
+
+# ClassImageBuilder (M4): fold module-level class → OBK_TYPE + STORE_NAME.
+pycore-img-class-simple:
+	$(call PYCORE_IMAGE_RUN,class_simple,100000)
+
+pycore-img-class-const:
+	$(call PYCORE_IMAGE_RUN,class_const,100000)
+
+pycore-img-staticmethod:
+	$(call PYCORE_IMAGE_RUN,staticmethod,100000)
+
+pycore-img-class-two-instances:
+	$(call PYCORE_IMAGE_RUN,class_two_instances,100000)
+
+pycore-img-class-all: \
+	pycore-img-class-simple \
+	pycore-img-class-const \
+	pycore-img-staticmethod \
+	pycore-img-class-two-instances
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /
@@ -931,28 +1184,29 @@ pycore-container-tuple-empty:
 # boot programs run through tb_container with BOOT_EN=1.
 
 pycore-container-list-oob-read:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_read.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/list_oob_read_str.hex\",pycore_container_list_oob_read)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_read.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 -GSTRING_HEX=\"pycore/programs/list_oob_read_str.hex\",pycore_container_list_oob_read)
 
 pycore-container-list-oob-write:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_write.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/list_oob_write_str.hex\",pycore_container_list_oob_write)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_write.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 -GSTRING_HEX=\"pycore/programs/list_oob_write_str.hex\",pycore_container_list_oob_write)
 
 pycore-container-dict-missing-key:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_missing_key.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/dict_missing_key_str.hex\",pycore_container_dict_missing_key)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_missing_key.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 -GSTRING_HEX=\"pycore/programs/dict_missing_key_str.hex\",pycore_container_dict_missing_key)
 
 # pycore-container-list-float-key removed: hex uses pre-3.14 inline
 # 3-slot LOAD_CONST for the float key.  Equivalent type-trap coverage
 # is available through image-boot fixtures.
 
 pycore-container-tuple-store-trap:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_store_trap.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d1 -GSTRING_HEX=\"pycore/programs/tuple_store_trap_str.hex\",pycore_container_tuple_store_trap)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_store_trap.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d1 -GSTRING_HEX=\"pycore/programs/tuple_store_trap_str.hex\",pycore_container_tuple_store_trap)
 
 pycore-container-dict-full-insert:
 	# Load ≥ 2/3 / last-slot insert → PY_TRAP_DICT_GROW (11), not MEM_FAULT.
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d11 -GSTRING_HEX=\"pycore/programs/dict_full_insert_str.hex\" -GMAX_CYCLES=20000,pycore_container_dict_full_insert)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d11 -GSTRING_HEX=\"pycore/programs/dict_full_insert_str.hex\" -GMAX_CYCLES=20000,pycore_container_dict_full_insert)
 
-# HEAP_INIT_PTR = 0x1F9C so BUILD_LIST 3 (112 bytes) exceeds PYCORE_HEAP_LIMIT.
+# HEAP_INIT_PTR = 0x1BF9C so BUILD_LIST 3 (112 bytes) exceeds PYCORE_HEAP_LIMIT
+# (0x1C000 after the 128 KB dmem / heap widen for object programs).
 pycore-container-list-oom:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h00001f9c",pycore_container_list_oom)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h0001bf9c",pycore_container_list_oom)
 
 # Natural FOR_ITER exhaustion skips END_FOR, so this raw stream executes
 # END_FOR directly and verifies its POP_TOP-equivalent stack effect.
@@ -973,7 +1227,7 @@ pycore-list-append-fixtures:
 # list_append_fast: [7] with hand-set capacity 4 (BUILD_LIST alone can never
 # produce spare capacity); appends 8 and 9 via the fast path (no trap),
 # subscripts both back, returns their sum (17).
-pycore-container-list-append-fast:
+pycore-container-list-append-fast: pycore-list-append-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_append_fast.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
@@ -996,7 +1250,7 @@ pycore-container-list-append-fast:
 # then one LIST_APPEND -> PY_TRAP_LIST_GROW (trap code 9). Phase A has no
 # excore, so this is fatal.
 pycore-container-list-append-full-fatal:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_append_full_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d9 -GSTRING_HEX=\"pycore/programs/list_append_full_fatal_str.hex\",pycore_container_list_append_full_fatal)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_append_full_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d9 -GSTRING_HEX=\"pycore/programs/list_append_full_fatal_str.hex\",pycore_container_list_append_full_fatal)
 
 # list_extend_* (LIST_EXTEND): hand-built fixtures — see
 # pycore/tools/gen_list_extend_fixtures.py. Non-empty extend always traps
@@ -1006,7 +1260,7 @@ pycore-container-list-append-full-fatal:
 pycore-list-extend-fixtures:
 	$(PYTHON) pycore/tools/gen_list_extend_fixtures.py
 
-pycore-container-list-extend-fast:
+pycore-container-list-extend-fast: pycore-list-extend-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_fast.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
@@ -1019,13 +1273,13 @@ pycore-container-list-extend-fast:
 		-GBOOT_EN=1 \
 		-GCHECK_ENTRY_RETURN=0 \
 		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d10 \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d10 \
 		--Mdir $(BUILD_DIR)/pycore_container_list_extend_fast \
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
 	./$(BUILD_DIR)/pycore_container_list_extend_fast/Vtb_container
 
-pycore-container-list-extend-fast-tuple:
+pycore-container-list-extend-fast-tuple: pycore-list-extend-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_fast_tuple.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
@@ -1038,13 +1292,13 @@ pycore-container-list-extend-fast-tuple:
 		-GBOOT_EN=1 \
 		-GCHECK_ENTRY_RETURN=0 \
 		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d10 \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d10 \
 		--Mdir $(BUILD_DIR)/pycore_container_list_extend_fast_tuple \
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
 	./$(BUILD_DIR)/pycore_container_list_extend_fast_tuple/Vtb_container
 
-pycore-container-list-extend-empty:
+pycore-container-list-extend-empty: pycore-list-extend-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_empty.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
@@ -1064,10 +1318,10 @@ pycore-container-list-extend-empty:
 	./$(BUILD_DIR)/pycore_container_list_extend_empty/Vtb_container
 
 pycore-container-list-extend-full-fatal:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_extend_full_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d10 -GSTRING_HEX=\"pycore/programs/list_extend_full_fatal_str.hex\",pycore_container_list_extend_full_fatal)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_extend_full_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d10 -GSTRING_HEX=\"pycore/programs/list_extend_full_fatal_str.hex\",pycore_container_list_extend_full_fatal)
 
 pycore-container-list-extend-type-fatal:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_extend_type_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d1 -GSTRING_HEX=\"pycore/programs/list_extend_type_fatal_str.hex\",pycore_container_list_extend_type_fatal)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_extend_type_fatal.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d1 -GSTRING_HEX=\"pycore/programs/list_extend_type_fatal_str.hex\",pycore_container_list_extend_type_fatal)
 
 # ---- Phase C: two-core (pycore + excore) system tests ----------------------
 # Hand-built images (gen_excore_integration_fixtures.py) exercising the real
@@ -1105,7 +1359,7 @@ pycore-excore-grow-from-zero: excore-fw pycore-excore-integration-fixtures
 pycore-excore-fast-path-no-trap: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,fast_path_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd9" -GEXPECTED_TRAP_REQ_COUNT=0)
 
-# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0x2000) so the excore's
+# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0x1C000) so the excore's
 # doubled buffer (cap 4 -> 8, 256 bytes) cannot fit -> FATAL(MEM_FAULT).
 pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 	mkdir -p $(BUILD_DIR)/grow_oom_fatal
@@ -1119,8 +1373,8 @@ pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXCORE_EN=1 \
 		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
-		"-GHEAP_INIT_PTR=32'h00001f80" \
-		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 \
+		"-GHEAP_INIT_PTR=32'h0001bf80" \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 \
 		--Mdir $(BUILD_DIR)/grow_oom_fatal/verilator \
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
@@ -1155,7 +1409,7 @@ pycore-excore-disabled: pycore-excore-integration-fixtures
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXCORE_EN=0 \
 		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d9 \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d9 \
 		--Mdir $(BUILD_DIR)/excore_disabled/verilator \
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
@@ -1195,8 +1449,8 @@ pycore-excore-extend-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXCORE_EN=1 \
 		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
-		"-GHEAP_INIT_PTR=32'h00001f80" \
-		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d7 \
+		"-GHEAP_INIT_PTR=32'h0001bf80" \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 \
 		--Mdir $(BUILD_DIR)/extend_oom_fatal/verilator \
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
@@ -1220,7 +1474,7 @@ pycore-excore-extend-disabled: pycore-excore-integration-fixtures
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXCORE_EN=0 \
 		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=4\'d10 \
+		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d10 \
 		--Mdir $(BUILD_DIR)/extend_disabled/verilator \
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv

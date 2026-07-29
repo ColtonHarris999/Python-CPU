@@ -80,17 +80,17 @@ excore. Empty `LIST_EXTEND` is a no-op pop on pycore; spare-capacity
 `trap_req`/`trap_res` are proper wide-parallel valid/ready handshakes;
 `excore_mmio`'s mailbox is level-held (`MB_STATUS.trap_pending` stays
 asserted until firmware reports a result via `RES_GO`) and its result is a
-one-cycle pulse. Field widths (`MAX_TRAP_ENTRIES = 3`, `MAX_RES_ENTRIES =
+one-cycle pulse. Field widths (`MAX_TRAP_ENTRIES = 4`, `MAX_RES_ENTRIES =
 2`) are module parameters on `pycore_core`, `trap_mailbox`, and
 `excore_mmio` alike, so a future handler needing more operands widens them
 in one place.
 
 ```text
 trap_req_valid / trap_req_ready
-  trap_code[3:0], pc[31:0], instr[39:0] ({arg[31:0], opcode[7:0]}),
-  heap_ptr[31:0], entry_count[2:0], entries[3][131:0]
+  trap_code[4:0], pc[31:0], instr[39:0] ({arg[31:0], opcode[7:0]}),
+  heap_ptr[31:0], entry_count[2:0], entries[4][131:0]
 trap_res_valid / trap_res_ready
-  res_code[3:0], fatal_code[3:0], pop_count[2:0], push_count[1:0],
+  res_code[3:0], fatal_code[4:0], pop_count[2:0], push_count[1:0],
   heap_ptr[31:0], entries[2][131:0]
 ```
 
@@ -138,6 +138,7 @@ whose ownership is being transferred.
 | 12 | `PY_TRAP_LIST_DELETE` | **recoverable** | mid-list `DELETE_SUBSCR` shift; excore COMPLETED pop 2 |
 | 13 | `PY_TRAP_SET_GROW` | **recoverable** | `SET_ADD` at load ≥ 2/3; excore realloc + insert |
 | 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | always; excore grow-to-fit + merge |
+| 15 | `PY_TRAP_ATTR_ERROR` | fatal | `LOAD_ATTR` / `DELETE_ATTR` miss after instance `__dict__` + MRO |
 | 15 | *(free)* | — | reserved |
 
 `pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
@@ -385,8 +386,8 @@ word_idx  = block_off >> log2(DATA_WIDTH/8)
   value per transaction, 16-byte aligned in v1.
 
 Default memory map (all parameters in `pycore_defs.svh`): `ADDR_WIDTH = 32`,
-`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 4` (16 KB), `DMEM_BLOCK_COUNT = 4`
-(16 KB). Out-of-range or misaligned data accesses raise `MEM_FAULT` /
+`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 8` (32 KB), `DMEM_BLOCK_COUNT = 32`
+(128 KB). Out-of-range or misaligned data accesses raise `MEM_FAULT` /
 `ADDR_ALIGN`.
 
 PTR load/store reach data memory through two internal-only opcodes
@@ -416,7 +417,7 @@ slot 1: { zero padding, caller cur_code[31:0] }
 Each RETURN pops slot 1 then slot 0, restores the caller's code object pointer,
 PC, TOS base, and locals base, then reloads the caller's `co_consts` and
 `co_names` from the code object before fetch resumes. Frame depth is bounded by
-the reserved frame-stack region (`0x2000`-`0x3FFF`).
+the reserved frame-stack region (`0x1C000`-`0x1FFFF`).
 
 > **Future work:** an earlier design study (`pycore/rtl/attic/pycore_frame_buffer.sv`)
 > explored a ring-buffer RF window with memory spill so call depth could scale
@@ -426,27 +427,31 @@ the reserved frame-stack region (`0x2000`-`0x3FFF`).
 ## Image boot and code objects
 
 When `BOOT_EN=1`, reset enters `S_BOOT` before normal fetch. The core reads the
-boot record at `PYCORE_BOOT_RECORD_ADDR = 0x0000_03e0`:
+boot record at `PYCORE_BOOT_RECORD_ADDR = 0x0000_03e0` (96 bytes):
 
 ```text
 0x3e0: module code object value
 0x3f0: module code object tag
 0x400: globals dict value
 0x410: globals dict tag
+0x420: builtins dict value
+0x430: builtins dict tag
 ```
 
-The boot walker verifies `CODE_OBJECT`/`DICT`, caches the module code object's
-`co_consts` and `co_names`, latches `globals_base_r`, and redirects fetch to the
-module entry slot. `BOOT_EN=0` remains available for hand-authored hex
-fixtures that skip the boot record.
+The boot walker verifies `CODE_OBJECT` / globals `DICT` / builtins `DICT`,
+caches the module code object's `co_consts` and `co_names`, latches
+`globals_base_r` and `builtins_base_r`, and redirects fetch to the module
+entry slot. `BOOT_EN=0` remains available for hand-authored hex fixtures that
+skip the boot record.
 
-Serialized code objects are four tagged-entry fields (32 bytes per field):
+Serialized code objects are five tagged-entry fields (32 bytes per field):
 
 ```text
 field 0: entry_slot  (INT, imem slot index)
 field 1: co_consts   (TUPLE handle)
 field 2: co_names    (TUPLE handle)
 field 3: metadata    (INT, packed {stacksize, nlocals, argcount})
+field 4: co_defaults (TUPLE handle)
 ```
 
 The interim function model is **function == code object**: `MAKE_FUNCTION`
@@ -461,10 +466,10 @@ tag slot) before pushing the tagged entry. An inline or small const cache is
 future work.
 
 `LOAD_GLOBAL` and `LOAD_NAME` read the name from `co_names`, then probe the
-module globals dict. There is no builtins fallback in this prototype: a missing
-name traps `PY_TRAP_MEM_FAULT`. `LOAD_NAME` is currently equivalent to globals
-lookup at module scope. `STORE_NAME` and `STORE_GLOBAL` update the same globals
-dict.
+module globals dict; on a miss they fall back once to the boot-record builtins
+dict. A name missing from both traps `PY_TRAP_MEM_FAULT`. `LOAD_NAME` is
+currently equivalent to globals-then-builtins lookup at module scope.
+`STORE_NAME` and `STORE_GLOBAL` update the globals dict only.
 
 ## CPython 3.14 image tooling
 
@@ -487,17 +492,18 @@ The core carries a **bump-pointer heap allocator** for dynamically allocated
 container objects.  The heap occupies a fixed region of data memory:
 
 ```text
-PYCORE_HEAP_BASE  = 0x0000_0400  (1 KB offset from dmem start)
-PYCORE_HEAP_LIMIT = 0x0000_2000  (just below the call-frame stack)
+PYCORE_HEAP_BASE  = 0x0000_0440  (first byte after the 96-byte boot record)
+PYCORE_HEAP_LIMIT = 0x0001_C000  (just below the call-frame stack)
 ```
 
-Capacity: ~7 KB.  A `heap_ptr_r` register in `pycore_core.sv` starts at
+Capacity: ~110 KB.  A `heap_ptr_r` register in `pycore_core.sv` starts at
 `HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE`) and advances monotonically; there
 is no free list (no object reclamation in this prototype).  Overflow traps
 `PY_TRAP_MEM_FAULT`.  A preloaded static heap image sets `HEAP_INIT_PTR` to the
 first free byte above the static objects so bump allocation does not overwrite
 them.  `DMEM_HEX` on `pycore_system` / `pycore_dmem` preloads the whole dmem
-bank (not just the first 4 KB block).
+bank (not just the first 4 KB block).  The boot record occupies
+`[0x3e0, 0x440)` and must not overlap heap objects.
 
 ### LIST in-dmem layout (v2 — growable split object/buffer)
 
@@ -760,7 +766,8 @@ Design notes: `pycore/docs/set_excore.md`.
 `dec_is_container` is asserted. It bypasses both `S_MEM` and `S_WB`; TOS and
 RF updates happen inside `S_CONTAINER`.
 
-Sub-phases live in `container_phase_r[4:0]`. Shared phases include:
+Sub-phases live in `container_phase_r[5:0]` (widened in M0 from 5 bits;
+selector `container_op_r` is likewise 6-bit). Shared phases include:
 
 | Phase | Name | Purpose |
 |-------|------|---------|
@@ -771,8 +778,10 @@ Sub-phases live in `container_phase_r[4:0]`. Shared phases include:
 | 4 | `CP_DONE` | Terminal marker; `always_comb` transitions to `S_FETCH` (or trap marshal). |
 
 Additional phases cover list buffer / writeback, dict/set probe, name/const
-loads, and extend source-header reads — see `pycore_core.sv` for the full
-`CP_*` enumeration.
+loads, and extend source-header reads — see `pycore_cont_defs.svh` for the
+full `CP_*` enumeration. The `unique case (container_op_r)` arms live in
+`pycore_cont_list.svh`, `pycore_cont_dict.svh`, and `pycore_cont_object.svh`
+(included from `pycore_core.sv`).
 
 The dmem port is arbitrated via `container_dmem_pending_r`, which mirrors
 `frame_dmem_pending_r` used by `S_CALL` and `S_RETURN`.

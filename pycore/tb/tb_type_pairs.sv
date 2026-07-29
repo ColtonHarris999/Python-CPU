@@ -10,7 +10,7 @@ module tb_type_pairs;
     logic [PYCORE_ENTRY_WIDTH-1:0] result;
     logic stall;
     logic trap;
-    logic [3:0] trap_code;
+    logic [4:0] trap_code;
     int tests_run;
 
     pycore_exec dut (

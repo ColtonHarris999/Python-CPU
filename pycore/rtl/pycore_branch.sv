@@ -8,7 +8,7 @@ module pycore_branch (
     output logic        take_branch_o,
     output logic [31:0] branch_target_o,
     output logic        trap_o,
-    output logic [3:0]  trap_code_o
+    output logic [4:0]  trap_code_o
 );
 
     logic [3:0] tag;

@@ -10,7 +10,7 @@ module tb_pycore_runfile #(
     logic clk;
     logic rst_n;
     logic trap_out;
-    logic [3:0] trap_code;
+    logic [4:0] trap_code;
     logic [63:0] cycle_count;
     logic dbg_wb_we;
     logic [7:0] dbg_wb_addr;

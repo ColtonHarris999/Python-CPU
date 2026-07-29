@@ -11,7 +11,7 @@ module pycore_tag_decode (
     output logic [1:0] promote_rs2_mode_o,
     output logic [3:0] result_tag_o,
     output logic       is_trap_o,
-    output logic [3:0] trap_code_o
+    output logic [4:0] trap_code_o
 );
 
     function automatic logic is_compare(input logic [4:0] op);
@@ -103,6 +103,12 @@ module pycore_tag_decode (
                     if (rs1_tag_i == PY_TAG_INT) begin
                         exec_unit_sel_o = PY_EXEC_INT;
                         result_tag_o = PY_TAG_INT;
+                    end else if (rs1_tag_i == PY_TAG_BOOL) begin
+                        // BOOL promotes to INT (−True == −1), matching CPython.
+                        exec_unit_sel_o = PY_EXEC_INT;
+                        result_tag_o = PY_TAG_INT;
+                        promote_rs1_o = 1'b1;
+                        promote_rs1_mode_o = PY_PROMOTE_BOOL_TO_INT;
                     end else if (rs1_tag_i == PY_TAG_FLOAT) begin
                         exec_unit_sel_o = PY_EXEC_FLOAT;
                         result_tag_o = PY_TAG_FLOAT;
@@ -112,9 +118,16 @@ module pycore_tag_decode (
                 end
 
                 PY_ALU_INVERT: begin
+                    // INT/BOOL only; BOOL promotes to INT (~True == −2).
+                    // FLOAT and other tags → TYPE.
                     if (rs1_tag_i == PY_TAG_INT) begin
                         exec_unit_sel_o = PY_EXEC_INT;
                         result_tag_o = PY_TAG_INT;
+                    end else if (rs1_tag_i == PY_TAG_BOOL) begin
+                        exec_unit_sel_o = PY_EXEC_INT;
+                        result_tag_o = PY_TAG_INT;
+                        promote_rs1_o = 1'b1;
+                        promote_rs1_mode_o = PY_PROMOTE_BOOL_TO_INT;
                     end else begin
                         `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
                     end
@@ -193,9 +206,9 @@ module pycore_tag_decode (
                     end
                 end
 
-                // Native COMPARE_OP ceiling: numeric pairs return exact BOOL.
-                // Rich comparison for strings, containers, None, and generic
-                // objects is intentionally trap-until-complete.
+                // Native COMPARE_OP: numeric pairs + same-tag SHORT_STR/LONG_STR
+                // equality (==/!=). Ordering on strings and all other tags trap.
+                // LONG_STR uses descriptor equality (see bytecode_support.md).
                 PY_ALU_EQ, PY_ALU_NE, PY_ALU_LT, PY_ALU_LE, PY_ALU_GT, PY_ALU_GE: begin
                     if (rs1_tag_i == PY_TAG_FLOAT || rs2_tag_i == PY_TAG_FLOAT) begin
                         if (pycore_is_numeric_tag(rs1_tag_i) && pycore_is_numeric_tag(rs2_tag_i)) begin
@@ -212,6 +225,13 @@ module pycore_tag_decode (
                         end else begin
                             `PYCORE_ROUTE_INT_BINARY(PY_TAG_BOOL)
                         end
+                    end else if ((alu_op_i == PY_ALU_EQ || alu_op_i == PY_ALU_NE) &&
+                                 (rs1_tag_i == rs2_tag_i) &&
+                                 pycore_is_string_tag(rs1_tag_i)) begin
+                        // Equality only; result built from full 128-bit value
+                        // compare in pycore_exec (string_cmp path).
+                        exec_unit_sel_o = PY_EXEC_INT;
+                        result_tag_o = PY_TAG_BOOL;
                     end else begin
                         `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
                     end

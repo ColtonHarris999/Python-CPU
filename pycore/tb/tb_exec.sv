@@ -10,7 +10,7 @@ module tb_exec;
     logic [PYCORE_ENTRY_WIDTH-1:0] result;
     logic stall;
     logic trap;
-    logic [3:0] trap_code;
+    logic [4:0] trap_code;
 
     pycore_exec dut (
         .clk_i(clk),
@@ -136,12 +136,25 @@ module tb_exec;
               "INT/FLOAT compare should produce BOOL");
         check(result[63:0] == 64'd1, "INT/FLOAT comparison value mismatch");
 
+        // Same-tag SHORT_STR equality is native (M5); empty payloads compare equal.
         rs1 = entry(PY_TAG_SHORT_STR, 64'd0);
         rs2 = entry(PY_TAG_SHORT_STR, 64'd0);
         alu_op = PY_ALU_EQ;
         #1;
+        check(!trap, "same-tag SHORT_STR EQ should not trap");
+        check(pycore_get_tag(result) == PY_TAG_BOOL, "string EQ should tag BOOL");
+        check(result[63:0] == 64'd1, "equal SHORT_STR EQ should be true");
+
+        alu_op = PY_ALU_NE;
+        #1;
+        check(!trap && result[63:0] == 64'd0,
+              "equal SHORT_STR NE should be false");
+
+        // Ordering on strings remains unsupported.
+        alu_op = PY_ALU_LT;
+        #1;
         check(trap && trap_code == PY_TRAP_TYPE,
-              "unsupported string equality should type trap");
+              "string ordering should type trap");
 
         $display("PASS: execute fabric smoke tests complete");
         $finish;
