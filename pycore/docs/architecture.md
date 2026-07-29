@@ -386,7 +386,7 @@ word_idx  = block_off >> log2(DATA_WIDTH/8)
   value per transaction, 16-byte aligned in v1.
 
 Default memory map (all parameters in `pycore_defs.svh`): `ADDR_WIDTH = 32`,
-`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 4` (16 KB), `DMEM_BLOCK_COUNT = 16`
+`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 8` (32 KB), `DMEM_BLOCK_COUNT = 16`
 (64 KB). Out-of-range or misaligned data accesses raise `MEM_FAULT` /
 `ADDR_ALIGN`.
 
