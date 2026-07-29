@@ -131,12 +131,16 @@ module tb_excore #(
         if (sp_req && sp_we)  write_count <= write_count + 1;
     end
 
+    // Word index inside the single 128 KB block: addr[BLOCK_SHIFT-1:4]
+    // with BLOCK_SHIFT=17 and 16-byte (128-bit) slots → addr[16:4].
+    // (addr[12:4] was correct only for the old 8 KB tile and aliases high
+    // heap addresses used by the OOM scenarios.)
     task automatic poke_slot(input logic [31:0] addr, input logic [127:0] data);
-        mem_bank.gen_block[0].blk.mem[addr[12:4]] = data;
+        mem_bank.gen_block[0].blk.mem[addr[16:4]] = data;
     endtask
 
     function automatic logic [127:0] peek_slot(input logic [31:0] addr);
-        peek_slot = mem_bank.gen_block[0].blk.mem[addr[12:4]];
+        peek_slot = mem_bank.gen_block[0].blk.mem[addr[16:4]];
     endfunction
 
     task automatic check(input bit condition, input string message);
