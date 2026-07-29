@@ -52,7 +52,7 @@ module tb_excore #(
     logic [31:0]  mb_arg;
     logic [31:0]  mb_heap_ptr;
     logic [2:0]   mb_entry_count;
-    logic [131:0] mb_entries [0:2];
+    logic [131:0] mb_entries [0:3];
 
     // ---- Result observation ----------------------------------------------
     logic         res_go;
@@ -158,6 +158,7 @@ module tb_excore #(
         mb_entries[0]   = 132'h0;
         mb_entries[1]   = 132'h0;
         mb_entries[2]   = 132'h0;
+        mb_entries[3]   = 132'h0;
         read_count      = 0;
         write_count     = 0;
         repeat (4) @(negedge clk);
