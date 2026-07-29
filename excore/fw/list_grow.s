@@ -106,8 +106,8 @@
     # key-slot tag of 9 means deleted (see PY_TAG_TOMBSTONE in pycore_defs.svh).
     .equ TAG_TOMBSTONE,  9
 
-    # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (frame stack at 0xC000).
-    .equ HEAP_LIMIT,     0xC000
+    # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (frame stack at 0x1C000).
+    .equ HEAP_LIMIT,     0x1C000
 
     # Private scratch (CPU data RAM @ 0x0) for key/value + helper state.
     .equ SCR_RA,         0x00

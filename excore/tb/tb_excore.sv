@@ -5,7 +5,7 @@
 // LIST_EXTEND trap messages driven directly onto the mailbox input ports
 // (no trap_mailbox.sv / pycore integration yet -- that is Phase C).
 //
-// pycore_mem_bank is configured as a single 64 KB block (BLOCK_SHIFT=16,
+// pycore_mem_bank is configured as a single 128 KB block (BLOCK_SHIFT=17,
 // BLOCK_COUNT=1) covering the whole heap [0, PYCORE_HEAP_LIMIT), so scenario
 // setup/verification can poke/peek `mem_bank.gen_block[0].blk.mem[...]`
 // directly instead of arbitrating a second bus master.
@@ -105,7 +105,7 @@ module tb_excore #(
     pycore_mem_bank #(
         .DATA_WIDTH(DATA_W),
         .ADDR_WIDTH(32),
-        .BLOCK_SHIFT(16),   // 64 KB single block covers PYCORE_HEAP_LIMIT
+        .BLOCK_SHIFT(17),   // 128 KB single block covers PYCORE_HEAP_LIMIT
         .BLOCK_COUNT(1),
         .READ_ONLY(0),
         .INIT_HEX("")
@@ -436,10 +436,10 @@ module tb_excore #(
         // Scenario 4: OOM -> FATAL(MEM_FAULT), memory untouched.
         // ------------------------------------------------------------------
         do_reset();
-        obj_addr = 32'hBF00;
-        old_buf  = 32'hBF20;
+        obj_addr = 32'h1BF00;
+        old_buf  = 32'h1BF20;
         // new_cap would be 8 (doubling from 4); 8*32=256B from a heap_ptr
-        // near the limit overflows PYCORE_HEAP_LIMIT (0xC000).
+        // near the limit overflows PYCORE_HEAP_LIMIT (0x1C000).
         poke_slot(obj_addr, {64'd4, 64'd2});
         poke_slot(obj_addr + 16, {96'd0, old_buf});
         poke_slot(old_buf,      128'd1);
@@ -447,7 +447,7 @@ module tb_excore #(
         poke_slot(old_buf + 32, 128'd2);
         poke_slot(old_buf + 48, {124'b0, 4'd1});
 
-        run_list_grow(obj_addr, {4'd1, 128'd7}, 32'hBF80, 20000);
+        run_list_grow(obj_addr, {4'd1, 128'd7}, 32'h1BF80, 20000);
 
         check(res_code == RES_FATAL, "scenario4: expected RES_FATAL");
         check(res_fatal_code == PY_TRAP_MEM_FAULT,

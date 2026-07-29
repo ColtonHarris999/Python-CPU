@@ -1180,10 +1180,10 @@ pycore-container-dict-full-insert:
 	# Load ≥ 2/3 / last-slot insert → PY_TRAP_DICT_GROW (11), not MEM_FAULT.
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d11 -GSTRING_HEX=\"pycore/programs/dict_full_insert_str.hex\" -GMAX_CYCLES=20000,pycore_container_dict_full_insert)
 
-# HEAP_INIT_PTR = 0xBF9C so BUILD_LIST 3 (112 bytes) exceeds PYCORE_HEAP_LIMIT
-# (0xC000 after the 64 KB dmem / heap widen for object programs).
+# HEAP_INIT_PTR = 0x1BF9C so BUILD_LIST 3 (112 bytes) exceeds PYCORE_HEAP_LIMIT
+# (0x1C000 after the 128 KB dmem / heap widen for object programs).
 pycore-container-list-oom:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h0000bf9c",pycore_container_list_oom)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h0001bf9c",pycore_container_list_oom)
 
 # Natural FOR_ITER exhaustion skips END_FOR, so this raw stream executes
 # END_FOR directly and verifies its POP_TOP-equivalent stack effect.
@@ -1336,7 +1336,7 @@ pycore-excore-grow-from-zero: excore-fw pycore-excore-integration-fixtures
 pycore-excore-fast-path-no-trap: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,fast_path_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd9" -GEXPECTED_TRAP_REQ_COUNT=0)
 
-# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0xC000) so the excore's
+# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0x1C000) so the excore's
 # doubled buffer (cap 4 -> 8, 256 bytes) cannot fit -> FATAL(MEM_FAULT).
 pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 	mkdir -p $(BUILD_DIR)/grow_oom_fatal
@@ -1350,7 +1350,7 @@ pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXCORE_EN=1 \
 		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
-		"-GHEAP_INIT_PTR=32'h0000bf80" \
+		"-GHEAP_INIT_PTR=32'h0001bf80" \
 		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 \
 		--Mdir $(BUILD_DIR)/grow_oom_fatal/verilator \
 		-Wall -Wno-fatal \
@@ -1426,7 +1426,7 @@ pycore-excore-extend-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXCORE_EN=1 \
 		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
-		"-GHEAP_INIT_PTR=32'h0000bf80" \
+		"-GHEAP_INIT_PTR=32'h0001bf80" \
 		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 \
 		--Mdir $(BUILD_DIR)/extend_oom_fatal/verilator \
 		-Wall -Wno-fatal \
