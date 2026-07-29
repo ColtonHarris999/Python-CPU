@@ -47,6 +47,17 @@ localparam logic [3:0] PY_TAG_FRAME_OBJECT = 4'b1101;
 localparam logic [3:0] PY_TAG_NULL         = 4'b1110;
 localparam logic [3:0] PY_TAG_NONE         = 4'b1111;
 
+// -------------------------------------------------------------------------
+// General heap-object kinds under PY_TAG_OBJECT (M1). The 4-bit tag space is
+// full; OBJECT means "read ob_head for the kind" (CPython's PyObject model).
+// -------------------------------------------------------------------------
+localparam logic [31:0] PY_OBK_INSTANCE     = 32'd1;
+localparam logic [31:0] PY_OBK_TYPE         = 32'd2;
+localparam logic [31:0] PY_OBK_BOUND_METHOD = 32'd3;
+localparam logic [31:0] PY_OBK_BUILTIN      = 32'd4;
+localparam logic [31:0] PY_OBK_BYTEARRAY    = 32'd5;
+localparam logic [31:0] PY_OBK_EXCEPTION    = 32'd6;
+
 localparam int PYCORE_SHORT_STR_MAX_BYTES = 15;
 localparam int PYCORE_SHORT_STR_SIZE_MSB  = 127;
 localparam int PYCORE_SHORT_STR_SIZE_LSB  = 124;
@@ -1226,6 +1237,91 @@ function automatic logic [15:0] pycore_code_meta_nlocals(
 );
     begin
         pycore_code_meta_nlocals = meta[31:16];
+    end
+endfunction
+
+// -------------------------------------------------------------------------
+// General OBJECT layout under PY_TAG_OBJECT (M1):
+//
+//   Handle: { PY_TAG_OBJECT, {64'd0, obj_addr[63:0]} }
+//
+//   obj + 0  : ob_head (raw, untagged 128-bit word)
+//                [127:96] ob_kind  (PY_OBK_*)
+//                [95:64]  ob_flags
+//                [63:0]   ob_type  (byte addr of TYPE object; 0 = none)
+//   obj + 16 : { 124'b0, PY_TAG_OBJECT }   // self-tag; preserves 32B stride
+//   obj + 32 : field0 value      obj + 48 : field0 tag
+//   obj + 64 : field1 value      ...
+//
+// Field *i* lives at pycore_tuple_val_addr(obj, i+1).  pycore_obj_field_*
+// helpers are thin aliases so call sites read clearly.
+//
+// Kind field tables:
+//   OBK_INSTANCE     field0=__dict__ (DICT)
+//   OBK_TYPE         field0=tp_dict, field1=tp_base, field2=tp_name
+//   OBK_BOUND_METHOD field0=__func__, field1=__self__
+//   OBK_BUILTIN      field0=builtin_id (INT), field1=bound_self
+//   OBK_BYTEARRAY    field0=length, field1=buf_addr, field2=capacity
+//   OBK_EXCEPTION    field0=exc_type, field1=args
+// -------------------------------------------------------------------------
+localparam logic [31:0] PYCORE_OBJ_HDR_BYTES        = 32'd32;
+localparam logic [31:0] PYCORE_OBJ_INSTANCE_BYTES   = 32'd64;   // hdr + 1 field
+localparam logic [31:0] PYCORE_OBJ_TYPE_BYTES       = 32'd128;  // hdr + 3 fields
+localparam logic [31:0] PYCORE_OBJ_BOUND_METHOD_BYTES = 32'd96; // hdr + 2
+localparam logic [31:0] PYCORE_OBJ_BUILTIN_BYTES    = 32'd96;
+localparam logic [31:0] PYCORE_OBJ_BYTEARRAY_BYTES  = 32'd128;  // hdr + 3
+localparam logic [31:0] PYCORE_OBJ_EXCEPTION_BYTES  = 32'd96;
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_pack_ob_head(
+    input logic [31:0] kind,
+    input logic [31:0] flags,
+    input logic [63:0] type_addr
+);
+    begin
+        pycore_pack_ob_head = {kind, flags, type_addr};
+    end
+endfunction
+
+function automatic logic [31:0] pycore_ob_kind(
+    input logic [PYCORE_VAL_WIDTH-1:0] head
+);
+    begin
+        pycore_ob_kind = head[127:96];
+    end
+endfunction
+
+function automatic logic [31:0] pycore_ob_flags(
+    input logic [PYCORE_VAL_WIDTH-1:0] head
+);
+    begin
+        pycore_ob_flags = head[95:64];
+    end
+endfunction
+
+function automatic logic [63:0] pycore_ob_type(
+    input logic [PYCORE_VAL_WIDTH-1:0] head
+);
+    begin
+        pycore_ob_type = head[63:0];
+    end
+endfunction
+
+// Field i value/tag — alias of tuple helpers with the +1 header offset.
+function automatic logic [31:0] pycore_obj_field_val_addr(
+    input logic [31:0] obj,
+    input logic [31:0] i
+);
+    begin
+        pycore_obj_field_val_addr = pycore_tuple_val_addr(obj, i + 32'd1);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_obj_field_tag_addr(
+    input logic [31:0] obj,
+    input logic [31:0] i
+);
+    begin
+        pycore_obj_field_tag_addr = pycore_tuple_tag_addr(obj, i + 32'd1);
     end
 endfunction
 

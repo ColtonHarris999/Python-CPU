@@ -22,11 +22,25 @@ from encoding import (
     CODE_OBJECT_NFIELDS,
     HEAP_BASE,
     HEAP_LIMIT,
+    OBK_BOUND_METHOD,
+    OBK_BUILTIN,
+    OBK_BYTEARRAY,
+    OBK_EXCEPTION,
+    OBK_INSTANCE,
+    OBK_TYPE,
+    OBJ_BOUND_METHOD_BYTES,
+    OBJ_BUILTIN_BYTES,
+    OBJ_BYTEARRAY_BYTES,
+    OBJ_EXCEPTION_BYTES,
+    OBJ_INSTANCE_BYTES,
+    OBJ_TYPE_BYTES,
     TAG_CODE_OBJECT,
     TAG_DICT,
     TAG_INT,
     TAG_LIST,
+    TAG_NONE,
     TAG_NULL,
+    TAG_OBJECT,
     TAG_SET,
     TAG_TOMBSTONE,
     TAG_TUPLE,
@@ -36,7 +50,9 @@ from encoding import (
     dict_slot_count_for_stores,
     encode_short_str,
     int_value,
+    obj_field_val_addr,
     pack_code_metadata,
+    pack_ob_head,
 )
 
 # Re-export tag constants / hash for callers / tests.
@@ -332,6 +348,172 @@ class HeapImageBuilder:
         for i, (tag, val) in enumerate(fields):
             self._write_tagged(addr + i * 32, tag, val)
         return TAG_CODE_OBJECT, addr & ((1 << 64) - 1)
+
+    # ---- General OBJECT substrate (PY_TAG_OBJECT + OBK_*) ----
+
+    def _alloc_object(
+        self,
+        nbytes: int,
+        kind: int,
+        fields: list[Tagged],
+        *,
+        type_addr: int = 0,
+        flags: int = 0,
+    ) -> Tagged:
+        """Allocate a general OBJECT with ob_head + tagged fields.
+
+        Layout matches pycore_defs.svh: header at +0/+16, field *i* at
+        ``obj_field_val_addr(obj, i)``.
+        """
+        if nbytes < 32 + 32 * len(fields):
+            raise ValueError(
+                f"object size {nbytes} too small for {len(fields)} fields"
+            )
+        addr = self._alloc(nbytes)
+        self._write(addr, pack_ob_head(kind, flags, type_addr))
+        # Self-tag at +16 preserves the 32-byte stride (tag word only).
+        self._write(addr + 16, TAG_OBJECT & 0xF)
+        for i, (tag, val) in enumerate(fields):
+            self._write_tagged(obj_field_val_addr(addr, i), tag, val)
+        return TAG_OBJECT, addr & ((1 << 64) - 1)
+
+    def alloc_instance(
+        self,
+        *,
+        type_addr: int = 0,
+        idict: Tagged | None = None,
+        flags: int = 0,
+    ) -> Tagged:
+        """OBK_INSTANCE: field0 = __dict__ (DICT handle)."""
+        if idict is None:
+            idict = self.alloc_dict([], slot_count=4)
+        if idict[0] != TAG_DICT:
+            raise ValueError("instance __dict__ must be a DICT handle")
+        return self._alloc_object(
+            OBJ_INSTANCE_BYTES,
+            OBK_INSTANCE,
+            [idict],
+            type_addr=type_addr,
+            flags=flags,
+        )
+
+    def alloc_type(
+        self,
+        tp_name: Tagged,
+        *,
+        tp_dict: Tagged | None = None,
+        tp_base: Tagged | None = None,
+        flags: int = 0,
+    ) -> Tagged:
+        """OBK_TYPE: field0=tp_dict, field1=tp_base, field2=tp_name."""
+        if tp_dict is None:
+            tp_dict = self.alloc_dict([], slot_count=4)
+        if tp_base is None:
+            tp_base = (TAG_NONE, 0)
+        if tp_dict[0] != TAG_DICT:
+            raise ValueError("tp_dict must be a DICT handle")
+        if tp_base[0] not in (TAG_NONE, TAG_OBJECT):
+            raise ValueError("tp_base must be NONE or OBJECT")
+        return self._alloc_object(
+            OBJ_TYPE_BYTES,
+            OBK_TYPE,
+            [tp_dict, tp_base, tp_name],
+            type_addr=0,
+            flags=flags,
+        )
+
+    def alloc_bound_method(
+        self,
+        func: Tagged,
+        self_obj: Tagged,
+        *,
+        flags: int = 0,
+    ) -> Tagged:
+        """OBK_BOUND_METHOD: field0=__func__, field1=__self__."""
+        if func[0] != TAG_CODE_OBJECT:
+            raise ValueError("bound-method __func__ must be CODE_OBJECT")
+        return self._alloc_object(
+            OBJ_BOUND_METHOD_BYTES,
+            OBK_BOUND_METHOD,
+            [func, self_obj],
+            flags=flags,
+        )
+
+    def alloc_builtin(
+        self,
+        builtin_id: int,
+        bound_self: Tagged | None = None,
+        *,
+        flags: int = 0,
+    ) -> Tagged:
+        """OBK_BUILTIN: field0=builtin_id (INT), field1=bound_self."""
+        if bound_self is None:
+            bound_self = (TAG_NULL, 0)
+        return self._alloc_object(
+            OBJ_BUILTIN_BYTES,
+            OBK_BUILTIN,
+            [(TAG_INT, int_value(builtin_id)), bound_self],
+            flags=flags,
+        )
+
+    def alloc_bytearray(
+        self,
+        length: int,
+        *,
+        capacity: int | None = None,
+        zero: bool = True,
+        flags: int = 0,
+    ) -> Tagged:
+        """OBK_BYTEARRAY: field0=length, field1=buf_addr, field2=capacity.
+
+        Allocates a contiguous byte buffer after the object (or leaves
+        buf_addr=0 when capacity==0).
+        """
+        if length < 0:
+            raise ValueError("bytearray length must be non-negative")
+        if capacity is None:
+            capacity = length
+        if capacity < length:
+            raise ValueError("bytearray capacity must be >= length")
+        # Object first; buffer follows so the handle address is stable.
+        addr = self._alloc(OBJ_BYTEARRAY_BYTES)
+        buf_addr = 0
+        if capacity > 0:
+            # 16-byte align the buffer for dmem slot friendliness.
+            pad = (16 - (self.ptr & 15)) & 15
+            if pad:
+                self._alloc(pad)
+            buf_addr = self._alloc(capacity)
+            if zero:
+                for off in range(0, capacity, 16):
+                    self._write(buf_addr + off, 0)
+        self._write(addr, pack_ob_head(OBK_BYTEARRAY, flags, 0))
+        self._write(addr + 16, TAG_OBJECT & 0xF)
+        fields: list[Tagged] = [
+            (TAG_INT, int_value(length)),
+            (TAG_INT, int_value(buf_addr)),
+            (TAG_INT, int_value(capacity)),
+        ]
+        for i, (tag, val) in enumerate(fields):
+            self._write_tagged(obj_field_val_addr(addr, i), tag, val)
+        return TAG_OBJECT, addr & ((1 << 64) - 1)
+
+    def alloc_exception(
+        self,
+        exc_type: Tagged,
+        args: Tagged,
+        *,
+        flags: int = 0,
+    ) -> Tagged:
+        """OBK_EXCEPTION: field0=exc_type, field1=args (TUPLE)."""
+        if args[0] != TAG_TUPLE:
+            raise ValueError("exception args must be a TUPLE handle")
+        return self._alloc_object(
+            OBJ_EXCEPTION_BYTES,
+            OBK_EXCEPTION,
+            [exc_type, args],
+            flags=flags,
+        )
 
     def write_boot_record(
         self,
