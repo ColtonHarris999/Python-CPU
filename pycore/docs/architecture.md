@@ -772,8 +772,10 @@ selector `container_op_r` is likewise 6-bit). Shared phases include:
 | 4 | `CP_DONE` | Terminal marker; `always_comb` transitions to `S_FETCH` (or trap marshal). |
 
 Additional phases cover list buffer / writeback, dict/set probe, name/const
-loads, and extend source-header reads — see `pycore_core.sv` for the full
-`CP_*` enumeration.
+loads, and extend source-header reads — see `pycore_cont_defs.svh` for the
+full `CP_*` enumeration. The `unique case (container_op_r)` arms live in
+`pycore_cont_list.svh`, `pycore_cont_dict.svh`, and `pycore_cont_object.svh`
+(included from `pycore_core.sv`).
 
 The dmem port is arbitrated via `container_dmem_pending_r`, which mirrors
 `frame_dmem_pending_r` used by `S_CALL` and `S_RETURN`.
