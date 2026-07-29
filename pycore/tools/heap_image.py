@@ -60,7 +60,6 @@ TAG_BOOL = 0b0011
 TAG_FLOAT = 0b0010
 TAG_SHORT_STR = 0b0110
 TAG_LONG_STR = 0b0111
-TAG_NONE = 0b1111
 TAG_UNUSED = TAG_NULL  # renamed; kept as alias
 
 Tagged = tuple[int, int]  # (tag, value128)
