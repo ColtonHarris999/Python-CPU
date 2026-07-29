@@ -615,6 +615,106 @@ class ImageTranscodingTest(unittest.TestCase):
         self.assertEqual(globals_header >> 64, 8)
 
 
+class ClassImageBuilderTest(unittest.TestCase):
+    def test_fold_module_class_simple(self) -> None:
+        src = (
+            "class Point:\n"
+            "    def set_x(self, v):\n"
+            "        self.x = v\n"
+            "    def get_x(self):\n"
+            "        return self.x\n"
+            "\n"
+            "def managed_entry():\n"
+            "    p = Point()\n"
+            "    p.set_x(7)\n"
+            "    return p.get_x()\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        result = image_from_source.build_image_from_source_text(src, "<class-simple>")
+        self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
+        # No LOAD_BUILD_CLASS left in the module image path.
+        module_co = compile(src, "<class-simple>", "exec")
+        folded, specs = image_from_source.fold_module_classes(module_co, src)
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].name, "Point")
+        self.assertIn("set_x", specs[0].methods)
+        self.assertIn("get_x", specs[0].methods)
+        opnames = [
+            ins.opname
+            for ins in image_from_source.iter_raw_instructions(folded)
+            if ins.opname != "CACHE"
+        ]
+        self.assertNotIn("LOAD_BUILD_CLASS", opnames)
+        self.assertIn("NOP", opnames)
+
+    def test_fold_staticmethod_and_const(self) -> None:
+        src = (
+            "class Util:\n"
+            "    WSIZE = 8\n"
+            "    @staticmethod\n"
+            "    def add(a, b):\n"
+            "        return a + b\n"
+            "\n"
+            "def managed_entry():\n"
+            "    return Util.WSIZE + Util().add(1, 2)\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        module_co = compile(src, "<class-static>", "exec")
+        _folded, specs = image_from_source.fold_module_classes(module_co, src)
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].constants.get("WSIZE"), 8)
+        self.assertIn("add", specs[0].static_methods)
+        self.assertNotIn("add", specs[0].methods)
+        result = image_from_source.build_image_from_source_text(src, "<class-static>")
+        self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
+
+    def test_reject_class_with_bases(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            image_from_source.build_image_from_source_text(
+                "class C(object):\n"
+                "    pass\n"
+                "\n"
+                "def managed_entry():\n"
+                "    return 0\n"
+                "\n"
+                "managed_entry()\n",
+                "<class-bases>",
+            )
+        msg = str(ctx.exception)
+        self.assertIn("bases", msg.lower())
+
+    def test_reject_nested_class(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            image_from_source.build_image_from_source_text(
+                "def managed_entry():\n"
+                "    class Inner:\n"
+                "        pass\n"
+                "    return 0\n"
+                "\n"
+                "managed_entry()\n",
+                "<class-nested>",
+            )
+        self.assertIn("inside function", str(ctx.exception))
+
+    def test_reject_classmethod(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            image_from_source.build_image_from_source_text(
+                "class C:\n"
+                "    @classmethod\n"
+                "    def m(cls):\n"
+                "        return 1\n"
+                "\n"
+                "def managed_entry():\n"
+                "    return 0\n"
+                "\n"
+                "managed_entry()\n",
+                "<class-classmethod>",
+            )
+        self.assertIn("classmethod", str(ctx.exception).lower())
+
+
 class CPython314ConventionProbeTest(unittest.TestCase):
     def test_opcode_numbers_used_by_image_decode(self) -> None:
         self.assertEqual(opcode.opmap["PUSH_NULL"], 33)

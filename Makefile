@@ -154,6 +154,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
 	pycore-img-default-arg pycore-img-default-arg-argc-trap \
 	pycore-img-bound-method-obj pycore-img-method-all \
+	pycore-img-class-simple pycore-img-class-const \
+	pycore-img-staticmethod pycore-img-class-two-instances \
+	pycore-img-class-all \
 	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
@@ -923,7 +926,8 @@ pycore-img: \
 	pycore-img-set-str \
 	pycore-img-set-grow-fatal \
 	pycore-img-attr-all \
-	pycore-img-method-all
+	pycore-img-method-all \
+	pycore-img-class-all
 
 # Attribute protocol (M2): LOAD/STORE/DELETE_ATTR via seeded OBK_INSTANCE.
 pycore-img-attr-basic:
@@ -994,6 +998,25 @@ pycore-img-method-all: \
 	pycore-img-default-arg \
 	pycore-img-default-arg-argc-trap \
 	pycore-img-bound-method-obj
+
+# ClassImageBuilder (M4): fold module-level class → OBK_TYPE + STORE_NAME.
+pycore-img-class-simple:
+	$(call PYCORE_IMAGE_RUN,class_simple,100000)
+
+pycore-img-class-const:
+	$(call PYCORE_IMAGE_RUN,class_const,100000)
+
+pycore-img-staticmethod:
+	$(call PYCORE_IMAGE_RUN,staticmethod,100000)
+
+pycore-img-class-two-instances:
+	$(call PYCORE_IMAGE_RUN,class_two_instances,100000)
+
+pycore-img-class-all: \
+	pycore-img-class-simple \
+	pycore-img-class-const \
+	pycore-img-staticmethod \
+	pycore-img-class-two-instances
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /

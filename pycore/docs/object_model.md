@@ -53,9 +53,26 @@ CPython 3.12+ `LOAD_ATTR` with `oparg & 1` pushes `[func, self]` (or
 
 ## D5 — Classes are built at image-build time
 
-Module-level `class` idioms are recognized by `image_from_source.py`, executed
-on the host, and emitted as fully-formed `OBK_TYPE` objects. Dynamic
-`LOAD_BUILD_CLASS` stays in `DEFERRED_OPS` until frame-local namespaces exist.
+Module-level `class` idioms are recognized by `fold_module_classes` in
+`image_from_source.py`, executed on the host, and emitted as fully-formed
+`OBK_TYPE` objects. The class-creation bytecode span is rewritten in place to
+`LOAD_CONST <_PyCoreTypeRef>` + `STORE_NAME` with **NOP padding** (never
+compact — branch offsets stay valid). The class-body code const is replaced
+with `None` so unsupported body plumbing (`LOAD_LOCALS`, `MAKE_CELL`, …) is
+not serialized.
+
+**Supported body:** plain methods, `@staticmethod`, and constant assignments
+(`int`/`bool`/`str`/`None`). Rejected: bases, metaclasses, `__slots__`,
+`@classmethod`, nested/dynamic `class`.
+
+**staticmethod representation:** `tp_dict` entry is `OBK_BUILTIN` with
+`builtin_id=0` and `bound_self` = the method `CODE_OBJECT` handle. `LOAD_ATTR`
+unwraps this to a `CODE_OBJECT` and pushes `NULL` as the CALL sentinel (no
+`self` bind). Ordinary methods remain bare `CODE_OBJECT` entries (bind on
+`method_flag=1` / allocate `OBK_BOUND_METHOD` on `method_flag=0`).
+
+Dynamic `LOAD_BUILD_CLASS` stays in `DEFERRED_OPS` for nested/runtime class
+creation until frame-local namespaces exist.
 
 ## LOAD_ATTR algorithm (M2)
 
@@ -66,10 +83,13 @@ on the host, and emitted as fully-formed `OBK_TYPE` objects. Dynamic
 4. On instance miss, walk `ob_type` → `tp_base` (depth guard 8), probing each
    `tp_dict`. Miss → `PY_TRAP_ATTR_ERROR` (15).
 5. Writeback:
+   - If the hit value is `OBJECT`/`OBK_BUILTIN` with `builtin_id=0`, unwrap
+     `field1` as `CODE_OBJECT` and mark static (no `self` bind).
    - `method_flag = 0`: replace TOS; if source is TYPE and value is
-     `CODE_OBJECT`, allocate `OBK_BOUND_METHOD`.
+     `CODE_OBJECT` (non-static), allocate `OBK_BOUND_METHOD`. Static → push
+     the unwrapped `CODE_OBJECT`.
    - `method_flag = 1`: replace TOS with attr/func and push `self` or `NULL`
-     (no allocation on this path).
+     (no allocation on this path). Static → `[func, NULL]`.
 
 `STORE_ATTR` / `DELETE_ATTR` require `OBK_INSTANCE` and operate on `__dict__`
 only (type mutation is build-time).
@@ -81,19 +101,21 @@ only (type mutation is build-time).
 - `alloc_instance` / `alloc_type` / `alloc_bound_method`
 - `alloc_builtin` / `alloc_bytearray` / `alloc_exception`
 
-Until M4 ClassImageBuilder lands, attribute image tests seed objects via:
+Attribute image tests may still seed objects via:
 
 ```
 # pycore-inject: SEED_TYPE T [attr=int ...]
 # pycore-inject: SEED_INSTANCE o [type=T] [slots=N] [attr=int ...]
 ```
 
-`run_image_test.py` mirrors those seeds with host `SimpleNamespace` / `type`
-objects so differential `managed_entry()` still works.
+Real `class` statements are preferred for new coverage (`img_class_*`,
+`img_staticmethod`). `run_image_test.py` mirrors seed pragmas with host
+`SimpleNamespace` / `type` objects so differential `managed_entry()` still
+works; host exec of real classes needs no seeding.
 
 Python-side layout constants live in `pycore/tools/encoding.py`
 (`OBK_*`, `pack_ob_head`, `obj_field_val_addr`). RTL mirrors are in
 `pycore/rtl/pycore_defs.svh` (`PY_OBK_*`, `pycore_pack_ob_head`,
 `pycore_obj_field_val_addr`).
 
-Coverage: `pycore/tests/test_object_image.py`, `img_attr_*`.
+Coverage: `pycore/tests/test_object_image.py`, `img_attr_*`, `img_class_*`.

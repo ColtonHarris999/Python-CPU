@@ -8,6 +8,7 @@ one-for-one: every raw two-byte ``co_code`` unit becomes one 64-bit imem slot.
 from __future__ import annotations
 
 import argparse
+import ast
 import dis
 import opcode as _opcode_module
 import pathlib
@@ -348,7 +349,11 @@ def count_global_store_names(module_code: types.CodeType) -> set[str]:
 
 
 class _ImageSerializer:
-    def __init__(self, defaults_map: dict[int, tuple] | None = None) -> None:
+    def __init__(
+        self,
+        defaults_map: dict[int, tuple] | None = None,
+        type_refs: dict[str, Tagged] | None = None,
+    ) -> None:
         # BOOT_RECORD_ADDR is 0x03e0 and the two tagged entries occupy 64 bytes,
         # so static image allocations must not start at the nominal 0x0400 base.
         static_base = max(HEAP_BASE, BOOT_RECORD_ADDR + 64)
@@ -358,6 +363,7 @@ class _ImageSerializer:
         self.code_handles: dict[int, Tagged] = {}
         self.entry_slots: dict[int, int] = {}
         self.defaults_map: dict[int, tuple] = defaults_map or {}
+        self.type_refs: dict[str, Tagged] = type_refs if type_refs is not None else {}
 
     def serialize_code(self, co: types.CodeType) -> Tagged:
         co_id = id(co)
@@ -398,6 +404,14 @@ class _ImageSerializer:
         return handle
 
     def serialize_constant(self, value: object, owner: types.CodeType) -> Tagged:
+        if isinstance(value, _PyCoreTypeRef):
+            handle = self.type_refs.get(value.name)
+            if handle is None:
+                raise ValueError(
+                    f"Unresolved _PyCoreTypeRef({value.name!r}) in code object "
+                    f"{owner.co_name!r}; type must be allocated before serialize"
+                )
+            return handle
         if isinstance(value, types.CodeType):
             return self.serialize_code(value)
         if isinstance(value, tuple):
@@ -412,6 +426,48 @@ class _ImageSerializer:
             f"Unsupported constant {value!r} of type {type(value).__name__} "
             f"in code object {owner.co_name!r}"
         )
+
+    def alloc_class_types(self, class_specs: list[ClassBuildSpec]) -> None:
+        """Serialize method codes, then allocate OBK_TYPE into ``type_refs``.
+
+        Staticmethods are stored as ``OBK_BUILTIN`` with ``builtin_id=0`` and
+        ``bound_self`` holding the ``CODE_OBJECT`` handle (LOAD_ATTR unwraps
+        without binding ``self``).
+        """
+        for spec in class_specs:
+            attr_pairs: list[tuple[Tagged, Tagged]] = []
+            for attr_name, const_val in spec.constants.items():
+                if const_val is None:
+                    tagged: Tagged = (TAG_NONE, 0)
+                elif isinstance(const_val, (bool, int, float, str)):
+                    tagged = tag_constant(const_val, self.string_heap)
+                else:
+                    raise ValueError(
+                        f"class {spec.name!r}: unsupported constant "
+                        f"{attr_name!r}={const_val!r}"
+                    )
+                attr_pairs.append(
+                    (tag_constant(attr_name, self.string_heap), tagged)
+                )
+            for meth_name, meth_co in spec.methods.items():
+                handle = self.serialize_code(meth_co)
+                attr_pairs.append(
+                    (tag_constant(meth_name, self.string_heap), handle)
+                )
+            for meth_name, meth_co in spec.static_methods.items():
+                code_handle = self.serialize_code(meth_co)
+                # Convention: builtin_id=0 ⇒ staticmethod wrapper; field1=CODE.
+                builtin = self.heap.alloc_builtin(0, code_handle)
+                attr_pairs.append(
+                    (tag_constant(meth_name, self.string_heap), builtin)
+                )
+            n_keys = max(len(attr_pairs), 1)
+            tp_dict = self.heap.alloc_dict(
+                attr_pairs, slot_count=dict_min_slots(n_keys)
+            )
+            tp_name = tag_constant(spec.name, self.string_heap)
+            handle = self.heap.alloc_type(tp_name, tp_dict=tp_dict)
+            self.type_refs[spec.name] = handle
 
 
 @dataclass(frozen=True)
@@ -467,7 +523,30 @@ _OP_NOP = _OM["NOP"]
 _OP_MAKE_FUNCTION = _OM["MAKE_FUNCTION"]
 _OP_SET_FUNCTION_ATTRIBUTE = _OM["SET_FUNCTION_ATTRIBUTE"]
 _OP_LOAD_CONST = _OM["LOAD_CONST"]
+_OP_PUSH_NULL = _OM["PUSH_NULL"]
+_OP_CALL = _OM["CALL"]
+_OP_STORE_NAME = _OM["STORE_NAME"]
+_OP_LOAD_BUILD_CLASS = _OM["LOAD_BUILD_CLASS"]
 _SFA_FLAG_DEFAULTS = 1
+
+
+@dataclass(frozen=True)
+class _PyCoreTypeRef:
+    """Placeholder in co_consts resolved to an OBK_TYPE handle at serialize time."""
+
+    name: str
+
+
+@dataclass
+class ClassBuildSpec:
+    """Module-level class folded at image-build time into an OBK_TYPE."""
+
+    name: str
+    methods: dict[str, types.CodeType]
+    static_methods: dict[str, types.CodeType]
+    constants: dict[str, object]
+    # id(code) → defaults tuple captured from host function.__defaults__
+    method_defaults: dict[int, tuple] = field(default_factory=dict)
 
 
 def _parse_seed_kv_tokens(tokens: list[str]) -> tuple[dict[str, str], list[tuple[str, int]]]:
@@ -721,18 +800,22 @@ def build_image_from_code(
     *,
     seeds: SeedSpecs | None = None,
     defaults_map: dict[int, tuple] | None = None,
+    class_specs: list[ClassBuildSpec] | None = None,
 ) -> ImageBuildResult:
     require_python_3_14()
     validate_code_tree(module_code)
 
     seeds = seeds or SeedSpecs()
+    class_specs = class_specs or []
     stored_names = count_global_store_names(module_code)
     # Pre-seeded globals keys plus room for runtime STORE_NAME / STORE_GLOBAL.
     n_for_slots = len(stored_names | seeds.global_names)
     globals_slot_count = dict_slot_count_for_stores(n_for_slots)
 
     serializer = _ImageSerializer(defaults_map=defaults_map)
-    # Serialize first so SEED_TYPE_METHOD can resolve CODE_OBJECT handles.
+    # Method codes + OBK_TYPE must exist before module consts resolve type refs.
+    serializer.alloc_class_types(class_specs)
+    # Serialize module so SEED_TYPE_METHOD can resolve CODE_OBJECT handles.
     module_handle = serializer.serialize_code(module_code)
     code_by_name = _code_handles_by_name(module_code, serializer.code_handles)
     seed_pairs = _seed_globals_pairs(
@@ -977,14 +1060,403 @@ def apply_set_add_seq_injects(
     return result
 
 
+def _code_has_load_build_class(co: types.CodeType) -> bool:
+    for ins in iter_raw_instructions(co):
+        if ins.opname == "LOAD_BUILD_CLASS":
+            return True
+    return False
+
+
+def _reject_nested_load_build_class(module_code: types.CodeType) -> None:
+    """Reject class creation inside functions / nested code objects."""
+    for const in module_code.co_consts:
+        if not isinstance(const, types.CodeType):
+            continue
+        for co in iter_code_objects(const):
+            if _code_has_load_build_class(co):
+                raise ValueError(
+                    f"class creation inside function/code {co.co_name!r} is not "
+                    "supported; only module-level classes can be folded at "
+                    "image-build time"
+                )
+
+
+def _module_level_class_nodes(source_text: str) -> dict[str, ast.ClassDef]:
+    tree = ast.parse(source_text)
+    out: dict[str, ast.ClassDef] = {}
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            out[node.name] = node
+    return out
+
+
+def _validate_class_ast(node: ast.ClassDef) -> None:
+    if node.bases:
+        raise ValueError(
+            f"class {node.name!r}: bases are not supported (only implicit object); "
+            "got bases in source"
+        )
+    if node.keywords:
+        raise ValueError(
+            f"class {node.name!r}: metaclass/keywords are not supported"
+        )
+    if node.decorator_list:
+        raise ValueError(
+            f"class {node.name!r}: class decorators are not supported"
+        )
+    for stmt in node.body:
+        if isinstance(stmt, ast.FunctionDef) or isinstance(stmt, ast.AsyncFunctionDef):
+            if isinstance(stmt, ast.AsyncFunctionDef):
+                raise ValueError(
+                    f"class {node.name!r}: async methods are not supported "
+                    f"({stmt.name!r})"
+                )
+            for dec in stmt.decorator_list:
+                if isinstance(dec, ast.Name) and dec.id == "staticmethod":
+                    continue
+                if isinstance(dec, ast.Name) and dec.id == "classmethod":
+                    raise ValueError(
+                        f"class {node.name!r}: @classmethod is not supported "
+                        f"({stmt.name!r})"
+                    )
+                raise ValueError(
+                    f"class {node.name!r}: unsupported decorator on method "
+                    f"{stmt.name!r} (only @staticmethod is allowed)"
+                )
+        elif isinstance(stmt, ast.Assign):
+            for t in stmt.targets:
+                if isinstance(t, ast.Name) and t.id == "__slots__":
+                    raise ValueError(
+                        f"class {node.name!r}: __slots__ is not supported"
+                    )
+        elif isinstance(stmt, ast.AnnAssign):
+            if isinstance(stmt.target, ast.Name) and stmt.target.id == "__slots__":
+                raise ValueError(
+                    f"class {node.name!r}: __slots__ is not supported"
+                )
+        elif isinstance(stmt, ast.Pass):
+            continue
+        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            continue  # docstring
+        else:
+            # Allow other simple statements only if host-exec classification
+            # accepts the resulting type dict; still reject obvious bad forms.
+            if isinstance(stmt, (ast.ClassDef, ast.With, ast.For, ast.While,
+                                 ast.If, ast.Try, ast.Import, ast.ImportFrom)):
+                raise ValueError(
+                    f"class {node.name!r}: unsupported statement "
+                    f"{type(stmt).__name__} in class body"
+                )
+
+
+_SKIP_TYPE_ATTRS = frozenset({
+    "__module__",
+    "__dict__",
+    "__weakref__",
+    "__doc__",
+    "__qualname__",
+    "__firstlineno__",
+    "__static_attributes__",
+    "__classdictcell__",
+})
+
+
+def _class_build_spec_from_type(typ: type) -> ClassBuildSpec:
+    name = typ.__name__
+    if typ.__bases__ != (object,):
+        raise ValueError(
+            f"class {name!r}: bases other than implicit object are not "
+            f"supported (bases={typ.__bases__!r})"
+        )
+    if typ.__dict__.get("__slots__") is not None or "__slots__" in typ.__dict__:
+        raise ValueError(f"class {name!r}: __slots__ is not supported")
+
+    methods: dict[str, types.CodeType] = {}
+    static_methods: dict[str, types.CodeType] = {}
+    constants: dict[str, object] = {}
+    method_defaults: dict[int, tuple] = {}
+
+    for attr_name, value in typ.__dict__.items():
+        if attr_name in _SKIP_TYPE_ATTRS:
+            continue
+        if attr_name == "__slots__":
+            raise ValueError(f"class {name!r}: __slots__ is not supported")
+        if isinstance(value, classmethod):
+            raise ValueError(
+                f"class {name!r}: @classmethod is not supported ({attr_name!r})"
+            )
+        if isinstance(value, staticmethod):
+            func = value.__func__
+            if not isinstance(func, types.FunctionType):
+                raise ValueError(
+                    f"class {name!r}: staticmethod {attr_name!r} is not a "
+                    "plain function"
+                )
+            static_methods[attr_name] = func.__code__
+            if func.__defaults__:
+                method_defaults[id(func.__code__)] = func.__defaults__
+            if func.__kwdefaults__:
+                raise ValueError(
+                    f"class {name!r}: keyword-only defaults on staticmethod "
+                    f"{attr_name!r} are not supported"
+                )
+            continue
+        if isinstance(value, types.FunctionType):
+            methods[attr_name] = value.__code__
+            if value.__defaults__:
+                method_defaults[id(value.__code__)] = value.__defaults__
+            if value.__kwdefaults__:
+                raise ValueError(
+                    f"class {name!r}: keyword-only defaults on method "
+                    f"{attr_name!r} are not supported"
+                )
+            continue
+        if value is None or isinstance(value, (bool, int, str)):
+            constants[attr_name] = value
+            continue
+        raise ValueError(
+            f"class {name!r}: unsupported class body attribute "
+            f"{attr_name!r} of type {type(value).__name__} "
+            "(allowed: methods, @staticmethod, int/bool/str/None constants)"
+        )
+
+    return ClassBuildSpec(
+        name=name,
+        methods=methods,
+        static_methods=static_methods,
+        constants=constants,
+        method_defaults=method_defaults,
+    )
+
+
+def _host_exec_class(node: ast.ClassDef, source_text: str) -> type:
+    segment = ast.get_source_segment(source_text, node)
+    if segment is None:
+        # Fallback: unparse the ClassDef.
+        segment = ast.unparse(node)
+    ns: dict[str, object] = {"__name__": "__pycore_class__"}
+    exec(compile(segment, f"<class:{node.name}>", "exec"), ns)
+    typ = ns.get(node.name)
+    if not isinstance(typ, type):
+        raise ValueError(
+            f"class {node.name!r}: host exec did not produce a type object"
+        )
+    return typ
+
+
+def _encode_const_index(index: int) -> list[tuple[int, int]]:
+    """Return ``(opcode, arg8)`` units for ``LOAD_CONST index`` (+ EXTENDED_ARG)."""
+    if index < 0:
+        raise ValueError(f"negative const index {index}")
+    units: list[tuple[int, int]] = []
+    if index > 0xFFFFFF:
+        raise ValueError(f"const index {index} exceeds 24-bit EXTENDED_ARG range")
+    if index > 0xFFFF:
+        units.append((OP_EXTENDED_ARG, (index >> 16) & 0xFF))
+        units.append((OP_EXTENDED_ARG, (index >> 8) & 0xFF))
+        units.append((_OP_LOAD_CONST, index & 0xFF))
+    elif index > 0xFF:
+        units.append((OP_EXTENDED_ARG, (index >> 8) & 0xFF))
+        units.append((_OP_LOAD_CONST, index & 0xFF))
+    else:
+        units.append((_OP_LOAD_CONST, index))
+    return units
+
+
+def _match_class_creation_span(
+    code: bytes, consts: tuple, names: tuple[str, ...]
+) -> list[tuple[int, int, str, int]]:
+    """Find module-level class-creation spans.
+
+    Returns list of ``(start, end_exclusive, class_name, body_const_index)``
+    where offsets are byte offsets into ``co_code``. Pattern (CPython 3.14)::
+
+        LOAD_BUILD_CLASS
+        PUSH_NULL
+        LOAD_CONST <body code>
+        MAKE_FUNCTION
+        LOAD_CONST <'Name'>
+        CALL 2
+        CACHE*
+        STORE_NAME Name
+    """
+    matches: list[tuple[int, int, str, int]] = []
+    i = 0
+    n = len(code)
+    while i + 11 < n:
+        if code[i] != _OP_LOAD_BUILD_CLASS:
+            i += 2
+            continue
+        # Fixed prefix through CALL (6 units = 12 bytes) before caches.
+        if i + 12 > n:
+            raise ValueError(
+                "truncated LOAD_BUILD_CLASS class-creation sequence at "
+                f"bytecode offset {i}"
+            )
+        if code[i + 2] != _OP_PUSH_NULL:
+            raise ValueError(
+                f"LOAD_BUILD_CLASS at offset {i}: expected PUSH_NULL "
+                "(CPython 3.14 class idiom); dynamic class creation is deferred"
+            )
+        if code[i + 4] != _OP_LOAD_CONST:
+            raise ValueError(
+                f"LOAD_BUILD_CLASS at offset {i}: expected LOAD_CONST body"
+            )
+        body_idx = code[i + 5]
+        if code[i + 6] != _OP_MAKE_FUNCTION:
+            raise ValueError(
+                f"LOAD_BUILD_CLASS at offset {i}: expected MAKE_FUNCTION"
+            )
+        if code[i + 8] != _OP_LOAD_CONST:
+            raise ValueError(
+                f"LOAD_BUILD_CLASS at offset {i}: expected LOAD_CONST name"
+            )
+        name_idx = code[i + 9]
+        if code[i + 10] != _OP_CALL:
+            # Bases/keywords insert LOAD_NAME / KW_NAMES before CALL.
+            raise ValueError(
+                f"class creation at offset {i}: bases or keywords present "
+                "(expected CALL 2 immediately after class name); only "
+                "no-base classes are supported"
+            )
+        argc = code[i + 11]
+        if argc != 2:
+            raise ValueError(
+                f"class creation at offset {i}: CALL argc={argc} (bases or "
+                "keywords present); only no-base classes (CALL 2) are supported"
+            )
+        body = consts[body_idx] if body_idx < len(consts) else None
+        name_const = consts[name_idx] if name_idx < len(consts) else None
+        if not isinstance(body, types.CodeType):
+            raise ValueError(
+                f"class creation at offset {i}: body const is not a code object"
+            )
+        if not isinstance(name_const, str):
+            raise ValueError(
+                f"class creation at offset {i}: name const is not a string"
+            )
+        # Skip CALL inline caches.
+        j = i + 12
+        while j < n and code[j] == OP_CACHE:
+            j += 2
+        if j + 1 >= n or code[j] != _OP_STORE_NAME:
+            raise ValueError(
+                f"class creation at offset {i}: expected STORE_NAME after CALL"
+            )
+        store_namei = code[j + 1]
+        if store_namei >= len(names) or names[store_namei] != name_const:
+            raise ValueError(
+                f"class creation at offset {i}: STORE_NAME target does not "
+                f"match class name {name_const!r}"
+            )
+        end = j + 2
+        matches.append((i, end, name_const, body_idx))
+        i = end
+    return matches
+
+
+def fold_module_classes(
+    module_code: types.CodeType,
+    source_text: str,
+) -> tuple[types.CodeType, list[ClassBuildSpec]]:
+    """Fold module-level ``class`` idioms into ``_PyCoreTypeRef`` + STORE_NAME.
+
+    Rewrites each matched span in place with NOP padding (never compact) so
+    branch offsets stay valid. Class body code consts are replaced with
+    ``None`` so unsupported body opcodes are not validated/serialized.
+    """
+    _reject_nested_load_build_class(module_code)
+
+    if not _code_has_load_build_class(module_code):
+        return module_code, []
+
+    ast_classes = _module_level_class_nodes(source_text)
+    matches = _match_class_creation_span(
+        module_code.co_code, module_code.co_consts, module_code.co_names
+    )
+    if not matches:
+        # LOAD_BUILD_CLASS present but no match — leave for validate/DEFERRED.
+        return module_code, []
+
+    code = bytearray(module_code.co_code)
+    consts: list[object] = list(module_code.co_consts)
+    specs: list[ClassBuildSpec] = []
+    seen_names: set[str] = set()
+
+    for start, end, class_name, body_idx in matches:
+        if class_name in seen_names:
+            raise ValueError(
+                f"duplicate module-level class {class_name!r} is not supported"
+            )
+        seen_names.add(class_name)
+        node = ast_classes.get(class_name)
+        if node is None:
+            raise ValueError(
+                f"class {class_name!r}: found in bytecode but not as a "
+                "module-level class statement in source"
+            )
+        _validate_class_ast(node)
+        typ = _host_exec_class(node, source_text)
+        if typ.__name__ != class_name:
+            raise ValueError(
+                f"class {class_name!r}: host type name mismatch {typ.__name__!r}"
+            )
+        spec = _class_build_spec_from_type(typ)
+        specs.append(spec)
+
+        # Replace body code const with None (drop LOAD_LOCALS / MAKE_CELL etc.).
+        consts[body_idx] = None
+
+        ref = _PyCoreTypeRef(class_name)
+        ref_index = len(consts)
+        consts.append(ref)
+
+        load_units = _encode_const_index(ref_index)
+        # STORE_NAME is the last unit of the span.
+        store_off = end - 2
+        store_namei = code[store_off + 1]
+        span_units = (end - start) // 2
+        need_units = len(load_units) + 1  # LOAD* + STORE_NAME
+        if need_units > span_units:
+            raise ValueError(
+                f"class {class_name!r}: rewritten LOAD_CONST/STORE_NAME needs "
+                f"{need_units} units but span is only {span_units}"
+            )
+        # Write LOAD_CONST (+ EXTENDED_ARG) then STORE_NAME, NOP-pad the rest.
+        cursor = start
+        for op, arg8 in load_units:
+            code[cursor] = op
+            code[cursor + 1] = arg8
+            cursor += 2
+        code[cursor] = _OP_STORE_NAME
+        code[cursor + 1] = store_namei
+        cursor += 2
+        while cursor < end:
+            code[cursor] = _OP_NOP
+            code[cursor + 1] = 0
+            cursor += 2
+
+    new_module = module_code.replace(
+        co_code=bytes(code), co_consts=tuple(consts)
+    )
+    return new_module, specs
+
+
 def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildResult:
     seeds = parse_seed_pragmas(source_text)
     module_code = compile(source_text, filename, "exec")
     module_code = apply_lfac_injects(module_code, source_text)
     module_code = apply_set_add_seq_injects(module_code, source_text)
+    module_code, class_specs = fold_module_classes(module_code, source_text)
     module_code, defaults_map = fold_function_defaults(module_code)
+    for spec in class_specs:
+        for co_id, defaults in spec.method_defaults.items():
+            defaults_map[co_id] = defaults
     return build_image_from_code(
-        module_code, seeds=seeds, defaults_map=defaults_map
+        module_code,
+        seeds=seeds,
+        defaults_map=defaults_map,
+        class_specs=class_specs,
     )
 
 

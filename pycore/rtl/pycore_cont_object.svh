@@ -746,7 +746,8 @@
                         // LOAD_ATTR — instance __dict__ then MRO tp_dict walk.
                         // Overlay: push_null=method_flag, src_len=type addr,
                         // count=MRO depth, lfb_hi=source (0=INSTANCE,1=TYPE),
-                        // lfb_lo=in_type_walk, src_buf=receiver addr,
+                        // lfb_lo[0]=in_type_walk, lfb_lo[2]=staticmethod unwrap,
+                        // src_buf=receiver addr,
                         // tag/val=name key during probe / attr value on hit.
                         // =====================================================
                         CONT_LOAD_ATTR: begin
@@ -1091,7 +1092,16 @@
                                 end
 
                                 CP_ATTR_WB: begin
-                                    if (container_push_null_r) begin
+                                    // OBJECT hit: may be OBK_BUILTIN id=0 staticmethod.
+                                    // lfb_lo[2] set after unwrap so we don't loop.
+                                    if ((container_tag_r == PY_TAG_OBJECT) &&
+                                        !container_lfb_lo_r[2]) begin
+                                        container_base_r       <= container_val_r[31:0];
+                                        container_dmem_addr_r  <= container_val_r[31:0];
+                                        container_dmem_we_r    <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r      <= CP_ATTR_STATIC0;
+                                    end else if (container_push_null_r) begin
                                         // method_flag=1: [func,self] or [attr,NULL]
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
@@ -1099,8 +1109,10 @@
                                             container_tag_r, container_val_r);
                                         container_phase_r <= CP_ATTR_WB_SELF;
                                     end else if ((container_lfb_hi_r[0]) &&
-                                                 (container_tag_r == PY_TAG_CODE_OBJECT)) begin
+                                                 (container_tag_r == PY_TAG_CODE_OBJECT) &&
+                                                 !container_lfb_lo_r[2]) begin
                                         // method_flag=0 + TYPE source + CODE → bind
+                                        // (staticmethod already unwrapped: push CODE)
                                         if ((heap_ptr_r + PYCORE_OBJ_BOUND_METHOD_BYTES)
                                                 > PYCORE_HEAP_LIMIT) begin
                                             container_mem_fault_r <= 1'b1;
@@ -1125,14 +1137,98 @@
                                     end
                                 end
 
+                                // staticmethod unwrap: OBK_BUILTIN id=0, field1=CODE.
+                                CP_ATTR_STATIC0: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (pycore_ob_kind(container_rd_data_r) !=
+                                                PY_OBK_BUILTIN) begin
+                                            // Plain object attribute — push as-is.
+                                            container_tag_r   <= PY_TAG_OBJECT;
+                                            container_val_r   <=
+                                                {{96{1'b0}}, container_base_r};
+                                            container_lfb_lo_r[2] <= 1'b1;
+                                            container_phase_r <= CP_ATTR_WB;
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_obj_field_val_addr(
+                                                    container_base_r, 32'd0);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_ATTR_STATIC1;
+                                        end
+                                    end
+                                end
+
+                                CP_ATTR_STATIC1: begin
+                                    if (!container_dmem_pending_r) begin
+                                        // field0 val = builtin_id (stash in probe_r)
+                                        container_probe_r <= container_rd_data_r[31:0];
+                                        container_dmem_addr_r <=
+                                            pycore_obj_field_tag_addr(
+                                                container_base_r, 32'd0);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_ATTR_STATIC2;
+                                    end
+                                end
+
+                                CP_ATTR_STATIC2: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if ((container_rd_data_r[3:0] != PY_TAG_INT) ||
+                                            (container_probe_r != 32'd0)) begin
+                                            // Non-zero / non-INT builtin id: push as-is.
+                                            container_tag_r   <= PY_TAG_OBJECT;
+                                            container_val_r   <=
+                                                {{96{1'b0}}, container_base_r};
+                                            container_lfb_lo_r[2] <= 1'b1;
+                                            container_phase_r <= CP_ATTR_WB;
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_obj_field_val_addr(
+                                                    container_base_r, 32'd1);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_ATTR_STATIC3;
+                                        end
+                                    end
+                                end
+
+                                CP_ATTR_STATIC3: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_val_r <= container_rd_data_r;
+                                        container_dmem_addr_r <=
+                                            pycore_obj_field_tag_addr(
+                                                container_base_r, 32'd1);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_ATTR_STATIC4;
+                                    end
+                                end
+
+                                CP_ATTR_STATIC4: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_rd_data_r[3:0] !=
+                                                PY_TAG_CODE_OBJECT) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else begin
+                                            container_tag_r       <= PY_TAG_CODE_OBJECT;
+                                            // val already holds field1 (CODE handle)
+                                            container_lfb_lo_r[2] <= 1'b1; // static
+                                            container_phase_r     <= CP_ATTR_WB;
+                                        end
+                                    end
+                                end
+
                                 CP_ATTR_WB_SELF: begin
                                     container_wb_we_r   <= 1'b1;
                                     container_wb_addr_r <= RF_AW'({2'b0, tos_r});
                                     if ((container_lfb_hi_r[0]) &&
-                                        (container_tag_r == PY_TAG_CODE_OBJECT)) begin
+                                        (container_tag_r == PY_TAG_CODE_OBJECT) &&
+                                        !container_lfb_lo_r[2]) begin
                                         // Push receiver as self (rs1 still holds it).
                                         container_wb_data_r <= rs1_r;
                                     end else begin
+                                        // Non-method attr, or staticmethod → NULL.
                                         container_wb_data_r <=
                                             pycore_make_entry(PY_TAG_NULL, '0);
                                     end

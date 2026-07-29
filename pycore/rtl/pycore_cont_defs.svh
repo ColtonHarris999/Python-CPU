@@ -105,6 +105,8 @@
     //   CP_ATTR_WB       : writeback attr / func / bound-method handle
     //   CP_ATTR_WB_SELF  : method_flag follow-up (self or NULL)
     //   CP_ATTR_BOUND*   : allocate OBK_BOUND_METHOD (96B) field writes
+    //   CP_ATTR_STATIC*  : unwrap OBK_BUILTIN id=0 (staticmethod) → CODE_OBJECT
+    //                      Overlay: lfb_lo[2]=1 marks static (no self bind).
     localparam logic [5:0] CP_ATTR_HEAD = 6'd25;
     localparam logic [5:0] CP_ATTR_IDICT = 6'd26;
     localparam logic [5:0] CP_ATTR_TYPE = 6'd27;
@@ -115,4 +117,9 @@
     localparam logic [5:0] CP_ATTR_BOUND1 = 6'd32;
     localparam logic [5:0] CP_ATTR_BOUND2 = 6'd33;
     localparam logic [5:0] CP_ATTR_BOUND3 = 6'd34;
+    localparam logic [5:0] CP_ATTR_STATIC0 = 6'd35;
+    localparam logic [5:0] CP_ATTR_STATIC1 = 6'd36;
+    localparam logic [5:0] CP_ATTR_STATIC2 = 6'd37;
+    localparam logic [5:0] CP_ATTR_STATIC3 = 6'd38;
+    localparam logic [5:0] CP_ATTR_STATIC4 = 6'd39;
 
