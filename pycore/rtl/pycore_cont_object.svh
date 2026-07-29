@@ -50,12 +50,17 @@
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
-                                    // namei: LOAD_GLOBAL uses arg>>1; LOAD_NAME
-                                    // uses raw arg — the push_null flag was
-                                    // sampled in S_EXEC and mirrors this shift.
+                                    // namei: LOAD_GLOBAL always uses arg>>1
+                                    // (null_bit = arg&1 is orthogonal — it only
+                                    // controls the post-load NULL push via
+                                    // container_push_null_r).  LOAD_NAME uses
+                                    // the raw arg.  Do NOT gate the shift on
+                                    // push_null_r: LOAD_GLOBAL with null_bit=0
+                                    // and namei>=1 (arg>=2) would then probe
+                                    // co_names[arg] and raise a false MEM_FAULT.
                                     begin
                                         logic [31:0] namei;
-                                        namei = container_push_null_r ?
+                                        namei = (cur_opcode_r == PY_OP_LOAD_GLOBAL) ?
                                                 (cur_arg_r >> 1) : cur_arg_r;
                                         if ({32'b0, namei} >= names_base_r[127:64]) begin
                                             container_mem_fault_r <= 1'b1;

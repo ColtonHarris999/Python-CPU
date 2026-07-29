@@ -23,7 +23,7 @@ fully unsupported for the current PyCore implementation.
 | `LOAD_FAST_CHECK` | Push local `oparg`; trap if unbound. | Same datapath as `LOAD_FAST`; `UNINIT` → `PY_TRAP_MEM_FAULT` (7). Layer D: `img_load_fast_check`, `img_load_fast_check_unbound`. |
 | `LOAD_SMALL_INT` | Pushes a small immediate integer encoded in `oparg`. | Fully supported fast-path immediate load. |
 | `LOAD_CONST` | Pushes `co_consts[oparg]` onto the value stack. | One CPython code unit; hardware reads value+tag from the serialized `co_consts` tuple in dmem. |
-| `LOAD_GLOBAL` | Loads a global by name. | Reads `co_names[namei]`, probes module globals, and optionally pushes `NULL` when `oparg & 1`. No builtins fallback. |
+| `LOAD_GLOBAL` | Loads a global by name. | `namei = oparg >> 1` always; `oparg & 1` only controls the optional trailing `NULL` push. Probes module globals. No builtins fallback. Images: `img_load_global_namei`, `img_seed_grow_global`. |
 | `LOAD_NAME` | Loads a name by index. | Same globals lookup path as `LOAD_GLOBAL` at module scope; no locals/builtins chain. |
 | `STORE_NAME` | Stores TOS into a module/global name. | Updates the serialized globals dict, popping one value. |
 | `STORE_GLOBAL` | Stores TOS into a global name. | Same hardware path as `STORE_NAME`. |

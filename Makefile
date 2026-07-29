@@ -154,6 +154,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-attr-missing pycore-img-attr-type-trap \
 	pycore-img-attr-del pycore-img-attr-del-reinsert \
 	pycore-img-attr-shadow pycore-img-attr-mro \
+	pycore-img-attr-grow-global pycore-img-seed-grow-global \
+	pycore-img-load-global-namei \
 	pycore-img-attr-all \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
@@ -1006,7 +1008,8 @@ pycore-img: \
 	pycore-img-set-grow-fatal \
 	pycore-img-attr-all \
 	pycore-img-method-all \
-	pycore-img-class-all
+	pycore-img-class-all \
+	pycore-img-allocator-list
 
 # Attribute protocol (M2): LOAD/STORE/DELETE_ATTR via seeded OBK_INSTANCE.
 pycore-img-attr-basic:
@@ -1045,7 +1048,10 @@ pycore-img-attr-all: \
 	pycore-img-attr-del \
 	pycore-img-attr-del-reinsert \
 	pycore-img-attr-shadow \
-	pycore-img-attr-mro
+	pycore-img-attr-mro \
+	pycore-img-attr-grow-global \
+	pycore-img-seed-grow-global \
+	pycore-img-load-global-namei
 
 # Generalized CALL (M3): method form, type ctor, defaults, bound-method obj.
 pycore-img-method-call:
@@ -1059,6 +1065,15 @@ pycore-img-ctor-noinit:
 
 pycore-img-ctor-init:
 	$(call PYCORE_IMAGE_RUN,ctor_init,100000)
+
+pycore-img-attr-grow-global: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,attr_grow_global,200000)
+
+pycore-img-seed-grow-global: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,seed_grow_global,200000)
+
+pycore-img-load-global-namei:
+	$(call PYCORE_IMAGE_RUN,load_global_namei,50000)
 
 pycore-img-default-arg:
 	$(call PYCORE_IMAGE_RUN,default_arg,50000)
