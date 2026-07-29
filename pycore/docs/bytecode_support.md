@@ -27,6 +27,9 @@ fully unsupported for the current PyCore implementation.
 | `LOAD_NAME` | Loads a name by index. | Same globals lookup path as `LOAD_GLOBAL` at module scope; no locals/builtins chain. |
 | `STORE_NAME` | Stores TOS into a module/global name. | Updates the serialized globals dict, popping one value. |
 | `STORE_GLOBAL` | Stores TOS into a global name. | Same hardware path as `STORE_NAME`. |
+| `LOAD_ATTR` | Loads attribute `co_names[namei]` from TOS. | `namei = oparg >> 1`, `method_flag = oparg & 1`. Receiver must be `OBJECT` (`INSTANCE`/`TYPE`); probes instance `__dict__` then single-inheritance MRO on `tp_dict`. Miss → `PY_TRAP_ATTR_ERROR` (15). Method form pushes `[func, self]` or `[attr, NULL]` without allocating; non-method TYPE-sourced `CODE_OBJECT` allocates `OBK_BOUND_METHOD`. Images: `img_attr_*`. |
+| `STORE_ATTR` | Stores value into `obj.name` (`value, obj --`). | `OBK_INSTANCE` only; upserts into `__dict__` (existing dict path). Grow → `DICT_GROW` (11); excore pop count is 2 when opcode is `STORE_ATTR`. Images: `img_attr_basic`, `img_attr_many`. |
+| `DELETE_ATTR` | Deletes `obj.name` (`obj --`). | Tombstones `__dict__` entry; miss → `PY_TRAP_ATTR_ERROR` (15) not `MEM_FAULT`. Images: `img_attr_del`, `img_attr_del_reinsert`. |
 | `PUSH_NULL` | Pushes CPython's non-method call sentinel. | Writes `{PY_TAG_NULL, 0}` to TOS. |
 | `MAKE_FUNCTION` | Builds a function object from a code object. | Interim model: function is the `CODE_OBJECT` handle itself; defaults/closures are rejected by tooling. |
 | `CALL` | Invokes a callable with positional arguments. | Supports CPython 3.14 non-method layout `callable, NULL, args...`; validates callable tag and argcount, pushes/pops hardware frames. |
@@ -108,7 +111,9 @@ this milestone:
    the serialized module globals dict; missing names trap `PY_TRAP_MEM_FAULT`.
 7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
    the stack and `CALL` treats that handle as the function. Defaults,
-   annotations, closures, bound methods, and callable objects are out of scope.
+   annotations, closures, and callable objects beyond code handles are still
+   out of scope. `LOAD_ATTR` can materialize an `OBK_BOUND_METHOD` for the
+   non-method form; calling it is M3.
 8. **`LOAD_NAME` module-scope behavior.** The current hardware treats
    `LOAD_NAME` as a globals lookup, matching the image-boot module programs but
    not CPython's full locals/globals/builtins search chain.

@@ -145,6 +145,11 @@ EXCORE_RTL_SRCS := \
 	pycore-img-set-bool-int pycore-img-set-hash-neg1 pycore-img-set-str \
 	pycore-img-set-grow-fatal pycore-img-set-grow-basic pycore-img-set-update \
 	pycore-img-two-core \
+	pycore-img-attr-basic pycore-img-attr-overwrite pycore-img-attr-many \
+	pycore-img-attr-missing pycore-img-attr-type-trap \
+	pycore-img-attr-del pycore-img-attr-del-reinsert \
+	pycore-img-attr-shadow pycore-img-attr-mro \
+	pycore-img-attr-all \
 	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	docker-build docker-run-file docker-pycore-test docker-all-tests
@@ -832,7 +837,8 @@ pycore-img-two-core: \
 	pycore-img-dict-grow-large \
 	pycore-img-dict-mixed-ops \
 	pycore-img-set-grow-basic \
-	pycore-img-set-update
+	pycore-img-set-update \
+	pycore-img-attr-many
 
 pycore-img: \
 	pycore-img-smoke \
@@ -911,7 +917,47 @@ pycore-img: \
 	pycore-img-set-bool-int \
 	pycore-img-set-hash-neg1 \
 	pycore-img-set-str \
-	pycore-img-set-grow-fatal
+	pycore-img-set-grow-fatal \
+	pycore-img-attr-all
+
+# Attribute protocol (M2): LOAD/STORE/DELETE_ATTR via seeded OBK_INSTANCE.
+pycore-img-attr-basic:
+	$(call PYCORE_IMAGE_RUN,attr_basic,50000)
+
+pycore-img-attr-overwrite:
+	$(call PYCORE_IMAGE_RUN,attr_overwrite,50000)
+
+pycore-img-attr-many: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,attr_many,100000)
+
+pycore-img-attr-missing:
+	$(call PYCORE_IMAGE_TRAP_RUN,attr_missing,15,50000)
+
+pycore-img-attr-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,attr_type_trap,1,50000)
+
+pycore-img-attr-del:
+	$(call PYCORE_IMAGE_TRAP_RUN,attr_del,15,50000)
+
+pycore-img-attr-del-reinsert:
+	$(call PYCORE_IMAGE_RUN,attr_del_reinsert,50000)
+
+pycore-img-attr-shadow:
+	$(call PYCORE_IMAGE_RUN,attr_shadow,50000)
+
+pycore-img-attr-mro:
+	$(call PYCORE_IMAGE_RUN,attr_mro,50000)
+
+pycore-img-attr-all: \
+	pycore-img-attr-basic \
+	pycore-img-attr-overwrite \
+	pycore-img-attr-many \
+	pycore-img-attr-missing \
+	pycore-img-attr-type-trap \
+	pycore-img-attr-del \
+	pycore-img-attr-del-reinsert \
+	pycore-img-attr-shadow \
+	pycore-img-attr-mro
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /

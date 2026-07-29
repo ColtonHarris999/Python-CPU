@@ -20,14 +20,16 @@ from encoding import (
     BOOT_RECORD_ADDR,
     HEAP_BASE,
     STRING_MEM_BYTES,
+    TAG_INT,
     TAG_NONE,
     VAL_MASK,
     StringHeapBuilder,
     dict_slot_count_for_stores,
     format_imem_slot,
+    int_value,
     tag_constant,
 )
-from heap_image import HeapImageBuilder, Tagged
+from heap_image import HeapImageBuilder, Tagged, dict_min_slots
 
 
 REQUIRED_PY = (3, 14)
@@ -125,6 +127,10 @@ SUPPORTED_OPS = {
     "BUILD_SET",
     "SET_ADD",
     "SET_UPDATE",
+    # Attribute protocol (M2): instance/type dict probe + MRO.
+    "LOAD_ATTR",
+    "STORE_ATTR",
+    "DELETE_ATTR",
 }
 
 DEFERRED_OPS: dict[str, str] = {
@@ -287,6 +293,19 @@ def validate_code_object(co: types.CodeType) -> None:
                     f"LOAD_GLOBAL name index {namei} out of range in code "
                     f"object {co.co_name!r} at bytecode offset {ins.offset}"
                 )
+        if ins.opname == "LOAD_ATTR":
+            namei = ins.arg >> 1
+            if namei >= len(co.co_names):
+                raise ValueError(
+                    f"LOAD_ATTR name index {namei} out of range in code "
+                    f"object {co.co_name!r} at bytecode offset {ins.offset}"
+                )
+        if ins.opname in {"STORE_ATTR", "DELETE_ATTR"}:
+            if ins.arg >= len(co.co_names):
+                raise ValueError(
+                    f"{ins.opname} name index {ins.arg} out of range in code "
+                    f"object {co.co_name!r} at bytecode offset {ins.offset}"
+                )
 
 
 def validate_code_tree(module_code: types.CodeType) -> None:
@@ -380,15 +399,176 @@ class _ImageSerializer:
         )
 
 
-def build_image_from_code(module_code: types.CodeType) -> ImageBuildResult:
+@dataclass(frozen=True)
+class SeedTypeSpec:
+    """Build-time OBK_TYPE seed: ``# pycore-inject: SEED_TYPE Name [attr=int ...]``."""
+
+    name: str
+    attrs: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class SeedInstanceSpec:
+    """Build-time OBK_INSTANCE seed.
+
+    ``# pycore-inject: SEED_INSTANCE name [type=T] [slots=N] [attr=int ...]``
+    """
+
+    name: str
+    type_name: str | None = None
+    slots: int = 4
+    attrs: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class SeedSpecs:
+    types: tuple[SeedTypeSpec, ...] = ()
+    instances: tuple[SeedInstanceSpec, ...] = ()
+
+    @property
+    def global_names(self) -> set[str]:
+        names = {t.name for t in self.types}
+        names.update(i.name for i in self.instances)
+        return names
+
+
+_INJECT_SEED_TYPE_PREFIX = "# pycore-inject: SEED_TYPE "
+_INJECT_SEED_INSTANCE_PREFIX = "# pycore-inject: SEED_INSTANCE "
+
+
+def _parse_seed_kv_tokens(tokens: list[str]) -> tuple[dict[str, str], list[tuple[str, int]]]:
+    """Split ``key=val`` tokens into options vs int attribute pairs."""
+    opts: dict[str, str] = {}
+    attrs: list[tuple[str, int]] = []
+    for tok in tokens:
+        if "=" not in tok:
+            raise ValueError(f"seed token must be key=value, got {tok!r}")
+        key, val = tok.split("=", 1)
+        if key in {"type", "slots"}:
+            opts[key] = val
+            continue
+        attrs.append((key, int(val)))
+    return opts, attrs
+
+
+def parse_seed_pragmas(source_text: str) -> SeedSpecs:
+    """Parse SEED_TYPE / SEED_INSTANCE pragmas from source comments."""
+    types: list[SeedTypeSpec] = []
+    instances: list[SeedInstanceSpec] = []
+    for line in source_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_INJECT_SEED_TYPE_PREFIX):
+            rest = stripped[len(_INJECT_SEED_TYPE_PREFIX) :].strip().split()
+            if not rest:
+                raise ValueError("SEED_TYPE expects '<Name> [attr=int ...]'")
+            _opts, attrs = _parse_seed_kv_tokens(rest[1:])
+            types.append(SeedTypeSpec(rest[0], tuple(attrs)))
+        elif stripped.startswith(_INJECT_SEED_INSTANCE_PREFIX):
+            rest = stripped[len(_INJECT_SEED_INSTANCE_PREFIX) :].strip().split()
+            if not rest:
+                raise ValueError(
+                    "SEED_INSTANCE expects '<name> [type=T] [slots=N] [attr=int ...]'"
+                )
+            opts, attrs = _parse_seed_kv_tokens(rest[1:])
+            slots = int(opts.get("slots", "4"))
+            if slots < 0 or (slots > 0 and (slots & (slots - 1)) != 0):
+                raise ValueError(f"SEED_INSTANCE slots must be 0 or power of two, got {slots}")
+            instances.append(
+                SeedInstanceSpec(
+                    rest[0],
+                    type_name=opts.get("type"),
+                    slots=slots,
+                    attrs=tuple(attrs),
+                )
+            )
+    return SeedSpecs(tuple(types), tuple(instances))
+
+
+def _seed_globals_pairs(
+    heap: HeapImageBuilder,
+    string_heap: StringHeapBuilder,
+    seeds: SeedSpecs,
+) -> list[tuple[Tagged, Tagged]]:
+    """Allocate seeded TYPE/INSTANCE objects and return globals key/value pairs."""
+    type_handles: dict[str, Tagged] = {}
+    pairs: list[tuple[Tagged, Tagged]] = []
+
+    for spec in seeds.types:
+        attr_pairs: list[tuple[Tagged, Tagged]] = []
+        for attr_name, attr_val in spec.attrs:
+            attr_pairs.append(
+                (
+                    tag_constant(attr_name, string_heap),
+                    (TAG_INT, int_value(attr_val)),
+                )
+            )
+        tp_dict = heap.alloc_dict(
+            attr_pairs,
+            slot_count=dict_min_slots(max(len(attr_pairs), 1)),
+        )
+        tp_name = tag_constant(spec.name, string_heap)
+        handle = heap.alloc_type(tp_name, tp_dict=tp_dict)
+        type_handles[spec.name] = handle
+        pairs.append((tag_constant(spec.name, string_heap), handle))
+
+    for spec in seeds.instances:
+        type_addr = 0
+        if spec.type_name is not None:
+            th = type_handles.get(spec.type_name)
+            if th is None:
+                raise ValueError(
+                    f"SEED_INSTANCE {spec.name!r} references unknown type "
+                    f"{spec.type_name!r}; declare SEED_TYPE first"
+                )
+            type_addr = th[1] & ((1 << 64) - 1)
+        attr_pairs: list[tuple[Tagged, Tagged]] = []
+        for attr_name, attr_val in spec.attrs:
+            attr_pairs.append(
+                (
+                    tag_constant(attr_name, string_heap),
+                    (TAG_INT, int_value(attr_val)),
+                )
+            )
+        idict_slots = spec.slots
+        if attr_pairs and idict_slots > 0 and len(attr_pairs) >= idict_slots:
+            raise ValueError(
+                f"SEED_INSTANCE {spec.name!r}: {len(attr_pairs)} attrs need "
+                f"slots > {idict_slots}"
+            )
+        idict = heap.alloc_dict(attr_pairs, slot_count=idict_slots)
+        handle = heap.alloc_instance(type_addr=type_addr, idict=idict)
+        pairs.append((tag_constant(spec.name, string_heap), handle))
+
+    return pairs
+
+
+def build_image_from_code(
+    module_code: types.CodeType,
+    *,
+    seeds: SeedSpecs | None = None,
+) -> ImageBuildResult:
     require_python_3_14()
     validate_code_tree(module_code)
 
+    seeds = seeds or SeedSpecs()
     stored_names = count_global_store_names(module_code)
-    globals_slot_count = dict_slot_count_for_stores(len(stored_names))
+    # Pre-seeded globals keys plus room for runtime STORE_NAME / STORE_GLOBAL.
+    n_for_slots = len(stored_names | seeds.global_names)
+    globals_slot_count = dict_slot_count_for_stores(n_for_slots)
 
     serializer = _ImageSerializer()
-    globals_dict = serializer.heap.alloc_empty_globals(len(stored_names))
+    seed_pairs = _seed_globals_pairs(serializer.heap, serializer.string_heap, seeds)
+    if seed_pairs:
+        if len(seed_pairs) >= globals_slot_count:
+            # Keep the interim "at least one empty slot" policy.
+            globals_slot_count = dict_slot_count_for_stores(len(seed_pairs) + 1)
+        globals_dict = serializer.heap.alloc_dict(
+            seed_pairs, slot_count=globals_slot_count
+        )
+    else:
+        globals_dict = serializer.heap.alloc_empty_globals(len(stored_names))
+        globals_slot_count = dict_slot_count_for_stores(len(stored_names))
+
     module_handle = serializer.serialize_code(module_code)
     serializer.heap.write_boot_record(module_handle, globals_dict)
 
@@ -620,10 +800,11 @@ def apply_set_add_seq_injects(
 
 
 def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildResult:
+    seeds = parse_seed_pragmas(source_text)
     module_code = compile(source_text, filename, "exec")
     module_code = apply_lfac_injects(module_code, source_text)
     module_code = apply_set_add_seq_injects(module_code, source_text)
-    return build_image_from_code(module_code)
+    return build_image_from_code(module_code, seeds=seeds)
 
 
 def build_image_from_source(source: pathlib.Path) -> ImageBuildResult:

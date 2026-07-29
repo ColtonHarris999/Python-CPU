@@ -623,6 +623,21 @@
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR"
+    },
+    "LOAD_ATTR": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR"
+    },
+    "STORE_ATTR": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR"
+    },
+    "DELETE_ATTR": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR"
     }
   },
   "max_fold_len": 4,
