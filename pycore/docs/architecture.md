@@ -571,8 +571,8 @@ every grow.
 
 #### LIST/TUPLE/RANGE/STR/DICT/SET iteration
 
-`GET_ITER` accepts LIST, TUPLE, STR, DICT, SET, and `OBK_RANGE` handles and rewrites TOS to an internal
-`PY_TAG_PTR` hybrid iterator. Its 128-bit payload is
+`GET_ITER` accepts LIST, TUPLE, STR, DICT, SET, and `PY_TAG_RANGE` handles and
+rewrites TOS to an internal `PY_TAG_ITER` hybrid iterator. Its 128-bit payload is
 `magic[127:120], kind[119:116], aux[115:96], index[95:64],
 size/stop[63:32], addr[31:0]`. Kinds 0/1/2/3 are LIST/TUPLE/RANGE/STR;
 HEAP_ITER reserves kind 4; kinds 5/6 are DICT/SET. LIST stores
@@ -583,7 +583,7 @@ in `index`, the byte length in `size`, and a byte-addressed `string_mem` base
 in `addr`; `aux` is zero. DICT stores an insertion-order index/length and a
 20-bit mutation-version snapshot. SET stores a hash-slot index/count and a
 20-bit `used` snapshot.
-Validity is per-kind rather than a global PTR rule. `PY_TAG_PTR` is not emitted
+Validity is per-kind rather than a global ITER rule. `PY_TAG_ITER` is not emitted
 by the image serializer, so malformed, unknown, or incomplete kinds raise
 `PY_TRAP_TYPE` in `FOR_ITER`.
 
@@ -613,11 +613,12 @@ cause early exhaustion.
 
 The image-builtins dict seeds `range` as `PY_BI_RANGE`. Its on-core `CALL`
 path accepts one to three INT/BOOL arguments, normalizes them to
-`start, stop, step`, and allocates an immutable `OBK_RANGE` object. A zero
-step raises `PY_TRAP_TYPE`. `GET_ITER` reads that object's fields and rewrites
-it to the RANGE hybrid iterator. The compact iterator socket limits start and
-stop to signed 32 bits and step to a nonzero signed 20-bit value; fields
-outside that encoding TYPE-trap before iteration.
+`start, stop, step`, and emits a dedicated `PY_TAG_RANGE` value. Signed i32
+triples use the inline `{start, stop, step}` payload; larger values use tuple
+pointer mode. A zero step raises `PY_TRAP_TYPE`. `GET_ITER` decodes either
+form and rewrites it to the RANGE hybrid iterator. The compact iterator socket
+limits start and stop to signed 32 bits and step to a nonzero signed 20-bit
+value; fields outside that encoding TYPE-trap before iteration.
 
 The image-builtins dict also seeds `set` as `PY_BI_SET`. Its native `CALL`
 accepts zero arguments or one LIST/TUPLE, allocates the normal open-addressed
@@ -684,7 +685,7 @@ pop 2). Capacity unchanged; delete never reallocates. OOB / negative
 indices → `PY_TRAP_MEM_FAULT`. Tuple / set → `PY_TRAP_TYPE`.
 
 On a **DICT**, same-tag / rich-eq hits write `PY_TAG_TOMBSTONE`
-(`== PY_TAG_DICT`, since dicts cannot be keys) on the key tag and
+(`4'b1110`, a dedicated non-value tag) on the key tag and
 decrement `used` on pycore. Miss → `PY_TRAP_MEM_FAULT`.
 
 #### `CONTAINS_OP`
@@ -798,11 +799,11 @@ obj+0  : header { slot_count[63:0], used[63:0] }
 obj+16 : { 64'd0, table_ptr[63:0] }     // 0 if slot_count == 0
 
 table + i*32 + 0  : element value
-table + i*32 + 16 : element tag   (UNINIT=empty, TOMBSTONE=DICT=9 deleted)
+table + i*32 + 16 : element tag   (UNINIT=empty, TOMBSTONE=14 deleted)
 ```
 
-Handle: `{ PY_TAG_SET, object_addr }`. Hash / rich-eq / tombstone policy
-match dict (`PY_TAG_TOMBSTONE == PY_TAG_DICT`). Slot count =
+Handle: `PY_TAG_MUT_COLLEC` with `PY_MUT_SET` and the object address. Hash /
+rich-eq / tombstone policy matches dict (dedicated `PY_TAG_TOMBSTONE`). Slot count =
 `next_pow2(max(4, 2 × n_elems))`.
 
 | Op | Path |

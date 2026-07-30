@@ -80,7 +80,6 @@ localparam logic [31:0] PY_OBK_BOUND_METHOD = 32'd3;
 localparam logic [31:0] PY_OBK_BUILTIN      = 32'd4;
 localparam logic [31:0] PY_OBK_BYTEARRAY    = 32'd5;  // legacy; prefer MUT_BYTEARRAY
 localparam logic [31:0] PY_OBK_EXCEPTION    = 32'd6;
-localparam logic [31:0] PY_OBK_RANGE        = 32'd7;
 
 localparam int PYCORE_SHORT_STR_MAX_BYTES = 15;
 localparam int PYCORE_SHORT_STR_SIZE_MSB  = 127;
@@ -1735,7 +1734,6 @@ localparam logic [31:0] PYCORE_OBJ_BOUND_METHOD_BYTES = 32'd96; // hdr + 2
 localparam logic [31:0] PYCORE_OBJ_BUILTIN_BYTES    = 32'd96;
 localparam logic [31:0] PYCORE_OBJ_BYTEARRAY_BYTES  = 32'd128;  // hdr + 3
 localparam logic [31:0] PYCORE_OBJ_EXCEPTION_BYTES  = 32'd96;
-localparam logic [31:0] PYCORE_OBJ_RANGE_BYTES      = 32'd128;  // hdr + 3
 
 function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_pack_ob_head(
     input logic [31:0] kind,

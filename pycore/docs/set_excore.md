@@ -21,10 +21,11 @@ obj+0  : { slot_count[63:0], used[63:0] }
 obj+16 : { 64'd0, table_ptr[63:0] }
 
 table + i*32 + 0  : element value
-table + i*32 + 16 : element tag   // UNINIT=empty; TOMBSTONE=DICT=9
+table + i*32 + 16 : element tag   // UNINIT=empty; TOMBSTONE=14
 ```
 
-Handle: `PY_TAG_SET` + object address. Tombstone remains `PY_TAG_DICT` (sets/dicts unhashable).
+Handle: `PY_TAG_MUT_COLLEC` with `PY_MUT_SET` and the object address. Deleted
+slots use the dedicated `PY_TAG_TOMBSTONE`.
 
 ## Bytecodes
 

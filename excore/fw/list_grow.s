@@ -984,6 +984,22 @@ dict_load_header_table:
     lw   ra, SCR_RA(x0)
     jalr x0, ra, 0
 
+# SET retains the v2 two-word object layout:
+#   obj+0={slots,used}, obj+16={0,table_ptr}.
+# Keep this separate from DICT v3 metadata/order-pointer loading.
+set_load_header_table:
+    sw   ra, SCR_RA(x0)
+    mv   a0, s0
+    jal  ra, sp_read
+    lw   s2, SP_DATA0(s11)
+    lw   s1, SP_DATA2(s11)
+    addi a0, s0, 16
+    jal  ra, sp_read
+    lw   s5, SP_DATA0(s11)
+    mv   s3, s5
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+
 dict_write_used_slots:
     sw   ra, SCR_RA3(x0)
     sw   s2, SP_DATA0(s11)
@@ -1675,7 +1691,7 @@ sg_tag_ok:
     sw   t0, SCR_KVAL3(x0)
     lw   t0, MB_E1_TAG(s11)
     sw   t0, SCR_KTAG(x0)
-    jal  ra, dict_load_header_table   # s1=slots, s2=used, s5/s3=table
+    jal  ra, set_load_header_table    # s1=slots, s2=used, s5/s3=table
     jal  ra, set_grow_rehash
     jal  ra, set_insert_from_scratch
     jal  ra, set_writeback_header
@@ -1708,7 +1724,7 @@ su_primary_ok:
     j    fatal_type
 su_tag_ok:
     lw   s0, MB_E0_VAL0(s11)
-    jal  ra, dict_load_header_table
+    jal  ra, set_load_header_table
     lw   s9, MB_E1_TAG(s11)
     lw   s10, MB_E1_VAL0(s11)
     li   t1, TAG_MUT_COLLEC

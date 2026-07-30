@@ -1071,27 +1071,7 @@ pycore-img: \
 	pycore-img-compare-op \
 	pycore-img-compare-op-type-trap \
 	pycore-img-pop-jump-if-none \
-	pycore-img-for-iter \
-	pycore-img-for-iter-type-trap \
-	pycore-img-for-iter-nested \
-	pycore-img-for-iter-edges \
-	pycore-img-for-iter-branch \
-	pycore-img-for-iter-mutate \
-	pycore-img-for-iter-mutate-visited \
-	pycore-img-for-iter-rebind \
-	pycore-img-for-iter-grow \
-	pycore-img-for-iter-delete \
-	pycore-img-for-iter-clear \
-	pycore-img-for-iter-subscr \
-	pycore-img-for-iter-build-tuple \
-	pycore-img-for-iter-range \
-	pycore-img-for-iter-range-bounds \
-	pycore-img-for-iter-range-step \
-	pycore-img-for-iter-range-empty \
-	pycore-img-for-iter-range-negative-step \
-	pycore-img-for-iter-range-type-trap \
-	pycore-img-for-iter-range-bool \
-	pycore-img-for-iter-range-zero-step-trap \
+	pycore-img-for-iter-all \
 	pycore-img-nop \
 	pycore-img-list-del-last-only \
 	pycore-img-list-contains-simple \

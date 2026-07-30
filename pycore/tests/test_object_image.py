@@ -14,14 +14,12 @@ from encoding import (
     OBK_BYTEARRAY,
     OBK_EXCEPTION,
     OBK_INSTANCE,
-    OBK_RANGE,
     OBK_TYPE,
     OBJ_BOUND_METHOD_BYTES,
     OBJ_BUILTIN_BYTES,
     OBJ_BYTEARRAY_BYTES,
     OBJ_EXCEPTION_BYTES,
     OBJ_INSTANCE_BYTES,
-    OBJ_RANGE_BYTES,
     OBJ_TYPE_BYTES,
     CTL_NONE,
     CTL_NULL,
@@ -175,27 +173,6 @@ class TestAllocBytearray(unittest.TestCase):
         self.assertNotEqual(buf, 0)
         self.assertEqual(buf & 0xF, 0)
         self.assertEqual(heap.words[buf], 0)
-
-
-class TestAllocRange(unittest.TestCase):
-    def test_layout(self) -> None:
-        heap = HeapImageBuilder()
-        handle = heap.alloc_range(2, 10, 3)
-        addr = handle[1]
-        self.assertEqual(handle[0], TAG_OBJECT)
-        self.assertEqual(ob_kind(heap.words[addr]), OBK_RANGE)
-        self.assertEqual(heap.end_ptr - addr, OBJ_RANGE_BYTES)
-        for index, expected in enumerate((2, 10, 3)):
-            self.assertEqual(
-                heap.words[obj_field_tag_addr(addr, index)] & 0xF, TAG_INT
-            )
-            self.assertEqual(
-                heap.words[obj_field_val_addr(addr, index)], int_value(expected)
-            )
-
-    def test_zero_step_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "step"):
-            HeapImageBuilder().alloc_range(0, 1, 0)
 
 
 class TestAllocException(unittest.TestCase):

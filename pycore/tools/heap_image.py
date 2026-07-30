@@ -28,14 +28,12 @@ from encoding import (
     OBK_BYTEARRAY,
     OBK_EXCEPTION,
     OBK_INSTANCE,
-    OBK_RANGE,
     OBK_TYPE,
     OBJ_BOUND_METHOD_BYTES,
     OBJ_BUILTIN_BYTES,
     OBJ_BYTEARRAY_BYTES,
     OBJ_EXCEPTION_BYTES,
     OBJ_INSTANCE_BYTES,
-    OBJ_RANGE_BYTES,
     OBJ_TYPE_BYTES,
     TAG_BOOL,
     TAG_CODE_OBJECT,
@@ -502,28 +500,6 @@ class HeapImageBuilder:
             OBJ_BUILTIN_BYTES,
             OBK_BUILTIN,
             [(TAG_INT, int_value(builtin_id)), bound_self],
-            flags=flags,
-        )
-
-    def alloc_range(
-        self,
-        start: int,
-        stop: int,
-        step: int = 1,
-        *,
-        flags: int = 0,
-    ) -> Tagged:
-        """OBK_RANGE: field0=start, field1=stop, field2=step."""
-        if step == 0:
-            raise ValueError("range step must not be zero")
-        return self._alloc_object(
-            OBJ_RANGE_BYTES,
-            OBK_RANGE,
-            [
-                (TAG_INT, int_value(start)),
-                (TAG_INT, int_value(stop)),
-                (TAG_INT, int_value(step)),
-            ],
             flags=flags,
         )
 

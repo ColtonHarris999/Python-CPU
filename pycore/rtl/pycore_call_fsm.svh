@@ -575,20 +575,43 @@
                                         call_sub_r        <= 6'd15;
                                     end
                                 end
-                                // Allocate and write OBK_RANGE.
+                                // Emit compact RANGE directly; extended
+                                // arguments use a heap 3-tuple payload.
                                 6'd15: begin
                                     if (call_range_step_r == 128'b0) begin
                                         container_type_trap_r <= 1'b1;
-                                    end else if ((heap_ptr_r + PYCORE_OBJ_RANGE_BYTES) >
+                                    end else if (
+                                        call_range_start_r[127:31] ==
+                                            {97{call_range_start_r[31]}} &&
+                                        call_range_stop_r[127:31] ==
+                                            {97{call_range_stop_r[31]}} &&
+                                        call_range_step_r[127:31] ==
+                                            {97{call_range_step_r[31]}}) begin
+                                        container_wb_we_r <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} -
+                                            {2'b0, call_argcount_r[6:0]} - 9'd2);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_RANGE,
+                                            pycore_range_inline_value(
+                                                call_range_start_r[31:0],
+                                                call_range_stop_r[31:0],
+                                                call_range_step_r[31:0]));
+                                        tos_r <= RF_AW'(
+                                            {2'b0, tos_r} -
+                                            {2'b0, call_argcount_r[6:0]} - 9'd1);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r <= 6'd0;
+                                    end else if ((heap_ptr_r + 32'd96) >
                                                  PYCORE_HEAP_LIMIT) begin
                                         container_mem_fault_r <= 1'b1;
                                     end else begin
                                         container_base_r <= heap_ptr_r;
-                                        heap_ptr_r <= heap_ptr_r + PYCORE_OBJ_RANGE_BYTES;
+                                        heap_ptr_r <= heap_ptr_r + 32'd96;
                                         container_dmem_addr_r <= heap_ptr_r;
                                         container_dmem_we_r <= 1'b1;
-                                        container_dmem_wdata_r <= pycore_pack_ob_head(
-                                            PY_OBK_RANGE, 32'd0, 64'd0);
+                                        container_dmem_wdata_r <= call_range_start_r;
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd16;
                                     end
@@ -597,25 +620,23 @@
                                     if (!container_dmem_pending_r) begin
                                         container_dmem_addr_r <= container_base_r + 32'd16;
                                         container_dmem_we_r <= 1'b1;
-                                        container_dmem_wdata_r <= {124'b0, PY_TAG_OBJECT};
+                                        container_dmem_wdata_r <= {124'b0, PY_TAG_INT};
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd17;
                                     end
                                 end
                                 6'd17: begin
                                     if (!container_dmem_pending_r) begin
-                                        container_dmem_addr_r <= pycore_obj_field_val_addr(
-                                            container_base_r, 32'd0);
+                                        container_dmem_addr_r <= container_base_r + 32'd32;
                                         container_dmem_we_r <= 1'b1;
-                                        container_dmem_wdata_r <= call_range_start_r;
+                                        container_dmem_wdata_r <= call_range_stop_r;
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd18;
                                     end
                                 end
                                 6'd18: begin
                                     if (!container_dmem_pending_r) begin
-                                        container_dmem_addr_r <= pycore_obj_field_tag_addr(
-                                            container_base_r, 32'd0);
+                                        container_dmem_addr_r <= container_base_r + 32'd48;
                                         container_dmem_we_r <= 1'b1;
                                         container_dmem_wdata_r <= {124'b0, PY_TAG_INT};
                                         container_dmem_pending_r <= 1'b1;
@@ -624,18 +645,16 @@
                                 end
                                 6'd19: begin
                                     if (!container_dmem_pending_r) begin
-                                        container_dmem_addr_r <= pycore_obj_field_val_addr(
-                                            container_base_r, 32'd1);
+                                        container_dmem_addr_r <= container_base_r + 32'd64;
                                         container_dmem_we_r <= 1'b1;
-                                        container_dmem_wdata_r <= call_range_stop_r;
+                                        container_dmem_wdata_r <= call_range_step_r;
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd20;
                                     end
                                 end
                                 6'd20: begin
                                     if (!container_dmem_pending_r) begin
-                                        container_dmem_addr_r <= pycore_obj_field_tag_addr(
-                                            container_base_r, 32'd1);
+                                        container_dmem_addr_r <= container_base_r + 32'd80;
                                         container_dmem_we_r <= 1'b1;
                                         container_dmem_wdata_r <= {124'b0, PY_TAG_INT};
                                         container_dmem_pending_r <= 1'b1;
@@ -644,33 +663,14 @@
                                 end
                                 6'd21: begin
                                     if (!container_dmem_pending_r) begin
-                                        container_dmem_addr_r <= pycore_obj_field_val_addr(
-                                            container_base_r, 32'd2);
-                                        container_dmem_we_r <= 1'b1;
-                                        container_dmem_wdata_r <= call_range_step_r;
-                                        container_dmem_pending_r <= 1'b1;
-                                        call_sub_r <= 6'd22;
-                                    end
-                                end
-                                6'd22: begin
-                                    if (!container_dmem_pending_r) begin
-                                        container_dmem_addr_r <= pycore_obj_field_tag_addr(
-                                            container_base_r, 32'd2);
-                                        container_dmem_we_r <= 1'b1;
-                                        container_dmem_wdata_r <= {124'b0, PY_TAG_INT};
-                                        container_dmem_pending_r <= 1'b1;
-                                        call_sub_r <= 6'd23;
-                                    end
-                                end
-                                6'd23: begin
-                                    if (!container_dmem_pending_r) begin
                                         container_wb_we_r <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
                                             {2'b0, tos_r} -
                                             {2'b0, call_argcount_r[6:0]} - 9'd2);
                                         container_wb_data_r <= pycore_make_entry(
-                                            PY_TAG_OBJECT,
-                                            {{96{1'b0}}, container_base_r});
+                                            PY_TAG_RANGE,
+                                            pycore_range_tuple_value(
+                                                {32'b0, container_base_r}));
                                         tos_r <= RF_AW'(
                                             {2'b0, tos_r} -
                                             {2'b0, call_argcount_r[6:0]} - 9'd1);
@@ -681,7 +681,9 @@
                                 end
                                 // SET arg: zero args, or one LIST/TUPLE source.
                                 6'd24: begin
-                                    if (cont_rf_rs1_tag == PY_TAG_LIST) begin
+                                    if (pycore_is_list(
+                                            cont_rf_rs1_tag,
+                                            cont_rf_rs1_val)) begin
                                         container_src_buf_r <= cont_rf_rs1_val[31:0];
                                         container_dmem_addr_r <=
                                             cont_rf_rs1_val[31:0];
@@ -924,11 +926,9 @@
                                             {2'b0, tos_r} -
                                             {2'b0,
                                              call_argcount_r[6:0]} - 9'd2);
-                                        container_wb_data_r <=
-                                            pycore_make_entry(
-                                                PY_TAG_SET,
-                                                {{96{1'b0}},
-                                                 container_base_r});
+                                        container_wb_data_r <= pycore_make_mut(
+                                            PY_MUT_SET,
+                                            {32'b0, container_base_r});
                                         tos_r <= RF_AW'(
                                             {2'b0, tos_r} -
                                             {2'b0,

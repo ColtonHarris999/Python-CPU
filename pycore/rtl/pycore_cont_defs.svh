@@ -123,8 +123,7 @@
     localparam logic [5:0] CP_ATTR_STATIC2 = 6'd37;
     localparam logic [5:0] CP_ATTR_STATIC3 = 6'd38;
     localparam logic [5:0] CP_ATTR_STATIC4 = 6'd39;
-    // RANGE GET_ITER: validate OBK_RANGE and read start/stop/step fields.
-    localparam logic [5:0] CP_RANGE_HEAD = 6'd40;
+    // Tuple-mode RANGE GET_ITER reads start/stop/step value/tag pairs.
     localparam logic [5:0] CP_RANGE_START_VAL = 6'd41;
     localparam logic [5:0] CP_RANGE_START_TAG = 6'd42;
     localparam logic [5:0] CP_RANGE_STOP_VAL = 6'd43;

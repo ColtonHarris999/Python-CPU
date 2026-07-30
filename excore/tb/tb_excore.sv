@@ -662,21 +662,29 @@ module tb_excore #(
         // ------------------------------------------------------------------
         do_reset();
         begin
-            logic [31:0] dobj, ntbl;
+            logic [31:0] dobj, nord, ntbl;
             dobj = 32'h0C00;
-            ntbl = 32'h0C20;
+            nord = 32'h0C40;
+            ntbl = 32'h0D40;
             poke_slot(dobj, {64'd0, 64'd0});       // slots=0, used=0
-            poke_slot(dobj + 16, 128'd0);          // table_ptr=0
+            poke_slot(dobj + 16, 128'd0);          // version=0, order_len=0
+            poke_slot(dobj + 32, 128'd0);          // order_ptr=0, table_ptr=0
             run_dict_grow(
                 pycore_make_mut(PY_MUT_DICT, {32'b0, dobj}),
                 {PY_TAG_INT, 128'd1},
                 {PY_TAG_INT, 128'd99},
-                ntbl, 80000);
+                nord, 80000);
             check(res_code == RES_COMPLETED, "scenario10: DICT_GROW COMPLETED");
             check(res_pop_count == 3'd3, "scenario10: pop=3");
             check(res_push_count == 2'd0, "scenario10: push=0");
             check(peek_slot(dobj) == {64'd8, 64'd1}, "scenario10: header {8,1}");
-            check(peek_slot(dobj + 16) == {96'd0, ntbl}, "scenario10: table_ptr");
+            check(peek_slot(dobj + 16) == {64'd1, 64'd1},
+                  "scenario10: metadata {version=1, order_len=1}");
+            check(peek_slot(dobj + 32) == {32'd0, nord, 32'd0, ntbl},
+                  "scenario10: order/table pointers");
+            check(peek_slot(nord) == 128'd1, "scenario10: order key");
+            check(peek_slot(nord + 16) == {124'b0, PY_TAG_INT},
+                  "scenario10: order tag");
             // key 1 hashes to slot 1
             check(peek_slot(ntbl + 64) == 128'd1, "scenario10: kval");
             check(peek_slot(ntbl + 80) == {124'b0, PY_TAG_INT}, "scenario10: ktag");

@@ -276,7 +276,7 @@
                                                 RF_AW'(tos_r - RF_AW'(1));
                                             container_wb_data_r <=
                                                 pycore_make_entry(
-                                                    PY_TAG_PTR,
+                                                    PY_TAG_ITER,
                                                     pycore_iter_value_str(
                                                         32'd0, 32'd0, 32'd0));
                                             container_phase_r <= CP_ITER_WB;
@@ -288,7 +288,7 @@
                                                 RF_AW'(tos_r - RF_AW'(1));
                                             container_wb_data_r <=
                                                 pycore_make_entry(
-                                                    PY_TAG_PTR,
+                                                    PY_TAG_ITER,
                                                     pycore_iter_value_str(
                                                         32'd0,
                                                         {28'b0,
@@ -319,32 +319,64 @@
                                                 RF_AW'(tos_r - RF_AW'(1));
                                             container_wb_data_r <=
                                                 pycore_make_entry(
-                                                    PY_TAG_PTR,
+                                                    PY_TAG_ITER,
                                                     pycore_iter_value_str(
                                                         32'd0,
                                                         str_size[31:0],
                                                         str_addr[31:0]));
                                             container_phase_r <= CP_ITER_WB;
                                         end
-                                    end else if (cont_rs1_tag == PY_TAG_DICT) begin
+                                    end else if (pycore_is_dict(
+                                                     cont_rs1_tag,
+                                                     cont_rs1_val)) begin
                                         container_base_r <= cont_rs1_addr;
                                         container_dmem_addr_r <=
                                             pycore_dict_meta_addr(cont_rs1_addr);
                                         container_dmem_we_r <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         container_phase_r <= CP_DICT_META;
-                                    end else if (cont_rs1_tag == PY_TAG_SET) begin
+                                    end else if (pycore_is_set(
+                                                     cont_rs1_tag,
+                                                     cont_rs1_val)) begin
                                         container_base_r <= cont_rs1_addr;
                                         container_dmem_addr_r <= cont_rs1_addr;
                                         container_dmem_we_r <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         container_phase_r <= CP_HDR;
-                                    end else if (cont_rs1_tag == PY_TAG_OBJECT) begin
-                                        container_base_r         <= cont_rs1_addr;
-                                        container_dmem_addr_r    <= cont_rs1_addr;
-                                        container_dmem_we_r      <= 1'b0;
-                                        container_dmem_pending_r <= 1'b1;
-                                        container_phase_r        <= CP_RANGE_HEAD;
+                                    end else if (cont_rs1_tag == PY_TAG_RANGE) begin
+                                        if (pycore_range_is_tuple_mode(
+                                                cont_rs1_val)) begin
+                                            if (cont_rs1_val[126:32] != 95'b0 ||
+                                                cont_rs1_val[3:0] != 4'b0) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                container_base_r <= cont_rs1_addr;
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_val_addr(
+                                                        cont_rs1_addr, 32'd0);
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <=
+                                                    CP_RANGE_START_VAL;
+                                            end
+                                        end else if (
+                                            cont_rs1_val[31:19] !=
+                                                {13{cont_rs1_val[19]}} ||
+                                            cont_rs1_val[31:0] == 32'b0) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else begin
+                                            container_wb_we_r <= 1'b1;
+                                            container_wb_addr_r <=
+                                                RF_AW'(tos_r - RF_AW'(1));
+                                            container_wb_data_r <=
+                                                pycore_make_entry(
+                                                    PY_TAG_ITER,
+                                                    pycore_iter_value_range(
+                                                        cont_rs1_val[95:64],
+                                                        cont_rs1_val[63:32],
+                                                        cont_rs1_val[19:0]));
+                                            container_phase_r <= CP_ITER_WB;
+                                        end
                                     end else begin
                                         container_type_trap_r <= 1'b1;
                                     end
@@ -359,7 +391,7 @@
                                             container_wb_addr_r <=
                                                 RF_AW'(tos_r - RF_AW'(1));
                                             container_wb_data_r <= pycore_make_entry(
-                                                PY_TAG_PTR,
+                                                PY_TAG_ITER,
                                                 pycore_iter_value_dict(
                                                     32'd0,
                                                     container_rd_data_r[31:0],
@@ -380,7 +412,7 @@
                                             container_wb_addr_r <=
                                                 RF_AW'(tos_r - RF_AW'(1));
                                             container_wb_data_r <= pycore_make_entry(
-                                                PY_TAG_PTR,
+                                                PY_TAG_ITER,
                                                 pycore_iter_value_set(
                                                     32'd0,
                                                     cont_dict_hdr_slots[31:0],
@@ -391,26 +423,10 @@
                                     end
                                 end
 
-                                CP_RANGE_HEAD: begin
-                                    if (!container_dmem_pending_r) begin
-                                        if (pycore_ob_kind(container_rd_data_r) !=
-                                                PY_OBK_RANGE) begin
-                                            container_type_trap_r <= 1'b1;
-                                        end else begin
-                                            container_dmem_addr_r <=
-                                                pycore_obj_field_val_addr(
-                                                    container_base_r, 32'd0);
-                                            container_dmem_we_r      <= 1'b0;
-                                            container_dmem_pending_r <= 1'b1;
-                                            container_phase_r <= CP_RANGE_START_VAL;
-                                        end
-                                    end
-                                end
-
                                 CP_RANGE_START_VAL: begin
                                     if (!container_dmem_pending_r) begin
                                         container_range_start_r <= container_rd_data_r;
-                                        container_dmem_addr_r <= pycore_obj_field_tag_addr(
+                                        container_dmem_addr_r <= pycore_tuple_tag_addr(
                                             container_base_r, 32'd0);
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
@@ -425,7 +441,7 @@
                                             container_type_trap_r <= 1'b1;
                                         end else begin
                                             container_dmem_addr_r <=
-                                                pycore_obj_field_val_addr(
+                                                pycore_tuple_val_addr(
                                                     container_base_r, 32'd1);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
@@ -437,7 +453,7 @@
                                 CP_RANGE_STOP_VAL: begin
                                     if (!container_dmem_pending_r) begin
                                         container_range_stop_r <= container_rd_data_r;
-                                        container_dmem_addr_r <= pycore_obj_field_tag_addr(
+                                        container_dmem_addr_r <= pycore_tuple_tag_addr(
                                             container_base_r, 32'd1);
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
@@ -452,7 +468,7 @@
                                             container_type_trap_r <= 1'b1;
                                         end else begin
                                             container_dmem_addr_r <=
-                                                pycore_obj_field_val_addr(
+                                                pycore_tuple_val_addr(
                                                     container_base_r, 32'd2);
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
@@ -464,7 +480,7 @@
                                 CP_RANGE_STEP_VAL: begin
                                     if (!container_dmem_pending_r) begin
                                         container_range_step_r <= container_rd_data_r;
-                                        container_dmem_addr_r <= pycore_obj_field_tag_addr(
+                                        container_dmem_addr_r <= pycore_tuple_tag_addr(
                                             container_base_r, 32'd2);
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
@@ -488,7 +504,7 @@
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
                                             container_wb_data_r <= pycore_make_entry(
-                                                PY_TAG_PTR,
+                                                PY_TAG_ITER,
                                                 pycore_iter_value_range(
                                                     container_range_start_r[31:0],
                                                     container_range_stop_r[31:0],
@@ -573,7 +589,7 @@
                                                     container_wb_addr_r <=
                                                         RF_AW'(tos_r - RF_AW'(1));
                                                     container_wb_data_r <= pycore_make_entry(
-                                                        PY_TAG_PTR,
+                                                        PY_TAG_ITER,
                                                         pycore_iter_value_range(
                                                             (((step_s > 0) &&
                                                               (next_s >=
@@ -658,7 +674,7 @@
                                                                RF_AW'(1));
                                                     container_wb_data_r <=
                                                         pycore_make_entry(
-                                                            PY_TAG_PTR,
+                                                            PY_TAG_ITER,
                                                             pycore_iter_value_str(
                                                                 char_end[31:0],
                                                                 cont_iter_size,
@@ -760,7 +776,7 @@
                                         container_wb_addr_r <=
                                             RF_AW'(tos_r - RF_AW'(1));
                                         container_wb_data_r <= pycore_make_entry(
-                                            PY_TAG_PTR,
+                                            PY_TAG_ITER,
                                             pycore_iter_value_dict(
                                                 cont_iter_index + 32'd1,
                                                 cont_iter_size,
@@ -843,7 +859,7 @@
                                         container_wb_addr_r <=
                                             RF_AW'(tos_r - RF_AW'(1));
                                         container_wb_data_r <= pycore_make_entry(
-                                            PY_TAG_PTR,
+                                            PY_TAG_ITER,
                                             pycore_iter_value_set(
                                                 container_probe_r + 32'd1,
                                                 cont_iter_size,

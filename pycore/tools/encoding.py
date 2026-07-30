@@ -86,7 +86,6 @@ OBK_BOUND_METHOD = 3
 OBK_BUILTIN = 4
 OBK_BYTEARRAY = 5
 OBK_EXCEPTION = 6
-OBK_RANGE = 7
 
 # Builtin ids under OBK_BUILTIN (mirror PY_BI_* in pycore_defs.svh).
 BI_STATICMETHOD = 0
@@ -107,7 +106,6 @@ OBJ_BOUND_METHOD_BYTES = 96
 OBJ_BUILTIN_BYTES = 96
 OBJ_BYTEARRAY_BYTES = 128
 OBJ_EXCEPTION_BYTES = 96
-OBJ_RANGE_BYTES = 128
 
 
 def pack_ob_head(kind: int, flags: int = 0, type_addr: int = 0) -> int:
