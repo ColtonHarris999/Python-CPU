@@ -430,6 +430,7 @@ module pycore_exec #(
         string_cmp_eq = (rs1_value_wide == rs2_value_wide);
 
         selected_value = 64'b0;
+        wide_value = '0;
         stall_o = mul_stall || div_stall || fpu_stall;
         trap_o = valid_i && tag_trap;
         trap_code_o = tag_trap_code;
