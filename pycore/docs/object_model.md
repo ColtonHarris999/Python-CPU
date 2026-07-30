@@ -38,6 +38,7 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | `BUILTIN` | 4 | `builtin_id` (INT) | `bound_self` | — | 96 B |
 | `BYTEARRAY` | 5 | `length` | `buf_addr` | `capacity` | 128 B |
 | `EXCEPTION` | 6 | `exc_type` | `args` (TUPLE) | — | 96 B |
+| `RANGE` | 7 | `start` (INT) | `stop` (INT) | `step` (INT) | 128 B |
 
 ### Builtin ids (`PY_BI_*` / `BI_*`)
 
@@ -51,10 +52,12 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | 5 | `LIST_APPEND` | |
 | 6 | `PRINT` | |
 | 7 | `LEN` | |
+| 8 | `RANGE` | Constructor |
 
 Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
 module **builtins** dict (`DICT`). The seeded builtins dict holds
-`bytearray` / `max` / `len` / `print` as `OBK_BUILTIN` handles and `int` as
+`bytearray` / `max` / `len` / `print` / `range` as `OBK_BUILTIN` handles and
+`int` as
 an `OBK_TYPE` whose `tp_dict` contains `from_bytes` / `to_bytes`. Total boot
 record size is `BOOT_RECORD_BYTES = 96`.
 
@@ -62,7 +65,8 @@ record size is `BOOT_RECORD_BYTES = 96`.
 
 Instance and class attributes are ordinary PyCore dicts with string keys.
 Attribute lookup reuses `CP_DICT_PROBE` unchanged (hash, rich-eq, tombstones,
-`PY_TRAP_DICT_GROW` → excore). No separate attribute-slot table.
+`PY_TRAP_DICT_GROW` → excore). These use the v3 dict layout and therefore
+carry the same insertion-order key sidecar. No separate attribute-slot table.
 
 ## D4 — Method calls allocate nothing on the hot path
 
@@ -118,7 +122,7 @@ only (type mutation is build-time).
 `HeapImageBuilder` in `pycore/tools/heap_image.py` provides:
 
 - `alloc_instance` / `alloc_type` / `alloc_bound_method`
-- `alloc_builtin` / `alloc_bytearray` / `alloc_exception`
+- `alloc_builtin` / `alloc_bytearray` / `alloc_exception` / `alloc_range`
 
 Attribute image tests may still seed objects via:
 

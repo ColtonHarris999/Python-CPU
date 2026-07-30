@@ -139,6 +139,10 @@
     .equ SCR_FTI0,       0x68
     .equ SCR_FTI1,       0x6C
     .equ SCR_RA3,        0x70
+    .equ SCR_ORDER_PTR,  0x74
+    .equ SCR_ORDER_LEN,  0x78
+    .equ SCR_VERSION,    0x7C
+    .equ SCR_NEW_ORDER,  0x80
 
 reset:
     li   s11, MMIO_BASE            # s11: persistent MMIO base, never clobbered
@@ -958,7 +962,7 @@ load_e1e2_to_scratch:
     sw   t0, SCR_VTAG(x0)
     jalr x0, ra, 0
 
-# → s1=slots, s2=used, s5/s3=table
+# → s1=slots, s2=used, s5/s3=table; order metadata in SCR_ORDER_*
 dict_load_header_table:
     sw   ra, SCR_RA(x0)
     mv   a0, s0
@@ -967,7 +971,15 @@ dict_load_header_table:
     lw   s1, SP_DATA2(s11)
     addi a0, s0, 16
     jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_ORDER_LEN(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_VERSION(x0)
+    addi a0, s0, 32
+    jal  ra, sp_read
     lw   s5, SP_DATA0(s11)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_ORDER_PTR(x0)
     mv   s3, s5
     lw   ra, SCR_RA(x0)
     jalr x0, ra, 0
@@ -1027,12 +1039,54 @@ dgr_vs_old:
     bge  s7, t0, dgr_alloc
     mv   s7, t0
 dgr_alloc:
-    lw   s4, MB_HEAP_PTR(s11)
+    lw   t3, MB_HEAP_PTR(s11)
+    sw   t3, SCR_NEW_ORDER(x0)
+    slli t0, s7, 5
+    add  s4, t3, t0              # table follows new order buffer
     slli t0, s7, 6
     add  t0, s4, t0
     li   t1, HEAP_LIMIT
-    bge  t1, t0, dgr_zero
+    bge  t1, t0, dgr_copy_order
     j    fatal_mem
+dgr_copy_order:
+    li   s6, 0
+dgr_copy_order_loop:
+    lw   t0, SCR_ORDER_LEN(x0)
+    beq  s6, t0, dgr_zero
+    lw   t1, SCR_ORDER_PTR(x0)
+    slli t2, s6, 5
+    add  a0, t1, t2
+    jal  ra, sp_read
+    lw   t3, SP_DATA0(s11)
+    lw   t4, SP_DATA1(s11)
+    lw   t5, SP_DATA2(s11)
+    lw   t6, SP_DATA3(s11)
+    lw   t1, SCR_NEW_ORDER(x0)
+    slli t2, s6, 5
+    add  a0, t1, t2
+    sw   t3, SP_DATA0(s11)
+    sw   t4, SP_DATA1(s11)
+    sw   t5, SP_DATA2(s11)
+    sw   t6, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   t1, SCR_ORDER_PTR(x0)
+    slli t2, s6, 5
+    add  a0, t1, t2
+    addi a0, a0, 16
+    jal  ra, sp_read
+    lw   t3, SP_DATA0(s11)
+    lw   t1, SCR_NEW_ORDER(x0)
+    slli t2, s6, 5
+    add  a0, t1, t2
+    addi a0, a0, 16
+    sw   t3, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   t0, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    addi s6, s6, 1
+    j    dgr_copy_order_loop
 dgr_zero:
     li   s6, 0
 dgr_zero_loop:
@@ -1130,6 +1184,38 @@ dict_insert_from_scratch:
     lw   a0, SCR_IDX(x0)
     jal  ra, dict_write_kv_at
     addi s2, s2, 1
+    # Append the new key to the preserved insertion-order sidecar.
+    lw   t0, SCR_ORDER_LEN(x0)
+    lw   t1, SCR_NEW_ORDER(x0)
+    slli t2, t0, 5
+    add  a0, t1, t2
+    lw   t3, SCR_KVAL0(x0)
+    sw   t3, SP_DATA0(s11)
+    lw   t3, SCR_KVAL1(x0)
+    sw   t3, SP_DATA1(s11)
+    lw   t3, SCR_KVAL2(x0)
+    sw   t3, SP_DATA2(s11)
+    lw   t3, SCR_KVAL3(x0)
+    sw   t3, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   t0, SCR_ORDER_LEN(x0)
+    lw   t1, SCR_NEW_ORDER(x0)
+    slli t2, t0, 5
+    add  a0, t1, t2
+    addi a0, a0, 16
+    lw   t3, SCR_KTAG(x0)
+    sw   t3, SP_DATA0(s11)
+    li   t4, 0
+    sw   t4, SP_DATA1(s11)
+    sw   t4, SP_DATA2(s11)
+    sw   t4, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   t0, SCR_ORDER_LEN(x0)
+    addi t0, t0, 1
+    sw   t0, SCR_ORDER_LEN(x0)
+    lw   t0, SCR_VERSION(x0)
+    addi t0, t0, 1
+    sw   t0, SCR_VERSION(x0)
     lw   ra, SCR_RA(x0)
     jalr x0, ra, 0
 difs_over:
@@ -1148,10 +1234,21 @@ dict_writeback_header:
     mv   a0, s0
     jal  ra, sp_write
     addi a0, s0, 16
+    lw   t0, SCR_ORDER_LEN(x0)
+    sw   t0, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    lw   t0, SCR_VERSION(x0)
+    sw   t0, SP_DATA2(s11)
+    li   t0, 0
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    addi a0, s0, 32
     sw   s4, SP_DATA0(s11)
     li   t0, 0
     sw   t0, SP_DATA1(s11)
-    sw   t0, SP_DATA2(s11)
+    lw   t1, SCR_NEW_ORDER(x0)
+    sw   t1, SP_DATA2(s11)
     sw   t0, SP_DATA3(s11)
     jal  ra, sp_write
     mv   s1, s7

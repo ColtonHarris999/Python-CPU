@@ -569,15 +569,20 @@ memory-ownership handoff plus `O(length)` element copy in firmware,
 amortized `O(1)` across appends because the excore doubles capacity on
 every grow.
 
-#### LIST/TUPLE iteration
+#### LIST/TUPLE/RANGE/STR/DICT/SET iteration
 
-`GET_ITER` accepts LIST and TUPLE handles and rewrites TOS to an internal
+`GET_ITER` accepts LIST, TUPLE, STR, DICT, SET, and `OBK_RANGE` handles and rewrites TOS to an internal
 `PY_TAG_PTR` hybrid iterator. Its 128-bit payload is
 `magic[127:120], kind[119:116], aux[115:96], index[95:64],
-size/stop[63:32], addr[31:0]`. Kinds 0/1 are LIST/TUPLE; RANGE, STR, and
-HEAP_ITER reserve kinds 2/3/4. LIST stores `size=0, addr=list_object`;
-TUPLE stores its immutable length and element-buffer address. Reserved kinds
-remain invalid until both their `GET_ITER` and `FOR_ITER` paths land.
+size/stop[63:32], addr[31:0]`. Kinds 0/1/2/3 are LIST/TUPLE/RANGE/STR;
+HEAP_ITER reserves kind 4; kinds 5/6 are DICT/SET. LIST stores
+`size=0, addr=list_object`;
+TUPLE stores its immutable length and element-buffer address. RANGE stores
+`index=current, size=stop, aux=step, addr=0`. STR stores a UTF-8 byte offset
+in `index`, the byte length in `size`, and a byte-addressed `string_mem` base
+in `addr`; `aux` is zero. DICT stores an insertion-order index/length and a
+20-bit mutation-version snapshot. SET stores a hash-slot index/count and a
+20-bit `used` snapshot.
 Validity is per-kind rather than a global PTR rule. `PY_TAG_PTR` is not emitted
 by the image serializer, so malformed, unknown, or incomplete kinds raise
 `PY_TRAP_TYPE` in `FOR_ITER`.
@@ -591,6 +596,12 @@ iterator at TOS and redirects over `END_FOR` to `POP_ITER`, which performs the
 single pop. Unsupported Python iterator types raise `PY_TRAP_TYPE`; there is
 no generic `__iter__` / `__next__` dispatch.
 
+DICT `FOR_ITER` reads keys from the v3 order sidecar, never from hash-slot
+order. SET scans hash slots and skips UNINIT/tombstone tags; its order is
+intentionally undefined. A size-changing mutation during either loop fails
+the snapshot check with `PY_TRAP_TYPE` (the native stand-in for CPython's
+`RuntimeError`). Empty DICT/SET objects take the normal exhaustion redirect.
+
 Element rewrites through `STORE_SUBSCR` are visible when their index has not
 yet been yielded. Rebinding the Python source name does not affect the
 iterator, which retains the original object address. LIST `NB_INPLACE_ADD`
@@ -600,11 +611,46 @@ LIST `DELETE_SUBSCR` decrements the live length (last element on pycore;
 mid-list via `LIST_DELETE`/excore), so deletion can skip shifted elements or
 cause early exhaustion.
 
-The reserved kinds are deliberate trap-until-complete sockets, not partial
-implementations. RANGE comes next after a native range source/CALL
-representation exists. STR follows after `S_CONTAINER` can retain SHORT_STR
-payloads and read LONG_STR `string_mem`. Dict views use HEAP_ITER only after a
-heap iterator-object layout and insertion-order walk are defined. Generators
+The image-builtins dict seeds `range` as `PY_BI_RANGE`. Its on-core `CALL`
+path accepts one to three INT/BOOL arguments, normalizes them to
+`start, stop, step`, and allocates an immutable `OBK_RANGE` object. A zero
+step raises `PY_TRAP_TYPE`. `GET_ITER` reads that object's fields and rewrites
+it to the RANGE hybrid iterator. The compact iterator socket limits start and
+stop to signed 32 bits and step to a nonzero signed 20-bit value; fields
+outside that encoding TYPE-trap before iteration.
+
+The image-builtins dict also seeds `set` as `PY_BI_SET`. Its native `CALL`
+accepts zero arguments or one LIST/TUPLE, allocates the normal open-addressed
+SET layout, and deduplicates elements with the shared hash/rich-equality rules.
+
+RANGE `FOR_ITER` performs no dmem reads. A positive step exhausts when
+`current >= stop`; a negative step exhausts when `current <= stop`. Otherwise
+it pushes `current` as an INT and advances the iterator in place. The update
+clamps a crossing next value to `stop`, avoiding signed-32 wrap at the
+boundary. Empty ranges take the same redirect over `END_FOR` to `POP_ITER` as
+empty LIST/TUPLE iterators.
+
+`string_mem` is shared by `S_EXEC` and `S_CONTAINER`. Image LONG_STR constants
+occupy the static region `[0, 16384)` and GET_ITER aliases their immutable
+`{size, addr}` descriptor. SHORT_STR payloads cannot fit in the iterator
+socket, so GET_ITER snapshots their bytes into the shared runtime bump region
+`[16384, 65536)`. The iterator pins that `{size, addr}` snapshot; rebinding
+the source name cannot affect an active loop. Exec concatenation and SHORT_STR
+snapshots use the same bump pointer. The states are mutually exclusive, so
+writes are ordered by instruction execution and cannot conflict.
+
+STR `FOR_ITER` reads the UTF-8 lead byte, decodes a width of one through four,
+validates every continuation byte, and advances `index` by that width. The
+yielded value is a one-character SHORT_STR containing the original UTF-8
+bytes. This is character iteration, not byte iteration: `"é"` and `"😀"`
+each produce one value while advancing by two and four bytes respectively.
+Invalid lead bytes, truncated sequences, and invalid continuation bytes raise
+`PY_TRAP_TYPE`. Empty strings take the normal exhaustion redirect on their
+first `FOR_ITER`.
+
+The remaining reserved kind is a deliberate trap-until-complete socket, not a
+partial implementation. Dict views still require HEAP_ITER even though direct
+DICT key iteration is native. Generators
 remain last because they require YIELD and suspended-frame state. Until each
 prerequisite lands, both unsupported sources and forged reserved kinds
 TYPE-trap rather than taking a plausible but incomplete path.
@@ -666,15 +712,19 @@ allocation bytes : size * 32
 Helpers: `pycore_tuple_val_addr`, `pycore_tuple_tag_addr`,
 `pycore_tuple_alloc_bytes`, `pycore_tuple_size`.
 
-### DICT in-dmem layout (v2)
+### DICT in-dmem layout (v3)
 
-All addresses are 16-byte aligned (128-bit dmem slot granularity). Layout v2
-keeps a **stable 32-byte object** and a **relocatable table** (grow updates
-`table_ptr` only; the dict handle address does not move):
+All addresses are 16-byte aligned (128-bit dmem slot granularity). Layout v3
+keeps a **stable 48-byte object**, an insertion-order key sidecar, and a
+relocatable table:
 
 ```text
 obj+0  : header { slot_count[63:0], used[63:0] }
-obj+16 : { 64'd0, table_ptr[63:0] }     // 0 if slot_count == 0
+obj+16 : { version[63:0], order_len[63:0] }
+obj+32 : { order_ptr[63:0], table_ptr[63:0] }
+
+order + i*32 + 0  : key value
+order + i*32 + 16 : key tag
 
 table + i*64 + 0  : key value
 table + i*64 + 16 : key tag   (UNINIT=empty, TOMBSTONE=DICT=9 deleted)
@@ -682,7 +732,7 @@ table + i*64 + 32 : value value
 table + i*64 + 48 : value tag
 ```
 
-`BUILD_MAP` may allocate object+table contiguously
+`BUILD_MAP` may allocate object+order+table contiguously
 (`pycore_dict_alloc_bytes`); slot helpers take the **table** base. Slot count
 = `next_pow2(max(4, 2 × n_pairs))` (including empty `BUILD_MAP 0` → 4 slots).
 Hash = `pycore_dict_key_hash(tag, value) & (slot_count − 1)`:
@@ -711,6 +761,11 @@ reallocates (`used*4` if `used≤50k` else `used*2`, floored/rounded to a
 power of two), rehashes, and completes the STORE. Without `EXCORE_EN` grow
 is fatal. Design notes: `pycore/docs/dict_excore.md`.
 
+New-key insertion appends a key copy to the order sidecar and increments
+`version`; value-only overwrite does neither. Delete shifts following order
+entries left and increments `version`. Excore grow rehashes only the table and
+copies the sidecar unchanged, so hash-slot relocation cannot reorder keys.
+
 Static heap images for dicts/tuples/lists can be built with
 `pycore/tools/heap_image.py` (`HeapImageBuilder`), which mirrors the RTL hash
 and probe rules.
@@ -718,13 +773,13 @@ and probe rules.
 ### DICT FSM path
 
 `CONT_BUILD_MAP`, `CONT_SUBSCR_DICT`, `CONT_STORE_DICT`, plus dict
-`DELETE_SUBSCR` / `CONTAINS_OP` paths, share the dict probe phases. Layout v2
-reads `table_ptr` via `CP_LIST_BUF` after the header. `CONT_BUILD_TUPLE` and
+`DELETE_SUBSCR` / `CONTAINS_OP` paths, share the dict probe phases. Layout v3
+reads metadata and packed pointers before slot access. `CONT_BUILD_TUPLE` and
 `CONT_SUBSCR_TUPLE` reuse the shared LIST-style phases without a header.
 
-- **`BUILD_MAP`**: allocates 32B object + contiguous table, writes header +
-  `table_ptr`, then for each pair probes (same-tag only) and inserts; rewrites
-  `used` once at the end. Empty maps still get ≥4 slots.
+- **`BUILD_MAP`**: allocates a 48B object + order buffer + table, then probes
+  each pair and appends each new key to the order buffer. Empty maps still
+  get ≥4 slots.
 - **`NB_SUBSCR` on DICT**: reads header + `table_ptr`, probes; same-tag /
   rich-eq hit returns value; miss → `MEM_FAULT`.
 - **`STORE_SUBSCR` on DICT**: same-tag / rich-eq upsert / tombstone reuse on

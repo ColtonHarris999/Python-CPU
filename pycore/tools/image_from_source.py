@@ -23,6 +23,8 @@ from encoding import (
     BI_LEN,
     BI_MAX,
     BI_PRINT,
+    BI_RANGE,
+    BI_SET,
     BI_TO_BYTES,
     HEAP_BASE,
     STRING_MEM_BYTES,
@@ -822,7 +824,7 @@ def build_builtins_dict(
     """Allocate the module builtins dict for the boot-record pair-2 slot.
 
     Entries:
-      bytearray / max / len / print → OBK_BUILTIN with bound_self=NULL
+      bytearray / max / len / print / range → OBK_BUILTIN with bound_self=NULL
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
     """
     from_bytes = heap.alloc_builtin(BI_FROM_BYTES)
@@ -843,6 +845,8 @@ def build_builtins_dict(
         (tag_constant("max", string_heap), heap.alloc_builtin(BI_MAX)),
         (tag_constant("len", string_heap), heap.alloc_builtin(BI_LEN)),
         (tag_constant("print", string_heap), heap.alloc_builtin(BI_PRINT)),
+        (tag_constant("range", string_heap), heap.alloc_builtin(BI_RANGE)),
+        (tag_constant("set", string_heap), heap.alloc_builtin(BI_SET)),
         (tag_constant("int", string_heap), int_type),
     ]
     return heap.alloc_dict(pairs, slot_count=dict_min_slots(len(pairs)))
