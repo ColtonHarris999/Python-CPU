@@ -63,9 +63,9 @@
                                             // Empty list: object only, ob_item=0.
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'({2'b0, tos_r});
-                                            container_wb_data_r <= pycore_make_entry(
-                                                PY_TAG_LIST,
-                                                {{96{1'b0}}, container_base_r});
+                                            container_wb_data_r <= pycore_make_mut(
+                                                PY_MUT_LIST,
+                                                {32'b0, container_base_r});
                                             tos_r             <= tos_r + RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
@@ -121,15 +121,15 @@
                                             container_phase_r   <= CP_LIST_BUF;
                                         end else begin
                                             // All elements written — commit list.
-                                            // Push {PY_TAG_LIST, 0, base} to RF[tos-count].
+                                            // Push the list handle to RF[tos-count].
                                             // heap_ptr already advanced by exactly
                                             // cont_bl_alloc back in CP_INIT.
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
                                                 {2'b0, tos_r} - {2'b0, container_count_r});
-                                            container_wb_data_r <= pycore_make_entry(
-                                                PY_TAG_LIST,
-                                                {{96{1'b0}}, container_base_r});
+                                            container_wb_data_r <= pycore_make_mut(
+                                                PY_MUT_LIST,
+                                                {32'b0, container_base_r});
                                             tos_r            <= tos_r
                                                 - {2'b0, container_count_r} + 7'd1;
                                             fetch_skip_r     <= 1'b1;
@@ -153,13 +153,13 @@
                         end // CONT_BUILD_LIST
 
                         CONT_SUBSCR_LIST: begin
-                            // rs1_r = container (PY_TAG_LIST expected)
+                            // rs1_r = container (MUT_COLLEC/PY_MUT_LIST expected)
                             // rs2_r = key       (INT or BOOL expected)
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
                                     // Type checks.
-                                    if (cont_rs1_tag != PY_TAG_LIST) begin
+                                    if (!pycore_is_list(cont_rs1_tag, cont_rs1_val)) begin
                                         container_type_trap_r <= 1'b1;
                                     end else if (cont_rs2_tag != PY_TAG_INT &&
                                                  cont_rs2_tag != PY_TAG_BOOL) begin
@@ -249,11 +249,11 @@
                         CONT_GET_ITER: begin
                             unique case (container_phase_r)
                                 CP_INIT: begin
-                                    if (cont_rs1_tag == PY_TAG_LIST) begin
+                                    if (pycore_is_list(cont_rs1_tag, cont_rs1_val)) begin
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
                                         container_wb_data_r <= pycore_make_entry(
-                                            PY_TAG_PTR,
+                                            PY_TAG_ITER,
                                             pycore_iter_value(
                                                 PY_ITER_KIND_LIST,
                                                 32'd0, 32'd0, cont_rs1_addr));
@@ -262,7 +262,7 @@
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
                                         container_wb_data_r <= pycore_make_entry(
-                                            PY_TAG_PTR,
+                                            PY_TAG_ITER,
                                             pycore_iter_value(
                                                 PY_ITER_KIND_TUPLE, 32'd0,
                                                 cont_tuple_size[31:0],
@@ -286,7 +286,7 @@
                         CONT_FOR_ITER: begin
                             unique case (container_phase_r)
                                 CP_INIT: begin
-                                    if (cont_rs1_tag != PY_TAG_PTR ||
+                                    if (cont_rs1_tag != PY_TAG_ITER ||
                                         !cont_iter_valid) begin
                                         container_type_trap_r <= 1'b1;
                                     end else begin
@@ -368,7 +368,7 @@
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
                                         container_wb_data_r <= pycore_make_entry(
-                                            PY_TAG_PTR,
+                                            PY_TAG_ITER,
                                             pycore_iter_value(
                                                 cont_iter_kind,
                                                 cont_iter_index + 32'd1,
@@ -399,13 +399,13 @@
 
                         CONT_STORE_LIST: begin
                             // rs1_r = key       (INT or BOOL)
-                            // rs2_r = container (PY_TAG_LIST)
+                            // rs2_r = container (MUT_COLLEC/PY_MUT_LIST)
                             // value at RF[tos-3] (read via container_rf_addr_r)
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
                                     // Type checks.
-                                    if (cont_rs2_tag != PY_TAG_LIST) begin
+                                    if (!pycore_is_list(cont_rs2_tag, cont_rs2_val)) begin
                                         container_type_trap_r <= 1'b1;
                                     end else if (cont_rs1_tag != PY_TAG_INT &&
                                                  cont_rs1_tag != PY_TAG_BOOL) begin
@@ -491,7 +491,7 @@
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
-                                    if (cont_rs2_tag != PY_TAG_LIST) begin
+                                    if (!pycore_is_list(cont_rs2_tag, cont_rs2_val)) begin
                                         container_type_trap_r <= 1'b1;
                                     end else if (cont_rs1_tag != PY_TAG_INT &&
                                                  cont_rs1_tag != PY_TAG_BOOL) begin
@@ -564,7 +564,7 @@
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
-                                    if (cont_rs1_tag != PY_TAG_LIST) begin
+                                    if (!pycore_is_list(cont_rs1_tag, cont_rs1_val)) begin
                                         container_type_trap_r <= 1'b1;
                                     end else begin
                                         container_base_r         <= cont_rs1_addr;
@@ -675,9 +675,9 @@
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
-                                    if (cont_rs1_tag != PY_TAG_LIST) begin
+                                    if (!pycore_is_list(cont_rs1_tag, cont_rs1_val)) begin
                                         container_type_trap_r <= 1'b1;
-                                    end else if (cont_rs2_tag != PY_TAG_LIST &&
+                                    end else if (!pycore_is_list(cont_rs2_tag, cont_rs2_val) &&
                                                  cont_rs2_tag != PY_TAG_TUPLE) begin
                                         container_type_trap_r <= 1'b1;
                                     end else begin
@@ -714,19 +714,19 @@
 
                                 CP_SRC_HDR: begin
                                     // Wait for distinct-list src header if needed.
-                                    if (cont_rs2_tag == PY_TAG_LIST &&
+                                    if (pycore_is_list(cont_rs2_tag, cont_rs2_val) &&
                                         cont_rs2_addr != cont_rs1_addr &&
                                         container_dmem_pending_r) begin
                                         // Still waiting on src header.
                                     end else begin
-                                        if (cont_rs2_tag == PY_TAG_LIST &&
+                                        if (pycore_is_list(cont_rs2_tag, cont_rs2_val) &&
                                             cont_rs2_addr != cont_rs1_addr &&
                                             !container_dmem_pending_r) begin
                                             container_src_len_r <= cont_hdr_len[31:0];
                                         end
                                         // Empty source → no-op pop. Non-empty
                                         // → always LIST_EXTEND (before commit).
-                                        if ((cont_rs2_tag == PY_TAG_LIST &&
+                                        if ((pycore_is_list(cont_rs2_tag, cont_rs2_val) &&
                                              cont_rs2_addr != cont_rs1_addr)
                                             ? (cont_hdr_len == 64'd0)
                                             : (container_src_len_r == 32'd0)) begin
@@ -893,7 +893,7 @@
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
-                                    if (cont_rs2_tag != PY_TAG_LIST) begin
+                                    if (!pycore_is_list(cont_rs2_tag, cont_rs2_val)) begin
                                         container_type_trap_r <= 1'b1;
                                     end else begin
                                         container_base_r         <= cont_rs2_addr;
@@ -1098,9 +1098,9 @@
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r        <= CP_VAL;
                                         end
-                                    end else if (cont_rs1_tag == PY_TAG_LIST) begin
+                                    end else if (pycore_is_list(cont_rs1_tag, cont_rs1_val)) begin
                                         container_base_r         <= cont_rs1_addr;
-                                        container_tag_r          <= PY_TAG_LIST;
+                                        container_tag_r          <= PY_TAG_MUT_COLLEC;
                                         container_dmem_addr_r    <= cont_rs1_addr;
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;

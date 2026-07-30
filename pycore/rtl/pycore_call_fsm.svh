@@ -64,7 +64,8 @@
 
                         4'd2: begin
                             // Sentinel: NULL ⇒ free-function; else method form.
-                            if (cont_rf_rs1_tag == PY_TAG_NULL) begin
+                            if (pycore_is_null(
+                                    cont_rf_rs1_tag, cont_rf_rs1_val)) begin
                                 call_argcount_r <= cur_arg_r[15:0];
                                 // call_new_locals_r already tos - oparg
                             end else begin
@@ -167,7 +168,8 @@
                         // --------------------------------------------------
                         4'd8: begin
                             // Sentinel must be NULL for BM / TYPE calls.
-                            if (cont_rf_rs1_tag != PY_TAG_NULL) begin
+                            if (!pycore_is_null(
+                                    cont_rf_rs1_tag, cont_rf_rs1_val)) begin
                                 call_filter_trap_r <= 1'b1;
                             end else begin
                                 container_dmem_addr_r    <= call_obj_addr_r;
@@ -407,7 +409,8 @@
                                 end
                                 // LEN arg0
                                 6'd6: begin
-                                    if (cont_rf_rs1_tag == PY_TAG_LIST) begin
+                                    if (pycore_is_list(
+                                            cont_rf_rs1_tag, cont_rf_rs1_val)) begin
                                         container_dmem_addr_r    <= cont_rf_rs1_val[31:0];
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
@@ -424,8 +427,12 @@
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 6'd0;
-                                    end else if (cont_rf_rs1_tag == PY_TAG_DICT ||
-                                                 cont_rf_rs1_tag == PY_TAG_SET) begin
+                                    end else if (pycore_is_dict(
+                                                         cont_rf_rs1_tag,
+                                                         cont_rf_rs1_val) ||
+                                                 pycore_is_set(
+                                                         cont_rf_rs1_tag,
+                                                         cont_rf_rs1_val)) begin
                                         container_dmem_addr_r    <= cont_rf_rs1_val[31:0];
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
@@ -567,7 +574,9 @@
                                                 call_inst_addr_r, 32'd0);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <=
-                                            {{96{1'b0}}, container_base_r};
+                                            pycore_mut_value(
+                                                PY_MUT_DICT,
+                                                {32'b0, container_base_r});
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd5;
                                     end
@@ -580,7 +589,7 @@
                                                 call_inst_addr_r, 32'd0);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <=
-                                            {124'b0, PY_TAG_DICT};
+                                            {124'b0, PY_TAG_MUT_COLLEC};
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd6;
                                     end
@@ -611,7 +620,8 @@
                                 // 8: require DICT; read header
                                 6'd8: begin
                                     if (!container_dmem_pending_r) begin
-                                        if (container_rd_data_r[3:0] != PY_TAG_DICT) begin
+                                        if (container_rd_data_r[3:0] !=
+                                                PY_TAG_MUT_COLLEC) begin
                                             call_filter_trap_r <= 1'b1;
                                         end else begin
                                             container_dmem_addr_r    <= container_base_r;
@@ -672,8 +682,8 @@
                                         end else begin
                                             container_probe_n_r <=
                                                 container_probe_n_r + 32'd1;
-                                            if (container_rd_data_r[3:0] ==
-                                                    PY_TAG_UNINIT) begin
+                                            if (pycore_dict_slot_empty(
+                                                    container_rd_data_r)) begin
                                                 call_sub_r <= 6'd20;
                                             end else if (pycore_dict_tombstone(
                                                             container_rd_data_r[3:0])) begin
@@ -947,7 +957,9 @@
                                 names_base_r <= container_rd_data_r;
                                 if (frame_ret_mode_r) begin
                                     // Discard __init__ return; require NONE.
-                                    if (pycore_get_tag(rs1_r) != PY_TAG_NONE) begin
+                                    if (!pycore_is_none(
+                                            pycore_get_tag(rs1_r),
+                                            pycore_get_val(rs1_r))) begin
                                         return_type_trap_r <= 1'b1;
                                     end else begin
                                         return_wb_we_r   <= 1'b1;

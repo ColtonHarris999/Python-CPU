@@ -22,40 +22,63 @@ localparam int PYCORE_DMEM_BLOCK_COUNT = 32;   // 128 KB data memory
 localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
 localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot
 
-localparam logic [3:0] PY_TAG_UNINIT       = 4'b0000;
+// =========================================================================
+// Primary 4-bit tag map (tag restructure).
+//
+// Numeric group is contiguous for decode: INT, FLOAT, COMPLEX, BOOL.
+// CONTROL / MUT_COLLEC use secondary nibbles in the value field.
+// =========================================================================
+localparam logic [3:0] PY_TAG_CONTROL      = 4'b0000;
 localparam logic [3:0] PY_TAG_INT          = 4'b0001;
 localparam logic [3:0] PY_TAG_FLOAT        = 4'b0010;
-localparam logic [3:0] PY_TAG_BOOL         = 4'b0011;
-localparam logic [3:0] PY_TAG_PTR          = 4'b0100;
-localparam logic [3:0] PY_TAG_TUPLE        = 4'b0101;
-localparam logic [3:0] PY_TAG_SHORT_STR    = 4'b0110;
-localparam logic [3:0] PY_TAG_LONG_STR     = 4'b0111;
-localparam logic [3:0] PY_TAG_OBJECT       = 4'b1000;
-localparam logic [3:0] PY_TAG_DICT         = 4'b1001;
-localparam logic [3:0] PY_TAG_LIST         = 4'b1010;
-localparam logic [3:0] PY_TAG_SET          = 4'b1011;
-// Dict deleted-key sentinel. Reuses PY_TAG_DICT because dicts are mutable and
-// cannot be hash keys — a key-slot tag of DICT is never a live key, so it is
-// free to mean "tombstone" during open-addressed probe / insert.
-localparam logic [3:0] PY_TAG_TOMBSTONE    = PY_TAG_DICT;
-localparam logic [3:0] PY_TAG_CODE_OBJECT  = 4'b1100;
-localparam logic [3:0] PY_TAG_FRAME_OBJECT = 4'b1101;
-// PY_TAG_NULL: CPython self_or_null sentinel pushed for non-method calls
-// (LOAD_GLOBAL with low bit set, or explicit PUSH_NULL). Formerly PY_TAG_UNUSED.
-// Value field is zero. Traps in arithmetic/branch like UNINIT (covered by
-// pycore_is_trapping_tag — not numeric, not string).
-localparam logic [3:0] PY_TAG_NULL         = 4'b1110;
-localparam logic [3:0] PY_TAG_NONE         = 4'b1111;
+localparam logic [3:0] PY_TAG_COMPLEX      = 4'b0011;
+localparam logic [3:0] PY_TAG_BOOL         = 4'b0100;
+localparam logic [3:0] PY_TAG_ITER         = 4'b0101;
+localparam logic [3:0] PY_TAG_TUPLE        = 4'b0110;
+localparam logic [3:0] PY_TAG_SHORT_STR    = 4'b0111;
+localparam logic [3:0] PY_TAG_LONG_STR     = 4'b1000;
+localparam logic [3:0] PY_TAG_MUT_COLLEC   = 4'b1001;
+localparam logic [3:0] PY_TAG_OBJECT       = 4'b1010;
+localparam logic [3:0] PY_TAG_RANGE        = 4'b1011;
+localparam logic [3:0] PY_TAG_BYTES        = 4'b1100;
+localparam logic [3:0] PY_TAG_CODE_OBJECT  = 4'b1101;
+// Dict/set deleted-key sentinel. Dedicated primary so key-tag slots (4-bit
+// compares) stay tag-only; never a live stack value.
+localparam logic [3:0] PY_TAG_TOMBSTONE    = 4'b1110;
+localparam logic [3:0] PY_TAG_FROZENSET    = 4'b1111;  // reserved
+
+// Back-compat names used across RTL during migration.
+localparam logic [3:0] PY_TAG_UNINIT       = PY_TAG_CONTROL;  // + CTL_UNINIT
+localparam logic [3:0] PY_TAG_PTR          = PY_TAG_ITER;     // rename
+localparam logic [3:0] PY_TAG_FRAME_OBJECT = PY_TAG_FROZENSET; // retired primary
+
+// CONTROL secondary ids in value[3:0] (value[127:4] must be zero).
+localparam logic [3:0] PY_CTL_UNINIT = 4'd0;
+localparam logic [3:0] PY_CTL_NONE   = 4'd1;
+localparam logic [3:0] PY_CTL_NULL   = 4'd2;
+
+// MUT_COLLEC secondary kind in value[127:124]; value[63:0] = object addr.
+localparam logic [3:0] PY_MUT_LIST      = 4'd1;
+localparam logic [3:0] PY_MUT_DICT      = 4'd2;
+localparam logic [3:0] PY_MUT_SET       = 4'd3;
+localparam logic [3:0] PY_MUT_BYTEARRAY = 4'd4;
+localparam logic [3:0] PY_MUT_DEQUE     = 4'd5;  // reserved socket
+
+// RANGE: value[127]=mode (0=inline i32 triple, 1=tuple pointer).
+// Inline: start[95:64], stop[63:32], step[31:0]. Tuple: addr in [63:0].
+localparam int PYCORE_RANGE_MODE_BIT = 127;
+
+// COMPLEX: real in value[63:0], imag in value[127:64] (IEEE754 binary64).
 
 // -------------------------------------------------------------------------
-// General heap-object kinds under PY_TAG_OBJECT (M1). The 4-bit tag space is
-// full; OBJECT means "read ob_head for the kind" (CPython's PyObject model).
+// General heap-object kinds under PY_TAG_OBJECT. BYTEARRAY lives under
+// MUT_COLLEC (PY_MUT_BYTEARRAY); OBK_BYTEARRAY kept for image compat reads.
 // -------------------------------------------------------------------------
 localparam logic [31:0] PY_OBK_INSTANCE     = 32'd1;
 localparam logic [31:0] PY_OBK_TYPE         = 32'd2;
 localparam logic [31:0] PY_OBK_BOUND_METHOD = 32'd3;
 localparam logic [31:0] PY_OBK_BUILTIN      = 32'd4;
-localparam logic [31:0] PY_OBK_BYTEARRAY    = 32'd5;
+localparam logic [31:0] PY_OBK_BYTEARRAY    = 32'd5;  // legacy; prefer MUT_BYTEARRAY
 localparam logic [31:0] PY_OBK_EXCEPTION    = 32'd6;
 
 localparam int PYCORE_SHORT_STR_MAX_BYTES = 15;
@@ -64,15 +87,19 @@ localparam int PYCORE_SHORT_STR_SIZE_LSB  = 124;
 localparam int PYCORE_SHORT_STR_DATA_MSB  = 123;
 localparam int PYCORE_SHORT_STR_DATA_LSB  = 4;
 
-localparam logic [1:0] PY_EXEC_INT   = 2'd0;
-localparam logic [1:0] PY_EXEC_FLOAT = 2'd1;
-localparam logic [1:0] PY_EXEC_BOOL  = 2'd2;
-localparam logic [1:0] PY_EXEC_TRAP  = 2'd3;
+localparam logic [2:0] PY_EXEC_INT     = 3'd0;
+localparam logic [2:0] PY_EXEC_FLOAT   = 3'd1;
+localparam logic [2:0] PY_EXEC_BOOL    = 3'd2;
+localparam logic [2:0] PY_EXEC_COMPLEX = 3'd3;
+localparam logic [2:0] PY_EXEC_TRAP    = 3'd4;
 
-localparam logic [1:0] PY_PROMOTE_NONE          = 2'd0;
-localparam logic [1:0] PY_PROMOTE_INT_TO_FLOAT  = 2'd1;
-localparam logic [1:0] PY_PROMOTE_BOOL_TO_INT   = 2'd2;
-localparam logic [1:0] PY_PROMOTE_BOOL_TO_FLOAT = 2'd3;
+localparam logic [2:0] PY_PROMOTE_NONE            = 3'd0;
+localparam logic [2:0] PY_PROMOTE_INT_TO_FLOAT    = 3'd1;
+localparam logic [2:0] PY_PROMOTE_BOOL_TO_INT     = 3'd2;
+localparam logic [2:0] PY_PROMOTE_BOOL_TO_FLOAT   = 3'd3;
+localparam logic [2:0] PY_PROMOTE_INT_TO_COMPLEX  = 3'd4;
+localparam logic [2:0] PY_PROMOTE_FLOAT_TO_COMPLEX= 3'd5;
+localparam logic [2:0] PY_PROMOTE_BOOL_TO_COMPLEX = 3'd6;
 
 localparam logic [4:0] PY_TRAP_NONE = 5'd0;
 localparam logic [4:0] PY_TRAP_TYPE = 5'd1;
@@ -361,7 +388,7 @@ localparam logic [7:0] PY_OP_DELETE_ATTR      = 8'd61;
 //   (callable, self_or_null, args[oparg] -- res)
 //   Bottom→top: callable, self_or_null, arg1..argN
 //   RF: callable @ tos-argc-2, sentinel @ tos-argc-1, args @ tos-argc .. tos-1
-//   Non-method calls require sentinel tag == PY_TAG_NULL.
+//   Non-method calls require CONTROL with ctl_id == PY_CTL_NULL.
 //
 // MAKE_FUNCTION: (codeobj -- func), oparg unused/None, stack effect 0.
 //   Interim model: function ≡ code object handle (no defaults/closures).
@@ -437,10 +464,189 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_entry(
     end
 endfunction
 
-// Internal hybrid iterator carried in a PY_TAG_PTR entry.  PTR is not
-// emitted by the image serializer and is otherwise reserved in the current
-// hardware, so the magic byte distinguishes iterator state from malformed
-// or future pointer payloads.
+// ---- CONTROL helpers ----------------------------------------------------
+function automatic logic [3:0] pycore_ctl_id(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_ctl_id = value[3:0];
+    end
+endfunction
+
+function automatic logic pycore_is_control(input logic [3:0] tag);
+    begin
+        pycore_is_control = (tag == PY_TAG_CONTROL);
+    end
+endfunction
+
+function automatic logic pycore_is_uninit(
+    input logic [3:0] tag, input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        // Empty dict/set key-tag slots store only the 4-bit CONTROL tag (0)
+        // with a zero value word — treat tag==CONTROL && ctl==UNINIT.
+        pycore_is_uninit = (tag == PY_TAG_CONTROL) &&
+                           (pycore_ctl_id(value) == PY_CTL_UNINIT);
+    end
+endfunction
+
+function automatic logic pycore_is_none(
+    input logic [3:0] tag, input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_is_none = (tag == PY_TAG_CONTROL) &&
+                         (pycore_ctl_id(value) == PY_CTL_NONE);
+    end
+endfunction
+
+function automatic logic pycore_is_null(
+    input logic [3:0] tag, input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_is_null = (tag == PY_TAG_CONTROL) &&
+                         (pycore_ctl_id(value) == PY_CTL_NULL);
+    end
+endfunction
+
+function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_control(
+    input logic [3:0] ctl_id
+);
+    begin
+        pycore_make_control = pycore_make_entry(PY_TAG_CONTROL, {124'b0, ctl_id});
+    end
+endfunction
+
+// ---- MUT_COLLEC helpers -------------------------------------------------
+function automatic logic [3:0] pycore_mut_kind(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_mut_kind = value[127:124];
+    end
+endfunction
+
+function automatic logic [63:0] pycore_mut_addr(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_mut_addr = value[63:0];
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_mut_value(
+    input logic [3:0] kind, input logic [63:0] addr
+);
+    begin
+        pycore_mut_value = {kind, 60'b0, addr};
+    end
+endfunction
+
+function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_mut(
+    input logic [3:0] kind, input logic [63:0] addr
+);
+    begin
+        pycore_make_mut = pycore_make_entry(
+            PY_TAG_MUT_COLLEC, pycore_mut_value(kind, addr));
+    end
+endfunction
+
+function automatic logic pycore_is_mut_kind(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value,
+    input logic [3:0] kind
+);
+    begin
+        pycore_is_mut_kind = (tag == PY_TAG_MUT_COLLEC) &&
+                             (pycore_mut_kind(value) == kind);
+    end
+endfunction
+
+function automatic logic pycore_is_list(
+    input logic [3:0] tag, input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_is_list = pycore_is_mut_kind(tag, value, PY_MUT_LIST);
+    end
+endfunction
+
+function automatic logic pycore_is_dict(
+    input logic [3:0] tag, input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_is_dict = pycore_is_mut_kind(tag, value, PY_MUT_DICT);
+    end
+endfunction
+
+function automatic logic pycore_is_set(
+    input logic [3:0] tag, input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_is_set = pycore_is_mut_kind(tag, value, PY_MUT_SET);
+    end
+endfunction
+
+function automatic logic pycore_is_bytearray(
+    input logic [3:0] tag, input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_is_bytearray = pycore_is_mut_kind(tag, value, PY_MUT_BYTEARRAY);
+    end
+endfunction
+
+// ---- COMPLEX / RANGE helpers --------------------------------------------
+function automatic logic [63:0] pycore_complex_real(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_complex_real = value[63:0];
+    end
+endfunction
+
+function automatic logic [63:0] pycore_complex_imag(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_complex_imag = value[127:64];
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_complex_value(
+    input logic [63:0] real_bits, input logic [63:0] imag_bits
+);
+    begin
+        pycore_complex_value = {imag_bits, real_bits};
+    end
+endfunction
+
+function automatic logic pycore_range_is_tuple_mode(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_range_is_tuple_mode = value[PYCORE_RANGE_MODE_BIT];
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_range_inline_value(
+    input logic signed [31:0] start_i,
+    input logic signed [31:0] stop_i,
+    input logic signed [31:0] step_i
+);
+    begin
+        pycore_range_inline_value = {1'b0, 31'b0, start_i, stop_i, step_i};
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_range_tuple_value(
+    input logic [63:0] tuple_addr
+);
+    begin
+        pycore_range_tuple_value = {1'b1, 63'b0, tuple_addr};
+    end
+endfunction
+
+// Internal hybrid iterator carried in a PY_TAG_ITER entry.  ITER is not
+// emitted by the image serializer as a Python value; the magic byte
+// distinguishes iterator state from malformed payloads.
 //
 //   [127:120] magic (8'hA5)
 //   [119:116] kind
@@ -540,7 +746,15 @@ endfunction
 
 function automatic logic pycore_is_numeric_tag(input logic [3:0] tag);
     begin
-        pycore_is_numeric_tag = (tag == PY_TAG_INT) || (tag == PY_TAG_FLOAT) || (tag == PY_TAG_BOOL);
+        pycore_is_numeric_tag = (tag == PY_TAG_INT) || (tag == PY_TAG_FLOAT) ||
+                                (tag == PY_TAG_COMPLEX) || (tag == PY_TAG_BOOL);
+    end
+endfunction
+
+function automatic logic pycore_is_real_numeric_tag(input logic [3:0] tag);
+    begin
+        pycore_is_real_numeric_tag = (tag == PY_TAG_INT) || (tag == PY_TAG_FLOAT) ||
+                                     (tag == PY_TAG_BOOL);
     end
 endfunction
 
@@ -635,13 +849,12 @@ endfunction
 //   obj + 16 : { 64'd0, table_ptr[63:0] }   // 0 if slot_count==0
 //
 //   table + i*64 + 0  : key   value[127:0]
-//   table + i*64 + 16 : key   tag   {124'b0, key_tag[3:0]}
+//   table + i*64 + 16 : key tag word; CONTROL also stores ctl_id in [7:4]
 //   table + i*64 + 32 : value value[127:0]
 //   table + i*64 + 48 : value tag   {124'b0, val_tag[3:0]}
 //
-// Slot stride = 64 bytes. Empty: key tag == PY_TAG_UNINIT.
-// Deleted: key tag == PY_TAG_TOMBSTONE (== PY_TAG_DICT; skip during probe).
-// Dicts cannot be keys, so DICT in a key slot unambiguously means tombstone.
+// Slot stride = 64 bytes. Empty: zero key tag word, or CONTROL/CTL_UNINIT.
+// Deleted: key tag == PY_TAG_TOMBSTONE (skip during probe).
 // Slot count is a power of two (or 0); probe mask = slot_count - 1.
 //
 // BUILD_MAP may allocate object+table contiguously
@@ -649,11 +862,35 @@ endfunction
 // table_ptr. Address helpers take the TABLE base, not the object base.
 //
 // Hash: pycore_dict_key_hash(tag, value) & (slot_count - 1).
-// Supported key tags: INT, BOOL, FLOAT, SHORT_STR, LONG_STR.
+// Supported key tags: CONTROL (None), INT, BOOL, FLOAT, SHORT_STR, LONG_STR.
 // Unsupported key tags trap PY_TRAP_TYPE.
 // Load ≥ 2/3 before new-key insert → PY_TRAP_DICT_GROW.
 // Probe equality (same-tag + INT/BOOL/FLOAT rich) → pycore_dict_key_rich_eq.
 // -------------------------------------------------------------------------
+
+// Pack the primary tag for a dict/set key slot. CONTROL keys carry ctl_id in
+// [7:4], keeping None distinct from the all-zero empty-slot encoding.
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_dict_key_tag_word(
+    input logic [3:0]                  tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        if (tag == PY_TAG_CONTROL)
+            pycore_dict_key_tag_word = {120'b0, pycore_ctl_id(value), tag};
+        else
+            pycore_dict_key_tag_word = {124'b0, tag};
+    end
+endfunction
+
+function automatic logic pycore_dict_slot_empty(
+    input logic [PYCORE_VAL_WIDTH-1:0] tag_word
+);
+    begin
+        pycore_dict_slot_empty = (tag_word == {PYCORE_VAL_WIDTH{1'b0}}) ||
+                                 ((tag_word[3:0] == PY_TAG_CONTROL) &&
+                                  (tag_word[7:4] == PY_CTL_UNINIT));
+    end
+endfunction
 
 // 32-bit key hash; caller masks with (slot_count - 1).
 // INT: CPython -1 → -2; else value[31:0].
@@ -742,7 +979,8 @@ endfunction
 
 function automatic logic pycore_dict_key_tag_ok(input logic [3:0] tag);
     begin
-        pycore_dict_key_tag_ok = (tag == PY_TAG_INT) || (tag == PY_TAG_BOOL)
+        pycore_dict_key_tag_ok = (tag == PY_TAG_CONTROL)
+                              || (tag == PY_TAG_INT) || (tag == PY_TAG_BOOL)
                               || (tag == PY_TAG_FLOAT)
                               || (tag == PY_TAG_SHORT_STR)
                               || (tag == PY_TAG_LONG_STR);
@@ -819,7 +1057,11 @@ function automatic logic pycore_dict_key_rich_eq(
         a_i  = 64'd0;
         b_i  = 64'd0;
 
-        if (pycore_is_numeric_tag(tag_a) && pycore_is_numeric_tag(tag_b)) begin
+        if (pycore_is_none(tag_a, val_a) || pycore_is_none(tag_b, val_b)) begin
+            pycore_dict_key_rich_eq = pycore_is_none(tag_a, val_a) &&
+                                      pycore_is_none(tag_b, val_b);
+        end else if (pycore_is_numeric_tag(tag_a) &&
+                     pycore_is_numeric_tag(tag_b)) begin
             if (tag_a == PY_TAG_INT) begin
                 a_ok = 1'b1;
                 a_i  = val_a[63:0];
@@ -856,7 +1098,6 @@ function automatic logic pycore_dict_key_rich_eq(
 endfunction
 
 // True when a dict key-slot tag is a deleted-entry sentinel.
-// PY_TAG_TOMBSTONE == PY_TAG_DICT (dicts are not valid keys).
 function automatic logic pycore_dict_tombstone(input logic [3:0] tag);
     begin
         pycore_dict_tombstone = (tag == PY_TAG_TOMBSTONE);
@@ -879,8 +1120,8 @@ endfunction
 
 // Element equality for CONTAINS_OP (list/tuple scan and dict key match).
 // INT/BOOL cross-compare as integers (True==1 / False==0), matching CPython.
-// Same-tag NONE is always equal. All other same-tag pairs compare the full
-// 128-bit value field (FLOAT bit-exact; SHORT_STR/LONG_STR; LIST/DICT/TUPLE
+// Two None values are always equal. All other same-tag pairs compare the full
+// 128-bit value field (FLOAT bit-exact; SHORT_STR/LONG_STR; mutable/TUPLE
 // handles — identity via equal descriptors).
 function automatic logic pycore_elem_eq(
     input logic [3:0]               tag_a,
@@ -890,15 +1131,16 @@ function automatic logic pycore_elem_eq(
 );
     logic [63:0] ia, ib;
     begin
-        if (((tag_a == PY_TAG_INT) || (tag_a == PY_TAG_BOOL)) &&
+        if (pycore_is_none(tag_a, val_a) || pycore_is_none(tag_b, val_b)) begin
+            pycore_elem_eq = pycore_is_none(tag_a, val_a) &&
+                             pycore_is_none(tag_b, val_b);
+        end else if (((tag_a == PY_TAG_INT) || (tag_a == PY_TAG_BOOL)) &&
             ((tag_b == PY_TAG_INT) || (tag_b == PY_TAG_BOOL))) begin
             ia = (tag_a == PY_TAG_BOOL) ? {63'b0, val_a[0]} : val_a[63:0];
             ib = (tag_b == PY_TAG_BOOL) ? {63'b0, val_b[0]} : val_b[63:0];
             pycore_elem_eq = (ia == ib);
         end else if (tag_a != tag_b) begin
             pycore_elem_eq = 1'b0;
-        end else if (tag_a == PY_TAG_NONE) begin
-            pycore_elem_eq = 1'b1;
         end else begin
             pycore_elem_eq = (val_a == val_b);
         end
@@ -1008,9 +1250,9 @@ endfunction
 //   obj+16 : { 64'd0, table_ptr[63:0] }
 //
 //   table + i*32 + 0  : element value
-//   table + i*32 + 16 : element tag   // UNINIT=empty; TOMBSTONE=DICT=9
+//   table + i*32 + 16 : element key tag word
 //
-// Handle: PY_TAG_SET + object address. Reuses dict key hash / tag_ok /
+// Handle: MUT_COLLEC/PY_MUT_SET + object address. Reuses dict key hash / tag_ok /
 // rich_eq / tombstone / needs_grow helpers for elements.
 // -------------------------------------------------------------------------
 function automatic logic [31:0] pycore_set_val_addr(
@@ -1097,7 +1339,7 @@ localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0001_C000;
 // -------------------------------------------------------------------------
 // LIST in-dmem layout v2 — growable split object/buffer (Phase A).
 //
-// The list HANDLE (PY_TAG_LIST, value={64'd0, obj_addr[63:0]}) names a
+// The list handle (MUT_COLLEC/PY_MUT_LIST) names a
 // stable, 32-byte LIST OBJECT that never moves; every alias of the handle
 // stays valid across growth because growth only ever updates the object's
 // ob_item field, never the object's own address:

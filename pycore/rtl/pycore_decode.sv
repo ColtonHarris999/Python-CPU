@@ -162,7 +162,7 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
-            // PUSH_NULL: push {PY_TAG_NULL, 0} (self_or_null sentinel).
+            // PUSH_NULL: push CONTROL/PY_CTL_NULL (self_or_null sentinel).
             PY_OP_PUSH_NULL: begin
                 rd_sel_o = tos_index_i;
                 push_stack_o = 1'b1;

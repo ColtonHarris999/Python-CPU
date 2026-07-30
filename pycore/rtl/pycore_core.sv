@@ -575,7 +575,8 @@ module pycore_core #(
     // and no spurious trap fires.
     assign binary_list_iadd = (cur_opcode_r == PY_OP_BINARY_OP) &&
                               (cur_arg_r[7:0] == 8'd13) &&
-                              (pycore_get_tag(rs1_r) == PY_TAG_LIST);
+                              pycore_is_list(
+                                  pycore_get_tag(rs1_r), pycore_get_val(rs1_r));
     assign route_container = dec_is_container || binary_list_iadd;
     assign is_alu = ((cur_opcode_r == PY_OP_BINARY_OP) && !route_container) ||
                     (cur_opcode_r == PY_OP_COMPARE_OP) ||
@@ -644,17 +645,17 @@ module pycore_core #(
                 ex_addr_entry = rs2_r;
             end
             // PUSH_NULL: emit the self_or_null sentinel entry.
-            PY_OP_PUSH_NULL: ex_entry = pycore_make_entry(PY_TAG_NULL, '0);
+            PY_OP_PUSH_NULL: ex_entry = pycore_make_control(PY_CTL_NULL);
             // DELETE_FAST: clear local to UNINIT; already-unbound → MEM_FAULT.
             PY_OP_DELETE_FAST: begin
-                if (ex_rs1_tag == PY_TAG_UNINIT) begin
+                if (pycore_is_uninit(ex_rs1_tag, pycore_get_val(rs1_r))) begin
                     exec_mem_fault_pulse = (state_r == S_EXEC);
                 end
-                ex_entry = pycore_make_entry(PY_TAG_UNINIT, '0);
+                ex_entry = pycore_make_control(PY_CTL_UNINIT);
             end
             // LOAD_FAST_CHECK: push local like LOAD_FAST; unbound → MEM_FAULT.
             PY_OP_LOAD_FAST_CHECK: begin
-                if (ex_rs1_tag == PY_TAG_UNINIT) begin
+                if (pycore_is_uninit(ex_rs1_tag, pycore_get_val(rs1_r))) begin
                     exec_mem_fault_pulse = (state_r == S_EXEC);
                 end
                 ex_entry = rs1_r;
@@ -1515,18 +1516,18 @@ module pycore_core #(
                                 // rs2 = container; choose LIST vs DICT path.
                                 // TUPLE (immutable) falls through to CONT_STORE_LIST,
                                 // which type-traps on non-LIST.
-                                container_op_r <= (cont_rs2_tag == PY_TAG_DICT) ?
+                                container_op_r <= (pycore_is_dict(cont_rs2_tag, cont_rs2_val)) ?
                                                   CONT_STORE_DICT : CONT_STORE_LIST;
                             end else if (cur_opcode_r == PY_OP_DELETE_SUBSCR) begin
                                 // DICT → tombstone path; LIST → shift-down;
                                 // SET / other → TYPE in CONT_DELETE_LIST.
-                                container_op_r <= (cont_rs2_tag == PY_TAG_DICT) ?
+                                container_op_r <= (pycore_is_dict(cont_rs2_tag, cont_rs2_val)) ?
                                                   CONT_DELETE_DICT : CONT_DELETE_LIST;
                             end else if (cur_opcode_r == PY_OP_CONTAINS_OP) begin
                                 // rs1 = needle, rs2 = container.
-                                if (cont_rs2_tag == PY_TAG_DICT)
+                                if (pycore_is_dict(cont_rs2_tag, cont_rs2_val))
                                     container_op_r <= CONT_CONTAINS_DICT;
-                                else if (cont_rs2_tag == PY_TAG_SET)
+                                else if (pycore_is_set(cont_rs2_tag, cont_rs2_val))
                                     container_op_r <= CONT_CONTAINS_SET;
                                 else if (cont_rs2_tag == PY_TAG_TUPLE)
                                     container_op_r <= CONT_CONTAINS_TUPLE;
@@ -1594,7 +1595,7 @@ module pycore_core #(
                                 container_idx_r   <= 7'd0;
                             end else if (cur_opcode_r == PY_OP_BINARY_OP) begin
                                 // BINARY_OP/NB_SUBSCR: rs1 = container.
-                                if (cont_rs1_tag == PY_TAG_DICT)
+                                if (pycore_is_dict(cont_rs1_tag, cont_rs1_val))
                                     container_op_r <= CONT_SUBSCR_DICT;
                                 else if (cont_rs1_tag == PY_TAG_TUPLE)
                                     container_op_r <= CONT_SUBSCR_TUPLE;
@@ -1813,7 +1814,8 @@ module pycore_core #(
 
                         4'd4: begin
                             if (!container_dmem_pending_r) begin
-                                if (container_rd_data_r[3:0] != PY_TAG_DICT) begin
+                                if (container_rd_data_r[3:0] !=
+                                        PY_TAG_MUT_COLLEC) begin
                                     container_mem_fault_r <= 1'b1;
                                 end else begin
                                     container_dmem_addr_r    <= PYCORE_BOOT_RECORD_ADDR + 32'd64;
@@ -1836,7 +1838,8 @@ module pycore_core #(
 
                         4'd6: begin
                             if (!container_dmem_pending_r) begin
-                                if (container_rd_data_r[3:0] != PY_TAG_DICT) begin
+                                if (container_rd_data_r[3:0] !=
+                                        PY_TAG_MUT_COLLEC) begin
                                     container_mem_fault_r <= 1'b1;
                                 end else begin
                                     container_dmem_addr_r    <= pycore_code_field_val_addr(
