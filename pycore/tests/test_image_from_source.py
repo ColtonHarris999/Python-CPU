@@ -10,7 +10,7 @@ import unittest
 if sys.version_info[:2] != (3, 14):
     raise unittest.SkipTest("image_from_source tests require Python 3.14")
 
-from encoding import TAG_CODE_OBJECT
+from encoding import TAG_CODE_OBJECT, TAG_INT, TAG_RANGE, mut_addr
 from pycore.tools import image_from_source
 
 
@@ -610,9 +610,26 @@ class ImageTranscodingTest(unittest.TestCase):
         # Distinct STORE_NAME names: a, b, managed_entry.
         self.assertEqual(result.global_store_count, 3)
         self.assertEqual(result.globals_slot_count, 8)
-        globals_addr = result.globals_dict[1]
+        globals_addr = mut_addr(result.globals_dict[1])
         globals_header = result.heap.words[globals_addr]
         self.assertEqual(globals_header >> 64, 8)
+
+
+class RangeConstantSerializationTest(unittest.TestCase):
+    def test_large_range_uses_heap_tuple_mode(self) -> None:
+        serializer = image_from_source._ImageSerializer()
+        owner = _compile_module("")
+        tag, value = serializer.serialize_constant(range(0, 1 << 40), owner)
+
+        self.assertEqual(tag, TAG_RANGE)
+        self.assertEqual(value >> 127, 1)
+        tuple_addr = value & ((1 << 64) - 1)
+        self.assertEqual(serializer.heap.words[tuple_addr], 0)
+        self.assertEqual(serializer.heap.words[tuple_addr + 16], TAG_INT)
+        self.assertEqual(serializer.heap.words[tuple_addr + 32], 1 << 40)
+        self.assertEqual(serializer.heap.words[tuple_addr + 48], TAG_INT)
+        self.assertEqual(serializer.heap.words[tuple_addr + 64], 1)
+        self.assertEqual(serializer.heap.words[tuple_addr + 80], TAG_INT)
 
 
 class ClassImageBuilderTest(unittest.TestCase):

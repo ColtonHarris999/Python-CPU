@@ -126,8 +126,8 @@ class TestBuildMapAccepted(unittest.TestCase):
         # Check we can at least run type inference without raising.
         self.assertIsInstance(warnings, list)
 
-    def test_dict_stored_variable_tagged_dict(self) -> None:
-        """A local variable holding a BUILD_MAP result is tagged DICT."""
+    def test_dict_stored_variable_tagged_mutable(self) -> None:
+        """A local variable holding a BUILD_MAP result is MUT_COLLEC."""
         fn = _compile_fn(
             "def managed_entry():\n"
             "    k = 7\n"
@@ -142,7 +142,7 @@ class TestBuildMapAccepted(unittest.TestCase):
             string_heap=heap,
         )
         var_tags, _ = preprocess.infer_types(fn, emitted)
-        self.assertEqual(var_tags.get("d"), preprocess.TAG_DICT)
+        self.assertEqual(var_tags.get("d"), preprocess.TAG_MUT_COLLEC)
 
 
 class TestStoreSubscrAccepted(unittest.TestCase):
@@ -180,9 +180,9 @@ class TestStoreSubscrAccepted(unittest.TestCase):
             string_heap=heap,
         )
         # infer_types runs on the emitted list; check it doesn't crash and
-        # lst is tagged LIST.
+        # Type sketch tracks mutable containers at the primary-tag level.
         var_tags, _ = preprocess.infer_types(self.fn, emitted)
-        self.assertEqual(var_tags.get("lst"), preprocess.TAG_LIST)
+        self.assertEqual(var_tags.get("lst"), preprocess.TAG_MUT_COLLEC)
 
 
 class TestNbSubscrAccepted(unittest.TestCase):

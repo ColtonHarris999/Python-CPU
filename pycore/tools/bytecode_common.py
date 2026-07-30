@@ -14,26 +14,52 @@ import pathlib
 import struct
 import sys
 
+from encoding import (
+    TAG_BOOL,
+    TAG_BYTES,
+    TAG_CODE_OBJECT,
+    TAG_COMPLEX,
+    TAG_CONTROL,
+    TAG_FLOAT,
+    TAG_FROZENSET,
+    TAG_INT,
+    TAG_ITER,
+    TAG_LONG_STR,
+    TAG_MUT_COLLEC,
+    TAG_OBJECT,
+    TAG_RANGE,
+    TAG_SHORT_STR,
+    TAG_TOMBSTONE,
+    TAG_TUPLE,
+    TAG_UNINITIALIZED,
+    make_complex,
+    make_none,
+    make_range_inline,
+    range_fits_inline,
+)
 
 REQUIRED_PY = (3, 14)
 
-TAG_UNINITIALIZED = 0b000
-TAG_INT = 0b001
-TAG_FLOAT = 0b010
-TAG_BOOL = 0b011
-TAG_PTR = 0b100
-TAG_OBJECT = 0b101
-
 TAG_NAMES = {
-    TAG_UNINITIALIZED: "UNINITIALIZED",
+    TAG_CONTROL: "CONTROL",
     TAG_INT: "INT",
     TAG_FLOAT: "FLOAT",
+    TAG_COMPLEX: "COMPLEX",
     TAG_BOOL: "BOOL",
-    TAG_PTR: "PTR",
+    TAG_ITER: "ITER",
+    TAG_TUPLE: "TUPLE",
+    TAG_SHORT_STR: "SHORT_STR",
+    TAG_LONG_STR: "LONG_STR",
+    TAG_MUT_COLLEC: "MUT_COLLEC",
     TAG_OBJECT: "OBJECT",
+    TAG_RANGE: "RANGE",
+    TAG_BYTES: "BYTES",
+    TAG_CODE_OBJECT: "CODE_OBJECT",
+    TAG_TOMBSTONE: "TOMBSTONE",
+    TAG_FROZENSET: "FROZENSET",
 }
 
-# Architectural value is a 128-bit field carrying a 3-bit tag. INT keeps a
+# Architectural value is a 128-bit field carrying a 4-bit tag. INT keeps a
 # 64-bit signed fast path sign-extended into the upper bits; FLOAT/BOOL live in
 # the low 64 bits with the rest zero.
 VAL_WIDTH = 128
@@ -73,4 +99,14 @@ def tag_constant(value: object) -> tuple[int, int]:
         return TAG_INT, value & VAL_MASK
     if isinstance(value, float):
         return TAG_FLOAT, float_bits(value)
+    if isinstance(value, complex):
+        return make_complex(value.real, value.imag)
+    if value is None:
+        return make_none()
+    if isinstance(value, range):
+        if not range_fits_inline(value):
+            raise ValueError(
+                "range constant does not fit inline signed i32 fields"
+            )
+        return make_range_inline(value.start, value.stop, value.step)
     return TAG_OBJECT, 0

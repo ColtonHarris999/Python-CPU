@@ -23,21 +23,22 @@ from encoding import (
     SHORT_STR_SIZE_SHIFT,
     STRING_MEM_BYTES,
     TAG_BOOL,
+    TAG_BYTES,
     TAG_CODE_OBJECT,
-    TAG_DICT,
+    TAG_COMPLEX,
+    TAG_CONTROL,
     TAG_FLOAT,
-    TAG_FRAME_OBJECT,
+    TAG_FROZENSET,
     TAG_INT,
-    TAG_LIST,
+    TAG_ITER,
     TAG_LONG_STR,
-    TAG_NONE,
+    TAG_MUT_COLLEC,
     TAG_OBJECT,
-    TAG_PTR,
-    TAG_SET,
+    TAG_RANGE,
     TAG_SHORT_STR,
+    TAG_TOMBSTONE,
     TAG_TUPLE,
     TAG_UNINITIALIZED,
-    TAG_UNUSED,
     StringHeapBuilder,
     format_imem_slot,
     tag_constant,
@@ -446,8 +447,12 @@ def write_cache_map(path: pathlib.Path) -> None:
 
 
 def merge_numeric(tag_a: int, tag_b: int, op_arg: int) -> int:
-    if op_arg == 13 and tag_a == TAG_LIST and tag_b in (TAG_LIST, TAG_TUPLE):
-        return TAG_LIST
+    if (
+        op_arg == 13
+        and tag_a == TAG_MUT_COLLEC
+        and tag_b in (TAG_MUT_COLLEC, TAG_TUPLE)
+    ):
+        return TAG_MUT_COLLEC
     if op_arg in (0, 13) and tag_a in (TAG_SHORT_STR, TAG_LONG_STR) and tag_b in (TAG_SHORT_STR, TAG_LONG_STR):
         # Hardware resolves short-vs-long at runtime from operand sizes.
         return TAG_LONG_STR
@@ -495,7 +500,7 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
         elif ins.opname == "GET_ITER":
             # Replaces the iterable with an internal iterator in place.
             if stack:
-                stack[-1] = TAG_OBJECT
+                stack[-1] = TAG_ITER
         elif ins.opname == "FOR_ITER":
             # The fallthrough edge pushes the yielded element. Exhaustion
             # branches to loop cleanup; this linear sketch follows fallthrough.
@@ -511,7 +516,7 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             count = ins.arg or 0
             for _ in range(min(count, len(stack))):
                 stack.pop()
-            stack.append(TAG_LIST)
+            stack.append(TAG_MUT_COLLEC)
         elif ins.opname == "BUILD_TUPLE":
             count = ins.arg or 0
             for _ in range(min(count, len(stack))):
@@ -521,7 +526,12 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             count = ins.arg or 0
             for _ in range(min(2 * count, len(stack))):
                 stack.pop()
-            stack.append(TAG_DICT)
+            stack.append(TAG_MUT_COLLEC)
+        elif ins.opname == "BUILD_SET":
+            count = ins.arg or 0
+            for _ in range(min(count, len(stack))):
+                stack.pop()
+            stack.append(TAG_MUT_COLLEC)
         elif ins.opname == "STORE_SUBSCR":
             # Pops key, container, value (3 items); pushes nothing.
             for _ in range(min(3, len(stack))):
@@ -553,7 +563,7 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
             if ins.arg == NBARG_SUBSCR:
                 # Subscript read: result type is unknown (element type not tracked).
                 result_tag = TAG_OBJECT
-                if lhs not in (TAG_LIST, TAG_DICT, TAG_TUPLE, TAG_OBJECT):
+                if lhs not in (TAG_MUT_COLLEC, TAG_TUPLE, TAG_OBJECT):
                     warnings.append(
                         f"NB_SUBSCR on non-container tag {lhs} at offset {ins.source_offset}"
                     )
@@ -595,21 +605,21 @@ def infer_types(fn, instructions: list[EmittedInstruction]) -> tuple[dict[str, i
 def write_types(path: pathlib.Path, var_tags: dict[str, int], warnings: list[str]) -> None:
     tag_names = {
         TAG_INT: "INT",
-        TAG_UNINITIALIZED: "UNINITIALIZED",
+        TAG_CONTROL: "CONTROL",
         TAG_FLOAT: "FLOAT",
+        TAG_COMPLEX: "COMPLEX",
         TAG_BOOL: "BOOL",
-        TAG_PTR: "PTR",
+        TAG_ITER: "ITER",
         TAG_TUPLE: "TUPLE",
         TAG_SHORT_STR: "SHORT_STR",
         TAG_LONG_STR: "LONG_STR",
+        TAG_MUT_COLLEC: "MUT_COLLEC",
         TAG_OBJECT: "OBJECT",
-        TAG_DICT: "DICT",
-        TAG_LIST: "LIST",
-        TAG_SET: "SET",
+        TAG_RANGE: "RANGE",
+        TAG_BYTES: "BYTES",
         TAG_CODE_OBJECT: "CODE_OBJECT",
-        TAG_FRAME_OBJECT: "FRAME_OBJECT",
-        TAG_UNUSED: "UNUSED",
-        TAG_NONE: "NONE",
+        TAG_TOMBSTONE: "TOMBSTONE",
+        TAG_FROZENSET: "FROZENSET",
     }
     lines = [f"{name}: {tag_names.get(tag, 'RESERVED')}" for name, tag in sorted(var_tags.items())]
     if warnings:

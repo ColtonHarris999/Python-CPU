@@ -38,6 +38,7 @@
     .equ MB_INSTR_LO,    0x0C
     .equ MB_HEAP_PTR,    0x14
     .equ MB_E0_VAL0,     0x20
+    .equ MB_E0_VAL3,     0x2C
     .equ MB_E0_TAG,      0x30
     .equ MB_E1_VAL0,     0x34
     .equ MB_E1_VAL1,     0x38
@@ -92,19 +93,20 @@
     .equ FATAL_ILLEGAL_OPCODE, 5
     .equ FATAL_MEM_FAULT,      7
 
-    .equ TAG_UNINIT,     0
-    .equ TAG_INT,        1
-    .equ TAG_FLOAT,      2
-    .equ TAG_BOOL,       3
-    .equ TAG_TUPLE,      5
-    .equ TAG_SHORT_STR,  6
-    .equ TAG_LONG_STR,   7
-    .equ TAG_DICT,       9
-    .equ TAG_LIST,       10
-    .equ TAG_SET,        11
-    # Tombstone reuses DICT: mutable dicts are never valid hash keys, so a
-    # key-slot tag of 9 means deleted (see PY_TAG_TOMBSTONE in pycore_defs.svh).
-    .equ TAG_TOMBSTONE,  9
+    .equ TAG_CONTROL,     0
+    .equ TAG_INT,         1
+    .equ TAG_FLOAT,       2
+    .equ TAG_BOOL,        4
+    .equ TAG_TUPLE,       6
+    .equ TAG_SHORT_STR,   7
+    .equ TAG_LONG_STR,    8
+    .equ TAG_MUT_COLLEC,  9
+    .equ TAG_TOMBSTONE,  14
+
+    # MUT_COLLEC kind is ENTRY value[127:124], i.e. VAL3[31:28].
+    .equ MUT_LIST,        1
+    .equ MUT_DICT,        2
+    .equ MUT_SET,         3
 
     # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (frame stack at 0x1C000).
     .equ HEAP_LIMIT,     0x1C000
@@ -194,7 +196,11 @@ do_fatal:
 
 do_list_grow:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_LIST
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, fatal_type
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_LIST
     bne  t0, t1, fatal_type
 
     lw   s0, MB_E0_VAL0(s11)       # s0 = obj_addr
@@ -383,13 +389,23 @@ poll_obitem_wb:
 # ===========================================================================
 do_list_extend:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_LIST
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, fatal_type
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_LIST
     bne  t0, t1, fatal_type
     lw   s0, MB_E0_VAL0(s11)       # s0 = dst obj_addr
 
     lw   s9, MB_E1_TAG(s11)        # s9 = src tag
-    li   t1, TAG_LIST
-    beq  s9, t1, ext_src_ok
+    li   t1, TAG_MUT_COLLEC
+    bne  s9, t1, ext_src_tuple_check
+    lw   t0, MB_E1_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_LIST
+    bne  t0, t1, fatal_type
+    j    ext_src_ok
+ext_src_tuple_check:
     li   t1, TAG_TUPLE
     bne  s9, t1, fatal_type
 ext_src_ok:
@@ -725,7 +741,11 @@ poll_ip_hdr_wb:
 # ===========================================================================
 do_dict_grow:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_DICT
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, fatal_type
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_DICT
     beq  t0, t1, dg_tag_ok
     j    fatal_type
 dg_tag_ok:
@@ -763,7 +783,11 @@ dg_pop_store:
 # ===========================================================================
 do_list_delete:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_LIST
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, fatal_type
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_LIST
     bne  t0, t1, fatal_type
     lw   s0, MB_E0_VAL0(s11)       # s0 = obj_addr
 
@@ -1532,7 +1556,13 @@ fti_fail:
 # ===========================================================================
 do_set_grow:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_SET
+    li   t1, TAG_MUT_COLLEC
+    beq  t0, t1, sg_primary_ok
+    j    fatal_type
+sg_primary_ok:
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_SET
     beq  t0, t1, sg_tag_ok
     j    fatal_type
 sg_tag_ok:
@@ -1570,7 +1600,13 @@ sg_tag_ok:
 # ===========================================================================
 do_set_update:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_SET
+    li   t1, TAG_MUT_COLLEC
+    beq  t0, t1, su_primary_ok
+    j    fatal_type
+su_primary_ok:
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_SET
     beq  t0, t1, su_tag_ok
     j    fatal_type
 su_tag_ok:
@@ -1578,12 +1614,18 @@ su_tag_ok:
     jal  ra, dict_load_header_table
     lw   s9, MB_E1_TAG(s11)
     lw   s10, MB_E1_VAL0(s11)
-    li   t1, TAG_LIST
-    beq  s9, t1, su_src_list
+    li   t1, TAG_MUT_COLLEC
+    bne  s9, t1, su_src_tuple_check
+    lw   t0, MB_E1_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_LIST
+    beq  t0, t1, su_src_list
+    li   t1, MUT_SET
+    beq  t0, t1, su_src_set
+    j    fatal_type
+su_src_tuple_check:
     li   t1, TAG_TUPLE
     beq  s9, t1, su_src_tuple
-    li   t1, TAG_SET
-    beq  s9, t1, su_src_set
     j    fatal_type
 
 su_src_list:

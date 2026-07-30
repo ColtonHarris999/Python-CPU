@@ -27,12 +27,15 @@ from encoding import (
     HEAP_BASE,
     STRING_MEM_BYTES,
     TAG_INT,
-    TAG_NONE,
     VAL_MASK,
     StringHeapBuilder,
     dict_slot_count_for_stores,
     format_imem_slot,
     int_value,
+    make_none,
+    make_range_inline,
+    make_range_tuple,
+    range_fits_inline,
     tag_constant,
 )
 from heap_image import HeapImageBuilder, Tagged, dict_min_slots
@@ -427,8 +430,17 @@ class _ImageSerializer:
                 [self.serialize_constant(item, owner) for item in value]
             )
         if value is None:
-            return TAG_NONE, 0
-        if isinstance(value, (bool, int, float, str)):
+            return make_none()
+        if isinstance(value, range):
+            if range_fits_inline(value):
+                return make_range_inline(value.start, value.stop, value.step)
+            triple = self.heap.alloc_tuple([
+                (TAG_INT, int_value(value.start)),
+                (TAG_INT, int_value(value.stop)),
+                (TAG_INT, int_value(value.step)),
+            ])
+            return make_range_tuple(triple[1] & ((1 << 64) - 1))
+        if isinstance(value, (bool, int, float, complex, str)):
             return tag_constant(value, self.string_heap)
         raise ValueError(
             f"Unsupported constant {value!r} of type {type(value).__name__} "
@@ -446,8 +458,8 @@ class _ImageSerializer:
             attr_pairs: list[tuple[Tagged, Tagged]] = []
             for attr_name, const_val in spec.constants.items():
                 if const_val is None:
-                    tagged: Tagged = (TAG_NONE, 0)
-                elif isinstance(const_val, (bool, int, float, str)):
+                    tagged: Tagged = make_none()
+                elif isinstance(const_val, (bool, int, float, complex, str)):
                     tagged = tag_constant(const_val, self.string_heap)
                 else:
                     raise ValueError(

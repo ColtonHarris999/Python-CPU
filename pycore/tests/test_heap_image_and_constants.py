@@ -8,7 +8,7 @@ import unittest
 if sys.version_info[:2] != (3, 14):
     raise unittest.SkipTest("preprocess tests require Python 3.14")
 
-from pycore.tools import heap_image, preprocess
+from pycore.tools import encoding, heap_image, preprocess
 
 
 def _compile_fn(src: str, name: str = "managed_entry"):
@@ -17,12 +17,70 @@ def _compile_fn(src: str, name: str = "managed_entry"):
     return ns[name]
 
 
+class TestRestructuredTagMap(unittest.TestCase):
+    def test_primary_tags_match_rtl_map(self) -> None:
+        self.assertEqual(
+            [
+                encoding.TAG_CONTROL,
+                encoding.TAG_INT,
+                encoding.TAG_FLOAT,
+                encoding.TAG_COMPLEX,
+                encoding.TAG_BOOL,
+                encoding.TAG_ITER,
+                encoding.TAG_TUPLE,
+                encoding.TAG_SHORT_STR,
+                encoding.TAG_LONG_STR,
+                encoding.TAG_MUT_COLLEC,
+                encoding.TAG_OBJECT,
+                encoding.TAG_RANGE,
+                encoding.TAG_BYTES,
+                encoding.TAG_CODE_OBJECT,
+                encoding.TAG_TOMBSTONE,
+                encoding.TAG_FROZENSET,
+            ],
+            list(range(16)),
+        )
+
+    def test_control_entries(self) -> None:
+        self.assertEqual(encoding.make_uninit(), (encoding.TAG_CONTROL, 0))
+        self.assertEqual(encoding.make_none(), (encoding.TAG_CONTROL, 1))
+        self.assertEqual(encoding.make_null(), (encoding.TAG_CONTROL, 2))
+
+    def test_mutable_handle_kind_and_address(self) -> None:
+        tag, value = encoding.make_list(0x440)
+        self.assertEqual(tag, encoding.TAG_MUT_COLLEC)
+        self.assertEqual(encoding.mut_kind(value), encoding.MUT_LIST)
+        self.assertEqual(encoding.mut_addr(value), 0x440)
+
+    def test_complex_layout(self) -> None:
+        tag, value = encoding.make_complex(1.5, -2.25)
+        self.assertEqual(tag, encoding.TAG_COMPLEX)
+        self.assertEqual(value & ((1 << 64) - 1), encoding.float_bits(1.5))
+        self.assertEqual(value >> 64, encoding.float_bits(-2.25))
+
+    def test_range_layouts(self) -> None:
+        tag, value = encoding.make_range_inline(-1, 7, 2)
+        self.assertEqual(tag, encoding.TAG_RANGE)
+        self.assertEqual((value >> 64) & 0xFFFF_FFFF, 0xFFFF_FFFF)
+        self.assertEqual((value >> 32) & 0xFFFF_FFFF, 7)
+        self.assertEqual(value & 0xFFFF_FFFF, 2)
+        tag, value = encoding.make_range_tuple(0x880)
+        self.assertEqual(tag, encoding.TAG_RANGE)
+        self.assertEqual(value >> 127, 1)
+        self.assertEqual(value & ((1 << 64) - 1), 0x880)
+
+    def test_tag_constant_rejects_non_inline_range_without_heap(self) -> None:
+        strings = encoding.StringHeapBuilder()
+        with self.assertRaisesRegex(ValueError, "heap tuple"):
+            encoding.tag_constant(range(0, 1 << 40), strings)
+
+
 class TestTagConstantNoneAndContainers(unittest.TestCase):
-    def test_none_is_tag_none(self) -> None:
+    def test_none_is_control_none(self) -> None:
         heap = preprocess.StringHeapBuilder()
         tag, val = preprocess.tag_constant(None, heap)
-        self.assertEqual(tag, preprocess.TAG_NONE)
-        self.assertEqual(val, 0)
+        self.assertEqual(tag, preprocess.TAG_CONTROL)
+        self.assertEqual(val, 1)
 
     def test_tuple_raises(self) -> None:
         heap = preprocess.StringHeapBuilder()
@@ -55,6 +113,21 @@ class TestStringHeapInterning(unittest.TestCase):
         self.assertEqual(addr1, addr2)
         # Only one copy in the image.
         self.assertEqual(heap.next_addr, len(s.encode("utf-8")))
+
+
+class TestControlKeyPacking(unittest.TestCase):
+    def test_none_dict_key_carries_control_id_in_tag_word(self) -> None:
+        builder = heap_image.HeapImageBuilder()
+        handle = builder.alloc_dict(
+            [(encoding.make_none(), (encoding.TAG_INT, 7))],
+            slot_count=4,
+        )
+        obj = encoding.mut_addr(handle[1])
+        table = builder.words[obj + 16]
+        # hash(CONTROL/NONE value=1) & 3 = slot 1.
+        self.assertEqual(builder.words[table + 16 + 64], 0x10)
+        # Other empty key-tag slots remain exactly zero.
+        self.assertEqual(builder.words[table + 16], 0)
 
 
 class TestBuildTupleAccepted(unittest.TestCase):
@@ -184,8 +257,10 @@ class TestListObjectBufferLayout(unittest.TestCase):
 
     def test_empty_list_is_object_only(self) -> None:
         builder = heap_image.HeapImageBuilder()
-        tag, obj_addr = builder.alloc_list([])
-        self.assertEqual(tag, heap_image.TAG_LIST)
+        tag, value = builder.alloc_list([])
+        self.assertEqual(tag, heap_image.TAG_MUT_COLLEC)
+        self.assertEqual(heap_image.mut_kind(value), heap_image.MUT_LIST)
+        obj_addr = heap_image.mut_addr(value)
         # header {capacity=0, length=0}
         self.assertEqual(builder.words[obj_addr], 0)
         # ob_item = 0 (no buffer allocated)
@@ -196,8 +271,10 @@ class TestListObjectBufferLayout(unittest.TestCase):
     def test_nonempty_list_object_and_buffer_addresses(self) -> None:
         builder = heap_image.HeapImageBuilder()
         elements = [(heap_image.TAG_INT, 7), (heap_image.TAG_INT, 9)]
-        tag, obj_addr = builder.alloc_list(elements)
-        self.assertEqual(tag, heap_image.TAG_LIST)
+        tag, value = builder.alloc_list(elements)
+        self.assertEqual(tag, heap_image.TAG_MUT_COLLEC)
+        self.assertEqual(heap_image.mut_kind(value), heap_image.MUT_LIST)
+        obj_addr = heap_image.mut_addr(value)
 
         header = builder.words[obj_addr]
         capacity = header >> 64
@@ -231,7 +308,9 @@ class TestListObjectBufferLayout(unittest.TestCase):
         list_handle = builder.alloc_list([(heap_image.TAG_INT, 1)])
 
         # Nest the same handle twice inside an outer list (two aliases).
-        outer_tag, outer_addr = builder.alloc_list([list_handle, list_handle])
+        outer_tag, outer_value = builder.alloc_list([list_handle, list_handle])
+        self.assertEqual(outer_tag, heap_image.TAG_MUT_COLLEC)
+        outer_addr = heap_image.mut_addr(outer_value)
 
         outer_ob_item = builder.words[outer_addr + 16]
         alias_0 = builder.words[outer_ob_item]        # element 0 value field
@@ -240,9 +319,17 @@ class TestListObjectBufferLayout(unittest.TestCase):
         self.assertEqual(alias_1, list_handle[1])
         self.assertEqual(alias_0, alias_1)
 
-        # Both aliases' tag slots name PY_TAG_LIST.
-        self.assertEqual(builder.words[outer_ob_item + 16], heap_image.TAG_LIST)
-        self.assertEqual(builder.words[outer_ob_item + 48], heap_image.TAG_LIST)
+        # Both aliases' tag slots name MUT_COLLEC; values retain MUT_LIST.
+        self.assertEqual(
+            builder.words[outer_ob_item + 16], heap_image.TAG_MUT_COLLEC
+        )
+        self.assertEqual(
+            builder.words[outer_ob_item + 48], heap_image.TAG_MUT_COLLEC
+        )
+        self.assertEqual(
+            heap_image.mut_kind(builder.words[outer_ob_item]),
+            heap_image.MUT_LIST,
+        )
 
 
 class TestListWithSpareCapacity(unittest.TestCase):
@@ -251,10 +338,12 @@ class TestListWithSpareCapacity(unittest.TestCase):
 
     def test_capacity_greater_than_length(self) -> None:
         builder = heap_image.HeapImageBuilder()
-        tag, obj_addr = builder.alloc_list_with_capacity(
+        tag, value = builder.alloc_list_with_capacity(
             [(heap_image.TAG_INT, 7)], capacity=4
         )
-        self.assertEqual(tag, heap_image.TAG_LIST)
+        self.assertEqual(tag, heap_image.TAG_MUT_COLLEC)
+        self.assertEqual(heap_image.mut_kind(value), heap_image.MUT_LIST)
+        obj_addr = heap_image.mut_addr(value)
         header = builder.words[obj_addr]
         capacity = header >> 64
         length = header & ((1 << 64) - 1)

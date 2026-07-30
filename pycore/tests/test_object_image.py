@@ -21,16 +21,21 @@ from encoding import (
     OBJ_EXCEPTION_BYTES,
     OBJ_INSTANCE_BYTES,
     OBJ_TYPE_BYTES,
+    CTL_NONE,
+    CTL_NULL,
+    MUT_BYTEARRAY,
+    MUT_DICT,
     TAG_CODE_OBJECT,
-    TAG_DICT,
+    TAG_CONTROL,
     TAG_INT,
-    TAG_NONE,
-    TAG_NULL,
+    TAG_MUT_COLLEC,
     TAG_OBJECT,
     TAG_SHORT_STR,
     TAG_TUPLE,
     encode_short_str,
     int_value,
+    mut_addr,
+    mut_kind,
     ob_flags,
     ob_kind,
     ob_type,
@@ -71,10 +76,9 @@ class TestAllocInstance(unittest.TestCase):
 
         d_val = heap.words[obj_field_val_addr(addr, 0)]
         d_tag = heap.words[obj_field_tag_addr(addr, 0)] & 0xF
-        self.assertEqual(d_tag, TAG_DICT)
-        # Dict handle value is the object address (low 64).
-        self.assertEqual(d_val & ((1 << 64) - 1), d_val)
-        self.assertGreaterEqual(d_val & ((1 << 64) - 1), heap.base)
+        self.assertEqual(d_tag, TAG_MUT_COLLEC)
+        self.assertEqual(mut_kind(d_val), MUT_DICT)
+        self.assertGreaterEqual(mut_addr(d_val), heap.base)
 
     def test_type_addr_recorded(self) -> None:
         heap = HeapImageBuilder()
@@ -95,8 +99,14 @@ class TestAllocType(unittest.TestCase):
         f0_tag = heap.words[obj_field_tag_addr(addr, 0)] & 0xF
         f1_tag = heap.words[obj_field_tag_addr(addr, 1)] & 0xF
         f2_tag = heap.words[obj_field_tag_addr(addr, 2)] & 0xF
-        self.assertEqual(f0_tag, TAG_DICT)
-        self.assertEqual(f1_tag, TAG_NONE)
+        self.assertEqual(f0_tag, TAG_MUT_COLLEC)
+        self.assertEqual(
+            mut_kind(heap.words[obj_field_val_addr(addr, 0)]), MUT_DICT
+        )
+        self.assertEqual(f1_tag, TAG_CONTROL)
+        self.assertEqual(
+            heap.words[obj_field_val_addr(addr, 1)] & 0xF, CTL_NONE
+        )
         self.assertEqual(f2_tag, TAG_SHORT_STR)
         self.assertEqual(heap.words[obj_field_val_addr(addr, 2)], name[1])
 
@@ -134,7 +144,10 @@ class TestAllocBuiltin(unittest.TestCase):
             heap.words[obj_field_val_addr(addr, 0)], int_value(4)
         )
         self.assertEqual(
-            heap.words[obj_field_tag_addr(addr, 1)] & 0xF, TAG_NULL
+            heap.words[obj_field_tag_addr(addr, 1)] & 0xF, TAG_CONTROL
+        )
+        self.assertEqual(
+            heap.words[obj_field_val_addr(addr, 1)] & 0xF, CTL_NULL
         )
 
         inst = heap.alloc_instance()
@@ -149,7 +162,9 @@ class TestAllocBytearray(unittest.TestCase):
     def test_zeroed_buffer(self) -> None:
         heap = HeapImageBuilder()
         handle = heap.alloc_bytearray(16)
-        addr = handle[1]
+        self.assertEqual(handle[0], TAG_MUT_COLLEC)
+        self.assertEqual(mut_kind(handle[1]), MUT_BYTEARRAY)
+        addr = mut_addr(handle[1])
         self.assertEqual(ob_kind(heap.words[addr]), OBK_BYTEARRAY)
         self.assertEqual(heap.words[obj_field_val_addr(addr, 0)], 16)
         buf = heap.words[obj_field_val_addr(addr, 1)]
