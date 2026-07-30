@@ -27,11 +27,11 @@ module pycore_exec #(
     logic [63:0] rs2_value;
     logic [PYCORE_VAL_WIDTH-1:0] rs1_value_wide;
     logic [PYCORE_VAL_WIDTH-1:0] rs2_value_wide;
-    logic [1:0] exec_unit_sel;
+    logic [2:0] exec_unit_sel;
     logic       promote_rs1;
     logic       promote_rs2;
-    logic [1:0] promote_rs1_mode;
-    logic [1:0] promote_rs2_mode;
+    logic [2:0] promote_rs1_mode;
+    logic [2:0] promote_rs2_mode;
     logic [3:0] result_tag;
     logic       tag_trap;
     logic [4:0] tag_trap_code;
@@ -40,10 +40,13 @@ module pycore_exec #(
     logic [63:0] promoted_rs2;
     logic [63:0] unit_a;
     logic [63:0] unit_b;
+    logic [127:0] complex_a;
+    logic [127:0] complex_b;
     logic [63:0] int_result;
     logic [63:0] mul_result;
     logic [63:0] div_result;
     logic [63:0] fpu_result;
+    logic [127:0] complex_result;
     logic        int_zero;
     logic        int_overflow;
     logic        mul_done;
@@ -54,6 +57,8 @@ module pycore_exec #(
     logic        fpu_done;
     logic        fpu_stall;
     logic        fpu_exception;
+    logic        complex_trap;
+    logic [4:0]  complex_trap_code;
     logic [63:0] pow_result;
     logic        pow_trap;
     logic [7:0] string_mem [0:STRING_MEM_BYTES-1];
@@ -136,6 +141,30 @@ module pycore_exec #(
         .value_out_o(promoted_rs2)
     );
 
+    function automatic [127:0] pycore_value_as_complex(
+        input logic [PYCORE_TAG_WIDTH-1:0] tag,
+        input logic [PYCORE_VAL_WIDTH-1:0] value
+    );
+        logic [63:0] real_bits;
+        begin
+            unique case (tag)
+                PY_TAG_COMPLEX: pycore_value_as_complex = value;
+                PY_TAG_FLOAT: begin
+                    pycore_value_as_complex = {64'd0, value[63:0]};
+                end
+                PY_TAG_BOOL: begin
+                    real_bits = value[0] ? 64'h3FF0000000000000 : 64'd0;
+                    pycore_value_as_complex = {64'd0, real_bits};
+                end
+                default: begin
+                    // INT (and any unexpected numeric promote path): cast i64→f64.
+                    real_bits = $realtobits($itor($signed(value[63:0])));
+                    pycore_value_as_complex = {64'd0, real_bits};
+                end
+            endcase
+        end
+    endfunction
+
     always_comb begin
         unit_a = promoted_rs1;
         unit_b = promoted_rs2;
@@ -143,6 +172,8 @@ module pycore_exec #(
             unit_a = {63'b0, rs1_value[0]};
             unit_b = {63'b0, rs2_value[0]};
         end
+        complex_a = pycore_value_as_complex(rs1_tag, rs1_value_wide);
+        complex_b = pycore_value_as_complex(rs2_tag, rs2_value_wide);
     end
 
     pycore_int_alu int_alu (
@@ -196,6 +227,15 @@ module pycore_exec #(
         .exception_o(fpu_exception),
         .done_o(fpu_done),
         .stall_o(fpu_stall)
+    );
+
+    pycore_complex_alu complex_alu (
+        .op_a_i(complex_a),
+        .op_b_i(complex_b),
+        .op_i(alu_op_i),
+        .result_o(complex_result),
+        .trap_o(complex_trap),
+        .trap_code_o(complex_trap_code)
     );
 
     always_comb begin
@@ -439,18 +479,29 @@ module pycore_exec #(
                         trap_code_o = PY_TRAP_FPU_EXCEPTION;
                     end
                 end
+                PY_EXEC_COMPLEX: begin
+                    selected_value = 64'b0;
+                    if (complex_trap) begin
+                        trap_o = valid_i;
+                        trap_code_o = complex_trap_code;
+                    end
+                end
                 default: begin
                     trap_o = valid_i;
                     trap_code_o = PY_TRAP_TYPE;
                 end
             endcase
 
-            if (result_tag == PY_TAG_INT) begin
-                wide_value = {{64{selected_value[63]}}, selected_value};
+            if (exec_unit_sel == PY_EXEC_COMPLEX && !trap_o) begin
+                result_o = pycore_make_entry(result_tag, complex_result);
             end else begin
-                wide_value = {64'b0, selected_value};
+                if (result_tag == PY_TAG_INT) begin
+                    wide_value = {{64{selected_value[63]}}, selected_value};
+                end else begin
+                    wide_value = {64'b0, selected_value};
+                end
+                result_o = pycore_make_entry(result_tag, wide_value);
             end
-            result_o = pycore_make_entry(result_tag, wide_value);
         end
     end
 

@@ -31,6 +31,7 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_mul.sv \
 	pycore/rtl/pycore_div.sv \
 	pycore/rtl/pycore_fpu.sv \
+	pycore/rtl/pycore_complex_alu.sv \
 	pycore/rtl/pycore_exec.sv \
 	pycore/rtl/pycore_regfile.sv \
 	pycore/rtl/pycore_fetch.sv \
@@ -228,6 +229,7 @@ pycore-exec:
 		pycore/rtl/pycore_mul.sv \
 		pycore/rtl/pycore_div.sv \
 		pycore/rtl/pycore_fpu.sv \
+		pycore/rtl/pycore_complex_alu.sv \
 		pycore/rtl/pycore_exec.sv \
 		pycore/tb/tb_exec.sv
 	./$(BUILD_DIR)/pycore_exec/Vtb_exec
@@ -245,6 +247,7 @@ pycore-string-exec:
 		pycore/rtl/pycore_mul.sv \
 		pycore/rtl/pycore_div.sv \
 		pycore/rtl/pycore_fpu.sv \
+		pycore/rtl/pycore_complex_alu.sv \
 		pycore/rtl/pycore_exec.sv \
 		pycore/tb/tb_string_exec.sv
 	./$(BUILD_DIR)/pycore_string_exec/Vtb_string_exec
@@ -262,6 +265,7 @@ pycore-type-pairs:
 		pycore/rtl/pycore_mul.sv \
 		pycore/rtl/pycore_div.sv \
 		pycore/rtl/pycore_fpu.sv \
+		pycore/rtl/pycore_complex_alu.sv \
 		pycore/rtl/pycore_exec.sv \
 		pycore/tb/tb_type_pairs.sv
 	./$(BUILD_DIR)/pycore_type_pairs/Vtb_type_pairs

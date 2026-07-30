@@ -4,11 +4,11 @@ module pycore_tag_decode (
     input  logic [3:0] rs1_tag_i,
     input  logic [3:0] rs2_tag_i,
     input  logic [4:0] alu_op_i,
-    output logic [1:0] exec_unit_sel_o,
+    output logic [2:0] exec_unit_sel_o,
     output logic       promote_rs1_o,
     output logic       promote_rs2_o,
-    output logic [1:0] promote_rs1_mode_o,
-    output logic [1:0] promote_rs2_mode_o,
+    output logic [2:0] promote_rs1_mode_o,
+    output logic [2:0] promote_rs2_mode_o,
     output logic [3:0] result_tag_o,
     output logic       is_trap_o,
     output logic [4:0] trap_code_o
@@ -58,6 +58,12 @@ module pycore_tag_decode (
         end \
     end
 
+
+`define PYCORE_ROUTE_COMPLEX_BINARY(_out_tag) \
+    begin \
+        exec_unit_sel_o = PY_EXEC_COMPLEX; \
+        result_tag_o = (_out_tag); \
+    end
 `define PYCORE_ROUTE_INT_BINARY(_out_tag) \
     begin \
         exec_unit_sel_o = PY_EXEC_INT; \
@@ -112,6 +118,9 @@ module pycore_tag_decode (
                     end else if (rs1_tag_i == PY_TAG_FLOAT) begin
                         exec_unit_sel_o = PY_EXEC_FLOAT;
                         result_tag_o = PY_TAG_FLOAT;
+                    end else if (rs1_tag_i == PY_TAG_COMPLEX) begin
+                        exec_unit_sel_o = PY_EXEC_COMPLEX;
+                        result_tag_o = PY_TAG_COMPLEX;
                     end else begin
                         `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
                     end
@@ -134,7 +143,10 @@ module pycore_tag_decode (
                 end
 
                 PY_ALU_NOT: begin
-                    if (pycore_is_numeric_tag(rs1_tag_i)) begin
+                    if (rs1_tag_i == PY_TAG_COMPLEX) begin
+                        exec_unit_sel_o = PY_EXEC_COMPLEX;
+                        result_tag_o = PY_TAG_BOOL;
+                    end else if (pycore_is_real_numeric_tag(rs1_tag_i)) begin
                         exec_unit_sel_o = (rs1_tag_i == PY_TAG_FLOAT) ? PY_EXEC_FLOAT : PY_EXEC_BOOL;
                         result_tag_o = PY_TAG_BOOL;
                     end else begin
@@ -143,7 +155,14 @@ module pycore_tag_decode (
                 end
 
                 PY_ALU_TRUE_DIV: begin
-                    if (pycore_is_numeric_tag(rs1_tag_i) && pycore_is_numeric_tag(rs2_tag_i)) begin
+                    if ((rs1_tag_i == PY_TAG_COMPLEX) || (rs2_tag_i == PY_TAG_COMPLEX)) begin
+                        if (pycore_is_numeric_tag(rs1_tag_i) && pycore_is_numeric_tag(rs2_tag_i)) begin
+                            `PYCORE_ROUTE_COMPLEX_BINARY(PY_TAG_COMPLEX)
+                        end else begin
+                            `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
+                        end
+                    end else if (pycore_is_real_numeric_tag(rs1_tag_i) &&
+                                 pycore_is_real_numeric_tag(rs2_tag_i)) begin
                         `PYCORE_ROUTE_FLOAT_BINARY(PY_TAG_FLOAT)
                     end else begin
                         `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
@@ -155,6 +174,12 @@ module pycore_tag_decode (
                         // String concatenation runs in pycore_exec's string path.
                         exec_unit_sel_o = PY_EXEC_INT;
                         result_tag_o = PY_TAG_SHORT_STR;
+                    end else if ((rs1_tag_i == PY_TAG_COMPLEX) || (rs2_tag_i == PY_TAG_COMPLEX)) begin
+                        if (pycore_is_numeric_tag(rs1_tag_i) && pycore_is_numeric_tag(rs2_tag_i)) begin
+                            `PYCORE_ROUTE_COMPLEX_BINARY(PY_TAG_COMPLEX)
+                        end else begin
+                            `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
+                        end
                     end else if (rs1_tag_i == PY_TAG_FLOAT || rs2_tag_i == PY_TAG_FLOAT) begin
                         if (pycore_is_numeric_tag(rs1_tag_i) && pycore_is_numeric_tag(rs2_tag_i)) begin
                             `PYCORE_ROUTE_FLOAT_BINARY(PY_TAG_FLOAT)
@@ -170,16 +195,44 @@ module pycore_tag_decode (
                     end
                 end
 
-                PY_ALU_SUB, PY_ALU_MUL, PY_ALU_FLOOR_DIV, PY_ALU_MOD, PY_ALU_POWER: begin
-                    if (rs1_tag_i == PY_TAG_FLOAT || rs2_tag_i == PY_TAG_FLOAT) begin
+                PY_ALU_SUB, PY_ALU_MUL: begin
+                    if ((rs1_tag_i == PY_TAG_COMPLEX) || (rs2_tag_i == PY_TAG_COMPLEX)) begin
                         if (pycore_is_numeric_tag(rs1_tag_i) && pycore_is_numeric_tag(rs2_tag_i)) begin
+                            `PYCORE_ROUTE_COMPLEX_BINARY(PY_TAG_COMPLEX)
+                        end else begin
+                            `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
+                        end
+                    end else if (rs1_tag_i == PY_TAG_FLOAT || rs2_tag_i == PY_TAG_FLOAT) begin
+                        if (pycore_is_real_numeric_tag(rs1_tag_i) &&
+                            pycore_is_real_numeric_tag(rs2_tag_i)) begin
                             `PYCORE_ROUTE_FLOAT_BINARY(PY_TAG_FLOAT)
                         end else begin
                             `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
                         end
                     end else if (rs1_tag_i == PY_TAG_BOOL && rs2_tag_i == PY_TAG_BOOL) begin
                         `PYCORE_ROUTE_INT_BINARY(PY_TAG_INT)
-                    end else if (pycore_is_numeric_tag(rs1_tag_i) && pycore_is_numeric_tag(rs2_tag_i)) begin
+                    end else if (pycore_is_real_numeric_tag(rs1_tag_i) &&
+                                 pycore_is_real_numeric_tag(rs2_tag_i)) begin
+                        `PYCORE_ROUTE_INT_BINARY(PY_TAG_INT)
+                    end else begin
+                        `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
+                    end
+                end
+
+                PY_ALU_FLOOR_DIV, PY_ALU_MOD, PY_ALU_POWER: begin
+                    if ((rs1_tag_i == PY_TAG_COMPLEX) || (rs2_tag_i == PY_TAG_COMPLEX)) begin
+                        `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
+                    end else if (rs1_tag_i == PY_TAG_FLOAT || rs2_tag_i == PY_TAG_FLOAT) begin
+                        if (pycore_is_real_numeric_tag(rs1_tag_i) &&
+                            pycore_is_real_numeric_tag(rs2_tag_i)) begin
+                            `PYCORE_ROUTE_FLOAT_BINARY(PY_TAG_FLOAT)
+                        end else begin
+                            `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
+                        end
+                    end else if (rs1_tag_i == PY_TAG_BOOL && rs2_tag_i == PY_TAG_BOOL) begin
+                        `PYCORE_ROUTE_INT_BINARY(PY_TAG_INT)
+                    end else if (pycore_is_real_numeric_tag(rs1_tag_i) &&
+                                 pycore_is_real_numeric_tag(rs2_tag_i)) begin
                         `PYCORE_ROUTE_INT_BINARY(PY_TAG_INT)
                     end else begin
                         `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
@@ -210,8 +263,17 @@ module pycore_tag_decode (
                 // equality (==/!=). Ordering on strings and all other tags trap.
                 // LONG_STR uses descriptor equality (see bytecode_support.md).
                 PY_ALU_EQ, PY_ALU_NE, PY_ALU_LT, PY_ALU_LE, PY_ALU_GT, PY_ALU_GE: begin
-                    if (rs1_tag_i == PY_TAG_FLOAT || rs2_tag_i == PY_TAG_FLOAT) begin
-                        if (pycore_is_numeric_tag(rs1_tag_i) && pycore_is_numeric_tag(rs2_tag_i)) begin
+                    if ((rs1_tag_i == PY_TAG_COMPLEX) || (rs2_tag_i == PY_TAG_COMPLEX)) begin
+                        if ((alu_op_i == PY_ALU_EQ || alu_op_i == PY_ALU_NE) &&
+                            pycore_is_numeric_tag(rs1_tag_i) &&
+                            pycore_is_numeric_tag(rs2_tag_i)) begin
+                            `PYCORE_ROUTE_COMPLEX_BINARY(PY_TAG_BOOL)
+                        end else begin
+                            `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
+                        end
+                    end else if (rs1_tag_i == PY_TAG_FLOAT || rs2_tag_i == PY_TAG_FLOAT) begin
+                        if (pycore_is_real_numeric_tag(rs1_tag_i) &&
+                            pycore_is_real_numeric_tag(rs2_tag_i)) begin
                             `PYCORE_ROUTE_FLOAT_BINARY(PY_TAG_BOOL)
                         end else begin
                             `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
@@ -248,4 +310,5 @@ endmodule
 
 `undef PYCORE_FORCE_TRAP
 `undef PYCORE_ROUTE_FLOAT_BINARY
+`undef PYCORE_ROUTE_COMPLEX_BINARY
 `undef PYCORE_ROUTE_INT_BINARY
