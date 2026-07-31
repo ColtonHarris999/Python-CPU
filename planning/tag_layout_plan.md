@@ -1,4 +1,6 @@
-# Tag layout (restructure)
+# Tag layout (restructure) — historical plan
+
+> Superseded by `pycore/docs/tags.md`. Kept only as planning history.
 
 Primary 4-bit tags after the tag-space restructure. Numeric types are
 contiguous for ALU decode. Secondary discriminators live in the value field
