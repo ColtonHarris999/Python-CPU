@@ -18,21 +18,20 @@ halting. Fatal traps still go through `pycore_trap.sv` and halt. With
 `EXCORE_EN=1`, recoverable codes are intercepted before `pycore_trap` and
 routed through `S_TRAP_MARSHAL` / `S_TRAP_WAIT`.
 
-How the split landed (all phases shipped):
+Current two-core pieces:
 
-- **Phase A**: growable LIST layout (stable object + relocatable buffer);
+- Growable LIST layout (stable object + relocatable buffer);
   spare-capacity `LIST_APPEND` on pycore; `PY_TRAP_LIST_GROW` /
   `PY_TRAP_LIST_EXTEND` (empty extend stays a no-op pop). Without
   `EXCORE_EN`, recoverable traps are fatal.
-- **Phase B**: standalone excore — `excore_cpu.sv` (wrapper around the
-  vendored `riscv_multicycle` hart), `excore_mmio.sv`, self-contained
-  assembler (`excore/tools/asm_rv32.py`), and `excore/fw/list_grow.s`
-  (now also list-delete / dict-grow / set-grow / set-update). Unit-tested
-  against a mocked mailbox + real `pycore_mem_bank`. See `excore/docs/`
-  and `excore/rtl/singlecore/README.md`.
-- **Phase C**: mailbox transport (`trap_mailbox.sv`), memory-ownership
-  grant mux in `pycore_excore_system.sv`, and pycore marshal/wait that
-  apply `COMPLETED` / `RETRY` / `FATAL` results. See below.
+- Standalone excore — `excore_cpu.sv` (wrapper around the vendored
+  `riscv_multicycle` hart), `excore_mmio.sv`, assembler
+  (`excore/tools/asm_rv32.py`), and `excore/fw/list_grow.s` (list grow /
+  extend / delete, dict grow, set grow / update). See `excore/docs/` and
+  `excore/rtl/singlecore/README.md`.
+- Mailbox transport (`trap_mailbox.sv`), memory-ownership grant mux in
+  `pycore_excore_system.sv`, and pycore marshal/wait that apply
+  `COMPLETED` / `RETRY` / `FATAL` results. See below.
 
 ### The excore contract: "complete the semantic effect"
 
@@ -72,7 +71,7 @@ excore. Empty `LIST_EXTEND` is a no-op pop on pycore; spare-capacity
 `LIST_APPEND` and last-element list delete stay O(1) on pycore. See
 `pycore/docs/dict_excore.md` and `pycore/docs/set_excore.md`.
 
-### Two-core transport and integration (Phase C)
+### Two-core transport and integration
 
 #### Mailbox message formats
 
@@ -223,58 +222,57 @@ tag/value slice indices live in `pycore_defs.svh` (`PYCORE_VAL_WIDTH`,
 functions (`pycore_get_tag`, `pycore_get_val`, `pycore_make_entry`,
 `pycore_int_entry`) so no module hardcodes a bit range.
 
-The tag encoding is:
+The tag encoding (see also `pycore/docs/tags.md`):
 
-| Tag | Meaning |
-| --- | --- |
-| `0000` | `UNINITIALIZED` |
-| `0001` | signed `INT` (64-bit fast path, sign-extended to 128) |
-| `0010` | IEEE 754 double `FLOAT` in `value[63:0]`, upper bits zero |
-| `0011` | `BOOL`, with `value[0]` significant, upper bits zero |
-| `0100` | raw `PTR`, 128-bit byte address for data memory |
-| `0101` | `TUPLE`: `size[63:0]`, `addr[63:0]` |
-| `0110` | `SHORT_STR` inline string: `size[3:0]`, `bytes[119:0]`, `flags[3:0]` |
-| `0111` | `LONG_STR` descriptor: `size[63:0]`, `addr[63:0]` |
-| `1000` | opaque `OBJECT`: `addr[63:0]` |
-| `1001` | `DICT` python dictionary: `addr[63:0]` |
-| `1010` | `LIST` python list: `addr[63:0]` |
-| `1011` | `SET` python set: `addr[63:0]` |
-| `1100` | `CODE_OBJECT` PythonCodeObject: `addr[63:0]` |
-| `1101` | `FRAME_OBJECT` PythonFrameObject: `addr[63:0]` |
-| `1110` | `NULL` CPython `self_or_null` call sentinel |
-| `1111` | `NONE` python None type |
+| Tag | Name | Notes |
+| --- | --- | --- |
+| `0000` | CONTROL | `value[3:0]`: UNINIT=0, NONE=1, NULL=2 |
+| `0001` | INT | signed i64 fast path, sign-extended to 128 |
+| `0010` | FLOAT | IEEE 754 binary64 in `value[63:0]` |
+| `0011` | COMPLEX | real `[63:0]`, imag `[127:64]` |
+| `0100` | BOOL | `value[0]` significant |
+| `0101` | ITER | hybrid iterator payload |
+| `0110` | TUPLE | `{ size[63:0], addr[63:0] }` |
+| `0111` | SHORT_STR | inline ≤15 UTF-8 bytes |
+| `1000` | LONG_STR | `{ size[63:0], addr[63:0] }` |
+| `1001` | MUT_COLLEC | kind `[127:124]`: LIST/DICT/SET/BYTEARRAY; addr `[63:0]` |
+| `1010` | OBJECT | general heap object (`ob_head` kinds) |
+| `1011` | RANGE | mode bit 127: inline i32 triple or tuple pointer |
+| `1100` | BYTES | reserved / partial |
+| `1101` | CODE_OBJECT | |
+| `1110` | TOMBSTONE | deleted dict/set table sentinel |
+| `1111` | FROZENSET | reserved |
 
 Undefined local reads still trap instead of returning a garbage value.
 
 ### 128-bit value semantics
 
-The value field is 128 bits wide, but the v1 datapath keeps the existing
-single-cycle math leaves rather than widening every unit:
+The value field is 128 bits wide. Arithmetic units keep a compact fast path
+rather than widening every leave:
 
 - `INT` uses a **64-bit signed fast path**. The ALU, multiplier, divider, and
   power unit operate on `value[63:0]`; `pycore_exec` sign-extends the 64-bit
-  result into `value[127:64]`. This deviates from CPython arbitrary-precision
-  integers in the same direction the prototype already did (overflow wraps at
-  64 bits). A true 128-bit INT ALU is future work; the wider field reserves the
-  encoding space for it.
+  result into `value[127:64]`. Overflow wraps at 64 bits (not CPython
+  arbitrary precision).
 - `FLOAT` stores the IEEE 754 double in `value[63:0]` with `value[127:64] = 0`.
-  The FPU remains 64-bit.
+- `COMPLEX` stores two binary64 values (real/imag); `pycore_complex_alu`
+  handles ADD/SUB/MUL/TRUE_DIV/NEG/POS/EQ/NE/NOT.
 - `BOOL` keeps the truth value in `value[0]` with all other bits zero.
-- `PTR` is architecturally a 128-bit byte address. In v1 only `value[31:0]` is
-  decoded onto the data bus (`ADDR_WIDTH = 32`); a nonzero upper PTR field
-  raises `MEM_FAULT`.
-- `SHORT_STR` uses 15 UTF-8 bytes inline in the value field plus a 4-bit size.
-  The low 4 flag bits are reserved for future use and currently written zero.
-- `LONG_STR` uses `{size, addr}` and stores byte payloads in string memory.
-  `BINARY_OP (+)` concatenates `SHORT_STR`/`LONG_STR` pairs, producing short or
-  long output based on result length; oversized results trap with `MEM_FAULT`.
-- `UNINITIALIZED` and `OBJECT` retain their trap semantics unchanged.
+- `MUT_COLLEC` / `OBJECT` / `ITER` / `CODE_OBJECT` addresses use the low
+  64 bits; the data bus is 32-bit (`ADDR_WIDTH = 32`).
+- `SHORT_STR` uses 15 UTF-8 bytes inline plus a 4-bit size.
+- `LONG_STR` uses `{size, addr}` and stores byte payloads in string memory
+  (`pycore_string_mem`). `BINARY_OP (+)` concatenates string pairs; oversized
+  results trap with `MEM_FAULT`.
+- `CONTROL` (UNINIT/NONE/NULL) and non-numeric tags trap on arithmetic unless
+  a dedicated path handles them (e.g. string `+`, identity `IS_OP`).
 
 ## Trap policy
 
-`OBJECT`, `UNINITIALIZED`, `PTR`, and reserved tags trap for arithmetic,
-comparison, branch truthiness, and unary operations. `OBJECT` is not a generic
-slow arithmetic type; it means "unknown, therefore unsafe." Reimplementing
+`OBJECT`, unbound `CONTROL`/UNINIT, `ITER`, `MUT_COLLEC`, and reserved tags
+trap for arithmetic, comparison, branch truthiness, and unary operations
+unless a dedicated opcode path handles them. `OBJECT` is not a generic slow
+arithmetic type; it means "unknown, therefore unsafe." Reimplementing
 CPython's complete object protocol in hardware is explicitly outside PyCore's
 fast path.
 
@@ -505,16 +503,14 @@ them.  `DMEM_HEX` on `pycore_system` / `pycore_dmem` preloads the whole dmem
 bank (not just the first 4 KB block).  The boot record occupies
 `[0x3e0, 0x440)` and must not overlap heap objects.
 
-### LIST in-dmem layout (v2 — growable split object/buffer)
+### LIST in-dmem layout
 
 All addresses are 16-byte aligned (128-bit dmem slot granularity).
 
-Lists moved (Phase A) from a v1 inline layout (header immediately followed
-by elements at the same base) to a **CPython-style split model**: a stable
-32-byte **object** whose address never changes (and is what the `LIST`
-handle names), pointing at a relocatable **element buffer**.  This is the
-prerequisite for growth — v1's inline layout made growing a list impossible
-without moving it, which would dangle every alias of the handle.
+Lists use a **CPython-style split model**: a stable 32-byte **object** whose
+address never changes (named by a `MUT_COLLEC`/`MUT_LIST` handle), pointing
+at a relocatable **element buffer**. Growing the buffer never moves the
+handle address.
 
 ```text
 obj_addr + 0  : header  { capacity[63:0], length[63:0] }
@@ -537,10 +533,8 @@ This avoids any non-16-byte addressing.
 Helpers in `pycore_defs.svh`: `pycore_list_obitem_addr(obj)` /
 `pycore_list_obitem(slot)` resolve the buffer address from the object;
 `pycore_list_val_addr(buf, idx)` / `pycore_list_tag_addr(buf, idx)` compute
-element addresses **within the buffer** (not the object — every read/write
-path resolves `ob_item` first, then addresses the buffer, adding one dmem
-op versus v1: `CONT_SUBSCR_LIST` / `CONT_STORE_LIST` insert a `CP_LIST_BUF`
-phase between the header read and the element access).
+element addresses **within the buffer**. Every read/write path resolves
+`ob_item` first (`CP_LIST_BUF` after the header read).
 
 `BUILD_LIST` allocates the object and a `count`-sized buffer in a single
 combined OOM check, with `capacity == count` exactly (no spare capacity —
@@ -596,11 +590,12 @@ iterator at TOS and redirects over `END_FOR` to `POP_ITER`, which performs the
 single pop. Unsupported Python iterator types raise `PY_TRAP_TYPE`; there is
 no generic `__iter__` / `__next__` dispatch.
 
-DICT `FOR_ITER` reads keys from the v3 order sidecar, never from hash-slot
-order. SET scans hash slots and skips UNINIT/tombstone tags; its order is
-intentionally undefined. A size-changing mutation during either loop fails
-the snapshot check with `PY_TRAP_TYPE` (the native stand-in for CPython's
-`RuntimeError`). Empty DICT/SET objects take the normal exhaustion redirect.
+DICT `FOR_ITER` reads keys from the insertion-order sidecar, never from
+hash-slot order. SET scans hash slots and skips UNINIT/tombstone tags; its
+order is intentionally undefined. A size-changing mutation during either
+loop fails the snapshot check with `PY_TRAP_TYPE` (the native stand-in for
+CPython's `RuntimeError`). Empty DICT/SET objects take the normal
+exhaustion redirect.
 
 Element rewrites through `STORE_SUBSCR` are visible when their index has not
 yet been yielded. Rebinding the Python source name does not affect the
@@ -713,11 +708,11 @@ allocation bytes : size * 32
 Helpers: `pycore_tuple_val_addr`, `pycore_tuple_tag_addr`,
 `pycore_tuple_alloc_bytes`, `pycore_tuple_size`.
 
-### DICT in-dmem layout (v3)
+### DICT in-dmem layout
 
-All addresses are 16-byte aligned (128-bit dmem slot granularity). Layout v3
-keeps a **stable 48-byte object**, an insertion-order key sidecar, and a
-relocatable table:
+All addresses are 16-byte aligned (128-bit dmem slot granularity). A dict is
+a **stable 48-byte object**, an insertion-order key sidecar, and a
+relocatable open-addressed table:
 
 ```text
 obj+0  : header { slot_count[63:0], used[63:0] }
@@ -728,7 +723,7 @@ order + i*32 + 0  : key value
 order + i*32 + 16 : key tag
 
 table + i*64 + 0  : key value
-table + i*64 + 16 : key tag   (UNINIT=empty, TOMBSTONE=DICT=9 deleted)
+table + i*64 + 16 : key tag   (UNINIT=empty, TOMBSTONE=14 deleted)
 table + i*64 + 32 : value value
 table + i*64 + 48 : value tag
 ```
@@ -774,9 +769,10 @@ and probe rules.
 ### DICT FSM path
 
 `CONT_BUILD_MAP`, `CONT_SUBSCR_DICT`, `CONT_STORE_DICT`, plus dict
-`DELETE_SUBSCR` / `CONTAINS_OP` paths, share the dict probe phases. Layout v3
-reads metadata and packed pointers before slot access. `CONT_BUILD_TUPLE` and
-`CONT_SUBSCR_TUPLE` reuse the shared LIST-style phases without a header.
+`DELETE_SUBSCR` / `CONTAINS_OP` paths, share the dict probe phases. The
+object header reads metadata and packed pointers before slot access.
+`CONT_BUILD_TUPLE` and `CONT_SUBSCR_TUPLE` reuse the shared LIST-style
+phases without a header.
 
 - **`BUILD_MAP`**: allocates a 48B object + order buffer + table, then probes
   each pair and appends each new key to the order buffer. Empty maps still
@@ -792,7 +788,8 @@ reads metadata and packed pointers before slot access. `CONT_BUILD_TUPLE` and
 
 ### SET in-dmem layout
 
-Sets mirror dict layout v2 but store **elements only** (no value half):
+Sets use a compact two-word object (no order sidecar) and store **elements
+only** (no value half):
 
 ```text
 obj+0  : header { slot_count[63:0], used[63:0] }
@@ -803,8 +800,8 @@ table + i*32 + 16 : element tag   (UNINIT=empty, TOMBSTONE=14 deleted)
 ```
 
 Handle: `PY_TAG_MUT_COLLEC` with `PY_MUT_SET` and the object address. Hash /
-rich-eq / tombstone policy matches dict (dedicated `PY_TAG_TOMBSTONE`). Slot count =
-`next_pow2(max(4, 2 × n_elems))`.
+rich-eq / tombstone policy matches dict (dedicated `PY_TAG_TOMBSTONE`). Slot
+count = `next_pow2(max(4, 2 × n_elems))`.
 
 | Op | Path |
 | --- | --- |

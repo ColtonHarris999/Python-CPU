@@ -35,31 +35,26 @@ lives in `pycore/rtl/attic/pycore_frame_buffer.sv` (not in the build).
 
 ### Tag map
 
-| Tag | Meaning |
-| --- | --- |
-| `0000` | `UNINITIALIZED` |
-| `0001` | `INT` signed (64-bit fast path, sign-extended to 128) |
-| `0010` | `FLOAT` IEEE 754 double in `value[63:0]`, upper bits zero |
-| `0011` | `BOOL` with `value[0]` significant, upper bits zero |
-| `0100` | `PTR` raw 128-bit byte address for data memory |
-| `0101` | `TUPLE` `size[63:0]`, `addr[63:0]` |
-| `0110` | `SHORT_STR` inline string: `size[3:0]`, `bytes[119:0]`, `flags[3:0]` |
-| `0111` | `LONG_STR` descriptor: `size[63:0]`, `addr[63:0]` |
-| `1000` | `OBJECT` opaque `addr[63:0]` |
-| `1001` | `DICT` python dictionary: `addr[63:0]` (also used as dict/set **tombstone** key/element tag) |
-| `1010` | `LIST` python list: `addr[63:0]` |
-| `1011` | `SET` python set: `addr[63:0]` |
-| `1100` | `CODE_OBJECT` PythonCodeObject: `addr[63:0]` |
-| `1101` | `FRAME_OBJECT` reserved |
-| `1110` | `NULL` CPython non-method call sentinel (`PUSH_NULL` / `LOAD_GLOBAL` low bit) |
-| `1111` | `NONE` python None type |
+| Tag | Name | Notes |
+| --- | --- | --- |
+| `0000` | CONTROL | UNINIT / NONE / NULL via `value[3:0]` |
+| `0001` | INT | signed i64 fast path |
+| `0010` | FLOAT | IEEE 754 binary64 |
+| `0011` | COMPLEX | real + imag binary64 |
+| `0100` | BOOL | `value[0]` |
+| `0101` | ITER | hybrid iterator |
+| `0110` | TUPLE | `{size, addr}` |
+| `0111` | SHORT_STR | inline ≤15 UTF-8 bytes |
+| `1000` | LONG_STR | `{len, addr}` |
+| `1001` | MUT_COLLEC | LIST / DICT / SET / BYTEARRAY via kind nibble |
+| `1010` | OBJECT | general heap object |
+| `1011` | RANGE | inline i32 triple or tuple pointer |
+| `1100` | BYTES | reserved / partial |
+| `1101` | CODE_OBJECT | |
+| `1110` | TOMBSTONE | deleted dict/set key sentinel |
+| `1111` | FROZENSET | reserved |
 
-String value layouts:
-
-- `SHORT_STR`: `size[3:0]`, `payload[119:0]`, `flags[3:0]`
-- `LONG_STR`: `size[63:0]`, `addr[63:0]`
-
-Additional design detail is in `pycore/docs/architecture.md`.
+Full payload details: `pycore/docs/tags.md` and `pycore/docs/architecture.md`.
 
 ## Ownership split (containers ↔ excore)
 
@@ -89,12 +84,13 @@ the serialized `co_consts` tuple. Do not use the old inline three-slot
 | Doc | Path |
 | --- | --- |
 | Two-core architecture | `pycore/docs/architecture.md` |
+| Tag map | `pycore/docs/tags.md` |
 | Bytecode support matrix | `pycore/docs/bytecode_support.md` |
+| Object model | `pycore/docs/object_model.md` |
 | Image / preprocessing flow | `pycore/docs/preprocessing_breakdown.md` |
 | Dict + excore split | `pycore/docs/dict_excore.md` |
 | Sets + hash-container split | `pycore/docs/set_excore.md` |
-| Dead-code audit (historical) | `pycore/docs/dead_code_report.md` |
-| Optimization backlog | `pycore/docs/optimization_plan.md` |
+| Planning / historical notes | `planning/` |
 | excore MMIO map | `excore/docs/mmio_map.md` |
 | excore RV32I subset | `excore/docs/rv32i_subset.md` |
 | Firmware build | `excore/docs/firmware_build.md` |

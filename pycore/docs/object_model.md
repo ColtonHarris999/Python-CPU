@@ -9,9 +9,10 @@ mailbox) and `bytecode_support.md` (opcode tables).
 All 16 tag values are allocated. Widening `PYCORE_TAG_WIDTH` 4→5 ripples
 through RF, dmem packing, every hex image, and every testbench.
 
-**Decision:** `PY_TAG_OBJECT` (`4'b1000`) means *"heap object — read
+**Decision:** `PY_TAG_OBJECT` (`4'b1010`) means *"heap object — read
 `ob_head` for the kind."* Attribute and call paths pay one extra dmem read;
-that is already a multi-cycle path.
+that is already a multi-cycle path. Lists/dicts/sets use `MUT_COLLEC`, not
+`OBJECT`.
 
 ## D2 — Uniform header, tuple-element stride
 
@@ -32,13 +33,14 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 
 | `OBK_*` | Value | field0 | field1 | field2 | Size |
 | --- | --- | --- | --- | --- | --- |
-| `INSTANCE` | 1 | `__dict__` (DICT) | — | — | 64 B |
+| `INSTANCE` | 1 | `__dict__` (MUT_DICT) | — | — | 64 B |
 | `TYPE` | 2 | `tp_dict` | `tp_base` | `tp_name` | 128 B |
 | `BOUND_METHOD` | 3 | `__func__` | `__self__` | — | 96 B |
 | `BUILTIN` | 4 | `builtin_id` (INT) | `bound_self` | — | 96 B |
-| `BYTEARRAY` | 5 | `length` | `buf_addr` | `capacity` | 128 B |
+| `BYTEARRAY` | 5 | legacy OBJECT kind; prefer `MUT_BYTEARRAY` | | | |
 | `EXCEPTION` | 6 | `exc_type` | `args` (TUPLE) | — | 96 B |
-| `RANGE` | 7 | `start` (INT) | `stop` (INT) | `step` (INT) | 128 B |
+
+`range` values use the dedicated `PY_TAG_RANGE` tag (not an OBJECT kind).
 
 ### Builtin ids (`PY_BI_*` / `BI_*`)
 
@@ -52,21 +54,21 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | 5 | `LIST_APPEND` | |
 | 6 | `PRINT` | |
 | 7 | `LEN` | |
-| 8 | `RANGE` | Constructor |
+| 8 | `RANGE` | Emits `PY_TAG_RANGE` |
+| 9 | `SET` | Native empty / from-list-or-tuple constructor |
 
 Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
-module **builtins** dict (`DICT`). The seeded builtins dict holds
-`bytearray` / `max` / `len` / `print` / `range` as `OBK_BUILTIN` handles and
-`int` as
-an `OBK_TYPE` whose `tp_dict` contains `from_bytes` / `to_bytes`. Total boot
-record size is `BOOT_RECORD_BYTES = 96`.
+module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
+`bytearray` / `max` / `len` / `print` / `range` / `set` as `OBK_BUILTIN`
+handles and `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
+`to_bytes`. Total boot record size is `BOOT_RECORD_BYTES = 96`.
 
-## D3 — `__dict__` is a real DICT
+## D3 — `__dict__` is a real dict
 
 Instance and class attributes are ordinary PyCore dicts with string keys.
 Attribute lookup reuses `CP_DICT_PROBE` unchanged (hash, rich-eq, tombstones,
-`PY_TRAP_DICT_GROW` → excore). These use the v3 dict layout and therefore
-carry the same insertion-order key sidecar. No separate attribute-slot table.
+`PY_TRAP_DICT_GROW` → excore), including the insertion-order key sidecar.
+No separate attribute-slot table.
 
 ## D4 — Method calls allocate nothing on the hot path
 
