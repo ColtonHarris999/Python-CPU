@@ -123,7 +123,7 @@ class TestControlKeyPacking(unittest.TestCase):
             slot_count=4,
         )
         obj = encoding.mut_addr(handle[1])
-        table = builder.words[obj + 16]
+        table = builder.words[obj + 32] & ((1 << 64) - 1)
         # hash(CONTROL/NONE value=1) & 3 = slot 1.
         self.assertEqual(builder.words[table + 16 + 64], 0x10)
         # Other empty key-tag slots remain exactly zero.

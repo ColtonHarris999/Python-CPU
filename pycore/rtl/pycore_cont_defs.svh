@@ -28,7 +28,7 @@
     localparam logic [5:0] CONT_SET_ADD = 6'd24;// SET_ADD probe/insert
     localparam logic [5:0] CONT_CONTAINS_SET = 6'd25;// CONTAINS_OP on SET
     localparam logic [5:0] CONT_SET_UPDATE = 6'd26;// SET_UPDATE → always trap
-    localparam logic [5:0] CONT_GET_ITER = 6'd27;// LIST/TUPLE -> internal PTR iterator
+    localparam logic [5:0] CONT_GET_ITER = 6'd27;// LIST/TUPLE/RANGE/STR -> internal PTR
     localparam logic [5:0] CONT_FOR_ITER = 6'd28;// advance internal iterator
     localparam logic [5:0] CONT_LOAD_ATTR = 6'd29;// LOAD_ATTR (MRO + method form)
     localparam logic [5:0] CONT_STORE_ATTR = 6'd30;// STORE_ATTR → instance __dict__
@@ -81,7 +81,7 @@
     // CP_HDR/CP_VAL/CP_TAG so the always_ff case tables stay legible.
     localparam logic [5:0] CP_NAME_VAL = 6'd18;
     localparam logic [5:0] CP_NAME_TAG = 6'd19;
-    // LIST v2 / DICT v2 shared phases:
+    // LIST v2 / DICT v3 shared phases:
     //   CP_LIST_BUF (20): list ob_item OR dict table_ptr at obj_addr+16 —
     //     WRITE while installing (CONT_BUILD_LIST / CONT_BUILD_MAP) or READ
     //     while resolving the buffer/table base before element/slot access
@@ -123,4 +123,24 @@
     localparam logic [5:0] CP_ATTR_STATIC2 = 6'd37;
     localparam logic [5:0] CP_ATTR_STATIC3 = 6'd38;
     localparam logic [5:0] CP_ATTR_STATIC4 = 6'd39;
+    // Tuple-mode RANGE GET_ITER reads start/stop/step value/tag pairs.
+    localparam logic [5:0] CP_RANGE_START_VAL = 6'd41;
+    localparam logic [5:0] CP_RANGE_START_TAG = 6'd42;
+    localparam logic [5:0] CP_RANGE_STOP_VAL = 6'd43;
+    localparam logic [5:0] CP_RANGE_STOP_TAG = 6'd44;
+    localparam logic [5:0] CP_RANGE_STEP_VAL = 6'd45;
+    localparam logic [5:0] CP_RANGE_STEP_TAG = 6'd46;
+    // DICT v3 metadata/order-sidecar phases. Values may be reused by other
+    // container operations because each operation has its own case table.
+    localparam logic [5:0] CP_DICT_META = 6'd47;
+    localparam logic [5:0] CP_DICT_META_FINAL = 6'd48;
+    localparam logic [5:0] CP_DICT_ORDER_VAL = 6'd49;
+    localparam logic [5:0] CP_DICT_ORDER_TAG = 6'd50;
+    localparam logic [5:0] CP_DICT_ORDER_SCAN_VAL = 6'd51;
+    localparam logic [5:0] CP_DICT_ORDER_SCAN_TAG = 6'd52;
+    localparam logic [5:0] CP_DICT_ORDER_SHIFT_VAL_RD = 6'd53;
+    localparam logic [5:0] CP_DICT_ORDER_SHIFT_VAL_WR = 6'd54;
+    localparam logic [5:0] CP_DICT_ORDER_SHIFT_TAG_RD = 6'd55;
+    localparam logic [5:0] CP_DICT_ORDER_SHIFT_TAG_WR = 6'd56;
+    localparam logic [5:0] CP_DICT_ORDER_FINAL = 6'd57;
 

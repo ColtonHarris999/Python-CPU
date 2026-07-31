@@ -181,12 +181,14 @@ class HeapImageBuilder:
         return TAG_TUPLE, ((n & ((1 << 64) - 1)) << 64) | (base & ((1 << 64) - 1))
 
     # ---- DICT ----
-    # v2 layout (relocatable table — mirrors pycore_defs.svh DICT section):
+    # v3 layout (relocatable table — mirrors pycore_defs.svh DICT section):
     #   obj + 0  : header { slot_count[63:0], used[63:0] }
-    #   obj + 16 : { 64'd0, table_ptr[63:0] }  (0 if slot_count==0)
+    #   obj + 16 : { version[63:0], order_len[63:0] }
+    #   obj + 32 : { order_ptr[63:0], table_ptr[63:0] }
+    #   order + i*32 + 0/16 : key val/tag in insertion order
     #   table + i*64 + 0/16/32/48 : key val/tag, value val/tag
-    # BUILD_MAP-style images allocate object then table contiguously.
-    DICT_OBJ_BYTES = 32
+    # BUILD_MAP-style images allocate object, order buffer, then table.
+    DICT_OBJ_BYTES = 48
 
     def alloc_dict(
         self,
@@ -209,9 +211,14 @@ class HeapImageBuilder:
             raise ValueError("non-empty dict requires slot_count > 0")
 
         obj = self._alloc(self.DICT_OBJ_BYTES)
+        order = 0
         table = 0
         if slot_count:
+            order = self._alloc(slot_count * 32)
             table = self._alloc(slot_count * 64)
+            for i in range(slot_count):
+                self._write(order + i * 32, 0)
+                self._write(order + 16 + i * 32, 0)
             # Zero all slots (CONTROL+UNINIT is the all-zero empty sentinel).
             for i in range(slot_count):
                 self._write(table + i * 64, 0)              # kval
@@ -222,9 +229,15 @@ class HeapImageBuilder:
         self._write(
             obj, ((slot_count & ((1 << 64) - 1)) << 64) | 0
         )  # used=0 for now
-        self._write(obj + 16, table & ((1 << 64) - 1))
+        self._write(obj + 16, 0)  # version=0, order_len=0
+        self._write(
+            obj + 32,
+            ((order & ((1 << 64) - 1)) << 64)
+            | (table & ((1 << 64) - 1)),
+        )
 
         used = 0
+        version = 0
         if slot_count:
             mask = slot_count - 1
             for (ktag, kval), (vtag, vval) in pairs:
@@ -240,7 +253,9 @@ class HeapImageBuilder:
                             table + idx * 64, ktag, kval, key=True
                         )
                         self._write_tagged(table + 32 + idx * 64, vtag, vval)
+                        self._write_tagged(order + used * 32, ktag, kval)
                         used += 1
+                        version += 1
                         break
                     # Overwrite on rich key match (incl. INT/BOOL/FLOAT cross).
                     existing_val = self.words.get(table + idx * 64, 0)
@@ -255,6 +270,11 @@ class HeapImageBuilder:
         self._write(
             obj,
             ((slot_count & ((1 << 64) - 1)) << 64) | (used & ((1 << 64) - 1)),
+        )
+        self._write(
+            obj + 16,
+            ((version & ((1 << 64) - 1)) << 64)
+            | (used & ((1 << 64) - 1)),
         )
         return make_dict(obj)
 

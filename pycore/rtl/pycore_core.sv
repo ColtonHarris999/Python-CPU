@@ -39,6 +39,9 @@ module pycore_core #(
     parameter int RF_DEPTH      = 256,
     parameter int STACK_BASE    = 32,
     parameter int STACK_TOP_MAX = 255,
+    parameter int STRING_MEM_BYTES = 65536,
+    parameter int STRING_MAX_LEN = 4096,
+    parameter longint unsigned STRING_RUNTIME_BASE = 64'd16384,
     parameter string STRING_HEX = "pycore/programs/string_mem.hex",
     // First free byte of the bump-pointer heap.  A preloaded static heap
     // image sets this above the static objects so runtime allocations do
@@ -223,6 +226,9 @@ module pycore_core #(
     // Self entry while unwrapping BOUND_METHOD / installing TYPE instance.
     logic [3:0]                    call_self_tag_r;
     logic [127:0]                  call_self_val_r;
+    logic [127:0]                  call_range_start_r;
+    logic [127:0]                  call_range_stop_r;
+    logic [127:0]                  call_range_step_r;
     // Instance byte address for TYPE instantiation / ret_discard_push_self.
     logic [31:0]                   call_inst_addr_r;
     // Mode installed for the frame being pushed (1 ⇒ discard return, push self).
@@ -269,6 +275,9 @@ module pycore_core #(
     logic [3:0]                    container_tag_r;
     // Saved element/key value[127:0].
     logic [127:0]                  container_val_r;
+    logic [127:0]                  container_range_start_r;
+    logic [127:0]                  container_range_stop_r;
+    logic [127:0]                  container_range_step_r;
     // RF address override: while state_r == S_CONTAINER, the regfile rs1 port
     // is presented with container_rf_addr_r instead of dec_rs1_sel so that the
     // container FSM can read arbitrary RF slots without an extra RF read port.
@@ -281,6 +290,14 @@ module pycore_core #(
     logic [RF_AW-1:0]              container_val_rf_addr_r;
     // Dict used-count (header[63:0]); tracked during BUILD_MAP / STORE_DICT.
     logic [63:0]                   container_used_r;
+    // DICT v3 insertion-order sidecar state.
+    logic [31:0]                   container_order_ptr_r;
+    logic [63:0]                   container_order_len_r;
+    logic [63:0]                   container_dict_version_r;
+    logic [31:0]                   container_order_idx_r;
+    logic [3:0]                    container_order_key_tag_r;
+    logic [127:0]                  container_order_shift_val_r;
+    logic [3:0]                    container_order_shift_tag_r;
     // Number of probe slots examined in the current probe sequence.
     logic [31:0]                   container_probe_n_r;
     // 1 = current STORE_DICT / BUILD_MAP write is inserting into an empty slot
@@ -587,16 +604,54 @@ module pycore_core #(
     logic                          exec_stall;
     logic                          exec_trap;
     logic [4:0]                    exec_trap_code;
+    logic                          string_exec_path_valid;
+    logic [PYCORE_ENTRY_WIDTH-1:0] string_exec_result;
+    logic                          string_exec_trap;
+    logic [4:0]                    string_exec_trap_code;
+    logic                          string_snapshot_valid;
+    logic [3:0]                    string_snapshot_size;
+    logic [119:0]                  string_snapshot_payload;
+    logic                          string_snapshot_ok;
+    logic [31:0]                   string_snapshot_addr;
+    logic [31:0]                   string_read_addr;
+    logic [31:0]                   string_read_data;
 
-    pycore_exec #(
+    pycore_string_mem #(
+        .STRING_MEM_BYTES(STRING_MEM_BYTES),
+        .STRING_MAX_LEN(STRING_MAX_LEN),
+        .STRING_RUNTIME_BASE(STRING_RUNTIME_BASE),
         .STRING_HEX(STRING_HEX)
-    ) exec (
+    ) string_store (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .exec_valid_i((state_r == S_EXEC) && is_alu),
+        .exec_alu_op_i(dec_alu_op),
+        .exec_rs1_i(rs1_r),
+        .exec_rs2_i(rs2_r),
+        .exec_path_valid_o(string_exec_path_valid),
+        .exec_result_o(string_exec_result),
+        .exec_trap_o(string_exec_trap),
+        .exec_trap_code_o(string_exec_trap_code),
+        .snapshot_valid_i(string_snapshot_valid),
+        .snapshot_size_i(string_snapshot_size),
+        .snapshot_payload_i(string_snapshot_payload),
+        .snapshot_ok_o(string_snapshot_ok),
+        .snapshot_addr_o(string_snapshot_addr),
+        .read_addr_i(string_read_addr),
+        .read_data_o(string_read_data)
+    );
+
+    pycore_exec exec (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
         .valid_i((state_r == S_EXEC) && is_alu),
         .alu_op_i(dec_alu_op),
         .rs1_i(rs1_r),
         .rs2_i(rs2_r),
+        .string_path_valid_i(string_exec_path_valid),
+        .string_result_i(string_exec_result),
+        .string_trap_i(string_exec_trap),
+        .string_trap_code_i(string_exec_trap_code),
         .result_o(exec_result),
         .stall_o(exec_stall),
         .trap_o(exec_trap),
@@ -1104,6 +1159,7 @@ module pycore_core #(
     logic [31:0]  cont_iter_index;
     logic [31:0]  cont_iter_size;
     logic [31:0]  cont_iter_addr;
+    logic [19:0]  cont_iter_aux;
 
     assign cont_rs1_val   = pycore_get_val(rs1_r);
     assign cont_rs2_val   = pycore_get_val(rs2_r);
@@ -1140,6 +1196,16 @@ module pycore_core #(
     assign cont_iter_index    = pycore_iter_index(cont_rs1_val);
     assign cont_iter_size     = pycore_iter_size(cont_rs1_val);
     assign cont_iter_addr     = pycore_iter_addr(cont_rs1_val);
+    assign cont_iter_aux      = pycore_iter_aux(cont_rs1_val);
+    assign string_snapshot_size = pycore_short_str_size(cont_rs1_val);
+    assign string_snapshot_payload = pycore_short_str_payload(cont_rs1_val);
+    assign string_snapshot_valid =
+        (state_r == S_CONTAINER) &&
+        (container_op_r == CONT_GET_ITER) &&
+        (container_phase_r == CP_INIT) &&
+        (cont_rs1_tag == PY_TAG_SHORT_STR) &&
+        (string_snapshot_size != 4'b0);
+    assign string_read_addr = cont_iter_addr + cont_iter_index;
 
     // Dict-specific combinational helpers.
     // Slot count computed from container_count_r (pairs), used during BUILD_MAP init.
@@ -1181,9 +1247,11 @@ module pycore_core #(
     assign cont_dict_needs_grow = pycore_dict_needs_grow(
         container_used_r, {32'b0, container_slot_count_r});
 
-    // table_ptr low 32 bits from the last table_ptr-slot dmem read.
+    // DICT v3 packed pointer slot: order_ptr high, table_ptr low.
     logic [31:0] cont_dict_table_ptr;
+    logic [31:0] cont_dict_order_ptr;
     assign cont_dict_table_ptr = container_rd_data_r[31:0];
+    assign cont_dict_order_ptr = container_rd_data_r[95:64];
 
     // CONTAINS_OP: compare scanned element (value latched in container_val_r,
     // tag in container_rd_data_r[3:0] during CP_TAG) against needle rs1.
@@ -1219,7 +1287,8 @@ module pycore_core #(
     // Empty dict for new instances: 4 slots (BUILD_MAP min for 0 pairs).
     localparam logic [31:0] CALL_EMPTY_DICT_SLOTS = 32'd4;
     localparam logic [31:0] CALL_TYPE_ALLOC_BYTES =
-        32'd32 + (CALL_EMPTY_DICT_SLOTS << 6) + PYCORE_OBJ_INSTANCE_BYTES;
+        32'd48 + (CALL_EMPTY_DICT_SLOTS << 5) +
+        (CALL_EMPTY_DICT_SLOTS << 6) + PYCORE_OBJ_INSTANCE_BYTES;
 
     always_comb begin
         state_next = state_r;  // default: hold current state
@@ -1357,6 +1426,9 @@ module pycore_core #(
             call_sub_r           <= '0;
             call_self_tag_r      <= '0;
             call_self_val_r      <= '0;
+            call_range_start_r   <= '0;
+            call_range_stop_r    <= '0;
+            call_range_step_r    <= '0;
             call_inst_addr_r     <= '0;
             call_ret_mode_r      <= 1'b0;
             call_saved_inst_r    <= '0;
@@ -1374,12 +1446,22 @@ module pycore_core #(
             container_base_r         <= '0;
             container_tag_r          <= '0;
             container_val_r          <= '0;
+            container_range_start_r  <= '0;
+            container_range_stop_r   <= '0;
+            container_range_step_r   <= '0;
             container_rf_addr_r      <= '0;
             container_rd_data_r      <= '0;
             container_slot_count_r   <= '0;
             container_probe_r        <= '0;
             container_val_rf_addr_r  <= '0;
             container_used_r         <= '0;
+            container_order_ptr_r     <= '0;
+            container_order_len_r     <= '0;
+            container_dict_version_r  <= '0;
+            container_order_idx_r     <= '0;
+            container_order_key_tag_r <= '0;
+            container_order_shift_val_r <= '0;
+            container_order_shift_tag_r <= '0;
             container_probe_n_r      <= '0;
             container_insert_new_r   <= 1'b0;
             container_finishing_r    <= 1'b0;

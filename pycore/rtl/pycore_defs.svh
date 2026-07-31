@@ -174,6 +174,8 @@ localparam logic [31:0] PY_BI_MAX          = 32'd4;
 localparam logic [31:0] PY_BI_LIST_APPEND  = 32'd5;
 localparam logic [31:0] PY_BI_PRINT        = 32'd6;
 localparam logic [31:0] PY_BI_LEN          = 32'd7;
+localparam logic [31:0] PY_BI_RANGE        = 32'd8;
+localparam logic [31:0] PY_BI_SET          = 32'd9;
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;
@@ -658,9 +660,13 @@ endfunction
 // Current layouts:
 //   LIST:      index, size=0, aux=0, addr=list object
 //   TUPLE:     index, size=len, aux=0, addr=element buffer
-// Reserved sockets:
 //   RANGE:     index=current, size=stop, aux=step, addr=0
 //   STR:       index, size=len, addr=string descriptor / buffer
+//   DICT:      index=order position, size=order_len,
+//              aux=version[19:0], addr=dict object
+//   SET:       index=table slot, size=slot_count,
+//              aux=used[19:0], addr=set object
+// Reserved sockets:
 //   HEAP_ITER: addr=heap iterator object; remaining fields are object-owned
 localparam logic [7:0] PY_ITER_MAGIC = 8'hA5;
 localparam logic [3:0] PY_ITER_KIND_LIST      = 4'd0;
@@ -668,6 +674,8 @@ localparam logic [3:0] PY_ITER_KIND_TUPLE     = 4'd1;
 localparam logic [3:0] PY_ITER_KIND_RANGE     = 4'd2;
 localparam logic [3:0] PY_ITER_KIND_STR       = 4'd3;
 localparam logic [3:0] PY_ITER_KIND_HEAP_ITER = 4'd4;
+localparam logic [3:0] PY_ITER_KIND_DICT      = 4'd5;
+localparam logic [3:0] PY_ITER_KIND_SET       = 4'd6;
 
 function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_iter_value(
     input logic [3:0] kind,
@@ -680,25 +688,124 @@ function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_iter_value(
     end
 endfunction
 
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_iter_value_range(
+    input logic [31:0] index,
+    input logic [31:0] stop,
+    input logic [19:0] step
+);
+    begin
+        pycore_iter_value_range = {
+            PY_ITER_MAGIC, PY_ITER_KIND_RANGE, step, index, stop, 32'b0
+        };
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_iter_value_str(
+    input logic [31:0] index,
+    input logic [31:0] size,
+    input logic [31:0] addr
+);
+    begin
+        pycore_iter_value_str = {
+            PY_ITER_MAGIC, PY_ITER_KIND_STR, 20'b0, index, size, addr
+        };
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_iter_value_dict(
+    input logic [31:0] index,
+    input logic [31:0] order_len,
+    input logic [19:0] version,
+    input logic [31:0] obj_addr
+);
+    begin
+        pycore_iter_value_dict = {
+            PY_ITER_MAGIC, PY_ITER_KIND_DICT, version,
+            index, order_len, obj_addr
+        };
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_iter_value_set(
+    input logic [31:0] index,
+    input logic [31:0] slot_count,
+    input logic [19:0] used,
+    input logic [31:0] obj_addr
+);
+    begin
+        pycore_iter_value_set = {
+            PY_ITER_MAGIC, PY_ITER_KIND_SET, used,
+            index, slot_count, obj_addr
+        };
+    end
+endfunction
+
 function automatic logic pycore_iter_valid(
     input logic [PYCORE_VAL_WIDTH-1:0] value
 );
-    logic common_valid;
+    logic common_magic;
     begin
-        common_valid = (value[127:120] == PY_ITER_MAGIC) &&
-                       (value[115:96] == 20'b0) &&
-                       (value[3:0] == 4'b0);
+        common_magic = (value[127:120] == PY_ITER_MAGIC);
         unique case (value[119:116])
             PY_ITER_KIND_LIST:
-                pycore_iter_valid = common_valid &&
+                pycore_iter_valid = common_magic &&
+                                    (value[3:0] == 4'b0) &&
+                                    (value[115:96] == 20'b0) &&
                                     (value[63:32] == 32'b0);
             PY_ITER_KIND_TUPLE:
-                pycore_iter_valid = common_valid;
-            // Reserved kinds remain invalid until both GET_ITER and FOR_ITER
-            // implementations land.
+                pycore_iter_valid = common_magic &&
+                                    (value[3:0] == 4'b0) &&
+                                    (value[115:96] == 20'b0);
+            PY_ITER_KIND_RANGE:
+                pycore_iter_valid = common_magic &&
+                                    (value[115:96] != 20'b0) &&
+                                    (value[31:0] == 32'b0);
+            // String buffers are byte-addressed, so unlike dmem-backed
+            // iterators their base need not be 16-byte aligned.
+            PY_ITER_KIND_STR:
+                pycore_iter_valid = common_magic &&
+                                    (value[115:96] == 20'b0) &&
+                                    (value[95:64] <= value[63:32]);
+            PY_ITER_KIND_DICT, PY_ITER_KIND_SET:
+                pycore_iter_valid = common_magic &&
+                                    (value[3:0] == 4'b0) &&
+                                    (value[95:64] <= value[63:32]);
             default:
                 pycore_iter_valid = 1'b0;
         endcase
+    end
+endfunction
+
+function automatic logic [2:0] pycore_utf8_char_width(
+    input logic [7:0] lead_byte
+);
+    begin
+        if (lead_byte[7] == 1'b0)
+            pycore_utf8_char_width = 3'd1;
+        else if (lead_byte[7:5] == 3'b110)
+            pycore_utf8_char_width = 3'd2;
+        else if (lead_byte[7:4] == 4'b1110)
+            pycore_utf8_char_width = 3'd3;
+        else if (lead_byte[7:3] == 5'b11110)
+            pycore_utf8_char_width = 3'd4;
+        else
+            pycore_utf8_char_width = 3'd0;
+    end
+endfunction
+
+function automatic logic pycore_utf8_cont_valid(
+    input logic [7:0] byte_value
+);
+    begin
+        pycore_utf8_cont_valid = (byte_value[7:6] == 2'b10);
+    end
+endfunction
+
+function automatic logic [19:0] pycore_iter_aux(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_iter_aux = value[115:96];
     end
 endfunction
 
@@ -840,13 +947,17 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_long_str_entry(
 endfunction
 
 // -------------------------------------------------------------------------
-// DICT in-dmem layout v2 (all addresses 16-byte aligned):
+// DICT in-dmem layout v3 (all addresses 16-byte aligned):
 //
-// Stable 32-byte object (handle never moves across grows) + relocatable
-// open-addressed table (like list obj / ob_item):
+// Stable 48-byte object (handle never moves across grows), insertion-order
+// key buffer, and relocatable open-addressed table:
 //
 //   obj + 0  : header { slot_count[63:0], used[63:0] }
-//   obj + 16 : { 64'd0, table_ptr[63:0] }   // 0 if slot_count==0
+//   obj + 16 : { version[63:0], order_len[63:0] }
+//   obj + 32 : { order_ptr[63:0], table_ptr[63:0] }
+//
+//   order + i*32 + 0  : key value[127:0]
+//   order + i*32 + 16 : key tag
 //
 //   table + i*64 + 0  : key   value[127:0]
 //   table + i*64 + 16 : key tag word; CONTROL also stores ctl_id in [7:4]
@@ -857,9 +968,9 @@ endfunction
 // Deleted: key tag == PY_TAG_TOMBSTONE (skip during probe).
 // Slot count is a power of two (or 0); probe mask = slot_count - 1.
 //
-// BUILD_MAP may allocate object+table contiguously
+// BUILD_MAP may allocate object+order+table contiguously
 // (pycore_dict_alloc_bytes); grow relocates the table only and updates
-// table_ptr. Address helpers take the TABLE base, not the object base.
+// table_ptr while preserving/copying order. Slot helpers take the TABLE base.
 //
 // Hash: pycore_dict_key_hash(tag, value) & (slot_count - 1).
 // Supported key tags: CONTROL (None), INT, BOOL, FLOAT, SHORT_STR, LONG_STR.
@@ -1185,12 +1296,36 @@ function automatic logic [31:0] pycore_dict_vtag_addr(
     end
 endfunction
 
-// Byte address of the dict object's table_ptr slot.
+function automatic logic [31:0] pycore_dict_meta_addr(
+    input logic [31:0] obj_addr
+);
+    begin
+        pycore_dict_meta_addr = obj_addr + 32'd16;
+    end
+endfunction
+
+// Byte address of the dict object's packed {order_ptr, table_ptr} slot.
 function automatic logic [31:0] pycore_dict_table_ptr_addr(
     input logic [31:0] obj_addr
 );
     begin
-        pycore_dict_table_ptr_addr = obj_addr + 32'd16;
+        pycore_dict_table_ptr_addr = obj_addr + 32'd32;
+    end
+endfunction
+
+function automatic logic [31:0] pycore_dict_order_val_addr(
+    input logic [31:0] order_ptr, input logic [31:0] order_idx
+);
+    begin
+        pycore_dict_order_val_addr = order_ptr + (order_idx << 5);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_dict_order_tag_addr(
+    input logic [31:0] order_ptr, input logic [31:0] order_idx
+);
+    begin
+        pycore_dict_order_tag_addr = order_ptr + 32'd16 + (order_idx << 5);
     end
 endfunction
 
@@ -1198,9 +1333,35 @@ function automatic logic [31:0] pycore_dict_alloc_bytes(
     input logic [31:0] slot_count
 );
     begin
-        // Contiguous BUILD_MAP layout: 32-byte object + slot_count * 64-byte table.
-        // Grow may relocate the table alone (object address stays stable).
-        pycore_dict_alloc_bytes = 32'd32 + (slot_count << 6);
+        // Contiguous BUILD_MAP: 48-byte object + 32-byte/order key +
+        // 64-byte hash slot. Grow preserves the stable object.
+        pycore_dict_alloc_bytes = 32'd48 + (slot_count << 5) +
+                                  (slot_count << 6);
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_dict_meta(
+    input logic [63:0] version,
+    input logic [63:0] order_len
+);
+    begin
+        pycore_dict_meta = {version, order_len};
+    end
+endfunction
+
+function automatic logic [63:0] pycore_dict_version_from_meta(
+    input logic [PYCORE_VAL_WIDTH-1:0] meta
+);
+    begin
+        pycore_dict_version_from_meta = meta[127:64];
+    end
+endfunction
+
+function automatic logic [63:0] pycore_dict_order_len_from_meta(
+    input logic [PYCORE_VAL_WIDTH-1:0] meta
+);
+    begin
+        pycore_dict_order_len_from_meta = meta[63:0];
     end
 endfunction
 

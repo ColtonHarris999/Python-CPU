@@ -579,6 +579,60 @@ class ImageTranscodingTest(unittest.TestCase):
         result = image_from_source.build_image_from_source_text(src, "<for_iter>")
         self.assertGreater(len(result.program_slots), 0)
 
+    def test_for_iter_range_source_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    total = 0\n"
+            "    for x in range(5):\n"
+            "        total += x\n"
+            "    return total\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertTrue({"CALL", "GET_ITER", "FOR_ITER"} <= opnames)
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<for_iter_range>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_for_iter_str_source_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    total = 0\n"
+            "    for c in \"abc\":\n"
+            "        total += 1\n"
+            "    return total\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        code_objects = list(
+            image_from_source.iter_code_objects(_compile_module(src))
+        )
+        opnames: set[str] = set()
+        for co in code_objects:
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertTrue(
+            {"GET_ITER", "FOR_ITER", "END_FOR", "POP_ITER"} <= opnames
+        )
+        managed_code = next(
+            co for co in code_objects if co.co_name == "managed_entry"
+        )
+        self.assertNotIn(
+            "CALL",
+            {ins.opname for ins in dis.get_instructions(managed_code)},
+        )
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<for_iter_str>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
     def test_for_iter_type_trap_source_builds(self) -> None:
         src = (
             "def managed_entry():\n"
@@ -592,6 +646,53 @@ class ImageTranscodingTest(unittest.TestCase):
 
         result = image_from_source.build_image_from_source_text(
             src, "<for_iter_type_trap>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_for_iter_dict_source_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    d = {}\n"
+            "    d[1] = 2\n"
+            "    total = 0\n"
+            "    for key in d:\n"
+            "        total += key\n"
+            "    return total\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertTrue(
+            {"BUILD_MAP", "STORE_SUBSCR", "GET_ITER", "FOR_ITER"} <= opnames
+        )
+        result = image_from_source.build_image_from_source_text(
+            src, "<for_iter_dict>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_for_iter_set_source_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a = 1\n"
+            "    b = 2\n"
+            "    s = set([a, b])\n"
+            "    total = 0\n"
+            "    for value in s:\n"
+            "        total += value\n"
+            "    return total\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertTrue({"CALL", "GET_ITER", "FOR_ITER"} <= opnames)
+        result = image_from_source.build_image_from_source_text(
+            src, "<for_iter_set>"
         )
         self.assertGreater(len(result.program_slots), 0)
 
