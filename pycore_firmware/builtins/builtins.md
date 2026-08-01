@@ -77,7 +77,7 @@ These limit every firmware builtin:
 | `isinstance` | Return True if the object is an instance of a type or tuple of types. | implemented | Single-class `classinfo` via `__class__`/`__base__` walk. Tuple-of-types form blocked. |
 | `issubclass` | Return True if a class is a subclass of a class or tuple of classes. | implemented | Single-class `classinfo` via `__base__` walk (depth ≤ 8). |
 | `iter` | Return an iterator for an object (or call a sentinel-producing callable). | in progress | One-arg materializes a list; sentinel form blocked (`% 0`). |
-| `len` | Return the number of items in a container. | implemented | O(n) FOR_ITER count. Native `BI_LEN` remains O(1) header path. |
+| `len` | Return the number of items in a container. | implemented | Miss path: `obj.__len__()`. Native `BI_LEN` owns container header reads. |
 | `list` | Create a new list, optionally from an iterable. | implemented | `out += [x]` per element (excore LIST_EXTEND). |
 | `locals` | Return the current local symbol table as a dict. | blocked | No frame-local namespace objects. |
 | `map` | Return an iterator that applies a function to every item of iterables. | implemented | Single iterable → **list**. Multi-iter `*args` blocked. |
