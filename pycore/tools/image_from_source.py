@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ast
 import dis
+import inspect
 import opcode as _opcode_module
 import pathlib
 import sys
@@ -262,6 +263,20 @@ def _is_supported_opname(opname: str) -> bool:
 
 
 def validate_code_object(co: types.CodeType) -> None:
+    unsupported_arg_flags = co.co_flags & (
+        inspect.CO_VARARGS | inspect.CO_VARKEYWORDS
+    )
+    if unsupported_arg_flags:
+        names: list[str] = []
+        if co.co_flags & inspect.CO_VARARGS:
+            names.append("CO_VARARGS (*args)")
+        if co.co_flags & inspect.CO_VARKEYWORDS:
+            names.append("CO_VARKEYWORDS (**kwargs)")
+        raise ValueError(
+            f"Unsupported variadic arguments in code object {co.co_name!r}: "
+            + ", ".join(names)
+        )
+
     for ins in iter_raw_instructions(co):
         if ins.opname == "CACHE":
             continue
@@ -278,18 +293,19 @@ def validate_code_object(co: types.CodeType) -> None:
                 f"at bytecode offset {ins.offset}: {DEFERRED_OPS[ins.opname]}"
             )
         if ins.opname == "SET_FUNCTION_ATTRIBUTE":
-            # Folded to NOP before validate when flag==defaults (1). Any other
-            # flag (closure/annotations/kwdefaults) is rejected here.
-            if ins.arg != 1:
+            # Folded to NOP before validate when flag==defaults (1) or
+            # kwdefaults (2). Any other flag is rejected here.
+            if ins.arg not in (_SFA_FLAG_DEFAULTS, _SFA_FLAG_KWDEFAULTS):
                 raise ValueError(
                     "Unsupported SET_FUNCTION_ATTRIBUTE flag "
                     f"{ins.arg} in code object {co.co_name!r} at bytecode "
-                    f"offset {ins.offset}: only defaults (flag 1) are folded "
-                    "at image-build time; closures/annotations/kwdefaults "
+                    f"offset {ins.offset}: only defaults (flag 1) and "
+                    "kwdefaults (flag 2) are folded at image-build time; "
+                    "closures/annotations "
                     "are not supported"
                 )
             raise ValueError(
-                "Internal error: SET_FUNCTION_ATTRIBUTE (defaults) should have "
+                "Internal error: SET_FUNCTION_ATTRIBUTE should have "
                 f"been folded before validate in {co.co_name!r} at offset "
                 f"{ins.offset}"
             )
@@ -375,6 +391,7 @@ class _ImageSerializer:
     def __init__(
         self,
         defaults_map: dict[int, tuple] | None = None,
+        kwdefaults_map: dict[int, dict] | None = None,
         type_refs: dict[str, Tagged] | None = None,
     ) -> None:
         # HEAP_BASE is defined as the first byte after the boot record.
@@ -385,6 +402,7 @@ class _ImageSerializer:
         self.code_handles: dict[int, Tagged] = {}
         self.entry_slots: dict[int, int] = {}
         self.defaults_map: dict[int, tuple] = defaults_map or {}
+        self.kwdefaults_map: dict[int, dict] = kwdefaults_map or {}
         self.type_refs: dict[str, Tagged] = type_refs if type_refs is not None else {}
 
     def serialize_code(self, co: types.CodeType) -> Tagged:
@@ -409,18 +427,35 @@ class _ImageSerializer:
         co_names = self.heap.alloc_tuple(
             [tag_constant(name, self.string_heap) for name in co.co_names]
         )
+        co_varnames = self.heap.alloc_tuple(
+            [tag_constant(name, self.string_heap) for name in co.co_varnames]
+        )
         defaults_py = self.defaults_map.get(co_id, ())
         co_defaults = self.heap.alloc_tuple(
             [self.serialize_constant(d, co) for d in defaults_py]
+        )
+        kwdefaults_py = self.kwdefaults_map.get(co_id, {})
+        co_kwdefaults = self.heap.alloc_dict(
+            [
+                (
+                    tag_constant(str(name), self.string_heap),
+                    self.serialize_constant(default, co),
+                )
+                for name, default in kwdefaults_py.items()
+            ],
+            slot_count=dict_min_slots(max(len(kwdefaults_py), 1)),
         )
         handle = self.heap.add_code_object(
             entry_slot,
             co_consts,
             co_names,
+            co_varnames,
             stacksize=co.co_stacksize,
             nlocals=co.co_nlocals,
             argcount=co.co_argcount,
+            kwonlyargcount=co.co_kwonlyargcount,
             co_defaults=co_defaults,
+            co_kwdefaults=co_kwdefaults,
         )
         self.code_handles[co_id] = handle
         return handle
@@ -558,7 +593,9 @@ _OP_PUSH_NULL = _OM["PUSH_NULL"]
 _OP_CALL = _OM["CALL"]
 _OP_STORE_NAME = _OM["STORE_NAME"]
 _OP_LOAD_BUILD_CLASS = _OM["LOAD_BUILD_CLASS"]
+_OP_BUILD_MAP = _OM["BUILD_MAP"]
 _SFA_FLAG_DEFAULTS = 1
+_SFA_FLAG_KWDEFAULTS = 2
 
 
 @dataclass(frozen=True)
@@ -578,6 +615,8 @@ class ClassBuildSpec:
     constants: dict[str, object]
     # id(code) → defaults tuple captured from host function.__defaults__
     method_defaults: dict[int, tuple] = field(default_factory=dict)
+    # id(code) → kwdefaults dict captured from host function.__kwdefaults__
+    method_kwdefaults: dict[int, dict] = field(default_factory=dict)
 
 
 def _parse_seed_kv_tokens(tokens: list[str]) -> tuple[dict[str, str], list[tuple[str, int]]]:
@@ -650,15 +689,26 @@ def parse_seed_pragmas(source_text: str) -> SeedSpecs:
 
 def fold_function_defaults(
     module_code: types.CodeType,
-) -> tuple[types.CodeType, dict[int, tuple]]:
-    """Fold ``SET_FUNCTION_ATTRIBUTE`` defaults into a map; NOP-pad the ops.
+) -> tuple[types.CodeType, dict[int, tuple], dict[int, dict]]:
+    """Fold ``SET_FUNCTION_ATTRIBUTE`` defaults into maps; NOP-pad the ops.
 
-    Pattern (CPython 3.14)::
+    Patterns (CPython 3.14)::
 
         LOAD_CONST <defaults_tuple>
         LOAD_CONST <code>
         MAKE_FUNCTION
         SET_FUNCTION_ATTRIBUTE 1 (defaults)
+
+    and, for keyword-only defaults::
+
+        <kwdefaults BUILD_MAP producer>
+        LOAD_CONST <code>
+        MAKE_FUNCTION
+        SET_FUNCTION_ATTRIBUTE 2 (kwdefaults)
+
+    When both defaults and kwdefaults are present, the positional defaults
+    producer sits lower on the stack and CPython typically emits
+    ``SET_FUNCTION_ATTRIBUTE 2`` followed by ``SET_FUNCTION_ATTRIBUTE 1``.
 
     Becomes::
 
@@ -667,13 +717,51 @@ def fold_function_defaults(
         MAKE_FUNCTION
         NOP
 
-    Returns ``(rewritten_module, {id(code): defaults_tuple})``.
+    Returns ``(rewritten_module, defaults_map, kwdefaults_map)``.
     """
     defaults_map: dict[int, tuple] = {}
+    kwdefaults_map: dict[int, dict] = {}
 
     def fold_one(co: types.CodeType) -> types.CodeType:
         code = bytearray(co.co_code)
         consts = list(co.co_consts)
+
+        def nop_span(start: int, end: int) -> None:
+            for off in range(start, end, 2):
+                code[off] = _OP_NOP
+                code[off + 1] = 0
+
+        def parse_attr_producer(end: int) -> tuple[int, object]:
+            if end < 2:
+                raise ValueError(
+                    f"truncated SET_FUNCTION_ATTRIBUTE producer in {co.co_name!r}"
+                )
+            op = code[end - 2]
+            arg = code[end - 1]
+            if op == _OP_LOAD_CONST:
+                if arg >= len(consts):
+                    raise ValueError(
+                        f"function attribute LOAD_CONST index {arg} out of "
+                        f"range in {co.co_name!r}"
+                    )
+                return end - 2, consts[arg]
+            if op == _OP_LOAD_SMALL_INT:
+                return end - 2, arg
+            if op == _OP_BUILD_MAP:
+                cursor = end - 2
+                pairs: list[tuple[object, object]] = []
+                for _ in range(arg):
+                    value_start, value = parse_attr_producer(cursor)
+                    key_start, key = parse_attr_producer(value_start)
+                    pairs.append((key, value))
+                    cursor = key_start
+                return cursor, dict(reversed(pairs))
+            raise ValueError(
+                f"Unsupported SET_FUNCTION_ATTRIBUTE producer opcode "
+                f"{dis.opname[op]!r} in {co.co_name!r} before bytecode "
+                f"offset {end}"
+            )
+
         # Recurse into nested code objects first (identity-stable replace).
         changed_consts = False
         for i, const in enumerate(consts):
@@ -685,40 +773,64 @@ def fold_function_defaults(
 
         i = 0
         n = len(code)
-        while i + 7 < n:
+        while i + 5 < n:
             op0, a0 = code[i], code[i + 1]
-            op1, a1 = code[i + 2], code[i + 3]
-            op2, _a2 = code[i + 4], code[i + 5]
-            op3, a3 = code[i + 6], code[i + 7]
-            if (
-                op0 == _OP_LOAD_CONST
-                and op1 == _OP_LOAD_CONST
-                and op2 == _OP_MAKE_FUNCTION
-                and op3 == _OP_SET_FUNCTION_ATTRIBUTE
-            ):
-                if a3 != _SFA_FLAG_DEFAULTS:
-                    raise ValueError(
-                        f"SET_FUNCTION_ATTRIBUTE flag {a3} in {co.co_name!r} "
-                        f"at offset {i + 6}: only defaults (1) supported"
-                    )
-                defaults = consts[a0]
-                func_co = consts[a1]
-                if not isinstance(defaults, tuple):
-                    raise ValueError(
-                        f"defaults const at index {a0} in {co.co_name!r} "
-                        f"is {type(defaults).__name__}, expected tuple"
-                    )
+            op1, _a1 = code[i + 2], code[i + 3]
+            if op0 == _OP_LOAD_CONST and op1 == _OP_MAKE_FUNCTION:
+                func_co = consts[a0] if a0 < len(consts) else None
+                sfa_ops: list[tuple[int, int]] = []
+                cursor = i + 4
+                while cursor + 1 < n and code[cursor] == _OP_SET_FUNCTION_ATTRIBUTE:
+                    flag = code[cursor + 1]
+                    if flag not in (_SFA_FLAG_DEFAULTS, _SFA_FLAG_KWDEFAULTS):
+                        raise ValueError(
+                            f"SET_FUNCTION_ATTRIBUTE flag {flag} in {co.co_name!r} "
+                            f"at offset {cursor}: only defaults (1) and "
+                            "kwdefaults (2) supported"
+                        )
+                    sfa_ops.append((cursor, flag))
+                    cursor += 2
+                if not sfa_ops:
+                    i += 2
+                    continue
                 if not isinstance(func_co, types.CodeType):
                     raise ValueError(
-                        f"MAKE_FUNCTION target at const {a1} in {co.co_name!r} "
+                        f"MAKE_FUNCTION target at const {a0} in {co.co_name!r} "
                         "is not a code object"
                     )
-                defaults_map[id(func_co)] = defaults
-                code[i] = _OP_NOP
-                code[i + 1] = 0
-                code[i + 6] = _OP_NOP
-                code[i + 7] = 0
-                i += 8
+                producers: list[tuple[int, int, object]] = []
+                producer_cursor = i
+                for _sfa_off, _flag in sfa_ops:
+                    start, value = parse_attr_producer(producer_cursor)
+                    producers.append((start, producer_cursor, value))
+                    producer_cursor = start
+
+                for (sfa_off, flag), (start, end, value) in zip(sfa_ops, producers):
+                    if flag == _SFA_FLAG_DEFAULTS:
+                        if not isinstance(value, tuple):
+                            raise ValueError(
+                                f"defaults for {func_co.co_name!r} in {co.co_name!r} "
+                                f"are {type(value).__name__}, expected tuple"
+                            )
+                        defaults_map[id(func_co)] = value
+                    elif flag == _SFA_FLAG_KWDEFAULTS:
+                        if not isinstance(value, dict):
+                            raise ValueError(
+                                f"kwdefaults for {func_co.co_name!r} in "
+                                f"{co.co_name!r} are {type(value).__name__}, "
+                                "expected dict"
+                            )
+                        bad_keys = [key for key in value if not isinstance(key, str)]
+                        if bad_keys:
+                            raise ValueError(
+                                f"kwdefaults for {func_co.co_name!r} contain "
+                                f"non-string keys: {bad_keys!r}"
+                            )
+                        kwdefaults_map[id(func_co)] = value
+                    nop_span(start, end)
+                    code[sfa_off] = _OP_NOP
+                    code[sfa_off + 1] = 0
+                i = cursor
                 continue
             i += 2
 
@@ -731,7 +843,7 @@ def fold_function_defaults(
             # consts list after nested rewrite, so id(func_co) is correct.
         return new_co
 
-    return fold_one(module_code), defaults_map
+    return fold_one(module_code), defaults_map, kwdefaults_map
 
 
 def _code_handles_by_name(
@@ -866,6 +978,7 @@ def build_image_from_code(
     *,
     seeds: SeedSpecs | None = None,
     defaults_map: dict[int, tuple] | None = None,
+    kwdefaults_map: dict[int, dict] | None = None,
     class_specs: list[ClassBuildSpec] | None = None,
 ) -> ImageBuildResult:
     require_python_3_14()
@@ -878,7 +991,10 @@ def build_image_from_code(
     n_for_slots = len(stored_names | seeds.global_names)
     globals_slot_count = dict_slot_count_for_stores(n_for_slots)
 
-    serializer = _ImageSerializer(defaults_map=defaults_map)
+    serializer = _ImageSerializer(
+        defaults_map=defaults_map,
+        kwdefaults_map=kwdefaults_map,
+    )
     # Method codes + OBK_TYPE must exist before module consts resolve type refs.
     serializer.alloc_class_types(class_specs)
     # Serialize module so SEED_TYPE_METHOD can resolve CODE_OBJECT handles.
@@ -1243,6 +1359,7 @@ def _class_build_spec_from_type(typ: type) -> ClassBuildSpec:
     static_methods: dict[str, types.CodeType] = {}
     constants: dict[str, object] = {}
     method_defaults: dict[int, tuple] = {}
+    method_kwdefaults: dict[int, dict] = {}
 
     for attr_name, value in typ.__dict__.items():
         if attr_name in _SKIP_TYPE_ATTRS:
@@ -1264,20 +1381,14 @@ def _class_build_spec_from_type(typ: type) -> ClassBuildSpec:
             if func.__defaults__:
                 method_defaults[id(func.__code__)] = func.__defaults__
             if func.__kwdefaults__:
-                raise ValueError(
-                    f"class {name!r}: keyword-only defaults on staticmethod "
-                    f"{attr_name!r} are not supported"
-                )
+                method_kwdefaults[id(func.__code__)] = dict(func.__kwdefaults__)
             continue
         if isinstance(value, types.FunctionType):
             methods[attr_name] = value.__code__
             if value.__defaults__:
                 method_defaults[id(value.__code__)] = value.__defaults__
             if value.__kwdefaults__:
-                raise ValueError(
-                    f"class {name!r}: keyword-only defaults on method "
-                    f"{attr_name!r} are not supported"
-                )
+                method_kwdefaults[id(value.__code__)] = dict(value.__kwdefaults__)
             continue
         if value is None or isinstance(value, (bool, int, str)):
             constants[attr_name] = value
@@ -1294,6 +1405,7 @@ def _class_build_spec_from_type(typ: type) -> ClassBuildSpec:
         static_methods=static_methods,
         constants=constants,
         method_defaults=method_defaults,
+        method_kwdefaults=method_kwdefaults,
     )
 
 
@@ -1516,14 +1628,17 @@ def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildR
     module_code = apply_lfac_injects(module_code, source_text)
     module_code = apply_set_add_seq_injects(module_code, source_text)
     module_code, class_specs = fold_module_classes(module_code, source_text)
-    module_code, defaults_map = fold_function_defaults(module_code)
+    module_code, defaults_map, kwdefaults_map = fold_function_defaults(module_code)
     for spec in class_specs:
         for co_id, defaults in spec.method_defaults.items():
             defaults_map[co_id] = defaults
+        for co_id, kwdefaults in spec.method_kwdefaults.items():
+            kwdefaults_map[co_id] = kwdefaults
     return build_image_from_code(
         module_code,
         seeds=seeds,
         defaults_map=defaults_map,
+        kwdefaults_map=kwdefaults_map,
         class_specs=class_specs,
     )
 

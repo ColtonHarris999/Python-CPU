@@ -67,6 +67,7 @@ def gen_list_append_fast() -> None:
     )
     co_consts = heap.alloc_tuple([list_handle])
     co_names = heap.alloc_tuple([])
+    co_varnames = heap.alloc_tuple([])
 
     slots: list[str] = []
     _emit(slots, OP_RESUME, 0)
@@ -88,6 +89,7 @@ def gen_list_append_fast() -> None:
         entry_slot=0,
         co_consts=co_consts,
         co_names=co_names,
+        co_varnames=co_varnames,
         stacksize=4,
         nlocals=0,
         argcount=0,

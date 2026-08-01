@@ -76,8 +76,10 @@ CODE_FIELD_CO_CONSTS = 1
 CODE_FIELD_CO_NAMES = 2
 CODE_FIELD_METADATA = 3
 CODE_FIELD_CO_DEFAULTS = 4
-CODE_OBJECT_NFIELDS = 5
-CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 192
+CODE_FIELD_CO_VARNAMES = 5
+CODE_FIELD_CO_KWDEFAULTS = 6
+CODE_OBJECT_NFIELDS = 7
+CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 224
 
 # General OBJECT kinds under TAG_OBJECT (mirror PY_OBK_* in pycore_defs.svh).
 OBK_INSTANCE = 1
@@ -350,12 +352,32 @@ def tag_constant(
     return TAG_OBJECT, 0
 
 
-def pack_code_metadata(stacksize: int, nlocals: int, argcount: int) -> int:
-    """Pack {stacksize[15:0], nlocals[15:0], argcount[15:0]} into value[47:0]."""
+def pack_code_metadata(
+    stacksize: int,
+    nlocals: int,
+    argcount: int,
+    kwonlyargcount: int = 0,
+) -> int:
+    """Pack code metadata fields into value[63:0].
+
+    Bits [15:0]=argcount, [31:16]=nlocals, [47:32]=stacksize,
+    [63:48]=kwonlyargcount.
+    """
     return (
-        ((stacksize & 0xFFFF) << 32)
+        ((kwonlyargcount & 0xFFFF) << 48)
+        | ((stacksize & 0xFFFF) << 32)
         | ((nlocals & 0xFFFF) << 16)
         | (argcount & 0xFFFF)
+    )
+
+
+def unpack_code_metadata(meta: int) -> tuple[int, int, int, int]:
+    """Return ``(stacksize, nlocals, argcount, kwonlyargcount)`` from metadata."""
+    return (
+        (meta >> 32) & 0xFFFF,
+        (meta >> 16) & 0xFFFF,
+        meta & 0xFFFF,
+        (meta >> 48) & 0xFFFF,
     )
 
 
