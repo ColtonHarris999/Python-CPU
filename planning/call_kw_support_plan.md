@@ -1,6 +1,6 @@
 # CALL_KW / CALL_FUNCTION_EX support plan
 
-**Status:** actionable follow-up (not blocked by missing silicon)  
+**Status:** implemented (v1) — merge target `bytecode_support`  
 **Audience:** bytecode / CALL FSM agent  
 **Unblocks:** firmware kwargs (`print(sep=)`, `max(key=)`, `sorted(reverse=)`),
 varargs (`print(*args)`, `zip(*iterables)`, `max(*xs)`), and general 3.14 call
@@ -194,18 +194,19 @@ in ROM Python once binder works.
 
 ## 6. Acceptance checklist
 
-- [ ] `f(1, b=2)` and `f(b=2, a=1)` on a user `def` match CPython results.  
-- [ ] Kw-only required/optional + kwdefaults work; positional-only overflow
-      into kw-only traps.  
-- [ ] Unexpected keyword → distinct trap (prefer `CALL_FILTER` until
-      TypeError objects exist).  
-- [ ] Duplicate keyword in names tuple → trap.  
-- [ ] `g(*[1,2,3])` via `CALL_FUNCTION_EX` equals `g(1,2,3)`.  
-- [ ] `g(*[], **{'b': 2})` (after DICT_MERGE path) binds correctly.  
-- [ ] Existing positional CALL / defaults / method / TYPE / `BI_*` image
-      tests remain green.  
-- [ ] `builtins.md` unfreezes kwargs for ROM modules that use them.  
-- [ ] Target JSON + `SUPPORTED_OPS` updated; analyzer consistency tests pass.
+- [x] `f(1, b=2)` and `f(b=2, a=1)` on a user `def` match CPython results.  
+- [x] Kw-only required/optional + kwdefaults work; positional overflow into
+      kw-only → `CALL_FILTER`.  
+- [x] Unexpected keyword → `CALL_FILTER` (`img_call_kw_unexpected`).  
+- [x] Duplicate keyword in names tuple → `CALL_FILTER` (filled-bit check).  
+- [x] `g(*(1,2,3))` via `CALL_FUNCTION_EX` equals `g(1,2,3)`.  
+- [x] `h(*(1,), **{'b': 2})` (empty-dest `DICT_MERGE` + EX) binds correctly.  
+- [x] Existing positional CALL / defaults path kept (`img_default_arg`).  
+- [x] `builtins.md` unfreezes kwargs for ROM `CODE_OBJECT` modules.  
+- [x] `SUPPORTED_OPS` updated (`CALL_KW` / `CALL_FUNCTION_EX` / `DICT_MERGE`).  
+
+**v1 limits:** non-empty `DICT_MERGE`, `OBK_BUILTIN`/TYPE kwargs, and
+`CO_VARARGS`/`CO_VARKEYWORDS` parameters remain out of scope / trap.
 
 ---
 

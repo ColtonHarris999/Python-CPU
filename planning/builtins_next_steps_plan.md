@@ -1,12 +1,14 @@
-# Builtins agent — next steps (post bytecode milestone)
+# Builtins agent — next steps (post CALL_KW)
 
 **Audience:** agent finishing / integrating `pycore_firmware/builtins/`  
 **Completed by bytecode agent:** see §1  
-**Constraint:** stay positional-only until `CALL_KW` / `CALL_FUNCTION_EX` unfreeze
+**Unblock:** `CALL_KW` / `CALL_FUNCTION_EX` / empty-dest `DICT_MERGE` are live for
+`CODE_OBJECT` callees — kwargs / varargs ROM signatures are now allowed.
 
 Related:
 
-- Prior bytecode plan (implemented): `planning/builtins_bytecode_support_plan.md`
+- CALL_KW plan (implemented): `planning/call_kw_support_plan.md`
+- Prior bytecode plan: `planning/builtins_bytecode_support_plan.md`
 - Inventory: `pycore_firmware/builtins/builtins.md`
 - Opcode matrix: `pycore/docs/bytecode_support.md`
 
@@ -14,36 +16,31 @@ Related:
 
 ## 1. What the bytecode agent shipped
 
-Hardware / tooling now supports the acceptance items from
-`builtins_bytecode_support_plan.md` §6:
-
 | Item | Status |
 | --- | --- |
-| LEGB-B tests (fallback, shadow, null bit, LOAD_NAME) | Done — `img_builtins_*`, `img_load_name_builtin` |
-| `BI_LEN` LONG_STR + inline RANGE | Done |
-| `BI_LEN` INSTANCE `__len__` via own `tp_dict` | Done — miss → `ATTR_ERROR` (15) |
-| `RAISE_VARARGS` oparg 1 → fatal `PY_TRAP_RAISE` (17) | Done |
-| `TO_BOOL` for `None` + containers | Done — `CONT_TO_BOOL` |
-| Comprehension `RERAISE` policy | Documented as **option C** (avoid comps) |
-| `CALL_KW` / `CALL_FUNCTION_EX` | **Frozen** positional-only in `builtins.md` |
-| `tuple(iterable)` path | `UNPACK_EX` + `CALL_INTRINSIC_1` LIST_TO_TUPLE |
-| `return True/False/None` on 3.14 | OK (`RETURN_CONST` absent; `img_return_true`) |
-| Docs synced | `bytecode_support.md`, `architecture.md`, `builtins.md` |
+| LEGB-B / `BI_LEN` / `TO_BOOL` / `RAISE` / LIST_TO_TUPLE | Done (prior milestone) |
+| Code-object fields `co_varnames`, `kwonlyargcount`, `co_kwdefaults` | Done |
+| Shared CALL binder + `CALL_KW` → `CODE_OBJECT` | Done — `img_call_kw*` |
+| `CALL_FUNCTION_EX` EX-A (`*args`, NULL kwargs) LIST/TUPLE | Done — `img_call_function_ex` |
+| `DICT_MERGE` empty-dest + EX-B `**kwargs` | Done — `img_call_function_ex_kw` |
+| `OBK_BUILTIN` / TYPE kwargs | Still `CALL_FILTER` (use ROM Python) |
+| Non-empty `DICT_MERGE` (multi-`**`) | Still `CALL_FILTER` |
+| `CO_VARARGS` / `CO_VARKEYWORDS` parameters | Still rejected by image tooling |
 
 ---
 
 ## 2. Immediate builtins-agent work
 
 1. **Replace `% 0` error hacks** with `raise <int-or-object>` where the
-   intent is “fatal error” (`tuple.py` already uses LIST_TO_TUPLE; sweep
-   `range.py`, `iter.py`, `next.py`, etc.).
+   intent is “fatal error”.
 2. **Rewrite firmware bodies** that assumed old TO_BOOL limits — `all` /
    `any` / `bool` / `filter(None, …)` can rely on None/container truthiness.
-3. **Keep signatures positional-only** (freeze). Do not add `key=`, `sep=`,
-   `*args` until bytecode unfreezes `CALL_KW` / `CALL_FUNCTION_EX`.
+3. **Add kwargs / varargs signatures** where useful as ROM `CODE_OBJECT`s:
+   `print(..., sep=, end=)`, `max(..., key=)`, `sorted(..., reverse=)`,
+   `zip(*iterables)`, etc. Prefer Python over new `BI_*` keyword tables.
 4. **Seed ROM `CODE_OBJECT`s** into the boot-record builtins dict for
    Python-only names (`sum`, `sorted`, `enumerate`, …) while leaving
-   `len`/`max`/`range`/`set` as `BI_*` hybrid entries
+   `len`/`max`/`range`/`set` as `BI_*` hybrid entries for positional hot paths
    (`image_from_source.build_builtins_dict`).
 5. **Wire `pycore_firmware/builtins/*.py` into image build** — compile each
    module, place handles in the builtins dict, and add differential image
@@ -55,14 +52,14 @@ Hardware / tooling now supports the acceptance items from
 
 ## 3. Follow-ups that still need bytecode help
 
-Track these; do not invent custom opcodes:
-
 | Need | Why |
 | --- | --- |
-| `CALL_KW` + `CALL_FUNCTION_EX` | Unfreeze `print`/`max`/`sorted`/`open` kwargs and varargs — see `planning/call_kw_support_plan.md` (doable; was scope-cut, not blocked) |
-| Full exception tables / `RERAISE` | Real `TypeError`/`StopIteration`; comprehension option A/B |
+| Non-empty `DICT_MERGE` | `f(**x, **y)` with both non-empty |
+| `CO_VARARGS` / `CO_VARKEYWORDS` on user defs | `def f(*a, **k)` parameters |
+| Optional `BI_*` keyword tables | Hardware `print(sep=)` without ROM wrapper |
+| Full exception tables / `RERAISE` | Real `TypeError`/`StopIteration` |
 | `BI_LEN` tuple-mode RANGE + OBJECT `__bool__` | Complete truthiness / len protocol |
-| `GET_ITER`/`FOR_ITER` on OBJECT (`__iter__`/`__next__`) | Iterator protocol for user types |
+| `GET_ITER`/`FOR_ITER` on OBJECT | Iterator protocol for user types |
 | `BI_ORD` / `BI_CHR` | Unblock `ord`/`chr` / `ascii` |
 | `LOAD_SUPER_ATTR` + descriptors | `super` / `property` / `classmethod` |
 | `COMPARE_OP` string ordering | `sorted`/`min`/`max` on str |
@@ -75,10 +72,9 @@ Track these; do not invent custom opcodes:
 1. Image-seed a small ROM subset (`sum`, `abs`, `bool`, `all`, `any`) beside
    existing `BI_*` entries; add `img_firmware_*` tests.  
 2. Sweep error paths to `raise`.  
-3. Finish list-materializing iterators (`enumerate`/`zip`/`map`) against
-   widened `TO_BOOL` + LIST_TO_TUPLE.  
-4. Document remaining blocked builtins against §3 bytecode gaps.  
-5. Only then ask bytecode for `CALL_KW` / exceptions / `ORD`/`CHR`.
+3. Land kwargs ROM wrappers (`print`/`max`/`sorted`) against live `CALL_KW`.  
+4. Finish list-materializing iterators (`enumerate`/`zip`/`map`).  
+5. Document remaining blocked builtins against §3 bytecode gaps.
 
 ---
 

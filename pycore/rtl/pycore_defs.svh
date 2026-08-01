@@ -244,7 +244,15 @@ localparam logic [7:0] PY_OP_BUILD_SET        = 8'd48;
 localparam logic [7:0] PY_OP_BUILD_TUPLE      = 8'd51;
 localparam logic [7:0] PY_OP_CALL             = 8'd52;
 localparam logic [7:0] PY_OP_CALL_INTRINSIC_1 = 8'd53;
+// CALL_FUNCTION_EX / CALL_KW — CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['CALL_FUNCTION_EX'],
+//                                       opcode.opmap['CALL_KW'])"
+//   -> 4, 55
+localparam logic [7:0] PY_OP_CALL_FUNCTION_EX = 8'd4;
+localparam logic [7:0] PY_OP_CALL_KW          = 8'd55;
 localparam logic [7:0] PY_OP_COMPARE_OP       = 8'd56;
+// DICT_MERGE — CPython 3.14.6 opmap['DICT_MERGE'] -> 66
+localparam logic [7:0] PY_OP_DICT_MERGE       = 8'd66;
 localparam logic [7:0] PY_OP_COPY             = 8'd59;
 localparam logic [7:0] PY_OP_DELETE_FAST      = 8'd63;
 localparam logic [7:0] PY_OP_EXTENDED_ARG     = 8'd69;

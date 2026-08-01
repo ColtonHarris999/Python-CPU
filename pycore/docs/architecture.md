@@ -442,21 +442,25 @@ caches the module code object's `co_consts` and `co_names`, latches
 entry slot. `BOOT_EN=0` remains available for hand-authored hex fixtures that
 skip the boot record.
 
-Serialized code objects are five tagged-entry fields (32 bytes per field):
+Serialized code objects are seven tagged-entry fields (32 bytes per field, 224B):
 
 ```text
-field 0: entry_slot  (INT, imem slot index)
-field 1: co_consts   (TUPLE handle)
-field 2: co_names    (TUPLE handle)
-field 3: metadata    (INT, packed {stacksize, nlocals, argcount})
-field 4: co_defaults (TUPLE handle)
+field 0: entry_slot    (INT, imem slot index)
+field 1: co_consts     (TUPLE handle)
+field 2: co_names      (TUPLE handle)
+field 3: metadata      (INT, packed {kwonlyargcount, stacksize, nlocals, argcount})
+field 4: co_defaults   (TUPLE handle)
+field 5: co_varnames   (TUPLE handle; parameter / local names)
+field 6: co_kwdefaults (MUT_DICT handle; empty if none)
 ```
 
 The interim function model is **function == code object**: `MAKE_FUNCTION`
-checks that TOS is a `CODE_OBJECT` and leaves it in place. `CALL` expects the
-CPython 3.14 non-method layout `callable, NULL, args...`, validates the callable
-tag and argcount, reads the callee code-object fields, then enters the frame
-manager.
+checks that TOS is a `CODE_OBJECT` and leaves it in place. `CALL` /
+`CALL_KW` / `CALL_FUNCTION_EX` expect the matching CPython 3.14 stack
+shapes, validate the callable, bind args (positional and/or keyword via
+`co_varnames`), read the callee code-object fields, then enter the frame
+manager. `OBK_BUILTIN` kwargs remain `CALL_FILTER` (firmware `CODE_OBJECT`
+path). `DICT_MERGE` supports the empty-dest call-site shape used for `**kwargs`.
 
 `LOAD_CONST` is a normal one-slot CPython instruction. It indexes
 `co_consts[arg]` and the container FSM performs two dmem reads (value slot then

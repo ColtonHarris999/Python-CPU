@@ -37,6 +37,7 @@
     localparam logic [5:0] CONT_TO_BOOL = 6'd33;// TO_BOOL scalar/container truthiness
     localparam logic [5:0] CONT_LIST_TO_TUPLE = 6'd34;// CALL_INTRINSIC_1 list->tuple
     localparam logic [5:0] CONT_UNPACK_EX = 6'd35;// UNPACK_EX LIST/TUPLE
+    localparam logic [5:0] CONT_DICT_MERGE = 6'd36;// DICT_MERGE (empty-dest fast path)
 
     // Container phases (stored in container_phase_r, 6-bit).
     //

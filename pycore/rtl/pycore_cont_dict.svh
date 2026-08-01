@@ -2012,3 +2012,45 @@
                             endcase
                         end // CONT_SET_UPDATE
 
+                        // DICT_MERGE: update dest (rs1) with source (rs2), pop
+                        // source. Empty-dest fast path aliases the source
+                        // handle into the dest RF slot (CPython emits
+                        // BUILD_MAP 0 + DICT_MERGE for call **kwargs).
+                        // Non-empty dest → CALL_FILTER until full merge lands.
+                        CONT_DICT_MERGE: begin
+                            unique case (container_phase_r)
+                                CP_INIT: begin
+                                    if (!pycore_is_dict(cont_rs1_tag, cont_rs1_val) ||
+                                        !pycore_is_dict(cont_rs2_tag, cont_rs2_val)) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        container_base_r <= cont_rs1_val[31:0];
+                                        container_dmem_addr_r <= cont_rs1_val[31:0];
+                                        container_dmem_we_r <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r <= CP_HDR;
+                                    end
+                                end
+                                CP_HDR: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (cont_dict_hdr_used != 64'd0) begin
+                                            call_filter_trap_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            // Alias source into dest slot; pop TOS.
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                {2'b0, tos_r} - 9'd1
+                                                - {2'b0, cur_arg_r[6:0]});
+                                            container_wb_data_r <= rs2_r;
+                                            tos_r <= tos_r - RF_AW'(1);
+                                            fetch_skip_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end
+                                    end
+                                end
+                                CP_DONE: ;
+                                default: ;
+                            endcase
+                        end // CONT_DICT_MERGE
+

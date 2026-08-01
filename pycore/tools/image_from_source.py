@@ -124,6 +124,9 @@ SUPPORTED_OPS = {
     "COPY",
     "SWAP",
     "CALL",
+    "CALL_KW",
+    "CALL_FUNCTION_EX",
+    "DICT_MERGE",
     # CPython 3.14 emits LOAD_CONST + RETURN_VALUE; RETURN_CONST is absent.
     "RETURN_VALUE",
     "RAISE_VARARGS",
@@ -154,7 +157,6 @@ SUPPORTED_OPS = {
 DEFERRED_OPS: dict[str, str] = {
     "MAP_ADD": "dict-comprehension MAP_ADD lowering is deferred",
     "DICT_UPDATE": "dict update/unpack lowering is deferred",
-    "DICT_MERGE": "dict merge lowering is deferred",
     "BINARY_SLICE": "slice notation support is deferred",
     "STORE_SLICE": "slice assignment support is deferred",
     # Classes are emitted at image-build time (M4 ClassImageBuilder); hardware
@@ -166,8 +168,6 @@ DEFERRED_OPS: dict[str, str] = {
     "LOAD_COMMON_CONSTANT": "LOAD_COMMON_CONSTANT is not part of the image-boot subset",
     "LOAD_SPECIAL": "LOAD_SPECIAL is not part of the image-boot subset",
     "LOAD_SUPER_ATTR": "super() attribute lookup is deferred",
-    "CALL_KW": "keyword calls are deferred",
-    "CALL_FUNCTION_EX": "variadic calls are deferred",
     "CALL_INTRINSIC_1": "CALL_INTRINSIC_1 is deferred except INTRINSIC_LIST_TO_TUPLE (arg 6)",
     "CALL_INTRINSIC_2": "CALL_INTRINSIC_2 is deferred",
     "IMPORT_NAME": "imports are deferred",

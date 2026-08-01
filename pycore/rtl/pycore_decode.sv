@@ -287,8 +287,15 @@ module pycore_decode (
                 end
             end
 
-            PY_OP_CALL: begin
+            PY_OP_CALL, PY_OP_CALL_KW, PY_OP_CALL_FUNCTION_EX: begin
                 is_call_o = 1'b1;
+            end
+
+            // DICT_MERGE: merge TOS mapping into dict at TOS-1-oparg; pop TOS.
+            PY_OP_DICT_MERGE: begin
+                rs1_sel_o      = tos_index_i - 8'd1 - arg_i[7:0]; // dest dict
+                rs2_sel_o      = tos_index_i - 8'd1;              // source mapping
+                is_container_o = 1'b1;
             end
 
             // LOAD_GLOBAL / LOAD_NAME / STORE_*: multi-cycle name dict ops.

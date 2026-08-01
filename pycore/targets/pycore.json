@@ -244,10 +244,8 @@
     },
     "OBJ_CALL": {
       "distance": 5,
-      "needs_subsystem": "full call/object-construction protocol (variadic + func-object creation; plain CALL is FRAME, in-scope)",
+      "needs_subsystem": "full call/object-construction protocol (variadic + func-object creation; CALL/CALL_KW/CALL_FUNCTION_EX are FRAME, in-scope)",
       "members": [
-        "CALL_KW",
-        "CALL_FUNCTION_EX",
         "CALL_INTRINSIC_1",
         "CALL_INTRINSIC_2",
         "MAKE_FUNCTION",
@@ -519,6 +517,24 @@
       "support": "partial",
       "hw_class": "FRAME",
       "fold": "BAR"
+    },
+    "CALL_KW": {
+      "support": "execute",
+      "hw_class": "FRAME",
+      "fold": "BAR",
+      "note": "CODE_OBJECT binder via co_varnames; OBK_BUILTIN/TYPE kwargs → CALL_FILTER"
+    },
+    "CALL_FUNCTION_EX": {
+      "support": "execute",
+      "hw_class": "FRAME",
+      "fold": "BAR",
+      "note": "LIST/TUPLE *args expand; kwargs dict via shared binder; NULL = no kwargs"
+    },
+    "DICT_MERGE": {
+      "support": "partial",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "Empty-dest fast path for call **kwargs; non-empty dest → CALL_FILTER"
     },
     "LOAD_FAST_AND_CLEAR": {
       "support": "execute",

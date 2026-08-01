@@ -180,6 +180,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
 	pycore-img-default-arg pycore-img-default-arg-argc-trap \
+	pycore-img-call-kw pycore-img-call-kw-unexpected \
+	pycore-img-call-function-ex pycore-img-call-function-ex-kw \
 	pycore-img-bound-method-obj pycore-img-method-all \
 	pycore-img-class-simple pycore-img-class-const \
 	pycore-img-staticmethod pycore-img-class-two-instances \
@@ -1241,6 +1243,18 @@ pycore-img-default-arg:
 pycore-img-default-arg-argc-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,default_arg_argc_trap,6,50000)
 
+pycore-img-call-kw:
+	$(call PYCORE_IMAGE_RUN,call_kw,100000)
+
+pycore-img-call-kw-unexpected:
+	$(call PYCORE_IMAGE_TRAP_RUN,call_kw_unexpected,6,50000)
+
+pycore-img-call-function-ex:
+	$(call PYCORE_IMAGE_RUN,call_function_ex,100000)
+
+pycore-img-call-function-ex-kw:
+	$(call PYCORE_IMAGE_RUN,call_function_ex_kw,100000)
+
 pycore-img-bound-method-obj:
 	$(call PYCORE_IMAGE_RUN,bound_method_obj,100000)
 
@@ -1251,6 +1265,10 @@ pycore-img-method-all: \
 	pycore-img-ctor-init \
 	pycore-img-default-arg \
 	pycore-img-default-arg-argc-trap \
+	pycore-img-call-kw \
+	pycore-img-call-kw-unexpected \
+	pycore-img-call-function-ex \
+	pycore-img-call-function-ex-kw \
 	pycore-img-bound-method-obj
 
 # ClassImageBuilder (M4): fold module-level class → OBK_TYPE + STORE_NAME.

@@ -199,8 +199,18 @@ module pycore_core #(
     // S_CALL / S_RETURN management (multi-phase FSM with code-object reads).
     logic                          call_sent_r;   // call_valid was pulsed
     logic                          frame_dmem_pending_r; // frame push or pop in flight
-    logic [3:0]                    call_phase_r;
+    logic [4:0]                    call_phase_r;
     logic [2:0]                    return_phase_r;
+    // CALL / CALL_KW / CALL_FUNCTION_EX mode (see CALL_MODE_* localparams).
+    logic [1:0]                    call_mode_r;
+    logic [7:0]                    call_n_pos_r;
+    logic [7:0]                    call_n_kwargs_r;
+    logic [127:0]                  call_kw_names_r;    // names TUPLE or kwargs DICT
+    logic [127:0]                  call_varnames_r;    // callee co_varnames TUPLE
+    logic [127:0]                  call_kwdefaults_r;  // callee co_kwdefaults DICT
+    logic [15:0]                   call_kwonly_r;
+    logic [15:0]                   call_total_params_r;
+    logic                          call_args_is_list_r; // EX expand source tag
     // Boot phase counter — reset walker for S_BOOT.
     logic [3:0]                    boot_phase_r;
     // Scratchpad regs latched during S_CALL / S_RETURN for a pending
@@ -1286,9 +1296,18 @@ module pycore_core #(
     // that commits state to the RF / fetch redirect.  Using a phase-driven
     // exit (rather than a wire from the frame module) keeps the extra
     // code-object dmem reads inside the same state.
-    localparam logic [3:0] CALL_PHASE_DONE = 4'd15;
+    localparam logic [4:0] CALL_PHASE_DONE     = 5'd15;
+    localparam logic [4:0] CALL_PHASE_KW_NAMES = 5'd16;
+    localparam logic [4:0] CALL_PHASE_EX_KW    = 5'd17;
+    localparam logic [4:0] CALL_PHASE_EX_ARGS  = 5'd18;
+    localparam logic [4:0] CALL_PHASE_EX_EXPAND = 5'd19;
     localparam logic [2:0] RET_PHASE_DONE  = 3'd7;
     localparam logic [3:0] BOOT_PHASE_DONE = 4'd15;
+    // call_mode_r encodings
+    localparam logic [1:0] CALL_MODE_POS   = 2'd0; // plain CALL
+    localparam logic [1:0] CALL_MODE_KW    = 2'd1; // CALL_KW (names tuple)
+    localparam logic [1:0] CALL_MODE_EX    = 2'd2; // CALL_FUNCTION_EX expand
+    localparam logic [1:0] CALL_MODE_EX_KW = 2'd3; // EX with kwargs dict binder
     // SHORT_STR value for "__init__" (size=8); used by TYPE-call tp_dict probe.
     localparam logic [127:0] CALL_INIT_NAME_VAL =
         128'h85f5f696e69745f5f000000000000000;
@@ -1421,6 +1440,15 @@ module pycore_core #(
             call_phase_r         <= '0;
             return_phase_r       <= '0;
             boot_phase_r         <= '0;
+            call_mode_r          <= 2'd0; // CALL_MODE_POS
+            call_n_pos_r         <= '0;
+            call_n_kwargs_r      <= '0;
+            call_kw_names_r      <= '0;
+            call_varnames_r      <= '0;
+            call_kwdefaults_r    <= '0;
+            call_kwonly_r        <= '0;
+            call_total_params_r  <= '0;
+            call_args_is_list_r  <= 1'b0;
             call_code_addr_r     <= '0;
             call_entry_slot_r    <= '0;
             call_consts_r        <= '0;
@@ -1659,6 +1687,8 @@ module pycore_core #(
                                 container_op_r <= CONT_SET_ADD;
                             end else if (cur_opcode_r == PY_OP_SET_UPDATE) begin
                                 container_op_r <= CONT_SET_UPDATE;
+                            end else if (cur_opcode_r == PY_OP_DICT_MERGE) begin
+                                container_op_r <= CONT_DICT_MERGE;
                             end else if (cur_opcode_r ==
                                          PY_OP_STORE_FAST_LOAD_FAST) begin
                                 container_op_r     <= CONT_SFLF;
@@ -1737,14 +1767,23 @@ module pycore_core #(
                         // state_next = S_FETCH (from always_comb)
 
                     end else if (dec_is_call) begin
-                        // CALL: move to multi-phase frame-management state.
-                        // Phase 0 → RF settle at callable slot.
+                        // CALL / CALL_KW / CALL_FUNCTION_EX: multi-phase FSM.
+                        // Phase 0 → RF settle at callable (or KW/EX prelude).
                         call_sent_r          <= 1'b0;
                         frame_dmem_pending_r <= 1'b0;
-                        call_phase_r         <= 4'd0;
+                        call_phase_r         <= 5'd0;
                         call_sub_r           <= 6'd0;
                         call_ret_mode_r      <= 1'b0;
                         call_saved_inst_r    <= 64'b0;
+                        if (cur_opcode_r == PY_OP_CALL_KW)
+                            call_mode_r <= CALL_MODE_KW;
+                        else if (cur_opcode_r == PY_OP_CALL_FUNCTION_EX)
+                            call_mode_r <= CALL_MODE_EX;
+                        else
+                            call_mode_r <= CALL_MODE_POS;
+                        call_n_pos_r        <= '0;
+                        call_n_kwargs_r     <= '0;
+                        call_args_is_list_r <= 1'b0;
                         container_dmem_pending_r <= 1'b0;
                         fetch_skip_r         <= 1'b1;
                         // state_next = S_CALL (from always_comb)
