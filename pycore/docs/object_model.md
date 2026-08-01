@@ -50,10 +50,10 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | 1 | `BYTEARRAY` | Constructor |
 | 2 | `FROM_BYTES` | `int.from_bytes` |
 | 3 | `TO_BYTES` | `int.to_bytes` |
-| 4 | `MAX` | |
+| 4 | `MAX` | Two-arg INT/BOOL fast path in CALL FSM |
 | 5 | `LIST_APPEND` | |
-| 6 | `PRINT` | |
-| 7 | `LEN` | |
+| 6 | `PRINT` | CALL → `PY_TRAP_BUILTIN_CALL` (excore) |
+| 7 | `LEN` | Tag fast paths in CALL FSM; object/`__len__` is the miss path |
 | 8 | `RANGE` | Emits `PY_TAG_RANGE` |
 | 9 | `SET` | Native empty / from-list-or-tuple constructor |
 
@@ -62,6 +62,14 @@ module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
 `bytearray` / `max` / `len` / `print` / `range` / `set` as `OBK_BUILTIN`
 handles and `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
 `to_bytes`. Total boot record size is `BOOT_RECORD_BYTES = 96`.
+
+**Resolution:** `LOAD_GLOBAL` / `LOAD_NAME` probe globals, then this
+builtins dict (LEGB **B**). **CALL** on an `OBK_BUILTIN` handle dispatches
+by `builtin_id` in the CALL FSM — hardware accelerates known tags (e.g.
+`BI_LEN` reads list/tuple/dict/set/str headers). Pure-Python bodies under
+`pycore_firmware/builtins/` are for miss / protocol cases (e.g.
+`obj.__len__()`), not for re-deriving header lengths in a loop. See
+`planning/builtins_bytecode_support_plan.md`.
 
 ## D3 — `__dict__` is a real dict
 
