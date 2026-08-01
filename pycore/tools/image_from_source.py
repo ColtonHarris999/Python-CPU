@@ -116,13 +116,16 @@ SUPPORTED_OPS = {
     "BUILD_MAP",
     "BUILD_TUPLE",
     "UNPACK_SEQUENCE",
+    "UNPACK_EX",
     "STORE_SUBSCR",
     "DELETE_SUBSCR",
     "CONTAINS_OP",
     "COPY",
     "SWAP",
     "CALL",
+    # CPython 3.14 emits LOAD_CONST + RETURN_VALUE; RETURN_CONST is absent.
     "RETURN_VALUE",
+    "RAISE_VARARGS",
     "LOAD_GLOBAL",
     "LOAD_NAME",
     "STORE_NAME",
@@ -164,7 +167,7 @@ DEFERRED_OPS: dict[str, str] = {
     "LOAD_SUPER_ATTR": "super() attribute lookup is deferred",
     "CALL_KW": "keyword calls are deferred",
     "CALL_FUNCTION_EX": "variadic calls are deferred",
-    "CALL_INTRINSIC_1": "CALL_INTRINSIC_1 is deferred",
+    "CALL_INTRINSIC_1": "CALL_INTRINSIC_1 is deferred except INTRINSIC_LIST_TO_TUPLE (arg 6)",
     "CALL_INTRINSIC_2": "CALL_INTRINSIC_2 is deferred",
     "IMPORT_NAME": "imports are deferred",
     "IMPORT_FROM": "imports are deferred",
@@ -176,7 +179,6 @@ DEFERRED_OPS: dict[str, str] = {
     "YIELD_VALUE": "generators are deferred",
     "SEND": "generators/coroutines are deferred",
     "GET_AWAITABLE": "async/await is deferred",
-    "UNPACK_EX": "starred unpack is deferred",
     "FORMAT_WITH_SPEC": "format-spec f-strings are deferred",
     "MATCH_CLASS": "structural pattern matching is deferred",
     "MATCH_KEYS": "structural pattern matching is deferred",
@@ -263,6 +265,13 @@ def validate_code_object(co: types.CodeType) -> None:
     for ins in iter_raw_instructions(co):
         if ins.opname == "CACHE":
             continue
+        if ins.opname == "CALL_INTRINSIC_1":
+            if ins.arg == 6:
+                continue
+            raise ValueError(
+                f"Deferred opcode {ins.opname!r} in code object {co.co_name!r} "
+                f"at bytecode offset {ins.offset}: {DEFERRED_OPS[ins.opname]}"
+            )
         if ins.opname in DEFERRED_OPS:
             raise ValueError(
                 f"Deferred opcode {ins.opname!r} in code object {co.co_name!r} "

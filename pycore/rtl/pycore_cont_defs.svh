@@ -34,6 +34,9 @@
     localparam logic [5:0] CONT_STORE_ATTR = 6'd30;// STORE_ATTR → instance __dict__
     localparam logic [5:0] CONT_DELETE_ATTR = 6'd31;// DELETE_ATTR → instance __dict__
     localparam logic [5:0] CONT_UNPACK_SEQ = 6'd32;// UNPACK_SEQUENCE LIST/TUPLE
+    localparam logic [5:0] CONT_TO_BOOL = 6'd33;// TO_BOOL scalar/container truthiness
+    localparam logic [5:0] CONT_LIST_TO_TUPLE = 6'd34;// CALL_INTRINSIC_1 list->tuple
+    localparam logic [5:0] CONT_UNPACK_EX = 6'd35;// UNPACK_EX LIST/TUPLE
 
     // Container phases (stored in container_phase_r, 6-bit).
     //
@@ -143,4 +146,7 @@
     localparam logic [5:0] CP_DICT_ORDER_SHIFT_TAG_RD = 6'd55;
     localparam logic [5:0] CP_DICT_ORDER_SHIFT_TAG_WR = 6'd56;
     localparam logic [5:0] CP_DICT_ORDER_FINAL = 6'd57;
+    // Generic copy writeback phases used by list/tuple conversion paths.
+    localparam logic [5:0] CP_COPY_VAL_WB = 6'd58;
+    localparam logic [5:0] CP_COPY_TAG_WB = 6'd59;
 

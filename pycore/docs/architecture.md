@@ -475,8 +475,9 @@ Builtin **CALL** uses the same LEGB load to obtain a callable, then:
 
 - `CODE_OBJECT` → normal frame entry;
 - `OBJECT`/`OBK_BUILTIN` → CALL FSM `BI_*` dispatch (hardware fast paths for
-  known tags; protocol miss paths such as `__len__` are planned — see
-  `planning/builtins_bytecode_support_plan.md`).
+  known tags). `BI_LEN` covers LIST/TUPLE/DICT/SET/SHORT_STR/LONG_STR/inline
+  RANGE; on `OBK_INSTANCE` it probes the type's own `tp_dict` for `__len__`
+  and runs that `CODE_OBJECT` as a method (miss → `PY_TRAP_ATTR_ERROR`).
 
 Firmware pure-Python under `pycore_firmware/builtins/` is the slow / miss
 path companion to those `BI_*` entries, not a replacement for header reads.

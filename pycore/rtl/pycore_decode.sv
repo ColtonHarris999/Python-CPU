@@ -168,11 +168,10 @@ module pycore_decode (
                 push_stack_o = 1'b1;
             end
 
-            // TO_BOOL: convert TOS numeric to BOOL in place (net stack 0).
+            // TO_BOOL: scalar/container truthiness in S_CONTAINER (net stack 0).
             PY_OP_TO_BOOL: begin
                 rs1_sel_o = tos_index_i - 8'd1;
-                rd_sel_o  = tos_index_i - 8'd1;
-                alu_op_o  = PY_ALU_PASS;  // conversion done in core EX
+                is_container_o = 1'b1;
             end
 
             // UNARY_NOT: invert TOS BOOL in place (net stack 0). CPython 3.14
@@ -197,8 +196,15 @@ module pycore_decode (
                 alu_op_o  = PY_ALU_NEG;
             end
 
-            // UNPACK_SEQUENCE: pop LIST/TUPLE, push count items right-to-left.
-            PY_OP_UNPACK_SEQUENCE: begin
+            // CALL_INTRINSIC_1 arg 6 (INTRINSIC_LIST_TO_TUPLE): TOS list.
+            PY_OP_CALL_INTRINSIC_1: begin
+                rs1_sel_o      = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
+            end
+
+            // UNPACK_SEQUENCE / UNPACK_EX: pop LIST/TUPLE, push items
+            // right-to-left so the first target is at TOS for following stores.
+            PY_OP_UNPACK_SEQUENCE, PY_OP_UNPACK_EX: begin
                 rs1_sel_o      = tos_index_i - 8'd1;
                 is_container_o = 1'b1;
             end
@@ -257,6 +263,14 @@ module pycore_decode (
                 rs1_sel_o = tos_index_i - 8'd1;
                 pop_stack_o = 1'b1;
                 is_return_o = 1'b1;
+                alu_op_o = PY_ALU_PASS;
+            end
+
+            // RAISE_VARARGS: minimal fatal raise path.  oparg validation and
+            // PY_TRAP_RAISE pulse are handled in core EX.
+            PY_OP_RAISE_VARARGS: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                pop_stack_o = 1'b1;
                 alu_op_o = PY_ALU_PASS;
             end
 
