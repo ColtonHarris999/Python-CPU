@@ -23,16 +23,17 @@ These limit every firmware builtin:
 
 | Constraint | Impact |
 | --- | --- |
-| No `RAISE_VARARGS` / exception handling | No `TypeError`/`ValueError`; error paths use hardware traps (`% 0`, TYPE, MEM_FAULT) |
-| No `CALL_KW` / `CALL_FUNCTION_EX` | No kwargs / `*args` signatures |
+| `RAISE_VARARGS` oparg 1 is fatal-only | Can `raise` to halt with `PY_TRAP_RAISE` (17); no handlers / `TypeError` objects yet. Prefer `raise` over `% 0` where touched. |
+| **Freeze: no `CALL_KW` / `CALL_FUNCTION_EX`** | Firmware builtins stay **positional-only** until those opcodes land. No `sep=` / `key=` / `*args` signatures in ROM sources. |
 | No `YIELD_VALUE` | `enumerate`/`zip`/`map`/`filter`/`reversed` return lists, not iterators |
-| `TO_BOOL` INT/BOOL/FLOAT/STR only | `all`/`any`/`bool`/`filter(None,…)` TYPE-trap on None/containers |
+| `TO_BOOL` widened | `None` + LIST/TUPLE/DICT/SET/inline RANGE truthiness work; `OBJECT` `__bool__`/`__len__` protocol still TYPE-traps |
 | `COMPARE_OP` numeric only | `min`/`max`/`sorted` TYPE-trap on str/containers |
 | No negative indices | `reversed` counts length explicitly |
-| Comprehensions emit `RERAISE` | Prefer `out += [x]` / `{*iterable}` over `[…]` / `{…}` comps |
+| Comprehensions emit `RERAISE` | Policy C: prefer `out += [x]` / `{*iterable}` (see `bytecode_support.md`) |
 | List/set growth | `LIST_EXTEND` / `SET_UPDATE` need excore for non-empty work |
+| `UNPACK_EX` + `CALL_INTRINSIC_1` (LIST_TO_TUPLE) | Starred unpack and `(*lst,)` / list→tuple materialization are available |
 | Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`, `ord.md`, `chr.md` |
-| Bytecode support plan | `planning/builtins_bytecode_support_plan.md` — LEGB, CALL schematics, required standard opcodes |
+| Bytecode follow-up plan | `planning/builtins_next_steps_plan.md` — what the builtins agent should do next |
 
 ## Builtin functions
 

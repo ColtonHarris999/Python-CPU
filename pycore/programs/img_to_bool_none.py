@@ -1,4 +1,4 @@
-"""Legacy name: None truthiness is now falsy (was TYPE trap)."""
+"""TO_BOOL on None is falsy (no TYPE trap)."""
 
 
 def managed_entry():

@@ -90,6 +90,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-unary-invert pycore-img-align-mask pycore-img-unary-negative \
 	pycore-img-unary-invert-float-trap \
 	pycore-img-unpack-tuple pycore-img-unpack-list pycore-img-unpack-len-trap \
+	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-str-eq pycore-img-str-lt-trap \
 	pycore-img-scalar-all \
 	pycore-img-is-op \
@@ -170,6 +171,11 @@ EXCORE_RTL_SRCS := \
 	pycore-img-attr-shadow pycore-img-attr-mro \
 	pycore-img-attr-grow-global pycore-img-seed-grow-global \
 	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
+	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
+	pycore-img-load-name-builtin pycore-img-builtin-len-long-str pycore-img-builtin-len-range \
+	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
+	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
+	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-attr-all \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
@@ -586,13 +592,13 @@ pycore-img-to-bool:
 	$(call PYCORE_IMAGE_RUN,to_bool,50000)
 
 pycore-img-to-bool-type-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,to_bool_type_trap,1,50000)
+	$(call PYCORE_IMAGE_RUN,to_bool_type_trap,50000)
 
 pycore-img-to-bool-str:
 	$(call PYCORE_IMAGE_RUN,to_bool_str,50000)
 
 pycore-img-to-bool-list-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,to_bool_list_trap,1,50000)
+	$(call PYCORE_IMAGE_RUN,to_bool_list_trap,50000)
 
 pycore-img-unary-not:
 	$(call PYCORE_IMAGE_RUN,unary_not,50000)
@@ -618,6 +624,12 @@ pycore-img-unpack-list:
 pycore-img-unpack-len-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,unpack_len_trap,1,50000)
 
+pycore-img-unpack-ex:
+	$(call PYCORE_IMAGE_RUN,unpack_ex,50000)
+
+pycore-img-list-to-tuple: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_to_tuple,100000)
+
 pycore-img-str-eq:
 	$(call PYCORE_IMAGE_RUN,str_eq,50000)
 
@@ -632,6 +644,8 @@ pycore-img-scalar-all: \
 	pycore-img-unpack-tuple \
 	pycore-img-unpack-list \
 	pycore-img-unpack-len-trap \
+	pycore-img-unpack-ex \
+	pycore-img-list-to-tuple \
 	pycore-img-str-eq \
 	pycore-img-str-lt-trap
 
@@ -1146,6 +1160,11 @@ pycore-img-attr-all: \
 	pycore-img-attr-grow-global \
 	pycore-img-seed-grow-global \
 	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
+	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
+	pycore-img-load-name-builtin pycore-img-builtin-len-long-str pycore-img-builtin-len-range \
+	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
+	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
+	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-builtin-max \
 	pycore-img-builtin-len-list
 
@@ -1176,6 +1195,45 @@ pycore-img-builtin-max:
 
 pycore-img-builtin-len-list:
 	$(call PYCORE_IMAGE_RUN,builtin_len_list,50000)
+
+pycore-img-builtins-fallback:
+	$(call PYCORE_IMAGE_RUN,builtins_fallback,50000)
+
+pycore-img-builtins-shadow:
+	$(call PYCORE_IMAGE_RUN,builtins_shadow,50000)
+
+pycore-img-builtins-null-bit:
+	$(call PYCORE_IMAGE_RUN,builtins_null_bit,50000)
+
+pycore-img-load-name-builtin:
+	$(call PYCORE_IMAGE_RUN,load_name_builtin,50000)
+
+pycore-img-builtin-len-long-str:
+	$(call PYCORE_IMAGE_RUN,builtin_len_long_str,50000)
+
+pycore-img-builtin-len-range:
+	$(call PYCORE_IMAGE_RUN,builtin_len_range,50000)
+
+pycore-img-builtin-len-empty-range:
+	$(call PYCORE_IMAGE_RUN,builtin_len_empty_range,50000)
+
+pycore-img-builtin-len-obj:
+	$(call PYCORE_IMAGE_RUN,builtin_len_obj,100000)
+
+pycore-img-builtin-len-obj-missing:
+	$(call PYCORE_IMAGE_TRAP_RUN,builtin_len_obj_missing,15,50000)
+
+pycore-img-to-bool-none:
+	$(call PYCORE_IMAGE_RUN,to_bool_none,50000)
+
+pycore-img-to-bool-containers:
+	$(call PYCORE_IMAGE_RUN,to_bool_containers,100000)
+
+pycore-img-raise-varargs:
+	$(call PYCORE_IMAGE_TRAP_RUN,raise_varargs,17,50000)
+
+pycore-img-return-true:
+	$(call PYCORE_IMAGE_RUN,return_true,50000)
 
 pycore-img-default-arg:
 	$(call PYCORE_IMAGE_RUN,default_arg,50000)

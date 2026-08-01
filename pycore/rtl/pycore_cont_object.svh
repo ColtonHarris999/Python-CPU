@@ -46,6 +46,135 @@
                             endcase
                         end // CONT_LOAD_CONST
 
+                        CONT_TO_BOOL: begin
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    begin
+                                        logic truthy;
+                                        truthy = 1'b0;
+                                        if (pycore_is_none(cont_rs1_tag, cont_rs1_val)) begin
+                                            truthy = 1'b0;
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_BOOL,
+                                                {{(PYCORE_VAL_WIDTH-1){1'b0}}, truthy});
+                                            fetch_skip_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else if (cont_rs1_tag == PY_TAG_INT) begin
+                                            truthy = (cont_rs1_val != {PYCORE_VAL_WIDTH{1'b0}});
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_BOOL,
+                                                {{(PYCORE_VAL_WIDTH-1){1'b0}}, truthy});
+                                            fetch_skip_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else if (cont_rs1_tag == PY_TAG_BOOL) begin
+                                            truthy = cont_rs1_val[0];
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_BOOL,
+                                                {{(PYCORE_VAL_WIDTH-1){1'b0}}, truthy});
+                                            fetch_skip_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else if (cont_rs1_tag == PY_TAG_FLOAT) begin
+                                            truthy = (cont_rs1_val[62:0] != 63'b0);
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_BOOL,
+                                                {{(PYCORE_VAL_WIDTH-1){1'b0}}, truthy});
+                                            fetch_skip_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else if (cont_rs1_tag == PY_TAG_SHORT_STR) begin
+                                            if (pycore_short_str_size(cont_rs1_val) >
+                                                    PYCORE_SHORT_STR_MAX_BYTES) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                truthy = (pycore_short_str_size(cont_rs1_val) != 4'b0);
+                                                container_wb_we_r   <= 1'b1;
+                                                container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                                container_wb_data_r <= pycore_make_entry(
+                                                    PY_TAG_BOOL,
+                                                    {{(PYCORE_VAL_WIDTH-1){1'b0}}, truthy});
+                                                fetch_skip_r <= 1'b1;
+                                                container_phase_r <= CP_DONE;
+                                            end
+                                        end else if (cont_rs1_tag == PY_TAG_LONG_STR) begin
+                                            truthy = (pycore_long_str_size(cont_rs1_val) != 64'b0);
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_BOOL,
+                                                {{(PYCORE_VAL_WIDTH-1){1'b0}}, truthy});
+                                            fetch_skip_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else if (cont_rs1_tag == PY_TAG_TUPLE) begin
+                                            truthy = (pycore_tuple_size(cont_rs1_val) != 64'b0);
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_BOOL,
+                                                {{(PYCORE_VAL_WIDTH-1){1'b0}}, truthy});
+                                            fetch_skip_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else if (cont_rs1_tag == PY_TAG_RANGE) begin
+                                            if (pycore_range_is_tuple_mode(cont_rs1_val) ||
+                                                cont_rs1_val[31:0] == 32'b0) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                truthy = (pycore_range_inline_len(cont_rs1_val) != 64'd0);
+                                                container_wb_we_r   <= 1'b1;
+                                                container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                                container_wb_data_r <= pycore_make_entry(
+                                                    PY_TAG_BOOL,
+                                                    {{(PYCORE_VAL_WIDTH-1){1'b0}}, truthy});
+                                                fetch_skip_r <= 1'b1;
+                                                container_phase_r <= CP_DONE;
+                                            end
+                                        end else if (pycore_is_list(cont_rs1_tag, cont_rs1_val) ||
+                                                     pycore_is_dict(cont_rs1_tag, cont_rs1_val) ||
+                                                     pycore_is_set(cont_rs1_tag, cont_rs1_val)) begin
+                                            container_base_r         <= cont_rs1_addr;
+                                            container_dmem_addr_r    <= cont_rs1_addr;
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_HDR;
+                                        end else begin
+                                            container_type_trap_r <= 1'b1;
+                                        end
+                                    end
+                                end
+
+                                CP_HDR: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (pycore_is_list(cont_rs1_tag, cont_rs1_val)) begin
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_BOOL,
+                                                {{(PYCORE_VAL_WIDTH-1){1'b0}},
+                                                 (cont_hdr_len != 64'd0)});
+                                        end else begin
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_BOOL,
+                                                {{(PYCORE_VAL_WIDTH-1){1'b0}},
+                                                 (cont_dict_hdr_used != 64'd0)});
+                                        end
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                        fetch_skip_r <= 1'b1;
+                                        container_phase_r <= CP_DONE;
+                                    end
+                                end
+
+                                CP_DONE: ;
+                                default: ;
+
+                            endcase
+                        end // CONT_TO_BOOL
+
                         CONT_LOAD_GLOBAL: begin
                             unique case (container_phase_r)
 

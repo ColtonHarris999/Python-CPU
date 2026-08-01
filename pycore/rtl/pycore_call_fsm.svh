@@ -1,16 +1,16 @@
-// pycore_call_fsm.svh — S_CALL / S_RETURN arms (included inside pycore_core).
+// pycore_call_fsm.svh - S_CALL / S_RETURN arms (included inside pycore_core).
 //
 // CALL phase map:
 //   0  : bases from oparg; RF = callable
 //   1  : CODE_OBJECT → 2; OBJECT → 8; else CALL_FILTER
 //   2  : sentinel NULL → free (eff=oparg); else method (eff=oparg+1,
 //        new_locals=tos-oparg-1); start entry_slot → 3
-//   3–5: code fields entry_slot / co_consts / co_names
+//   3-5: code fields entry_slot / co_consts / co_names
 //   6  : metadata; start co_defaults → 14
 //   7  : frame push + init
-//   8–11: BOUND_METHOD unwrap (NULL sentinel required) → join 3
+//   8-11: BOUND_METHOD unwrap (NULL sentinel required) → join 3
 //   12 : TYPE instantiate + __init__ lookup (call_sub_r) → 3 or DONE
-//   13 : OBK_BUILTIN — max/len/range on-core; else PY_TRAP_BUILTIN_CALL
+//   13 : OBK_BUILTIN - max/len/range on-core; else PY_TRAP_BUILTIN_CALL
 //   14 : defaults arity check + fill missing locals → 7
 //   15 : CALL_PHASE_DONE
                 // ----------------------------------------------------------
@@ -164,7 +164,7 @@
                         end
 
                         // --------------------------------------------------
-                        // Phases 8–11: OBJECT → BOUND_METHOD unwrap
+                        // Phases 8-11: OBJECT → BOUND_METHOD unwrap
                         // --------------------------------------------------
                         4'd8: begin
                             // Sentinel must be NULL for BM / TYPE calls.
@@ -282,11 +282,10 @@
                         //   sub0: latch builtin_id (field0 val), read field0 tag
                         //   sub1: confirm INT id; read field1 (bound_self) val
                         //   sub2: read bound_self tag; branch by id
-                        //   sub3: MAX — read arg0 from RF
-                        //   sub4: MAX — read arg1; compare; writeback
-                        //   sub5: LEN — read arg0; dispatch by tag
-                        //   sub6: LEN — list/dict header ready → push length
-                        //   sub12–23: RANGE — normalize args, allocate object
+                        //   sub4-5: MAX - read args; compare; writeback
+                        //   sub6-8: LEN - builtin containers / strings / inline range
+                        //   sub40-51: LEN - INSTANCE.__len__ own tp_dict probe
+                        //   sub12-23: RANGE - normalize args, allocate object
                         //   else: marshal PY_TRAP_BUILTIN_CALL
                         // --------------------------------------------------
                         4'd13: begin
@@ -406,7 +405,7 @@
                                         end
                                     end
                                 end
-                                // MAX arg0 — scratch in return_wb_data_r (entry-width).
+                                // MAX arg0 - scratch in return_wb_data_r (entry-width).
                                 6'd4: begin
                                     return_wb_data_r    <= rf_rs1;
                                     container_rf_addr_r <= RF_AW'({2'b0, tos_r} - 9'd1);
@@ -479,6 +478,48 @@
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 6'd0;
+                                    end else if (cont_rf_rs1_tag == PY_TAG_LONG_STR) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_INT,
+                                            {{64{1'b0}},
+                                             pycore_long_str_size(cont_rf_rs1_val)});
+                                        tos_r <= RF_AW'({2'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 6'd0;
+                                    end else if (cont_rf_rs1_tag == PY_TAG_RANGE) begin
+                                        if (pycore_range_is_tuple_mode(
+                                                cont_rf_rs1_val)) begin
+                                            // Tuple-mode RANGE length needs heap tuple
+                                            // element reads; follow-up milestone.
+                                            container_type_trap_r <= 1'b1;
+                                        end else if (cont_rf_rs1_val[31:0] == 32'd0) begin
+                                            // step==0 is rejected by BI_RANGE; defensive.
+                                            container_type_trap_r <= 1'b1;
+                                        end else begin
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                {2'b0, tos_r} - 9'd3);
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_INT,
+                                                {{64{1'b0}},
+                                                 pycore_range_inline_len(
+                                                     cont_rf_rs1_val)});
+                                            tos_r <= RF_AW'(
+                                                {2'b0, tos_r} - 9'd2);
+                                            fetch_skip_r <= 1'b1;
+                                            call_phase_r <= CALL_PHASE_DONE;
+                                            call_sub_r   <= 6'd0;
+                                        end
+                                    end else if (cont_rf_rs1_tag == PY_TAG_OBJECT) begin
+                                        call_inst_addr_r <= cont_rf_rs1_val[31:0];
+                                        container_dmem_addr_r    <= cont_rf_rs1_val[31:0];
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r               <= 6'd40;
                                     end else begin
                                         container_type_trap_r <= 1'b1;
                                     end
@@ -692,20 +733,23 @@
                                         call_sub_r <= 6'd25;
                                     end else if (cont_rf_rs1_tag ==
                                                  PY_TAG_TUPLE) begin
-                                        if (pycore_tuple_size(
-                                                cont_rf_rs1_val)[63:7] !=
-                                            57'b0) begin
-                                            container_type_trap_r <= 1'b1;
-                                        end else begin
-                                            container_src_buf_r <=
-                                                cont_rf_rs1_val[31:0];
-                                            container_src_len_r <=
-                                                pycore_tuple_size(
-                                                    cont_rf_rs1_val)[31:0];
-                                            container_count_r <=
-                                                pycore_tuple_size(
-                                                    cont_rf_rs1_val)[6:0];
-                                            call_sub_r <= 6'd27;
+                                        // Latch tuple size before slicing -
+                                        // some simulators reject func()[bits].
+                                        begin
+                                            logic [63:0] set_src_size;
+                                            set_src_size =
+                                                pycore_tuple_size(cont_rf_rs1_val);
+                                            if (set_src_size[63:7] != 57'b0) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                container_src_buf_r <=
+                                                    cont_rf_rs1_val[31:0];
+                                                container_src_len_r <=
+                                                    set_src_size[31:0];
+                                                container_count_r <=
+                                                    set_src_size[6:0];
+                                                call_sub_r <= 6'd27;
+                                            end
                                         end
                                     end else begin
                                         container_type_trap_r <= 1'b1;
@@ -937,6 +981,230 @@
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r <= 6'd0;
                                     end
+                                end
+                                // LEN INSTANCE path: read object head.
+                                6'd40: begin
+                                    if (!container_dmem_pending_r) begin
+                                        begin
+                                            logic [63:0] len_type_addr;
+                                            len_type_addr =
+                                                pycore_ob_type(container_rd_data_r);
+                                            if (pycore_ob_kind(container_rd_data_r) !=
+                                                    PY_OBK_INSTANCE ||
+                                                len_type_addr[31:0] == 32'd0) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                container_src_buf_r <=
+                                                    len_type_addr[31:0];
+                                                container_dmem_addr_r <=
+                                                    len_type_addr[31:0];
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                call_sub_r <= 6'd41;
+                                            end
+                                        end
+                                    end
+                                end
+                                // LEN INSTANCE path: require TYPE head.
+                                6'd41: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (pycore_ob_kind(container_rd_data_r) !=
+                                                PY_OBK_TYPE) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_obj_field_val_addr(
+                                                    container_src_buf_r, 32'd0);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_sub_r <= 6'd42;
+                                        end
+                                    end
+                                end
+                                // LEN INSTANCE path: latch tp_dict val; read tag.
+                                6'd42: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_base_r <= container_rd_data_r[31:0];
+                                        container_dmem_addr_r <=
+                                            pycore_obj_field_tag_addr(
+                                                container_src_buf_r, 32'd0);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd43;
+                                    end
+                                end
+                                // LEN INSTANCE path: require tp_dict; read header.
+                                6'd43: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_rd_data_r[3:0] !=
+                                                PY_TAG_MUT_COLLEC) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else begin
+                                            container_dmem_addr_r    <= container_base_r;
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_sub_r <= 6'd44;
+                                        end
+                                    end
+                                end
+                                // LEN INSTANCE path: latch slots; read table_ptr.
+                                6'd44: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_slot_count_r <=
+                                            cont_dict_hdr_slots[31:0];
+                                        container_dmem_addr_r <=
+                                            pycore_dict_table_ptr_addr(
+                                                container_base_r);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd45;
+                                    end
+                                end
+                                // LEN INSTANCE path: start __len__ probe.
+                                6'd45: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_buf_r <= cont_dict_table_ptr;
+                                        container_tag_r <= PY_TAG_SHORT_STR;
+                                        container_val_r <= CALL_LEN_NAME_VAL;
+                                        if ((container_slot_count_r == 32'd0) ||
+                                            (cont_dict_table_ptr == 32'd0)) begin
+                                            container_attr_error_r <= 1'b1;
+                                        end else begin
+                                            begin
+                                                logic [31:0] probe0;
+                                                probe0 = pycore_dict_key_hash(
+                                                    PY_TAG_SHORT_STR,
+                                                    CALL_LEN_NAME_VAL)
+                                                    & (container_slot_count_r - 32'd1);
+                                                container_probe_r   <= probe0;
+                                                container_probe_n_r <= 32'd0;
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_ktag_addr(
+                                                        cont_dict_table_ptr, probe0);
+                                            end
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_sub_r <= 6'd46;
+                                        end
+                                    end
+                                end
+                                // LEN INSTANCE path: probe ktag.
+                                6'd46: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_probe_n_r >=
+                                                container_slot_count_r) begin
+                                            container_attr_error_r <= 1'b1;
+                                        end else begin
+                                            container_probe_n_r <=
+                                                container_probe_n_r + 32'd1;
+                                            if (pycore_dict_slot_empty(
+                                                    container_rd_data_r)) begin
+                                                container_attr_error_r <= 1'b1;
+                                            end else if (pycore_dict_tombstone(
+                                                            container_rd_data_r[3:0])) begin
+                                                if (container_probe_n_r + 32'd1 >=
+                                                        container_slot_count_r) begin
+                                                    container_attr_error_r <= 1'b1;
+                                                end else begin
+                                                    container_probe_r <= cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r,
+                                                            cont_probe_next);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end
+                                            end else begin
+                                                container_probe_tag_r <=
+                                                    container_rd_data_r[3:0];
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_kval_addr(
+                                                        container_buf_r,
+                                                        container_probe_r);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                call_sub_r <= 6'd47;
+                                            end
+                                        end
+                                    end
+                                end
+                                // LEN INSTANCE path: compare key value.
+                                6'd47: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (cont_dict_key_match) begin
+                                            container_dmem_addr_r <=
+                                                pycore_dict_vval_addr(
+                                                    container_buf_r,
+                                                    container_probe_r);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_sub_r <= 6'd48;
+                                        end else if (container_probe_n_r >=
+                                                     container_slot_count_r) begin
+                                            container_attr_error_r <= 1'b1;
+                                        end else begin
+                                            container_probe_r <= cont_probe_next;
+                                            container_dmem_addr_r <=
+                                                pycore_dict_ktag_addr(
+                                                    container_buf_r, cont_probe_next);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_sub_r <= 6'd46;
+                                        end
+                                    end
+                                end
+                                // LEN INSTANCE path: __len__ value.
+                                6'd48: begin
+                                    if (!container_dmem_pending_r) begin
+                                        call_code_addr_r <= container_rd_data_r[31:0];
+                                        container_dmem_addr_r <=
+                                            pycore_dict_vtag_addr(
+                                                container_buf_r, container_probe_r);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd49;
+                                    end
+                                end
+                                // LEN INSTANCE path: require CODE_OBJECT; write callable.
+                                6'd49: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_rd_data_r[3:0] !=
+                                                PY_TAG_CODE_OBJECT) begin
+                                            call_filter_trap_r <= 1'b1;
+                                        end else begin
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                {2'b0, tos_r} - 9'd3);
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_CODE_OBJECT,
+                                                {{96{1'b0}}, call_code_addr_r});
+                                            call_argcount_r   <= 16'd1;
+                                            call_new_locals_r <= RF_AW'(
+                                                {2'b0, tos_r} - 9'd2);
+                                            call_sub_r <= 6'd50;
+                                        end
+                                    end
+                                end
+                                // LEN INSTANCE path: write self into method slot.
+                                6'd50: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, tos_r} - 9'd2);
+                                    container_wb_data_r <= pycore_make_entry(
+                                        PY_TAG_OBJECT,
+                                        {{96{1'b0}}, call_inst_addr_r});
+                                    call_sub_r <= 6'd51;
+                                end
+                                // LEN INSTANCE path: join code-object field reads.
+                                6'd51: begin
+                                    container_dmem_addr_r    <=
+                                        pycore_code_field_val_addr(
+                                            call_code_addr_r,
+                                            PYCORE_CODE_FIELD_ENTRY_SLOT);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    call_sub_r               <= 6'd0;
+                                    call_phase_r             <= 4'd3;
                                 end
                                 default: call_filter_trap_r <= 1'b1;
                             endcase
@@ -1243,7 +1511,7 @@
                                     call_sub_r               <= 6'd0;
                                     call_phase_r             <= 4'd3;
                                 end
-                                // 20: no __init__ — pop argc+2, push instance
+                                // 20: no __init__ - pop argc+2, push instance
                                 6'd20: begin
                                     container_wb_we_r   <= 1'b1;
                                     container_wb_addr_r <= call_tos_base_r;

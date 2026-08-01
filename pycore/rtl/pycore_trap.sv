@@ -26,6 +26,9 @@ module pycore_trap (
     input  logic        set_update_i,
     // PY_TRAP_ATTR_ERROR: missing attribute after __dict__ + MRO (fatal).
     input  logic        attr_error_i,
+    // PY_TRAP_RAISE: explicit Python raise.  Prioritized after memory faults
+    // and before attribute errors so hardware faults win over user exceptions.
+    input  logic        raise_i,
     // Phase C: the excore reported RES_FATAL for a recoverable trap it was
     // handed (S_TRAP_WAIT). excore_fatal_code_i is forwarded verbatim as
     // trap_code_o rather than mapped through a fixed one-hot condition,
@@ -49,7 +52,7 @@ module pycore_trap (
     always_comb begin
         next_trap = type_trap_i || stack_fault_i || div_zero_i || fpu_exception_i ||
                     illegal_opcode_i || call_filter_i || mem_fault_i || addr_align_i ||
-                    attr_error_i ||
+                    raise_i || attr_error_i ||
                     list_grow_i || list_extend_i || dict_grow_i || list_delete_i ||
                     set_grow_i || set_update_i ||
                     excore_fatal_i;
@@ -71,6 +74,8 @@ module pycore_trap (
             next_code = PY_TRAP_ADDR_ALIGN;
         end else if (mem_fault_i) begin
             next_code = PY_TRAP_MEM_FAULT;
+        end else if (raise_i) begin
+            next_code = PY_TRAP_RAISE;
         end else if (attr_error_i) begin
             next_code = PY_TRAP_ATTR_ERROR;
         end else if (list_grow_i) begin
