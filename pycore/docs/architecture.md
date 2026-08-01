@@ -465,9 +465,21 @@ future work.
 
 `LOAD_GLOBAL` and `LOAD_NAME` read the name from `co_names`, then probe the
 module globals dict; on a miss they fall back once to the boot-record builtins
-dict. A name missing from both traps `PY_TRAP_MEM_FAULT`. `LOAD_NAME` is
-currently equivalent to globals-then-builtins lookup at module scope.
-`STORE_NAME` and `STORE_GLOBAL` update the globals dict only.
+dict (`builtins_base_r`, latched in `S_BOOT`). A name missing from both traps
+`PY_TRAP_MEM_FAULT`. `LOAD_NAME` is currently equivalent to
+globals-then-builtins lookup at module scope (LEGB **G** then **B**; locals
+and enclosing cells are not yet on this path). `STORE_NAME` and
+`STORE_GLOBAL` update the globals dict only.
+
+Builtin **CALL** uses the same LEGB load to obtain a callable, then:
+
+- `CODE_OBJECT` → normal frame entry;
+- `OBJECT`/`OBK_BUILTIN` → CALL FSM `BI_*` dispatch (hardware fast paths for
+  known tags; protocol miss paths such as `__len__` are planned — see
+  `planning/builtins_bytecode_support_plan.md`).
+
+Firmware pure-Python under `pycore_firmware/builtins/` is the slow / miss
+path companion to those `BI_*` entries, not a replacement for header reads.
 
 ## CPython 3.14 image tooling
 

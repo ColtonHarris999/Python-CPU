@@ -5,6 +5,12 @@ lookup. Each module will be compiled to bytecode and placed at a
 known address in the pycore boot image (hex fixtures in the current
 test flow). Small helpers may later be inlined instead of a PC jump.
 
+**Architecture:** prefer hardware `OBK_BUILTIN` / `BI_*` CALL fast paths
+for known tags; keep these `.py` bodies as **miss / protocol**
+implementations (see `planning/builtins_bytecode_support_plan.md`).
+Example: `BI_LEN` reads container headers; Python `len` should only
+handle `obj.__len__()`, not recount with a for-loop.
+
 Status values: **not implemented** (stub only), **blocked** (stub +
 documented hard dependency), **in progress** (partial pure-Python with
 known gaps), **implemented** (pure-Python source ready for ROM compile
@@ -26,6 +32,7 @@ These limit every firmware builtin:
 | Comprehensions emit `RERAISE` | Prefer `out += [x]` / `{*iterable}` over `[…]` / `{…}` comps |
 | List/set growth | `LIST_EXTEND` / `SET_UPDATE` need excore for non-empty work |
 | Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`, `ord.md`, `chr.md` |
+| Bytecode support plan | `planning/builtins_bytecode_support_plan.md` — LEGB, CALL schematics, required standard opcodes |
 
 ## Builtin functions
 

@@ -1,12 +1,10 @@
-"""Number of items in an iterable (count via FOR_ITER).
+"""Miss / protocol path for ``len``.
 
-Deviation: O(n) iteration count instead of O(1) container headers /
-__len__. Native BI_LEN remains the O(1) on-core path.
+Hardware ``BI_LEN`` (CALL FSM) handles list/tuple/dict/set/str headers.
+This ROM body is only for objects that expose ``__len__``.
+Do not recount containers with a for-loop — that races the fast path.
 """
 
 
 def len(obj):
-    n = 0
-    for _ in obj:
-        n = n + 1
-    return n
+    return obj.__len__()
