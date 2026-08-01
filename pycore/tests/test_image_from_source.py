@@ -10,7 +10,21 @@ import unittest
 if sys.version_info[:2] != (3, 14):
     raise unittest.SkipTest("image_from_source tests require Python 3.14")
 
-from encoding import TAG_CODE_OBJECT
+from encoding import (
+    CODE_FIELD_CO_KWDEFAULTS,
+    CODE_FIELD_CO_VARNAMES,
+    CODE_FIELD_METADATA,
+    MUT_DICT,
+    TAG_CODE_OBJECT,
+    TAG_INT,
+    TAG_MUT_COLLEC,
+    TAG_RANGE,
+    TAG_TUPLE,
+    mut_addr,
+    mut_kind,
+    pack_code_metadata,
+    unpack_code_metadata,
+)
 from pycore.tools import image_from_source
 
 
@@ -19,6 +33,16 @@ def _compile_module(src: str):
 
 
 class ImageTranscodingTest(unittest.TestCase):
+    def test_pack_code_metadata_includes_kwonlyargcount(self) -> None:
+        meta = pack_code_metadata(
+            stacksize=7,
+            nlocals=6,
+            argcount=5,
+            kwonlyargcount=4,
+        )
+
+        self.assertEqual(unpack_code_metadata(meta), (7, 6, 5, 4))
+
     def test_transcoding_preserves_raw_unit_count(self) -> None:
         code = _compile_module(
             "def managed_entry():\n"
@@ -87,6 +111,50 @@ class ImageTranscodingTest(unittest.TestCase):
             "<defaults>",
         )
         self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
+
+    def test_kwonly_defaults_build_with_varnames(self) -> None:
+        src = (
+            "def f(a, b=0, *, c=1):\n"
+            "    return a + b + c\n"
+            "\n"
+            "def managed_entry():\n"
+            "    return f(2)\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        module_code = _compile_module(src)
+        module_code, defaults_map, kwdefaults_map = (
+            image_from_source.fold_function_defaults(module_code)
+        )
+        f_co = next(
+            co for co in image_from_source.iter_code_objects(module_code)
+            if co.co_name == "f"
+        )
+
+        result = image_from_source.build_image_from_code(
+            module_code,
+            defaults_map=defaults_map,
+            kwdefaults_map=kwdefaults_map,
+        )
+        f_handle = result.code_handles[id(f_co)]
+        f_addr = f_handle[1]
+
+        metadata = result.heap.words[f_addr + CODE_FIELD_METADATA * 32]
+        self.assertEqual(unpack_code_metadata(metadata), (f_co.co_stacksize, 3, 2, 1))
+
+        varnames_val = result.heap.words[f_addr + CODE_FIELD_CO_VARNAMES * 32]
+        varnames_tag = (
+            result.heap.words[f_addr + CODE_FIELD_CO_VARNAMES * 32 + 16] & 0xF
+        )
+        self.assertEqual(varnames_tag, TAG_TUPLE)
+        self.assertEqual(varnames_val >> 64, 3)
+
+        kwdefaults_val = result.heap.words[f_addr + CODE_FIELD_CO_KWDEFAULTS * 32]
+        kwdefaults_tag = (
+            result.heap.words[f_addr + CODE_FIELD_CO_KWDEFAULTS * 32 + 16] & 0xF
+        )
+        self.assertEqual(kwdefaults_tag, TAG_MUT_COLLEC)
+        self.assertEqual(mut_kind(kwdefaults_val), MUT_DICT)
 
     def test_set_function_attribute_closure_rejected(self) -> None:
         with self.assertRaises(ValueError) as ctx:
@@ -579,6 +647,60 @@ class ImageTranscodingTest(unittest.TestCase):
         result = image_from_source.build_image_from_source_text(src, "<for_iter>")
         self.assertGreater(len(result.program_slots), 0)
 
+    def test_for_iter_range_source_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    total = 0\n"
+            "    for x in range(5):\n"
+            "        total += x\n"
+            "    return total\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertTrue({"CALL", "GET_ITER", "FOR_ITER"} <= opnames)
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<for_iter_range>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_for_iter_str_source_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    total = 0\n"
+            "    for c in \"abc\":\n"
+            "        total += 1\n"
+            "    return total\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        code_objects = list(
+            image_from_source.iter_code_objects(_compile_module(src))
+        )
+        opnames: set[str] = set()
+        for co in code_objects:
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertTrue(
+            {"GET_ITER", "FOR_ITER", "END_FOR", "POP_ITER"} <= opnames
+        )
+        managed_code = next(
+            co for co in code_objects if co.co_name == "managed_entry"
+        )
+        self.assertNotIn(
+            "CALL",
+            {ins.opname for ins in dis.get_instructions(managed_code)},
+        )
+
+        result = image_from_source.build_image_from_source_text(
+            src, "<for_iter_str>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
     def test_for_iter_type_trap_source_builds(self) -> None:
         src = (
             "def managed_entry():\n"
@@ -592,6 +714,53 @@ class ImageTranscodingTest(unittest.TestCase):
 
         result = image_from_source.build_image_from_source_text(
             src, "<for_iter_type_trap>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_for_iter_dict_source_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    d = {}\n"
+            "    d[1] = 2\n"
+            "    total = 0\n"
+            "    for key in d:\n"
+            "        total += key\n"
+            "    return total\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertTrue(
+            {"BUILD_MAP", "STORE_SUBSCR", "GET_ITER", "FOR_ITER"} <= opnames
+        )
+        result = image_from_source.build_image_from_source_text(
+            src, "<for_iter_dict>"
+        )
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_for_iter_set_source_builds(self) -> None:
+        src = (
+            "def managed_entry():\n"
+            "    a = 1\n"
+            "    b = 2\n"
+            "    s = set([a, b])\n"
+            "    total = 0\n"
+            "    for value in s:\n"
+            "        total += value\n"
+            "    return total\n"
+            "\n"
+            "managed_entry()\n"
+        )
+
+        opnames: set[str] = set()
+        for co in image_from_source.iter_code_objects(_compile_module(src)):
+            opnames.update(ins.opname for ins in dis.get_instructions(co))
+        self.assertTrue({"CALL", "GET_ITER", "FOR_ITER"} <= opnames)
+        result = image_from_source.build_image_from_source_text(
+            src, "<for_iter_set>"
         )
         self.assertGreater(len(result.program_slots), 0)
 
@@ -610,9 +779,26 @@ class ImageTranscodingTest(unittest.TestCase):
         # Distinct STORE_NAME names: a, b, managed_entry.
         self.assertEqual(result.global_store_count, 3)
         self.assertEqual(result.globals_slot_count, 8)
-        globals_addr = result.globals_dict[1]
+        globals_addr = mut_addr(result.globals_dict[1])
         globals_header = result.heap.words[globals_addr]
         self.assertEqual(globals_header >> 64, 8)
+
+
+class RangeConstantSerializationTest(unittest.TestCase):
+    def test_large_range_uses_heap_tuple_mode(self) -> None:
+        serializer = image_from_source._ImageSerializer()
+        owner = _compile_module("")
+        tag, value = serializer.serialize_constant(range(0, 1 << 40), owner)
+
+        self.assertEqual(tag, TAG_RANGE)
+        self.assertEqual(value >> 127, 1)
+        tuple_addr = value & ((1 << 64) - 1)
+        self.assertEqual(serializer.heap.words[tuple_addr], 0)
+        self.assertEqual(serializer.heap.words[tuple_addr + 16], TAG_INT)
+        self.assertEqual(serializer.heap.words[tuple_addr + 32], 1 << 40)
+        self.assertEqual(serializer.heap.words[tuple_addr + 48], TAG_INT)
+        self.assertEqual(serializer.heap.words[tuple_addr + 64], 1)
+        self.assertEqual(serializer.heap.words[tuple_addr + 80], TAG_INT)
 
 
 class ClassImageBuilderTest(unittest.TestCase):
@@ -713,6 +899,20 @@ class ClassImageBuilderTest(unittest.TestCase):
                 "<class-classmethod>",
             )
         self.assertIn("classmethod", str(ctx.exception).lower())
+
+    def test_fold_class_method_kwdefaults(self) -> None:
+        result = image_from_source.build_image_from_source_text(
+            "class C:\n"
+            "    def value(self, *, x=1):\n"
+            "        return x\n"
+            "\n"
+            "def managed_entry():\n"
+            "    return 0\n"
+            "\n"
+            "managed_entry()\n",
+            "<class-kwdefaults>",
+        )
+        self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
 
 
 class CPython314ConventionProbeTest(unittest.TestCase):

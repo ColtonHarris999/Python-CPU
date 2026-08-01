@@ -4,11 +4,11 @@ module tb_tag_decode;
     logic [3:0] rs1_tag;
     logic [3:0] rs2_tag;
     logic [4:0] alu_op;
-    logic [1:0] exec_unit_sel;
+    logic [2:0] exec_unit_sel;
     logic promote_rs1;
     logic promote_rs2;
-    logic [1:0] promote_rs1_mode;
-    logic [1:0] promote_rs2_mode;
+    logic [2:0] promote_rs1_mode;
+    logic [2:0] promote_rs2_mode;
     logic [3:0] result_tag;
     logic is_trap;
     logic [4:0] trap_code;
@@ -90,11 +90,11 @@ module tb_tag_decode;
         #1;
         check(is_trap && trap_code == PY_TRAP_TYPE, "STR * STR should type trap");
 
-        rs1_tag = PY_TAG_PTR;
+        rs1_tag = PY_TAG_ITER;
         rs2_tag = PY_TAG_INT;
         alu_op = PY_ALU_EQ;
         #1;
-        check(is_trap && trap_code == PY_TRAP_TYPE, "PTR compare should type trap");
+        check(is_trap && trap_code == PY_TRAP_TYPE, "ITER compare should type trap");
 
         rs1_tag = PY_TAG_INT;
         rs2_tag = PY_TAG_FLOAT;
@@ -140,6 +140,60 @@ module tb_tag_decode;
         alu_op = PY_ALU_ADD;
         #1;
         check(is_trap && trap_code == PY_TRAP_TYPE, "OBJECT arithmetic should type trap");
+
+        // COMPLEX routing
+        rs1_tag = PY_TAG_COMPLEX;
+        rs2_tag = PY_TAG_COMPLEX;
+        alu_op = PY_ALU_ADD;
+        #1;
+        check(!is_trap, "COMPLEX + COMPLEX should not trap");
+        check(exec_unit_sel == PY_EXEC_COMPLEX, "COMPLEX add should route to COMPLEX");
+        check(result_tag == PY_TAG_COMPLEX, "COMPLEX add should produce COMPLEX");
+
+        rs1_tag = PY_TAG_INT;
+        rs2_tag = PY_TAG_COMPLEX;
+        alu_op = PY_ALU_MUL;
+        #1;
+        check(!is_trap, "INT * COMPLEX should not trap");
+        check(exec_unit_sel == PY_EXEC_COMPLEX, "INT*COMPLEX should route to COMPLEX");
+        check(result_tag == PY_TAG_COMPLEX, "INT*COMPLEX should produce COMPLEX");
+
+        rs1_tag = PY_TAG_COMPLEX;
+        rs2_tag = PY_TAG_FLOAT;
+        alu_op = PY_ALU_TRUE_DIV;
+        #1;
+        check(!is_trap, "COMPLEX / FLOAT should not trap");
+        check(exec_unit_sel == PY_EXEC_COMPLEX, "COMPLEX true div should route to COMPLEX");
+
+        rs1_tag = PY_TAG_COMPLEX;
+        rs2_tag = PY_TAG_INT;
+        alu_op = PY_ALU_FLOOR_DIV;
+        #1;
+        check(is_trap && trap_code == PY_TRAP_TYPE,
+              "COMPLEX floor-div should type trap");
+
+        rs1_tag = PY_TAG_COMPLEX;
+        rs2_tag = PY_TAG_COMPLEX;
+        alu_op = PY_ALU_EQ;
+        #1;
+        check(!is_trap, "COMPLEX EQ should not trap");
+        check(exec_unit_sel == PY_EXEC_COMPLEX, "COMPLEX EQ should route to COMPLEX");
+        check(result_tag == PY_TAG_BOOL, "COMPLEX EQ should produce BOOL");
+
+        rs1_tag = PY_TAG_COMPLEX;
+        rs2_tag = PY_TAG_COMPLEX;
+        alu_op = PY_ALU_LT;
+        #1;
+        check(is_trap && trap_code == PY_TRAP_TYPE,
+              "COMPLEX ordering should type trap");
+
+        rs1_tag = PY_TAG_COMPLEX;
+        rs2_tag = PY_TAG_UNINIT;
+        alu_op = PY_ALU_NEG;
+        #1;
+        check(!is_trap, "COMPLEX NEG should not trap");
+        check(exec_unit_sel == PY_EXEC_COMPLEX, "COMPLEX NEG should route to COMPLEX");
+        check(result_tag == PY_TAG_COMPLEX, "COMPLEX NEG should produce COMPLEX");
 
         $display("PASS: exhaustive tag decode smoke coverage complete");
         $finish;

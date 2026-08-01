@@ -156,7 +156,8 @@ module tb_container #(
                 // TOS).  Filter those out so the check locks onto the
                 // entry function's real return value.
                 if (CHECK_ENTRY_RETURN &&
-                    (pycore_get_tag(g_dut.dut.core.rs1_r) == PY_TAG_NONE)) begin
+                    pycore_is_none(pycore_get_tag(g_dut.dut.core.rs1_r),
+                                   pycore_get_val(g_dut.dut.core.rs1_r))) begin
                     // Skip and keep waiting for the entry return.
                 end else begin
                     return_seen  = 1;

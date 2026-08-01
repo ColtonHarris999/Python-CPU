@@ -31,6 +31,8 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_mul.sv \
 	pycore/rtl/pycore_div.sv \
 	pycore/rtl/pycore_fpu.sv \
+	pycore/rtl/pycore_complex_alu.sv \
+	pycore/rtl/pycore_string_mem.sv \
 	pycore/rtl/pycore_exec.sv \
 	pycore/rtl/pycore_regfile.sv \
 	pycore/rtl/pycore_fetch.sv \
@@ -88,6 +90,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-unary-invert pycore-img-align-mask pycore-img-unary-negative \
 	pycore-img-unary-invert-float-trap \
 	pycore-img-unpack-tuple pycore-img-unpack-list pycore-img-unpack-len-trap \
+	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-str-eq pycore-img-str-lt-trap \
 	pycore-img-scalar-all \
 	pycore-img-is-op \
@@ -100,6 +103,18 @@ EXCORE_RTL_SRCS := \
 	pycore-img-for-iter-grow \
 	pycore-img-for-iter-delete pycore-img-for-iter-clear \
 	pycore-img-for-iter-subscr pycore-img-for-iter-build-tuple \
+	pycore-img-for-iter-range pycore-img-for-iter-range-bounds \
+	pycore-img-for-iter-range-step pycore-img-for-iter-range-empty \
+	pycore-img-for-iter-range-negative-step pycore-img-for-iter-range-type-trap \
+	pycore-img-for-iter-range-bool pycore-img-for-iter-range-zero-step-trap \
+	pycore-img-for-iter-str-short pycore-img-for-iter-str-empty \
+	pycore-img-for-iter-str-long pycore-img-for-iter-str-unicode \
+	pycore-img-for-iter-str-branch pycore-img-for-iter-str-type-trap \
+	pycore-img-for-iter-dict-keys pycore-img-for-iter-dict-empty \
+	pycore-img-for-iter-dict-delete pycore-img-for-iter-dict-str-keys \
+	pycore-img-for-iter-dict-grow \
+	pycore-img-for-iter-set-basic pycore-img-for-iter-set-empty \
+	pycore-img-for-iter-set-type-trap \
 	pycore-img-for-iter-all \
 	pycore-img-nop \
 	pycore-container pycore-container-build-index pycore-container-store-subscr \
@@ -156,10 +171,17 @@ EXCORE_RTL_SRCS := \
 	pycore-img-attr-shadow pycore-img-attr-mro \
 	pycore-img-attr-grow-global pycore-img-seed-grow-global \
 	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
+	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
+	pycore-img-load-name-builtin pycore-img-builtin-len-long-str pycore-img-builtin-len-range \
+	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
+	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
+	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-attr-all \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
 	pycore-img-default-arg pycore-img-default-arg-argc-trap \
+	pycore-img-call-kw pycore-img-call-kw-unexpected \
+	pycore-img-call-function-ex pycore-img-call-function-ex-kw \
 	pycore-img-bound-method-obj pycore-img-method-all \
 	pycore-img-class-simple pycore-img-class-const \
 	pycore-img-staticmethod pycore-img-class-two-instances \
@@ -228,6 +250,7 @@ pycore-exec:
 		pycore/rtl/pycore_mul.sv \
 		pycore/rtl/pycore_div.sv \
 		pycore/rtl/pycore_fpu.sv \
+		pycore/rtl/pycore_complex_alu.sv \
 		pycore/rtl/pycore_exec.sv \
 		pycore/tb/tb_exec.sv
 	./$(BUILD_DIR)/pycore_exec/Vtb_exec
@@ -245,6 +268,8 @@ pycore-string-exec:
 		pycore/rtl/pycore_mul.sv \
 		pycore/rtl/pycore_div.sv \
 		pycore/rtl/pycore_fpu.sv \
+		pycore/rtl/pycore_complex_alu.sv \
+		pycore/rtl/pycore_string_mem.sv \
 		pycore/rtl/pycore_exec.sv \
 		pycore/tb/tb_string_exec.sv
 	./$(BUILD_DIR)/pycore_string_exec/Vtb_string_exec
@@ -262,6 +287,7 @@ pycore-type-pairs:
 		pycore/rtl/pycore_mul.sv \
 		pycore/rtl/pycore_div.sv \
 		pycore/rtl/pycore_fpu.sv \
+		pycore/rtl/pycore_complex_alu.sv \
 		pycore/rtl/pycore_exec.sv \
 		pycore/tb/tb_type_pairs.sv
 	./$(BUILD_DIR)/pycore_type_pairs/Vtb_type_pairs
@@ -568,13 +594,13 @@ pycore-img-to-bool:
 	$(call PYCORE_IMAGE_RUN,to_bool,50000)
 
 pycore-img-to-bool-type-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,to_bool_type_trap,1,50000)
+	$(call PYCORE_IMAGE_RUN,to_bool_type_trap,50000)
 
 pycore-img-to-bool-str:
 	$(call PYCORE_IMAGE_RUN,to_bool_str,50000)
 
 pycore-img-to-bool-list-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,to_bool_list_trap,1,50000)
+	$(call PYCORE_IMAGE_RUN,to_bool_list_trap,50000)
 
 pycore-img-unary-not:
 	$(call PYCORE_IMAGE_RUN,unary_not,50000)
@@ -600,6 +626,12 @@ pycore-img-unpack-list:
 pycore-img-unpack-len-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,unpack_len_trap,1,50000)
 
+pycore-img-unpack-ex:
+	$(call PYCORE_IMAGE_RUN,unpack_ex,50000)
+
+pycore-img-list-to-tuple: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_to_tuple,100000)
+
 pycore-img-str-eq:
 	$(call PYCORE_IMAGE_RUN,str_eq,50000)
 
@@ -614,6 +646,8 @@ pycore-img-scalar-all: \
 	pycore-img-unpack-tuple \
 	pycore-img-unpack-list \
 	pycore-img-unpack-len-trap \
+	pycore-img-unpack-ex \
+	pycore-img-list-to-tuple \
 	pycore-img-str-eq \
 	pycore-img-str-lt-trap
 
@@ -668,6 +702,72 @@ pycore-img-for-iter-subscr:
 pycore-img-for-iter-build-tuple:
 	$(call PYCORE_IMAGE_RUN,for_iter_build_tuple,100000)
 
+pycore-img-for-iter-range:
+	$(call PYCORE_IMAGE_RUN,for_iter_range,100000)
+
+pycore-img-for-iter-range-bounds:
+	$(call PYCORE_IMAGE_RUN,for_iter_range_bounds,150000)
+
+pycore-img-for-iter-range-step:
+	$(call PYCORE_IMAGE_RUN,for_iter_range_step,100000)
+
+pycore-img-for-iter-range-empty:
+	$(call PYCORE_IMAGE_RUN,for_iter_range_empty,100000)
+
+pycore-img-for-iter-range-negative-step:
+	$(call PYCORE_IMAGE_RUN,for_iter_range_negative_step,100000)
+
+pycore-img-for-iter-range-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_range_type_trap,1,50000)
+
+pycore-img-for-iter-range-bool:
+	$(call PYCORE_IMAGE_RUN,for_iter_range_bool,100000)
+
+pycore-img-for-iter-range-zero-step-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_range_zero_step_trap,1,50000)
+
+pycore-img-for-iter-str-short:
+	$(call PYCORE_IMAGE_RUN,for_iter_str_short,100000)
+
+pycore-img-for-iter-str-empty:
+	$(call PYCORE_IMAGE_RUN,for_iter_str_empty,100000)
+
+pycore-img-for-iter-str-long:
+	$(call PYCORE_IMAGE_RUN,for_iter_str_long,150000)
+
+pycore-img-for-iter-str-unicode:
+	$(call PYCORE_IMAGE_RUN,for_iter_str_unicode,100000)
+
+pycore-img-for-iter-str-branch:
+	$(call PYCORE_IMAGE_RUN,for_iter_str_branch,100000)
+
+pycore-img-for-iter-str-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_str_type_trap,1,50000)
+
+pycore-img-for-iter-dict-keys:
+	$(call PYCORE_IMAGE_RUN,for_iter_dict_keys,100000)
+
+pycore-img-for-iter-dict-empty:
+	$(call PYCORE_IMAGE_RUN,for_iter_dict_empty,50000)
+
+pycore-img-for-iter-dict-delete:
+	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_dict_delete,1,100000)
+
+pycore-img-for-iter-dict-str-keys:
+	$(call PYCORE_IMAGE_RUN,for_iter_dict_str_keys,150000)
+
+pycore-img-for-iter-dict-grow: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,for_iter_dict_grow,200000)
+
+pycore-img-for-iter-set-basic:
+	$(call PYCORE_IMAGE_RUN,for_iter_set_basic,150000)
+
+pycore-img-for-iter-set-empty:
+	$(call PYCORE_IMAGE_RUN,for_iter_set_empty,100000)
+
+pycore-img-for-iter-set-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_set_type_trap,1,50000)
+
 pycore-img-for-iter-all: \
 	pycore-img-for-iter \
 	pycore-img-for-iter-type-trap \
@@ -682,6 +782,28 @@ pycore-img-for-iter-all: \
 	pycore-img-for-iter-clear \
 	pycore-img-for-iter-subscr \
 	pycore-img-for-iter-build-tuple \
+	pycore-img-for-iter-range \
+	pycore-img-for-iter-range-bounds \
+	pycore-img-for-iter-range-step \
+	pycore-img-for-iter-range-empty \
+	pycore-img-for-iter-range-negative-step \
+	pycore-img-for-iter-range-type-trap \
+	pycore-img-for-iter-range-bool \
+	pycore-img-for-iter-range-zero-step-trap \
+	pycore-img-for-iter-str-short \
+	pycore-img-for-iter-str-empty \
+	pycore-img-for-iter-str-long \
+	pycore-img-for-iter-str-unicode \
+	pycore-img-for-iter-str-branch \
+	pycore-img-for-iter-str-type-trap \
+	pycore-img-for-iter-dict-keys \
+	pycore-img-for-iter-dict-empty \
+	pycore-img-for-iter-dict-delete \
+	pycore-img-for-iter-dict-str-keys \
+	pycore-img-for-iter-dict-grow \
+	pycore-img-for-iter-set-basic \
+	pycore-img-for-iter-set-empty \
+	pycore-img-for-iter-set-type-trap \
 	pycore-container-for-iter-end-for
 
 pycore-img-nop:
@@ -965,19 +1087,7 @@ pycore-img: \
 	pycore-img-compare-op \
 	pycore-img-compare-op-type-trap \
 	pycore-img-pop-jump-if-none \
-	pycore-img-for-iter \
-	pycore-img-for-iter-type-trap \
-	pycore-img-for-iter-nested \
-	pycore-img-for-iter-edges \
-	pycore-img-for-iter-branch \
-	pycore-img-for-iter-mutate \
-	pycore-img-for-iter-mutate-visited \
-	pycore-img-for-iter-rebind \
-	pycore-img-for-iter-grow \
-	pycore-img-for-iter-delete \
-	pycore-img-for-iter-clear \
-	pycore-img-for-iter-subscr \
-	pycore-img-for-iter-build-tuple \
+	pycore-img-for-iter-all \
 	pycore-img-nop \
 	pycore-img-list-del-last-only \
 	pycore-img-list-contains-simple \
@@ -1052,6 +1162,11 @@ pycore-img-attr-all: \
 	pycore-img-attr-grow-global \
 	pycore-img-seed-grow-global \
 	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
+	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
+	pycore-img-load-name-builtin pycore-img-builtin-len-long-str pycore-img-builtin-len-range \
+	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
+	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
+	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-builtin-max \
 	pycore-img-builtin-len-list
 
@@ -1083,11 +1198,62 @@ pycore-img-builtin-max:
 pycore-img-builtin-len-list:
 	$(call PYCORE_IMAGE_RUN,builtin_len_list,50000)
 
+pycore-img-builtins-fallback:
+	$(call PYCORE_IMAGE_RUN,builtins_fallback,50000)
+
+pycore-img-builtins-shadow:
+	$(call PYCORE_IMAGE_RUN,builtins_shadow,50000)
+
+pycore-img-builtins-null-bit:
+	$(call PYCORE_IMAGE_RUN,builtins_null_bit,50000)
+
+pycore-img-load-name-builtin:
+	$(call PYCORE_IMAGE_RUN,load_name_builtin,50000)
+
+pycore-img-builtin-len-long-str:
+	$(call PYCORE_IMAGE_RUN,builtin_len_long_str,50000)
+
+pycore-img-builtin-len-range:
+	$(call PYCORE_IMAGE_RUN,builtin_len_range,50000)
+
+pycore-img-builtin-len-empty-range:
+	$(call PYCORE_IMAGE_RUN,builtin_len_empty_range,50000)
+
+pycore-img-builtin-len-obj:
+	$(call PYCORE_IMAGE_RUN,builtin_len_obj,100000)
+
+pycore-img-builtin-len-obj-missing:
+	$(call PYCORE_IMAGE_TRAP_RUN,builtin_len_obj_missing,15,50000)
+
+pycore-img-to-bool-none:
+	$(call PYCORE_IMAGE_RUN,to_bool_none,50000)
+
+pycore-img-to-bool-containers:
+	$(call PYCORE_IMAGE_RUN,to_bool_containers,100000)
+
+pycore-img-raise-varargs:
+	$(call PYCORE_IMAGE_TRAP_RUN,raise_varargs,17,50000)
+
+pycore-img-return-true:
+	$(call PYCORE_IMAGE_RUN,return_true,50000)
+
 pycore-img-default-arg:
 	$(call PYCORE_IMAGE_RUN,default_arg,50000)
 
 pycore-img-default-arg-argc-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,default_arg_argc_trap,6,50000)
+
+pycore-img-call-kw:
+	$(call PYCORE_IMAGE_RUN,call_kw,100000)
+
+pycore-img-call-kw-unexpected:
+	$(call PYCORE_IMAGE_TRAP_RUN,call_kw_unexpected,6,50000)
+
+pycore-img-call-function-ex:
+	$(call PYCORE_IMAGE_RUN,call_function_ex,100000)
+
+pycore-img-call-function-ex-kw:
+	$(call PYCORE_IMAGE_RUN,call_function_ex_kw,100000)
 
 pycore-img-bound-method-obj:
 	$(call PYCORE_IMAGE_RUN,bound_method_obj,100000)
@@ -1099,6 +1265,10 @@ pycore-img-method-all: \
 	pycore-img-ctor-init \
 	pycore-img-default-arg \
 	pycore-img-default-arg-argc-trap \
+	pycore-img-call-kw \
+	pycore-img-call-kw-unexpected \
+	pycore-img-call-function-ex \
+	pycore-img-call-function-ex-kw \
 	pycore-img-bound-method-obj
 
 # ClassImageBuilder (M4): fold module-level class → OBK_TYPE + STORE_NAME.
@@ -1227,7 +1397,7 @@ pycore-list-append-fixtures:
 # list_append_fast: [7] with hand-set capacity 4 (BUILD_LIST alone can never
 # produce spare capacity); appends 8 and 9 via the fast path (no trap),
 # subscripts both back, returns their sum (17).
-pycore-container-list-append-fast:
+pycore-container-list-append-fast: pycore-list-append-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_append_fast.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
@@ -1260,7 +1430,7 @@ pycore-container-list-append-full-fatal:
 pycore-list-extend-fixtures:
 	$(PYTHON) pycore/tools/gen_list_extend_fixtures.py
 
-pycore-container-list-extend-fast:
+pycore-container-list-extend-fast: pycore-list-extend-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_fast.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
@@ -1279,7 +1449,7 @@ pycore-container-list-extend-fast:
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
 	./$(BUILD_DIR)/pycore_container_list_extend_fast/Vtb_container
 
-pycore-container-list-extend-fast-tuple:
+pycore-container-list-extend-fast-tuple: pycore-list-extend-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_fast_tuple.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \
@@ -1298,7 +1468,7 @@ pycore-container-list-extend-fast-tuple:
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv
 	./$(BUILD_DIR)/pycore_container_list_extend_fast_tuple/Vtb_container
 
-pycore-container-list-extend-empty:
+pycore-container-list-extend-empty: pycore-list-extend-fixtures
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' pycore/programs/list_extend_empty.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	mkdir -p $(BUILD_DIR); \

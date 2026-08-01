@@ -12,30 +12,40 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-# Mirror pycore/rtl/pycore_defs.svh tags.
-TAG_UNINIT = 0b0000
+# Mirror the primary tag map in pycore/rtl/pycore_defs.svh.
+TAG_CONTROL = 0b0000
 TAG_INT = 0b0001
 TAG_FLOAT = 0b0010
-TAG_BOOL = 0b0011
-TAG_PTR = 0b0100
-TAG_TUPLE = 0b0101
-TAG_SHORT_STR = 0b0110
-TAG_LONG_STR = 0b0111
-TAG_OBJECT = 0b1000
-TAG_DICT = 0b1001
-TAG_LIST = 0b1010
-TAG_SET = 0b1011
-# Dict deleted-key sentinel (= TAG_DICT). Dicts are mutable and cannot be
-# hash keys, so DICT in a key slot means tombstone (mirrors PY_TAG_TOMBSTONE).
-TAG_TOMBSTONE = TAG_DICT
-TAG_CODE_OBJECT = 0b1100
-TAG_FRAME_OBJECT = 0b1101
-TAG_NULL = 0b1110  # formerly TAG_UNUSED; CPython self_or_null sentinel
-TAG_NONE = 0b1111
+TAG_COMPLEX = 0b0011
+TAG_BOOL = 0b0100
+TAG_ITER = 0b0101
+TAG_TUPLE = 0b0110
+TAG_SHORT_STR = 0b0111
+TAG_LONG_STR = 0b1000
+TAG_MUT_COLLEC = 0b1001
+TAG_OBJECT = 0b1010
+TAG_RANGE = 0b1011
+TAG_BYTES = 0b1100
+TAG_CODE_OBJECT = 0b1101
+TAG_TOMBSTONE = 0b1110
+TAG_FROZENSET = 0b1111
 
-# Back-compat alias used by older preprocess code paths.
-TAG_UNUSED = TAG_NULL
+# Migration aliases retained by RTL and legacy iterator/preprocess paths.
+TAG_UNINIT = TAG_CONTROL
 TAG_UNINITIALIZED = TAG_UNINIT
+TAG_PTR = TAG_ITER
+
+# CONTROL secondary ids in value[3:0].
+CTL_UNINIT = 0
+CTL_NONE = 1
+CTL_NULL = 2
+
+# MUT_COLLEC secondary kinds in value[127:124].
+MUT_LIST = 1
+MUT_DICT = 2
+MUT_SET = 3
+MUT_BYTEARRAY = 4
+MUT_DEQUE = 5
 
 SHORT_STR_MAX_BYTES = 15
 SHORT_STR_SIZE_SHIFT = 124
@@ -51,12 +61,14 @@ ENTRY_HEX_DIGITS = (TAG_WIDTH + VAL_WIDTH + 3) // 4  # ceil(132/4) == 33
 IMEM_SLOT_BITS = 64
 IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
 
-HEAP_BASE = 0x0400
+# Boot record occupies [BOOT_RECORD_ADDR, BOOT_RECORD_ADDR+BOOT_RECORD_BYTES).
+# HEAP_BASE is the first byte after that record so static/bump allocations never
+# overlap the three boot pairs (code / globals / builtins).
+BOOT_RECORD_ADDR = 0x03E0
+BOOT_RECORD_BYTES = 96
+HEAP_BASE = BOOT_RECORD_ADDR + BOOT_RECORD_BYTES  # 0x0440
 # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (below frame stack at 0x1C000).
 HEAP_LIMIT = 0x1C000
-BOOT_RECORD_ADDR = 0x03E0
-# Three tagged-entry pairs (code, globals, builtins); mirror PYCORE_BOOT_RECORD_BYTES.
-BOOT_RECORD_BYTES = 96
 
 # Code-object field indices (tuple-element convention at code addr).
 CODE_FIELD_ENTRY_SLOT = 0
@@ -64,8 +76,10 @@ CODE_FIELD_CO_CONSTS = 1
 CODE_FIELD_CO_NAMES = 2
 CODE_FIELD_METADATA = 3
 CODE_FIELD_CO_DEFAULTS = 4
-CODE_OBJECT_NFIELDS = 5
-CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 192
+CODE_FIELD_CO_VARNAMES = 5
+CODE_FIELD_CO_KWDEFAULTS = 6
+CODE_OBJECT_NFIELDS = 7
+CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 224
 
 # General OBJECT kinds under TAG_OBJECT (mirror PY_OBK_* in pycore_defs.svh).
 OBK_INSTANCE = 1
@@ -84,6 +98,8 @@ BI_MAX = 4
 BI_LIST_APPEND = 5
 BI_PRINT = 6
 BI_LEN = 7
+BI_RANGE = 8
+BI_SET = 9
 
 OBJ_HDR_BYTES = 32
 OBJ_INSTANCE_BYTES = 64
@@ -126,6 +142,96 @@ def obj_field_tag_addr(obj: int, i: int) -> int:
 
 def float_bits(value: float) -> int:
     return struct.unpack(">Q", struct.pack(">d", value))[0]
+
+
+def make_control(ctl: int) -> tuple[int, int]:
+    """Return a CONTROL entry with the secondary id in value[3:0]."""
+    return TAG_CONTROL, ctl & 0xF
+
+
+def make_uninit() -> tuple[int, int]:
+    return make_control(CTL_UNINIT)
+
+
+def make_none() -> tuple[int, int]:
+    return make_control(CTL_NONE)
+
+
+def make_null() -> tuple[int, int]:
+    return make_control(CTL_NULL)
+
+
+UNINIT_ENTRY = make_uninit()
+NONE_ENTRY = make_none()
+NULL_ENTRY = make_null()
+
+
+def make_mut(kind: int, addr: int) -> tuple[int, int]:
+    """Return a MUT_COLLEC handle with kind[127:124] and addr[63:0]."""
+    value = ((kind & 0xF) << 124) | (addr & ((1 << 64) - 1))
+    return TAG_MUT_COLLEC, value
+
+
+def make_list(addr: int) -> tuple[int, int]:
+    return make_mut(MUT_LIST, addr)
+
+
+def make_dict(addr: int) -> tuple[int, int]:
+    return make_mut(MUT_DICT, addr)
+
+
+def make_set(addr: int) -> tuple[int, int]:
+    return make_mut(MUT_SET, addr)
+
+
+def make_bytearray(addr: int) -> tuple[int, int]:
+    return make_mut(MUT_BYTEARRAY, addr)
+
+
+def mut_kind(value: int) -> int:
+    return (value >> 124) & 0xF
+
+
+def mut_addr(value: int) -> int:
+    return value & ((1 << 64) - 1)
+
+
+def is_mut_kind(entry: tuple[int, int], kind: int) -> bool:
+    return entry[0] == TAG_MUT_COLLEC and mut_kind(entry[1]) == (kind & 0xF)
+
+
+def make_complex(real: float, imag: float = 0) -> tuple[int, int]:
+    """Encode complex(real, imag) as two IEEE754 binary64 bit patterns."""
+    return TAG_COMPLEX, (float_bits(imag) << 64) | float_bits(real)
+
+
+I32_MIN = -(1 << 31)
+I32_MAX = (1 << 31) - 1
+
+
+def range_fits_inline(value: range) -> bool:
+    return all(I32_MIN <= part <= I32_MAX for part in (
+        value.start, value.stop, value.step
+    ))
+
+
+def make_range_inline(start: int, stop: int, step: int = 1) -> tuple[int, int]:
+    """Encode a RANGE inline as signed i32 start/stop/step in value[95:0]."""
+    if not all(I32_MIN <= part <= I32_MAX for part in (start, stop, step)):
+        raise ValueError("inline range start/stop/step must fit signed i32")
+    if step == 0:
+        raise ValueError("range() arg 3 must not be zero")
+    value = (
+        ((start & 0xFFFF_FFFF) << 64)
+        | ((stop & 0xFFFF_FFFF) << 32)
+        | (step & 0xFFFF_FFFF)
+    )
+    return TAG_RANGE, value
+
+
+def make_range_tuple(addr: int) -> tuple[int, int]:
+    """Encode a RANGE whose start/stop/step tuple lives at a heap address."""
+    return TAG_RANGE, (1 << 127) | (addr & ((1 << 64) - 1))
 
 
 def encode_short_string(data: bytes) -> int:
@@ -197,11 +303,13 @@ def tag_constant(
     *,
     allow_containers: bool = False,
 ) -> tuple[int, int]:
-    """Encode a Python scalar/string constant as (tag, value128).
+    """Encode a Python scalar/string/range constant as (tag, value128).
 
     When allow_containers is False (preprocess legacy path), tuple/list/dict
     constants raise. The image builder serializes containers itself and does
-    not call this for those types.
+    not call this for those types. This helper has no object-heap allocator,
+    so ranges are inline-only; callers with a HeapImageBuilder must allocate
+    an out-of-i32 (start, stop, step) tuple and use make_range_tuple().
     """
     if isinstance(value, bool):
         return TAG_BOOL, int(value)
@@ -209,6 +317,8 @@ def tag_constant(
         return TAG_INT, value & VAL_MASK
     if isinstance(value, float):
         return TAG_FLOAT, float_bits(value)
+    if isinstance(value, complex):
+        return make_complex(value.real, value.imag)
     if isinstance(value, str):
         encoded = value.encode("utf-8")
         if len(encoded) <= SHORT_STR_MAX_BYTES:
@@ -220,7 +330,14 @@ def tag_constant(
             addr & ((1 << 64) - 1)
         )
     if value is None:
-        return TAG_NONE, 0
+        return make_none()
+    if isinstance(value, range):
+        if not range_fits_inline(value):
+            raise ValueError(
+                "range constant does not fit inline signed i32 fields; "
+                "serialize it with a heap tuple"
+            )
+        return make_range_inline(value.start, value.stop, value.step)
     if isinstance(value, tuple):
         if not allow_containers:
             raise ValueError(
@@ -235,12 +352,32 @@ def tag_constant(
     return TAG_OBJECT, 0
 
 
-def pack_code_metadata(stacksize: int, nlocals: int, argcount: int) -> int:
-    """Pack {stacksize[15:0], nlocals[15:0], argcount[15:0]} into value[47:0]."""
+def pack_code_metadata(
+    stacksize: int,
+    nlocals: int,
+    argcount: int,
+    kwonlyargcount: int = 0,
+) -> int:
+    """Pack code metadata fields into value[63:0].
+
+    Bits [15:0]=argcount, [31:16]=nlocals, [47:32]=stacksize,
+    [63:48]=kwonlyargcount.
+    """
     return (
-        ((stacksize & 0xFFFF) << 32)
+        ((kwonlyargcount & 0xFFFF) << 48)
+        | ((stacksize & 0xFFFF) << 32)
         | ((nlocals & 0xFFFF) << 16)
         | (argcount & 0xFFFF)
+    )
+
+
+def unpack_code_metadata(meta: int) -> tuple[int, int, int, int]:
+    """Return ``(stacksize, nlocals, argcount, kwonlyargcount)`` from metadata."""
+    return (
+        (meta >> 32) & 0xFFFF,
+        (meta >> 16) & 0xFFFF,
+        meta & 0xFFFF,
+        (meta >> 48) & 0xFFFF,
     )
 
 
@@ -375,4 +512,6 @@ def dict_key_rich_eq(tag_a: int, val_a: int, tag_b: int, val_b: int) -> bool:
         return False
     if tag_a == tag_b and tag_a in (TAG_SHORT_STR, TAG_LONG_STR):
         return val_a == val_b
+    if tag_a == tag_b == TAG_CONTROL:
+        return (val_a & 0xF) == (val_b & 0xF)
     return False

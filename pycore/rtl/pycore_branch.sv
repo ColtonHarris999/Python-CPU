@@ -20,7 +20,7 @@ module pycore_branch (
 
     assign tag = pycore_get_tag(tos_entry_i);
     assign value = pycore_get_val(tos_entry_i);
-    assign is_none = (tag == PY_TAG_NONE);
+    assign is_none = pycore_is_none(tag, value);
     // TRUE/FALSE use numeric/bool truthiness and TYPE-trap other tags.
     // NONE/NOT_NONE are tag-only and never trap.
     assign is_truthy_conditional = (opcode_i == PY_OP_POP_JUMP_IF_TRUE) ||
@@ -54,6 +54,10 @@ module pycore_branch (
             end
             PY_TAG_FLOAT: begin
                 truthy = value[62:0] != 63'b0;
+            end
+            PY_TAG_COMPLEX: begin
+                truthy = (value[62:0] != 63'b0) ||
+                         (value[126:64] != 63'b0);
             end
             default: begin
                 truthy = 1'b0;

@@ -244,10 +244,8 @@
     },
     "OBJ_CALL": {
       "distance": 5,
-      "needs_subsystem": "full call/object-construction protocol (variadic + func-object creation; plain CALL is FRAME, in-scope)",
+      "needs_subsystem": "full call/object-construction protocol (variadic + func-object creation; CALL/CALL_KW/CALL_FUNCTION_EX are FRAME, in-scope)",
       "members": [
-        "CALL_KW",
-        "CALL_FUNCTION_EX",
         "CALL_INTRINSIC_1",
         "CALL_INTRINSIC_2",
         "MAKE_FUNCTION",
@@ -455,6 +453,12 @@
       "hw_class": "BRANCH",
       "fold": "BAR"
     },
+    "RAISE_VARARGS": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "minimal oparg=1 support: accepts TOS and raises fatal PY_TRAP_RAISE"
+    },
     "RESUME": {
       "support": "strip",
       "hw_class": "BRANCH",
@@ -513,6 +517,24 @@
       "support": "partial",
       "hw_class": "FRAME",
       "fold": "BAR"
+    },
+    "CALL_KW": {
+      "support": "execute",
+      "hw_class": "FRAME",
+      "fold": "BAR",
+      "note": "CODE_OBJECT binder via co_varnames; OBK_BUILTIN/TYPE kwargs → CALL_FILTER"
+    },
+    "CALL_FUNCTION_EX": {
+      "support": "execute",
+      "hw_class": "FRAME",
+      "fold": "BAR",
+      "note": "LIST/TUPLE *args expand; kwargs dict via shared binder; NULL = no kwargs"
+    },
+    "DICT_MERGE": {
+      "support": "partial",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "Empty-dest fast path for call **kwargs; non-empty dest → CALL_FILTER"
     },
     "LOAD_FAST_AND_CLEAR": {
       "support": "execute",
@@ -575,6 +597,18 @@
       "hw_class": "OBJECT",
       "fold": "BAR",
       "note": "LIST/TUPLE only; length mismatch → TYPE; 1 CACHE unit"
+    },
+    "UNPACK_EX": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "LIST/TUPLE only; middle rest allocated as LIST; wrong length → TYPE"
+    },
+    "CALL_INTRINSIC_1": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "INTRINSIC_LIST_TO_TUPLE (arg 6) only; other intrinsic ids rejected by image tooling"
     },
     "BUILD_MAP": {
       "support": "execute",

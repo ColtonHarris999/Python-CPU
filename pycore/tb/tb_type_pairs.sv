@@ -20,6 +20,10 @@ module tb_type_pairs;
         .alu_op_i(alu_op),
         .rs1_i(rs1),
         .rs2_i(rs2),
+        .string_path_valid_i(1'b0),
+        .string_result_i('0),
+        .string_trap_i(1'b0),
+        .string_trap_code_i(PY_TRAP_NONE),
         .result_o(result),
         .stall_o(stall),
         .trap_o(trap),
@@ -51,9 +55,10 @@ module tb_type_pairs;
                 0: tag_by_index = PY_TAG_UNINIT;
                 1: tag_by_index = PY_TAG_INT;
                 2: tag_by_index = PY_TAG_FLOAT;
-                3: tag_by_index = PY_TAG_BOOL;
-                4: tag_by_index = PY_TAG_PTR;
-                5: tag_by_index = PY_TAG_OBJECT;
+                3: tag_by_index = PY_TAG_COMPLEX;
+                4: tag_by_index = PY_TAG_BOOL;
+                5: tag_by_index = PY_TAG_ITER;
+                6: tag_by_index = PY_TAG_OBJECT;
                 default: tag_by_index = PY_TAG_OBJECT;
             endcase
         end
@@ -65,8 +70,9 @@ module tb_type_pairs;
                 PY_TAG_UNINIT: tag_name = "UNINITIALIZED";
                 PY_TAG_INT: tag_name = "INT";
                 PY_TAG_FLOAT: tag_name = "FLOAT";
+                PY_TAG_COMPLEX: tag_name = "COMPLEX";
                 PY_TAG_BOOL: tag_name = "BOOL";
-                PY_TAG_PTR: tag_name = "PTR";
+                PY_TAG_ITER: tag_name = "ITER";
                 PY_TAG_OBJECT: tag_name = "OBJECT";
                 default: tag_name = "RESERVED";
             endcase
@@ -85,18 +91,22 @@ module tb_type_pairs;
 
     function automatic logic is_numeric(input logic [3:0] tag);
         begin
-            is_numeric = (tag == PY_TAG_INT) || (tag == PY_TAG_FLOAT) || (tag == PY_TAG_BOOL);
+            is_numeric = (tag == PY_TAG_INT) || (tag == PY_TAG_FLOAT) ||
+                         (tag == PY_TAG_COMPLEX) || (tag == PY_TAG_BOOL);
         end
     endfunction
 
-    function automatic logic [63:0] value_for_tag(input logic [3:0] tag);
+    function automatic logic [PYCORE_ENTRY_WIDTH-1:0] entry_for_tag(input logic [3:0] tag);
         begin
             unique case (tag)
-                PY_TAG_INT: value_for_tag = 64'd2;
-                PY_TAG_FLOAT: value_for_tag = 64'h3ff8_0000_0000_0000; // 1.5
-                PY_TAG_BOOL: value_for_tag = 64'd1;
-                PY_TAG_PTR: value_for_tag = 64'h0000_0000_0000_1000;
-                default: value_for_tag = 64'd0;
+                PY_TAG_INT: entry_for_tag = entry(tag, 64'd2);
+                PY_TAG_FLOAT: entry_for_tag = entry(tag, 64'h3ff8_0000_0000_0000); // 1.5
+                PY_TAG_BOOL: entry_for_tag = entry(tag, 64'd1);
+                PY_TAG_COMPLEX: entry_for_tag = pycore_make_entry(
+                    PY_TAG_COMPLEX,
+                    pycore_complex_value($realtobits(2.0), $realtobits(1.0))); // 2+1j
+                PY_TAG_ITER: entry_for_tag = entry(tag, 64'h0000_0000_0000_1000);
+                default: entry_for_tag = entry(tag, 64'd0);
             endcase
         end
     endfunction
@@ -107,8 +117,15 @@ module tb_type_pairs;
                 PY_TAG_INT: real_for_tag = 2.0;
                 PY_TAG_FLOAT: real_for_tag = 1.5;
                 PY_TAG_BOOL: real_for_tag = 1.0;
+                PY_TAG_COMPLEX: real_for_tag = 2.0;
                 default: real_for_tag = 0.0;
             endcase
+        end
+    endfunction
+
+    function automatic real imag_for_tag(input logic [3:0] tag);
+        begin
+            imag_for_tag = (tag == PY_TAG_COMPLEX) ? 1.0 : 0.0;
         end
     endfunction
 
@@ -130,7 +147,9 @@ module tb_type_pairs;
 
     function automatic logic [3:0] expected_tag(input logic [3:0] tag_a, input logic [3:0] tag_b);
         begin
-            if (tag_a == PY_TAG_FLOAT || tag_b == PY_TAG_FLOAT) begin
+            if (tag_a == PY_TAG_COMPLEX || tag_b == PY_TAG_COMPLEX) begin
+                expected_tag = PY_TAG_COMPLEX;
+            end else if (tag_a == PY_TAG_FLOAT || tag_b == PY_TAG_FLOAT) begin
                 expected_tag = PY_TAG_FLOAT;
             end else begin
                 expected_tag = PY_TAG_INT;
@@ -138,26 +157,44 @@ module tb_type_pairs;
         end
     endfunction
 
-    function automatic logic [63:0] expected_value(
+    function automatic logic [PYCORE_VAL_WIDTH-1:0] expected_value(
         input logic [4:0] op,
         input logic [3:0] tag_a,
         input logic [3:0] tag_b
     );
         real a_real;
         real b_real;
+        real a_imag;
+        real b_imag;
+        real r_real;
+        real r_imag;
         longint signed a_int;
         longint signed b_int;
         longint signed result_int;
         begin
-            if (expected_tag(tag_a, tag_b) == PY_TAG_FLOAT) begin
+            if (expected_tag(tag_a, tag_b) == PY_TAG_COMPLEX) begin
                 a_real = real_for_tag(tag_a);
                 b_real = real_for_tag(tag_b);
-                expected_value = $realtobits(op == PY_ALU_ADD ? (a_real + b_real) : (a_real * b_real));
+                a_imag = imag_for_tag(tag_a);
+                b_imag = imag_for_tag(tag_b);
+                if (op == PY_ALU_ADD) begin
+                    r_real = a_real + b_real;
+                    r_imag = a_imag + b_imag;
+                end else begin
+                    r_real = (a_real * b_real) - (a_imag * b_imag);
+                    r_imag = (a_real * b_imag) + (a_imag * b_real);
+                end
+                expected_value = pycore_complex_value($realtobits(r_real), $realtobits(r_imag));
+            end else if (expected_tag(tag_a, tag_b) == PY_TAG_FLOAT) begin
+                a_real = real_for_tag(tag_a);
+                b_real = real_for_tag(tag_b);
+                expected_value = {64'b0,
+                    $realtobits(op == PY_ALU_ADD ? (a_real + b_real) : (a_real * b_real))};
             end else begin
                 a_int = int_for_tag(tag_a);
                 b_int = int_for_tag(tag_b);
                 result_int = op == PY_ALU_ADD ? (a_int + b_int) : (a_int * b_int);
-                expected_value = result_int[63:0];
+                expected_value = {{64{result_int[63]}}, result_int[63:0]};
             end
         end
     endfunction
@@ -167,8 +204,8 @@ module tb_type_pairs;
         begin
             label = $sformatf("%s %s x %s", op_name(op), tag_name(tag_a), tag_name(tag_b));
             alu_op = op;
-            rs1 = entry(tag_a, value_for_tag(tag_a));
-            rs2 = entry(tag_b, value_for_tag(tag_b));
+            rs1 = entry_for_tag(tag_a);
+            rs2 = entry_for_tag(tag_b);
             #1;
             tests_run++;
 
@@ -178,7 +215,8 @@ module tb_type_pairs;
             end else begin
                 check(!trap, {label, " should not trap"});
                 check(pycore_get_tag(result) == expected_tag(tag_a, tag_b), {label, " result tag mismatch"});
-                check(result[63:0] == expected_value(op, tag_a, tag_b), {label, " result value mismatch"});
+                check(pycore_get_val(result) == expected_value(op, tag_a, tag_b),
+                      {label, " result value mismatch"});
             end
         end
     endtask
@@ -196,8 +234,8 @@ module tb_type_pairs;
         valid = 1'b1;
 
         for (int op_idx = 0; op_idx < 2; op_idx++) begin
-            for (int lhs_idx = 0; lhs_idx < 6; lhs_idx++) begin
-                for (int rhs_idx = 0; rhs_idx < 6; rhs_idx++) begin
+            for (int lhs_idx = 0; lhs_idx < 7; lhs_idx++) begin
+                for (int rhs_idx = 0; rhs_idx < 7; rhs_idx++) begin
                     run_pair(op_idx == 0 ? PY_ALU_ADD : PY_ALU_MUL,
                              tag_by_index(lhs_idx),
                              tag_by_index(rhs_idx));
@@ -205,7 +243,7 @@ module tb_type_pairs;
             end
         end
 
-        check(tests_run == 72, "type-pair matrix should run 72 cases");
+        check(tests_run == 98, "type-pair matrix should run 98 cases");
         $display("PASS: add/multiply type-pair matrix complete (%0d cases)", tests_run);
         $finish;
     end

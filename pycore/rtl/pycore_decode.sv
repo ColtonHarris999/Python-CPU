@@ -162,17 +162,16 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
-            // PUSH_NULL: push {PY_TAG_NULL, 0} (self_or_null sentinel).
+            // PUSH_NULL: push CONTROL/PY_CTL_NULL (self_or_null sentinel).
             PY_OP_PUSH_NULL: begin
                 rd_sel_o = tos_index_i;
                 push_stack_o = 1'b1;
             end
 
-            // TO_BOOL: convert TOS numeric to BOOL in place (net stack 0).
+            // TO_BOOL: scalar/container truthiness in S_CONTAINER (net stack 0).
             PY_OP_TO_BOOL: begin
                 rs1_sel_o = tos_index_i - 8'd1;
-                rd_sel_o  = tos_index_i - 8'd1;
-                alu_op_o  = PY_ALU_PASS;  // conversion done in core EX
+                is_container_o = 1'b1;
             end
 
             // UNARY_NOT: invert TOS BOOL in place (net stack 0). CPython 3.14
@@ -197,8 +196,15 @@ module pycore_decode (
                 alu_op_o  = PY_ALU_NEG;
             end
 
-            // UNPACK_SEQUENCE: pop LIST/TUPLE, push count items right-to-left.
-            PY_OP_UNPACK_SEQUENCE: begin
+            // CALL_INTRINSIC_1 arg 6 (INTRINSIC_LIST_TO_TUPLE): TOS list.
+            PY_OP_CALL_INTRINSIC_1: begin
+                rs1_sel_o      = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
+            end
+
+            // UNPACK_SEQUENCE / UNPACK_EX: pop LIST/TUPLE, push items
+            // right-to-left so the first target is at TOS for following stores.
+            PY_OP_UNPACK_SEQUENCE, PY_OP_UNPACK_EX: begin
                 rs1_sel_o      = tos_index_i - 8'd1;
                 is_container_o = 1'b1;
             end
@@ -260,6 +266,14 @@ module pycore_decode (
                 alu_op_o = PY_ALU_PASS;
             end
 
+            // RAISE_VARARGS: minimal fatal raise path.  oparg validation and
+            // PY_TRAP_RAISE pulse are handled in core EX.
+            PY_OP_RAISE_VARARGS: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                pop_stack_o = 1'b1;
+                alu_op_o = PY_ALU_PASS;
+            end
+
             PY_OP_JUMP_FORWARD, PY_OP_JUMP_BACKWARD,
             PY_OP_POP_JUMP_IF_TRUE, PY_OP_POP_JUMP_IF_FALSE,
             PY_OP_POP_JUMP_IF_NONE, PY_OP_POP_JUMP_IF_NOT_NONE: begin
@@ -273,8 +287,15 @@ module pycore_decode (
                 end
             end
 
-            PY_OP_CALL: begin
+            PY_OP_CALL, PY_OP_CALL_KW, PY_OP_CALL_FUNCTION_EX: begin
                 is_call_o = 1'b1;
+            end
+
+            // DICT_MERGE: merge TOS mapping into dict at TOS-1-oparg; pop TOS.
+            PY_OP_DICT_MERGE: begin
+                rs1_sel_o      = tos_index_i - 8'd1 - arg_i[7:0]; // dest dict
+                rs2_sel_o      = tos_index_i - 8'd1;              // source mapping
+                is_container_o = 1'b1;
             end
 
             // LOAD_GLOBAL / LOAD_NAME / STORE_*: multi-cycle name dict ops.

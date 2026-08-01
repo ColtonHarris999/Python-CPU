@@ -38,6 +38,7 @@
     .equ MB_INSTR_LO,    0x0C
     .equ MB_HEAP_PTR,    0x14
     .equ MB_E0_VAL0,     0x20
+    .equ MB_E0_VAL3,     0x2C
     .equ MB_E0_TAG,      0x30
     .equ MB_E1_VAL0,     0x34
     .equ MB_E1_VAL1,     0x38
@@ -92,19 +93,20 @@
     .equ FATAL_ILLEGAL_OPCODE, 5
     .equ FATAL_MEM_FAULT,      7
 
-    .equ TAG_UNINIT,     0
-    .equ TAG_INT,        1
-    .equ TAG_FLOAT,      2
-    .equ TAG_BOOL,       3
-    .equ TAG_TUPLE,      5
-    .equ TAG_SHORT_STR,  6
-    .equ TAG_LONG_STR,   7
-    .equ TAG_DICT,       9
-    .equ TAG_LIST,       10
-    .equ TAG_SET,        11
-    # Tombstone reuses DICT: mutable dicts are never valid hash keys, so a
-    # key-slot tag of 9 means deleted (see PY_TAG_TOMBSTONE in pycore_defs.svh).
-    .equ TAG_TOMBSTONE,  9
+    .equ TAG_CONTROL,     0
+    .equ TAG_INT,         1
+    .equ TAG_FLOAT,       2
+    .equ TAG_BOOL,        4
+    .equ TAG_TUPLE,       6
+    .equ TAG_SHORT_STR,   7
+    .equ TAG_LONG_STR,    8
+    .equ TAG_MUT_COLLEC,  9
+    .equ TAG_TOMBSTONE,  14
+
+    # MUT_COLLEC kind is ENTRY value[127:124], i.e. VAL3[31:28].
+    .equ MUT_LIST,        1
+    .equ MUT_DICT,        2
+    .equ MUT_SET,         3
 
     # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (frame stack at 0x1C000).
     .equ HEAP_LIMIT,     0x1C000
@@ -137,6 +139,10 @@
     .equ SCR_FTI0,       0x68
     .equ SCR_FTI1,       0x6C
     .equ SCR_RA3,        0x70
+    .equ SCR_ORDER_PTR,  0x74
+    .equ SCR_ORDER_LEN,  0x78
+    .equ SCR_VERSION,    0x7C
+    .equ SCR_NEW_ORDER,  0x80
 
 reset:
     li   s11, MMIO_BASE            # s11: persistent MMIO base, never clobbered
@@ -194,7 +200,11 @@ do_fatal:
 
 do_list_grow:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_LIST
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, fatal_type
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_LIST
     bne  t0, t1, fatal_type
 
     lw   s0, MB_E0_VAL0(s11)       # s0 = obj_addr
@@ -383,13 +393,23 @@ poll_obitem_wb:
 # ===========================================================================
 do_list_extend:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_LIST
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, fatal_type
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_LIST
     bne  t0, t1, fatal_type
     lw   s0, MB_E0_VAL0(s11)       # s0 = dst obj_addr
 
     lw   s9, MB_E1_TAG(s11)        # s9 = src tag
-    li   t1, TAG_LIST
-    beq  s9, t1, ext_src_ok
+    li   t1, TAG_MUT_COLLEC
+    bne  s9, t1, ext_src_tuple_check
+    lw   t0, MB_E1_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_LIST
+    bne  t0, t1, fatal_type
+    j    ext_src_ok
+ext_src_tuple_check:
     li   t1, TAG_TUPLE
     bne  s9, t1, fatal_type
 ext_src_ok:
@@ -725,7 +745,11 @@ poll_ip_hdr_wb:
 # ===========================================================================
 do_dict_grow:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_DICT
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, fatal_type
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_DICT
     beq  t0, t1, dg_tag_ok
     j    fatal_type
 dg_tag_ok:
@@ -763,7 +787,11 @@ dg_pop_store:
 # ===========================================================================
 do_list_delete:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_LIST
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, fatal_type
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_LIST
     bne  t0, t1, fatal_type
     lw   s0, MB_E0_VAL0(s11)       # s0 = obj_addr
 
@@ -934,8 +962,32 @@ load_e1e2_to_scratch:
     sw   t0, SCR_VTAG(x0)
     jalr x0, ra, 0
 
-# → s1=slots, s2=used, s5/s3=table
+# → s1=slots, s2=used, s5/s3=table; order metadata in SCR_ORDER_*
 dict_load_header_table:
+    sw   ra, SCR_RA(x0)
+    mv   a0, s0
+    jal  ra, sp_read
+    lw   s2, SP_DATA0(s11)
+    lw   s1, SP_DATA2(s11)
+    addi a0, s0, 16
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_ORDER_LEN(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_VERSION(x0)
+    addi a0, s0, 32
+    jal  ra, sp_read
+    lw   s5, SP_DATA0(s11)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_ORDER_PTR(x0)
+    mv   s3, s5
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+
+# SET retains the v2 two-word object layout:
+#   obj+0={slots,used}, obj+16={0,table_ptr}.
+# Keep this separate from DICT v3 metadata/order-pointer loading.
+set_load_header_table:
     sw   ra, SCR_RA(x0)
     mv   a0, s0
     jal  ra, sp_read
@@ -1003,12 +1055,54 @@ dgr_vs_old:
     bge  s7, t0, dgr_alloc
     mv   s7, t0
 dgr_alloc:
-    lw   s4, MB_HEAP_PTR(s11)
+    lw   t3, MB_HEAP_PTR(s11)
+    sw   t3, SCR_NEW_ORDER(x0)
+    slli t0, s7, 5
+    add  s4, t3, t0              # table follows new order buffer
     slli t0, s7, 6
     add  t0, s4, t0
     li   t1, HEAP_LIMIT
-    bge  t1, t0, dgr_zero
+    bge  t1, t0, dgr_copy_order
     j    fatal_mem
+dgr_copy_order:
+    li   s6, 0
+dgr_copy_order_loop:
+    lw   t0, SCR_ORDER_LEN(x0)
+    beq  s6, t0, dgr_zero
+    lw   t1, SCR_ORDER_PTR(x0)
+    slli t2, s6, 5
+    add  a0, t1, t2
+    jal  ra, sp_read
+    lw   t3, SP_DATA0(s11)
+    lw   t4, SP_DATA1(s11)
+    lw   t5, SP_DATA2(s11)
+    lw   t6, SP_DATA3(s11)
+    lw   t1, SCR_NEW_ORDER(x0)
+    slli t2, s6, 5
+    add  a0, t1, t2
+    sw   t3, SP_DATA0(s11)
+    sw   t4, SP_DATA1(s11)
+    sw   t5, SP_DATA2(s11)
+    sw   t6, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   t1, SCR_ORDER_PTR(x0)
+    slli t2, s6, 5
+    add  a0, t1, t2
+    addi a0, a0, 16
+    jal  ra, sp_read
+    lw   t3, SP_DATA0(s11)
+    lw   t1, SCR_NEW_ORDER(x0)
+    slli t2, s6, 5
+    add  a0, t1, t2
+    addi a0, a0, 16
+    sw   t3, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   t0, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    addi s6, s6, 1
+    j    dgr_copy_order_loop
 dgr_zero:
     li   s6, 0
 dgr_zero_loop:
@@ -1106,6 +1200,38 @@ dict_insert_from_scratch:
     lw   a0, SCR_IDX(x0)
     jal  ra, dict_write_kv_at
     addi s2, s2, 1
+    # Append the new key to the preserved insertion-order sidecar.
+    lw   t0, SCR_ORDER_LEN(x0)
+    lw   t1, SCR_NEW_ORDER(x0)
+    slli t2, t0, 5
+    add  a0, t1, t2
+    lw   t3, SCR_KVAL0(x0)
+    sw   t3, SP_DATA0(s11)
+    lw   t3, SCR_KVAL1(x0)
+    sw   t3, SP_DATA1(s11)
+    lw   t3, SCR_KVAL2(x0)
+    sw   t3, SP_DATA2(s11)
+    lw   t3, SCR_KVAL3(x0)
+    sw   t3, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   t0, SCR_ORDER_LEN(x0)
+    lw   t1, SCR_NEW_ORDER(x0)
+    slli t2, t0, 5
+    add  a0, t1, t2
+    addi a0, a0, 16
+    lw   t3, SCR_KTAG(x0)
+    sw   t3, SP_DATA0(s11)
+    li   t4, 0
+    sw   t4, SP_DATA1(s11)
+    sw   t4, SP_DATA2(s11)
+    sw   t4, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   t0, SCR_ORDER_LEN(x0)
+    addi t0, t0, 1
+    sw   t0, SCR_ORDER_LEN(x0)
+    lw   t0, SCR_VERSION(x0)
+    addi t0, t0, 1
+    sw   t0, SCR_VERSION(x0)
     lw   ra, SCR_RA(x0)
     jalr x0, ra, 0
 difs_over:
@@ -1124,10 +1250,21 @@ dict_writeback_header:
     mv   a0, s0
     jal  ra, sp_write
     addi a0, s0, 16
+    lw   t0, SCR_ORDER_LEN(x0)
+    sw   t0, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    lw   t0, SCR_VERSION(x0)
+    sw   t0, SP_DATA2(s11)
+    li   t0, 0
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    addi a0, s0, 32
     sw   s4, SP_DATA0(s11)
     li   t0, 0
     sw   t0, SP_DATA1(s11)
-    sw   t0, SP_DATA2(s11)
+    lw   t1, SCR_NEW_ORDER(x0)
+    sw   t1, SP_DATA2(s11)
     sw   t0, SP_DATA3(s11)
     jal  ra, sp_write
     mv   s1, s7
@@ -1532,7 +1669,13 @@ fti_fail:
 # ===========================================================================
 do_set_grow:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_SET
+    li   t1, TAG_MUT_COLLEC
+    beq  t0, t1, sg_primary_ok
+    j    fatal_type
+sg_primary_ok:
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_SET
     beq  t0, t1, sg_tag_ok
     j    fatal_type
 sg_tag_ok:
@@ -1548,7 +1691,7 @@ sg_tag_ok:
     sw   t0, SCR_KVAL3(x0)
     lw   t0, MB_E1_TAG(s11)
     sw   t0, SCR_KTAG(x0)
-    jal  ra, dict_load_header_table   # s1=slots, s2=used, s5/s3=table
+    jal  ra, set_load_header_table    # s1=slots, s2=used, s5/s3=table
     jal  ra, set_grow_rehash
     jal  ra, set_insert_from_scratch
     jal  ra, set_writeback_header
@@ -1570,20 +1713,32 @@ sg_tag_ok:
 # ===========================================================================
 do_set_update:
     lw   t0, MB_E0_TAG(s11)
-    li   t1, TAG_SET
+    li   t1, TAG_MUT_COLLEC
+    beq  t0, t1, su_primary_ok
+    j    fatal_type
+su_primary_ok:
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_SET
     beq  t0, t1, su_tag_ok
     j    fatal_type
 su_tag_ok:
     lw   s0, MB_E0_VAL0(s11)
-    jal  ra, dict_load_header_table
+    jal  ra, set_load_header_table
     lw   s9, MB_E1_TAG(s11)
     lw   s10, MB_E1_VAL0(s11)
-    li   t1, TAG_LIST
-    beq  s9, t1, su_src_list
+    li   t1, TAG_MUT_COLLEC
+    bne  s9, t1, su_src_tuple_check
+    lw   t0, MB_E1_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_LIST
+    beq  t0, t1, su_src_list
+    li   t1, MUT_SET
+    beq  t0, t1, su_src_set
+    j    fatal_type
+su_src_tuple_check:
     li   t1, TAG_TUPLE
     beq  s9, t1, su_src_tuple
-    li   t1, TAG_SET
-    beq  s9, t1, su_src_set
     j    fatal_type
 
 su_src_list:

@@ -16,7 +16,9 @@ from encoding import (
     BOOT_RECORD_ADDR,
     CODE_FIELD_CO_CONSTS,
     CODE_FIELD_CO_DEFAULTS,
+    CODE_FIELD_CO_KWDEFAULTS,
     CODE_FIELD_CO_NAMES,
+    CODE_FIELD_CO_VARNAMES,
     CODE_FIELD_ENTRY_SLOT,
     CODE_FIELD_METADATA,
     CODE_OBJECT_BYTES,
@@ -35,33 +37,38 @@ from encoding import (
     OBJ_EXCEPTION_BYTES,
     OBJ_INSTANCE_BYTES,
     OBJ_TYPE_BYTES,
+    TAG_BOOL,
     TAG_CODE_OBJECT,
-    TAG_DICT,
+    TAG_CONTROL,
+    TAG_FLOAT,
     TAG_INT,
-    TAG_LIST,
-    TAG_NONE,
-    TAG_NULL,
+    TAG_LONG_STR,
+    TAG_MUT_COLLEC,
     TAG_OBJECT,
-    TAG_SET,
+    TAG_SHORT_STR,
     TAG_TOMBSTONE,
     TAG_TUPLE,
-    TAG_UNINIT,
+    MUT_DICT,
+    MUT_LIST,
+    NONE_ENTRY,
     dict_key_hash,
     dict_key_rich_eq,
     dict_slot_count_for_stores,
     encode_short_str,
     int_value,
+    is_mut_kind,
+    make_bytearray,
+    make_dict,
+    make_list,
+    make_none,
+    make_null,
+    make_set,
+    mut_addr,
+    mut_kind,
     obj_field_val_addr,
     pack_code_metadata,
     pack_ob_head,
 )
-
-# Re-export tag constants / hash for callers / tests.
-TAG_BOOL = 0b0011
-TAG_FLOAT = 0b0010
-TAG_SHORT_STR = 0b0110
-TAG_LONG_STR = 0b0111
-TAG_UNUSED = TAG_NULL  # renamed; kept as alias
 
 Tagged = tuple[int, int]  # (tag, value128)
 
@@ -115,9 +122,15 @@ class HeapImageBuilder:
             raise ValueError(f"unaligned write {addr:#x}")
         self.words[addr] = word & ((1 << 128) - 1)
 
-    def _write_tagged(self, val_addr: int, tag: int, value: int) -> None:
+    def _write_tagged(
+        self, val_addr: int, tag: int, value: int, *, key: bool = False
+    ) -> None:
         self._write(val_addr, value)
-        self._write(val_addr + 16, tag & 0xF)
+        tag_word = tag & 0xF
+        if key and tag == TAG_CONTROL:
+            # CONTROL keys preserve their secondary id beside the primary tag.
+            tag_word |= (value & 0xF) << 4
+        self._write(val_addr + 16, tag_word)
 
     # ---- LIST ----
     # v2 layout (Phase A, growable split object/buffer — mirrors
@@ -156,7 +169,7 @@ class HeapImageBuilder:
                 self._write_tagged(ob_item + i * 32, tag, val)
         self._write(obj_addr, ((capacity & ((1 << 64) - 1)) << 64) | (n & ((1 << 64) - 1)))
         self._write(obj_addr + 16, ob_item & ((1 << 64) - 1))
-        return TAG_LIST, obj_addr
+        return make_list(obj_addr)
 
     # ---- TUPLE ----
     def alloc_tuple(self, elements: list[Tagged]) -> Tagged:
@@ -170,12 +183,14 @@ class HeapImageBuilder:
         return TAG_TUPLE, ((n & ((1 << 64) - 1)) << 64) | (base & ((1 << 64) - 1))
 
     # ---- DICT ----
-    # v2 layout (relocatable table — mirrors pycore_defs.svh DICT section):
+    # v3 layout (relocatable table — mirrors pycore_defs.svh DICT section):
     #   obj + 0  : header { slot_count[63:0], used[63:0] }
-    #   obj + 16 : { 64'd0, table_ptr[63:0] }  (0 if slot_count==0)
+    #   obj + 16 : { version[63:0], order_len[63:0] }
+    #   obj + 32 : { order_ptr[63:0], table_ptr[63:0] }
+    #   order + i*32 + 0/16 : key val/tag in insertion order
     #   table + i*64 + 0/16/32/48 : key val/tag, value val/tag
-    # BUILD_MAP-style images allocate object then table contiguously.
-    DICT_OBJ_BYTES = 32
+    # BUILD_MAP-style images allocate object, order buffer, then table.
+    DICT_OBJ_BYTES = 48
 
     def alloc_dict(
         self,
@@ -198,22 +213,33 @@ class HeapImageBuilder:
             raise ValueError("non-empty dict requires slot_count > 0")
 
         obj = self._alloc(self.DICT_OBJ_BYTES)
+        order = 0
         table = 0
         if slot_count:
+            order = self._alloc(slot_count * 32)
             table = self._alloc(slot_count * 64)
-            # Zero all slots (empty sentinel = UNINIT key tag).
+            for i in range(slot_count):
+                self._write(order + i * 32, 0)
+                self._write(order + 16 + i * 32, 0)
+            # Zero all slots (CONTROL+UNINIT is the all-zero empty sentinel).
             for i in range(slot_count):
                 self._write(table + i * 64, 0)              # kval
-                self._write(table + 16 + i * 64, TAG_UNINIT)  # ktag
+                self._write(table + 16 + i * 64, 0)          # ktag
                 self._write(table + 32 + i * 64, 0)          # vval
                 self._write(table + 48 + i * 64, 0)          # vtag
 
         self._write(
             obj, ((slot_count & ((1 << 64) - 1)) << 64) | 0
         )  # used=0 for now
-        self._write(obj + 16, table & ((1 << 64) - 1))
+        self._write(obj + 16, 0)  # version=0, order_len=0
+        self._write(
+            obj + 32,
+            ((order & ((1 << 64) - 1)) << 64)
+            | (table & ((1 << 64) - 1)),
+        )
 
         used = 0
+        version = 0
         if slot_count:
             mask = slot_count - 1
             for (ktag, kval), (vtag, vval) in pairs:
@@ -222,11 +248,16 @@ class HeapImageBuilder:
                 idx = h
                 while probes < slot_count:
                     ktag_addr = table + 16 + idx * 64
-                    existing_tag = self.words.get(ktag_addr, TAG_UNINIT) & 0xF
-                    if existing_tag == TAG_UNINIT:
-                        self._write_tagged(table + idx * 64, ktag, kval)
+                    existing_tag_word = self.words.get(ktag_addr, 0)
+                    existing_tag = existing_tag_word & 0xF
+                    if existing_tag_word == 0:
+                        self._write_tagged(
+                            table + idx * 64, ktag, kval, key=True
+                        )
                         self._write_tagged(table + 32 + idx * 64, vtag, vval)
+                        self._write_tagged(order + used * 32, ktag, kval)
                         used += 1
+                        version += 1
                         break
                     # Overwrite on rich key match (incl. INT/BOOL/FLOAT cross).
                     existing_val = self.words.get(table + idx * 64, 0)
@@ -242,7 +273,12 @@ class HeapImageBuilder:
             obj,
             ((slot_count & ((1 << 64) - 1)) << 64) | (used & ((1 << 64) - 1)),
         )
-        return TAG_DICT, obj
+        self._write(
+            obj + 16,
+            ((version & ((1 << 64) - 1)) << 64)
+            | (used & ((1 << 64) - 1)),
+        )
+        return make_dict(obj)
 
     # ---- SET ----
     # Element-only open addressing (see set_excore.md / pycore_defs.svh):
@@ -276,7 +312,7 @@ class HeapImageBuilder:
             table = self._alloc(slot_count * 32)
             for i in range(slot_count):
                 self._write(table + i * 32, 0)
-                self._write(table + 16 + i * 32, TAG_UNINIT)
+                self._write(table + 16 + i * 32, 0)
 
         self._write(obj, ((slot_count & ((1 << 64) - 1)) << 64) | 0)
         self._write(obj + 16, table & ((1 << 64) - 1))
@@ -289,9 +325,14 @@ class HeapImageBuilder:
                 probes = 0
                 idx = h
                 while probes < slot_count:
-                    existing_tag = self.words.get(table + 16 + idx * 32, TAG_UNINIT) & 0xF
-                    if existing_tag == TAG_UNINIT:
-                        self._write_tagged(table + idx * 32, etag, eval_)
+                    existing_tag_word = self.words.get(
+                        table + 16 + idx * 32, 0
+                    )
+                    existing_tag = existing_tag_word & 0xF
+                    if existing_tag_word == 0:
+                        self._write_tagged(
+                            table + idx * 32, etag, eval_, key=True
+                        )
                         used += 1
                         break
                     if existing_tag == TAG_TOMBSTONE:
@@ -310,7 +351,7 @@ class HeapImageBuilder:
             obj,
             ((slot_count & ((1 << 64) - 1)) << 64) | (used & ((1 << 64) - 1)),
         )
-        return TAG_SET, obj
+        return make_set(obj)
 
     # ---- CODE OBJECT ----
     def add_code_object(
@@ -318,34 +359,53 @@ class HeapImageBuilder:
         entry_slot: int,
         co_consts: Tagged,
         co_names: Tagged,
+        co_varnames: Tagged,
         *,
         stacksize: int,
         nlocals: int,
         argcount: int,
+        kwonlyargcount: int = 0,
         co_defaults: Tagged | None = None,
+        co_kwdefaults: Tagged | None = None,
     ) -> Tagged:
-        """Allocate a 192-byte code object (5 tagged-entry fields).
+        """Allocate a 224-byte code object (7 tagged-entry fields).
 
         field 0 : entry_slot  (INT) — imem slot index of the first code unit
         field 1 : co_consts   (TUPLE handle)
         field 2 : co_names    (TUPLE handle)
-        field 3 : metadata    (INT) — packed {stacksize, nlocals, argcount}
+        field 3 : metadata    (INT) — packed
+                  {kwonlyargcount, stacksize, nlocals, argcount}
         field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
+        field 5 : co_varnames (TUPLE handle; local/argument names)
+        field 6 : co_kwdefaults (MUT_DICT handle; empty ⇒ no kw-only defaults)
         """
-        assert CODE_OBJECT_NFIELDS == 5
+        assert CODE_OBJECT_NFIELDS == 7
         assert co_consts[0] == TAG_TUPLE
         assert co_names[0] == TAG_TUPLE
+        if co_varnames[0] != TAG_TUPLE:
+            raise ValueError("co_varnames must be a TUPLE handle")
         if co_defaults is None:
             co_defaults = self.alloc_tuple([])
         if co_defaults[0] != TAG_TUPLE:
             raise ValueError("co_defaults must be a TUPLE handle")
+        if co_kwdefaults is None:
+            co_kwdefaults = self.alloc_dict([], slot_count=4)
+        if not is_mut_kind(co_kwdefaults, MUT_DICT):
+            raise ValueError("co_kwdefaults must be a MUT_DICT handle")
         addr = self._alloc(CODE_OBJECT_BYTES)
         fields: list[Tagged] = [
             (TAG_INT, int_value(entry_slot)),  # field 0
             co_consts,                         # field 1
             co_names,                          # field 2
-            (TAG_INT, pack_code_metadata(stacksize, nlocals, argcount)),  # field 3
+            (
+                TAG_INT,
+                pack_code_metadata(
+                    stacksize, nlocals, argcount, kwonlyargcount
+                ),
+            ),                                 # field 3
             co_defaults,                       # field 4
+            co_varnames,                       # field 5
+            co_kwdefaults,                     # field 6
         ]
         # Silence unused-import lint for field index constants (documented API).
         assert CODE_FIELD_ENTRY_SLOT == 0
@@ -353,6 +413,8 @@ class HeapImageBuilder:
         assert CODE_FIELD_CO_NAMES == 2
         assert CODE_FIELD_METADATA == 3
         assert CODE_FIELD_CO_DEFAULTS == 4
+        assert CODE_FIELD_CO_VARNAMES == 5
+        assert CODE_FIELD_CO_KWDEFAULTS == 6
         for i, (tag, val) in enumerate(fields):
             self._write_tagged(addr + i * 32, tag, val)
         return TAG_CODE_OBJECT, addr & ((1 << 64) - 1)
@@ -395,7 +457,7 @@ class HeapImageBuilder:
         """OBK_INSTANCE: field0 = __dict__ (DICT handle)."""
         if idict is None:
             idict = self.alloc_dict([], slot_count=4)
-        if idict[0] != TAG_DICT:
+        if not is_mut_kind(idict, MUT_DICT):
             raise ValueError("instance __dict__ must be a DICT handle")
         return self._alloc_object(
             OBJ_INSTANCE_BYTES,
@@ -417,10 +479,10 @@ class HeapImageBuilder:
         if tp_dict is None:
             tp_dict = self.alloc_dict([], slot_count=4)
         if tp_base is None:
-            tp_base = (TAG_NONE, 0)
-        if tp_dict[0] != TAG_DICT:
+            tp_base = make_none()
+        if not is_mut_kind(tp_dict, MUT_DICT):
             raise ValueError("tp_dict must be a DICT handle")
-        if tp_base[0] not in (TAG_NONE, TAG_OBJECT):
+        if tp_base != NONE_ENTRY and tp_base[0] != TAG_OBJECT:
             raise ValueError("tp_base must be NONE or OBJECT")
         return self._alloc_object(
             OBJ_TYPE_BYTES,
@@ -456,7 +518,7 @@ class HeapImageBuilder:
     ) -> Tagged:
         """OBK_BUILTIN: field0=builtin_id (INT), field1=bound_self."""
         if bound_self is None:
-            bound_self = (TAG_NULL, 0)
+            bound_self = make_null()
         return self._alloc_object(
             OBJ_BUILTIN_BYTES,
             OBK_BUILTIN,
@@ -472,10 +534,10 @@ class HeapImageBuilder:
         zero: bool = True,
         flags: int = 0,
     ) -> Tagged:
-        """OBK_BYTEARRAY: field0=length, field1=buf_addr, field2=capacity.
+        """Allocate a MUT_BYTEARRAY handle over the legacy-compatible body.
 
-        Allocates a contiguous byte buffer after the object (or leaves
-        buf_addr=0 when capacity==0).
+        The body retains the OBK_BYTEARRAY field layout for existing firmware
+        readers, but the externally visible handle is MUT_COLLEC/MUT_BYTEARRAY.
         """
         if length < 0:
             raise ValueError("bytearray length must be non-negative")
@@ -491,9 +553,10 @@ class HeapImageBuilder:
             pad = (16 - (self.ptr & 15)) & 15
             if pad:
                 self._alloc(pad)
-            buf_addr = self._alloc(capacity)
+            alloc_bytes = (capacity + 15) & ~15
+            buf_addr = self._alloc(alloc_bytes)
             if zero:
-                for off in range(0, capacity, 16):
+                for off in range(0, alloc_bytes, 16):
                     self._write(buf_addr + off, 0)
         self._write(addr, pack_ob_head(OBK_BYTEARRAY, flags, 0))
         self._write(addr + 16, TAG_OBJECT & 0xF)
@@ -504,7 +567,7 @@ class HeapImageBuilder:
         ]
         for i, (tag, val) in enumerate(fields):
             self._write_tagged(obj_field_val_addr(addr, i), tag, val)
-        return TAG_OBJECT, addr & ((1 << 64) - 1)
+        return make_bytearray(addr)
 
     def alloc_exception(
         self,
@@ -538,9 +601,9 @@ class HeapImageBuilder:
         """
         if module_code[0] != TAG_CODE_OBJECT:
             raise ValueError("boot record pair 0 must be CODE_OBJECT")
-        if globals_dict[0] != TAG_DICT:
+        if not is_mut_kind(globals_dict, MUT_DICT):
             raise ValueError("boot record pair 1 must be DICT")
-        if builtins_dict[0] != TAG_DICT:
+        if not is_mut_kind(builtins_dict, MUT_DICT):
             raise ValueError("boot record pair 2 must be DICT")
         if addr % 16 != 0:
             raise ValueError(f"boot record addr must be 16-byte aligned, got {addr:#x}")

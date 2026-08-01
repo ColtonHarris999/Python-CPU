@@ -39,6 +39,9 @@ module pycore_core #(
     parameter int RF_DEPTH      = 256,
     parameter int STACK_BASE    = 32,
     parameter int STACK_TOP_MAX = 255,
+    parameter int STRING_MEM_BYTES = 65536,
+    parameter int STRING_MAX_LEN = 4096,
+    parameter longint unsigned STRING_RUNTIME_BASE = 64'd16384,
     parameter string STRING_HEX = "pycore/programs/string_mem.hex",
     // First free byte of the bump-pointer heap.  A preloaded static heap
     // image sets this above the static objects so runtime allocations do
@@ -196,8 +199,18 @@ module pycore_core #(
     // S_CALL / S_RETURN management (multi-phase FSM with code-object reads).
     logic                          call_sent_r;   // call_valid was pulsed
     logic                          frame_dmem_pending_r; // frame push or pop in flight
-    logic [3:0]                    call_phase_r;
+    logic [4:0]                    call_phase_r;
     logic [2:0]                    return_phase_r;
+    // CALL / CALL_KW / CALL_FUNCTION_EX mode (see CALL_MODE_* localparams).
+    logic [1:0]                    call_mode_r;
+    logic [7:0]                    call_n_pos_r;
+    logic [7:0]                    call_n_kwargs_r;
+    logic [127:0]                  call_kw_names_r;    // names TUPLE or kwargs DICT
+    logic [127:0]                  call_varnames_r;    // callee co_varnames TUPLE
+    logic [127:0]                  call_kwdefaults_r;  // callee co_kwdefaults DICT
+    logic [15:0]                   call_kwonly_r;
+    logic [15:0]                   call_total_params_r;
+    logic                          call_args_is_list_r; // EX expand source tag
     // Boot phase counter — reset walker for S_BOOT.
     logic [3:0]                    boot_phase_r;
     // Scratchpad regs latched during S_CALL / S_RETURN for a pending
@@ -223,6 +236,9 @@ module pycore_core #(
     // Self entry while unwrapping BOUND_METHOD / installing TYPE instance.
     logic [3:0]                    call_self_tag_r;
     logic [127:0]                  call_self_val_r;
+    logic [127:0]                  call_range_start_r;
+    logic [127:0]                  call_range_stop_r;
+    logic [127:0]                  call_range_step_r;
     // Instance byte address for TYPE instantiation / ret_discard_push_self.
     logic [31:0]                   call_inst_addr_r;
     // Mode installed for the frame being pushed (1 ⇒ discard return, push self).
@@ -269,6 +285,9 @@ module pycore_core #(
     logic [3:0]                    container_tag_r;
     // Saved element/key value[127:0].
     logic [127:0]                  container_val_r;
+    logic [127:0]                  container_range_start_r;
+    logic [127:0]                  container_range_stop_r;
+    logic [127:0]                  container_range_step_r;
     // RF address override: while state_r == S_CONTAINER, the regfile rs1 port
     // is presented with container_rf_addr_r instead of dec_rs1_sel so that the
     // container FSM can read arbitrary RF slots without an extra RF read port.
@@ -281,6 +300,14 @@ module pycore_core #(
     logic [RF_AW-1:0]              container_val_rf_addr_r;
     // Dict used-count (header[63:0]); tracked during BUILD_MAP / STORE_DICT.
     logic [63:0]                   container_used_r;
+    // DICT v3 insertion-order sidecar state.
+    logic [31:0]                   container_order_ptr_r;
+    logic [63:0]                   container_order_len_r;
+    logic [63:0]                   container_dict_version_r;
+    logic [31:0]                   container_order_idx_r;
+    logic [3:0]                    container_order_key_tag_r;
+    logic [127:0]                  container_order_shift_val_r;
+    logic [3:0]                    container_order_shift_tag_r;
     // Number of probe slots examined in the current probe sequence.
     logic [31:0]                   container_probe_n_r;
     // 1 = current STORE_DICT / BUILD_MAP write is inserting into an empty slot
@@ -307,6 +334,12 @@ module pycore_core #(
     // addr) and source length, held across the destination copy loop.
     logic [31:0]                   container_src_buf_r;
     logic [31:0]                   container_src_len_r;
+    logic                          container_src_is_tuple_r;
+    // UNPACK_EX: oparg = before | (after << 8).  The mode register selects
+    // after-element pushes, starred-list copy, then before-element pushes.
+    logic [7:0]                    container_unpack_before_r;
+    logic [7:0]                    container_unpack_after_r;
+    logic [1:0]                    container_unpack_mode_r;
     // One-cycle pulse: CONT_LIST_EXTEND non-empty source (always excore).
     logic                          container_list_extend_trap_r;
     // One-cycle pulse: CONT_DELETE_LIST needs an element shift (excore).
@@ -485,8 +518,9 @@ module pycore_core #(
                 id_rd_we = 1'b1; id_tos_delta = 3'sd1;
             end
             // LOAD_CONST / LOAD_GLOBAL / LOAD_NAME / STORE_NAME / STORE_GLOBAL
-            // / SWAP / paired-FAST ops / LOAD_FAST_AND_CLEAR are container ops
-            // (S_CONTAINER manages tos and RF writes).
+            // / SWAP / paired-FAST ops / LOAD_FAST_AND_CLEAR / TO_BOOL /
+            // CALL_INTRINSIC_1 / UNPACK_EX are container ops (S_CONTAINER
+            // manages tos and RF writes).
             PY_OP_LOAD_CONST, PY_OP_LOAD_GLOBAL, PY_OP_LOAD_NAME,
             PY_OP_STORE_NAME, PY_OP_STORE_GLOBAL,
             PY_OP_LOAD_ATTR, PY_OP_STORE_ATTR, PY_OP_DELETE_ATTR,
@@ -496,16 +530,16 @@ module pycore_core #(
             PY_OP_STORE_FAST_LOAD_FAST,
             PY_OP_STORE_FAST_STORE_FAST,
             PY_OP_SWAP, PY_OP_GET_ITER, PY_OP_FOR_ITER,
-            PY_OP_UNPACK_SEQUENCE: begin
+            PY_OP_UNPACK_SEQUENCE, PY_OP_UNPACK_EX, PY_OP_TO_BOOL,
+            PY_OP_CALL_INTRINSIC_1: begin
                 id_rd_we = 1'b0; id_tos_delta = 3'sd0;
             end
             // PUSH_NULL: push sentinel {NULL, 0}, one RF write via WB stage.
             PY_OP_PUSH_NULL: begin
                 id_rd_we = 1'b1; id_tos_delta = 3'sd1;
             end
-            // TO_BOOL / UNARY_*: rewrite TOS in place; net stack effect 0.
-            PY_OP_TO_BOOL, PY_OP_UNARY_NOT,
-            PY_OP_UNARY_INVERT, PY_OP_UNARY_NEGATIVE: begin
+            // UNARY_*: rewrite TOS in place; net stack effect 0.
+            PY_OP_UNARY_NOT, PY_OP_UNARY_INVERT, PY_OP_UNARY_NEGATIVE: begin
                 id_rd_we = 1'b1; id_tos_delta = 3'sd0;
             end
             // MAKE_FUNCTION: function ≡ code object; net effect 0 with no
@@ -529,6 +563,10 @@ module pycore_core #(
                 id_tos_delta = -3'sd1;
             end
             PY_OP_RETURN_VALUE: begin
+                id_tos_delta = -3'sd1;
+            end
+            PY_OP_RAISE_VARARGS: begin
+                // The fatal trap is raised in EX before any pop can commit.
                 id_tos_delta = -3'sd1;
             end
             PY_OP_POP_JUMP_IF_TRUE, PY_OP_POP_JUMP_IF_FALSE,
@@ -575,7 +613,8 @@ module pycore_core #(
     // and no spurious trap fires.
     assign binary_list_iadd = (cur_opcode_r == PY_OP_BINARY_OP) &&
                               (cur_arg_r[7:0] == 8'd13) &&
-                              (pycore_get_tag(rs1_r) == PY_TAG_LIST);
+                              pycore_is_list(
+                                  pycore_get_tag(rs1_r), pycore_get_val(rs1_r));
     assign route_container = dec_is_container || binary_list_iadd;
     assign is_alu = ((cur_opcode_r == PY_OP_BINARY_OP) && !route_container) ||
                     (cur_opcode_r == PY_OP_COMPARE_OP) ||
@@ -586,16 +625,54 @@ module pycore_core #(
     logic                          exec_stall;
     logic                          exec_trap;
     logic [4:0]                    exec_trap_code;
+    logic                          string_exec_path_valid;
+    logic [PYCORE_ENTRY_WIDTH-1:0] string_exec_result;
+    logic                          string_exec_trap;
+    logic [4:0]                    string_exec_trap_code;
+    logic                          string_snapshot_valid;
+    logic [3:0]                    string_snapshot_size;
+    logic [119:0]                  string_snapshot_payload;
+    logic                          string_snapshot_ok;
+    logic [31:0]                   string_snapshot_addr;
+    logic [31:0]                   string_read_addr;
+    logic [31:0]                   string_read_data;
 
-    pycore_exec #(
+    pycore_string_mem #(
+        .STRING_MEM_BYTES(STRING_MEM_BYTES),
+        .STRING_MAX_LEN(STRING_MAX_LEN),
+        .STRING_RUNTIME_BASE(STRING_RUNTIME_BASE),
         .STRING_HEX(STRING_HEX)
-    ) exec (
+    ) string_store (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .exec_valid_i((state_r == S_EXEC) && is_alu),
+        .exec_alu_op_i(dec_alu_op),
+        .exec_rs1_i(rs1_r),
+        .exec_rs2_i(rs2_r),
+        .exec_path_valid_o(string_exec_path_valid),
+        .exec_result_o(string_exec_result),
+        .exec_trap_o(string_exec_trap),
+        .exec_trap_code_o(string_exec_trap_code),
+        .snapshot_valid_i(string_snapshot_valid),
+        .snapshot_size_i(string_snapshot_size),
+        .snapshot_payload_i(string_snapshot_payload),
+        .snapshot_ok_o(string_snapshot_ok),
+        .snapshot_addr_o(string_snapshot_addr),
+        .read_addr_i(string_read_addr),
+        .read_data_o(string_read_data)
+    );
+
+    pycore_exec exec (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
         .valid_i((state_r == S_EXEC) && is_alu),
         .alu_op_i(dec_alu_op),
         .rs1_i(rs1_r),
         .rs2_i(rs2_r),
+        .string_path_valid_i(string_exec_path_valid),
+        .string_result_i(string_exec_result),
+        .string_trap_i(string_exec_trap),
+        .string_trap_code_i(string_exec_trap_code),
         .result_o(exec_result),
         .stall_o(exec_stall),
         .trap_o(exec_trap),
@@ -628,6 +705,7 @@ module pycore_core #(
         ex_addr_entry = '0;
         exec_type_trap_pulse = 1'b0;
         exec_mem_fault_pulse = 1'b0;
+        exec_raise_pulse = 1'b0;
         ex_rs1_tag  = pycore_get_tag(rs1_r);
         ex_rs1_int  = rs1_r[63:0];
         ex_rs1_bool = 1'b0;
@@ -644,50 +722,20 @@ module pycore_core #(
                 ex_addr_entry = rs2_r;
             end
             // PUSH_NULL: emit the self_or_null sentinel entry.
-            PY_OP_PUSH_NULL: ex_entry = pycore_make_entry(PY_TAG_NULL, '0);
+            PY_OP_PUSH_NULL: ex_entry = pycore_make_control(PY_CTL_NULL);
             // DELETE_FAST: clear local to UNINIT; already-unbound → MEM_FAULT.
             PY_OP_DELETE_FAST: begin
-                if (ex_rs1_tag == PY_TAG_UNINIT) begin
+                if (pycore_is_uninit(ex_rs1_tag, pycore_get_val(rs1_r))) begin
                     exec_mem_fault_pulse = (state_r == S_EXEC);
                 end
-                ex_entry = pycore_make_entry(PY_TAG_UNINIT, '0);
+                ex_entry = pycore_make_control(PY_CTL_UNINIT);
             end
             // LOAD_FAST_CHECK: push local like LOAD_FAST; unbound → MEM_FAULT.
             PY_OP_LOAD_FAST_CHECK: begin
-                if (ex_rs1_tag == PY_TAG_UNINIT) begin
+                if (pycore_is_uninit(ex_rs1_tag, pycore_get_val(rs1_r))) begin
                     exec_mem_fault_pulse = (state_r == S_EXEC);
                 end
                 ex_entry = rs1_r;
-            end
-            // TO_BOOL: convert numeric and string scalars to BOOL in place;
-            // unsupported tags raise PY_TRAP_TYPE via exec_type_trap_pulse.
-            PY_OP_TO_BOOL: begin
-                unique case (ex_rs1_tag)
-                    PY_TAG_INT:   ex_rs1_bool = (rs1_r[PYCORE_VAL_MSB:0] != {PYCORE_VAL_WIDTH{1'b0}});
-                    PY_TAG_BOOL:  ex_rs1_bool = ex_rs1_int[0];
-                    PY_TAG_FLOAT: ex_rs1_bool = (ex_rs1_int[62:0] != 63'b0);
-                    PY_TAG_SHORT_STR: begin
-                        if (pycore_short_str_size(rs1_r[PYCORE_VAL_MSB:0])
-                                > PYCORE_SHORT_STR_MAX_BYTES) begin
-                            ex_rs1_bool          = 1'b0;
-                            exec_type_trap_pulse = (state_r == S_EXEC);
-                        end else begin
-                            ex_rs1_bool = (pycore_short_str_size(
-                                rs1_r[PYCORE_VAL_MSB:0]
-                            ) != 4'b0);
-                        end
-                    end
-                    PY_TAG_LONG_STR: begin
-                        ex_rs1_bool = (pycore_long_str_size(
-                            rs1_r[PYCORE_VAL_MSB:0]
-                        ) != 64'b0);
-                    end
-                    default: begin
-                        ex_rs1_bool          = 1'b0;
-                        exec_type_trap_pulse = (state_r == S_EXEC);
-                    end
-                endcase
-                ex_entry = pycore_make_entry(PY_TAG_BOOL, {{(PYCORE_VAL_WIDTH-1){1'b0}}, ex_rs1_bool});
             end
             // UNARY_NOT: invert TOS BOOL in place; non-BOOL → PY_TRAP_TYPE.
             PY_OP_UNARY_NOT: begin
@@ -710,6 +758,16 @@ module pycore_core #(
             // MAKE_FUNCTION: function is the code object itself; verify tag.
             PY_OP_MAKE_FUNCTION: begin
                 if (ex_rs1_tag != PY_TAG_CODE_OBJECT) begin
+                    exec_type_trap_pulse = (state_r == S_EXEC);
+                end
+                ex_entry = rs1_r;
+            end
+            // RAISE_VARARGS 1: accept any TOS and halt with PY_TRAP_RAISE.
+            // Other arities are outside the minimal exception subset.
+            PY_OP_RAISE_VARARGS: begin
+                if (cur_arg_r == 32'd1) begin
+                    exec_raise_pulse = (state_r == S_EXEC);
+                end else begin
                     exec_type_trap_pulse = (state_r == S_EXEC);
                 end
                 ex_entry = rs1_r;
@@ -950,13 +1008,14 @@ module pycore_core #(
     // container_type_trap_r / container_mem_fault_r are one-cycle pulses set in
     // S_CONTAINER's always_ff when a type or bounds error is detected.
     // exec_type_trap_pulse folds in MAKE_FUNCTION (non-CODE_OBJECT),
-    // TO_BOOL (non-numeric), and UNARY_NOT (non-BOOL) type checks that ride
+    // RAISE_VARARGS bad arity, and UNARY_NOT (non-BOOL) type checks that ride
     // the EX stage combinationally.
     // exec_mem_fault_pulse covers DELETE_FAST on an already-unbound local
     // and LOAD_FAST_CHECK on an unbound local (UnboundLocalError analog →
     // PY_TRAP_MEM_FAULT).
     logic exec_type_trap_pulse;
     logic exec_mem_fault_pulse;
+    logic exec_raise_pulse;
     assign type_trap_sig  = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_TYPE)) ||
                             (exec_in && dec_is_branch && branch_trap) ||
                             exec_type_trap_pulse ||
@@ -969,11 +1028,15 @@ module pycore_core #(
     assign fpu_exc_sig    = exec_in && exec_trap && (exec_trap_code == PY_TRAP_FPU_EXCEPTION);
     assign illegal_sig    = (exec_in && dec_illegal) ||
                             (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ILLEGAL_OPCODE));
+    // Container/boot/frame dmem transactions bypass pycore_mem_stage, so
+    // dmem_fault_i must be folded in here whenever those owners hold the port.
     assign mem_fault_sig  = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_MEM_FAULT)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_MEM_FAULT)) ||
                             exec_mem_fault_pulse ||
                             container_mem_fault_r ||
-                            imem_fault_i;
+                            imem_fault_i ||
+                            ((container_dmem_active || frame_dmem_active) &&
+                             dmem_ack_i && dmem_fault_i);
     assign addr_align_sig = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ADDR_ALIGN)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_ADDR_ALIGN));
     // CONT_LIST_APPEND raises this before any RF/heap commit (see
@@ -993,6 +1056,8 @@ module pycore_core #(
     assign set_update_sig     = container_set_update_trap_r;
     logic attr_error_sig;
     assign attr_error_sig     = container_attr_error_r;
+    logic raise_sig;
+    assign raise_sig          = exec_raise_pulse;
     // Phase C: excore reported RES_FATAL for a trap it was handed — forward
     // its fatal_code as a normal halt (see S_TRAP_WAIT).
     logic excore_fatal_sig;
@@ -1026,6 +1091,7 @@ module pycore_core #(
         .set_grow_i(set_grow_sig),
         .set_update_i(set_update_sig),
         .attr_error_i(attr_error_sig),
+        .raise_i(raise_sig),
         .excore_fatal_i(excore_fatal_sig),
         .excore_fatal_code_i(excore_fatal_code_r),
         .fault_pc_i(fault_pc),
@@ -1099,6 +1165,7 @@ module pycore_core #(
     logic [31:0]  cont_iter_index;
     logic [31:0]  cont_iter_size;
     logic [31:0]  cont_iter_addr;
+    logic [19:0]  cont_iter_aux;
 
     assign cont_rs1_val   = pycore_get_val(rs1_r);
     assign cont_rs2_val   = pycore_get_val(rs2_r);
@@ -1135,6 +1202,16 @@ module pycore_core #(
     assign cont_iter_index    = pycore_iter_index(cont_rs1_val);
     assign cont_iter_size     = pycore_iter_size(cont_rs1_val);
     assign cont_iter_addr     = pycore_iter_addr(cont_rs1_val);
+    assign cont_iter_aux      = pycore_iter_aux(cont_rs1_val);
+    assign string_snapshot_size = pycore_short_str_size(cont_rs1_val);
+    assign string_snapshot_payload = pycore_short_str_payload(cont_rs1_val);
+    assign string_snapshot_valid =
+        (state_r == S_CONTAINER) &&
+        (container_op_r == CONT_GET_ITER) &&
+        (container_phase_r == CP_INIT) &&
+        (cont_rs1_tag == PY_TAG_SHORT_STR) &&
+        (string_snapshot_size != 4'b0);
+    assign string_read_addr = cont_iter_addr + cont_iter_index;
 
     // Dict-specific combinational helpers.
     // Slot count computed from container_count_r (pairs), used during BUILD_MAP init.
@@ -1176,9 +1253,11 @@ module pycore_core #(
     assign cont_dict_needs_grow = pycore_dict_needs_grow(
         container_used_r, {32'b0, container_slot_count_r});
 
-    // table_ptr low 32 bits from the last table_ptr-slot dmem read.
+    // DICT v3 packed pointer slot: order_ptr high, table_ptr low.
     logic [31:0] cont_dict_table_ptr;
+    logic [31:0] cont_dict_order_ptr;
     assign cont_dict_table_ptr = container_rd_data_r[31:0];
+    assign cont_dict_order_ptr = container_rd_data_r[95:64];
 
     // CONTAINS_OP: compare scanned element (value latched in container_val_r,
     // tag in container_rd_data_r[3:0] during CP_TAG) against needle rs1.
@@ -1190,6 +1269,18 @@ module pycore_core #(
     // Probe advance: (probe + 1) & mask.
     logic [31:0] cont_probe_next;
     assign cont_probe_next = (container_probe_r + 32'd1) & (container_slot_count_r - 32'd1);
+
+    // UNPACK_EX helpers.  These are only meaningful after the source length
+    // has been validated as >= before+after.
+    logic [31:0] cont_unpack_fixed_len;
+    logic [31:0] cont_unpack_rest_len;
+    logic [31:0] cont_unpack_middle_alloc;
+    assign cont_unpack_fixed_len = {24'd0, container_unpack_before_r} +
+                                   {24'd0, container_unpack_after_r};
+    assign cont_unpack_rest_len = container_src_len_r - cont_unpack_fixed_len;
+    assign cont_unpack_middle_alloc = pycore_list_obj_bytes() +
+        ((cont_unpack_rest_len == 32'd0) ? 32'd0 :
+         pycore_list_buf_bytes(cont_unpack_rest_len));
 
     // ---------------------------------------------------------------------
     // Control FSM — next-state combinational logic.
@@ -1205,16 +1296,29 @@ module pycore_core #(
     // that commits state to the RF / fetch redirect.  Using a phase-driven
     // exit (rather than a wire from the frame module) keeps the extra
     // code-object dmem reads inside the same state.
-    localparam logic [3:0] CALL_PHASE_DONE = 4'd15;
+    localparam logic [4:0] CALL_PHASE_DONE     = 5'd15;
+    localparam logic [4:0] CALL_PHASE_KW_NAMES = 5'd16;
+    localparam logic [4:0] CALL_PHASE_EX_KW    = 5'd17;
+    localparam logic [4:0] CALL_PHASE_EX_ARGS  = 5'd18;
+    localparam logic [4:0] CALL_PHASE_EX_EXPAND = 5'd19;
     localparam logic [2:0] RET_PHASE_DONE  = 3'd7;
     localparam logic [3:0] BOOT_PHASE_DONE = 4'd15;
+    // call_mode_r encodings
+    localparam logic [1:0] CALL_MODE_POS   = 2'd0; // plain CALL
+    localparam logic [1:0] CALL_MODE_KW    = 2'd1; // CALL_KW (names tuple)
+    localparam logic [1:0] CALL_MODE_EX    = 2'd2; // CALL_FUNCTION_EX expand
+    localparam logic [1:0] CALL_MODE_EX_KW = 2'd3; // EX with kwargs dict binder
     // SHORT_STR value for "__init__" (size=8); used by TYPE-call tp_dict probe.
     localparam logic [127:0] CALL_INIT_NAME_VAL =
         128'h85f5f696e69745f5f000000000000000;
+    // SHORT_STR value for "__len__" (size=7); used by builtins.len instance probe.
+    localparam logic [127:0] CALL_LEN_NAME_VAL =
+        128'h75f5f6c656e5f5f00000000000000000;
     // Empty dict for new instances: 4 slots (BUILD_MAP min for 0 pairs).
     localparam logic [31:0] CALL_EMPTY_DICT_SLOTS = 32'd4;
     localparam logic [31:0] CALL_TYPE_ALLOC_BYTES =
-        32'd32 + (CALL_EMPTY_DICT_SLOTS << 6) + PYCORE_OBJ_INSTANCE_BYTES;
+        32'd48 + (CALL_EMPTY_DICT_SLOTS << 5) +
+        (CALL_EMPTY_DICT_SLOTS << 6) + PYCORE_OBJ_INSTANCE_BYTES;
 
     always_comb begin
         state_next = state_r;  // default: hold current state
@@ -1336,6 +1440,15 @@ module pycore_core #(
             call_phase_r         <= '0;
             return_phase_r       <= '0;
             boot_phase_r         <= '0;
+            call_mode_r          <= 2'd0; // CALL_MODE_POS
+            call_n_pos_r         <= '0;
+            call_n_kwargs_r      <= '0;
+            call_kw_names_r      <= '0;
+            call_varnames_r      <= '0;
+            call_kwdefaults_r    <= '0;
+            call_kwonly_r        <= '0;
+            call_total_params_r  <= '0;
+            call_args_is_list_r  <= 1'b0;
             call_code_addr_r     <= '0;
             call_entry_slot_r    <= '0;
             call_consts_r        <= '0;
@@ -1352,6 +1465,9 @@ module pycore_core #(
             call_sub_r           <= '0;
             call_self_tag_r      <= '0;
             call_self_val_r      <= '0;
+            call_range_start_r   <= '0;
+            call_range_stop_r    <= '0;
+            call_range_step_r    <= '0;
             call_inst_addr_r     <= '0;
             call_ret_mode_r      <= 1'b0;
             call_saved_inst_r    <= '0;
@@ -1369,12 +1485,22 @@ module pycore_core #(
             container_base_r         <= '0;
             container_tag_r          <= '0;
             container_val_r          <= '0;
+            container_range_start_r  <= '0;
+            container_range_stop_r   <= '0;
+            container_range_step_r   <= '0;
             container_rf_addr_r      <= '0;
             container_rd_data_r      <= '0;
             container_slot_count_r   <= '0;
             container_probe_r        <= '0;
             container_val_rf_addr_r  <= '0;
             container_used_r         <= '0;
+            container_order_ptr_r     <= '0;
+            container_order_len_r     <= '0;
+            container_dict_version_r  <= '0;
+            container_order_idx_r     <= '0;
+            container_order_key_tag_r <= '0;
+            container_order_shift_val_r <= '0;
+            container_order_shift_tag_r <= '0;
             container_probe_n_r      <= '0;
             container_insert_new_r   <= 1'b0;
             container_finishing_r    <= 1'b0;
@@ -1396,6 +1522,10 @@ module pycore_core #(
             container_list_grow_trap_r   <= 1'b0;
             container_src_buf_r          <= '0;
             container_src_len_r          <= '0;
+            container_src_is_tuple_r     <= 1'b0;
+            container_unpack_before_r    <= '0;
+            container_unpack_after_r     <= '0;
+            container_unpack_mode_r      <= '0;
             container_list_extend_trap_r <= 1'b0;
             container_list_delete_trap_r <= 1'b0;
             container_dict_grow_trap_r      <= 1'b0;
@@ -1511,18 +1641,18 @@ module pycore_core #(
                                 // rs2 = container; choose LIST vs DICT path.
                                 // TUPLE (immutable) falls through to CONT_STORE_LIST,
                                 // which type-traps on non-LIST.
-                                container_op_r <= (cont_rs2_tag == PY_TAG_DICT) ?
+                                container_op_r <= (pycore_is_dict(cont_rs2_tag, cont_rs2_val)) ?
                                                   CONT_STORE_DICT : CONT_STORE_LIST;
                             end else if (cur_opcode_r == PY_OP_DELETE_SUBSCR) begin
                                 // DICT → tombstone path; LIST → shift-down;
                                 // SET / other → TYPE in CONT_DELETE_LIST.
-                                container_op_r <= (cont_rs2_tag == PY_TAG_DICT) ?
+                                container_op_r <= (pycore_is_dict(cont_rs2_tag, cont_rs2_val)) ?
                                                   CONT_DELETE_DICT : CONT_DELETE_LIST;
                             end else if (cur_opcode_r == PY_OP_CONTAINS_OP) begin
                                 // rs1 = needle, rs2 = container.
-                                if (cont_rs2_tag == PY_TAG_DICT)
+                                if (pycore_is_dict(cont_rs2_tag, cont_rs2_val))
                                     container_op_r <= CONT_CONTAINS_DICT;
-                                else if (cont_rs2_tag == PY_TAG_SET)
+                                else if (pycore_is_set(cont_rs2_tag, cont_rs2_val))
                                     container_op_r <= CONT_CONTAINS_SET;
                                 else if (cont_rs2_tag == PY_TAG_TUPLE)
                                     container_op_r <= CONT_CONTAINS_TUPLE;
@@ -1557,6 +1687,8 @@ module pycore_core #(
                                 container_op_r <= CONT_SET_ADD;
                             end else if (cur_opcode_r == PY_OP_SET_UPDATE) begin
                                 container_op_r <= CONT_SET_UPDATE;
+                            end else if (cur_opcode_r == PY_OP_DICT_MERGE) begin
+                                container_op_r <= CONT_DICT_MERGE;
                             end else if (cur_opcode_r ==
                                          PY_OP_STORE_FAST_LOAD_FAST) begin
                                 container_op_r     <= CONT_SFLF;
@@ -1588,9 +1720,20 @@ module pycore_core #(
                                 container_op_r    <= CONT_UNPACK_SEQ;
                                 container_count_r <= cur_arg_r[6:0];
                                 container_idx_r   <= 7'd0;
+                            end else if (cur_opcode_r == PY_OP_UNPACK_EX) begin
+                                container_op_r             <= CONT_UNPACK_EX;
+                                container_unpack_before_r  <= cur_arg_r[7:0];
+                                container_unpack_after_r   <= cur_arg_r[15:8];
+                                container_unpack_mode_r    <= 2'd0;
+                                container_count_r          <= 7'd0;
+                                container_idx_r            <= 7'd0;
+                            end else if (cur_opcode_r == PY_OP_TO_BOOL) begin
+                                container_op_r <= CONT_TO_BOOL;
+                            end else if (cur_opcode_r == PY_OP_CALL_INTRINSIC_1) begin
+                                container_op_r <= CONT_LIST_TO_TUPLE;
                             end else if (cur_opcode_r == PY_OP_BINARY_OP) begin
                                 // BINARY_OP/NB_SUBSCR: rs1 = container.
-                                if (cont_rs1_tag == PY_TAG_DICT)
+                                if (pycore_is_dict(cont_rs1_tag, cont_rs1_val))
                                     container_op_r <= CONT_SUBSCR_DICT;
                                 else if (cont_rs1_tag == PY_TAG_TUPLE)
                                     container_op_r <= CONT_SUBSCR_TUPLE;
@@ -1624,14 +1767,23 @@ module pycore_core #(
                         // state_next = S_FETCH (from always_comb)
 
                     end else if (dec_is_call) begin
-                        // CALL: move to multi-phase frame-management state.
-                        // Phase 0 → RF settle at callable slot.
+                        // CALL / CALL_KW / CALL_FUNCTION_EX: multi-phase FSM.
+                        // Phase 0 → RF settle at callable (or KW/EX prelude).
                         call_sent_r          <= 1'b0;
                         frame_dmem_pending_r <= 1'b0;
-                        call_phase_r         <= 4'd0;
+                        call_phase_r         <= 5'd0;
                         call_sub_r           <= 6'd0;
                         call_ret_mode_r      <= 1'b0;
                         call_saved_inst_r    <= 64'b0;
+                        if (cur_opcode_r == PY_OP_CALL_KW)
+                            call_mode_r <= CALL_MODE_KW;
+                        else if (cur_opcode_r == PY_OP_CALL_FUNCTION_EX)
+                            call_mode_r <= CALL_MODE_EX;
+                        else
+                            call_mode_r <= CALL_MODE_POS;
+                        call_n_pos_r        <= '0;
+                        call_n_kwargs_r     <= '0;
+                        call_args_is_list_r <= 1'b0;
                         container_dmem_pending_r <= 1'b0;
                         fetch_skip_r         <= 1'b1;
                         // state_next = S_CALL (from always_comb)
@@ -1809,7 +1961,8 @@ module pycore_core #(
 
                         4'd4: begin
                             if (!container_dmem_pending_r) begin
-                                if (container_rd_data_r[3:0] != PY_TAG_DICT) begin
+                                if (container_rd_data_r[3:0] !=
+                                        PY_TAG_MUT_COLLEC) begin
                                     container_mem_fault_r <= 1'b1;
                                 end else begin
                                     container_dmem_addr_r    <= PYCORE_BOOT_RECORD_ADDR + 32'd64;
@@ -1832,7 +1985,8 @@ module pycore_core #(
 
                         4'd6: begin
                             if (!container_dmem_pending_r) begin
-                                if (container_rd_data_r[3:0] != PY_TAG_DICT) begin
+                                if (container_rd_data_r[3:0] !=
+                                        PY_TAG_MUT_COLLEC) begin
                                     container_mem_fault_r <= 1'b1;
                                 end else begin
                                     container_dmem_addr_r    <= pycore_code_field_val_addr(

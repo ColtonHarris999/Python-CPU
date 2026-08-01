@@ -3,11 +3,7 @@
 module pycore_exec #(
     parameter int MUL_LATENCY = 0,
     parameter int DIV_LATENCY = 0,
-    parameter int FPU_LATENCY = 0,
-    parameter int STRING_MEM_BYTES = 65536,
-    parameter int STRING_MAX_LEN = 4096,
-    parameter longint unsigned STRING_RUNTIME_BASE = 64'd16384,
-    parameter string STRING_HEX = "pycore/programs/string_mem.hex"
+    parameter int FPU_LATENCY = 0
 ) (
     input  logic        clk_i,
     input  logic        rst_n_i,
@@ -15,6 +11,10 @@ module pycore_exec #(
     input  logic [4:0]  alu_op_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] rs1_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] rs2_i,
+    input  logic        string_path_valid_i,
+    input  logic [PYCORE_ENTRY_WIDTH-1:0] string_result_i,
+    input  logic        string_trap_i,
+    input  logic [4:0]  string_trap_code_i,
     output logic [PYCORE_ENTRY_WIDTH-1:0] result_o,
     output logic        stall_o,
     output logic        trap_o,
@@ -27,11 +27,11 @@ module pycore_exec #(
     logic [63:0] rs2_value;
     logic [PYCORE_VAL_WIDTH-1:0] rs1_value_wide;
     logic [PYCORE_VAL_WIDTH-1:0] rs2_value_wide;
-    logic [1:0] exec_unit_sel;
+    logic [2:0] exec_unit_sel;
     logic       promote_rs1;
     logic       promote_rs2;
-    logic [1:0] promote_rs1_mode;
-    logic [1:0] promote_rs2_mode;
+    logic [2:0] promote_rs1_mode;
+    logic [2:0] promote_rs2_mode;
     logic [3:0] result_tag;
     logic       tag_trap;
     logic [4:0] tag_trap_code;
@@ -40,10 +40,13 @@ module pycore_exec #(
     logic [63:0] promoted_rs2;
     logic [63:0] unit_a;
     logic [63:0] unit_b;
+    logic [127:0] complex_a;
+    logic [127:0] complex_b;
     logic [63:0] int_result;
     logic [63:0] mul_result;
     logic [63:0] div_result;
     logic [63:0] fpu_result;
+    logic [127:0] complex_result;
     logic        int_zero;
     logic        int_overflow;
     logic        mul_done;
@@ -54,27 +57,10 @@ module pycore_exec #(
     logic        fpu_done;
     logic        fpu_stall;
     logic        fpu_exception;
+    logic        complex_trap;
+    logic [4:0]  complex_trap_code;
     logic [63:0] pow_result;
     logic        pow_trap;
-    logic [7:0] string_mem [0:STRING_MEM_BYTES-1];
-    logic [63:0] string_heap_alloc_r;
-    logic [63:0] string_heap_alloc_d;
-    logic [PYCORE_ENTRY_WIDTH-1:0] string_result_entry;
-    logic string_path_valid;
-    logic string_path_trap;
-    logic [4:0] string_path_trap_code;
-    logic string_store_fire;
-    longint unsigned string_lhs_len;
-    longint unsigned string_rhs_len;
-    longint unsigned string_concat_len;
-    longint unsigned string_lhs_addr;
-    longint unsigned string_rhs_addr;
-    longint unsigned string_dst_addr;
-    logic [119:0] string_short_payload;
-    localparam logic [63:0] STRING_MEM_BYTES_U64 = STRING_MEM_BYTES;
-    localparam logic [63:0] STRING_MAX_LEN_U64 = STRING_MAX_LEN;
-    localparam logic [63:0] STRING_RUNTIME_BASE_U64 = STRING_RUNTIME_BASE[63:0];
-
     // 128-bit INT keeps a 64-bit signed fast path: the math leaves operate on
     // value[63:0] and the result_o is sign-/zero-extended back to 128 bits below.
     assign rs1_tag = pycore_get_tag(rs1_i);
@@ -83,30 +69,6 @@ module pycore_exec #(
     assign rs2_value = rs2_i[63:0];
     assign rs1_value_wide = pycore_get_val(rs1_i);
     assign rs2_value_wide = pycore_get_val(rs2_i);
-
-    initial begin
-        int i;
-        for (i = 0; i < STRING_MEM_BYTES; i++) begin
-            string_mem[i] = 8'h00;
-        end
-        $readmemh(STRING_HEX, string_mem);
-    end
-
-    function automatic logic [7:0] string_operand_byte(
-        input logic [3:0] tag,
-        input logic [PYCORE_VAL_WIDTH-1:0] value,
-        input longint unsigned idx
-    );
-        int unsigned mem_idx;
-        begin
-            if (tag == PY_TAG_SHORT_STR) begin
-                string_operand_byte = pycore_short_str_byte(value, idx[3:0]);
-            end else begin
-                mem_idx = int'(pycore_long_str_addr(value) + idx);
-                string_operand_byte = string_mem[mem_idx];
-            end
-        end
-    endfunction
 
     pycore_tag_decode tag_decode (
         .rs1_tag_i(rs1_tag),
@@ -136,6 +98,30 @@ module pycore_exec #(
         .value_out_o(promoted_rs2)
     );
 
+    function automatic [127:0] pycore_value_as_complex(
+        input logic [PYCORE_TAG_WIDTH-1:0] tag,
+        input logic [PYCORE_VAL_WIDTH-1:0] value
+    );
+        logic [63:0] real_bits;
+        begin
+            unique case (tag)
+                PY_TAG_COMPLEX: pycore_value_as_complex = value;
+                PY_TAG_FLOAT: begin
+                    pycore_value_as_complex = {64'd0, value[63:0]};
+                end
+                PY_TAG_BOOL: begin
+                    real_bits = value[0] ? 64'h3FF0000000000000 : 64'd0;
+                    pycore_value_as_complex = {64'd0, real_bits};
+                end
+                default: begin
+                    // INT (and any unexpected numeric promote path): cast i64→f64.
+                    real_bits = $realtobits($itor($signed(value[63:0])));
+                    pycore_value_as_complex = {64'd0, real_bits};
+                end
+            endcase
+        end
+    endfunction
+
     always_comb begin
         unit_a = promoted_rs1;
         unit_b = promoted_rs2;
@@ -143,6 +129,8 @@ module pycore_exec #(
             unit_a = {63'b0, rs1_value[0]};
             unit_b = {63'b0, rs2_value[0]};
         end
+        complex_a = pycore_value_as_complex(rs1_tag, rs1_value_wide);
+        complex_b = pycore_value_as_complex(rs2_tag, rs2_value_wide);
     end
 
     pycore_int_alu int_alu (
@@ -198,6 +186,15 @@ module pycore_exec #(
         .stall_o(fpu_stall)
     );
 
+    pycore_complex_alu complex_alu (
+        .op_a_i(complex_a),
+        .op_b_i(complex_b),
+        .op_i(alu_op_i),
+        .result_o(complex_result),
+        .trap_o(complex_trap),
+        .trap_code_o(complex_trap_code)
+    );
+
     always_comb begin
         logic signed [63:0] base;
         logic signed [63:0] exp;
@@ -230,152 +227,6 @@ module pycore_exec #(
     end
 
     always_comb begin
-        int i;
-        logic [7:0] byte_value;
-        logic [63:0] lhs_addr_plus_len;
-        logic [63:0] rhs_addr_plus_len;
-        logic [63:0] dst_addr_plus_len;
-        logic [63:0] concat_len_u64;
-        logic [63:0] lhs_len_u64;
-        logic [63:0] rhs_len_u64;
-
-        string_path_valid = valid_i && (alu_op_i == PY_ALU_ADD) &&
-                            pycore_is_string_tag(rs1_tag) &&
-                            pycore_is_string_tag(rs2_tag);
-        string_path_trap = 1'b0;
-        string_path_trap_code = PY_TRAP_NONE;
-        string_result_entry = pycore_make_entry(PY_TAG_OBJECT, '0);
-        string_store_fire = 1'b0;
-        string_heap_alloc_d = string_heap_alloc_r;
-        string_short_payload = '0;
-        string_lhs_len = 0;
-        string_rhs_len = 0;
-        string_concat_len = 0;
-        string_lhs_addr = 0;
-        string_rhs_addr = 0;
-        string_dst_addr = 0;
-        byte_value = 8'h00;
-        lhs_addr_plus_len = 64'b0;
-        rhs_addr_plus_len = 64'b0;
-        dst_addr_plus_len = 64'b0;
-        concat_len_u64 = 64'b0;
-        lhs_len_u64 = 64'b0;
-        rhs_len_u64 = 64'b0;
-
-        if (string_path_valid) begin
-            string_lhs_len = (rs1_tag == PY_TAG_SHORT_STR) ?
-                             pycore_short_str_size(rs1_value_wide) :
-                             pycore_long_str_size(rs1_value_wide);
-            string_rhs_len = (rs2_tag == PY_TAG_SHORT_STR) ?
-                             pycore_short_str_size(rs2_value_wide) :
-                             pycore_long_str_size(rs2_value_wide);
-            string_lhs_addr = (rs1_tag == PY_TAG_LONG_STR) ? pycore_long_str_addr(rs1_value_wide) : 0;
-            string_rhs_addr = (rs2_tag == PY_TAG_LONG_STR) ? pycore_long_str_addr(rs2_value_wide) : 0;
-
-            lhs_len_u64 = string_lhs_len[63:0];
-            rhs_len_u64 = string_rhs_len[63:0];
-            lhs_addr_plus_len = string_lhs_addr[63:0] + lhs_len_u64;
-            rhs_addr_plus_len = string_rhs_addr[63:0] + rhs_len_u64;
-
-            if ((rs1_tag == PY_TAG_SHORT_STR) && (string_lhs_len > PYCORE_SHORT_STR_MAX_BYTES)) begin
-                string_path_trap = 1'b1;
-                string_path_trap_code = PY_TRAP_TYPE;
-            end else if ((rs2_tag == PY_TAG_SHORT_STR) && (string_rhs_len > PYCORE_SHORT_STR_MAX_BYTES)) begin
-                string_path_trap = 1'b1;
-                string_path_trap_code = PY_TRAP_TYPE;
-            end else if ((rs1_tag == PY_TAG_LONG_STR) &&
-                         ((lhs_addr_plus_len < string_lhs_addr[63:0]) ||
-                          (lhs_addr_plus_len > STRING_MEM_BYTES_U64))) begin
-                string_path_trap = 1'b1;
-                string_path_trap_code = PY_TRAP_MEM_FAULT;
-            end else if ((rs2_tag == PY_TAG_LONG_STR) &&
-                         ((rhs_addr_plus_len < string_rhs_addr[63:0]) ||
-                          (rhs_addr_plus_len > STRING_MEM_BYTES_U64))) begin
-                string_path_trap = 1'b1;
-                string_path_trap_code = PY_TRAP_MEM_FAULT;
-            end else begin
-                string_concat_len = string_lhs_len + string_rhs_len;
-                concat_len_u64 = string_concat_len[63:0];
-                if ((concat_len_u64 < lhs_len_u64) || (concat_len_u64 > STRING_MAX_LEN_U64)) begin
-                    string_path_trap = 1'b1;
-                    string_path_trap_code = PY_TRAP_MEM_FAULT;
-                end else if (concat_len_u64 <= PYCORE_SHORT_STR_MAX_BYTES) begin
-                    for (i = 0; i < PYCORE_SHORT_STR_MAX_BYTES; i++) begin
-                        if (i < string_concat_len) begin
-                            if (i < string_lhs_len) begin
-                                byte_value = string_operand_byte(rs1_tag, rs1_value_wide, i);
-                            end else begin
-                                byte_value = string_operand_byte(
-                                    rs2_tag,
-                                    rs2_value_wide,
-                                    i - string_lhs_len
-                                );
-                            end
-                            string_short_payload[119-(i*8)-:8] = byte_value;
-                        end
-                    end
-                    string_result_entry = pycore_make_short_str_entry(
-                        string_concat_len[3:0],
-                        string_short_payload
-                    );
-                end else begin
-                    string_dst_addr = (string_heap_alloc_r < STRING_RUNTIME_BASE_U64) ?
-                                      STRING_RUNTIME_BASE_U64 : string_heap_alloc_r;
-                    dst_addr_plus_len = string_dst_addr[63:0] + concat_len_u64;
-                    if ((dst_addr_plus_len < string_dst_addr[63:0]) ||
-                        (dst_addr_plus_len > STRING_MEM_BYTES_U64)) begin
-                        string_path_trap = 1'b1;
-                        string_path_trap_code = PY_TRAP_MEM_FAULT;
-                    end else begin
-                        string_store_fire = 1'b1;
-                        string_heap_alloc_d = dst_addr_plus_len;
-                        string_result_entry = pycore_make_long_str_entry(
-                            concat_len_u64,
-                            string_dst_addr[63:0]
-                        );
-                    end
-                end
-            end
-        end
-    end
-
-    always_ff @(posedge clk_i or negedge rst_n_i) begin
-        if (!rst_n_i) begin
-            string_heap_alloc_r <= STRING_RUNTIME_BASE_U64;
-        end else if (valid_i && string_path_valid && !string_path_trap && string_store_fire) begin
-            int i;
-            logic [7:0] byte_value;
-            logic [63:0] rhs_idx;
-            int unsigned dst_idx;
-            int unsigned src_idx;
-
-            for (i = 0; i < STRING_MAX_LEN; i++) begin
-                if (i < string_concat_len) begin
-                    if (i < string_lhs_len) begin
-                        if (rs1_tag == PY_TAG_SHORT_STR) begin
-                            byte_value = pycore_short_str_byte(rs1_value_wide, i[3:0]);
-                        end else begin
-                            src_idx = int'(string_lhs_addr[63:0] + i[63:0]);
-                            byte_value = string_mem[src_idx];
-                        end
-                    end else begin
-                        rhs_idx = i[63:0] - string_lhs_len[63:0];
-                        if (rs2_tag == PY_TAG_SHORT_STR) begin
-                            byte_value = pycore_short_str_byte(rs2_value_wide, rhs_idx[3:0]);
-                        end else begin
-                            src_idx = int'(string_rhs_addr[63:0] + rhs_idx);
-                            byte_value = string_mem[src_idx];
-                        end
-                    end
-                    dst_idx = int'(string_dst_addr[63:0] + i[63:0]);
-                    string_mem[dst_idx] = byte_value;
-                end
-            end
-            string_heap_alloc_r <= string_heap_alloc_d;
-        end
-    end
-
-    always_comb begin
         logic [63:0] selected_value;
         logic [PYCORE_VAL_WIDTH-1:0] wide_value;
         logic        string_cmp_valid;
@@ -390,6 +241,7 @@ module pycore_exec #(
         string_cmp_eq = (rs1_value_wide == rs2_value_wide);
 
         selected_value = 64'b0;
+        wide_value = '0;
         stall_o = mul_stall || div_stall || fpu_stall;
         trap_o = valid_i && tag_trap;
         trap_code_o = tag_trap_code;
@@ -403,11 +255,11 @@ module pycore_exec #(
                 PY_TAG_BOOL,
                 {{(PYCORE_VAL_WIDTH-1){1'b0}},
                  (alu_op_i == PY_ALU_EQ) ? string_cmp_eq : !string_cmp_eq});
-        end else if (string_path_valid) begin
+        end else if (string_path_valid_i) begin
             stall_o = 1'b0;
-            trap_o = valid_i && string_path_trap;
-            trap_code_o = string_path_trap_code;
-            result_o = string_result_entry;
+            trap_o = valid_i && string_trap_i;
+            trap_code_o = string_trap_code_i;
+            result_o = string_result_i;
         end else if (!tag_trap) begin
             unique case (exec_unit_sel)
                 PY_EXEC_INT: begin
@@ -439,18 +291,29 @@ module pycore_exec #(
                         trap_code_o = PY_TRAP_FPU_EXCEPTION;
                     end
                 end
+                PY_EXEC_COMPLEX: begin
+                    selected_value = 64'b0;
+                    if (complex_trap) begin
+                        trap_o = valid_i;
+                        trap_code_o = complex_trap_code;
+                    end
+                end
                 default: begin
                     trap_o = valid_i;
                     trap_code_o = PY_TRAP_TYPE;
                 end
             endcase
 
-            if (result_tag == PY_TAG_INT) begin
-                wide_value = {{64{selected_value[63]}}, selected_value};
+            if (exec_unit_sel == PY_EXEC_COMPLEX && !trap_o) begin
+                result_o = pycore_make_entry(result_tag, complex_result);
             end else begin
-                wide_value = {64'b0, selected_value};
+                if (result_tag == PY_TAG_INT) begin
+                    wide_value = {{64{selected_value[63]}}, selected_value};
+                end else begin
+                    wide_value = {64'b0, selected_value};
+                end
+                result_o = pycore_make_entry(result_tag, wide_value);
             end
-            result_o = pycore_make_entry(result_tag, wide_value);
         end
     end
 

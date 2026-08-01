@@ -175,8 +175,10 @@ class ObjGroupTest(unittest.TestCase):
             union |= members
             self.assertIn(group["distance"], range(1, 6))
         self.assertEqual(union, all_object)
-        self.assertEqual(len(union), 88)
+        self.assertEqual(len(union), 86)
         self.assertNotIn("CALL", union)
+        self.assertNotIn("CALL_KW", union)
+        self.assertNotIn("CALL_FUNCTION_EX", union)
 
     def test_roadmap_orders_by_distance(self) -> None:
         # BUILD_LIST now executes; only BINARY_OP[NB_SUBSCR] remains on the

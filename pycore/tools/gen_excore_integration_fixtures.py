@@ -21,7 +21,13 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from encoding import TAG_INT, format_imem_slot, int_value  # noqa: E402
+from encoding import (  # noqa: E402
+    BOOT_RECORD_ADDR,
+    HEAP_BASE,
+    TAG_INT,
+    format_imem_slot,
+    int_value,
+)
 from heap_image import HeapImageBuilder, Tagged  # noqa: E402
 from image_from_source import write_program_hex, write_text  # noqa: E402
 
@@ -39,9 +45,6 @@ OP_CALL = 52
 NBARG_SUBSCR = 26
 NBARG_ADD = 0
 
-BOOT_RECORD_ADDR = 0x03E0
-BOOT_RECORD_BYTES = 96
-
 
 def _emit(slots: list[str], opcode: int, arg: int = 0) -> None:
     slots.append(format_imem_slot(opcode, arg))
@@ -56,10 +59,12 @@ def _write_image(
     stacksize: int = 8,
 ) -> None:
     co_names = heap.alloc_tuple([])
+    co_varnames = heap.alloc_tuple([])
     module_code = heap.add_code_object(
         entry_slot=entry_slot,
         co_consts=module_co_consts,
         co_names=co_names,
+        co_varnames=co_varnames,
         stacksize=stacksize,
         nlocals=0,
         argcount=0,
@@ -77,7 +82,7 @@ def _write_image(
 
 
 def _new_heap() -> HeapImageBuilder:
-    return HeapImageBuilder(base=max(0x0400, BOOT_RECORD_ADDR + BOOT_RECORD_BYTES))
+    return HeapImageBuilder(base=HEAP_BASE)
 
 
 def gen_grow_from_zero() -> None:
@@ -293,10 +298,12 @@ def gen_append_across_call() -> None:
     _emit(callee_slots, OP_RETURN_VALUE)
 
     callee_names = heap.alloc_tuple([])
+    callee_varnames = heap.alloc_tuple([])
     callee_code = heap.add_code_object(
         entry_slot=0,
         co_consts=callee_consts,
         co_names=callee_names,
+        co_varnames=callee_varnames,
         stacksize=4,
         nlocals=0,
         argcount=0,
@@ -564,10 +571,12 @@ def gen_extend_across_call() -> None:
     _emit(callee_slots, OP_RETURN_VALUE)
 
     callee_names = heap.alloc_tuple([])
+    callee_varnames = heap.alloc_tuple([])
     callee_code = heap.add_code_object(
         entry_slot=0,
         co_consts=callee_consts,
         co_names=callee_names,
+        co_varnames=callee_varnames,
         stacksize=4,
         nlocals=0,
         argcount=0,

@@ -131,12 +131,16 @@ module tb_excore #(
         if (sp_req && sp_we)  write_count <= write_count + 1;
     end
 
+    // Word index inside the single 128 KB block: addr[BLOCK_SHIFT-1:4]
+    // with BLOCK_SHIFT=17 and 16-byte (128-bit) slots → addr[16:4].
+    // (addr[12:4] was correct only for the old 8 KB tile and aliases high
+    // heap addresses used by the OOM scenarios.)
     task automatic poke_slot(input logic [31:0] addr, input logic [127:0] data);
-        mem_bank.gen_block[0].blk.mem[addr[12:4]] = data;
+        mem_bank.gen_block[0].blk.mem[addr[16:4]] = data;
     endtask
 
     function automatic logic [127:0] peek_slot(input logic [31:0] addr);
-        peek_slot = mem_bank.gen_block[0].blk.mem[addr[12:4]];
+        peek_slot = mem_bank.gen_block[0].blk.mem[addr[16:4]];
     endfunction
 
     task automatic check(input bit condition, input string message);
@@ -174,7 +178,7 @@ module tb_excore #(
         input int max_cycles
     );
         int i;
-        mb_entries[0]  = {PY_TAG_LIST, {96{1'b0}}, obj_addr};
+        mb_entries[0]  = pycore_make_mut(PY_MUT_LIST, {32'b0, obj_addr});
         mb_entries[1]  = element;
         mb_entry_count = 3'd2;
         mb_heap_ptr    = heap_ptr;
@@ -493,8 +497,8 @@ module tb_excore #(
         poke_slot(src_buf + 48, {124'b0, 4'd1});
 
         run_list_extend(
-            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
-            {PY_TAG_LIST, {96{1'b0}}, src_addr},
+            pycore_make_mut(PY_MUT_LIST, {32'b0, obj_addr}),
+            pycore_make_mut(PY_MUT_LIST, {32'b0, src_addr}),
             new_buf, 40000);
 
         check(res_code == RES_COMPLETED, "scenario6: expected RES_COMPLETED");
@@ -525,7 +529,7 @@ module tb_excore #(
         poke_slot(src_addr + 48, {124'b0, 4'd1});
 
         run_list_extend(
-            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            pycore_make_mut(PY_MUT_LIST, {32'b0, obj_addr}),
             {PY_TAG_TUPLE, 64'd2, {32'd0, src_addr}},
             new_buf, 40000);
 
@@ -553,8 +557,8 @@ module tb_excore #(
         poke_slot(old_buf + 48, {124'b0, 4'd1});
 
         run_list_extend(
-            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
-            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            pycore_make_mut(PY_MUT_LIST, {32'b0, obj_addr}),
+            pycore_make_mut(PY_MUT_LIST, {32'b0, obj_addr}),
             new_buf, 40000);
 
         check(res_code == RES_COMPLETED, "scenario8: expected RES_COMPLETED");
@@ -575,7 +579,7 @@ module tb_excore #(
         poke_slot(obj_addr + 16, 128'd0);
 
         run_list_extend(
-            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            pycore_make_mut(PY_MUT_LIST, {32'b0, obj_addr}),
             {4'd1, 128'd5}, // INT
             32'h0B40, 20000);
 
@@ -605,8 +609,8 @@ module tb_excore #(
         poke_slot(src_buf + 48, {124'b0, 4'd1});
 
         run_list_extend(
-            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
-            {PY_TAG_LIST, {96{1'b0}}, src_addr},
+            pycore_make_mut(PY_MUT_LIST, {32'b0, obj_addr}),
+            pycore_make_mut(PY_MUT_LIST, {32'b0, src_addr}),
             32'h0D00, 40000);
 
         check(res_code == RES_COMPLETED, "scenario9b: expected RES_COMPLETED");
@@ -639,7 +643,7 @@ module tb_excore #(
         poke_slot(old_buf + 112, {124'b0, 4'd1});
 
         run_list_delete(
-            {PY_TAG_LIST, {96{1'b0}}, obj_addr},
+            pycore_make_mut(PY_MUT_LIST, {32'b0, obj_addr}),
             {PY_TAG_INT, 128'd1},
             32'h0F00, 40000);
 
@@ -658,21 +662,29 @@ module tb_excore #(
         // ------------------------------------------------------------------
         do_reset();
         begin
-            logic [31:0] dobj, ntbl;
+            logic [31:0] dobj, nord, ntbl;
             dobj = 32'h0C00;
-            ntbl = 32'h0C20;
+            nord = 32'h0C40;
+            ntbl = 32'h0D40;
             poke_slot(dobj, {64'd0, 64'd0});       // slots=0, used=0
-            poke_slot(dobj + 16, 128'd0);          // table_ptr=0
+            poke_slot(dobj + 16, 128'd0);          // version=0, order_len=0
+            poke_slot(dobj + 32, 128'd0);          // order_ptr=0, table_ptr=0
             run_dict_grow(
-                {PY_TAG_DICT, {96{1'b0}}, dobj},
+                pycore_make_mut(PY_MUT_DICT, {32'b0, dobj}),
                 {PY_TAG_INT, 128'd1},
                 {PY_TAG_INT, 128'd99},
-                ntbl, 80000);
+                nord, 80000);
             check(res_code == RES_COMPLETED, "scenario10: DICT_GROW COMPLETED");
             check(res_pop_count == 3'd3, "scenario10: pop=3");
             check(res_push_count == 2'd0, "scenario10: push=0");
             check(peek_slot(dobj) == {64'd8, 64'd1}, "scenario10: header {8,1}");
-            check(peek_slot(dobj + 16) == {96'd0, ntbl}, "scenario10: table_ptr");
+            check(peek_slot(dobj + 16) == {64'd1, 64'd1},
+                  "scenario10: metadata {version=1, order_len=1}");
+            check(peek_slot(dobj + 32) == {32'd0, nord, 32'd0, ntbl},
+                  "scenario10: order/table pointers");
+            check(peek_slot(nord) == 128'd1, "scenario10: order key");
+            check(peek_slot(nord + 16) == {124'b0, PY_TAG_INT},
+                  "scenario10: order tag");
             // key 1 hashes to slot 1
             check(peek_slot(ntbl + 64) == 128'd1, "scenario10: kval");
             check(peek_slot(ntbl + 80) == {124'b0, PY_TAG_INT}, "scenario10: ktag");
@@ -692,7 +704,7 @@ module tb_excore #(
             poke_slot(sobj, {64'd0, 64'd0});
             poke_slot(sobj + 16, 128'd0);
             run_set_grow(
-                {4'd11, {96{1'b0}}, sobj},  // PY_TAG_SET
+                pycore_make_mut(PY_MUT_SET, {32'b0, sobj}),
                 {PY_TAG_INT, 128'd7},
                 32'h0D40, 80000);
             check(res_code == RES_COMPLETED, "scenario11: SET_GROW COMPLETED");

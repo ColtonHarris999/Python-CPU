@@ -17,20 +17,55 @@ module tb_string_exec;
     logic stall;
     logic trap;
     logic [4:0] trap_code;
+    logic string_path_valid;
+    logic [PYCORE_ENTRY_WIDTH-1:0] string_result;
+    logic string_trap;
+    logic [4:0] string_trap_code;
+    logic snapshot_valid;
+    logic [3:0] snapshot_size;
+    logic [119:0] snapshot_payload;
+    logic snapshot_ok;
+    logic [31:0] snapshot_addr;
+    logic [31:0] string_read_addr;
+    logic [31:0] string_read_data;
     int tests_run;
     longint unsigned last_long_addr;
 
-    pycore_exec #(
+    pycore_string_mem #(
         .STRING_MEM_BYTES(STRING_MEM_BYTES),
         .STRING_MAX_LEN(STRING_MAX_LEN),
         .STRING_RUNTIME_BASE(STRING_RUNTIME_BASE)
-    ) dut (
+    ) string_store (
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .exec_valid_i(valid),
+        .exec_alu_op_i(alu_op),
+        .exec_rs1_i(rs1),
+        .exec_rs2_i(rs2),
+        .exec_path_valid_o(string_path_valid),
+        .exec_result_o(string_result),
+        .exec_trap_o(string_trap),
+        .exec_trap_code_o(string_trap_code),
+        .snapshot_valid_i(snapshot_valid),
+        .snapshot_size_i(snapshot_size),
+        .snapshot_payload_i(snapshot_payload),
+        .snapshot_ok_o(snapshot_ok),
+        .snapshot_addr_o(snapshot_addr),
+        .read_addr_i(string_read_addr),
+        .read_data_o(string_read_data)
+    );
+
+    pycore_exec dut (
         .clk_i(clk),
         .rst_n_i(rst_n),
         .valid_i(valid),
         .alu_op_i(alu_op),
         .rs1_i(rs1),
         .rs2_i(rs2),
+        .string_path_valid_i(string_path_valid),
+        .string_result_i(string_result),
+        .string_trap_i(string_trap),
+        .string_trap_code_i(string_trap_code),
         .result_o(result),
         .stall_o(stall),
         .trap_o(trap),
@@ -89,7 +124,7 @@ module tb_string_exec;
         begin
             for (i = 0; i < value.len(); i++) begin
                 idx = int'(addr + i);
-                dut.string_mem[idx] = value[i];
+                string_store.string_mem[idx] = value[i];
             end
         end
     endtask
@@ -143,7 +178,8 @@ module tb_string_exec;
                     #1;
                     for (i = 0; i < expected_value.len(); i++) begin
                         mem_idx = int'(out_addr + i);
-                        check(dut.string_mem[mem_idx] == expected_value[i], "long concat byte mismatch");
+                        check(string_store.string_mem[mem_idx] == expected_value[i],
+                              "long concat byte mismatch");
                     end
                     last_long_addr = out_addr + out_len;
                 end
@@ -169,6 +205,10 @@ module tb_string_exec;
         alu_op = PY_ALU_ADD;
         rs1 = '0;
         rs2 = '0;
+        snapshot_valid = 1'b0;
+        snapshot_size = 4'b0;
+        snapshot_payload = 120'b0;
+        string_read_addr = 32'b0;
         tests_run = 0;
         last_long_addr = STRING_RUNTIME_BASE;
         #20;
@@ -184,6 +224,21 @@ module tb_string_exec;
         preload_string(64, long_b);
         preload_string(128, long_c);
         preload_string(256, long_d);
+
+        snapshot_payload[119:96] = 24'h61_62_63;
+        snapshot_size = 4'd3;
+        snapshot_valid = 1'b1;
+        #1;
+        check(snapshot_ok, "short snapshot allocation should succeed");
+        check(snapshot_addr == STRING_RUNTIME_BASE,
+              "short snapshot should start at runtime base");
+        @(posedge clk);
+        #1;
+        snapshot_valid = 1'b0;
+        string_read_addr = STRING_RUNTIME_BASE;
+        #1;
+        check(string_read_data[23:0] == 24'h63_62_61,
+              "short snapshot bytes should be readable in order");
 
         // Short-string matrix across all legal sizes.
         for (len_a = 0; len_a <= PYCORE_SHORT_STR_MAX_BYTES; len_a++) begin

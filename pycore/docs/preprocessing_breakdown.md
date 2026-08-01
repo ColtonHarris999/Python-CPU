@@ -40,8 +40,8 @@ Steps:
 5. **Serialize object graph**: lowers `co_consts`, `co_names`, nested code
    objects, scalar constants, tuple constants, the module globals dict, and
    interned long strings into tagged slots.
-6. **Write boot record**: stores the module `CODE_OBJECT` handle and globals
-   `DICT` handle at `0x3e0`.
+6. **Write boot record**: stores the module `CODE_OBJECT` handle, globals
+   dict handle, and builtins dict handle at `0x3e0` (96 bytes total).
 7. **Export metadata**: reports `HEAP_INIT_PTR` so runtime heap allocation starts
    above the static image.
 
