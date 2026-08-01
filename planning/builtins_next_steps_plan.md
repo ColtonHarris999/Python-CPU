@@ -59,7 +59,7 @@ Track these; do not invent custom opcodes:
 
 | Need | Why |
 | --- | --- |
-| `CALL_KW` + `CALL_FUNCTION_EX` | Unfreeze `print`/`max`/`sorted`/`open` kwargs and varargs |
+| `CALL_KW` + `CALL_FUNCTION_EX` | Unfreeze `print`/`max`/`sorted`/`open` kwargs and varargs — see `planning/call_kw_support_plan.md` (doable; was scope-cut, not blocked) |
 | Full exception tables / `RERAISE` | Real `TypeError`/`StopIteration`; comprehension option A/B |
 | `BI_LEN` tuple-mode RANGE + OBJECT `__bool__` | Complete truthiness / len protocol |
 | `GET_ITER`/`FOR_ITER` on OBJECT (`__iter__`/`__next__`) | Iterator protocol for user types |
