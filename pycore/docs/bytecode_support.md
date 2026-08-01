@@ -24,8 +24,8 @@ fully unsupported for the current PyCore implementation.
 | `LOAD_FAST_CHECK`                       | Push local `oparg`; trap if unbound.                                                        | Same datapath as `LOAD_FAST`; `UNINIT` → `PY_TRAP_MEM_FAULT` (7). Layer D: `img_load_fast_check`, `img_load_fast_check_unbound`.                                                                                                                                                                                                                                                                                                           |
 | `LOAD_SMALL_INT`                        | Pushes a small immediate integer encoded in `oparg`.                                        | Fully supported fast-path immediate load.                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `LOAD_CONST`                            | Pushes `co_consts[oparg]` onto the value stack.                                             | One CPython code unit; hardware reads value+tag from the serialized `co_consts` tuple in dmem.                                                                                                                                                                                                                                                                                                                                             |
-| `LOAD_GLOBAL`                           | Loads a global by name.                                                                     | Reads `co_names[namei]`, probes module globals, and optionally pushes `NULL` when `oparg & 1`. No builtins fallback.                                                                                                                                                                                                                                                                                                                       |
-| `LOAD_NAME`                             | Loads a name by index.                                                                      | Same globals lookup path as `LOAD_GLOBAL` at module scope; no locals/builtins chain.                                                                                                                                                                                                                                                                                                                                                       |
+| `LOAD_GLOBAL`                           | Loads a global by name.                                                                     | Reads `co_names[namei]` (`namei = oparg >> 1`), probes module **globals**, then on miss probes the boot-record **builtins** dict once (`builtins_base_r`). Optionally pushes `NULL` when `oparg & 1`. Missing in both → `PY_TRAP_MEM_FAULT`.                                                                                                                                                                                                                                                              |
+| `LOAD_NAME`                             | Loads a name by index.                                                                      | Same globals-then-builtins probe as `LOAD_GLOBAL` at module scope (no NULL push; `namei = oparg`). Full LEGB locals→globals→builtins for function/`exec` scopes is not implemented yet.                                                                                                                                                                                                                                                                                                              |
 | `STORE_NAME`                            | Stores TOS into a module/global name.                                                       | Updates the serialized globals dict, popping one value.                                                                                                                                                                                                                                                                                                                                                                                    |
 | `STORE_GLOBAL`                          | Stores TOS into a global name.                                                              | Same hardware path as `STORE_NAME`.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `PUSH_NULL`                             | Pushes CPython's non-method call sentinel.                                                  | Writes CONTROL+NULL (`PY_CTL_NULL`) to TOS.                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -112,14 +112,21 @@ this milestone:
   a new-key insert raises `DICT_GROW` (11). With `EXCORE_EN=1` excore
    reallocates the table, rehashes, and completes the STORE; without excore
    the trap is fatal. See `pycore/docs/dict_excore.md`.
-6. **No builtins fallback for names.** `LOAD_GLOBAL` / `LOAD_NAME` probe only
-  the serialized module globals dict; missing names trap `PY_TRAP_MEM_FAULT`.
+6. **Globals then builtins (not full LEGB).** `LOAD_GLOBAL` / `LOAD_NAME`
+   probe the module globals dict, then the boot-record builtins dict
+   (`CONT_LOAD_GLOBAL` + `builtins_base_r`). There is still no locals-mapping
+   step for `LOAD_NAME` inside functions / `exec` / class bodies. Missing in
+   both dicts traps `PY_TRAP_MEM_FAULT`. See
+   `planning/builtins_bytecode_support_plan.md`.
 7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
-  the stack and `CALL` treats that handle as the function. Defaults,
-   annotations, closures, bound methods, and callable objects are out of scope.
-8. `LOAD_NAME` **module-scope behavior.** The current hardware treats
-  `LOAD_NAME` as a globals lookup, matching the image-boot module programs but
-   not CPython's full locals/globals/builtins search chain.
+  the stack and `CALL` treats that handle as the function. Defaults are folded
+  at image-build time; annotations, closures, and generic `__call__` objects
+  remain out of scope. `OBK_BUILTIN` / `BI_*` ids use the CALL FSM fast path
+  (e.g. `BI_LEN` header reads) instead of a Python frame.
+8. `LOAD_NAME` **module-scope behavior.** Hardware uses the same
+  globals-then-builtins path as `LOAD_GLOBAL` (without the NULL push). That
+  matches image-boot module programs and builtin resolution, but not
+  CPython's full locals→globals→builtins chain.
 9. **Image fidelity scope.** Images preserve the `compile()` object graph and
   bytecode-unit order, including `CACHE` and `EXTENDED_ARG`, but use PyCore's
    tagged 128-bit-slot layout rather than CPython C structs.
