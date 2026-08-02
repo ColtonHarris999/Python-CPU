@@ -243,6 +243,7 @@ localparam logic [7:0] PY_OP_BUILD_MAP        = 8'd47;
 localparam logic [7:0] PY_OP_BUILD_SET        = 8'd48;
 localparam logic [7:0] PY_OP_BUILD_TUPLE      = 8'd51;
 localparam logic [7:0] PY_OP_CALL             = 8'd52;
+localparam logic [7:0] PY_OP_CALL_INTRINSIC_1 = 8'd53;
 localparam logic [7:0] PY_OP_COMPARE_OP       = 8'd56;
 localparam logic [7:0] PY_OP_COPY             = 8'd59;
 localparam logic [7:0] PY_OP_DELETE_FAST      = 8'd63;
@@ -265,6 +266,10 @@ localparam logic [7:0] PY_OP_POP_JUMP_IF_FALSE    = 8'd100;
 localparam logic [7:0] PY_OP_POP_JUMP_IF_NONE     = 8'd101;
 localparam logic [7:0] PY_OP_POP_JUMP_IF_NOT_NONE = 8'd102;
 localparam logic [7:0] PY_OP_POP_JUMP_IF_TRUE     = 8'd103;
+// RAISE_VARARGS — resolved from CPython 3.14.6 opmap:
+//   python3.14 -c "import opcode; print(opcode.opmap['RAISE_VARARGS'])"
+//   -> 104
+localparam logic [7:0] PY_OP_RAISE_VARARGS   = 8'd104;
 localparam logic [7:0] PY_OP_SET_ADD          = 8'd107;
 localparam logic [7:0] PY_OP_SET_UPDATE       = 8'd109;
 localparam logic [7:0] PY_OP_STORE_FAST       = 8'd112;
@@ -273,6 +278,7 @@ localparam logic [7:0] PY_OP_STORE_FAST_STORE_FAST = 8'd114;
 localparam logic [7:0] PY_OP_STORE_GLOBAL     = 8'd115;
 localparam logic [7:0] PY_OP_STORE_NAME       = 8'd116;
 localparam logic [7:0] PY_OP_SWAP             = 8'd117;
+localparam logic [7:0] PY_OP_UNPACK_EX        = 8'd118;
 // UNPACK_SEQUENCE — resolved from CPython 3.14.6 opmap:
 //   python3.14 -c "import opcode; print(opcode.opmap['UNPACK_SEQUENCE'])"
 //   -> 119
@@ -643,6 +649,43 @@ function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_range_tuple_value(
 );
     begin
         pycore_range_tuple_value = {1'b1, 63'b0, tuple_addr};
+    end
+endfunction
+
+function automatic logic [63:0] pycore_range_inline_len(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    logic signed [63:0] start_s;
+    logic signed [63:0] stop_s;
+    logic signed [63:0] step_s;
+    logic [63:0] span;
+    logic [63:0] step_abs;
+    begin
+        start_s = {{32{value[95]}}, value[95:64]};
+        stop_s  = {{32{value[63]}}, value[63:32]};
+        step_s  = {{32{value[31]}}, value[31:0]};
+        span     = 64'd0;
+        step_abs = 64'd0;
+
+        if (step_s == 64'sd0) begin
+            pycore_range_inline_len = 64'd0;
+        end else if (step_s > 64'sd0) begin
+            if (start_s >= stop_s) begin
+                pycore_range_inline_len = 64'd0;
+            end else begin
+                span = $unsigned(stop_s - start_s - 64'sd1);
+                step_abs = $unsigned(step_s);
+                pycore_range_inline_len = (span / step_abs) + 64'd1;
+            end
+        end else begin
+            if (start_s <= stop_s) begin
+                pycore_range_inline_len = 64'd0;
+            end else begin
+                span = $unsigned(start_s - stop_s - 64'sd1);
+                step_abs = $unsigned(-step_s);
+                pycore_range_inline_len = (span / step_abs) + 64'd1;
+            end
+        end
     end
 endfunction
 

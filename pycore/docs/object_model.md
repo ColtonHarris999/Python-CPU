@@ -53,7 +53,7 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | 4 | `MAX` | Two-arg INT/BOOL fast path in CALL FSM |
 | 5 | `LIST_APPEND` | |
 | 6 | `PRINT` | CALL → `PY_TRAP_BUILTIN_CALL` (excore) |
-| 7 | `LEN` | Tag fast paths in CALL FSM; object/`__len__` is the miss path |
+| 7 | `LEN` | Tag fast paths (LIST/TUPLE/DICT/SET/STR/inline RANGE); INSTANCE `__len__` via own `tp_dict` |
 | 8 | `RANGE` | Emits `PY_TAG_RANGE` |
 | 9 | `SET` | Native empty / from-list-or-tuple constructor |
 
@@ -66,10 +66,11 @@ handles and `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
 **Resolution:** `LOAD_GLOBAL` / `LOAD_NAME` probe globals, then this
 builtins dict (LEGB **B**). **CALL** on an `OBK_BUILTIN` handle dispatches
 by `builtin_id` in the CALL FSM — hardware accelerates known tags (e.g.
-`BI_LEN` reads list/tuple/dict/set/str headers). Pure-Python bodies under
-`pycore_firmware/builtins/` are for miss / protocol cases (e.g.
-`obj.__len__()`), not for re-deriving header lengths in a loop. See
-`planning/builtins_bytecode_support_plan.md`.
+`BI_LEN` reads list/tuple/dict/set/str/inline-range headers and calls
+instance `__len__` when present). Pure-Python bodies under
+`pycore_firmware/builtins/` are for miss / protocol cases, not for
+re-deriving header lengths in a loop. Follow-up:
+`planning/builtins_next_steps_plan.md`.
 
 ## D3 — `__dict__` is a real dict
 

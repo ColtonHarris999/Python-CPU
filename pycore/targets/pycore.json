@@ -455,6 +455,12 @@
       "hw_class": "BRANCH",
       "fold": "BAR"
     },
+    "RAISE_VARARGS": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "minimal oparg=1 support: accepts TOS and raises fatal PY_TRAP_RAISE"
+    },
     "RESUME": {
       "support": "strip",
       "hw_class": "BRANCH",
@@ -575,6 +581,18 @@
       "hw_class": "OBJECT",
       "fold": "BAR",
       "note": "LIST/TUPLE only; length mismatch → TYPE; 1 CACHE unit"
+    },
+    "UNPACK_EX": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "LIST/TUPLE only; middle rest allocated as LIST; wrong length → TYPE"
+    },
+    "CALL_INTRINSIC_1": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "INTRINSIC_LIST_TO_TUPLE (arg 6) only; other intrinsic ids rejected by image tooling"
     },
     "BUILD_MAP": {
       "support": "execute",

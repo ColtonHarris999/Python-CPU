@@ -1,13 +1,15 @@
 """Create a tuple.
 
-``tuple()`` → empty tuple. Non-empty ``tuple(iterable)`` cannot emit a
-dynamic BUILD_TUPLE without UNPACK_EX (``(*lst,)``) — traps via ``% 0``.
+``tuple()`` → empty tuple. Non-empty ``tuple(iterable)`` materializes a
+list then uses CPython 3.14 ``(*lst,)`` → ``CALL_INTRINSIC_1`` /
+``INTRINSIC_LIST_TO_TUPLE``.
 """
 
 
 def tuple(iterable=None):
     if iterable is None:
         return ()
-    for _ in iterable:
-        return 1 % 0
-    return ()
+    out = []
+    for x in iterable:
+        out += [x]
+    return (*out,)
