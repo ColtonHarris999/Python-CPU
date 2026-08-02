@@ -298,6 +298,23 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
+            // DICT_UPDATE: A.update(B). dest A at TOS-1-oparg, source B at TOS;
+            // pop source. Same stack wiring as DICT_MERGE.
+            PY_OP_DICT_UPDATE: begin
+                rs1_sel_o      = tos_index_i - 8'd1 - arg_i[7:0]; // dest dict A
+                rs2_sel_o      = tos_index_i - 8'd1;              // source dict B
+                is_container_o = 1'b1;
+            end
+
+            // MAP_ADD: dict[key]=value. value at TOS, key at TOS-1, dict at
+            // TOS-1-oparg; pop key+value (pop 2), leave dict. rs1 = dict,
+            // rs2 = key; value read from the container RF port at TOS.
+            PY_OP_MAP_ADD: begin
+                rs1_sel_o      = tos_index_i - 8'd2 - arg_i[7:0]; // dict
+                rs2_sel_o      = tos_index_i - 8'd2;              // key
+                is_container_o = 1'b1;
+            end
+
             // LOAD_GLOBAL / LOAD_NAME / STORE_*: multi-cycle name dict ops.
             PY_OP_LOAD_GLOBAL, PY_OP_LOAD_NAME: begin
                 is_container_o = 1'b1;

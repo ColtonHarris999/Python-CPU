@@ -15,7 +15,7 @@ the value field for `CONTROL` and `MUT_COLLEC`.
 | `0110` | TUPLE | `{ size[63:0], addr[63:0] }` |
 | `0111` | SHORT_STR | inline ≤15 UTF-8 bytes |
 | `1000` | LONG_STR | `{ len[127:64], addr[63:0] }` |
-| `1001` | MUT_COLLEC | kind `[127:124]`: LIST=1, DICT=2, SET=3, BYTEARRAY=4; addr `[63:0]` |
+| `1001` | MUT_COLLEC | kind `[127:124]`: LIST=1, DICT=2, SET=3, BYTEARRAY=4; addr `[63:0]`; contamination bit `[123]` (see below) |
 | `1010` | OBJECT | general heap object (`ob_head` kinds) |
 | `1011` | RANGE | mode bit `value[127]`: 0 = inline i32 start/stop/step in `[95:0]`; 1 = pointer to a 3-tuple at `[63:0]` |
 | `1100` | BYTES | reserved / partial |
@@ -25,6 +25,25 @@ the value field for `CONTROL` and `MUT_COLLEC`.
 
 Compatibility aliases in RTL/tools: `PY_TAG_UNINIT` / `TAG_UNINIT` → CONTROL+CTL_UNINIT;
 `PY_TAG_PTR` / `TAG_PTR` → ITER.
+
+## MUT_COLLEC contamination bit (`value[123]`)
+
+`PYCORE_MUT_CONTAM_BIT = 123` is a sticky flag on a `MUT_COLLEC` handle that
+records whether a `PY_TAG_OBJECT` has ever been inserted into the collection
+(for dicts, an OBJECT *key* only; values never contaminate). It is set at insert
+time (`BUILD_MAP`/`BUILD_SET`/`SET_ADD`/`STORE_DICT`/`MAP_ADD`/`LIST_APPEND`) and
+folded into the handle written back to the element's RF slot via
+`pycore_mut_set_contaminated` / `pycore_make_mut(kind, addr, contaminated)`.
+
+The bit routes bulk operations (`DICT_UPDATE`, `DICT_MERGE`, `SET_UPDATE`): when
+both operands are uncontaminated the whole op is handed to the excore in one
+recoverable trap (which hashes plain-value keys directly); if either side is
+contaminated the excore's value-hash cannot be used, so the op must run entirely
+in pycore (OBJECT keys hash by identity). It is metadata only — it never changes
+the object's heap layout or `addr`, and helpers that just need the address
+(`pycore_mut_addr`) ignore it. Tooling mirrors this with
+`encoding.make_mut(..., contaminated=...)`, `mut_contaminated`, and
+`mut_with_contam`.
 
 ## COMPLEX ALU
 

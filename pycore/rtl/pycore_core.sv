@@ -355,6 +355,33 @@ module pycore_core #(
     // probe (insert target when the key/element is absent).
     logic                          container_tomb_valid_r;
     logic [31:0]                   container_tomb_idx_r;
+    // Contamination tracking: set while building/bulk-inserting when an
+    // OBJECT key/element is committed; folded into the final MUT_COLLEC handle
+    // (value[123]) and written back to the container's RF slot.
+    logic                          container_contam_r;
+    // Bulk DICT_UPDATE / SET_UPDATE (contaminated pycore path): source table
+    // base, source slot count and current walk index, plus the destination
+    // handle RF slot to rewrite when the op finishes.
+    logic [31:0]                   container_src_base_r;
+    logic [31:0]                   container_src_slots_r;
+    logic [31:0]                   container_src_idx_r;
+    logic [8:0]                    container_dst_rf_addr_r;
+    // Bulk pycore rehash bookkeeping (SET_UPDATE / DICT_UPDATE / DICT_MERGE):
+    //   old_table/old_slots : the destination's PRE-resize hash table, walked
+    //     during rehash while container_buf_r/container_slot_count_r name the
+    //     freshly allocated target table.
+    //   bulk_mode           : REHASH (relocating the destination) vs INSERT
+    //     (folding source elements in) — selects the post-insert continuation.
+    //   src_kind            : which source collection layout to walk.
+    //   bulk_size           : source element count (used for the resize check).
+    //   old_order           : DICT rehash carries the source order buffer base
+    //     across the order-copy + table-rehash passes.
+    logic [31:0]                   container_old_table_r;
+    logic [31:0]                   container_old_slots_r;
+    logic [1:0]                    container_bulk_mode_r;
+    logic [2:0]                    container_src_kind_r;
+    logic [63:0]                   container_bulk_size_r;
+    logic [31:0]                   container_old_order_r;
 
     // -----------------------------------------------------------------------
     // S_TRAP_MARSHAL / S_TRAP_WAIT (Phase C) registers.
@@ -1160,6 +1187,8 @@ module pycore_core #(
     logic [3:0]   cont_rs2_tag;   // tag of rs2_r
     logic [127:0] cont_rf_rs1_val; // value field of rf_rs1 (container RF read)
     logic [3:0]   cont_rf_rs1_tag; // tag of rf_rs1
+    logic         cont_rs1_contam; // contamination bit of rs1 handle
+    logic         cont_rs2_contam; // contamination bit of rs2 handle
     logic         cont_iter_valid;
     logic [3:0]   cont_iter_kind;
     logic [31:0]  cont_iter_index;
@@ -1197,6 +1226,13 @@ module pycore_core #(
     assign cont_rs2_tag   = pycore_get_tag(rs2_r);
     assign cont_rf_rs1_val = pycore_get_val(rf_rs1);
     assign cont_rf_rs1_tag = pycore_get_tag(rf_rs1);
+    // Contamination bits on the MUT_COLLEC handle operands (value[123]).
+    // Contamination bit is only meaningful on MUT_COLLEC (and reserved
+    // FROZENSET) handles. Reading value[123] on a TUPLE would alias size bits.
+    assign cont_rs1_contam = (cont_rs1_tag == PY_TAG_MUT_COLLEC) &&
+                             pycore_mut_contaminated(cont_rs1_val);
+    assign cont_rs2_contam = (cont_rs2_tag == PY_TAG_MUT_COLLEC) &&
+                             pycore_mut_contaminated(cont_rs2_val);
     assign cont_iter_valid    = pycore_iter_valid(cont_rs1_val);
     assign cont_iter_kind     = pycore_iter_kind(cont_rs1_val);
     assign cont_iter_index    = pycore_iter_index(cont_rs1_val);
@@ -1534,6 +1570,17 @@ module pycore_core #(
             container_probe_tag_r           <= '0;
             container_tomb_valid_r          <= 1'b0;
             container_tomb_idx_r            <= '0;
+            container_contam_r              <= 1'b0;
+            container_src_base_r            <= '0;
+            container_src_slots_r           <= '0;
+            container_src_idx_r             <= '0;
+            container_dst_rf_addr_r         <= '0;
+            container_old_table_r           <= '0;
+            container_old_slots_r           <= '0;
+            container_bulk_mode_r           <= '0;
+            container_src_kind_r            <= '0;
+            container_bulk_size_r           <= '0;
+            container_old_order_r           <= '0;
             trap_marshal_pending_r     <= 1'b0;
             trap_marshal_code_r        <= '0;
             trap_marshal_entry_count_r <= '0;
@@ -1619,6 +1666,7 @@ module pycore_core #(
                             container_mem_fault_r    <= 1'b0;
                             container_attr_error_r   <= 1'b0;
                             container_wb_we_r        <= 1'b0;
+                            container_contam_r       <= 1'b0;
                             trap_marshal_pending_r   <= 1'b0;
 
                             if (cur_opcode_r == PY_OP_BUILD_LIST) begin
@@ -1689,6 +1737,10 @@ module pycore_core #(
                                 container_op_r <= CONT_SET_UPDATE;
                             end else if (cur_opcode_r == PY_OP_DICT_MERGE) begin
                                 container_op_r <= CONT_DICT_MERGE;
+                            end else if (cur_opcode_r == PY_OP_DICT_UPDATE) begin
+                                container_op_r <= CONT_DICT_UPDATE;
+                            end else if (cur_opcode_r == PY_OP_MAP_ADD) begin
+                                container_op_r <= CONT_MAP_ADD;
                             end else if (cur_opcode_r ==
                                          PY_OP_STORE_FAST_LOAD_FAST) begin
                                 container_op_r     <= CONT_SFLF;
@@ -1877,6 +1929,10 @@ module pycore_core #(
 
                         // DICT / SET ops
                         `include "pycore_cont_dict.svh"
+
+                        // Bulk DICT_UPDATE / DICT_MERGE / SET_UPDATE — excore
+                        // fast paths + contaminated/TUPLE pycore rehash loops.
+                        `include "pycore_cont_bulk.svh"
 
                         // Name/global/RF helpers (+ future object attrs)
                         `include "pycore_cont_object.svh"

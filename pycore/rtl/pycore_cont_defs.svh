@@ -38,6 +38,8 @@
     localparam logic [5:0] CONT_LIST_TO_TUPLE = 6'd34;// CALL_INTRINSIC_1 list->tuple
     localparam logic [5:0] CONT_UNPACK_EX = 6'd35;// UNPACK_EX LIST/TUPLE
     localparam logic [5:0] CONT_DICT_MERGE = 6'd36;// DICT_MERGE (empty-dest fast path)
+    localparam logic [5:0] CONT_DICT_UPDATE = 6'd37;// DICT_UPDATE (A.update(B))
+    localparam logic [5:0] CONT_MAP_ADD = 6'd38;// MAP_ADD (dict[key]=value, pop 2)
 
     // Container phases (stored in container_phase_r, 6-bit).
     //
@@ -150,4 +152,24 @@
     // Generic copy writeback phases used by list/tuple conversion paths.
     localparam logic [5:0] CP_COPY_VAL_WB = 6'd58;
     localparam logic [5:0] CP_COPY_TAG_WB = 6'd59;
+    // Bulk DICT_UPDATE / SET_UPDATE pycore (contaminated) phases. These walk a
+    // source collection's table slots and single-insert each element into the
+    // destination. Each container op owns its own case table, so these codes
+    // are only meaningful inside CONT_DICT_UPDATE / CONT_SET_UPDATE arms.
+    localparam logic [5:0] CP_BULK_SRC_HDR  = 6'd40;
+    localparam logic [5:0] CP_BULK_SCAN     = 6'd60;
+    localparam logic [5:0] CP_BULK_RD_KEY   = 6'd61;
+    localparam logic [5:0] CP_BULK_RD_VAL   = 6'd62;
+    localparam logic [5:0] CP_BULK_INS      = 6'd63;
+
+    // Bulk source-collection layout selector (container_src_kind_r).
+    localparam logic [2:0] BULK_SRC_LIST  = 3'd0;
+    localparam logic [2:0] BULK_SRC_TUPLE = 3'd1;
+    localparam logic [2:0] BULK_SRC_SET   = 3'd2;
+    localparam logic [2:0] BULK_SRC_DICT  = 3'd3;
+    // Bulk insert continuation selector (container_bulk_mode_r): the shared
+    // probe/insert sub-FSM either relocates the destination (REHASH) or folds
+    // in a source element (INSERT).
+    localparam logic [1:0] BULK_MODE_REHASH = 2'd0;
+    localparam logic [1:0] BULK_MODE_INSERT = 2'd1;
 

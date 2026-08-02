@@ -127,6 +127,8 @@ SUPPORTED_OPS = {
     "CALL_KW",
     "CALL_FUNCTION_EX",
     "DICT_MERGE",
+    "DICT_UPDATE",
+    "MAP_ADD",
     # CPython 3.14 emits LOAD_CONST + RETURN_VALUE; RETURN_CONST is absent.
     "RETURN_VALUE",
     "RAISE_VARARGS",
@@ -155,8 +157,6 @@ SUPPORTED_OPS = {
 }
 
 DEFERRED_OPS: dict[str, str] = {
-    "MAP_ADD": "dict-comprehension MAP_ADD lowering is deferred",
-    "DICT_UPDATE": "dict update/unpack lowering is deferred",
     "BINARY_SLICE": "slice notation support is deferred",
     "STORE_SLICE": "slice assignment support is deferred",
     # Classes are emitted at image-build time (M4 ClassImageBuilder); hardware
@@ -1244,6 +1244,106 @@ def apply_set_add_seq_injects(
     return result
 
 
+# Hand-assemble MAP_ADD sequences (compile() only emits MAP_ADD in dict
+# comprehensions, which also emit RERAISE cleanup that hardware defers). Pragma:
+#   # pycore-inject: MAP_ADD_SEQ <func> <k0> <v0> <k1> <v1> ...
+# Builds BUILD_MAP 0 + (LOAD_FAST d; key; value; MAP_ADD 1; POP_TOP)* and
+# returns the sum of the stored values (each read back with d[key]).
+_INJECT_MAP_ADD_PREFIX = "# pycore-inject: MAP_ADD_SEQ "
+_OP_MAP_ADD = _OM["MAP_ADD"]
+_OP_BUILD_MAP = _OM["BUILD_MAP"]
+_OP_POP_TOP = _OM["POP_TOP"]
+_NB_SUBSCR = next(
+    i for i, (n, _s) in enumerate(_opcode_module._nb_ops) if n == "NB_SUBSCR"
+)
+
+
+def parse_map_add_seq_pragmas(
+    source_text: str,
+) -> list[tuple[str, list[tuple[int, int]]]]:
+    """Return ``(func, [(key, value), ...])`` for each MAP_ADD_SEQ pragma."""
+    out: list[tuple[str, list[tuple[int, int]]]] = []
+    for line in source_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(_INJECT_MAP_ADD_PREFIX):
+            continue
+        rest = stripped[len(_INJECT_MAP_ADD_PREFIX):].strip().split()
+        if len(rest) < 3 or (len(rest) - 1) % 2 != 0:
+            raise ValueError(
+                "pycore-inject MAP_ADD_SEQ expects '<func> <k> <v> ...' pairs, "
+                f"got {stripped!r}"
+            )
+        func = rest[0]
+        nums = [int(tok) for tok in rest[1:]]
+        pairs = list(zip(nums[0::2], nums[1::2]))
+        out.append((func, pairs))
+    return out
+
+
+def _build_map_add_seq_code(
+    template: types.CodeType, pairs: list[tuple[int, int]]
+) -> types.CodeType:
+    """Replace ``template`` bytecode with BUILD_MAP0 + MAP_ADDs + value sum."""
+    code = bytearray()
+    _binary_caches = sum(_opcode_module._cache_format["BINARY_OP"].values())
+
+    def emit(op: int, arg: int = 0) -> None:
+        if arg > 255:
+            raise ValueError(f"oparg {arg} exceeds 8 bits in MAP_ADD_SEQ")
+        code.append(op)
+        code.append(arg & 0xFF)
+
+    def emit_caches(n: int) -> None:
+        for _ in range(n):
+            emit(OP_CACHE, 0)
+
+    emit(_OP_RESUME, 0)
+    emit(_OP_BUILD_MAP, 0)
+    emit(_OP_STORE_FAST, 0)  # d
+    for k, v in pairs:
+        if not (0 <= k <= 255 and 0 <= v <= 255):
+            raise ValueError(f"MAP_ADD_SEQ key/value must be 0..255, got {k},{v}")
+        emit(_OP_LOAD_FAST, 0)      # d
+        emit(_OP_LOAD_SMALL_INT, k)  # key
+        emit(_OP_LOAD_SMALL_INT, v)  # value
+        emit(_OP_MAP_ADD, 1)         # d[key] = value; leaves d on stack
+        emit(_OP_POP_TOP, 0)
+    # acc = 0; acc += d[k] for each key
+    emit(_OP_LOAD_SMALL_INT, 0)
+    for k, _v in pairs:
+        emit(_OP_LOAD_FAST, 0)
+        emit(_OP_LOAD_SMALL_INT, k)
+        emit(_OP_BINARY_OP, _NB_SUBSCR)
+        emit_caches(_binary_caches)
+        emit(_OP_BINARY_OP, 0)  # +
+        emit_caches(_binary_caches)
+    emit(_OP_RETURN_VALUE, 0)
+
+    return template.replace(
+        co_code=bytes(code),
+        co_varnames=("d",),
+        co_nlocals=1,
+        co_stacksize=max(8, template.co_stacksize),
+        co_names=(),
+        co_consts=(None,),
+    )
+
+
+def apply_map_add_seq_injects(
+    module_code: types.CodeType, source_text: str
+) -> types.CodeType:
+    result = module_code
+    for func_name, pairs in parse_map_add_seq_pragmas(source_text):
+        target = _find_code_by_name(result, func_name)
+        if target is None:
+            raise ValueError(
+                f"pycore-inject MAP_ADD_SEQ target {func_name!r} not found"
+            )
+        rewritten = _build_map_add_seq_code(target, pairs)
+        result = _replace_code_by_name(result, func_name, rewritten)
+    return result
+
+
 def _code_has_load_build_class(co: types.CodeType) -> bool:
     for ins in iter_raw_instructions(co):
         if ins.opname == "LOAD_BUILD_CLASS":
@@ -1627,6 +1727,7 @@ def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildR
     module_code = compile(source_text, filename, "exec")
     module_code = apply_lfac_injects(module_code, source_text)
     module_code = apply_set_add_seq_injects(module_code, source_text)
+    module_code = apply_map_add_seq_injects(module_code, source_text)
     module_code, class_specs = fold_module_classes(module_code, source_text)
     module_code, defaults_map, kwdefaults_map = fold_function_defaults(module_code)
     for spec in class_specs:

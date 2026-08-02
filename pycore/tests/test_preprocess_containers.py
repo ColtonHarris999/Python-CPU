@@ -430,11 +430,15 @@ class TestDeferredOpcodesRejected(unittest.TestCase):
         self.assertTrue(len(reason) > 5,
                         f"DEFERRED_OPS[{opname!r}] reason is too short: {reason!r}")
 
-    def test_map_add_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("MAP_ADD")
+    def test_map_add_not_deferred(self) -> None:
+        # MAP_ADD now lands in CONT_MAP_ADD (pycore_core.sv / cont_dict).
+        self.assertNotIn("MAP_ADD", preprocess.DEFERRED_OPS)
+        self.assertIn("MAP_ADD", preprocess.SUPPORTED_OPS)
 
-    def test_dict_update_in_deferred_ops(self) -> None:
-        self._assert_deferred_error("DICT_UPDATE")
+    def test_dict_update_not_deferred(self) -> None:
+        # DICT_UPDATE now lands in CONT_DICT_UPDATE (pycore_core.sv / cont_dict).
+        self.assertNotIn("DICT_UPDATE", preprocess.DEFERRED_OPS)
+        self.assertIn("DICT_UPDATE", preprocess.SUPPORTED_OPS)
 
     def test_deferred_ops_not_in_supported_ops(self) -> None:
         """All deferred opcodes must be absent from SUPPORTED_OPS."""
