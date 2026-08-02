@@ -527,7 +527,7 @@ Implement in phases so a partial PR on `ui_simulation` is still reviewable. **Pu
 ## 11. Testing requirements for the implementing agent
 
 1. **Unit tests** for tag/entry decode and trace parser (no Verilator).
-2. **Golden trace fixture** (checked-in small JSONL, including at least one mailbox handoff) to lock UI/server parsing.
+2. **Golden trace fixture** (checked-in small JSONL, including at least one mailbox handoff — preferably a post-merge bulk trap such as `DICT_UPDATE` / `DICT_MERGE` or classic `LIST_GROW`) to lock UI/server parsing.
 3. **Manual/scripted e2e:** via Docker if possible — POST session with smoke program, assert return INT 12 on two-core path.
 4. Do **not** weaken existing `make pycore-test` / image differentials; new hooks must be off-by-default or unused by existing TBs.
 5. If RTL/TB changes land, run relevant two-core image tests (`pycore-img-smoke-two-core` at minimum; plus a grow/extend two-core test if mailbox tracing touches shared modules).
