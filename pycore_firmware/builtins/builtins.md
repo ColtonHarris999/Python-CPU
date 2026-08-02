@@ -169,7 +169,8 @@ Audit of **blocked** / partially-blocked names against
 
 | Bytecode / protocol gap | Blocked or limited builtins |
 | --- | --- |
-| `CALL_KW` / `CALL_FUNCTION_EX` | `print` kwargs/`sep=`, `sorted`/`max`/`min` `key=`, multi-iter `zip`/`map`, `open` kwargs |
+| Kwargs ROM wrappers (not a bytecode gap) | `print`/`sorted`/`max` kwargs still unimplemented in firmware; binder is ready for `CODE_OBJECT` |
+| `CO_VARARGS` / `CO_VARKEYWORDS` on defs | Multi-iter `zip(*args)` / `map` as Python `*args` parameters |
 | Exception tables / `RERAISE` | Real `TypeError` / `StopIteration` everywhere; comprehension option A/B |
 | `GET_ITER` / `FOR_ITER` on OBJECT | User-defined iterables (`__iter__` / `__next__`) |
 | `BI_ORD` / `BI_CHR` | `ord`, `chr`, `ascii` (see `ord.md`, `chr.md`) |
