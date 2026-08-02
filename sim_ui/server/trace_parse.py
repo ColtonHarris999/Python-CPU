@@ -142,7 +142,9 @@ def _enrich_step(rec: dict[str, Any]) -> dict[str, Any]:
         )
     heap_delta = []
     for root in rec.get("heap_roots") or []:
-        heap_delta.append(_root_summary(root))
+        summary = _root_summary(root)
+        if summary is not None:
+            heap_delta.append(summary)
     mem_owner = int(rec.get("mem_owner", 0))
     return {
         "step": int(rec.get("step", 0)),
@@ -172,9 +174,11 @@ def _enrich_step(rec: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _root_summary(root: dict[str, Any]) -> dict[str, Any]:
+def _root_summary(root: dict[str, Any]) -> dict[str, Any] | None:
     tag = int(root.get("tag") or 0)
     addr = int(root.get("addr") or 0)
+    if addr == 0:
+        return None
     kind_id = root.get("kind")
     contam = root.get("contaminated")
     hdr_lo = int(root.get("hdr_lo") or 0)
@@ -196,6 +200,8 @@ def _root_summary(root: dict[str, Any]) -> dict[str, Any]:
         summary = f"tuple len={hdr_hi} @{addr:#x}"
     elif tag_name == "CODE_OBJECT":
         summary = f"code@{addr:#x}"
+    elif tag_name == "LONG_STR":
+        summary = f"str@{addr:#x} len={hdr_hi}"
     return {
         "addr": hex(addr),
         "addr_int": addr,
