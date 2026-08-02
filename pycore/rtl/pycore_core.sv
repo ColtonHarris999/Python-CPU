@@ -199,8 +199,18 @@ module pycore_core #(
     // S_CALL / S_RETURN management (multi-phase FSM with code-object reads).
     logic                          call_sent_r;   // call_valid was pulsed
     logic                          frame_dmem_pending_r; // frame push or pop in flight
-    logic [3:0]                    call_phase_r;
+    logic [4:0]                    call_phase_r;
     logic [2:0]                    return_phase_r;
+    // CALL / CALL_KW / CALL_FUNCTION_EX mode (see CALL_MODE_* localparams).
+    logic [1:0]                    call_mode_r;
+    logic [7:0]                    call_n_pos_r;
+    logic [7:0]                    call_n_kwargs_r;
+    logic [127:0]                  call_kw_names_r;    // names TUPLE or kwargs DICT
+    logic [127:0]                  call_varnames_r;    // callee co_varnames TUPLE
+    logic [127:0]                  call_kwdefaults_r;  // callee co_kwdefaults DICT
+    logic [15:0]                   call_kwonly_r;
+    logic [15:0]                   call_total_params_r;
+    logic                          call_args_is_list_r; // EX expand source tag
     // Boot phase counter — reset walker for S_BOOT.
     logic [3:0]                    boot_phase_r;
     // Scratchpad regs latched during S_CALL / S_RETURN for a pending
@@ -345,6 +355,33 @@ module pycore_core #(
     // probe (insert target when the key/element is absent).
     logic                          container_tomb_valid_r;
     logic [31:0]                   container_tomb_idx_r;
+    // Contamination tracking: set while building/bulk-inserting when an
+    // OBJECT key/element is committed; folded into the final MUT_COLLEC handle
+    // (value[123]) and written back to the container's RF slot.
+    logic                          container_contam_r;
+    // Bulk DICT_UPDATE / SET_UPDATE (contaminated pycore path): source table
+    // base, source slot count and current walk index, plus the destination
+    // handle RF slot to rewrite when the op finishes.
+    logic [31:0]                   container_src_base_r;
+    logic [31:0]                   container_src_slots_r;
+    logic [31:0]                   container_src_idx_r;
+    logic [8:0]                    container_dst_rf_addr_r;
+    // Bulk pycore rehash bookkeeping (SET_UPDATE / DICT_UPDATE / DICT_MERGE):
+    //   old_table/old_slots : the destination's PRE-resize hash table, walked
+    //     during rehash while container_buf_r/container_slot_count_r name the
+    //     freshly allocated target table.
+    //   bulk_mode           : REHASH (relocating the destination) vs INSERT
+    //     (folding source elements in) — selects the post-insert continuation.
+    //   src_kind            : which source collection layout to walk.
+    //   bulk_size           : source element count (used for the resize check).
+    //   old_order           : DICT rehash carries the source order buffer base
+    //     across the order-copy + table-rehash passes.
+    logic [31:0]                   container_old_table_r;
+    logic [31:0]                   container_old_slots_r;
+    logic [1:0]                    container_bulk_mode_r;
+    logic [2:0]                    container_src_kind_r;
+    logic [63:0]                   container_bulk_size_r;
+    logic [31:0]                   container_old_order_r;
 
     // -----------------------------------------------------------------------
     // S_TRAP_MARSHAL / S_TRAP_WAIT (Phase C) registers.
@@ -1150,6 +1187,8 @@ module pycore_core #(
     logic [3:0]   cont_rs2_tag;   // tag of rs2_r
     logic [127:0] cont_rf_rs1_val; // value field of rf_rs1 (container RF read)
     logic [3:0]   cont_rf_rs1_tag; // tag of rf_rs1
+    logic         cont_rs1_contam; // contamination bit of rs1 handle
+    logic         cont_rs2_contam; // contamination bit of rs2 handle
     logic         cont_iter_valid;
     logic [3:0]   cont_iter_kind;
     logic [31:0]  cont_iter_index;
@@ -1187,6 +1226,13 @@ module pycore_core #(
     assign cont_rs2_tag   = pycore_get_tag(rs2_r);
     assign cont_rf_rs1_val = pycore_get_val(rf_rs1);
     assign cont_rf_rs1_tag = pycore_get_tag(rf_rs1);
+    // Contamination bits on the MUT_COLLEC handle operands (value[123]).
+    // Contamination bit is only meaningful on MUT_COLLEC (and reserved
+    // FROZENSET) handles. Reading value[123] on a TUPLE would alias size bits.
+    assign cont_rs1_contam = (cont_rs1_tag == PY_TAG_MUT_COLLEC) &&
+                             pycore_mut_contaminated(cont_rs1_val);
+    assign cont_rs2_contam = (cont_rs2_tag == PY_TAG_MUT_COLLEC) &&
+                             pycore_mut_contaminated(cont_rs2_val);
     assign cont_iter_valid    = pycore_iter_valid(cont_rs1_val);
     assign cont_iter_kind     = pycore_iter_kind(cont_rs1_val);
     assign cont_iter_index    = pycore_iter_index(cont_rs1_val);
@@ -1286,9 +1332,18 @@ module pycore_core #(
     // that commits state to the RF / fetch redirect.  Using a phase-driven
     // exit (rather than a wire from the frame module) keeps the extra
     // code-object dmem reads inside the same state.
-    localparam logic [3:0] CALL_PHASE_DONE = 4'd15;
+    localparam logic [4:0] CALL_PHASE_DONE     = 5'd15;
+    localparam logic [4:0] CALL_PHASE_KW_NAMES = 5'd16;
+    localparam logic [4:0] CALL_PHASE_EX_KW    = 5'd17;
+    localparam logic [4:0] CALL_PHASE_EX_ARGS  = 5'd18;
+    localparam logic [4:0] CALL_PHASE_EX_EXPAND = 5'd19;
     localparam logic [2:0] RET_PHASE_DONE  = 3'd7;
     localparam logic [3:0] BOOT_PHASE_DONE = 4'd15;
+    // call_mode_r encodings
+    localparam logic [1:0] CALL_MODE_POS   = 2'd0; // plain CALL
+    localparam logic [1:0] CALL_MODE_KW    = 2'd1; // CALL_KW (names tuple)
+    localparam logic [1:0] CALL_MODE_EX    = 2'd2; // CALL_FUNCTION_EX expand
+    localparam logic [1:0] CALL_MODE_EX_KW = 2'd3; // EX with kwargs dict binder
     // SHORT_STR value for "__init__" (size=8); used by TYPE-call tp_dict probe.
     localparam logic [127:0] CALL_INIT_NAME_VAL =
         128'h85f5f696e69745f5f000000000000000;
@@ -1421,6 +1476,15 @@ module pycore_core #(
             call_phase_r         <= '0;
             return_phase_r       <= '0;
             boot_phase_r         <= '0;
+            call_mode_r          <= 2'd0; // CALL_MODE_POS
+            call_n_pos_r         <= '0;
+            call_n_kwargs_r      <= '0;
+            call_kw_names_r      <= '0;
+            call_varnames_r      <= '0;
+            call_kwdefaults_r    <= '0;
+            call_kwonly_r        <= '0;
+            call_total_params_r  <= '0;
+            call_args_is_list_r  <= 1'b0;
             call_code_addr_r     <= '0;
             call_entry_slot_r    <= '0;
             call_consts_r        <= '0;
@@ -1506,6 +1570,17 @@ module pycore_core #(
             container_probe_tag_r           <= '0;
             container_tomb_valid_r          <= 1'b0;
             container_tomb_idx_r            <= '0;
+            container_contam_r              <= 1'b0;
+            container_src_base_r            <= '0;
+            container_src_slots_r           <= '0;
+            container_src_idx_r             <= '0;
+            container_dst_rf_addr_r         <= '0;
+            container_old_table_r           <= '0;
+            container_old_slots_r           <= '0;
+            container_bulk_mode_r           <= '0;
+            container_src_kind_r            <= '0;
+            container_bulk_size_r           <= '0;
+            container_old_order_r           <= '0;
             trap_marshal_pending_r     <= 1'b0;
             trap_marshal_code_r        <= '0;
             trap_marshal_entry_count_r <= '0;
@@ -1591,6 +1666,7 @@ module pycore_core #(
                             container_mem_fault_r    <= 1'b0;
                             container_attr_error_r   <= 1'b0;
                             container_wb_we_r        <= 1'b0;
+                            container_contam_r       <= 1'b0;
                             trap_marshal_pending_r   <= 1'b0;
 
                             if (cur_opcode_r == PY_OP_BUILD_LIST) begin
@@ -1659,6 +1735,12 @@ module pycore_core #(
                                 container_op_r <= CONT_SET_ADD;
                             end else if (cur_opcode_r == PY_OP_SET_UPDATE) begin
                                 container_op_r <= CONT_SET_UPDATE;
+                            end else if (cur_opcode_r == PY_OP_DICT_MERGE) begin
+                                container_op_r <= CONT_DICT_MERGE;
+                            end else if (cur_opcode_r == PY_OP_DICT_UPDATE) begin
+                                container_op_r <= CONT_DICT_UPDATE;
+                            end else if (cur_opcode_r == PY_OP_MAP_ADD) begin
+                                container_op_r <= CONT_MAP_ADD;
                             end else if (cur_opcode_r ==
                                          PY_OP_STORE_FAST_LOAD_FAST) begin
                                 container_op_r     <= CONT_SFLF;
@@ -1737,14 +1819,23 @@ module pycore_core #(
                         // state_next = S_FETCH (from always_comb)
 
                     end else if (dec_is_call) begin
-                        // CALL: move to multi-phase frame-management state.
-                        // Phase 0 → RF settle at callable slot.
+                        // CALL / CALL_KW / CALL_FUNCTION_EX: multi-phase FSM.
+                        // Phase 0 → RF settle at callable (or KW/EX prelude).
                         call_sent_r          <= 1'b0;
                         frame_dmem_pending_r <= 1'b0;
-                        call_phase_r         <= 4'd0;
+                        call_phase_r         <= 5'd0;
                         call_sub_r           <= 6'd0;
                         call_ret_mode_r      <= 1'b0;
                         call_saved_inst_r    <= 64'b0;
+                        if (cur_opcode_r == PY_OP_CALL_KW)
+                            call_mode_r <= CALL_MODE_KW;
+                        else if (cur_opcode_r == PY_OP_CALL_FUNCTION_EX)
+                            call_mode_r <= CALL_MODE_EX;
+                        else
+                            call_mode_r <= CALL_MODE_POS;
+                        call_n_pos_r        <= '0;
+                        call_n_kwargs_r     <= '0;
+                        call_args_is_list_r <= 1'b0;
                         container_dmem_pending_r <= 1'b0;
                         fetch_skip_r         <= 1'b1;
                         // state_next = S_CALL (from always_comb)
@@ -1838,6 +1929,10 @@ module pycore_core #(
 
                         // DICT / SET ops
                         `include "pycore_cont_dict.svh"
+
+                        // Bulk DICT_UPDATE / DICT_MERGE / SET_UPDATE — excore
+                        // fast paths + contaminated/TUPLE pycore rehash loops.
+                        `include "pycore_cont_bulk.svh"
 
                         // Name/global/RF helpers (+ future object attrs)
                         `include "pycore_cont_object.svh"

@@ -56,7 +56,7 @@ multiple traps; COMPLETED finishes in one handoff. The protocol still
 defines `RETRY` for handlers where pycore state genuinely did not advance
 (e.g. emulating an unimplemented opcode from scratch) — but every current
 handler (`LIST_GROW`, `LIST_EXTEND`, `LIST_DELETE`, `DICT_GROW`,
-`SET_GROW`, `SET_UPDATE`) answers `COMPLETED`.
+`SET_GROW`, `SET_UPDATE`, `DICT_UPDATE`, `DICT_MERGE`) answers `COMPLETED`.
 
 This "complete, don't retry" contract is only safe because every
 recoverable trap is raised **before any RF/heap/dmem commit** (see
@@ -136,9 +136,13 @@ whose ownership is being transferred.
 | 11 | `PY_TRAP_DICT_GROW` | **recoverable** | new-key dict insert at load ≥ 2/3; excore realloc + rehash + STORE |
 | 12 | `PY_TRAP_LIST_DELETE` | **recoverable** | mid-list `DELETE_SUBSCR` shift; excore COMPLETED pop 2 |
 | 13 | `PY_TRAP_SET_GROW` | **recoverable** | `SET_ADD` at load ≥ 2/3; excore realloc + insert |
-| 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | always; excore grow-to-fit + merge |
+| 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | uncontaminated `SET_UPDATE` with a `LIST`/`SET`/`DICT` source; excore grow-to-fit + merge (dict source inserts keys). `TUPLE` sources and any contaminated operand are owned by pycore (`pycore_cont_bulk.svh`) instead of trapping |
 | 15 | `PY_TRAP_ATTR_ERROR` | fatal | `LOAD_ATTR` / `DELETE_ATTR` miss after instance `__dict__` + MRO |
-| 15 | *(free)* | — | reserved |
+| 16 | `PY_TRAP_BUILTIN_CALL` | **recoverable** | builtin call handed to firmware |
+| 17 | `PY_TRAP_RAISE` | fatal | `RAISE_VARARGS` (no handler tables yet) |
+| 18 | `PY_TRAP_SLICE` | **recoverable** | slice helper |
+| 19 | `PY_TRAP_DICT_UPDATE` | **recoverable** | uncontaminated `A.update(B)`; excore grows A to fit `used(A)+used(B)` and inserts all of B, overwriting dups. Contaminated (OBJECT-key) operands are owned by pycore (`pycore_cont_bulk.svh`) instead of trapping |
+| 20 | `PY_TRAP_DICT_MERGE` | **recoverable** | non-empty uncontaminated `DICT_MERGE`; excore builds a fresh dict C (A then B, duplicate key → fatal `TYPE`). Contaminated operands build C in pycore (`pycore_cont_bulk.svh`) |
 
 `pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
 truth for the fatal/recoverable split. `EXCORE_EN=1` intercepts a recoverable
@@ -442,21 +446,33 @@ caches the module code object's `co_consts` and `co_names`, latches
 entry slot. `BOOT_EN=0` remains available for hand-authored hex fixtures that
 skip the boot record.
 
-Serialized code objects are five tagged-entry fields (32 bytes per field):
+Serialized code objects are seven tagged-entry fields (32 bytes per field, 224B):
 
 ```text
-field 0: entry_slot  (INT, imem slot index)
-field 1: co_consts   (TUPLE handle)
-field 2: co_names    (TUPLE handle)
-field 3: metadata    (INT, packed {stacksize, nlocals, argcount})
-field 4: co_defaults (TUPLE handle)
+field 0: entry_slot    (INT, imem slot index)
+field 1: co_consts     (TUPLE handle)
+field 2: co_names      (TUPLE handle)
+field 3: metadata      (INT, packed {kwonlyargcount, stacksize, nlocals, argcount})
+field 4: co_defaults   (TUPLE handle)
+field 5: co_varnames   (TUPLE handle; parameter / local names)
+field 6: co_kwdefaults (MUT_DICT handle; empty if none)
 ```
 
 The interim function model is **function == code object**: `MAKE_FUNCTION`
-checks that TOS is a `CODE_OBJECT` and leaves it in place. `CALL` expects the
-CPython 3.14 non-method layout `callable, NULL, args...`, validates the callable
-tag and argcount, reads the callee code-object fields, then enters the frame
-manager.
+checks that TOS is a `CODE_OBJECT` and leaves it in place. `CALL` /
+`CALL_KW` / `CALL_FUNCTION_EX` expect the matching CPython 3.14 stack
+shapes, validate the callable, bind args (positional and/or keyword via
+`co_varnames`), read the callee code-object fields, then enter the frame
+manager. `OBK_BUILTIN` kwargs remain `CALL_FILTER` (firmware `CODE_OBJECT`
+path). `DICT_MERGE` aliases the empty-dest call-site shape used for `**kwargs`;
+a non-empty uncontaminated dest raises `PY_TRAP_DICT_MERGE` (20) and the excore
+builds a fresh combined dict. `DICT_UPDATE` (`{**a, **b}` displays) and `MAP_ADD`
+(dict comprehensions) are also supported — see `bytecode_support.md` and the
+MUT_COLLEC contamination-bit routing in `tags.md`. Contaminated (OBJECT-key /
+element) `DICT_UPDATE` / `DICT_MERGE` / `SET_UPDATE`, and every `TUPLE`-source
+`SET_UPDATE`, are handled entirely by pycore in `pycore_cont_bulk.svh` (optional
+grow + rehash, then a shared probe/insert sub-FSM folds in the source) rather
+than being delegated to the excore fast paths.
 
 `LOAD_CONST` is a normal one-slot CPython instruction. It indexes
 `co_consts[arg]` and the container FSM performs two dmem reads (value slot then
@@ -820,7 +836,7 @@ count = `next_pow2(max(4, 2 × n_elems))`.
 | --- | --- |
 | `BUILD_SET` | pycore alloc + insert (same-tag + rich numeric/str eq) |
 | `SET_ADD` | pycore probe/insert; load ≥ 2/3 → `SET_GROW` (13) |
-| `SET_UPDATE` | always `SET_UPDATE` (14) → excore bulk merge |
+| `SET_UPDATE` | uncontaminated `LIST`/`SET`/`DICT` → trap 14 / excore; contaminated or `TUPLE` → pycore (`pycore_cont_bulk.svh`) |
 | `CONTAINS_OP` | pycore probe + rich eq |
 | `DELETE_SUBSCR` / `STORE_SUBSCR` | `TYPE` (sets are not subscriptable) |
 

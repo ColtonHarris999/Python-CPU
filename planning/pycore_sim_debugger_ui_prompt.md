@@ -1,19 +1,55 @@
 # PyCore Interactive Simulator & Debugger UI — Implementation Prompt
 
-> **Status:** Draft for human review (refined). Not yet approved for implementation.
-> **Audience:** (1) reviewer approving scope, (2) implementing agent executing after approval.
+> **Status:** **Ready for handoff** — approved for implementation by a follow-on agent.
+> **Audience:** implementing agent (primary); human reviewer (reference).
 > **Type:** Product + engineering brief. Prefer this doc over inventing alternate scope.
 >
-> **Locked decisions (from reviewer):**
+> **Locked decisions:**
 > 1. Always simulate the **full two-core system** (pycore + excore). No single-core mode.
 > 2. Prefer **Docker** for the UI/orchestration path so hosts without Python 3.14 still work.
 > 3. Implementation work lives on branch **`ui_simulation`**; push after each completed phase.
->
-> **Pending base (do not ignore):** `bytecode_support` is landing on `main` via
-> PR [#61](https://github.com/ColtonHarris999/Python-CPU/pull/61)
-> (`cursor/merge-bulk-to-main-9270`). The sim UI must be built **on top of that
-> post-merge tree** (see §2.1). Do not design decode/trace/UI against the older
-> five-field code-object layout or the pre-bulk trap taxonomy.
+> 4. Base branch is current **`main`** (PR [#61](https://github.com/ColtonHarris999/Python-CPU/pull/61) / `bytecode_support` **already merged**).
+> 5. Defaults locked for kickoff: FastAPI + React/Vite; **per-opcode** snapshots in v1; leave legacy `make run-file` alone; Docker via Make wrapper on port **8000**.
+
+---
+
+## 0. Handoff package (start here)
+
+### 0.1 Prerequisites for the human / dispatcher
+
+1. Merge this planning PR into `main` if it is not already there, **or** ensure the implementing agent can read this file from the planning branch.
+2. Spawn the implementing agent with the **§14 kickoff prompt** (copy-paste).
+3. Expect work on branch `ui_simulation` and a draft PR `ui_simulation` → `main`.
+
+### 0.2 First commands for the implementing agent
+
+```bash
+git fetch origin main
+git checkout -b ui_simulation origin/main
+# Confirm this brief exists:
+test -f planning/pycore_sim_debugger_ui_prompt.md
+```
+
+If the brief is not yet on `main`, cherry-pick / merge the planning PR commit(s) that add `planning/pycore_sim_debugger_ui_prompt.md` onto `ui_simulation` before coding, then proceed.
+
+### 0.3 Delivery cadence
+
+| Phase | Goal | After done |
+| --- | --- | --- |
+| **A** | Docker UI + paste/run + stack stepping on two-core smoke | commit + `git push -u origin ui_simulation` + open/update PR |
+| **B** | Frames (`co_varnames`), disasm, errors, excore event lane, scrubber | commit + push |
+| **C** | Heap inspector + contamination + richer mailbox | commit + push |
+| **D** | Polish, docs, tests | commit + push; mark PR ready if §3.3 met |
+
+Do **not** invent a different branch name. Do **not** offer single-core mode.
+
+### 0.4 Definition of “handoff complete” for *this* planning doc
+
+- [x] Product scope locked (two-core, Docker-first, `ui_simulation`)
+- [x] `bytecode_support` on `main` reflected as baseline (not pending)
+- [x] Remaining optional product choices locked to defaults (§0 header / §15)
+- [x] Phased plan, API sketch, trace contract, demos, risks, checklist present
+- [x] Copy-paste kickoff prompt ready (§14)
 
 ---
 
@@ -31,7 +67,7 @@ PyCore is a SystemVerilog multi-cycle CPU whose ISA is a CPython **3.14** byteco
 | --- | --- |
 | `pycore/tools/image_from_source.py` | Preferred path: compile Python → imem/dmem/string hex images (1:1 with CPython code units) |
 | `pycore/tools/run_image_test.py` | Image build + host `managed_entry()` expected-result helper |
-| `make run-file` / `tb_pycore_runfile.sv` | Legacy single-function preprocess + Verilator run; prints final `RETURN_*` + RF dump |
+| `make run-file` / `tb_pycore_runfile.sv` | Legacy single-function preprocess + Verilator run; **not** the UI primary path |
 | `make pycore-img-*-two-core` / `PYCORE_IMAGE_RUN_TWOCORE` | Image-boot sims on the two-core top (`EXCORE_EN=1`) — **this is the sim model for the UI** |
 | `Dockerfile` (`python:3.14-slim` + Verilator) | Existing container used by `make docker-*` — extend for the UI |
 | `pycore/tools/cosim_trace.py` | Trace *summarizer* only; no producer UI exists |
@@ -39,98 +75,94 @@ PyCore is a SystemVerilog multi-cycle CPU whose ISA is a CPython **3.14** byteco
 
 There is **no frontend**, no step-time debugger, and no structured execution-trace protocol. The UI must sit on top of (and extend) this toolchain — not replace the RTL or invent a second Python interpreter.
 
-### 2.1 Pending merge: `bytecode_support` → `main`
+### 2.1 Baseline already on `main` (former `bytecode_support`)
 
-At plan-update time, open PR [#61](https://github.com/ColtonHarris999/Python-CPU/pull/61) merges branch `bytecode_support` (via `cursor/merge-bulk-to-main-9270`) into `main`. That tip already contains substantial ISA / image / excore work the UI must assume as **baseline**, not future stretch:
+PR [#61](https://github.com/ColtonHarris999/Python-CPU/pull/61) is **merged**. Treat the following as required baseline on `origin/main` — not future stretch, not optional:
 
-| Landing change | Why the sim UI cares |
+| Baseline on `main` | Why the sim UI cares |
 | --- | --- |
-| **7-field code objects** (`co_varnames`, `co_kwdefaults`; metadata packs `kwonlyargcount`) | Frame locals can be labeled from `co_varnames`; decode/heap inspector must use 224B / 7-field layout, not the old 5-field model |
-| **`CALL_KW` / `CALL_FUNCTION_EX`** | Supported user programs widen; disasm + stack shapes must understand kw / `*args` / `**kwargs` call layouts |
-| **`MAP_ADD`, `DICT_UPDATE`, `DICT_MERGE`, bulk `SET_UPDATE`** | New opcodes + demos; image_from_source accepts them |
-| **`MUT_COLLEC` contamination bit** (`value[123]`) | Heap / handle decode must show sticky contamination; it decides pycore vs excore ownership of bulk hash ops |
-| **New recoverable traps** `PY_TRAP_DICT_UPDATE` (19), `PY_TRAP_DICT_MERGE` (20) (+ extended `SET_UPDATE` 14) | Mailbox event lane + trap name table must include them; bulk demos are first-class excore content |
-| **excore firmware bulk helpers** (`do_dict_update` / `do_dict_merge` / …) | Two-core traces will show longer ownership grants on dict/set bulk paths |
-| **Tooling** (`encoding.make_mut(..., contaminated=)`, image builder, Makefile two-core img targets) | Server decode + demos should reuse these helpers, not reinvent layouts |
+| **7-field code objects** (`co_varnames`, `co_kwdefaults`; metadata packs `kwonlyargcount`) | Frame locals labeled from `co_varnames`; decode/heap inspector uses 224B / 7-field layout |
+| **`CALL_KW` / `CALL_FUNCTION_EX`** | Disasm + stack shapes for kw / `*args` / `**kwargs` |
+| **`MAP_ADD`, `DICT_UPDATE`, `DICT_MERGE`, bulk `SET_UPDATE`** | Supported opcodes + demos; image_from_source accepts them |
+| **`MUT_COLLEC` contamination bit** (`value[123]`) | Heap/handle decode must show sticky contamination; routes bulk ops pycore vs excore |
+| **Recoverable traps** including `PY_TRAP_DICT_UPDATE` (19), `PY_TRAP_DICT_MERGE` (20), `SET_UPDATE` (14), list/dict/set grow/extend/delete | Mailbox event lane + trap name table |
+| **excore firmware bulk helpers** | Longer ownership grants on dict/set bulk paths |
+| **Tooling** (`encoding.make_mut(..., contaminated=)`, image builder, two-core img targets) | Reuse helpers; do not reinvent layouts |
 
-**Implementer base-branch rule:**
+**Base-branch rule (simple):**
 
-1. Prefer waiting until PR #61 is merged, then:
-   ```bash
-   git fetch origin main
-   git checkout -b ui_simulation origin/main
-   ```
-2. If implementation must start while #61 is still open, create `ui_simulation` from `origin/main` and **immediately merge** `origin/bytecode_support` (or the PR head `origin/cursor/merge-bulk-to-main-9270`) before writing UI/trace code. Do not ship Phase A against pre-merge `main` alone.
-3. After #61 lands, merge/rebase latest `origin/main` into `ui_simulation` before the next phase push.
-4. Re-read post-merge `pycore/docs/bytecode_support.md`, `tags.md`, and `architecture.md` — they are the source of truth once main advances; planning docs under `planning/call_kw_support_plan.md` / `planning/dict_set_bulk_contam_plan.md` are background.
+```bash
+git fetch origin main
+git checkout -b ui_simulation origin/main
+```
 
-Canonical docs to read before coding (use **post-`bytecode_support`** versions):
+Re-read current `pycore/docs/bytecode_support.md`, `tags.md`, and `architecture.md` on that tip. Planning docs `planning/call_kw_support_plan.md` and `planning/dict_set_bulk_contam_plan.md` are historical design notes (**Done**); defer to docs/RTL if they disagree.
+
+### 2.2 Docs to read before coding
 
 - `README.md`
-- `pycore/docs/architecture.md` (frames, RF, boot, traps incl. 19/20, two-core transport, **7-field code objects**)
+- `pycore/docs/architecture.md` (frames, RF, boot, traps incl. 19/20, two-core transport, 7-field code objects)
 - `pycore/docs/preprocessing_breakdown.md` (image-boot vs deprecated preprocess)
-- `pycore/docs/bytecode_support.md` (legal opcodes after the merge, including CALL_KW / bulk dict-set)
-- `pycore/docs/tags.md` (**contamination bit**), `pycore/docs/object_model.md`
+- `pycore/docs/bytecode_support.md` (legal opcodes, including CALL_KW / bulk dict-set)
+- `pycore/docs/tags.md` (contamination bit), `pycore/docs/object_model.md`
 - `pycore/docs/set_excore.md` / dict excore notes for bulk routing
-- `excore/docs/` (mailbox MMIO, firmware build, trap handlers — bulk paths included)
-- `planning/call_kw_support_plan.md`, `planning/dict_set_bulk_contam_plan.md` (design intent; defer to docs/RTL if they disagree after merge)
-- `planning/builtins_*` only as background if builtins demos are added later
+- `excore/docs/` (mailbox MMIO, firmware build, trap handlers)
+- `planning/call_kw_support_plan.md`, `planning/dict_set_bulk_contam_plan.md` (background only)
+- `planning/builtins_*` only if adding builtins demos later
 
 ---
 
-## 3. Product vision (approval checklist)
+## 3. Product vision
 
 ### 3.1 Must-have user experience
 
-1. **Open the simulator** — one documented command starts the UI (prefer Docker; see §8.5).
-2. **Load Python source** in either way:
-   - Drag-and-drop a `.py` file from the user's machine into the editor pane.
-   - Type / paste / edit source in a code editor in the browser.
-3. **Configure a short run profile** (sensible defaults):
-   - Entry function name (default: `managed_entry`).
-   - Max cycles.
-   - **No core-mode toggle** — every run is the full pycore + excore system (`EXCORE_EN=1`, firmware loaded).
-4. **Click Run** — backend builds a PyCore image from the source, launches the **two-core** Verilator simulation, and streams or returns a structured execution trace + final result.
+1. **Open the simulator** — one documented command starts the UI (Docker-first; see §8.5).
+2. **Load Python source**:
+   - Drag-and-drop a `.py` file into the editor pane, **or**
+   - Type / paste / edit source in the browser editor.
+3. **Configure a short run profile** (defaults):
+   - Entry function name: `managed_entry`.
+   - Max cycles: generous default (document it; allow override).
+   - **No core-mode toggle** — always pycore + excore (`EXCORE_EN=1`, firmware loaded).
+4. **Click Run** — build image → two-core Verilator sim → structured trace + final result.
 5. **See the result clearly**:
    - Pass / fatal trap / timeout / recoverable-trap activity summary.
    - Decoded return value (tag + human-readable value when possible).
    - Cycle count / opcodes retired / CPO if available.
-   - Host expected result when the entry returns `int`/`bool` (reuse `run_image_test` host path); show match/mismatch.
-6. **Debug / visualize the run** (debugger-like):
-   - Scrub or step through execution snapshots (at least per retired opcode; finer cycle detail is a plus).
-   - Highlight the current bytecode / source line when mapping is available.
-   - Visualize **operand stack** (RF\[32..95\] live window relative to TOS).
-   - Visualize **call frames** (frame-stack descriptors in dmem `0x1C000`–`0x1FFFF`, plus locals window RF\[0..31\]).
-   - Visualize **heap data structures** reachable from handles (lists/dicts/sets/tuples/strings/code objects/objects) with tag-aware decoding.
-   - Always show **trap / mailbox / memory-ownership** events (pycore ↔ excore), including idle periods where excore is parked.
+   - Host expected result when entry returns `int`/`bool` (reuse `run_image_test` helpers); show match/mismatch.
+6. **Debug / visualize**:
+   - Scrub or step through **per retired opcode** snapshots (v1).
+   - Highlight current bytecode (source-line highlight is stretch).
+   - Visualize operand stack, call frames, heap structures, RF (advanced).
+   - Always show trap / mailbox / `mem_owner` (idle excore still visible as parked).
 
 ### 3.2 Explicit non-goals (v1)
 
-- Not a full CPython debugger (no pdb, no CPython frame objects as source of truth).
-- Not an FPGA bitstream / waveform viewer (GTKWave-style VCD browsing is optional later).
-- Not supporting the full Python language — only what `bytecode_support.md` + image tooling accept. Unsupported constructs must fail at image-build with a clear UI error.
-- Not rewriting RTL microarchitecture. Add **observation / trace hooks** only as needed.
-- Not using deprecated `preprocess.py` for the primary path. Prefer **image-boot** (`image_from_source.py`).
-- Not offering a single-core / `EXCORE_EN=0` simulation mode in the UI.
-- Not multi-user cloud hosting in v1 — local single-user tool is enough.
-- Not pretty-printing every possible heap corruption edge case; best-effort decode with raw hex fallback is fine.
+- Not a full CPython debugger (no pdb).
+- Not a GTKWave-style VCD browser.
+- Not full Python — only `bytecode_support.md` + image tooling; clear UI errors otherwise.
+- Not RTL microarchitecture rewrites — observation/trace hooks only.
+- Not `preprocess.py` / `tb_pycore_runfile` as the primary path.
+- Not single-core / `EXCORE_EN=0` UI mode.
+- Not multi-user cloud hosting.
+- Not perfect decode of every corrupt heap edge case (raw hex fallback OK).
 
-### 3.3 Success definition (human-approvable)
+### 3.3 Success definition
 
 A reviewer can:
 
-1. Start the UI with one documented command (Docker-first).
-2. Drop in `pycore/programs/smoke_return.py` (or type an equivalent `managed_entry`), click Run, and see return `12` / INT on the **two-core** top.
-3. Step a recursive or call-chain program (e.g. `img_recursion` / `call_chain`) and watch call frames and stack grow/shrink.
-4. Run a small list grow / extend **or** uncontaminated dict update/merge program and see both heap changes **and** an excore mailbox handoff (codes such as `LIST_GROW` / `DICT_UPDATE` / `DICT_MERGE` as applicable).
-5. Inspect a `MUT_COLLEC` handle and see whether its **contamination bit** is set (and understand that contaminated bulk ops stay on pycore).
-6. On unsupported syntax/opcodes, get a readable build error in the UI, not a silent hang.
+1. Start the UI with one documented Docker-first command.
+2. Drop in `pycore/programs/smoke_return.py` (or equivalent), Run, see return `12` / INT on the **two-core** top.
+3. Step a recursive/call-chain program and watch frames + stack change.
+4. Run list grow/extend **or** uncontaminated dict update/merge and see heap changes **and** an excore mailbox handoff.
+5. Inspect a `MUT_COLLEC` handle and see the **contamination bit**; understand contaminated bulk may stay on pycore.
+6. Get a readable build error on unsupported syntax/opcodes (no silent hang).
 
 ---
 
 ## 4. Recommended architecture
 
-Keep three layers. Do not collapse RTL, orchestration, and UI into one script.
+Three layers — do not collapse RTL, orchestration, and UI into one script.
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -139,70 +171,61 @@ Keep three layers. Do not collapse RTL, orchestration, and UI into one script.
 │  - Timeline / step controls                                 │
 │  - Panels: Result, Stack, Frames, Heap, RF, Excore/events   │
 └───────────────────────────▲─────────────────────────────────┘
-                            │ HTTP + WebSocket (JSON)
+                            │ HTTP + WebSocket (JSON)  :8000
 ┌───────────────────────────┴─────────────────────────────────┐
 │  Orchestration server (Python 3.14, prefer in Docker)       │
-│  - Validate / build image via image_from_source             │
-│  - Optional host expected-result via run_image_test helpers │
-│  - Build/load excore firmware; invoke two-core Verilator    │
-│  - Parse sim stdout/trace → SessionTrace model              │
-│  - Serve session + step snapshots to UI                     │
+│  - image_from_source build                                  │
+│  - optional host expected-result                            │
+│  - excore-fw + two-core Verilator traced run                │
+│  - parse trace → SessionTrace; serve snapshots              │
 └───────────────────────────▲─────────────────────────────────┘
                             │ subprocess / files
 ┌───────────────────────────┴─────────────────────────────────┐
 │  Two-core PyCore system sim (Verilator) + trace hooks       │
-│  - pycore_excore_system (or equivalent image-boot two-core) │
+│  - pycore_excore_system / image-boot two-core top           │
 │  - EXCORE_EN=1, FW_HEX always provided                      │
-│  - Emits structured per-opcode (and optional per-cycle) log │
+│  - structured per-opcode (optional per-cycle) log           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 4.1 Suggested repo layout (implementer may adjust names, not responsibilities)
+### 4.1 Suggested repo layout
 
 ```text
 sim_ui/                      # or pycore/sim_ui/
-  README.md                  # how to run the UI (Docker-first)
-  server/                    # FastAPI (or similar) orchestration
+  README.md                  # Docker-first how-to
+  server/                    # FastAPI + uvicorn
     app.py
-    image_build.py           # thin wrapper over image_from_source
-    sim_runner.py            # two-core Verilator invoke + artifact dirs
-    trace_parse.py           # lines → SessionTrace
-    decode.py                # tag/entry → JSON-friendly values
-    models.py                # pydantic / dataclasses
-  web/                       # frontend (Vite + React/TS preferred)
-    ...
-  fixtures/                  # tiny demo programs for UI smoke
-Makefile additions           # `make sim-ui` / `make docker-sim-ui` (preferred)
-Dockerfile / compose tweak   # reuse python:3.14-slim image; expose UI port
-planning/… (this doc)        # stays as the product brief
+    image_build.py
+    sim_runner.py            # two-core Verilator + artifacts
+    trace_parse.py
+    decode.py
+    models.py
+  web/                       # Vite + React + TypeScript
+  fixtures/                  # tiny demo programs
+Makefile                     # sim-ui / docker-sim-ui (port 8000)
+Dockerfile                   # extend python:3.14-slim image as needed
 ```
 
-**Stack guidance (defaults if no strong repo preference):**
+**Locked stack defaults:**
 
-- Backend: Python 3.14 + FastAPI + uvicorn, run inside the repo Docker image by default.
-- Frontend: Vite + React + TypeScript (can be built in Docker or served as static assets from the container).
-- Editor: Monaco or CodeMirror 6.
-- No new heavyweight design system; keep the UI utilitarian and debugger-clear (dense but readable). This is a developer tool, not a marketing landing page — prioritize information density and step clarity over brand hero layouts.
+- Backend: Python 3.14 + FastAPI + uvicorn (in Docker by default).
+- Frontend: Vite + React + TypeScript; Monaco or CodeMirror 6.
+- Utilitarian debugger UI — dense and clear, not a marketing page.
 
 ---
 
-## 5. Execution & trace contract (the hard part)
+## 5. Execution & trace contract
 
-Today’s `tb_pycore_runfile` only reports the final return and a coarse RF shadow, and it is a **single-core** path. The UI debugger needs a **time series on the two-core system top**.
+### 5.1 Principles
 
-### 5.1 Trace design principles
+1. **Hardware-faithful** (host Python only for optional expected-result compare).
+2. **Opcode-primary timeline** for v1 scrubber steps.
+3. Self-describing file trace (JSONL preferred; `key=value` OK if parsed cleanly).
+4. **Bounded size:** user max_cycles, max snapshots (~50k), optional keypoint mode.
+5. **Server-side decode** to UI JSON.
+6. **Always include excore visibility** (`mem_owner`, mailbox edges, parked state).
 
-1. **Hardware-faithful:** values come from sim/RTL observation, not from re-interpreting Python on the host (except optional expected-result compare).
-2. **Opcode-primary timeline:** v1 scrubber steps are “opcode retired” (or “entered S_WB / equivalent”). Optional sub-steps for multi-cycle container ops and excore service intervals can be phase markers.
-3. **Self-describing lines** the existing `cosim_trace.py` style can grow into, e.g. space-separated `key=value` plus a JSON snapshot mode for the UI.
-4. **Bounded size:** large programs must not explode RAM. Caps:
-   - max cycles (user-set),
-   - max retained snapshots (e.g. 50k),
-   - optional “keypoints only” mode (CALL/RETURN/trap/mailbox/container mutate).
-5. **Decode on the server** into UI-friendly JSON so the browser does not reimplement tag layouts.
-6. **Always include excore visibility:** even when no recoverable trap fires, the UI/trace should make clear that the two-core system is active (e.g. mem owner = PYCORE, excore parked). When a recoverable trap fires, record mailbox req/res and ownership flips.
-
-### 5.2 Minimum snapshot fields (per step)
+### 5.2 Minimum snapshot fields
 
 ```json
 {
@@ -216,7 +239,7 @@ Today’s `tb_pycore_runfile` only reports the final return and a coarse RF shad
   "locals_base": 0,
   "tos_base": 32,
   "mem_owner": "PYCORE",
-  "rf": { "0": {"tag": "INT", "display": "3", "raw": "..."}, "...": "..." },
+  "rf": { "0": {"tag": "INT", "display": "3", "raw": "..."} },
   "stack": [ {"tag": "INT", "display": "1"}, {"tag": "INT", "display": "2"} ],
   "frames": [
     {
@@ -241,45 +264,31 @@ Today’s `tb_pycore_runfile` only reports the final return and a coarse RF shad
 
 Notes:
 
-- Full RF every step is OK for small runs; for larger runs prefer stack + locals + dirty-RF deltas.
-- `heap_delta` can be “handles touched this step”; a separate endpoint can expand a handle into a full decoded object graph on demand.
-- Function / local names: after `bytecode_support`, prefer **`co_varnames`** from the 7-field code object (plus `co_names` / source map). Fall back to addresses only if missing.
-- `MUT_COLLEC` decode must include `kind` **and** `contaminated` (`value[123]`).
-- When excore owns memory / services a trap, either emit dedicated steps or annotate the straddling pycore steps with mailbox transition events so the scrubber can pause on handoffs.
-- Trap name table must cover the post-merge recoverable set, including **`DICT_UPDATE` (19)** and **`DICT_MERGE` (20)** as well as list/dict/set grow/extend/delete/update.
+- Prefer stack + locals + dirty-RF deltas for large runs.
+- Label locals via **`co_varnames`** from 7-field code objects.
+- `MUT_COLLEC` decode includes `kind` **and** `contaminated`.
+- Trap names must include list/dict/set grow/extend/delete/update **and** `DICT_UPDATE` (19) / `DICT_MERGE` (20).
+- Contaminated bulk with no mailbox → UI should say “bulk on pycore — contaminated”, not look broken.
 
-### 5.3 RTL / TB work required
+### 5.3 RTL / TB work
 
-Implement observation without changing architectural behavior:
-
-1. Extend the **two-core image-boot testbench path** used by `PYCORE_IMAGE_RUN_TWOCORE` / `pycore-img-*-two-core` (not legacy `tb_pycore_runfile` + `preprocess.py`).
-2. Always build/run with `EXCORE_EN=1` and a firmware hex (`excore-fw` / `FW_HEX`), matching Makefile two-core targets.
-3. Add a **trace enable** plus output path (plusarg, parameter, or env-selected file).
-4. At a stable point each opcode (e.g. end of writeback / when PC advances), dump:
-   - cycle, pc, opcode, oparg
-   - tos / locals_base / tos_base
-   - RF entries that are in the live locals+stack window (or full 96)
-   - frame-stack top pointer / depth if available
-   - `mem_owner`, trap_code if asserted
-   - mailbox req/res summary (trap_code, res_code, pop/push counts, heap_ptr) on handoff edges
-5. On program end: emit final return entry, PASS/FAIL/FATAL_TRAP/TIMEOUT reason (machine-readable).
-6. Keep `$display` human logs, but make the **file trace** the API the server parses.
-
-If hierarchical TB peeks (`dut.core.*`, mailbox, grant mux) are already the house style, continue that pattern for v1 rather than a large DPI redesign — but isolate peek logic in one TB/helper so it can be replaced later.
+1. Extend the **two-core image-boot** TB path (`PYCORE_IMAGE_RUN_TWOCORE` / `pycore-img-*-two-core`), not `tb_pycore_runfile`.
+2. Always `EXCORE_EN=1` + `FW_HEX` (`excore-fw`).
+3. Trace enable + output path (plusarg / parameter / env file).
+4. Per opcode (stable WB / PC advance): cycle, pc, opcode, oparg, tos/bases, live RF window, frame depth, `mem_owner`, trap/mailbox edges.
+5. End record: return entry + PASS/FAIL/FATAL_TRAP/TIMEOUT (machine-readable).
+6. Isolate hierarchical peeks in one helper module.
 
 ### 5.4 Source ↔ bytecode mapping
 
-Provide enough mapping for the editor to highlight:
-
-- Module/function code object → imem entry slot range.
-- Optional: disassembly list (`pc → opcode mnemonic`) from the built image (host can disassemble with `dis` / existing analyze tools).
-- Best-effort Python line mapping via CPython `co_linetable` if present in compile artifacts; if painful, v1 may highlight **disassembly PC** only and treat source-line highlight as stretch.
+- Code object → imem range; disassembly list for PC highlight.
+- Source-line mapping via `co_linetable` is stretch; PC/disasm is enough for v1.
 
 ---
 
 ## 6. UI specification
 
-### 6.1 Layout (single composition, debugger-first)
+### 6.1 Layout
 
 ```text
 ┌──────────────────────────────┬────────────────────────────────┐
@@ -287,13 +296,13 @@ Provide enough mapping for the editor to highlight:
 │ Entry · max cycles           │ return value · mem owner       │
 ├──────────────────────────────┼────────────────────────────────┤
 │ Source editor                │ Visualizations (tabbed/split)  │
-│ (drag-drop target overlay)   │  • Operand stack               │
+│ (drag-drop target)           │  • Operand stack               │
 │                              │  • Call frames                 │
-│ Disassembly (optional pane)  │  • Heap / object inspector     │
+│ Disassembly (optional)       │  • Heap / object inspector     │
 │                              │  • Excore / mailbox events     │
 │                              │  • RF raw (advanced)           │
 ├──────────────────────────────┴────────────────────────────────┤
-│ Timeline scrubber  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
+│ Timeline scrubber                                             │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -301,315 +310,241 @@ Provide enough mapping for the editor to highlight:
 
 | Action | Behavior |
 | --- | --- |
-| Drag `.py` onto editor | Load text; mark session stale until re-run |
-| Edit text | Mark stale; do not auto-run |
-| Run | Disable controls; show build+sim progress; on completion load step 0 or last; enable stepping |
-| Step forward/back | Move snapshot index; refresh all panes from that snapshot |
-| Click timeline | Jump to step |
-| Click stack/frame/heap handle | Open object inspector for that address |
-| Unsupported opcode at build | Show error panel with tool message; no sim |
+| Drag `.py` | Load text; mark session stale |
+| Edit text | Mark stale; no auto-run |
+| Run | Build+sim progress; then enable stepping |
+| Step / scrub | Move snapshot index; refresh panes |
+| Click handle | Open object inspector |
+| Unsupported opcode | Error panel; no sim |
 
-### 6.3 Visualization rules (domain-specific)
+### 6.3 Visualization rules
 
-**Tagged values** always show: tag name, short display, raw hex on hover.
+- **Tagged values:** tag name, short display, raw hex on hover.
+- **Stack:** consistent TOS orientation; highlight push/pop deltas.
+- **Frames:** depth, label, return PC; locals from `co_varnames`; show argcount/kwonly when useful.
+- **Heap:** LIST/DICT/SET/TUPLE/STR/CODE(7-field)/OBJECT; always show MUT_COLLEC kind + contamination.
+- **Excore:** `mem_owner` chip; mailbox events with taxonomy names; contaminated bulk annotation when no handoff.
+- **Fatal traps:** banner + freeze scrubber.
 
-**Operand stack:** vertical TOS-on-top or TOS-at-bottom (pick one, stay consistent); empty slots not shown; highlight pushes/pops between steps.
+### 6.4 Demo programs (examples menu)
 
-**Call frames:** stack of frames with function label, depth, return PC; selected frame shows locals by name from **`co_varnames`** (serialized on code objects after `bytecode_support`). Also surface `argcount` / `kwonlyargcount` when useful for CALL_KW demos.
+Reuse fixtures on `main` where possible:
 
-**Heap structures:**
-
-- LIST: length, capacity, element array (decoded entries); show handle contamination if set via `LIST_APPEND` of OBJECT
-- DICT/SET: len, slot table summary, insertion-order keys when applicable; **always show contamination bit** (OBJECT keys/elements)
-- TUPLE: size + elements
-- SHORT_STR / LONG_STR: decoded text (truncate long)
-- CODE_OBJECT: entry_slot, nlocals, stacksize, argcount, **kwonlyargcount**, defaults / kwdefaults / **varnames** handles (7-field layout)
-- OBJECT: kind + fields per `object_model.md`
-- MUT_COLLEC kind nibble must be decoded (LIST/DICT/SET/…) **plus** `contaminated`
-
-**Excore / mailbox:** persistent status chip for current `mem_owner`; event list for trap_req / trap_res with codes from the post-merge taxonomy, including `LIST_GROW`, `LIST_EXTEND`, `DICT_GROW`, `LIST_DELETE`, `SET_GROW`, `SET_UPDATE`, **`DICT_UPDATE`**, **`DICT_MERGE`**. When a bulk op runs on pycore because of contamination (no mailbox), show that in the UI (e.g. “bulk on pycore — contaminated”) so users are not confused by a missing handoff.
-
-**Fatal traps:** banner with code name; freeze scrubber at trap step.
-
-### 6.4 Demo programs
-
-Ship UI-loadable demos (buttons or examples menu), reusing existing programs / post-merge `img_*` fixtures where possible:
-
-- `smoke_return.py` — trivial return (two-core still active)
-- call / recursion example — frames
-- **`CALL_KW` / `CALL_FUNCTION_EX` example** (from `img_call_kw` / `img_call_function_ex*`) — stack shapes + named locals
+- `smoke_return.py` — trivial return
+- call / recursion — frames
+- `img_call_kw` / `img_call_function_ex*` — kw / vararg stack shapes
 - list/dict build + index — heap
-- list grow / extend — classic excore mailbox demo
-- **uncontaminated `DICT_UPDATE` / `DICT_MERGE` / `SET_UPDATE`** (`img_dict_update`, `img_dict_merge`, `img_set_update*`) — **required** bulk-trap mailbox demos after the merge
-- optional contaminated-key demo — shows pycore-owned bulk path / TYPE gap behavior without a false “missing excore” bug report
-- a program that fatal-traps (type or mem fault) — trap UX
+- list grow / extend — classic mailbox
+- `img_dict_update` / `img_dict_merge` / `img_set_update*` — **required** bulk-trap demos
+- optional contaminated-key demo — pycore-owned bulk / TYPE gap clarity
+- fatal trap demo — trap UX
 
 ---
 
 ## 7. Backend API sketch
 
-Implement roughly these endpoints (names flexible; keep the responsibilities):
-
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/health` | Python version, verilator present, docker/runtime info, repo root, confirms two-core/fw ready |
-| `POST` | `/api/sessions` | Body: source text, entry, max_cycles → create session, build+run two-core traced sim (or async job) |
-| `GET` | `/api/sessions/{id}` | Status, result summary, error |
+| `GET` | `/api/health` | Python 3.14, verilator, docker/runtime, two-core/fw ready |
+| `POST` | `/api/sessions` | `{source, entry, max_cycles}` → build+run two-core traced sim |
+| `GET` | `/api/sessions/{id}` | Status, result, error |
 | `GET` | `/api/sessions/{id}/steps/{n}` | Snapshot n |
-| `GET` | `/api/sessions/{id}/steps?from=&to=` | Bulk range for scrubbing |
-| `GET` | `/api/sessions/{id}/heap/{addr}` | Expanded object decode at step (query `step=`) |
-| `GET` | `/api/sessions/{id}/disasm` | PC → mnemonic listing |
-| `WS` | `/api/sessions/{id}/events` | Optional: build/sim progress streaming |
+| `GET` | `/api/sessions/{id}/steps?from=&to=` | Bulk range |
+| `GET` | `/api/sessions/{id}/heap/{addr}?step=` | Expanded object decode |
+| `GET` | `/api/sessions/{id}/disasm` | PC → mnemonic |
+| `WS` | `/api/sessions/{id}/events` | Optional progress stream |
 
-There is **no `mode=single|two-core` field** — sessions always use the two-core system.
+No `mode=single|two-core` field.
 
-Use a per-session temp dir under `build/sim_ui/<session_id>/` for hex, meta, fw reference, trace, logs. Clean up old sessions (TTL or LRU).
+Session dirs under `build/sim_ui/<session_id>/`; TTL/LRU cleanup.
 
-**Security (local tool, still be sane):**
-
-- Do not `eval` user source on the server except through the existing image/host helpers.
-- Cap source size and max_cycles.
-- Run Verilator with timeouts; kill runaway sims.
-- No arbitrary path reads from the client beyond the session sandbox.
+**Security:** no arbitrary path reads; cap source size / max_cycles; kill runaway sims; only use existing host helpers for expected-result compare.
 
 ---
 
-## 8. Integration with existing Make / Python / Docker tools
+## 8. Integration with Make / Python / Docker
 
 ### 8.1 Image build
 
-Primary:
-
 ```text
-Python source (text)
-  → image_from_source.build_image_from_source_text / write_image_outputs
-  → program.hex, dmem.hex, string_mem.hex, image.meta
+source text → image_from_source → program.hex, dmem.hex, string_mem.hex, image.meta
 ```
 
-Validate unsupported opcodes the same way tooling already does; surface stderr/exceptions to the UI.
-
-Entry convention: match repo programs — define `managed_entry()` (or user-selected name) and typically call it at module level for image-boot, consistent with `img_*` fixtures. Document this in the UI help strip.
+Entry convention: `managed_entry()` (+ module-level call as in `img_*` fixtures). Document in UI help.
 
 ### 8.2 Simulation (always two-core)
 
-Wrap the same Verilator top/flags the Makefile uses for `PYCORE_IMAGE_RUN_TWOCORE` / `pycore-img-*-two-core`:
+Match `PYCORE_IMAGE_RUN_TWOCORE` flags: `EXCORE_EN=1`, `FW_HEX`, shared dmem/mailbox/ownership.
 
-- `EXCORE_EN=1`
-- `FW_HEX` from `make excore-fw` (or equivalent)
-- Shared dmem / mailbox / ownership mux as in `pycore_excore_system`
-
-Prefer a **new Make target or Python runner** dedicated to traced two-core runs rather than scraping unrelated test PASS lines.
-
-Example shape:
+Add a dedicated traced runner, e.g.:
 
 ```bash
 make pycore-sim-trace \
   RUN_SOURCE=... \
   TRACE_JSONL=build/sim_ui/.../trace.jsonl \
   MAX_CYCLES=...
-# always depends on excore-fw; always EXCORE_EN=1
+# depends on excore-fw; always EXCORE_EN=1
 ```
-
-…or a Python equivalent used by both Make and the server.
-
-Do **not** wire the UI to `tb_pycore_runfile` / single-core `pycore_system` as the primary path.
 
 ### 8.3 Decoding
 
-Centralize tag/entry decoding in one Python module (extend `pycore/tools/encoding.py` / heap helpers rather than duplicating constants). After `bytecode_support` merges, reuse `make_mut(..., contaminated=)`, `mut_contaminated`, and the 7-field code-object readers already used by image tooling.
-
-Mirror layouts in:
-
-- `pycore/docs/tags.md` (incl. contamination bit)
-- `heap_image.py` / architecture memory map
-- frame descriptor + **7-field CODE_OBJECT** layout in `architecture.md`
-- mailbox / trap codes in `architecture.md` + `excore/docs/mmio_map.md` (include 19/20)
+Extend `pycore/tools/encoding.py` / heap helpers. Reuse `make_mut(..., contaminated=)`, `mut_contaminated`, 7-field code-object readers.
 
 ### 8.4 Python version
 
-Image tools require **Python 3.14**. Do not ask users to install 3.14 on the host if Docker can provide it.
+Require **Python 3.14** inside the orchestration environment (Docker provides it).
 
-### 8.5 Docker-first launch (required preference)
+### 8.5 Docker-first launch (primary)
 
-Use / extend the existing `Dockerfile` (`FROM python:3.14-slim` + Verilator) so the orchestration server and image-build tools run with a known interpreter.
+Extend existing `Dockerfile` (`FROM python:3.14-slim` + Verilator):
 
-Expectations:
-
-1. **Primary documented path** is Docker, e.g.:
-   - `make docker-build`
-   - `make docker-sim-ui` (or `docker compose up`) publishing the UI port (e.g. `8000`) to the host browser.
-2. The container must include whatever the server needs beyond the base image (e.g. `pip install` for FastAPI/uvicorn; Node only if the frontend is built inside the container — baking a production static build into the image is fine).
-3. Mount or copy the repo so Verilator can compile RTL and write `build/sim_ui/...` artifacts.
-4. `/api/health` should report that it is running under the expected Python 3.14 and that excore firmware build is available.
-5. A native (non-Docker) launch may exist for developers who already have Python 3.14 + Verilator, but it is secondary in docs and must not be the only path.
-6. Goal: avoid “works on my machine” Python-version conflicts for reviewers and later agents.
+1. Documented path:
+   ```bash
+   make docker-build
+   make docker-sim-ui          # publish host port 8000
+   ```
+2. Install server deps in image; serve built frontend static assets (or documented dev compose).
+3. Mount/copy repo so Verilator can compile RTL and write `build/sim_ui/...`.
+4. `/api/health` reports Python 3.14 + fw availability.
+5. Native launch may exist for developers with local 3.14 + Verilator, but is **secondary** in docs.
 
 ---
 
-## 9. Git / branch workflow for the implementing agent
+## 9. Git / branch workflow
 
 **Branch name is fixed:** `ui_simulation`
 
-Rules:
-
-1. **Base must include `bytecode_support`.** Preferred:
+1. Create from up-to-date `main` (already includes `bytecode_support`):
    ```bash
    git fetch origin main
-   # after PR #61 is merged:
    git checkout -b ui_simulation origin/main
    ```
-   If #61 is not merged yet:
-   ```bash
-   git fetch origin main bytecode_support cursor/merge-bulk-to-main-9270
-   git checkout -b ui_simulation origin/main
-   git merge origin/cursor/merge-bulk-to-main-9270   # or origin/bytecode_support
-   ```
-   Do not begin Phase A decode/trace work on pre-merge `main` alone.
-2. Do **all** implementation commits on `ui_simulation` (not on ad-hoc agent branches, unless temporarily experimenting — land results on `ui_simulation`).
-3. After finishing **each phase** (A/B/C/D), commit with a clear message and push:
-   ```bash
-   git push -u origin ui_simulation
-   ```
-4. Open or update **one PR** from `ui_simulation` → `main` (draft OK). Update the PR description as phases land. Note in the PR that it assumes the `bytecode_support` merge.
-5. If `main` moves (including when #61 merges), merge/rebase `origin/main` into `ui_simulation` and resolve conflicts before continuing a phase.
-6. Do not rename the branch. The reviewer will look specifically for `ui_simulation`.
+2. All implementation commits on `ui_simulation`.
+3. After each phase: commit + `git push -u origin ui_simulation`.
+4. One PR: `ui_simulation` → `main` (draft OK until Phase A/B solid).
+5. If `main` moves, merge `origin/main` into `ui_simulation` before continuing.
+6. Do not rename the branch.
 
 ---
 
-## 10. Phased delivery plan
+## 10. Phased delivery
 
-Implement in phases so a partial PR on `ui_simulation` is still reviewable. **Push after each phase.**
+### Phase A — Vertical slice
 
-### Phase A — Vertical slice (approve-to-demo)
+- `make docker-sim-ui` (or equivalent) works on port 8000.
+- Paste/drag source → image build → **traced two-core** sim.
+- Trace: step, cycle, pc, opcode, stack, mem_owner, return summary.
+- Minimal UI: editor, Run, result, stack, step buttons.
+- Smoke: `managed_entry` → INT `12`.
 
-- Docker-first launch path works (`make docker-sim-ui` or equivalent).
-- Server can build image from pasted source and run a **traced two-core** sim for a trivial program.
-- Trace contains at least: step, cycle, pc, opcode, stack list, mem_owner, return summary.
-- Minimal web UI: editor, Run, result panel, stack panel, step buttons.
-- Works for `managed_entry` returning a small INT.
+**Exit:** smoke demo works; UI shows two-core active. **Then push `ui_simulation`.**
 
-**Exit criteria:** drag/paste `smoke_return.py` → Run → see `12`, step through a few opcodes with stack updates; health/UI indicates two-core system.  
-**Then:** commit + `git push -u origin ui_simulation`.
+### Phase B — Frames + disasm + errors + excore lane
 
-### Phase B — Frames + disassembly + errors + excore event lane
+- Frames with `co_varnames` locals.
+- Disasm synced to PC (CALL_KW / bulk opcodes when present).
+- Polished build/trap/timeout errors; timeline scrubber.
+- Mailbox event lane with post-merge trap names; ≥1 bulk or list-grow demo.
 
-- Call frame panel with depth and locals labeled via **`co_varnames`**.
-- Disassembly pane synced to PC (include CALL_KW / CALL_FUNCTION_EX / bulk opcodes when present).
-- Image-build / fatal-trap / timeout errors polished in UI.
-- Timeline scrubber.
-- Excore/mailbox event lane present with post-merge trap names (incl. `DICT_UPDATE` / `DICT_MERGE` when exercised).
-- At least one bulk-dict or list-grow handoff demo wired in the examples menu.
-
-**Exit criteria:** recursion/call-chain demo shows nested named locals; grow/extend or dict-update demo shows mailbox handoff; fatal trap demo shows code name.  
-**Then:** commit + push `ui_simulation`.
+**Exit:** nested named locals + mailbox handoff + fatal trap name. **Then push.**
 
 ### Phase C — Heap inspector (+ contamination)
 
-- On-demand heap decode for LIST/DICT/SET/TUPLE/STR/CODE/OBJECT (7-field code objects).
-- Show **contamination bit** on MUT_COLLEC handles; explain bulk routing in the inspector/event lane.
-- Highlight mutated handles across steps.
-- Richer mailbox payload display (trap entries / result entries) as available.
+- On-demand LIST/DICT/SET/TUPLE/STR/CODE/OBJECT decode.
+- Contamination bit visible; bulk routing explained.
+- Richer mailbox payloads as available.
 
-**Exit criteria:** list/dict demo inspectable; uncontaminated update/merge shows excore completion; contaminated handle is visible in the UI.  
-**Then:** commit + push `ui_simulation`.
+**Exit:** inspectable heap; uncontaminated update/merge shows excore; contam visible. **Then push.**
 
 ### Phase D — Polish
 
-- Examples menu, keyboard shortcuts (Run, Step), session persistence in memory only.
-- Trace size controls / keypoint mode.
-- Docs: `sim_ui/README.md` + link from root `README.md` (Docker-first instructions).
-- Basic automated tests: decode unit tests, trace parser tests, one end-to-end “build+parse smoke” if CI/Docker can run Verilator.
+- Examples menu, shortcuts, in-memory sessions, keypoint mode.
+- `sim_ui/README.md` + root README link (Docker-first).
+- Unit tests (decode, trace parse) + golden JSONL (prefer bulk mailbox) + Docker e2e smoke if feasible.
 
-**Then:** commit + push `ui_simulation`; mark PR ready if acceptance (§3.3) is met.
-
----
-
-## 11. Testing requirements for the implementing agent
-
-1. **Unit tests** for tag/entry decode and trace parser (no Verilator).
-2. **Golden trace fixture** (checked-in small JSONL, including at least one mailbox handoff — preferably a post-merge bulk trap such as `DICT_UPDATE` / `DICT_MERGE` or classic `LIST_GROW`) to lock UI/server parsing.
-3. **Manual/scripted e2e:** via Docker if possible — POST session with smoke program, assert return INT 12 on two-core path.
-4. Do **not** weaken existing `make pycore-test` / image differentials; new hooks must be off-by-default or unused by existing TBs.
-5. If RTL/TB changes land, run relevant two-core image tests (`pycore-img-smoke-two-core` at minimum; plus a grow/extend two-core test if mailbox tracing touches shared modules).
+**Then push; mark PR ready if §3.3 met.**
 
 ---
 
-## 12. Implementation constraints & risks
+## 11. Testing requirements
+
+1. Unit tests for decode + trace parser (no Verilator).
+2. Golden JSONL fixture with ≥1 mailbox handoff (`DICT_UPDATE` / `DICT_MERGE` / `LIST_GROW`).
+3. Docker e2e if possible: POST smoke session → INT 12.
+4. Do not weaken existing `make pycore-test` / image differentials; new hooks off-by-default for old TBs.
+5. If RTL/TB changes: run `pycore-img-smoke-two-core` at minimum; plus a grow/extend or dict-update two-core test when mailbox tracing touches shared modules.
+
+---
+
+## 12. Risks & mitigations
 
 | Risk | Mitigation |
 | --- | --- |
-| Hierarchical signal peeks brittle across RTL refactors | Isolate in one TB/trace module; prefer stable architectural state (RF, PC, tos, frame ptr, mem_owner, mailbox) |
-| Trace files huge | Caps, deltas, keypoint mode |
-| Line mapping incomplete | Ship PC/disasm highlight first |
-| `run-file` preprocess path diverges from image-boot | Do not build the UI on `preprocess.py` |
-| Two-core always-on adds FW/build coupling | Depend on `excore-fw` in the sim-ui Make/Docker path; fail health check if FW missing |
-| Host Python version conflicts | Docker-first launch using `python:3.14-slim` image; native path secondary |
-| Security of `exec` in host expected-result | Reuse existing helper; only for compare; never trust client paths |
-| Agents invent alternate branch names | Hard requirement: land work on `ui_simulation` only |
-| Building against pre-`bytecode_support` main | §2.1 / §9: wait for PR #61 or merge that tip first; treat 7-field code objects + contam bit + traps 19/20 as required |
-| Stale trap/name tables omit DICT_UPDATE/MERGE | Generate/name from post-merge `pycore_defs` / architecture taxonomy |
-| Users expect excore on contaminated bulk ops | UI must show contamination and “pycore-owned bulk” when no mailbox fires |
+| Hierarchical peeks brittle | One TB/trace helper; prefer RF/PC/tos/frame/`mem_owner`/mailbox |
+| Huge traces | Caps, deltas, keypoint mode |
+| Weak line mapping | PC/disasm first |
+| Legacy preprocess divergence | Do not use `preprocess.py` as primary |
+| FW/build coupling | `excore-fw` in Make/Docker path; health fails if missing |
+| Host Python conflicts | Docker-first `python:3.14-slim` |
+| Host `exec` for expected result | Existing helper only; no client path reads |
+| Wrong branch name | Only `ui_simulation` |
+| Stale trap tables | Use current `pycore_defs` / architecture taxonomy (incl. 19/20) |
+| Missing mailbox on contaminated bulk | Show contamination + “pycore-owned bulk” |
 
 ---
 
-## 13. Deliverables checklist (agent definition of done)
+## 13. Deliverables checklist
 
-- [ ] Implementation branch **`ui_simulation`** based on post-`bytecode_support` tree, pushed with phase commits
-- [ ] `sim_ui/` (or equivalent) with server + web client
-- [ ] Docker-first Make/docs entry point: one command to launch the UI
-- [ ] Image-boot **two-core** run path with structured trace output (`EXCORE_EN=1` always)
-- [ ] Decode understands **7-field code objects**, **contamination bit**, and traps **19/20**
-- [ ] UI: load source (drag/drop + edit), Run, result, step/scrub
-- [ ] Panels: stack, frames (named locals), excore/mailbox events (incl. bulk traps), heap inspector with contam, basic RF/advanced raw
+- [ ] Branch **`ui_simulation`** from current `main`, phase commits pushed
+- [ ] `sim_ui/` (or equivalent) server + web client
+- [ ] Docker-first one-command launch on port **8000**
+- [ ] Image-boot **two-core** traced path (`EXCORE_EN=1` always)
+- [ ] Decode: **7-field code objects**, **contamination bit**, traps **19/20**
+- [ ] UI: drag/drop + edit, Run, result, step/scrub
+- [ ] Panels: stack, frames (named locals), excore/mailbox, heap+contam, RF advanced
 - [ ] Clear errors for unsupported Python / fatal traps / timeouts
-- [ ] Tests for decode + trace parse (incl. contam + a bulk mailbox fixture); smoke path documented
-- [ ] Root or `sim_ui` README section describing UX, Docker launch, and limits (bytecode subset, Python 3.14 in container)
-- [ ] No reliance on deprecated preprocess as the primary path
-- [ ] No single-core UI mode
-- [ ] This planning doc updated with “Implemented” notes / deviations only if approval changes scope
+- [ ] Tests: decode + trace parse (+ golden mailbox); smoke documented
+- [ ] `sim_ui/README.md` (+ root README link): Docker launch + bytecode subset limits
+- [ ] No deprecated-preprocess primary path; no single-core UI mode
+- [ ] PR `ui_simulation` → `main` updated each phase
 
 ---
 
 ## 14. Prompt for the implementing agent (copy-paste kickoff)
 
-After a human approves this document, an implementing agent should treat the following as the task statement:
-
 ```text
 Implement the PyCore Interactive Simulator & Debugger UI described in
-`planning/pycore_sim_debugger_ui_prompt.md`.
+`planning/pycore_sim_debugger_ui_prompt.md` (read §0 handoff + full doc).
 
 Git workflow (mandatory):
-- Create/use branch exactly named `ui_simulation`.
-- Base it on main AFTER bytecode_support lands (PR #61), or merge
-  origin/bytecode_support / origin/cursor/merge-bulk-to-main-9270 into
-  ui_simulation before Phase A if #61 is still open (see plan §2.1 / §9).
-- Commit and push to `origin/ui_simulation` after each completed phase.
-- Open/update one PR from `ui_simulation` → `main`.
+- git fetch origin main
+- git checkout -b ui_simulation origin/main
+  (main already includes bytecode_support / PR #61)
+- If the planning brief is not on main yet, bring
+  planning/pycore_sim_debugger_ui_prompt.md onto this branch first.
+- Commit and push to origin/ui_simulation after each completed phase.
+- Open/update one PR: ui_simulation → main.
 
-Read that planning document fully, then read the post-merge README and the
-pycore/excore docs it cites (especially tags contamination bit, 7-field code
-objects, and trap codes 19/20). Execute Phase A first and push; continue
-through Phase B and push. Do not start Phase C/D unless Phase A/B are solid
-or the user asks to go further.
+Read README.md and the pycore/excore docs cited in the brief (tags
+contamination bit, 7-field code objects, trap codes including 19/20).
+Execute Phase A first and push; continue through Phase B and push.
+Do not start Phase C/D unless A/B are solid or the user asks.
 
 Constraints:
-- Always simulate the full two-core system (pycore + excore, EXCORE_EN=1).
-  Do not offer or default to single-core.
-- Prefer Docker for launch/orchestration (extend existing Dockerfile /
-  make docker-* flow) so Python 3.14/Verilator are container-provided.
-- Prefer image_from_source / two-core image-boot tops; do not make
-  preprocess.py or tb_pycore_runfile primary.
-- Assume bytecode_support ISA: CALL_KW/CALL_FUNCTION_EX, MAP_ADD,
+- Always two-core (pycore + excore, EXCORE_EN=1). No single-core mode.
+- Docker-first launch (extend Dockerfile / make docker-*); publish port 8000.
+- image_from_source + two-core image-boot tops only as primary path
+  (not preprocess.py / tb_pycore_runfile).
+- Assume current main ISA: CALL_KW/CALL_FUNCTION_EX, MAP_ADD,
   DICT_UPDATE/DICT_MERGE/SET_UPDATE bulk routing, MUT_COLLEC contamination bit.
-- Add RTL/TB observation hooks only as needed for tracing; do not change
-  architectural execution semantics.
+- Trace hooks only; do not change architectural execution semantics.
 - Keep existing make test targets green.
-- Put new code under a dedicated sim_ui (or pycore/sim_ui) tree plus minimal
-  Makefile/README/Docker wiring.
-- Match the UX must-haves in §3.1 and the success definition in §3.3.
+- New code under sim_ui/ (or pycore/sim_ui/) + minimal Makefile/README/Docker wiring.
+- Match §3.1 must-haves and §3.3 success definition.
+- Stack defaults: FastAPI + React/Vite; per-opcode snapshots in v1.
 
-Acceptance for the first push/PR slice:
-- Docker-first one-command UI launch
+Acceptance for the first push/PR slice (Phase A):
+- Docker-first one-command UI launch on :8000
 - Paste/drag Python with managed_entry, Run on two-core sim, see decoded return
 - Step through snapshots with operand stack visualization
 - Document Docker launch and supported Python subset
@@ -617,21 +552,17 @@ Acceptance for the first push/PR slice:
 
 ---
 
-## 15. Reviewer notes (for you)
+## 15. Locked defaults & closed reviewer questions
 
-Already locked from feedback:
+| Topic | Decision |
+| --- | --- |
+| Core mode | Always two-core |
+| Launch | Docker-first; port **8000**; Make wrapper (`docker-sim-ui`) preferred over bespoke compose unless compose is clearly simpler |
+| Implementation branch | **`ui_simulation`** |
+| Base | Current **`main`** (bytecode_support merged via #61) |
+| UI stack | FastAPI + React/Vite + Monaco/CodeMirror |
+| Trace fidelity v1 | Per-opcode snapshots (finer phase/cycle optional later) |
+| Legacy `make run-file` | Leave as-is (out of scope) |
+| Planning status | Ready for handoff — implementing agent may start |
 
-- ✅ Always two-core (pycore + excore)
-- ✅ Docker-first to avoid host Python conflicts
-- ✅ Implementation branch name: `ui_simulation`
-- ✅ Account for pending `bytecode_support` → `main` merge (PR #61) as the implementation base
-
-Still optional to amend before kickoff:
-
-1. **UI stack:** FastAPI + React/Vite default OK, or prefer a simpler single-page + Starlette/Flask approach?
-2. **Trace fidelity:** Per-opcode snapshots OK, or need true per-cycle / per-container-phase stepping in v1?
-3. **Legacy `make run-file`:** Leave as-is (recommended), or also migrate it to image-boot as drive-by work? (Drive-by not required.)
-4. **Published port / compose:** Any preference for port number or docker compose vs plain `docker run` Make wrapper?
-5. **Start now vs wait:** Prefer the implementing agent wait for #61 to merge, or start immediately by merging `bytecode_support` into `ui_simulation`?
-
-Mark remaining decisions at the top of this file when approved, then hand the §14 kickoff prompt to an implementing agent.
+No further human decisions are required to begin Phase A.

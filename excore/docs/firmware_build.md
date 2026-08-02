@@ -22,9 +22,14 @@ python3 excore/tools/asm_rv32.py excore/fw/list_grow.s -o build/excore_fw/list_g
 | 11 | `PY_TRAP_DICT_GROW` |
 | 12 | `PY_TRAP_LIST_DELETE` |
 | 13 | `PY_TRAP_SET_GROW` |
-| 14 | `PY_TRAP_SET_UPDATE` |
+| 14 | `PY_TRAP_SET_UPDATE` (LIST/SET/DICT source; dict source inserts keys) |
+| 19 | `PY_TRAP_DICT_UPDATE` (`do_dict_update`: grow A to fit, insert all of B, overwrite dups) |
+| 20 | `PY_TRAP_DICT_MERGE` (`do_dict_merge`: build fresh dict C = A then B, duplicate key → fatal `TYPE`) |
 
-Dict/set rich equality stays on pycore (no collision trap).
+Dict/set rich equality stays on pycore (no collision trap). The bulk hash traps
+(`SET_UPDATE`, `DICT_UPDATE`, `DICT_MERGE`) are only raised when both operands
+are uncontaminated (no `OBJECT` keys/elements), so the firmware hashes plain
+values directly; contaminated collections stay on pycore.
 
 or via the Makefile step used by every excore RTL test target:
 

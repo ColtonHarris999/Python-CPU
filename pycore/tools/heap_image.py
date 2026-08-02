@@ -16,7 +16,9 @@ from encoding import (
     BOOT_RECORD_ADDR,
     CODE_FIELD_CO_CONSTS,
     CODE_FIELD_CO_DEFAULTS,
+    CODE_FIELD_CO_KWDEFAULTS,
     CODE_FIELD_CO_NAMES,
+    CODE_FIELD_CO_VARNAMES,
     CODE_FIELD_ENTRY_SLOT,
     CODE_FIELD_METADATA,
     CODE_OBJECT_BYTES,
@@ -357,34 +359,53 @@ class HeapImageBuilder:
         entry_slot: int,
         co_consts: Tagged,
         co_names: Tagged,
+        co_varnames: Tagged,
         *,
         stacksize: int,
         nlocals: int,
         argcount: int,
+        kwonlyargcount: int = 0,
         co_defaults: Tagged | None = None,
+        co_kwdefaults: Tagged | None = None,
     ) -> Tagged:
-        """Allocate a 192-byte code object (5 tagged-entry fields).
+        """Allocate a 224-byte code object (7 tagged-entry fields).
 
         field 0 : entry_slot  (INT) — imem slot index of the first code unit
         field 1 : co_consts   (TUPLE handle)
         field 2 : co_names    (TUPLE handle)
-        field 3 : metadata    (INT) — packed {stacksize, nlocals, argcount}
+        field 3 : metadata    (INT) — packed
+                  {kwonlyargcount, stacksize, nlocals, argcount}
         field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
+        field 5 : co_varnames (TUPLE handle; local/argument names)
+        field 6 : co_kwdefaults (MUT_DICT handle; empty ⇒ no kw-only defaults)
         """
-        assert CODE_OBJECT_NFIELDS == 5
+        assert CODE_OBJECT_NFIELDS == 7
         assert co_consts[0] == TAG_TUPLE
         assert co_names[0] == TAG_TUPLE
+        if co_varnames[0] != TAG_TUPLE:
+            raise ValueError("co_varnames must be a TUPLE handle")
         if co_defaults is None:
             co_defaults = self.alloc_tuple([])
         if co_defaults[0] != TAG_TUPLE:
             raise ValueError("co_defaults must be a TUPLE handle")
+        if co_kwdefaults is None:
+            co_kwdefaults = self.alloc_dict([], slot_count=4)
+        if not is_mut_kind(co_kwdefaults, MUT_DICT):
+            raise ValueError("co_kwdefaults must be a MUT_DICT handle")
         addr = self._alloc(CODE_OBJECT_BYTES)
         fields: list[Tagged] = [
             (TAG_INT, int_value(entry_slot)),  # field 0
             co_consts,                         # field 1
             co_names,                          # field 2
-            (TAG_INT, pack_code_metadata(stacksize, nlocals, argcount)),  # field 3
+            (
+                TAG_INT,
+                pack_code_metadata(
+                    stacksize, nlocals, argcount, kwonlyargcount
+                ),
+            ),                                 # field 3
             co_defaults,                       # field 4
+            co_varnames,                       # field 5
+            co_kwdefaults,                     # field 6
         ]
         # Silence unused-import lint for field index constants (documented API).
         assert CODE_FIELD_ENTRY_SLOT == 0
@@ -392,6 +413,8 @@ class HeapImageBuilder:
         assert CODE_FIELD_CO_NAMES == 2
         assert CODE_FIELD_METADATA == 3
         assert CODE_FIELD_CO_DEFAULTS == 4
+        assert CODE_FIELD_CO_VARNAMES == 5
+        assert CODE_FIELD_CO_KWDEFAULTS == 6
         for i, (tag, val) in enumerate(fields):
             self._write_tagged(addr + i * 32, tag, val)
         return TAG_CODE_OBJECT, addr & ((1 << 64) - 1)
