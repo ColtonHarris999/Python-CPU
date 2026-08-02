@@ -136,13 +136,13 @@ whose ownership is being transferred.
 | 11 | `PY_TRAP_DICT_GROW` | **recoverable** | new-key dict insert at load ≥ 2/3; excore realloc + rehash + STORE |
 | 12 | `PY_TRAP_LIST_DELETE` | **recoverable** | mid-list `DELETE_SUBSCR` shift; excore COMPLETED pop 2 |
 | 13 | `PY_TRAP_SET_GROW` | **recoverable** | `SET_ADD` at load ≥ 2/3; excore realloc + insert |
-| 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | uncontaminated `SET_UPDATE` with a `LIST`/`SET`/`DICT` source; excore grow-to-fit + merge (dict source inserts keys) |
+| 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | uncontaminated `SET_UPDATE` with a `LIST`/`SET`/`DICT` source; excore grow-to-fit + merge (dict source inserts keys). `TUPLE` sources and any contaminated operand are owned by pycore (`pycore_cont_bulk.svh`) instead of trapping |
 | 15 | `PY_TRAP_ATTR_ERROR` | fatal | `LOAD_ATTR` / `DELETE_ATTR` miss after instance `__dict__` + MRO |
 | 16 | `PY_TRAP_BUILTIN_CALL` | **recoverable** | builtin call handed to firmware |
 | 17 | `PY_TRAP_RAISE` | fatal | `RAISE_VARARGS` (no handler tables yet) |
 | 18 | `PY_TRAP_SLICE` | **recoverable** | slice helper |
-| 19 | `PY_TRAP_DICT_UPDATE` | **recoverable** | uncontaminated `A.update(B)`; excore grows A to fit `used(A)+used(B)` and inserts all of B, overwriting dups |
-| 20 | `PY_TRAP_DICT_MERGE` | **recoverable** | non-empty uncontaminated `DICT_MERGE`; excore builds a fresh dict C (A then B, duplicate key → fatal `TYPE`) |
+| 19 | `PY_TRAP_DICT_UPDATE` | **recoverable** | uncontaminated `A.update(B)`; excore grows A to fit `used(A)+used(B)` and inserts all of B, overwriting dups. Contaminated (OBJECT-key) operands are owned by pycore (`pycore_cont_bulk.svh`) instead of trapping |
+| 20 | `PY_TRAP_DICT_MERGE` | **recoverable** | non-empty uncontaminated `DICT_MERGE`; excore builds a fresh dict C (A then B, duplicate key → fatal `TYPE`). Contaminated operands build C in pycore (`pycore_cont_bulk.svh`) |
 
 `pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
 truth for the fatal/recoverable split. `EXCORE_EN=1` intercepts a recoverable
@@ -468,7 +468,11 @@ path). `DICT_MERGE` aliases the empty-dest call-site shape used for `**kwargs`;
 a non-empty uncontaminated dest raises `PY_TRAP_DICT_MERGE` (20) and the excore
 builds a fresh combined dict. `DICT_UPDATE` (`{**a, **b}` displays) and `MAP_ADD`
 (dict comprehensions) are also supported — see `bytecode_support.md` and the
-MUT_COLLEC contamination-bit routing in `tags.md`.
+MUT_COLLEC contamination-bit routing in `tags.md`. Contaminated (OBJECT-key /
+element) `DICT_UPDATE` / `DICT_MERGE` / `SET_UPDATE`, and every `TUPLE`-source
+`SET_UPDATE`, are handled entirely by pycore in `pycore_cont_bulk.svh` (optional
+grow + rehash, then a shared probe/insert sub-FSM folds in the source) rather
+than being delegated to the excore fast paths.
 
 `LOAD_CONST` is a normal one-slot CPython instruction. It indexes
 `co_consts[arg]` and the container FSM performs two dmem reads (value slot then
