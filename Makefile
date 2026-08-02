@@ -164,7 +164,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-set-build-simple pycore-img-set-add-contains \
 	pycore-img-set-bool-int pycore-img-set-hash-neg1 pycore-img-set-str \
 	pycore-img-set-grow-fatal pycore-img-set-grow-basic pycore-img-set-update \
-	pycore-img-map-add pycore-img-dict-update pycore-img-dict-merge \
+	pycore-img-set-update-tuple \
+	pycore-img-map-add pycore-img-dict-update pycore-img-dict-update-obj \
+	pycore-img-dict-merge \
 	pycore-img-two-core \
 	pycore-img-attr-basic pycore-img-attr-overwrite pycore-img-attr-many \
 	pycore-img-attr-missing pycore-img-attr-type-trap \
@@ -931,6 +933,12 @@ pycore-img-set-grow-basic: excore-fw
 pycore-img-set-update: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,set_update,100000)
 
+# TUPLE-source SET_UPDATE: excore fast path excludes TUPLE, so pycore owns the
+# whole op (grow + rehash + insert). Two-core so the excore firmware is linked
+# even though the SET_UPDATE itself never traps out to it.
+pycore-img-set-update-tuple: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,set_update_tuple,100000)
+
 # Bulk dict ops: MAP_ADD (dict comprehension), DICT_UPDATE ({**a, **b}) and
 # non-empty DICT_MERGE (CALL_FUNCTION_EX **kwargs). All hit excore grow/merge.
 pycore-img-map-add: excore-fw
@@ -938,6 +946,11 @@ pycore-img-map-add: excore-fw
 
 pycore-img-dict-update: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_update,150000)
+
+# Contaminated DICT_UPDATE (OBJECT/instance keys) — pycore owns grow + rehash +
+# order-copy + insert/overwrite; never traps to excore for the update itself.
+pycore-img-dict-update-obj: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_update_obj,200000)
 
 pycore-img-dict-merge: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_merge,150000)
@@ -1059,8 +1072,10 @@ pycore-img-two-core: \
 	pycore-img-dict-mixed-ops \
 	pycore-img-set-grow-basic \
 	pycore-img-set-update \
+	pycore-img-set-update-tuple \
 	pycore-img-map-add \
 	pycore-img-dict-update \
+	pycore-img-dict-update-obj \
 	pycore-img-dict-merge \
 	pycore-img-attr-many
 
