@@ -66,10 +66,12 @@ def _write_boot_image(
     stacksize: int = 4,
 ) -> None:
     co_names = heap.alloc_tuple([])
+    co_varnames = heap.alloc_tuple([])
     module_code = heap.add_code_object(
         entry_slot=0,
         co_consts=co_consts,
         co_names=co_names,
+        co_varnames=co_varnames,
         stacksize=stacksize,
         nlocals=0,
         argcount=0,

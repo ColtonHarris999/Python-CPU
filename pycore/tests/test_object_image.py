@@ -116,8 +116,9 @@ class TestAllocBoundMethod(unittest.TestCase):
         heap = HeapImageBuilder()
         consts = heap.alloc_tuple([])
         names = heap.alloc_tuple([])
+        varnames = heap.alloc_tuple([])
         code = heap.add_code_object(
-            0, consts, names, stacksize=2, nlocals=1, argcount=1
+            0, consts, names, varnames, stacksize=2, nlocals=1, argcount=1
         )
         inst = heap.alloc_instance()
         bm = heap.alloc_bound_method(code, inst)

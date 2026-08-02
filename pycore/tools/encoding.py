@@ -41,11 +41,16 @@ CTL_NONE = 1
 CTL_NULL = 2
 
 # MUT_COLLEC secondary kinds in value[127:124].
+# Contamination bit lives in value[123]: set when the collection has ever
+# contained a TAG_OBJECT element (dicts: OBJECT keys only). Used to keep
+# bulk update/merge hashing on pycore when excore cannot hash OBJECTs.
+# FROZENSET (when live) uses the same value[123] convention.
 MUT_LIST = 1
 MUT_DICT = 2
 MUT_SET = 3
 MUT_BYTEARRAY = 4
 MUT_DEQUE = 5
+MUT_CONTAMINATED_BIT = 123
 
 SHORT_STR_MAX_BYTES = 15
 SHORT_STR_SIZE_SHIFT = 124
@@ -76,8 +81,10 @@ CODE_FIELD_CO_CONSTS = 1
 CODE_FIELD_CO_NAMES = 2
 CODE_FIELD_METADATA = 3
 CODE_FIELD_CO_DEFAULTS = 4
-CODE_OBJECT_NFIELDS = 5
-CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 192
+CODE_FIELD_CO_VARNAMES = 5
+CODE_FIELD_CO_KWDEFAULTS = 6
+CODE_OBJECT_NFIELDS = 7
+CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 224
 
 # General OBJECT kinds under TAG_OBJECT (mirror PY_OBK_* in pycore_defs.svh).
 OBK_INSTANCE = 1
@@ -164,34 +171,47 @@ NONE_ENTRY = make_none()
 NULL_ENTRY = make_null()
 
 
-def make_mut(kind: int, addr: int) -> tuple[int, int]:
-    """Return a MUT_COLLEC handle with kind[127:124] and addr[63:0]."""
+def make_mut(kind: int, addr: int, contaminated: bool = False) -> tuple[int, int]:
+    """Return a MUT_COLLEC handle: kind[127:124], contam[123], addr[63:0]."""
     value = ((kind & 0xF) << 124) | (addr & ((1 << 64) - 1))
+    if contaminated:
+        value |= 1 << MUT_CONTAMINATED_BIT
     return TAG_MUT_COLLEC, value
 
 
-def make_list(addr: int) -> tuple[int, int]:
-    return make_mut(MUT_LIST, addr)
+def make_list(addr: int, contaminated: bool = False) -> tuple[int, int]:
+    return make_mut(MUT_LIST, addr, contaminated)
 
 
-def make_dict(addr: int) -> tuple[int, int]:
-    return make_mut(MUT_DICT, addr)
+def make_dict(addr: int, contaminated: bool = False) -> tuple[int, int]:
+    return make_mut(MUT_DICT, addr, contaminated)
 
 
-def make_set(addr: int) -> tuple[int, int]:
-    return make_mut(MUT_SET, addr)
+def make_set(addr: int, contaminated: bool = False) -> tuple[int, int]:
+    return make_mut(MUT_SET, addr, contaminated)
 
 
-def make_bytearray(addr: int) -> tuple[int, int]:
-    return make_mut(MUT_BYTEARRAY, addr)
+def make_bytearray(addr: int, contaminated: bool = False) -> tuple[int, int]:
+    return make_mut(MUT_BYTEARRAY, addr, contaminated)
 
 
 def mut_kind(value: int) -> int:
     return (value >> 124) & 0xF
 
 
+def mut_contaminated(value: int) -> bool:
+    return bool((value >> MUT_CONTAMINATED_BIT) & 1)
+
+
 def mut_addr(value: int) -> int:
     return value & ((1 << 64) - 1)
+
+
+def mut_with_contam(value: int, contaminated: bool = True) -> int:
+    """Return MUT_COLLEC value with contamination bit set or cleared."""
+    if contaminated:
+        return value | (1 << MUT_CONTAMINATED_BIT)
+    return value & ~(1 << MUT_CONTAMINATED_BIT)
 
 
 def is_mut_kind(entry: tuple[int, int], kind: int) -> bool:
@@ -350,12 +370,32 @@ def tag_constant(
     return TAG_OBJECT, 0
 
 
-def pack_code_metadata(stacksize: int, nlocals: int, argcount: int) -> int:
-    """Pack {stacksize[15:0], nlocals[15:0], argcount[15:0]} into value[47:0]."""
+def pack_code_metadata(
+    stacksize: int,
+    nlocals: int,
+    argcount: int,
+    kwonlyargcount: int = 0,
+) -> int:
+    """Pack code metadata fields into value[63:0].
+
+    Bits [15:0]=argcount, [31:16]=nlocals, [47:32]=stacksize,
+    [63:48]=kwonlyargcount.
+    """
     return (
-        ((stacksize & 0xFFFF) << 32)
+        ((kwonlyargcount & 0xFFFF) << 48)
+        | ((stacksize & 0xFFFF) << 32)
         | ((nlocals & 0xFFFF) << 16)
         | (argcount & 0xFFFF)
+    )
+
+
+def unpack_code_metadata(meta: int) -> tuple[int, int, int, int]:
+    """Return ``(stacksize, nlocals, argcount, kwonlyargcount)`` from metadata."""
+    return (
+        (meta >> 32) & 0xFFFF,
+        (meta >> 16) & 0xFFFF,
+        meta & 0xFFFF,
+        (meta >> 48) & 0xFFFF,
     )
 
 

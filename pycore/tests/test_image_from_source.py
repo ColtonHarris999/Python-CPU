@@ -10,7 +10,21 @@ import unittest
 if sys.version_info[:2] != (3, 14):
     raise unittest.SkipTest("image_from_source tests require Python 3.14")
 
-from encoding import TAG_CODE_OBJECT, TAG_INT, TAG_RANGE, mut_addr
+from encoding import (
+    CODE_FIELD_CO_KWDEFAULTS,
+    CODE_FIELD_CO_VARNAMES,
+    CODE_FIELD_METADATA,
+    MUT_DICT,
+    TAG_CODE_OBJECT,
+    TAG_INT,
+    TAG_MUT_COLLEC,
+    TAG_RANGE,
+    TAG_TUPLE,
+    mut_addr,
+    mut_kind,
+    pack_code_metadata,
+    unpack_code_metadata,
+)
 from pycore.tools import image_from_source
 
 
@@ -19,6 +33,16 @@ def _compile_module(src: str):
 
 
 class ImageTranscodingTest(unittest.TestCase):
+    def test_pack_code_metadata_includes_kwonlyargcount(self) -> None:
+        meta = pack_code_metadata(
+            stacksize=7,
+            nlocals=6,
+            argcount=5,
+            kwonlyargcount=4,
+        )
+
+        self.assertEqual(unpack_code_metadata(meta), (7, 6, 5, 4))
+
     def test_transcoding_preserves_raw_unit_count(self) -> None:
         code = _compile_module(
             "def managed_entry():\n"
@@ -87,6 +111,50 @@ class ImageTranscodingTest(unittest.TestCase):
             "<defaults>",
         )
         self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
+
+    def test_kwonly_defaults_build_with_varnames(self) -> None:
+        src = (
+            "def f(a, b=0, *, c=1):\n"
+            "    return a + b + c\n"
+            "\n"
+            "def managed_entry():\n"
+            "    return f(2)\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        module_code = _compile_module(src)
+        module_code, defaults_map, kwdefaults_map = (
+            image_from_source.fold_function_defaults(module_code)
+        )
+        f_co = next(
+            co for co in image_from_source.iter_code_objects(module_code)
+            if co.co_name == "f"
+        )
+
+        result = image_from_source.build_image_from_code(
+            module_code,
+            defaults_map=defaults_map,
+            kwdefaults_map=kwdefaults_map,
+        )
+        f_handle = result.code_handles[id(f_co)]
+        f_addr = f_handle[1]
+
+        metadata = result.heap.words[f_addr + CODE_FIELD_METADATA * 32]
+        self.assertEqual(unpack_code_metadata(metadata), (f_co.co_stacksize, 3, 2, 1))
+
+        varnames_val = result.heap.words[f_addr + CODE_FIELD_CO_VARNAMES * 32]
+        varnames_tag = (
+            result.heap.words[f_addr + CODE_FIELD_CO_VARNAMES * 32 + 16] & 0xF
+        )
+        self.assertEqual(varnames_tag, TAG_TUPLE)
+        self.assertEqual(varnames_val >> 64, 3)
+
+        kwdefaults_val = result.heap.words[f_addr + CODE_FIELD_CO_KWDEFAULTS * 32]
+        kwdefaults_tag = (
+            result.heap.words[f_addr + CODE_FIELD_CO_KWDEFAULTS * 32 + 16] & 0xF
+        )
+        self.assertEqual(kwdefaults_tag, TAG_MUT_COLLEC)
+        self.assertEqual(mut_kind(kwdefaults_val), MUT_DICT)
 
     def test_set_function_attribute_closure_rejected(self) -> None:
         with self.assertRaises(ValueError) as ctx:
@@ -831,6 +899,20 @@ class ClassImageBuilderTest(unittest.TestCase):
                 "<class-classmethod>",
             )
         self.assertIn("classmethod", str(ctx.exception).lower())
+
+    def test_fold_class_method_kwdefaults(self) -> None:
+        result = image_from_source.build_image_from_source_text(
+            "class C:\n"
+            "    def value(self, *, x=1):\n"
+            "        return x\n"
+            "\n"
+            "def managed_entry():\n"
+            "    return 0\n"
+            "\n"
+            "managed_entry()\n",
+            "<class-kwdefaults>",
+        )
+        self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
 
 
 class CPython314ConventionProbeTest(unittest.TestCase):

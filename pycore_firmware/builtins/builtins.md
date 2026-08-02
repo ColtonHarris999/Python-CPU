@@ -24,7 +24,7 @@ These limit every firmware builtin:
 | Constraint | Impact |
 | --- | --- |
 | `RAISE_VARARGS` oparg 1 is fatal-only | Can `raise` to halt with `PY_TRAP_RAISE` (17); no handlers / `TypeError` objects yet. Prefer `raise` over `% 0` where touched. |
-| **Freeze: no `CALL_KW` / `CALL_FUNCTION_EX`** | Firmware builtins stay **positional-only** until those opcodes land. No `sep=` / `key=` / `*args` signatures in ROM sources. Implementation plan: `planning/call_kw_support_plan.md` (doable; needs code-object `co_varnames` + CALL binder, not new opcodes). |
+| **`CALL_KW` / `CALL_FUNCTION_EX` unfrozen** | Hardware binder supports keyword / `*args` / `**kwargs` calls on `CODE_OBJECT` (see `planning/call_kw_support_plan.md`). ROM modules may use `sep=` / `key=` / `*args` when implemented as Python `CODE_OBJECT`s. Native `OBK_BUILTIN` / `BI_*` paths remain positional-only (`CALL_FILTER` on kwargs). |
 | No `YIELD_VALUE` | `enumerate`/`zip`/`map`/`filter`/`reversed` return lists, not iterators |
 | `TO_BOOL` widened | `None` + LIST/TUPLE/DICT/SET/inline RANGE truthiness work; `OBJECT` `__bool__`/`__len__` protocol still TYPE-traps |
 | `COMPARE_OP` numeric only | `min`/`max`/`sorted` TYPE-trap on str/containers |
@@ -91,7 +91,7 @@ These limit every firmware builtin:
 | `open` | Open a file and return a corresponding file object. | blocked | See `open.md`. |
 | `ord` | Return the Unicode code point for a one-character string. | blocked | See `ord.md`. |
 | `pow` | Return base**exp, optionally modulo mod. | implemented | Binary modexp for non-neg exp; neg exp+mod → trap. |
-| `print` | Print objects to a stream (default stdout), separated by sep and ended by end. | blocked | `BI_PRINT` → excore I/O; kwargs need `CALL_KW`. |
+| `print` | Print objects to a stream (default stdout), separated by sep and ended by end. | blocked | `BI_PRINT` → excore I/O; kwargs/`*args` OK on a ROM `CODE_OBJECT` wrapper once seeded. |
 | `property` | Return a property attribute with optional getter/setter/deleter. | blocked | See `property.md`. |
 | `range` | Return an immutable sequence of numbers (start, stop, step). | implemented | Interim **list** materialization. Native `BI_RANGE` (`PY_TAG_RANGE`) preferred. |
 | `repr` | Return a string containing a printable representation of an object. | in progress | INT/BOOL/None only; containers/str quoting blocked. |

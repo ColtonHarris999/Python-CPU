@@ -42,7 +42,7 @@ BRANCH_OPNAMES = {
     "JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT", "RETURN_VALUE", "RESUME",
     "NOT_TAKEN", "NOP", "POP_TOP", "POP_ITER",
 }
-FRAME_OPNAMES = {"CALL"}
+FRAME_OPNAMES = {"CALL", "CALL_KW", "CALL_FUNCTION_EX"}
 
 # Interpreter plumbing: never reaches a hardware target. Computed so the 21
 # INSTRUMENTED_* shadow opcodes are always covered regardless of build.

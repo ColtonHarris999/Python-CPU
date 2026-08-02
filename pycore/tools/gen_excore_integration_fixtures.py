@@ -59,10 +59,12 @@ def _write_image(
     stacksize: int = 8,
 ) -> None:
     co_names = heap.alloc_tuple([])
+    co_varnames = heap.alloc_tuple([])
     module_code = heap.add_code_object(
         entry_slot=entry_slot,
         co_consts=module_co_consts,
         co_names=co_names,
+        co_varnames=co_varnames,
         stacksize=stacksize,
         nlocals=0,
         argcount=0,
@@ -296,10 +298,12 @@ def gen_append_across_call() -> None:
     _emit(callee_slots, OP_RETURN_VALUE)
 
     callee_names = heap.alloc_tuple([])
+    callee_varnames = heap.alloc_tuple([])
     callee_code = heap.add_code_object(
         entry_slot=0,
         co_consts=callee_consts,
         co_names=callee_names,
+        co_varnames=callee_varnames,
         stacksize=4,
         nlocals=0,
         argcount=0,
@@ -567,10 +571,12 @@ def gen_extend_across_call() -> None:
     _emit(callee_slots, OP_RETURN_VALUE)
 
     callee_names = heap.alloc_tuple([])
+    callee_varnames = heap.alloc_tuple([])
     callee_code = heap.add_code_object(
         entry_slot=0,
         co_consts=callee_consts,
         co_names=callee_names,
+        co_varnames=callee_varnames,
         stacksize=4,
         nlocals=0,
         argcount=0,

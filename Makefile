@@ -164,6 +164,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-set-build-simple pycore-img-set-add-contains \
 	pycore-img-set-bool-int pycore-img-set-hash-neg1 pycore-img-set-str \
 	pycore-img-set-grow-fatal pycore-img-set-grow-basic pycore-img-set-update \
+	pycore-img-set-update-tuple \
+	pycore-img-map-add pycore-img-dict-update pycore-img-dict-update-obj \
+	pycore-img-dict-merge \
 	pycore-img-two-core \
 	pycore-img-attr-basic pycore-img-attr-overwrite pycore-img-attr-many \
 	pycore-img-attr-missing pycore-img-attr-type-trap \
@@ -180,6 +183,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
 	pycore-img-default-arg pycore-img-default-arg-argc-trap \
+	pycore-img-call-kw pycore-img-call-kw-unexpected \
+	pycore-img-call-function-ex pycore-img-call-function-ex-kw \
 	pycore-img-bound-method-obj pycore-img-method-all \
 	pycore-img-class-simple pycore-img-class-const \
 	pycore-img-staticmethod pycore-img-class-two-instances \
@@ -928,6 +933,28 @@ pycore-img-set-grow-basic: excore-fw
 pycore-img-set-update: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,set_update,100000)
 
+# TUPLE-source SET_UPDATE: excore fast path excludes TUPLE, so pycore owns the
+# whole op (grow + rehash + insert). Two-core so the excore firmware is linked
+# even though the SET_UPDATE itself never traps out to it.
+pycore-img-set-update-tuple: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,set_update_tuple,100000)
+
+# Bulk dict ops: MAP_ADD (dict comprehension), DICT_UPDATE ({**a, **b}) and
+# non-empty DICT_MERGE (CALL_FUNCTION_EX **kwargs). All hit excore grow/merge.
+pycore-img-map-add: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,map_add,150000)
+
+pycore-img-dict-update: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_update,150000)
+
+# Contaminated DICT_UPDATE (OBJECT/instance keys) — pycore owns grow + rehash +
+# order-copy + insert/overwrite; never traps to excore for the update itself.
+pycore-img-dict-update-obj: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_update_obj,200000)
+
+pycore-img-dict-merge: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_merge,150000)
+
 # Extend (excore grow) then delete/contains — two-core only.
 pycore-img-list-extend-del-contains-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,list_extend_del_contains,100000)
@@ -1045,6 +1072,11 @@ pycore-img-two-core: \
 	pycore-img-dict-mixed-ops \
 	pycore-img-set-grow-basic \
 	pycore-img-set-update \
+	pycore-img-set-update-tuple \
+	pycore-img-map-add \
+	pycore-img-dict-update \
+	pycore-img-dict-update-obj \
+	pycore-img-dict-merge \
 	pycore-img-attr-many
 
 pycore-img: \
@@ -1241,6 +1273,18 @@ pycore-img-default-arg:
 pycore-img-default-arg-argc-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,default_arg_argc_trap,6,50000)
 
+pycore-img-call-kw:
+	$(call PYCORE_IMAGE_RUN,call_kw,100000)
+
+pycore-img-call-kw-unexpected:
+	$(call PYCORE_IMAGE_TRAP_RUN,call_kw_unexpected,6,50000)
+
+pycore-img-call-function-ex:
+	$(call PYCORE_IMAGE_RUN,call_function_ex,100000)
+
+pycore-img-call-function-ex-kw:
+	$(call PYCORE_IMAGE_RUN,call_function_ex_kw,100000)
+
 pycore-img-bound-method-obj:
 	$(call PYCORE_IMAGE_RUN,bound_method_obj,100000)
 
@@ -1251,6 +1295,10 @@ pycore-img-method-all: \
 	pycore-img-ctor-init \
 	pycore-img-default-arg \
 	pycore-img-default-arg-argc-trap \
+	pycore-img-call-kw \
+	pycore-img-call-kw-unexpected \
+	pycore-img-call-function-ex \
+	pycore-img-call-function-ex-kw \
 	pycore-img-bound-method-obj
 
 # ClassImageBuilder (M4): fold module-level class → OBK_TYPE + STORE_NAME.
