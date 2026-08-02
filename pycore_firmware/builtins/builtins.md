@@ -24,7 +24,7 @@ These limit every firmware builtin:
 | Constraint | Impact |
 | --- | --- |
 | `RAISE_VARARGS` oparg 1 is fatal-only | Can `raise` to halt with `PY_TRAP_RAISE` (17); no handlers / `TypeError` objects yet. Prefer `raise` over `% 0` where touched. |
-| **Freeze: no `CALL_KW` / `CALL_FUNCTION_EX`** | Firmware builtins stay **positional-only** until those opcodes land. No `sep=` / `key=` / `*args` signatures in ROM sources. |
+| **Freeze: no `CALL_KW` / `CALL_FUNCTION_EX`** | Firmware builtins stay **positional-only** until those opcodes land. No `sep=` / `key=` / `*args` signatures in ROM sources. Implementation plan: `planning/call_kw_support_plan.md` (doable; needs code-object `co_varnames` + CALL binder, not new opcodes). |
 | No `YIELD_VALUE` | `enumerate`/`zip`/`map`/`filter`/`reversed` return lists, not iterators |
 | `TO_BOOL` widened | `None` + LIST/TUPLE/DICT/SET/inline RANGE truthiness work; `OBJECT` `__bool__`/`__len__` protocol still TYPE-traps |
 | `COMPARE_OP` numeric only | `min`/`max`/`sorted` TYPE-trap on str/containers |
