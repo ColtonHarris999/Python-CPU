@@ -836,7 +836,7 @@ count = `next_pow2(max(4, 2 × n_elems))`.
 | --- | --- |
 | `BUILD_SET` | pycore alloc + insert (same-tag + rich numeric/str eq) |
 | `SET_ADD` | pycore probe/insert; load ≥ 2/3 → `SET_GROW` (13) |
-| `SET_UPDATE` | always `SET_UPDATE` (14) → excore bulk merge |
+| `SET_UPDATE` | uncontaminated `LIST`/`SET`/`DICT` → trap 14 / excore; contaminated or `TUPLE` → pycore (`pycore_cont_bulk.svh`) |
 | `CONTAINS_OP` | pycore probe + rich eq |
 | `DELETE_SUBSCR` / `STORE_SUBSCR` | `TYPE` (sets are not subscriptable) |
 
