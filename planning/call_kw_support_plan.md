@@ -1,6 +1,7 @@
 # CALL_KW / CALL_FUNCTION_EX support plan
 
-**Status:** implemented (v1) — merge target `bytecode_support`  
+**Status:** implemented (v1) — on `main` via bulk dict/set merge  
+
 **Audience:** bytecode / CALL FSM agent  
 **Unblocks:** firmware kwargs (`print(sep=)`, `max(key=)`, `sorted(reverse=)`),
 varargs (`print(*args)`, `zip(*iterables)`, `max(*xs)`), and general 3.14 call
@@ -201,12 +202,14 @@ in ROM Python once binder works.
 - [x] Duplicate keyword in names tuple → `CALL_FILTER` (filled-bit check).  
 - [x] `g(*(1,2,3))` via `CALL_FUNCTION_EX` equals `g(1,2,3)`.  
 - [x] `h(*(1,), **{'b': 2})` (empty-dest `DICT_MERGE` + EX) binds correctly.  
+- [x] Non-empty `DICT_MERGE` / `DICT_UPDATE` / `MAP_ADD` / `SET_UPDATE` (see
+      `planning/dict_set_bulk_contam_plan.md`).  
 - [x] Existing positional CALL / defaults path kept (`img_default_arg`).  
 - [x] `builtins.md` unfreezes kwargs for ROM `CODE_OBJECT` modules.  
 - [x] `SUPPORTED_OPS` updated (`CALL_KW` / `CALL_FUNCTION_EX` / `DICT_MERGE`).  
 
-**v1 limits:** non-empty `DICT_MERGE`, `OBK_BUILTIN`/TYPE kwargs, and
-`CO_VARARGS`/`CO_VARKEYWORDS` parameters remain out of scope / trap.
+**v1 limits:** `OBK_BUILTIN`/TYPE kwargs and `CO_VARARGS`/`CO_VARKEYWORDS`
+parameters remain out of scope / trap.
 
 ---
 

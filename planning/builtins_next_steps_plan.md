@@ -54,10 +54,9 @@ Related:
 
 | Need | Why |
 | --- | --- |
-| Non-empty `DICT_MERGE` | `f(**x, **y)` with both non-empty |
 | `CO_VARARGS` / `CO_VARKEYWORDS` on user defs | `def f(*a, **k)` parameters |
 | Optional `BI_*` keyword tables | Hardware `print(sep=)` without ROM wrapper |
-| Full exception tables / `RERAISE` | Real `TypeError`/`StopIteration` |
+| Full exception tables / `RERAISE` | Real `TypeError`/`StopIteration`; comprehension option A/B |
 | `BI_LEN` tuple-mode RANGE + OBJECT `__bool__` | Complete truthiness / len protocol |
 | `GET_ITER`/`FOR_ITER` on OBJECT | Iterator protocol for user types |
 | `BI_ORD` / `BI_CHR` | Unblock `ord`/`chr` / `ascii` |
