@@ -1,9 +1,9 @@
 `include "pycore_defs.svh"
 
 // Traced two-core image-boot testbench for the simulator/debugger UI.
-// Always instantiates pycore_excore_system (EXCORE_EN=1). Emits a JSONL
-// trace (TRACE_JSONL) with one snapshot per retired opcode (S_WB or
-// completing S_CONTAINER) plus mailbox events and a terminal END record.
+// Always instantiates pycore_excore_system (EXCORE_EN=1). Emits JSONL with
+// per-retired-opcode snapshots, saved-frame walk, heap roots, RF window,
+// mailbox events (with payload entries), and a terminal END record.
 // Hierarchical peeks are confined to this file.
 module tb_sim_trace #(
     parameter string PROG_HEX       = "build/sim_ui/program.hex",
@@ -29,6 +29,9 @@ module tb_sim_trace #(
     localparam int RF_DEPTH   = 256;
     localparam int WORDS_PER_BLOCK = (1 << PYCORE_BLOCK_SHIFT) / (PYCORE_DMEM_DATA_WIDTH / 8);
     localparam int DMEM_BLOCKS = PYCORE_DMEM_BLOCK_COUNT;
+    localparam int FRAME_STACK_BASE = 32'h0001_C000;
+    localparam int FRAME_ENTRY_BYTES = 32;
+    localparam int WORD_BYTES = PYCORE_DMEM_DATA_WIDTH / 8;
 
     logic clk;
     logic rst_n;
@@ -64,7 +67,6 @@ module tb_sim_trace #(
 
     always #5 clk = ~clk;
 
-    // Constant-index dmem word peek (Verilator forbids variable gen-block index).
     function automatic logic [PYCORE_DMEM_DATA_WIDTH-1:0] peek_dmem_word(
         input int block_idx,
         input int word_idx
@@ -106,6 +108,15 @@ module tb_sim_trace #(
                 31: peek_dmem_word = dut.dmem.bank.gen_block[31].blk.mem[word_idx];
                 default: peek_dmem_word = '0;
             endcase
+        end
+    endfunction
+
+    function automatic logic [PYCORE_DMEM_DATA_WIDTH-1:0] peek_dmem_addr(input int byte_addr);
+        int bi, wi;
+        begin
+            bi = byte_addr >> PYCORE_BLOCK_SHIFT;
+            wi = (byte_addr & ((1 << PYCORE_BLOCK_SHIFT) - 1)) / WORD_BYTES;
+            peek_dmem_addr = peek_dmem_word(bi, wi);
         end
     endfunction
 
@@ -175,18 +186,159 @@ module tb_sim_trace #(
         end
     endtask
 
-    task automatic emit_frames_array;
-        // Current frame from architectural state + saved-frame count.
-        // Full dmem frame-stack walk is omitted (Verilator hierarchy limits);
-        // UI labels locals via co_varnames on the current code object.
+    // RF window: locals[base..base+15] + stack[STACK_BASE..tos)
+    task automatic emit_rf_object;
+        int idx;
+        int first;
+        int base;
+        int tos;
+        int n;
         begin
+            base = dut.core.cur_locals_base_r;
+            tos  = dut.core.tos_r;
+            n = 16;
+            if (base + n > RF_DEPTH) n = RF_DEPTH - base;
+            $fwrite(fd, "{");
+            first = 1;
+            for (idx = 0; idx < n; idx++) begin
+                if (!first) $fwrite(fd, ",");
+                $fwrite(fd, "\"%0d\":\"", base + idx);
+                write_entry_hex(dut.core.regfile.rf[base + idx]);
+                $fwrite(fd, "\"");
+                first = 0;
+            end
+            if (tos > STACK_BASE) begin
+                for (idx = STACK_BASE; idx < tos; idx++) begin
+                    if (!first) $fwrite(fd, ",");
+                    $fwrite(fd, "\"%0d\":\"", idx);
+                    write_entry_hex(dut.core.regfile.rf[idx]);
+                    $fwrite(fd, "\"");
+                    first = 0;
+                end
+            end
+            $fwrite(fd, "}");
+        end
+    endtask
+
+    task automatic emit_one_heap_root(input logic [PYCORE_ENTRY_WIDTH-1:0] e, inout int first);
+        logic [3:0] tag;
+        logic [PYCORE_VAL_WIDTH-1:0] val;
+        logic [3:0] kind;
+        logic contam;
+        logic [63:0] addr;
+        logic [PYCORE_DMEM_DATA_WIDTH-1:0] hdr;
+        logic [63:0] a, b;
+        begin
+            tag = pycore_get_tag(e);
+            val = pycore_get_val(e);
+            // MUT_COLLEC / TUPLE / CODE_OBJECT / LONG_STR / OBJECT
+            if (tag == PY_TAG_MUT_COLLEC || tag == PY_TAG_TUPLE ||
+                tag == PY_TAG_CODE_OBJECT || tag == PY_TAG_LONG_STR ||
+                tag == PY_TAG_OBJECT) begin
+                addr = val[63:0];
+                if (tag == PY_TAG_MUT_COLLEC) begin
+                    kind = val[127:124];
+                    contam = val[123];
+                    hdr = peek_dmem_addr(addr);
+                    a = hdr[63:0];
+                    b = hdr[127:64];
+                    if (!first) $fwrite(fd, ",");
+                    $fwrite(fd,
+                        "{\"tag\":%0d,\"kind\":%0d,\"contaminated\":%0d,\"addr\":%0d,\"hdr_lo\":%0d,\"hdr_hi\":%0d}",
+                        tag, kind, contam, addr, a, b);
+                    first = 0;
+                end else begin
+                    if (!first) $fwrite(fd, ",");
+                    $fwrite(fd,
+                        "{\"tag\":%0d,\"kind\":null,\"contaminated\":null,\"addr\":%0d,\"hdr_lo\":%0d,\"hdr_hi\":%0d}",
+                        tag, addr, val[63:0], val[127:64]);
+                    first = 0;
+                end
+            end
+        end
+    endtask
+
+    task automatic emit_heap_roots;
+        int idx;
+        int first;
+        int base;
+        int tos;
+        int n;
+        begin
+            $fwrite(fd, "[");
+            first = 1;
+            tos = dut.core.tos_r;
+            if (tos > STACK_BASE) begin
+                for (idx = STACK_BASE; idx < tos; idx++) begin
+                    emit_one_heap_root(dut.core.regfile.rf[idx], first);
+                end
+            end
+            base = dut.core.cur_locals_base_r;
+            n = 16;
+            if (base + n > RF_DEPTH) n = RF_DEPTH - base;
+            for (idx = 0; idx < n; idx++) begin
+                emit_one_heap_root(dut.core.regfile.rf[base + idx], first);
+            end
+            $fwrite(fd, "]");
+        end
+    endtask
+
+    task automatic emit_frames_array;
+        int depth;
+        int fi;
+        int slot0_addr;
+        logic [PYCORE_DMEM_DATA_WIDTH-1:0] slot0, slot1;
+        logic [31:0] pc_ret;
+        logic [7:0]  tos_base;
+        logic [7:0]  loc_base;
+        logic [31:0] code_addr;
+        int li;
+        int first_loc;
+        begin
+            depth = dut.core.frame_active_depth;
+            $fwrite(fd, "[");
+            // Current (innermost) live frame from arch state.
             $fwrite(fd,
-                "[{\"depth\":%0d,\"pc_return\":null,\"tos_base\":%0d,\"locals_base\":%0d,\"code_addr\":%0d,\"current\":true,\"saved_frames\":%0d}]",
-                dut.core.frame_active_depth,
+                "{\"depth\":%0d,\"pc_return\":null,\"tos_base\":%0d,\"locals_base\":%0d,\"code_addr\":%0d,\"current\":true,\"locals_raw\":[",
+                depth,
                 dut.core.tos_r,
                 dut.core.cur_locals_base_r,
-                dut.core.cur_code_r,
-                dut.core.frame_active_depth);
+                dut.core.cur_code_r);
+            first_loc = 1;
+            for (li = 0; li < 16; li++) begin
+                if (dut.core.cur_locals_base_r + li >= RF_DEPTH) break;
+                if (!first_loc) $fwrite(fd, ",");
+                $fwrite(fd, "\"");
+                write_entry_hex(dut.core.regfile.rf[dut.core.cur_locals_base_r + li]);
+                $fwrite(fd, "\"");
+                first_loc = 0;
+            end
+            $fwrite(fd, "]}");
+
+            // Older frames from dmem frame stack (oldest at index 0).
+            for (fi = 0; fi < depth; fi++) begin
+                slot0_addr = FRAME_STACK_BASE + fi * FRAME_ENTRY_BYTES;
+                slot0 = peek_dmem_addr(slot0_addr);
+                slot1 = peek_dmem_addr(slot0_addr + 16);
+                pc_ret    = slot0[127:96];
+                tos_base  = slot0[95:88];
+                loc_base  = slot0[87:80];
+                code_addr = slot1[31:0];
+                $fwrite(fd,
+                    ",{\"depth\":%0d,\"pc_return\":%0d,\"tos_base\":%0d,\"locals_base\":%0d,\"code_addr\":%0d,\"current\":false,\"locals_raw\":[",
+                    fi, pc_ret, tos_base, loc_base, code_addr);
+                first_loc = 1;
+                for (li = 0; li < 8; li++) begin
+                    if (loc_base + li >= RF_DEPTH) break;
+                    if (!first_loc) $fwrite(fd, ",");
+                    $fwrite(fd, "\"");
+                    write_entry_hex(dut.core.regfile.rf[loc_base + li]);
+                    $fwrite(fd, "\"");
+                    first_loc = 0;
+                end
+                $fwrite(fd, "]}");
+            end
+            $fwrite(fd, "]");
         end
     endtask
 
@@ -194,7 +346,7 @@ module tb_sim_trace #(
         begin
             if (snapshot_count >= MAX_SNAPSHOTS) return;
             $fwrite(fd,
-                "{\"t\":\"step\",\"step\":%0d,\"cycle\":%0d,\"pc\":%0d,\"opcode\":%0d,\"oparg\":%0d,\"state\":\"%s\",\"tos\":%0d,\"locals_base\":%0d,\"frame_depth\":%0d,\"mem_owner\":%0d,\"heap_ptr\":%0d,\"cur_code\":%0d,\"stack\":",
+                "{\"t\":\"step\",\"step\":%0d,\"cycle\":%0d,\"pc\":%0d,\"opcode\":%0d,\"oparg\":%0d,\"state\":\"%s\",\"tos\":%0d,\"locals_base\":%0d,\"tos_base\":%0d,\"frame_depth\":%0d,\"mem_owner\":%0d,\"heap_ptr\":%0d,\"cur_code\":%0d,\"stack\":",
                 snapshot_count,
                 cycle_count,
                 dut.core.cur_pc_r,
@@ -203,6 +355,7 @@ module tb_sim_trace #(
                 state_name,
                 dut.core.tos_r,
                 dut.core.cur_locals_base_r,
+                32,
                 dut.core.frame_active_depth,
                 dut.mem_owner_r,
                 dut.core.heap_ptr_r,
@@ -210,25 +363,38 @@ module tb_sim_trace #(
             emit_stack_array();
             $fwrite(fd, ",\"locals\":");
             emit_locals_array();
+            $fwrite(fd, ",\"rf\":");
+            emit_rf_object();
             $fwrite(fd, ",\"frames\":");
             emit_frames_array();
+            $fwrite(fd, ",\"heap_roots\":");
+            emit_heap_roots();
             $fwrite(fd, "}\n");
             snapshot_count = snapshot_count + 1;
         end
     endtask
 
-    task automatic emit_event(
+    task automatic emit_event_full(
         input string kind,
         input int code,
         input int pc,
         input int opcode,
-        input int arg
+        input int arg,
+        input int entry_count
     );
+        int ei;
         begin
             $fwrite(fd,
-                "{\"t\":\"event\",\"step\":%0d,\"cycle\":%0d,\"kind\":\"%s\",\"code\":%0d,\"pc\":%0d,\"opcode\":%0d,\"arg\":%0d,\"mem_owner\":%0d}\n",
+                "{\"t\":\"event\",\"step\":%0d,\"cycle\":%0d,\"kind\":\"%s\",\"code\":%0d,\"pc\":%0d,\"opcode\":%0d,\"arg\":%0d,\"mem_owner\":%0d,\"entry_count\":%0d,\"entries\":[",
                 (snapshot_count > 0) ? snapshot_count - 1 : 0,
-                cycle_count, kind, code, pc, opcode, arg, dut.mem_owner_r);
+                cycle_count, kind, code, pc, opcode, arg, dut.mem_owner_r, entry_count);
+            for (ei = 0; ei < entry_count && ei < 4; ei++) begin
+                if (ei) $fwrite(fd, ",");
+                $fwrite(fd, "\"");
+                write_entry_hex(dut.core.trap_req_entries_o[ei]);
+                $fwrite(fd, "\"");
+            end
+            $fwrite(fd, "]}\n");
         end
     endtask
 
@@ -303,19 +469,17 @@ module tb_sim_trace #(
             @(posedge clk);
 
             if (trap_req_fire) begin
-                // Sample core trap_req_* (stable on the handshake edge).
-                // mb_* registers update via NBA on this same edge, so reading
-                // them here would observe the previous mailbox payload.
                 trap_req_count = trap_req_count + 1;
-                emit_event("trap_req",
+                emit_event_full("trap_req",
                            dut.core.trap_req_code_o,
                            dut.core.trap_req_pc_o,
                            dut.core.trap_req_instr_o[7:0],
-                           dut.core.trap_req_instr_o[39:8]);
+                           dut.core.trap_req_instr_o[39:8],
+                           dut.core.trap_req_entry_count_o);
             end
             if (trap_res_fire) begin
-                emit_event("trap_res", dut.trap_res_code, dut.core.cur_pc_r,
-                           dut.core.cur_opcode_r, dut.core.cur_arg_r);
+                emit_event_full("trap_res", dut.trap_res_code, dut.core.cur_pc_r,
+                           dut.core.cur_opcode_r, dut.core.cur_arg_r, 0);
             end
 
             st   = dut.core.state_r;
