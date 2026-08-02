@@ -56,7 +56,7 @@ multiple traps; COMPLETED finishes in one handoff. The protocol still
 defines `RETRY` for handlers where pycore state genuinely did not advance
 (e.g. emulating an unimplemented opcode from scratch) — but every current
 handler (`LIST_GROW`, `LIST_EXTEND`, `LIST_DELETE`, `DICT_GROW`,
-`SET_GROW`, `SET_UPDATE`) answers `COMPLETED`.
+`SET_GROW`, `SET_UPDATE`, `DICT_UPDATE`, `DICT_MERGE`) answers `COMPLETED`.
 
 This "complete, don't retry" contract is only safe because every
 recoverable trap is raised **before any RF/heap/dmem commit** (see
@@ -136,9 +136,13 @@ whose ownership is being transferred.
 | 11 | `PY_TRAP_DICT_GROW` | **recoverable** | new-key dict insert at load ≥ 2/3; excore realloc + rehash + STORE |
 | 12 | `PY_TRAP_LIST_DELETE` | **recoverable** | mid-list `DELETE_SUBSCR` shift; excore COMPLETED pop 2 |
 | 13 | `PY_TRAP_SET_GROW` | **recoverable** | `SET_ADD` at load ≥ 2/3; excore realloc + insert |
-| 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | always; excore grow-to-fit + merge |
+| 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | uncontaminated `SET_UPDATE` with a `LIST`/`SET`/`DICT` source; excore grow-to-fit + merge (dict source inserts keys) |
 | 15 | `PY_TRAP_ATTR_ERROR` | fatal | `LOAD_ATTR` / `DELETE_ATTR` miss after instance `__dict__` + MRO |
-| 15 | *(free)* | — | reserved |
+| 16 | `PY_TRAP_BUILTIN_CALL` | **recoverable** | builtin call handed to firmware |
+| 17 | `PY_TRAP_RAISE` | fatal | `RAISE_VARARGS` (no handler tables yet) |
+| 18 | `PY_TRAP_SLICE` | **recoverable** | slice helper |
+| 19 | `PY_TRAP_DICT_UPDATE` | **recoverable** | uncontaminated `A.update(B)`; excore grows A to fit `used(A)+used(B)` and inserts all of B, overwriting dups |
+| 20 | `PY_TRAP_DICT_MERGE` | **recoverable** | non-empty uncontaminated `DICT_MERGE`; excore builds a fresh dict C (A then B, duplicate key → fatal `TYPE`) |
 
 `pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
 truth for the fatal/recoverable split. `EXCORE_EN=1` intercepts a recoverable
@@ -460,7 +464,11 @@ checks that TOS is a `CODE_OBJECT` and leaves it in place. `CALL` /
 shapes, validate the callable, bind args (positional and/or keyword via
 `co_varnames`), read the callee code-object fields, then enter the frame
 manager. `OBK_BUILTIN` kwargs remain `CALL_FILTER` (firmware `CODE_OBJECT`
-path). `DICT_MERGE` supports the empty-dest call-site shape used for `**kwargs`.
+path). `DICT_MERGE` aliases the empty-dest call-site shape used for `**kwargs`;
+a non-empty uncontaminated dest raises `PY_TRAP_DICT_MERGE` (20) and the excore
+builds a fresh combined dict. `DICT_UPDATE` (`{**a, **b}` displays) and `MAP_ADD`
+(dict comprehensions) are also supported — see `bytecode_support.md` and the
+MUT_COLLEC contamination-bit routing in `tags.md`.
 
 `LOAD_CONST` is a normal one-slot CPython instruction. It indexes
 `co_consts[arg]` and the container FSM performs two dmem reads (value slot then
