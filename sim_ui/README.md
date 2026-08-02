@@ -9,7 +9,7 @@ of the operand stack, call frames, mailbox/excore handoffs, and heap handles.
 Requires **Docker** (recommended — includes Python 3.14 and Verilator).
 
 ```bash
-git clone -b ui <repo-url> Python-CPU
+git clone -b ui https://github.com/ColtonHarris999/Python-CPU.git
 cd Python-CPU
 
 make docker-build

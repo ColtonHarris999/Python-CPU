@@ -126,7 +126,7 @@ simulation, and step through stack / frames / mailbox state in the browser.
 **Docker-first (recommended):**
 
 ```bash
-git clone -b ui <repo-url> Python-CPU
+git clone -b ui https://github.com/ColtonHarris999/Python-CPU.git
 cd Python-CPU
 make docker-build
 make docker-sim-ui
