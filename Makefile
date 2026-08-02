@@ -1790,6 +1790,18 @@ sim-ui-web:
 sim-ui-test:
 	$(PYTHON) -m unittest discover -s sim_ui/tests -v
 
+# Full Verilator e2e smoke (INT 12). Prefer inside Docker.
+sim-ui-e2e: excore-fw
+	SIM_UI_E2E=1 PYTHONPATH="$(CURDIR)" $(PYTHON) -m unittest sim_ui.tests.test_e2e_smoke -v
+
+docker-sim-ui-e2e: docker-build
+	docker run --rm $(DOCKER_RUN_FLAGS) \
+		-v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" \
+		-w "$(DOCKER_CONTAINER_WORKDIR)" \
+		-e PYTHONPATH="$(DOCKER_CONTAINER_WORKDIR)" \
+		-e SIM_UI_E2E=1 \
+		$(DOCKER_IMAGE) make sim-ui-e2e
+
 # Native serve (requires local Python 3.14 + Verilator + built web/dist).
 sim-ui-serve: excore-fw
 	@test -d sim_ui/web/dist || (echo "missing sim_ui/web/dist — run: make sim-ui-web" && exit 1)

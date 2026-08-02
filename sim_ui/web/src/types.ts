@@ -17,6 +17,8 @@ export type FrameInfo = {
   current: boolean;
   func: string | null;
   locals: Record<string, TaggedValue>;
+  locals_raw?: TaggedValue[];
+  nlocals_named?: number;
 };
 
 export type EventInfo = {
@@ -30,6 +32,18 @@ export type EventInfo = {
   opcode: string;
   arg: number;
   mem_owner: string;
+  entry_count?: number;
+  entries?: TaggedValue[];
+};
+
+export type HeapDelta = {
+  addr: string;
+  addr_int: number;
+  tag: string;
+  kind: string | null;
+  contaminated: boolean | null;
+  summary: string;
+  routing_note?: string | null;
 };
 
 export type StepSnapshot = {
@@ -42,15 +56,24 @@ export type StepSnapshot = {
   state: string;
   tos: number;
   locals_base: number;
+  tos_base?: number;
   frame_depth: number;
   mem_owner: "PYCORE" | "EXCORE" | string;
   heap_ptr: number;
   cur_code: number;
   stack: TaggedValue[];
   locals_window: TaggedValue[];
+  rf?: Record<string, TaggedValue>;
   frames: FrameInfo[];
+  heap_delta?: HeapDelta[];
   events: EventInfo[];
-  excore: { active: boolean; mailbox: unknown };
+  keypoint?: boolean;
+  excore: {
+    active: boolean;
+    mailbox: unknown;
+    parked?: boolean;
+    last_trap_code?: number | null;
+  };
 };
 
 export type DisasmRow = {
@@ -77,11 +100,14 @@ export type EndInfo = {
 export type SessionResult = {
   id: string;
   status: string;
+  phase?: string;
   error?: string | null;
   step_count?: number;
   event_count?: number;
   disasm?: DisasmRow[];
   end?: EndInfo;
+  keypoint_mode?: boolean;
+  progress?: { phase: string; detail?: Record<string, unknown> }[];
   result?: {
     expected?: {
       available?: boolean;
@@ -89,6 +115,7 @@ export type SessionResult = {
       error?: string;
     };
     end?: EndInfo;
+    keypoint_mode?: boolean;
   };
 };
 

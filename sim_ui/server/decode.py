@@ -54,8 +54,10 @@ from encoding import (  # noqa: E402
 # Re-export for tests / callers.
 __all__ = [
     "DmemImage",
+    "MUT_KIND_NAMES",
     "TAG_INT",
     "TAG_MUT_COLLEC",
+    "TAG_NAMES",
     "decode_entry",
     "decode_entry_hex",
     "decode_heap_object",

@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import ast
 import json
-import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .decode import DmemImage, decode_heap_object, parse_entry_hex
 from .disasm import disasm_program_hex
-from .trace_parse import label_frames_with_varnames, parse_trace_jsonl
+from .trace_parse import (
+    filter_keypoints,
+    label_frames_with_varnames,
+    parse_trace_jsonl,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS = REPO_ROOT / "pycore" / "tools"
@@ -23,26 +28,33 @@ BUILD_ROOT = REPO_ROOT / "build" / "sim_ui"
 DEFAULT_MAX_CYCLES = 200_000
 DEFAULT_MAX_SOURCE_BYTES = 200_000
 
+ProgressCb = Callable[[str, dict[str, Any] | None], None]
+
 
 @dataclass
 class Session:
     id: str
     dir: Path
     status: str = "pending"
+    phase: str = "queued"
     error: str | None = None
     source: str = ""
     entry: str = "managed_entry"
     max_cycles: int = DEFAULT_MAX_CYCLES
+    keypoint_mode: bool = False
     created_at: float = field(default_factory=time.time)
     result: dict[str, Any] | None = None
     steps: list[dict[str, Any]] = field(default_factory=list)
+    steps_full: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     disasm: list[dict[str, Any]] = field(default_factory=list)
     end: dict[str, Any] | None = None
     dmem_final: DmemImage | None = None
+    progress_log: list[dict[str, Any]] = field(default_factory=list)
 
 
 _SESSIONS: dict[str, Session] = {}
+_LOCK = threading.Lock()
 
 
 def session_get(sid: str) -> Session | None:
@@ -52,8 +64,11 @@ def session_get(sid: str) -> Session | None:
 def list_example_sources() -> list[dict[str, str]]:
     examples = [
         ("smoke", "Smoke return 42", "pycore/programs/img_smoke.py"),
+        ("smoke_12", "Smoke return 12", "sim_ui/fixtures/smoke_return.py"),
         ("recursion", "Fibonacci recursion (frames)", "pycore/programs/img_recursion.py"),
         ("call_chain", "Nested call chain", "pycore/programs/img_call_chain.py"),
+        ("call_kw", "CALL_KW keyword args", "pycore/programs/img_call_kw.py"),
+        ("call_function_ex", "CALL_FUNCTION_EX *args", "pycore/programs/img_call_function_ex.py"),
         ("containers", "List/dict/tuple basics", "pycore/programs/img_containers.py"),
         ("list_extend", "LIST_EXTEND → excore mailbox", "pycore/programs/img_list_extend.py"),
         ("dict_update", "DICT_UPDATE bulk trap", "pycore/programs/img_dict_update.py"),
@@ -92,6 +107,16 @@ def health_check() -> dict[str, Any]:
         "two_core": True,
         "repo_root": str(REPO_ROOT),
     }
+
+
+def _set_phase(sess: Session, phase: str, detail: dict[str, Any] | None = None) -> None:
+    sess.phase = phase
+    entry = {"t": time.time(), "phase": phase, "detail": detail or {}}
+    sess.progress_log.append(entry)
+    (sess.dir / "progress.json").write_text(
+        json.dumps({"status": sess.status, "phase": phase, "log": sess.progress_log[-20:]}, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _ensure_fw() -> Path:
@@ -135,7 +160,11 @@ def _build_image(session_dir: Path, source_text: str, entry: str) -> dict[str, A
     except Exception as exc:  # noqa: BLE001
         expected = {"available": False, "error": str(exc)}
 
-    result = build_image_from_source_text(source_text, filename=str(src_path))
+    try:
+        result = build_image_from_source_text(source_text, filename=str(src_path))
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Image build failed (unsupported syntax/opcode?): {exc}") from exc
+
     write_image_outputs(
         result,
         program_hex=session_dir / "program.hex",
@@ -247,7 +276,6 @@ def _run_verilator_trace(
 
     exe = mdir / "Vtb_sim_trace"
     if not exe.is_file():
-        # Some Verilator versions nest the binary.
         candidates = list(mdir.glob("**/Vtb_sim_trace"))
         if not candidates:
             raise RuntimeError("Verilator binary Vtb_sim_trace not found")
@@ -271,20 +299,13 @@ def _run_verilator_trace(
 
 
 def _extract_varnames(dmem: DmemImage | None, code_addrs: set[int]) -> dict[int, list[str]]:
-    """Best-effort co_varnames extraction from final dmem code objects."""
-    from .decode import (
-        CODE_FIELD_CO_VARNAMES,
-        TAG_SHORT_STR,
-        TAG_TUPLE,
-        decode_entry,
-    )
+    from .decode import CODE_FIELD_CO_VARNAMES, TAG_SHORT_STR, TAG_TUPLE, decode_entry
 
     out: dict[int, list[str]] = {}
     if dmem is None:
         return out
     for addr in code_addrs:
         try:
-            # Field 5 = co_varnames at addr + 5*32
             f_addr = addr + CODE_FIELD_CO_VARNAMES * 32
             tag_word = dmem.read_word(f_addr + 16)
             val = dmem.read_word(f_addr)
@@ -298,7 +319,6 @@ def _extract_varnames(dmem: DmemImage | None, code_addrs: set[int]) -> dict[int,
                 e_tag, e_val = dmem.read_entry_pair(taddr + i * 32)
                 dec = decode_entry(e_tag, e_val)
                 if e_tag == TAG_SHORT_STR:
-                    # display is repr(s); strip quotes
                     disp = dec.get("display", "")
                     if isinstance(disp, str) and len(disp) >= 2 and disp[0] in "'\"":
                         names.append(ast_literal(disp))
@@ -314,12 +334,144 @@ def _extract_varnames(dmem: DmemImage | None, code_addrs: set[int]) -> dict[int,
 
 def ast_literal(s: str) -> str:
     try:
-        import ast
-
         v = ast.literal_eval(s)
         return v if isinstance(v, str) else s
     except Exception:
         return s.strip("'\"")
+
+
+def _func_names_from_source(source: str) -> dict[str, list[str]]:
+    """Map function name -> co_varnames-like list from source AST."""
+    out: dict[str, list[str]] = {}
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return out
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            names = [a.arg for a in node.args.args]
+            names += [a.arg for a in node.args.kwonlyargs]
+            out[node.name] = names
+    return out
+
+
+def _match_func_names(
+    varnames_by_code: dict[int, list[str]],
+    source_funcs: dict[str, list[str]],
+) -> dict[int, str]:
+    """Best-effort code_addr → function name via co_varnames equality."""
+    mapping: dict[int, str] = {}
+    for addr, names in varnames_by_code.items():
+        for fname, fnames in source_funcs.items():
+            if names and names == fnames:
+                mapping[addr] = fname
+                break
+    return mapping
+
+
+def _run_session_pipeline(sess: Session) -> None:
+    try:
+        _set_phase(sess, "building_image")
+        built = _build_image(sess.dir, sess.source, sess.entry)
+        heap_init = int(built["meta"].get("HEAP_INIT_PTR", "0"))
+
+        _set_phase(sess, "compiling_sim")
+        _run_verilator_trace(
+            sess.dir,
+            heap_init_ptr=heap_init,
+            max_cycles=sess.max_cycles,
+            expected=built["expected"],
+        )
+
+        _set_phase(sess, "parsing_trace")
+        parsed = parse_trace_jsonl(sess.dir / "trace.jsonl")
+        dmem_final_path = sess.dir / "dmem_final.hex"
+        dmem = (
+            DmemImage.from_hex_file(dmem_final_path) if dmem_final_path.is_file() else None
+        )
+        code_addrs = {int(s.get("cur_code") or 0) for s in parsed["steps"]}
+        code_addrs |= {
+            int(fr.get("code_addr") or 0)
+            for s in parsed["steps"]
+            for fr in (s.get("frames") or [])
+        }
+        code_addrs.discard(0)
+        varnames = _extract_varnames(dmem, code_addrs)
+        source_funcs = _func_names_from_source(sess.source)
+        func_names = _match_func_names(varnames, source_funcs)
+        # Prefer entry name for the managed_entry varnames match.
+        for addr, names in varnames.items():
+            if sess.entry in source_funcs and names == source_funcs[sess.entry]:
+                func_names[addr] = sess.entry
+        label_frames_with_varnames(parsed["steps"], varnames, func_names)
+
+        # Enrich heap_delta with end-of-run decode when possible.
+        if dmem is not None:
+            for step in parsed["steps"]:
+                enriched = []
+                for root in step.get("heap_delta") or []:
+                    item = dict(root)
+                    addr = root.get("addr_int")
+                    if isinstance(addr, int) and root.get("tag") == "MUT_COLLEC":
+                        try:
+                            from .decode import make_dict, make_list, make_set
+
+                            kind = root.get("kind")
+                            if kind == "LIST":
+                                tag, val = make_list(addr, bool(root.get("contaminated")))
+                            elif kind == "DICT":
+                                tag, val = make_dict(addr, bool(root.get("contaminated")))
+                            elif kind == "SET":
+                                tag, val = make_set(addr, bool(root.get("contaminated")))
+                            else:
+                                tag = val = None  # type: ignore
+                            if tag is not None:
+                                dec = decode_heap_object(dmem, tag, val)
+                                item["summary"] = dec.get("summary", item.get("summary"))
+                                if dec.get("routing_note"):
+                                    item["routing_note"] = dec["routing_note"]
+                        except Exception:
+                            pass
+                    enriched.append(item)
+                step["heap_delta"] = enriched
+
+        sess.steps_full = parsed["steps"]
+        sess.steps = (
+            filter_keypoints(parsed["steps"]) if sess.keypoint_mode else parsed["steps"]
+        )
+        sess.events = parsed["events"]
+        sess.end = parsed["end"]
+        sess.disasm = disasm_program_hex(sess.dir / "program.hex")
+        sess.dmem_final = dmem
+        sess.result = {
+            "expected": built["expected"],
+            "meta": built["meta"],
+            "end": sess.end,
+            "step_count": len(sess.steps),
+            "step_count_full": len(sess.steps_full),
+            "event_count": len(parsed["events"]),
+            "keypoint_mode": sess.keypoint_mode,
+        }
+        sess.status = "ready"
+        _set_phase(sess, "ready", {"steps": len(sess.steps)})
+        (sess.dir / "session.json").write_text(
+            json.dumps(
+                {
+                    "id": sess.id,
+                    "entry": sess.entry,
+                    "max_cycles": sess.max_cycles,
+                    "keypoint_mode": sess.keypoint_mode,
+                    "result": sess.result,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception as exc:  # noqa: BLE001
+        sess.status = "error"
+        sess.error = str(exc)
+        _set_phase(sess, "error", {"error": str(exc)})
+        (sess.dir / "error.txt").write_text(str(exc), encoding="utf-8")
 
 
 def create_session(
@@ -327,6 +479,8 @@ def create_session(
     *,
     entry: str = "managed_entry",
     max_cycles: int = DEFAULT_MAX_CYCLES,
+    keypoint_mode: bool = False,
+    background: bool = False,
 ) -> Session:
     if len(source.encode("utf-8")) > DEFAULT_MAX_SOURCE_BYTES:
         raise ValueError(f"source exceeds {DEFAULT_MAX_SOURCE_BYTES} bytes")
@@ -344,63 +498,28 @@ def create_session(
         source=source,
         entry=entry,
         max_cycles=max_cycles,
+        keypoint_mode=keypoint_mode,
         status="running",
     )
-    _SESSIONS[sid] = sess
+    with _LOCK:
+        _SESSIONS[sid] = sess
+    _set_phase(sess, "starting")
 
-    try:
-        built = _build_image(session_dir, source, entry)
-        heap_init = int(built["meta"].get("HEAP_INIT_PTR", "0"))
-        _run_verilator_trace(
-            session_dir,
-            heap_init_ptr=heap_init,
-            max_cycles=max_cycles,
-            expected=built["expected"],
-        )
-        parsed = parse_trace_jsonl(session_dir / "trace.jsonl")
-        dmem_final_path = session_dir / "dmem_final.hex"
-        dmem = DmemImage.from_hex_file(dmem_final_path) if dmem_final_path.is_file() else None
-        code_addrs = {int(s.get("cur_code") or 0) for s in parsed["steps"]}
-        code_addrs |= {
-            int(fr.get("code_addr") or 0)
-            for s in parsed["steps"]
-            for fr in (s.get("frames") or [])
-        }
-        code_addrs.discard(0)
-        varnames = _extract_varnames(dmem, code_addrs)
-        label_frames_with_varnames(parsed["steps"], varnames)
+    if background:
+        threading.Thread(target=_run_session_pipeline, args=(sess,), daemon=True).start()
+        return sess
 
-        sess.steps = parsed["steps"]
-        sess.events = parsed["events"]
-        sess.end = parsed["end"]
-        sess.disasm = disasm_program_hex(session_dir / "program.hex")
-        sess.dmem_final = dmem
-        sess.result = {
-            "expected": built["expected"],
-            "meta": built["meta"],
-            "end": sess.end,
-            "step_count": parsed["step_count"],
-            "event_count": len(parsed["events"]),
-        }
-        sess.status = "ready"
-        # Persist summary for restarts.
-        (session_dir / "session.json").write_text(
-            json.dumps(
-                {
-                    "id": sid,
-                    "entry": entry,
-                    "max_cycles": max_cycles,
-                    "result": sess.result,
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-    except Exception as exc:  # noqa: BLE001
-        sess.status = "error"
-        sess.error = str(exc)
-        (session_dir / "error.txt").write_text(str(exc), encoding="utf-8")
+    _run_session_pipeline(sess)
     return sess
+
+
+def set_keypoint_mode(sess: Session, enabled: bool) -> None:
+    sess.keypoint_mode = enabled
+    if sess.steps_full:
+        sess.steps = filter_keypoints(sess.steps_full) if enabled else list(sess.steps_full)
+        if sess.result is not None:
+            sess.result["step_count"] = len(sess.steps)
+            sess.result["keypoint_mode"] = enabled
 
 
 def get_step(sess: Session, n: int) -> dict[str, Any]:
@@ -412,21 +531,35 @@ def get_step(sess: Session, n: int) -> dict[str, Any]:
 def get_heap(sess: Session, addr: int, step: int | None = None) -> dict[str, Any]:
     if sess.dmem_final is None:
         raise RuntimeError("no final dmem image available")
-    # Find a tagged handle on the requested step stack/locals pointing at addr,
-    # else try MUT_COLLEC/TUPLE/CODE decode assuming MUT_COLLEC list.
     tag = None
     value = None
     if step is not None and 0 <= step < len(sess.steps):
         snap = sess.steps[step]
-        for entry in list(snap.get("stack") or []) + list(snap.get("locals_window") or []):
+        candidates = list(snap.get("stack") or []) + list(snap.get("locals_window") or [])
+        for fr in snap.get("frames") or []:
+            candidates.extend((fr.get("locals") or {}).values())
+        for entry in candidates:
             if entry.get("addr") == addr:
                 tag = entry.get("tag_id")
                 raw = entry.get("raw", "0")
                 _, value = parse_entry_hex(raw[2:] if raw.startswith("0x") else raw)
                 break
+        # Prefer heap_delta kind if present.
+        for root in snap.get("heap_delta") or []:
+            if root.get("addr_int") == addr and root.get("kind"):
+                from .decode import make_dict, make_list, make_set
+
+                contam = bool(root.get("contaminated"))
+                kind = root["kind"]
+                if kind == "LIST":
+                    tag, value = make_list(addr, contam)
+                elif kind == "DICT":
+                    tag, value = make_dict(addr, contam)
+                elif kind == "SET":
+                    tag, value = make_set(addr, contam)
+                break
     if tag is None:
-        # Fallback: treat as list object header address under MUT_COLLEC.
-        from .decode import TAG_MUT_COLLEC, make_list
+        from .decode import make_list
 
         tag, value = make_list(addr)
     return decode_heap_object(sess.dmem_final, tag, value)
@@ -434,8 +567,9 @@ def get_heap(sess: Session, addr: int, step: int | None = None) -> dict[str, Any
 
 def prune_sessions(ttl_s: float = 3600.0, max_keep: int = 20) -> None:
     now = time.time()
-    items = sorted(_SESSIONS.values(), key=lambda s: s.created_at, reverse=True)
-    for i, sess in enumerate(items):
-        stale = (now - sess.created_at) > ttl_s or i >= max_keep
-        if stale:
-            _SESSIONS.pop(sess.id, None)
+    with _LOCK:
+        items = sorted(_SESSIONS.values(), key=lambda s: s.created_at, reverse=True)
+        for i, sess in enumerate(items):
+            stale = (now - sess.created_at) > ttl_s or i >= max_keep
+            if stale:
+                _SESSIONS.pop(sess.id, None)
