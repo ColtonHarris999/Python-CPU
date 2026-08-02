@@ -16,7 +16,11 @@ module pycore_mem_block #(
     output logic [DATA_WIDTH-1:0]      rdata_o
 );
 
-    logic [DATA_WIDTH-1:0] mem [0:DEPTH-1];
+    // public_flat_rw: allow TB hierarchical dumps for the sim UI trace path.
+    // Does not change simulation semantics.
+    // verilator lint_off UNOPTFLAT
+    logic [DATA_WIDTH-1:0] mem [0:DEPTH-1] /*verilator public_flat_rw*/;
+    // verilator lint_on UNOPTFLAT
 
     initial begin
         int i;

@@ -17,14 +17,13 @@ module tb_sim_trace #(
     parameter int    MAX_SNAPSHOTS  = 50000,
     parameter bit    BOOT_EN        = 1'b1,
     parameter bit    CHECK_ENTRY_RETURN = 1'b1,
-    // Soft expectations (UI still emits END even on mismatch).
     parameter bit    HAS_EXPECTED   = 1'b0,
     parameter logic [3:0]                  EXPECTED_TAG   = PY_TAG_INT,
     parameter logic [PYCORE_VAL_WIDTH-1:0] EXPECTED_VALUE = 128'd0
 );
-    localparam logic [3:0] CORE_S_WB        = 4'd4;
-    localparam logic [3:0] CORE_S_CONTAINER = 4'd8;
-    localparam logic [3:0] CORE_S_FETCH     = 4'd0;
+    localparam logic [3:0] CORE_S_WB           = 4'd4;
+    localparam logic [3:0] CORE_S_CONTAINER    = 4'd8;
+    localparam logic [3:0] CORE_S_FETCH        = 4'd0;
     localparam logic [3:0] CORE_S_TRAP_MARSHAL = 4'd10;
     localparam int STACK_BASE = 32;
     localparam int RF_DEPTH   = 256;
@@ -65,21 +64,48 @@ module tb_sim_trace #(
 
     always #5 clk = ~clk;
 
-    // ---- dmem hierarchical peek ------------------------------------------
-    function automatic logic [PYCORE_DMEM_DATA_WIDTH-1:0] peek_dmem(input int byte_addr);
-        int block_idx;
-        int word_idx;
+    // Constant-index dmem word peek (Verilator forbids variable gen-block index).
+    function automatic logic [PYCORE_DMEM_DATA_WIDTH-1:0] peek_dmem_word(
+        input int block_idx,
+        input int word_idx
+    );
         begin
-            block_idx = byte_addr >> PYCORE_BLOCK_SHIFT;
-            word_idx  = (byte_addr & ((1 << PYCORE_BLOCK_SHIFT) - 1))
-                        >> $clog2(PYCORE_DMEM_DATA_WIDTH / 8);
-            if (block_idx < 0 || block_idx >= DMEM_BLOCKS ||
-                word_idx < 0 || word_idx >= WORDS_PER_BLOCK) begin
-                peek_dmem = '0;
-            end else begin
-                // Path: dut.dmem.bank.gen_block[bi].blk.mem[wi]
-                peek_dmem = dut.dmem.bank.gen_block[block_idx].blk.mem[word_idx];
-            end
+            peek_dmem_word = '0;
+            unique case (block_idx)
+                0:  peek_dmem_word = dut.dmem.bank.gen_block[0].blk.mem[word_idx];
+                1:  peek_dmem_word = dut.dmem.bank.gen_block[1].blk.mem[word_idx];
+                2:  peek_dmem_word = dut.dmem.bank.gen_block[2].blk.mem[word_idx];
+                3:  peek_dmem_word = dut.dmem.bank.gen_block[3].blk.mem[word_idx];
+                4:  peek_dmem_word = dut.dmem.bank.gen_block[4].blk.mem[word_idx];
+                5:  peek_dmem_word = dut.dmem.bank.gen_block[5].blk.mem[word_idx];
+                6:  peek_dmem_word = dut.dmem.bank.gen_block[6].blk.mem[word_idx];
+                7:  peek_dmem_word = dut.dmem.bank.gen_block[7].blk.mem[word_idx];
+                8:  peek_dmem_word = dut.dmem.bank.gen_block[8].blk.mem[word_idx];
+                9:  peek_dmem_word = dut.dmem.bank.gen_block[9].blk.mem[word_idx];
+                10: peek_dmem_word = dut.dmem.bank.gen_block[10].blk.mem[word_idx];
+                11: peek_dmem_word = dut.dmem.bank.gen_block[11].blk.mem[word_idx];
+                12: peek_dmem_word = dut.dmem.bank.gen_block[12].blk.mem[word_idx];
+                13: peek_dmem_word = dut.dmem.bank.gen_block[13].blk.mem[word_idx];
+                14: peek_dmem_word = dut.dmem.bank.gen_block[14].blk.mem[word_idx];
+                15: peek_dmem_word = dut.dmem.bank.gen_block[15].blk.mem[word_idx];
+                16: peek_dmem_word = dut.dmem.bank.gen_block[16].blk.mem[word_idx];
+                17: peek_dmem_word = dut.dmem.bank.gen_block[17].blk.mem[word_idx];
+                18: peek_dmem_word = dut.dmem.bank.gen_block[18].blk.mem[word_idx];
+                19: peek_dmem_word = dut.dmem.bank.gen_block[19].blk.mem[word_idx];
+                20: peek_dmem_word = dut.dmem.bank.gen_block[20].blk.mem[word_idx];
+                21: peek_dmem_word = dut.dmem.bank.gen_block[21].blk.mem[word_idx];
+                22: peek_dmem_word = dut.dmem.bank.gen_block[22].blk.mem[word_idx];
+                23: peek_dmem_word = dut.dmem.bank.gen_block[23].blk.mem[word_idx];
+                24: peek_dmem_word = dut.dmem.bank.gen_block[24].blk.mem[word_idx];
+                25: peek_dmem_word = dut.dmem.bank.gen_block[25].blk.mem[word_idx];
+                26: peek_dmem_word = dut.dmem.bank.gen_block[26].blk.mem[word_idx];
+                27: peek_dmem_word = dut.dmem.bank.gen_block[27].blk.mem[word_idx];
+                28: peek_dmem_word = dut.dmem.bank.gen_block[28].blk.mem[word_idx];
+                29: peek_dmem_word = dut.dmem.bank.gen_block[29].blk.mem[word_idx];
+                30: peek_dmem_word = dut.dmem.bank.gen_block[30].blk.mem[word_idx];
+                31: peek_dmem_word = dut.dmem.bank.gen_block[31].blk.mem[word_idx];
+                default: peek_dmem_word = '0;
+            endcase
         end
     endfunction
 
@@ -92,8 +118,7 @@ module tb_sim_trace #(
             end else begin
                 for (bi = 0; bi < DMEM_BLOCKS; bi++) begin
                     for (wi = 0; wi < WORDS_PER_BLOCK; wi++) begin
-                        $fwrite(fd_mem, "%032h\n",
-                                dut.dmem.bank.gen_block[bi].blk.mem[wi]);
+                        $fwrite(fd_mem, "%032h\n", peek_dmem_word(bi, wi));
                     end
                 end
                 $fclose(fd_mem);
@@ -103,7 +128,6 @@ module tb_sim_trace #(
 
     task automatic write_entry_hex(input logic [PYCORE_ENTRY_WIDTH-1:0] e);
         begin
-            // 132-bit entry → 33 hex digits
             $fwrite(fd, "%033h", e);
         end
     endtask
@@ -136,7 +160,6 @@ module tb_sim_trace #(
         int n;
         begin
             base = dut.core.cur_locals_base_r;
-            // Dump up to 16 locals from the current window (UI labels later).
             n = 16;
             if (base + n > RF_DEPTH) n = RF_DEPTH - base;
             $fwrite(fd, "[");
@@ -153,46 +176,17 @@ module tb_sim_trace #(
     endtask
 
     task automatic emit_frames_array;
-        int depth;
-        int fi;
-        int first;
-        int frame_bytes;
-        int base_addr;
-        int slot0_addr;
-        logic [PYCORE_DMEM_DATA_WIDTH-1:0] slot0;
-        logic [PYCORE_DMEM_DATA_WIDTH-1:0] slot1;
-        logic [31:0] pc_ret;
-        logic [7:0]  tos_base;
-        logic [7:0]  loc_base;
-        logic [31:0] code_addr;
+        // Current frame from architectural state + saved-frame count.
+        // Full dmem frame-stack walk is omitted (Verilator hierarchy limits);
+        // UI labels locals via co_varnames on the current code object.
         begin
-            // FRAME_STACK_BASE = 0x1C000; 32 bytes/frame; sp points past last.
-            frame_bytes = 32;
-            depth = dut.core.frame_active_depth;
-            base_addr = 32'h0001_C000;
-            $fwrite(fd, "[");
-            first = 1;
-            // Current (innermost) live frame is not yet on the stack; emit it
-            // from architectural state first.
-            $fwrite(fd, "{\"depth\":%0d,\"pc_return\":null,\"tos_base\":%0d,\"locals_base\":%0d,\"code_addr\":%0d,\"current\":true}",
-                    depth,
-                    dut.core.tos_r,
-                    dut.core.cur_locals_base_r,
-                    dut.core.cur_code_r);
-            first = 0;
-            // Older frames from the dmem frame stack (newest saved first).
-            for (fi = 0; fi < depth; fi++) begin
-                slot0_addr = base_addr + fi * frame_bytes;
-                slot0 = peek_dmem(slot0_addr);
-                slot1 = peek_dmem(slot0_addr + 16);
-                pc_ret   = slot0[127:96];
-                tos_base = slot0[95:88];
-                loc_base = slot0[87:80];
-                code_addr = slot1[31:0];
-                $fwrite(fd, ",{\"depth\":%0d,\"pc_return\":%0d,\"tos_base\":%0d,\"locals_base\":%0d,\"code_addr\":%0d,\"current\":false}",
-                        fi, pc_ret, tos_base, loc_base, code_addr);
-            end
-            $fwrite(fd, "]");
+            $fwrite(fd,
+                "[{\"depth\":%0d,\"pc_return\":null,\"tos_base\":%0d,\"locals_base\":%0d,\"code_addr\":%0d,\"current\":true,\"saved_frames\":%0d}]",
+                dut.core.frame_active_depth,
+                dut.core.tos_r,
+                dut.core.cur_locals_base_r,
+                dut.core.cur_code_r,
+                dut.core.frame_active_depth);
         end
     endtask
 
@@ -268,7 +262,6 @@ module tb_sim_trace #(
         end
     endtask
 
-    // Edge detectors for mailbox handshakes.
     logic trap_req_fire;
     logic trap_res_fire;
     assign trap_req_fire = dut.trap_req_valid && dut.trap_req_ready;
@@ -310,9 +303,15 @@ module tb_sim_trace #(
             @(posedge clk);
 
             if (trap_req_fire) begin
+                // Sample core trap_req_* (stable on the handshake edge).
+                // mb_* registers update via NBA on this same edge, so reading
+                // them here would observe the previous mailbox payload.
                 trap_req_count = trap_req_count + 1;
-                emit_event("trap_req", dut.mb_trap_code, dut.mb_pc,
-                           dut.mb_opcode, dut.mb_arg);
+                emit_event("trap_req",
+                           dut.core.trap_req_code_o,
+                           dut.core.trap_req_pc_o,
+                           dut.core.trap_req_instr_o[7:0],
+                           dut.core.trap_req_instr_o[39:8]);
             end
             if (trap_res_fire) begin
                 emit_event("trap_res", dut.trap_res_code, dut.core.cur_pc_r,
@@ -322,7 +321,6 @@ module tb_sim_trace #(
             st   = dut.core.state_r;
             st_n = dut.core.state_next;
 
-            // Retire at S_WB (standard path) or completing S_CONTAINER.
             if (st == CORE_S_WB) begin
                 emit_step("S_WB");
             end else if (st == CORE_S_CONTAINER &&
@@ -343,7 +341,6 @@ module tb_sim_trace #(
                 if (CHECK_ENTRY_RETURN &&
                     pycore_is_none(pycore_get_tag(dut.core.rs1_r),
                                    pycore_get_val(dut.core.rs1_r))) begin
-                    // skip module None return
                 end else begin
                     return_seen  = 1;
                     return_entry = dut.core.rs1_r;
