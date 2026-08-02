@@ -162,3 +162,14 @@
     localparam logic [5:0] CP_BULK_RD_VAL   = 6'd62;
     localparam logic [5:0] CP_BULK_INS      = 6'd63;
 
+    // Bulk source-collection layout selector (container_src_kind_r).
+    localparam logic [2:0] BULK_SRC_LIST  = 3'd0;
+    localparam logic [2:0] BULK_SRC_TUPLE = 3'd1;
+    localparam logic [2:0] BULK_SRC_SET   = 3'd2;
+    localparam logic [2:0] BULK_SRC_DICT  = 3'd3;
+    // Bulk insert continuation selector (container_bulk_mode_r): the shared
+    // probe/insert sub-FSM either relocates the destination (REHASH) or folds
+    // in a source element (INSERT).
+    localparam logic [1:0] BULK_MODE_REHASH = 2'd0;
+    localparam logic [1:0] BULK_MODE_INSERT = 2'd1;
+
