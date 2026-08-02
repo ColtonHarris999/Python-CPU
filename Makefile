@@ -164,6 +164,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-set-build-simple pycore-img-set-add-contains \
 	pycore-img-set-bool-int pycore-img-set-hash-neg1 pycore-img-set-str \
 	pycore-img-set-grow-fatal pycore-img-set-grow-basic pycore-img-set-update \
+	pycore-img-map-add pycore-img-dict-update pycore-img-dict-merge \
 	pycore-img-two-core \
 	pycore-img-attr-basic pycore-img-attr-overwrite pycore-img-attr-many \
 	pycore-img-attr-missing pycore-img-attr-type-trap \
@@ -930,6 +931,17 @@ pycore-img-set-grow-basic: excore-fw
 pycore-img-set-update: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,set_update,100000)
 
+# Bulk dict ops: MAP_ADD (dict comprehension), DICT_UPDATE ({**a, **b}) and
+# non-empty DICT_MERGE (CALL_FUNCTION_EX **kwargs). All hit excore grow/merge.
+pycore-img-map-add: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,map_add,150000)
+
+pycore-img-dict-update: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_update,150000)
+
+pycore-img-dict-merge: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_merge,150000)
+
 # Extend (excore grow) then delete/contains — two-core only.
 pycore-img-list-extend-del-contains-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,list_extend_del_contains,100000)
@@ -1047,6 +1059,9 @@ pycore-img-two-core: \
 	pycore-img-dict-mixed-ops \
 	pycore-img-set-grow-basic \
 	pycore-img-set-update \
+	pycore-img-map-add \
+	pycore-img-dict-update \
+	pycore-img-dict-merge \
 	pycore-img-attr-many
 
 pycore-img: \
