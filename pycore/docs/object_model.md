@@ -60,17 +60,20 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
 module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
 `bytearray` / `max` / `len` / `print` / `range` / `set` as `OBK_BUILTIN`
-handles and `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
-`to_bytes`. Total boot record size is `BOOT_RECORD_BYTES = 96`.
+handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
+`to_bytes`, and ROM firmware names (`sum`, `abs`, `bool`, `all`, `any`,
+`enumerate`, `map`, `zip`, …) as `CODE_OBJECT` handles from
+`ROM_FIRMWARE_BUILTINS` in `image_from_source.py`. Total boot record size
+is `BOOT_RECORD_BYTES = 96`.
 
 **Resolution:** `LOAD_GLOBAL` / `LOAD_NAME` probe globals, then this
 builtins dict (LEGB **B**). **CALL** on an `OBK_BUILTIN` handle dispatches
 by `builtin_id` in the CALL FSM — hardware accelerates known tags (e.g.
 `BI_LEN` reads list/tuple/dict/set/str/inline-range headers and calls
-instance `__len__` when present). Pure-Python bodies under
-`pycore_firmware/builtins/` are for miss / protocol cases, not for
-re-deriving header lengths in a loop. Follow-up:
-`planning/builtins_next_steps_plan.md`.
+instance `__len__` when present). **CALL** on a ROM `CODE_OBJECT` uses the
+normal frame path. Pure-Python bodies under `pycore_firmware/builtins/`
+also cover miss / protocol cases (not for re-deriving header lengths in a
+loop). See `planning/builtins_next_steps_plan.md`.
 
 ## D3 — `__dict__` is a real dict
 

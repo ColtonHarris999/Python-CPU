@@ -938,16 +938,79 @@ def _seed_globals_pairs(
     return pairs
 
 
-def build_builtins_dict(
-    heap: HeapImageBuilder,
-    string_heap: StringHeapBuilder,
+# (dict_key, source_stem, func_name) → pycore_firmware/builtins/{stem}.py
+ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
+    ("sum", "sum", "sum"),
+    ("abs", "abs", "abs"),
+    ("bool", "bool", "bool"),
+    ("all", "all", "all"),
+    ("any", "any", "any"),
+    ("enumerate", "enumerate", "enumerate"),
+    ("map", "map", "map"),
+    ("zip", "zip", "zip"),
+)
+
+FIRMWARE_BUILTINS_DIR = (
+    pathlib.Path(__file__).resolve().parents[2] / "pycore_firmware" / "builtins"
+)
+
+
+def seed_firmware_function(
+    serializer: _ImageSerializer,
+    source_path: pathlib.Path,
+    func_name: str,
 ) -> Tagged:
+    """Compile a firmware .py and serialize its named function as a CODE_OBJECT.
+
+    Defaults are taken from the live function object (``__defaults__``) and
+    stored in ``serializer.defaults_map`` for CALL arity fill — the same path
+    used for user functions after ``fold_function_defaults``.
+    """
+    source_path = pathlib.Path(source_path)
+    source_text = source_path.read_text(encoding="utf-8")
+    module_code = compile(source_text, str(source_path), "exec")
+    ns: dict[str, object] = {}
+    exec(module_code, ns)
+    func = ns.get(func_name)
+    if not isinstance(func, types.FunctionType):
+        raise ValueError(
+            f"firmware {source_path.name!r}: expected function {func_name!r}, "
+            f"got {type(func).__name__}"
+        )
+    co = func.__code__
+    validate_code_tree(co)
+    defaults = func.__defaults__
+    if defaults:
+        serializer.defaults_map[id(co)] = defaults
+    return serializer.serialize_code(co)
+
+
+def seed_rom_firmware_builtins(
+    serializer: _ImageSerializer,
+) -> list[tuple[Tagged, Tagged]]:
+    """Return (name, CODE_OBJECT) pairs for every ROM_FIRMWARE_BUILTINS entry."""
+    pairs: list[tuple[Tagged, Tagged]] = []
+    for dict_key, stem, func_name in ROM_FIRMWARE_BUILTINS:
+        path = FIRMWARE_BUILTINS_DIR / f"{stem}.py"
+        if not path.is_file():
+            raise FileNotFoundError(f"ROM firmware builtin source missing: {path}")
+        handle = seed_firmware_function(serializer, path, func_name)
+        pairs.append(
+            (tag_constant(dict_key, serializer.string_heap), handle)
+        )
+    return pairs
+
+
+def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     """Allocate the module builtins dict for the boot-record pair-2 slot.
 
     Entries:
-      bytearray / max / len / print / range → OBK_BUILTIN with bound_self=NULL
+      bytearray / max / len / print / range / set → OBK_BUILTIN (bound_self=NULL)
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
+      ROM_FIRMWARE_BUILTINS → CODE_OBJECT handles (pure-Python firmware)
     """
+    heap = serializer.heap
+    string_heap = serializer.string_heap
     from_bytes = heap.alloc_builtin(BI_FROM_BYTES)
     to_bytes = heap.alloc_builtin(BI_TO_BYTES)
     int_tp_dict = heap.alloc_dict(
@@ -970,6 +1033,7 @@ def build_builtins_dict(
         (tag_constant("set", string_heap), heap.alloc_builtin(BI_SET)),
         (tag_constant("int", string_heap), int_type),
     ]
+    pairs.extend(seed_rom_firmware_builtins(serializer))
     return heap.alloc_dict(pairs, slot_count=dict_min_slots(len(pairs)))
 
 
@@ -1013,7 +1077,8 @@ def build_image_from_code(
         globals_dict = serializer.heap.alloc_empty_globals(len(stored_names))
         globals_slot_count = dict_slot_count_for_stores(len(stored_names))
 
-    builtins_dict = build_builtins_dict(serializer.heap, serializer.string_heap)
+    # After module serialize so firmware bytecode appends to the same imem pool.
+    builtins_dict = build_builtins_dict(serializer)
     serializer.heap.write_boot_record(module_handle, globals_dict, builtins_dict)
 
     return ImageBuildResult(

@@ -10,8 +10,8 @@ def range(start, stop=None, step=1):
         stop = start
         start = 0
     if step == 0:
-        # CPython ValueError; RAISE deferred — div-by-zero trap
-        return 1 % 0
+        # CPython ValueError; fatal PY_TRAP_RAISE until exception objects exist
+        raise 1
     out = []
     i = start
     if step > 0:

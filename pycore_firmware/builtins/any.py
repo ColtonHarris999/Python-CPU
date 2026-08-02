@@ -1,7 +1,8 @@
 """True if any element is truthy.
 
-PyCore note: truthiness uses TO_BOOL (INT/BOOL/FLOAT/STR only).
-None and containers TYPE-trap — same as hardware TO_BOOL.
+PyCore note: truthiness uses hardware TO_BOOL (None, INT/BOOL/FLOAT,
+STR, LIST/TUPLE/DICT/SET, inline RANGE). OBJECT without ``__bool__``
+still TYPE-traps.
 """
 
 
