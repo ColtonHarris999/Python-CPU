@@ -191,7 +191,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-class-all \
 	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
-	docker-build docker-run-file docker-pycore-test docker-all-tests
+	docker-build docker-run-file docker-pycore-test docker-all-tests \
+	docker-sim-ui sim-ui sim-ui-web sim-ui-serve pycore-sim-trace sim-ui-test
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -1776,6 +1777,77 @@ docker-pycore-test: docker-build
 
 docker-all-tests: docker-build
 	docker run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" $(DOCKER_IMAGE) make all-tests
+
+# ---- Simulator / debugger UI (always two-core, Docker-first) --------------
+# TRACE_JSONL / RUN_SOURCE / MAX_CYCLES optional overrides for pycore-sim-trace.
+TRACE_JSONL ?= $(BUILD_DIR)/sim_ui/manual/trace.jsonl
+SIM_UI_MAX_CYCLES ?= 200000
+SIM_UI_SOURCE ?= sim_ui/fixtures/smoke_return.py
+
+sim-ui-web:
+	cd sim_ui/web && npm install && npm run build
+
+sim-ui-test:
+	$(PYTHON) -m unittest discover -s sim_ui/tests -v
+
+# Native serve (requires local Python 3.14 + Verilator + built web/dist).
+sim-ui-serve: excore-fw
+	@test -d sim_ui/web/dist || (echo "missing sim_ui/web/dist — run: make sim-ui-web" && exit 1)
+	PYTHONPATH="$(CURDIR)" $(PYTHON) -m uvicorn sim_ui.server.app:app \
+		--host 0.0.0.0 --port 8000
+
+sim-ui: sim-ui-web sim-ui-serve
+
+# Primary launch path: build image, publish :8000, serve UI + Verilator inside.
+docker-sim-ui: docker-build
+	docker run --rm -p 8000:8000 \
+		$(DOCKER_RUN_FLAGS) \
+		-v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" \
+		-w "$(DOCKER_CONTAINER_WORKDIR)" \
+		-e PYTHONPATH="$(DOCKER_CONTAINER_WORKDIR)" \
+		$(DOCKER_IMAGE) \
+		bash -lc 'cp -a /opt/sim_ui_web_dist/. sim_ui/web/dist/ 2>/dev/null || true; \
+			mkdir -p sim_ui/web/dist; \
+			if [ ! -f sim_ui/web/dist/index.html ]; then \
+			  echo "Frontend dist missing in image; rebuild with make docker-build"; exit 1; \
+			fi; \
+			make excore-fw; \
+			PYTHONPATH=$(DOCKER_CONTAINER_WORKDIR) python3.14 -m uvicorn sim_ui.server.app:app --host 0.0.0.0 --port 8000'
+
+# Manual traced two-core run (debug / golden fixture generation).
+pycore-sim-trace: excore-fw
+	mkdir -p $(dir $(TRACE_JSONL))
+	$(PYTHON) pycore/tools/run_image_test.py \
+		--source "$(SIM_UI_SOURCE)" \
+		--entry managed_entry \
+		--program-hex $(dir $(TRACE_JSONL))program.hex \
+		--dmem-hex $(dir $(TRACE_JSONL))dmem.hex \
+		--string-hex $(dir $(TRACE_JSONL))string_mem.hex \
+		--meta $(dir $(TRACE_JSONL))image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(dir $(TRACE_JSONL))image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(dir $(TRACE_JSONL))image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(dir $(TRACE_JSONL))image.meta); \
+	test -n "$$HEAP_INIT_PTR"; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_sim_trace \
+		-GPROG_HEX=\"$(dir $(TRACE_JSONL))program.hex\" \
+		-GSTRING_HEX=\"$(dir $(TRACE_JSONL))string_mem.hex\" \
+		-GDMEM_HEX=\"$(dir $(TRACE_JSONL))dmem.hex\" \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		-GTRACE_JSONL=\"$(TRACE_JSONL)\" \
+		-GDMEM_FINAL_HEX=\"$(dir $(TRACE_JSONL))dmem_final.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GHAS_EXPECTED=1 \
+		-GEXPECTED_TAG=4\'d$$EXPECTED_TAG \
+		"-GEXPECTED_VALUE=128'd$$EXPECTED_VALUE" \
+		-GMAX_CYCLES=$(SIM_UI_MAX_CYCLES) \
+		--Mdir $(dir $(TRACE_JSONL))verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_sim_trace.sv && \
+	./$(dir $(TRACE_JSONL))verilator/Vtb_sim_trace
 
 clean:
 	rm -rf $(BUILD_DIR)

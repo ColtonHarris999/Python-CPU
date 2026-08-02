@@ -1,0 +1,350 @@
+:root {
+  --bg0: #12161c;
+  --bg1: #1a212b;
+  --bg2: #243041;
+  --bg3: #2e3d52;
+  --line: #3a4d66;
+  --text: #e7eef8;
+  --muted: #9aafc4;
+  --accent: #3db8a0;
+  --accent-dim: #2a7f6f;
+  --warn: #e0a15c;
+  --danger: #e06c75;
+  --ok: #7ec699;
+  --owner-py: #6cb6ff;
+  --owner-ex: #d4a017;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --sans: "Source Sans 3", "Segoe UI", sans-serif;
+  --radius: 6px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: radial-gradient(1200px 600px at 10% -10%, #1d2a3a 0%, var(--bg0) 55%);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.75rem;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dim) 100%);
+  border-color: transparent;
+  color: #04150f;
+  font-weight: 700;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+  min-height: 100vh;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg1) 92%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.brand {
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin-right: 0.5rem;
+}
+
+.toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.toolbar input[type="text"],
+.toolbar input[type="number"],
+.toolbar select {
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.3rem 0.5rem;
+  min-width: 7rem;
+}
+
+.status-pill {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.pill {
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg2);
+}
+
+.pill.ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--line));
+}
+.pill.warn {
+  color: var(--warn);
+}
+.pill.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 50%, var(--line));
+}
+.pill.owner-py {
+  color: var(--owner-py);
+}
+.pill.owner-ex {
+  color: var(--owner-ex);
+}
+
+.main {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.1fr) minmax(320px, 1.2fr);
+  gap: 0;
+  min-height: 0;
+}
+
+@media (max-width: 960px) {
+  .main {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(280px, 45vh) 1fr;
+  }
+}
+
+.panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+}
+
+.panel:last-child {
+  border-right: none;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg1);
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.editor-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-wrap .cm-editor {
+  height: 100%;
+  font-size: 13px;
+}
+
+.drop-hint {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-bottom: 1px dashed var(--line);
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg1);
+}
+
+.tabs button {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.85rem;
+}
+
+.tabs button.active {
+  background: var(--bg3);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.viz {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.stack-list,
+.frame-list,
+.event-list,
+.heap-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.stack-list {
+  flex-direction: column-reverse;
+}
+
+.entry,
+.frame,
+.event,
+.disasm-row {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  padding: 0.4rem 0.55rem;
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.entry .tag {
+  color: var(--accent);
+  margin-right: 0.4rem;
+}
+
+.entry.delta-push {
+  border-color: color-mix(in srgb, var(--ok) 60%, var(--line));
+}
+
+.entry.delta-pop {
+  opacity: 0.55;
+}
+
+.frame strong {
+  color: var(--text);
+}
+
+.frame .locals {
+  margin-top: 0.35rem;
+  color: var(--muted);
+}
+
+.event.trap_req {
+  border-left: 3px solid var(--owner-ex);
+}
+.event.trap_res {
+  border-left: 3px solid var(--ok);
+}
+
+.disasm {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.disasm-row {
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
+  padding: 0.15rem 0.4rem;
+  background: transparent;
+}
+
+.disasm-row.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text);
+}
+
+.disasm-row.cache {
+  color: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+
+.scrubber {
+  border-top: 1px solid var(--line);
+  background: var(--bg1);
+  padding: 0.55rem 1rem 0.75rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.scrubber-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.scrubber input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.error-banner {
+  margin: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg1));
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.help {
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.help code {
+  font-family: var(--mono);
+  color: var(--text);
+}

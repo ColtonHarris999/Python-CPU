@@ -118,6 +118,23 @@ Use WSL2 Ubuntu and run the same Linux setup commands inside WSL.
 make docker-build
 ```
 
+## Interactive simulator UI (two-core)
+
+Paste or drag in a Python file, run a **pycore + excore** image-boot
+simulation, and step through stack / frames / mailbox state in the browser.
+
+**Docker-first (recommended):**
+
+```bash
+git clone -b ui <repo-url> Python-CPU
+cd Python-CPU
+make docker-build
+make docker-sim-ui
+```
+
+Then open http://localhost:8000 — full instructions in
+[`sim_ui/README.md`](sim_ui/README.md).
+
 ## Testing workflows
 
 ### Run an individual test target (local)
