@@ -65,7 +65,7 @@
                                             container_wb_addr_r <= RF_AW'({2'b0, tos_r});
                                             container_wb_data_r <= pycore_make_mut(
                                                 PY_MUT_LIST,
-                                                {32'b0, container_base_r});
+                                                {32'b0, container_base_r}, 1'b0);
                                             tos_r             <= tos_r + RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
@@ -129,7 +129,7 @@
                                                 {2'b0, tos_r} - {2'b0, container_count_r});
                                             container_wb_data_r <= pycore_make_mut(
                                                 PY_MUT_LIST,
-                                                {32'b0, container_base_r});
+                                                {32'b0, container_base_r}, 1'b0);
                                             tos_r            <= tos_r
                                                 - {2'b0, container_count_r} + 7'd1;
                                             fetch_skip_r     <= 1'b1;
@@ -1201,6 +1201,18 @@
 
                                 CP_LIST_WB: begin
                                     if (!container_dmem_pending_r) begin
+                                        // OBJECT element contaminates the list
+                                        // handle (needed so a later SET_UPDATE
+                                        // with this list source routes to pycore).
+                                        if (cont_rs2_tag == PY_TAG_OBJECT) begin
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                {2'b0, tos_r} - 9'd1
+                                                - {2'b0, cur_arg_r[6:0]});
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_MUT_COLLEC,
+                                                pycore_mut_set_contaminated(cont_rs1_val));
+                                        end
                                         // Pop 1 (the appended element); the list
                                         // handle beneath it is left in place.
                                         tos_r             <= tos_r - RF_AW'(1);
@@ -1980,7 +1992,7 @@
                                             container_wb_addr_r <= RF_AW'(tos_r);
                                             container_wb_data_r <= pycore_make_mut(
                                                 PY_MUT_LIST,
-                                                {32'b0, container_base_r});
+                                                {32'b0, container_base_r}, 1'b0);
                                             tos_r <= tos_r + RF_AW'(1);
                                             if (container_unpack_before_r == 8'd0) begin
                                                 fetch_skip_r      <= 1'b1;
@@ -2154,7 +2166,7 @@
                                             container_wb_addr_r <= RF_AW'(tos_r);
                                             container_wb_data_r <= pycore_make_mut(
                                                 PY_MUT_LIST,
-                                                {32'b0, container_base_r});
+                                                {32'b0, container_base_r}, 1'b0);
                                             tos_r <= tos_r + RF_AW'(1);
                                             if (container_unpack_before_r == 8'd0) begin
                                                 fetch_skip_r      <= 1'b1;

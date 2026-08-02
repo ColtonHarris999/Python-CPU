@@ -84,6 +84,8 @@
     .equ TRAP_LIST_DELETE,   12
     .equ TRAP_SET_GROW,      13
     .equ TRAP_SET_UPDATE,    14
+    .equ TRAP_DICT_UPDATE,   19
+    .equ TRAP_DICT_MERGE,    20
 
     # fatal_code values mirror pycore_defs.svh's PY_TRAP_* codes exactly --
     # Phase C forwards this 5-bit field (RES_CODE[8:4]) straight into
@@ -143,6 +145,25 @@
     .equ SCR_ORDER_LEN,  0x78
     .equ SCR_VERSION,    0x7C
     .equ SCR_NEW_ORDER,  0x80
+    # DICT_UPDATE / DICT_MERGE source-dict walk scratch.
+    .equ SCR_B_TABLE,    0x84
+    .equ SCR_B_SLOTS,    0x88
+    .equ SCR_B_IDX,      0x8C
+    .equ SCR_C_OBJ,      0x90
+    # 1 → dict_grow_rehash must NOT reload E1/E2 into scratch (bulk update).
+    .equ SCR_KEEP,       0x94
+    .equ SCR_NEED,       0x98
+    # DICT_UPDATE / DICT_MERGE bulk-insert helper scratch.
+    .equ SCR_DUPMODE,    0x9C
+    .equ SCR_BULK_RA,    0xA0
+    .equ SCR_USEDA,      0xA4
+    .equ SCR_A_TABLE,    0xA8
+    .equ SCR_A_SLOTS,    0xAC
+    .equ SCR_BB_TABLE,   0xB0
+    .equ SCR_BB_SLOTS,   0xB4
+    .equ SCR_C_SLOTS,    0xB8
+    .equ SCR_C_HEAP,     0xBC
+    .equ SCR_ZIDX,       0xC0
 
 reset:
     li   s11, MMIO_BASE            # s11: persistent MMIO base, never clobbered
@@ -165,6 +186,10 @@ wait_trap:
     beq  t0, t1, tramp_set_grow
     li   t1, TRAP_SET_UPDATE
     beq  t0, t1, tramp_set_update
+    li   t1, TRAP_DICT_UPDATE
+    beq  t0, t1, tramp_dict_update
+    li   t1, TRAP_DICT_MERGE
+    beq  t0, t1, tramp_dict_merge
     j    fatal_illegal
 
 # J-type trampolines: handlers past B-type ±4KiB reach.
@@ -174,6 +199,10 @@ tramp_set_grow:
     j    do_set_grow
 tramp_set_update:
     j    do_set_update
+tramp_dict_update:
+    j    do_dict_update
+tramp_dict_merge:
+    j    do_dict_merge
 
 fatal_type:
     li   t0, FATAL_TYPE
@@ -761,11 +790,14 @@ dg_tag_ok:
     jal  ra, dict_writeback_header
     li   t0, RES_COMPLETED
     sw   t0, RES_CODE(s11)
-    # STORE_ATTR (opcode 110): value+obj on stack → pop 2; else STORE_SUBSCR
+    # STORE_ATTR (opcode 110): value+obj on stack → pop 2. MAP_ADD (opcode 98):
+    # key+value popped, dict left in place → pop 2. Else STORE_SUBSCR
     # (value+key+container) / STORE_NAME → pop 3.
     lw   t0, MB_INSTR_LO(s11)
     andi t0, t0, 0xFF
     li   t1, 110
+    beq  t0, t1, dg_pop_store_attr
+    li   t1, 98
     beq  t0, t1, dg_pop_store_attr
     li   t0, 3
     j    dg_pop_store
@@ -1026,8 +1058,18 @@ dng_yes:
     li   a0, 1
     jalr x0, ra, 0
 
-# grow+rehash: s1/s2/s5 → s4/s7/s3=new table; restores E1/E2 into scratch
+# grow+rehash: s1/s2/s5 → s4/s7/s3=new table.
+#   dict_grow_rehash:      reloads E1/E2 into scratch afterward (STORE_SUBSCR /
+#                          STORE_ATTR / MAP_ADD single-insert path).
+#   dict_grow_rehash_keep: leaves SCR_K*/SCR_V* untouched so a bulk-insert
+#                          caller (DICT_UPDATE) keeps its own walk state.
+dict_grow_rehash_keep:
+    li   t0, 1
+    sw   t0, SCR_KEEP(x0)
+    j    dgr_entry
 dict_grow_rehash:
+    sw   x0, SCR_KEEP(x0)
+dgr_entry:
     sw   ra, SCR_RA(x0)
     li   t0, 50000
     bltu t0, s2, dgr_mul2
@@ -1185,7 +1227,10 @@ dgr_next:
     addi s6, s6, 1
     j    dgr_rehash_loop
 dgr_done:
+    lw   t0, SCR_KEEP(x0)
+    bne  t0, x0, dgr_skip_reload
     jal  ra, load_e1e2_to_scratch
+dgr_skip_reload:
     lw   ra, SCR_RA(x0)
     jalr x0, ra, 0
 
@@ -1735,6 +1780,8 @@ su_tag_ok:
     beq  t0, t1, su_src_list
     li   t1, MUT_SET
     beq  t0, t1, su_src_set
+    li   t1, MUT_DICT
+    beq  t0, t1, su_src_dict
     j    fatal_type
 su_src_tuple_check:
     li   t1, TAG_TUPLE
@@ -1775,6 +1822,23 @@ su_src_set:
     # Fall through with t0=src_used for need; walk count stays TMP_L0.
     j    su_maybe_grow_set
 
+# DICT source (SET_UPDATE from dict): insert the dict's KEYS into the set.
+# Walk the dict table (stride 64); the key lives at slot+0 (val) / slot+16
+# (tag), matching v3 dict layout.
+su_src_dict:
+    mv   a0, s10
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)         # used(dict) → grow sizing upper bound
+    sw   t0, SCR_TMP_L1(x0)
+    lw   t1, SP_DATA2(s11)         # slots(dict) → walk count
+    sw   t1, SCR_TMP_L0(x0)
+    addi a0, s10, 32              # dict pointers: table_ptr at word0
+    jal  ra, sp_read
+    lw   s8, SP_DATA0(s11)
+    li   s9, 2
+    lw   t0, SCR_TMP_L1(x0)
+    j    su_maybe_grow_set
+
 su_maybe_grow:
     lw   t0, SCR_TMP_L0(x0)        # src_len
 su_maybe_grow_set:
@@ -1803,6 +1867,8 @@ su_loop_init:
 su_loop:
     lw   t0, SCR_TMP_L0(x0)
     beq  s6, t0, su_done
+    li   t1, 2
+    beq  s9, t1, su_load_dict
     bne  s9, x0, su_load_set
     # dense LIST/TUPLE
     slli t0, s6, 5
@@ -1824,6 +1890,29 @@ su_loop:
     j    su_insert
 su_load_set:
     slli t0, s6, 5
+    add  t2, s8, t0
+    addi a0, t2, 16
+    sw   t2, SCR_A1(x0)
+    jal  ra, sp_read
+    lw   a1, SP_DATA0(s11)
+    beq  a1, x0, su_next
+    li   t0, TAG_TOMBSTONE
+    beq  a1, t0, su_next
+    lw   a0, SCR_A1(x0)
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_KVAL3(x0)
+    sw   a1, SCR_KTAG(x0)
+    j    su_insert
+# DICT source key loader: stride 64, key val at slot+0, key tag at slot+16.
+su_load_dict:
+    slli t0, s6, 6
     add  t2, s8, t0
     addi a0, t2, 16
     sw   t2, SCR_A1(x0)
@@ -2165,3 +2254,373 @@ set_write_elem_at:
     jal  ra, sp_write
     lw   ra, SCR_RA3(x0)
     jalr x0, ra, 0
+
+# ===========================================================================
+# DICT_UPDATE (trap 19): E0 = dest dict A, E1 = source dict B.
+# Grow A to fit used(A)+used(B), then insert every entry of B into A,
+# overwriting duplicate keys. A is mutated in place (its handle/RF slot is
+# unchanged); COMPLETED pop 1 (source), push 0.
+# ===========================================================================
+do_dict_update:
+    lw   t0, MB_E0_TAG(s11)
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, xd_fatal_type
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_DICT
+    bne  t0, t1, xd_fatal_type
+    lw   t0, MB_E1_TAG(s11)
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, xd_fatal_type
+    lw   t0, MB_E1_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_DICT
+    bne  t0, t1, xd_fatal_type
+    lw   s0, MB_E0_VAL0(s11)
+    jal  ra, dict_load_header_table   # s1=slotsA s2=usedA s5=s3=tableA order*
+    lw   s9, MB_E1_VAL0(s11)
+    mv   a0, s9
+    jal  ra, sp_read
+    lw   s10, SP_DATA0(s11)            # usedB
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_B_SLOTS(x0)           # slotsB = walk count
+    addi a0, s9, 32
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_B_TABLE(x0)           # tableB = walk source
+    add  a0, s2, s10                   # need = usedA + usedB
+    sw   a0, SCR_NEED(x0)
+    mv   a1, s1
+    jal  ra, dict_needs_grow
+    beq  a0, x0, du_no_grow
+    lw   s2, SCR_NEED(x0)              # size the new table for the union
+    jal  ra, dict_grow_rehash_keep
+    mv   s1, s7                        # slots = new
+    mv   s3, s4                        # table = new
+    lw   t0, SCR_NEW_ORDER(x0)
+    sw   t0, SCR_ORDER_PTR(x0)         # order buffer = new
+    lw   t0, SCR_NEED(x0)
+    sub  s2, t0, s10                   # restore usedA
+    slli t0, s7, 6
+    add  t0, s4, t0
+    sw   t0, SCR_C_HEAP(x0)            # new heap = table + slots*64
+    j    du_insert
+du_no_grow:
+    lw   t0, MB_HEAP_PTR(s11)
+    sw   t0, SCR_C_HEAP(x0)
+du_insert:
+    sw   x0, SCR_DUPMODE(x0)           # overwrite duplicate keys
+    jal  ra, dict_bulk_insert
+    jal  ra, dict_writeback_all
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 1
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 0
+    sw   t0, RES_PUSH_COUNT(s11)
+    lw   t0, SCR_C_HEAP(x0)
+    sw   t0, RES_HEAP_PTR(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
+# ===========================================================================
+# DICT_MERGE (trap 20): E0 = dict A, E1 = dict B. Build a fresh dict C sized
+# for used(A)+used(B); insert A then B. A key present in both A and B is a
+# duplicate keyword → FATAL(TYPE). COMPLETED pop 2, push 1 (C in RES_E0),
+# landing C where A was (DICT_MERGE oparg == 1).
+# ===========================================================================
+do_dict_merge:
+    lw   t0, MB_E0_TAG(s11)
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, xd_fatal_type
+    lw   t0, MB_E0_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_DICT
+    bne  t0, t1, xd_fatal_type
+    lw   t0, MB_E1_TAG(s11)
+    li   t1, TAG_MUT_COLLEC
+    bne  t0, t1, xd_fatal_type
+    lw   t0, MB_E1_VAL3(s11)
+    srli t0, t0, 28
+    li   t1, MUT_DICT
+    bne  t0, t1, xd_fatal_type
+    lw   s0, MB_E0_VAL0(s11)           # A addr (temp)
+    lw   s9, MB_E1_VAL0(s11)           # B addr
+    mv   a0, s0
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)             # usedA
+    sw   t0, SCR_USEDA(x0)
+    lw   t0, SP_DATA2(s11)             # slotsA
+    sw   t0, SCR_A_SLOTS(x0)
+    addi a0, s0, 32
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)             # tableA
+    sw   t0, SCR_A_TABLE(x0)
+    mv   a0, s9
+    jal  ra, sp_read
+    lw   s10, SP_DATA0(s11)            # usedB
+    lw   t0, SP_DATA2(s11)             # slotsB
+    sw   t0, SCR_BB_SLOTS(x0)
+    addi a0, s9, 32
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)             # tableB
+    sw   t0, SCR_BB_TABLE(x0)
+    lw   t0, SCR_USEDA(x0)
+    add  a0, t0, s10                   # need = usedA + usedB
+    jal  ra, dict_calc_slots          # a0 = C slots
+    sw   a0, SCR_C_SLOTS(x0)
+    lw   s0, MB_HEAP_PTR(s11)          # s0 = C obj
+    addi t0, s0, 48
+    sw   t0, SCR_ORDER_PTR(x0)         # C order at C+48
+    lw   t1, SCR_C_SLOTS(x0)
+    slli t2, t1, 5
+    add  t3, t0, t2                    # C table = C+48+slots*32
+    mv   s3, t3
+    slli t2, t1, 6
+    add  t4, t3, t2                    # new heap = table + slots*64
+    li   t5, HEAP_LIMIT
+    blt  t5, t4, xd_fatal_mem
+    sw   t4, SCR_C_HEAP(x0)
+    mv   s1, t1                        # C slots
+    li   s2, 0                         # C used
+    sw   x0, SCR_ORDER_LEN(x0)
+    sw   x0, SCR_VERSION(x0)
+    sw   x0, SCR_ZIDX(x0)
+dm_zero:
+    lw   t0, SCR_ZIDX(x0)
+    lw   t1, SCR_C_SLOTS(x0)
+    beq  t0, t1, dm_zdone
+    slli t2, t0, 6
+    add  a0, s3, t2
+    addi a0, a0, 16                    # zero each slot's ktag (empty marker)
+    li   t3, 0
+    sw   t3, SP_DATA0(s11)
+    sw   t3, SP_DATA1(s11)
+    sw   t3, SP_DATA2(s11)
+    sw   t3, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   t0, SCR_ZIDX(x0)
+    addi t0, t0, 1
+    sw   t0, SCR_ZIDX(x0)
+    j    dm_zero
+dm_zdone:
+    lw   t0, SCR_A_TABLE(x0)           # walk A into C
+    sw   t0, SCR_B_TABLE(x0)
+    lw   t0, SCR_A_SLOTS(x0)
+    sw   t0, SCR_B_SLOTS(x0)
+    sw   x0, SCR_DUPMODE(x0)
+    jal  ra, dict_bulk_insert
+    lw   t0, SCR_BB_TABLE(x0)          # walk B into C (dup key → fatal)
+    sw   t0, SCR_B_TABLE(x0)
+    lw   t0, SCR_BB_SLOTS(x0)
+    sw   t0, SCR_B_SLOTS(x0)
+    li   t0, 1
+    sw   t0, SCR_DUPMODE(x0)
+    jal  ra, dict_bulk_insert
+    jal  ra, dict_writeback_all
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 2
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 1
+    sw   t0, RES_PUSH_COUNT(s11)
+    lw   t0, SCR_C_HEAP(x0)
+    sw   t0, RES_HEAP_PTR(s11)
+    sw   s0, RES_E0_VAL0(s11)
+    li   t0, 0
+    sw   t0, RES_E0_VAL1(s11)
+    sw   t0, RES_E0_VAL2(s11)
+    li   t0, 0x20000000               # MUT_DICT kind (2) at value[127:124]
+    sw   t0, RES_E0_VAL3(s11)
+    li   t0, TAG_MUT_COLLEC
+    sw   t0, RES_E0_TAG(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
+# dict_bulk_insert: walk SCR_B_TABLE[0..SCR_B_SLOTS) (stride 64) and insert
+# each live (key,value) into the destination dict held in s0/s1/s2/s3 +
+# SCR_ORDER_PTR/SCR_ORDER_LEN/SCR_VERSION. SCR_DUPMODE selects behavior on an
+# existing key: 0 = overwrite value (update); 1 = FATAL(TYPE) (merge dup kwarg).
+# The destination must be pre-sized to hold every insert (open addressing needs
+# a spare slot). Updates s2 (used) plus the order sidecar / version per new key.
+dict_bulk_insert:
+    sw   ra, SCR_BULK_RA(x0)
+    sw   x0, SCR_B_IDX(x0)
+dbi_loop:
+    lw   t0, SCR_B_IDX(x0)
+    lw   t1, SCR_B_SLOTS(x0)
+    bgeu t0, t1, dbi_done
+    lw   t2, SCR_B_TABLE(x0)
+    slli t3, t0, 6
+    add  t4, t2, t3
+    addi a0, t4, 16                    # ktag
+    jal  ra, sp_read
+    lw   a1, SP_DATA0(s11)
+    beq  a1, x0, dbi_next
+    li   t0, TAG_TOMBSTONE
+    beq  a1, t0, dbi_next
+    lw   t0, SCR_B_IDX(x0)             # key value at slot+0
+    lw   t2, SCR_B_TABLE(x0)
+    slli t3, t0, 6
+    add  t4, t2, t3
+    mv   a0, t4
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_KVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_KVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_KVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_KVAL3(x0)
+    lw   t0, SCR_B_IDX(x0)             # key tag at slot+16
+    lw   t2, SCR_B_TABLE(x0)
+    slli t3, t0, 6
+    add  t4, t2, t3
+    addi a0, t4, 16
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_KTAG(x0)
+    lw   t0, SCR_B_IDX(x0)             # value at slot+32
+    lw   t2, SCR_B_TABLE(x0)
+    slli t3, t0, 6
+    add  t4, t2, t3
+    addi a0, t4, 32
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_VVAL0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_VVAL1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_VVAL2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_VVAL3(x0)
+    lw   t0, SCR_B_IDX(x0)             # value tag at slot+48
+    lw   t2, SCR_B_TABLE(x0)
+    slli t3, t0, 6
+    add  t4, t2, t3
+    addi a0, t4, 48
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_VTAG(x0)
+    jal  ra, dict_probe               # dest s3/s1 + SCR_K → SCR_FOUND/SCR_IDX
+    lw   t0, SCR_FOUND(x0)
+    beq  t0, x0, dbi_insert
+    lw   t0, SCR_DUPMODE(x0)
+    bne  t0, x0, dbi_dup
+    lw   a0, SCR_IDX(x0)
+    jal  ra, dict_write_val_at
+    j    dbi_next
+dbi_dup:
+    j    fatal_type
+dbi_insert:
+    lw   a0, SCR_IDX(x0)
+    jal  ra, dict_write_kv_at
+    addi s2, s2, 1
+    lw   t0, SCR_ORDER_LEN(x0)         # append key to insertion-order sidecar
+    lw   t1, SCR_ORDER_PTR(x0)
+    slli t2, t0, 5
+    add  a0, t1, t2
+    lw   t3, SCR_KVAL0(x0)
+    sw   t3, SP_DATA0(s11)
+    lw   t3, SCR_KVAL1(x0)
+    sw   t3, SP_DATA1(s11)
+    lw   t3, SCR_KVAL2(x0)
+    sw   t3, SP_DATA2(s11)
+    lw   t3, SCR_KVAL3(x0)
+    sw   t3, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   t0, SCR_ORDER_LEN(x0)
+    lw   t1, SCR_ORDER_PTR(x0)
+    slli t2, t0, 5
+    add  a0, t1, t2
+    addi a0, a0, 16
+    lw   t3, SCR_KTAG(x0)
+    sw   t3, SP_DATA0(s11)
+    li   t4, 0
+    sw   t4, SP_DATA1(s11)
+    sw   t4, SP_DATA2(s11)
+    sw   t4, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   t0, SCR_ORDER_LEN(x0)
+    addi t0, t0, 1
+    sw   t0, SCR_ORDER_LEN(x0)
+    lw   t0, SCR_VERSION(x0)
+    addi t0, t0, 1
+    sw   t0, SCR_VERSION(x0)
+dbi_next:
+    lw   t0, SCR_B_IDX(x0)
+    addi t0, t0, 1
+    sw   t0, SCR_B_IDX(x0)
+    j    dbi_loop
+dbi_done:
+    lw   ra, SCR_BULK_RA(x0)
+    jalr x0, ra, 0
+
+# dict_calc_slots(a0 = target used) → a0 = pow2 slot count. Mirrors
+# dict_grow_rehash sizing: 4x (used < 50000) or 2x, min 8, strictly > target.
+dict_calc_slots:
+    li   t0, 50000
+    bltu t0, a0, dcs_mul2
+    slli t1, a0, 2
+    j    dcs_min
+dcs_mul2:
+    slli t1, a0, 1
+dcs_min:
+    li   t0, 8
+    bge  t1, t0, dcs_p2i
+    li   t1, 8
+dcs_p2i:
+    li   t2, 8
+dcs_p2:
+    bge  t2, t1, dcs_gt
+    slli t2, t2, 1
+    j    dcs_p2
+dcs_gt:
+    blt  a0, t2, dcs_ret
+    slli t2, t2, 1
+    j    dcs_gt
+dcs_ret:
+    mv   a0, t2
+    jalr x0, ra, 0
+
+# dict_writeback_all: publish dest header/meta/pointers from
+# s0/s1/s2/s3 + SCR_ORDER_PTR/SCR_ORDER_LEN/SCR_VERSION.
+dict_writeback_all:
+    sw   ra, SCR_RA(x0)
+    sw   s2, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    sw   s1, SP_DATA2(s11)
+    sw   t0, SP_DATA3(s11)
+    mv   a0, s0
+    jal  ra, sp_write
+    addi a0, s0, 16
+    lw   t0, SCR_ORDER_LEN(x0)
+    sw   t0, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    lw   t0, SCR_VERSION(x0)
+    sw   t0, SP_DATA2(s11)
+    li   t0, 0
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    addi a0, s0, 32
+    sw   s3, SP_DATA0(s11)
+    li   t0, 0
+    sw   t0, SP_DATA1(s11)
+    lw   t0, SCR_ORDER_PTR(x0)
+    sw   t0, SP_DATA2(s11)
+    li   t0, 0
+    sw   t0, SP_DATA3(s11)
+    jal  ra, sp_write
+    lw   ra, SCR_RA(x0)
+    jalr x0, ra, 0
+
+# B-type-reachable fatal trampolines for the dict update/merge block.
+xd_fatal_type:
+    j    fatal_type
+xd_fatal_mem:
+    j    fatal_mem

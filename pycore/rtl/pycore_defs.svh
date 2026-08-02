@@ -57,12 +57,16 @@ localparam logic [3:0] PY_CTL_UNINIT = 4'd0;
 localparam logic [3:0] PY_CTL_NONE   = 4'd1;
 localparam logic [3:0] PY_CTL_NULL   = 4'd2;
 
-// MUT_COLLEC secondary kind in value[127:124]; value[63:0] = object addr.
+// MUT_COLLEC secondary kind in value[127:124]; contamination in value[123];
+// value[63:0] = object addr. Contaminated means the collection has ever
+// contained a PY_TAG_OBJECT element (dicts: OBJECT keys only). FROZENSET
+// (reserved) will use the same value[123] bit when it becomes live.
 localparam logic [3:0] PY_MUT_LIST      = 4'd1;
 localparam logic [3:0] PY_MUT_DICT      = 4'd2;
 localparam logic [3:0] PY_MUT_SET       = 4'd3;
 localparam logic [3:0] PY_MUT_BYTEARRAY = 4'd4;
 localparam logic [3:0] PY_MUT_DEQUE     = 4'd5;  // reserved socket
+localparam int PYCORE_MUT_CONTAM_BIT    = 123;
 
 // RANGE: value[127]=mode (0=inline i32 triple, 1=tuple pointer).
 // Inline: start[95:64], stop[63:32], step[31:0]. Tuple: addr in [63:0].
@@ -148,6 +152,13 @@ localparam logic [4:0] PY_TRAP_RAISE = 5'd17;
 // PY_TRAP_SLICE: BINARY_SLICE / STORE_SLICE on OBK_BYTEARRAY (O(n) copy).
 // Recoverable — excore allocates/copies and returns COMPLETED.
 localparam logic [4:0] PY_TRAP_SLICE = 5'd18;
+// PY_TRAP_DICT_UPDATE: DICT_UPDATE when dest+source are both uncontaminated.
+// Recoverable — excore grow-to-fit + insert-all (overwrite), COMPLETED pop=1.
+localparam logic [4:0] PY_TRAP_DICT_UPDATE = 5'd19;
+// PY_TRAP_DICT_MERGE: DICT_MERGE when dest+source are both uncontaminated and
+// dest is non-empty. Recoverable — merge into a fresh dict (dup key → TYPE),
+// COMPLETED with push of result handle + pop handled by firmware convention.
+localparam logic [4:0] PY_TRAP_DICT_MERGE = 5'd20;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a
@@ -161,7 +172,9 @@ function automatic logic pycore_trap_recoverable(input logic [4:0] code);
                                   (code == PY_TRAP_SET_GROW) ||
                                   (code == PY_TRAP_SET_UPDATE) ||
                                   (code == PY_TRAP_BUILTIN_CALL) ||
-                                  (code == PY_TRAP_SLICE);
+                                  (code == PY_TRAP_SLICE) ||
+                                  (code == PY_TRAP_DICT_UPDATE) ||
+                                  (code == PY_TRAP_DICT_MERGE);
     end
 endfunction
 
@@ -251,8 +264,10 @@ localparam logic [7:0] PY_OP_CALL_INTRINSIC_1 = 8'd53;
 localparam logic [7:0] PY_OP_CALL_FUNCTION_EX = 8'd4;
 localparam logic [7:0] PY_OP_CALL_KW          = 8'd55;
 localparam logic [7:0] PY_OP_COMPARE_OP       = 8'd56;
-// DICT_MERGE — CPython 3.14.6 opmap['DICT_MERGE'] -> 66
+// DICT_MERGE / DICT_UPDATE / MAP_ADD — CPython 3.14.6 opmap.
 localparam logic [7:0] PY_OP_DICT_MERGE       = 8'd66;
+localparam logic [7:0] PY_OP_DICT_UPDATE      = 8'd67;
+localparam logic [7:0] PY_OP_MAP_ADD          = 8'd98;
 localparam logic [7:0] PY_OP_COPY             = 8'd59;
 localparam logic [7:0] PY_OP_DELETE_FAST      = 8'd63;
 localparam logic [7:0] PY_OP_EXTENDED_ARG     = 8'd69;
@@ -549,20 +564,42 @@ function automatic logic [63:0] pycore_mut_addr(
     end
 endfunction
 
-function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_mut_value(
-    input logic [3:0] kind, input logic [63:0] addr
+function automatic logic pycore_mut_contaminated(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
 );
     begin
-        pycore_mut_value = {kind, 60'b0, addr};
+        pycore_mut_contaminated = value[PYCORE_MUT_CONTAM_BIT];
+    end
+endfunction
+
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_mut_value(
+    input logic [3:0]  kind,
+    input logic [63:0] addr,
+    input logic        contaminated
+);
+    begin
+        pycore_mut_value = {kind, contaminated, 59'b0, addr};
     end
 endfunction
 
 function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_mut(
-    input logic [3:0] kind, input logic [63:0] addr
+    input logic [3:0]  kind,
+    input logic [63:0] addr,
+    input logic        contaminated
 );
     begin
         pycore_make_mut = pycore_make_entry(
-            PY_TAG_MUT_COLLEC, pycore_mut_value(kind, addr));
+            PY_TAG_MUT_COLLEC, pycore_mut_value(kind, addr, contaminated));
+    end
+endfunction
+
+// Preserve kind+addr from an existing MUT_COLLEC value; force contamination.
+function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_mut_set_contaminated(
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_mut_set_contaminated = value;
+        pycore_mut_set_contaminated[PYCORE_MUT_CONTAM_BIT] = 1'b1;
     end
 endfunction
 
@@ -1141,11 +1178,14 @@ endfunction
 
 function automatic logic pycore_dict_key_tag_ok(input logic [3:0] tag);
     begin
+        // OBJECT keys are pycore-only (identity hash); they set the
+        // collection contamination bit so bulk ops skip excore.
         pycore_dict_key_tag_ok = (tag == PY_TAG_CONTROL)
                               || (tag == PY_TAG_INT) || (tag == PY_TAG_BOOL)
                               || (tag == PY_TAG_FLOAT)
                               || (tag == PY_TAG_SHORT_STR)
-                              || (tag == PY_TAG_LONG_STR);
+                              || (tag == PY_TAG_LONG_STR)
+                              || (tag == PY_TAG_OBJECT);
     end
 endfunction
 
@@ -1251,7 +1291,9 @@ function automatic logic pycore_dict_key_rich_eq(
             else
                 pycore_dict_key_rich_eq = 1'b0;
         end else if ((tag_a == tag_b) &&
-                     ((tag_a == PY_TAG_SHORT_STR) || (tag_a == PY_TAG_LONG_STR))) begin
+                     ((tag_a == PY_TAG_SHORT_STR) || (tag_a == PY_TAG_LONG_STR) ||
+                      (tag_a == PY_TAG_OBJECT))) begin
+            // STR: full value compare. OBJECT: identity (addr) compare.
             pycore_dict_key_rich_eq = (val_a == val_b);
         end else begin
             pycore_dict_key_rich_eq = 1'b0;
@@ -1277,6 +1319,38 @@ function automatic logic pycore_dict_needs_grow(
             (slot_count == 64'd0) ||
             ((used * 64'd3) >= (slot_count * 64'd2)) ||
             ((used + 64'd1) >= slot_count);
+    end
+endfunction
+
+// Bulk grow sizing for DICT_UPDATE / DICT_MERGE / SET_UPDATE pre-sizing.
+// Mirrors the excore dict_grow_rehash policy: need = used*4 (used<50000)
+// else used*2; floor to 8; round up to a power of two strictly greater than
+// used and at least twice the old slot count. old_slots must be a power of
+// two (0 for a fresh table).
+function automatic logic [31:0] pycore_dict_grow_slots(
+    input logic [63:0] used_need,
+    input logic [31:0] old_slots
+);
+    logic [63:0] need;
+    logic [63:0] pow2;
+    integer      i;
+    begin
+        if (used_need < 64'd50000)
+            need = used_need << 2;
+        else
+            need = used_need << 1;
+        if (need < 64'd8) need = 64'd8;
+        pow2 = 64'd8;
+        for (i = 0; i < 40; i = i + 1) begin
+            if (pow2 < need) pow2 = pow2 << 1;
+        end
+        // Ensure strictly greater than the target used count.
+        for (i = 0; i < 40; i = i + 1) begin
+            if (used_need >= pow2) pow2 = pow2 << 1;
+        end
+        if (pow2 < ({32'd0, old_slots} << 1))
+            pow2 = {32'd0, old_slots} << 1;
+        pycore_dict_grow_slots = pow2[31:0];
     end
 endfunction
 

@@ -546,7 +546,7 @@
                                                 trap_marshal_entries_r[0]  <=
                                                     pycore_make_mut(
                                                         PY_MUT_DICT,
-                                                        {32'b0, container_base_r});
+                                                        {32'b0, container_base_r}, 1'b0);
                                                 trap_marshal_entries_r[1]  <=
                                                     pycore_make_entry(
                                                         container_tag_r, container_val_r);
@@ -592,7 +592,7 @@
                                                             pycore_make_mut(
                                                                 PY_MUT_DICT,
                                                                 {32'b0,
-                                                                 container_base_r});
+                                                                 container_base_r}, 1'b0);
                                                         trap_marshal_entries_r[1]  <=
                                                             pycore_make_entry(
                                                                 container_tag_r,
@@ -630,7 +630,7 @@
                                                         pycore_make_mut(
                                                             PY_MUT_DICT,
                                                             {32'b0,
-                                                             container_base_r});
+                                                             container_base_r}, 1'b0);
                                                     trap_marshal_entries_r[1]  <=
                                                         pycore_make_entry(
                                                             container_tag_r, container_val_r);
@@ -658,7 +658,7 @@
                                                             pycore_make_mut(
                                                                 PY_MUT_DICT,
                                                                 {32'b0,
-                                                                 container_base_r});
+                                                                 container_base_r}, 1'b0);
                                                         trap_marshal_entries_r[1]  <=
                                                             pycore_make_entry(
                                                                 container_tag_r,
@@ -1735,7 +1735,7 @@
                                                 trap_marshal_entries_r[0]  <=
                                                     pycore_make_mut(
                                                         PY_MUT_DICT,
-                                                        {32'b0, container_base_r});
+                                                        {32'b0, container_base_r}, 1'b0);
                                                 trap_marshal_entries_r[1]  <=
                                                     pycore_make_entry(
                                                         container_tag_r, container_val_r);
@@ -1781,7 +1781,7 @@
                                                             pycore_make_mut(
                                                                 PY_MUT_DICT,
                                                                 {32'b0,
-                                                                 container_base_r});
+                                                                 container_base_r}, 1'b0);
                                                         trap_marshal_entries_r[1]  <=
                                                             pycore_make_entry(
                                                                 container_tag_r,
@@ -1819,7 +1819,7 @@
                                                         pycore_make_mut(
                                                             PY_MUT_DICT,
                                                             {32'b0,
-                                                             container_base_r});
+                                                             container_base_r}, 1'b0);
                                                     trap_marshal_entries_r[1]  <=
                                                         pycore_make_entry(
                                                             container_tag_r, container_val_r);
@@ -1847,7 +1847,7 @@
                                                         pycore_make_mut(
                                                             PY_MUT_DICT,
                                                             {32'b0,
-                                                             container_base_r});
+                                                             container_base_r}, 1'b0);
                                                         trap_marshal_entries_r[1]  <=
                                                             pycore_make_entry(
                                                                 container_tag_r,

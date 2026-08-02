@@ -1027,7 +1027,7 @@
                                              call_argcount_r[6:0]} - 9'd2);
                                         container_wb_data_r <= pycore_make_mut(
                                             PY_MUT_SET,
-                                            {32'b0, container_base_r});
+                                            {32'b0, container_base_r}, 1'b0);
                                         tos_r <= RF_AW'(
                                             {2'b0, tos_r} -
                                             {2'b0,
@@ -1354,7 +1354,7 @@
                                         container_dmem_wdata_r <=
                                             pycore_mut_value(
                                                 PY_MUT_DICT,
-                                                {32'b0, container_base_r});
+                                                {32'b0, container_base_r}, 1'b0);
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd5;
                                     end
