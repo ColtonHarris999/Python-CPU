@@ -8,6 +8,12 @@
 > 1. Always simulate the **full two-core system** (pycore + excore). No single-core mode.
 > 2. Prefer **Docker** for the UI/orchestration path so hosts without Python 3.14 still work.
 > 3. Implementation work lives on branch **`ui_simulation`**; push after each completed phase.
+>
+> **Pending base (do not ignore):** `bytecode_support` is landing on `main` via
+> PR [#61](https://github.com/ColtonHarris999/Python-CPU/pull/61)
+> (`cursor/merge-bulk-to-main-9270`). The sim UI must be built **on top of that
+> post-merge tree** (see §2.1). Do not design decode/trace/UI against the older
+> five-field code-object layout or the pre-bulk trap taxonomy.
 
 ---
 
@@ -33,14 +39,41 @@ PyCore is a SystemVerilog multi-cycle CPU whose ISA is a CPython **3.14** byteco
 
 There is **no frontend**, no step-time debugger, and no structured execution-trace protocol. The UI must sit on top of (and extend) this toolchain — not replace the RTL or invent a second Python interpreter.
 
-Canonical docs to read before coding:
+### 2.1 Pending merge: `bytecode_support` → `main`
+
+At plan-update time, open PR [#61](https://github.com/ColtonHarris999/Python-CPU/pull/61) merges branch `bytecode_support` (via `cursor/merge-bulk-to-main-9270`) into `main`. That tip already contains substantial ISA / image / excore work the UI must assume as **baseline**, not future stretch:
+
+| Landing change | Why the sim UI cares |
+| --- | --- |
+| **7-field code objects** (`co_varnames`, `co_kwdefaults`; metadata packs `kwonlyargcount`) | Frame locals can be labeled from `co_varnames`; decode/heap inspector must use 224B / 7-field layout, not the old 5-field model |
+| **`CALL_KW` / `CALL_FUNCTION_EX`** | Supported user programs widen; disasm + stack shapes must understand kw / `*args` / `**kwargs` call layouts |
+| **`MAP_ADD`, `DICT_UPDATE`, `DICT_MERGE`, bulk `SET_UPDATE`** | New opcodes + demos; image_from_source accepts them |
+| **`MUT_COLLEC` contamination bit** (`value[123]`) | Heap / handle decode must show sticky contamination; it decides pycore vs excore ownership of bulk hash ops |
+| **New recoverable traps** `PY_TRAP_DICT_UPDATE` (19), `PY_TRAP_DICT_MERGE` (20) (+ extended `SET_UPDATE` 14) | Mailbox event lane + trap name table must include them; bulk demos are first-class excore content |
+| **excore firmware bulk helpers** (`do_dict_update` / `do_dict_merge` / …) | Two-core traces will show longer ownership grants on dict/set bulk paths |
+| **Tooling** (`encoding.make_mut(..., contaminated=)`, image builder, Makefile two-core img targets) | Server decode + demos should reuse these helpers, not reinvent layouts |
+
+**Implementer base-branch rule:**
+
+1. Prefer waiting until PR #61 is merged, then:
+   ```bash
+   git fetch origin main
+   git checkout -b ui_simulation origin/main
+   ```
+2. If implementation must start while #61 is still open, create `ui_simulation` from `origin/main` and **immediately merge** `origin/bytecode_support` (or the PR head `origin/cursor/merge-bulk-to-main-9270`) before writing UI/trace code. Do not ship Phase A against pre-merge `main` alone.
+3. After #61 lands, merge/rebase latest `origin/main` into `ui_simulation` before the next phase push.
+4. Re-read post-merge `pycore/docs/bytecode_support.md`, `tags.md`, and `architecture.md` — they are the source of truth once main advances; planning docs under `planning/call_kw_support_plan.md` / `planning/dict_set_bulk_contam_plan.md` are background.
+
+Canonical docs to read before coding (use **post-`bytecode_support`** versions):
 
 - `README.md`
-- `pycore/docs/architecture.md` (frames, RF, boot, traps, two-core transport)
+- `pycore/docs/architecture.md` (frames, RF, boot, traps incl. 19/20, two-core transport, **7-field code objects**)
 - `pycore/docs/preprocessing_breakdown.md` (image-boot vs deprecated preprocess)
-- `pycore/docs/bytecode_support.md` (what user programs may legally contain)
-- `pycore/docs/tags.md`, `pycore/docs/object_model.md`
-- `excore/docs/` (mailbox MMIO, firmware build, trap handlers)
+- `pycore/docs/bytecode_support.md` (legal opcodes after the merge, including CALL_KW / bulk dict-set)
+- `pycore/docs/tags.md` (**contamination bit**), `pycore/docs/object_model.md`
+- `pycore/docs/set_excore.md` / dict excore notes for bulk routing
+- `excore/docs/` (mailbox MMIO, firmware build, trap handlers — bulk paths included)
+- `planning/call_kw_support_plan.md`, `planning/dict_set_bulk_contam_plan.md` (design intent; defer to docs/RTL if they disagree after merge)
 - `planning/builtins_*` only as background if builtins demos are added later
 
 ---
@@ -89,8 +122,9 @@ A reviewer can:
 1. Start the UI with one documented command (Docker-first).
 2. Drop in `pycore/programs/smoke_return.py` (or type an equivalent `managed_entry`), click Run, and see return `12` / INT on the **two-core** top.
 3. Step a recursive or call-chain program (e.g. `img_recursion` / `call_chain`) and watch call frames and stack grow/shrink.
-4. Run a small list grow / extend program and see both heap changes **and** an excore mailbox handoff in the event lane.
-5. On unsupported syntax/opcodes, get a readable build error in the UI, not a silent hang.
+4. Run a small list grow / extend **or** uncontaminated dict update/merge program and see both heap changes **and** an excore mailbox handoff (codes such as `LIST_GROW` / `DICT_UPDATE` / `DICT_MERGE` as applicable).
+5. Inspect a `MUT_COLLEC` handle and see whether its **contamination bit** is set (and understand that contaminated bulk ops stay on pycore).
+6. On unsupported syntax/opcodes, get a readable build error in the UI, not a silent hang.
 
 ---
 
@@ -193,7 +227,7 @@ Today’s `tb_pycore_runfile` only reports the final return and a coarse RF shad
       "code_addr": "0x..."
     }
   ],
-  "heap_delta": [ {"addr": "0x500", "kind": "LIST", "summary": "list len=2 cap=2"} ],
+  "heap_delta": [ {"addr": "0x500", "kind": "LIST", "summary": "list len=2 cap=2", "contaminated": false} ],
   "trap": null,
   "excore": {
     "active": false,
@@ -209,8 +243,10 @@ Notes:
 
 - Full RF every step is OK for small runs; for larger runs prefer stack + locals + dirty-RF deltas.
 - `heap_delta` can be “handles touched this step”; a separate endpoint can expand a handle into a full decoded object graph on demand.
-- Function names: best-effort from image metadata / `co_names` / source map; fall back to code-object address.
+- Function / local names: after `bytecode_support`, prefer **`co_varnames`** from the 7-field code object (plus `co_names` / source map). Fall back to addresses only if missing.
+- `MUT_COLLEC` decode must include `kind` **and** `contaminated` (`value[123]`).
 - When excore owns memory / services a trap, either emit dedicated steps or annotate the straddling pycore steps with mailbox transition events so the scrubber can pause on handoffs.
+- Trap name table must cover the post-merge recoverable set, including **`DICT_UPDATE` (19)** and **`DICT_MERGE` (20)** as well as list/dict/set grow/extend/delete/update.
 
 ### 5.3 RTL / TB work required
 
@@ -279,30 +315,33 @@ Provide enough mapping for the editor to highlight:
 
 **Operand stack:** vertical TOS-on-top or TOS-at-bottom (pick one, stay consistent); empty slots not shown; highlight pushes/pops between steps.
 
-**Call frames:** stack of frames with function label, depth, return PC; selected frame shows locals by name when names are known (`co_varnames` if available from image/metadata — add metadata export if missing).
+**Call frames:** stack of frames with function label, depth, return PC; selected frame shows locals by name from **`co_varnames`** (serialized on code objects after `bytecode_support`). Also surface `argcount` / `kwonlyargcount` when useful for CALL_KW demos.
 
 **Heap structures:**
 
-- LIST: length, capacity, element array (decoded entries)
-- DICT/SET: len, slot table summary, insertion-order keys when applicable
+- LIST: length, capacity, element array (decoded entries); show handle contamination if set via `LIST_APPEND` of OBJECT
+- DICT/SET: len, slot table summary, insertion-order keys when applicable; **always show contamination bit** (OBJECT keys/elements)
 - TUPLE: size + elements
 - SHORT_STR / LONG_STR: decoded text (truncate long)
-- CODE_OBJECT: entry_slot, nlocals, stacksize, argcount
+- CODE_OBJECT: entry_slot, nlocals, stacksize, argcount, **kwonlyargcount**, defaults / kwdefaults / **varnames** handles (7-field layout)
 - OBJECT: kind + fields per `object_model.md`
-- MUT_COLLEC kind nibble must be decoded (LIST/DICT/SET/…)
+- MUT_COLLEC kind nibble must be decoded (LIST/DICT/SET/…) **plus** `contaminated`
 
-**Excore / mailbox:** persistent status chip for current `mem_owner`; event list for trap_req / trap_res with codes from the architecture taxonomy (`LIST_GROW`, `LIST_EXTEND`, `DICT_GROW`, …). Recoverable service intervals should be obvious while scrubbing.
+**Excore / mailbox:** persistent status chip for current `mem_owner`; event list for trap_req / trap_res with codes from the post-merge taxonomy, including `LIST_GROW`, `LIST_EXTEND`, `DICT_GROW`, `LIST_DELETE`, `SET_GROW`, `SET_UPDATE`, **`DICT_UPDATE`**, **`DICT_MERGE`**. When a bulk op runs on pycore because of contamination (no mailbox), show that in the UI (e.g. “bulk on pycore — contaminated”) so users are not confused by a missing handoff.
 
 **Fatal traps:** banner with code name; freeze scrubber at trap step.
 
 ### 6.4 Demo programs
 
-Ship UI-loadable demos (buttons or examples menu), reusing existing programs where possible:
+Ship UI-loadable demos (buttons or examples menu), reusing existing programs / post-merge `img_*` fixtures where possible:
 
 - `smoke_return.py` — trivial return (two-core still active)
 - call / recursion example — frames
+- **`CALL_KW` / `CALL_FUNCTION_EX` example** (from `img_call_kw` / `img_call_function_ex*`) — stack shapes + named locals
 - list/dict build + index — heap
-- list grow / extend (or other recoverable trap) — **required** excore mailbox demo
+- list grow / extend — classic excore mailbox demo
+- **uncontaminated `DICT_UPDATE` / `DICT_MERGE` / `SET_UPDATE`** (`img_dict_update`, `img_dict_merge`, `img_set_update*`) — **required** bulk-trap mailbox demos after the merge
+- optional contaminated-key demo — shows pycore-owned bulk path / TYPE gap behavior without a false “missing excore” bug report
 - a program that fatal-traps (type or mem fault) — trap UX
 
 ---
@@ -377,12 +416,14 @@ Do **not** wire the UI to `tb_pycore_runfile` / single-core `pycore_system` as t
 
 ### 8.3 Decoding
 
-Centralize tag/entry decoding in one Python module (extend `pycore/tools/encoding.py` / heap helpers rather than duplicating constants). Mirror layouts in:
+Centralize tag/entry decoding in one Python module (extend `pycore/tools/encoding.py` / heap helpers rather than duplicating constants). After `bytecode_support` merges, reuse `make_mut(..., contaminated=)`, `mut_contaminated`, and the 7-field code-object readers already used by image tooling.
 
-- `pycore/docs/tags.md`
+Mirror layouts in:
+
+- `pycore/docs/tags.md` (incl. contamination bit)
 - `heap_image.py` / architecture memory map
-- frame descriptor layout in `architecture.md`
-- mailbox / trap codes in `architecture.md` + `excore/docs/mmio_map.md`
+- frame descriptor + **7-field CODE_OBJECT** layout in `architecture.md`
+- mailbox / trap codes in `architecture.md` + `excore/docs/mmio_map.md` (include 19/20)
 
 ### 8.4 Python version
 
@@ -411,18 +452,26 @@ Expectations:
 
 Rules:
 
-1. Create the branch from up-to-date `main` when implementation starts:
+1. **Base must include `bytecode_support`.** Preferred:
    ```bash
    git fetch origin main
+   # after PR #61 is merged:
    git checkout -b ui_simulation origin/main
    ```
+   If #61 is not merged yet:
+   ```bash
+   git fetch origin main bytecode_support cursor/merge-bulk-to-main-9270
+   git checkout -b ui_simulation origin/main
+   git merge origin/cursor/merge-bulk-to-main-9270   # or origin/bytecode_support
+   ```
+   Do not begin Phase A decode/trace work on pre-merge `main` alone.
 2. Do **all** implementation commits on `ui_simulation` (not on ad-hoc agent branches, unless temporarily experimenting — land results on `ui_simulation`).
 3. After finishing **each phase** (A/B/C/D), commit with a clear message and push:
    ```bash
    git push -u origin ui_simulation
    ```
-4. Open or update **one PR** from `ui_simulation` → `main` (draft OK). Update the PR description as phases land.
-5. If `main` moves, merge/rebase `origin/main` into `ui_simulation` and resolve conflicts before continuing a phase.
+4. Open or update **one PR** from `ui_simulation` → `main` (draft OK). Update the PR description as phases land. Note in the PR that it assumes the `bytecode_support` merge.
+5. If `main` moves (including when #61 merges), merge/rebase `origin/main` into `ui_simulation` and resolve conflicts before continuing a phase.
 6. Do not rename the branch. The reviewer will look specifically for `ui_simulation`.
 
 ---
@@ -444,22 +493,24 @@ Implement in phases so a partial PR on `ui_simulation` is still reviewable. **Pu
 
 ### Phase B — Frames + disassembly + errors + excore event lane
 
-- Call frame panel with depth and locals.
-- Disassembly pane synced to PC.
+- Call frame panel with depth and locals labeled via **`co_varnames`**.
+- Disassembly pane synced to PC (include CALL_KW / CALL_FUNCTION_EX / bulk opcodes when present).
 - Image-build / fatal-trap / timeout errors polished in UI.
 - Timeline scrubber.
-- Excore/mailbox event lane present (even if only idle + one demo handoff).
+- Excore/mailbox event lane present with post-merge trap names (incl. `DICT_UPDATE` / `DICT_MERGE` when exercised).
+- At least one bulk-dict or list-grow handoff demo wired in the examples menu.
 
-**Exit criteria:** recursion/call-chain demo shows nested frames; grow/extend demo shows mailbox handoff; fatal trap demo shows code name.  
+**Exit criteria:** recursion/call-chain demo shows nested named locals; grow/extend or dict-update demo shows mailbox handoff; fatal trap demo shows code name.  
 **Then:** commit + push `ui_simulation`.
 
-### Phase C — Heap inspector
+### Phase C — Heap inspector (+ contamination)
 
-- On-demand heap decode for LIST/DICT/SET/TUPLE/STR/CODE/OBJECT.
+- On-demand heap decode for LIST/DICT/SET/TUPLE/STR/CODE/OBJECT (7-field code objects).
+- Show **contamination bit** on MUT_COLLEC handles; explain bulk routing in the inspector/event lane.
 - Highlight mutated handles across steps.
 - Richer mailbox payload display (trap entries / result entries) as available.
 
-**Exit criteria:** list/dict demo inspectable; grow path shows heap resize + excore completion.  
+**Exit criteria:** list/dict demo inspectable; uncontaminated update/merge shows excore completion; contaminated handle is visible in the UI.  
 **Then:** commit + push `ui_simulation`.
 
 ### Phase D — Polish
@@ -495,19 +546,23 @@ Implement in phases so a partial PR on `ui_simulation` is still reviewable. **Pu
 | Host Python version conflicts | Docker-first launch using `python:3.14-slim` image; native path secondary |
 | Security of `exec` in host expected-result | Reuse existing helper; only for compare; never trust client paths |
 | Agents invent alternate branch names | Hard requirement: land work on `ui_simulation` only |
+| Building against pre-`bytecode_support` main | §2.1 / §9: wait for PR #61 or merge that tip first; treat 7-field code objects + contam bit + traps 19/20 as required |
+| Stale trap/name tables omit DICT_UPDATE/MERGE | Generate/name from post-merge `pycore_defs` / architecture taxonomy |
+| Users expect excore on contaminated bulk ops | UI must show contamination and “pycore-owned bulk” when no mailbox fires |
 
 ---
 
 ## 13. Deliverables checklist (agent definition of done)
 
-- [ ] Implementation branch **`ui_simulation`** pushed to origin with phase commits
+- [ ] Implementation branch **`ui_simulation`** based on post-`bytecode_support` tree, pushed with phase commits
 - [ ] `sim_ui/` (or equivalent) with server + web client
 - [ ] Docker-first Make/docs entry point: one command to launch the UI
 - [ ] Image-boot **two-core** run path with structured trace output (`EXCORE_EN=1` always)
+- [ ] Decode understands **7-field code objects**, **contamination bit**, and traps **19/20**
 - [ ] UI: load source (drag/drop + edit), Run, result, step/scrub
-- [ ] Panels: stack, frames, excore/mailbox events, heap inspector (per phase), basic RF/advanced raw
+- [ ] Panels: stack, frames (named locals), excore/mailbox events (incl. bulk traps), heap inspector with contam, basic RF/advanced raw
 - [ ] Clear errors for unsupported Python / fatal traps / timeouts
-- [ ] Tests for decode + trace parse; smoke path documented
+- [ ] Tests for decode + trace parse (incl. contam + a bulk mailbox fixture); smoke path documented
 - [ ] Root or `sim_ui` README section describing UX, Docker launch, and limits (bytecode subset, Python 3.14 in container)
 - [ ] No reliance on deprecated preprocess as the primary path
 - [ ] No single-core UI mode
@@ -524,14 +579,18 @@ Implement the PyCore Interactive Simulator & Debugger UI described in
 `planning/pycore_sim_debugger_ui_prompt.md`.
 
 Git workflow (mandatory):
-- Create/use branch exactly named `ui_simulation` from up-to-date main.
+- Create/use branch exactly named `ui_simulation`.
+- Base it on main AFTER bytecode_support lands (PR #61), or merge
+  origin/bytecode_support / origin/cursor/merge-bulk-to-main-9270 into
+  ui_simulation before Phase A if #61 is still open (see plan §2.1 / §9).
 - Commit and push to `origin/ui_simulation` after each completed phase.
 - Open/update one PR from `ui_simulation` → `main`.
 
-Read that planning document fully, then read README.md and the pycore/excore
-docs it cites. Execute Phase A first and push; continue through Phase B and
-push. Do not start Phase C/D unless Phase A/B are solid or the user asks to
-go further.
+Read that planning document fully, then read the post-merge README and the
+pycore/excore docs it cites (especially tags contamination bit, 7-field code
+objects, and trap codes 19/20). Execute Phase A first and push; continue
+through Phase B and push. Do not start Phase C/D unless Phase A/B are solid
+or the user asks to go further.
 
 Constraints:
 - Always simulate the full two-core system (pycore + excore, EXCORE_EN=1).
@@ -540,6 +599,8 @@ Constraints:
   make docker-* flow) so Python 3.14/Verilator are container-provided.
 - Prefer image_from_source / two-core image-boot tops; do not make
   preprocess.py or tb_pycore_runfile primary.
+- Assume bytecode_support ISA: CALL_KW/CALL_FUNCTION_EX, MAP_ADD,
+  DICT_UPDATE/DICT_MERGE/SET_UPDATE bulk routing, MUT_COLLEC contamination bit.
 - Add RTL/TB observation hooks only as needed for tracing; do not change
   architectural execution semantics.
 - Keep existing make test targets green.
@@ -563,6 +624,7 @@ Already locked from feedback:
 - ✅ Always two-core (pycore + excore)
 - ✅ Docker-first to avoid host Python conflicts
 - ✅ Implementation branch name: `ui_simulation`
+- ✅ Account for pending `bytecode_support` → `main` merge (PR #61) as the implementation base
 
 Still optional to amend before kickoff:
 
@@ -570,5 +632,6 @@ Still optional to amend before kickoff:
 2. **Trace fidelity:** Per-opcode snapshots OK, or need true per-cycle / per-container-phase stepping in v1?
 3. **Legacy `make run-file`:** Leave as-is (recommended), or also migrate it to image-boot as drive-by work? (Drive-by not required.)
 4. **Published port / compose:** Any preference for port number or docker compose vs plain `docker run` Make wrapper?
+5. **Start now vs wait:** Prefer the implementing agent wait for #61 to merge, or start immediately by merging `bytecode_support` into `ui_simulation`?
 
 Mark remaining decisions at the top of this file when approved, then hand the §14 kickoff prompt to an implementing agent.
