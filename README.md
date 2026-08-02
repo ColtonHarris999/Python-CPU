@@ -121,9 +121,10 @@ make docker-build
 ## Interactive simulator UI (two-core)
 
 Paste or drag in a Python file, run a **pycore + excore** image-boot
-simulation, and step through stack / frames / mailbox state in the browser.
+simulation, and step through stack / frames / mailbox / heap state in the
+browser.
 
-**Docker-first (recommended):**
+**Docker-first (recommended) — two commands after clone:**
 
 ```bash
 git clone -b ui https://github.com/ColtonHarris999/Python-CPU.git
@@ -132,7 +133,7 @@ make docker-build
 make docker-sim-ui
 ```
 
-Then open http://localhost:8000 — full instructions in
+Then open http://localhost:8000. Usage (examples, stepping, shortcuts):
 [`sim_ui/README.md`](sim_ui/README.md).
 
 ## Testing workflows
