@@ -95,9 +95,6 @@ if NBARG_SUBSCR is None:
 # Preprocess raises a specific error when it encounters any of these so the
 # user knows to use a supported alternative.
 DEFERRED_OPS: dict[str, str] = {
-    "MAP_ADD":       "dict mutation not yet implemented",
-    "DICT_UPDATE":   "dict.update not yet implemented",
-    "DICT_MERGE":    "dict merge not yet implemented",
     "BINARY_SLICE":  "slice notation not yet implemented",
     "STORE_SLICE":   "slice assignment not yet implemented",
     "LOAD_GLOBAL":   "module/global lookup is supported by image_from_source.py",
@@ -170,6 +167,9 @@ SUPPORTED_OPS = {
     "BUILD_SET",
     "SET_ADD",
     "SET_UPDATE",
+    "DICT_MERGE",
+    "DICT_UPDATE",
+    "MAP_ADD",
 }
 
 SUPPORTED_BINARY_ARGS = {

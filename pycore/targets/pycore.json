@@ -534,7 +534,19 @@
       "support": "partial",
       "hw_class": "OBJECT",
       "fold": "BAR",
-      "note": "Empty-dest fast path for call **kwargs; non-empty dest → CALL_FILTER"
+      "note": "Empty-dest alias fast path; non-empty uncontaminated dest → excore DICT_MERGE trap; contaminated dest/src → CALL_FILTER"
+    },
+    "DICT_UPDATE": {
+      "support": "partial",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "Uncontaminated A.update(B) → excore DICT_UPDATE trap (grow-to-fit, overwrite dups); contaminated → type trap (pycore bulk update gap)"
+    },
+    "MAP_ADD": {
+      "support": "partial",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "note": "Single dict[key]=value in pycore (reuses STORE_DICT probe/insert, DICT_GROW trap); OBJECT key contaminates the dict handle"
     },
     "LOAD_FAST_AND_CLEAR": {
       "support": "execute",
