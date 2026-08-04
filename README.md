@@ -136,6 +136,9 @@ make docker-sim-ui
 Then open http://localhost:8000. Usage (examples, stepping, shortcuts):
 [`sim_ui/README.md`](sim_ui/README.md).
 
+On **Windows Git Bash**, if you see `C:/Program Files/Git/work` path errors,
+pull latest `ui` or run `MSYS_NO_PATHCONV=1 make docker-sim-ui`.
+
 ## Testing workflows
 
 ### Run an individual test target (local)
