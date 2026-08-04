@@ -41,11 +41,11 @@ def _parse_int_string(s, base):
             if started == 0:
                 neg = 1
                 continue
-            return 1 % 0
+            raise 1
         if ch == "+":
             if started == 0:
                 continue
-            return 1 % 0
+            raise 1
         if ch == "0":
             val = 0
         elif ch == "1":
@@ -91,13 +91,13 @@ def _parse_int_string(s, base):
         elif ch == "F":
             val = 15
         if val < 0:
-            return 1 % 0
+            raise 1
         if val >= base:
-            return 1 % 0
+            raise 1
         n = n * base + val
         started = 1
     if started == 0:
-        return 1 % 0
+        raise 1
     if neg:
         return -n
     return n

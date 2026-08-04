@@ -39,14 +39,14 @@ These limit every firmware builtin:
 
 | Builtin | Description | Status | Notes |
 | --- | --- | --- | --- |
-| `abs` | Return the absolute value of a number. | implemented | INT/BOOL/FLOAT via `<` + `UNARY_NEGATIVE`. |
+| `abs` | Return the absolute value of a number. | in ROM | INT/BOOL/FLOAT via `<` + `UNARY_NEGATIVE`. Non-numeric → TYPE trap. |
 | `aiter` | Return an asynchronous iterator for an asynchronous iterable. | blocked | Async/await deferred (`GET_AWAITABLE`/`SEND`). |
-| `all` | Return True if all elements of the iterable are true (or if empty). | implemented | TO_BOOL limits apply. |
+| `all` | Return True if all elements of the iterable are true (or if empty). | in ROM | Uses widened TO_BOOL; empty → True. |
 | `anext` | Return the next item from an asynchronous iterator. | blocked | Async/await deferred. |
-| `any` | Return True if any element of the iterable is true. | implemented | TO_BOOL limits apply. |
+| `any` | Return True if any element of the iterable is true. | in ROM | Uses widened TO_BOOL; empty → False. |
 | `ascii` | Return an ASCII-only repr, escaping non-ASCII characters. | blocked | Needs `repr` for str + `ord` for non-ASCII escapes. |
 | `bin` | Convert an integer to a binary string prefixed with '0b'. | implemented | String concat digit loop. |
-| `bool` | Return a Boolean value; subclass of int used as the Boolean type. | implemented | Truthiness only — does not fabricate a `bool` type object. |
+| `bool` | Return a Boolean value; subclass of int used as the Boolean type. | in ROM | Truthiness only — does not fabricate a `bool` type object. |
 | `breakpoint` | Drop into the debugger at the call site (PEP 553). | blocked | No `sys.breakpointhook` / debugger. |
 | `bytearray` | Return a new mutable bytearray object. | blocked | Seeded as `BI_BYTEARRAY`; CALL → excore. Cannot alloc in pure Python. |
 | `bytes` | Return a new immutable bytes object. | blocked | `PY_TAG_BYTES` exists; no runtime constructor API. |
@@ -59,7 +59,7 @@ These limit every firmware builtin:
 | `dict` | Create a new dictionary. | implemented | From iterable of pairs via `UNPACK_SEQUENCE` + `STORE_SUBSCR`. No kwargs. |
 | `dir` | Return a list of valid attribute names for an object or the local scope. | in progress | Instance `__dict__` keys only; no-arg / MRO names blocked. |
 | `divmod` | Return the pair (quotient, remainder) of integer division. | implemented | `(a // b, a % b)`. |
-| `enumerate` | Return an enumerate object yielding (index, item) pairs. | implemented | Returns a **list** of pairs (no YIELD). |
+| `enumerate` | Return an enumerate object yielding (index, item) pairs. | in ROM | Returns a **list** of pairs (no YIELD). LIST grow needs excore. |
 | `eval` | Evaluate a Python expression from a string or code object. | blocked | See `eval.md`. |
 | `exec` | Execute Python statements from a string or code object. | blocked | See `exec.md`. |
 | `filter` | Construct an iterator of items for which a function returns true. | implemented | Returns a **list**; `function is None` uses TO_BOOL. |
@@ -77,11 +77,11 @@ These limit every firmware builtin:
 | `int` | Convert a number or string to an integer. | in progress | Numeric truncate + `_parse_int_string` when `base` given; `int("5")` without base still needs tag dispatch. |
 | `isinstance` | Return True if the object is an instance of a type or tuple of types. | implemented | Single-class `classinfo` via `__class__`/`__base__` walk. Tuple-of-types form blocked. |
 | `issubclass` | Return True if a class is a subclass of a class or tuple of classes. | implemented | Single-class `classinfo` via `__base__` walk (depth ≤ 8). |
-| `iter` | Return an iterator for an object (or call a sentinel-producing callable). | in progress | One-arg materializes a list; sentinel form blocked (`% 0`). |
+| `iter` | Return an iterator for an object (or call a sentinel-producing callable). | in progress | One-arg materializes a list; sentinel form `raise`s (fatal). |
 | `len` | Return the number of items in a container. | implemented | Miss path: `obj.__len__()`. Native `BI_LEN` owns container header reads. |
 | `list` | Create a new list, optionally from an iterable. | implemented | `out += [x]` per element (excore LIST_EXTEND). |
 | `locals` | Return the current local symbol table as a dict. | blocked | No frame-local namespace objects. |
-| `map` | Return an iterator that applies a function to every item of iterables. | implemented | Single iterable → **list**. Multi-iter `*args` blocked. |
+| `map` | Return an iterator that applies a function to every item of iterables. | in ROM | Single iterable → **list**. Multi-iter `*args` blocked. LIST grow needs excore. |
 | `max` | Return the largest item in an iterable or among arguments. | implemented | `(iterable)` or `(a, b)` only. Empty → `None`. Native `BI_MAX` still on-core for 2-arg. |
 | `memoryview` | Return a memory view object over a bytes-like object. | blocked | No buffer protocol / memoryview kind. |
 | `min` | Return the smallest item in an iterable or among arguments. | implemented | Same signature limits as `max`. |
@@ -103,12 +103,12 @@ These limit every firmware builtin:
 | `sorted` | Return a new sorted list from an iterable. | implemented | Bubble sort; numeric COMPARE_OP only; no key=/reverse=. |
 | `staticmethod` | Transform a method into a static method. | blocked | Image-time `BI_STATICMETHOD` (id 0) unwrap; runtime wrapper blocked. |
 | `str` | Create a new string object from an object or buffer. | in progress | BOOL/None/INT decimal; STR identity needs tag probe. |
-| `sum` | Return the sum of a start value and an iterable of numbers. | implemented | `start` default 0. |
+| `sum` | Return the sum of a start value and an iterable of numbers. | in ROM | `start` default 0 (positional). Bad `+` / non-iterable → TYPE trap (no TypeError objects). No `start=` kwarg / genexpr. |
 | `super` | Return a proxy object that delegates method calls to a parent or sibling class. | blocked | See `super.md`. |
 | `tuple` | Create a new tuple, optionally from an iterable. | in progress | `tuple()` → `()`. Non-empty iterable needs `UNPACK_EX` / dynamic BUILD_TUPLE — traps. |
 | `type` | Return the type of an object, or create a new type object. | in progress | One-arg: `obj.__class__`. Three-arg needs `LOAD_BUILD_CLASS`. |
 | `vars` | Return the __dict__ of an object, or locals() with no argument. | in progress | `obj.__dict__`; no-arg → `{}` (not real locals). |
-| `zip` | Iterate over several iterables in parallel, yielding tuples. | implemented | Two iterables → **list** of pairs. |
+| `zip` | Iterate over several iterables in parallel, yielding tuples. | in ROM | Two iterables → **list** of pairs. LIST grow needs excore. |
 
 ## pycore-specific helpers
 
@@ -130,17 +130,23 @@ pycore_firmware/builtins/builtins.md    # this inventory
 | --- | --- |
 | Python modules | 73 |
 | Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`, `ord`, `chr`) |
-| Status: implemented | 31 |
+| Status: in ROM | 8 (`abs`, `all`, `any`, `bool`, `enumerate`, `map`, `sum`, `zip`) |
+| Status: implemented | 23 |
 | Status: in progress | 12 |
 | Status: blocked | 30 |
 
+### In ROM (seeded as CODE_OBJECT in boot builtins dict)
+
+`abs`, `all`, `any`, `bool`, `enumerate`, `map`, `sum`, `zip` — via
+`ROM_FIRMWARE_BUILTINS` in `image_from_source.py`. Coverage:
+`img_firmware_rom_subset`, `img_firmware_iterators` (two-core).
+
 ### Implemented (ROM-ready happy path)
 
-`abs`, `all`, `any`, `bin`, `bool`, `delattr`, `dict`, `divmod`,
-`enumerate`, `filter`, `getattr`, `hasattr`, `hex`, `isinstance`,
-`issubclass`, `len`, `list`, `list_append`, `map`, `max`, `min`, `oct`,
-`pow`, `range`, `reversed`, `round`, `set`, `setattr`, `sorted`, `sum`,
-`zip`
+`bin`, `delattr`, `dict`, `divmod`, `filter`, `getattr`, `hasattr`,
+`hex`, `isinstance`, `issubclass`, `len`, `list`, `list_append`, `max`,
+`min`, `oct`, `pow`, `range`, `reversed`, `round`, `set`, `setattr`,
+`sorted`
 
 ### In progress (usable subset)
 
@@ -154,3 +160,25 @@ pycore_firmware/builtins/builtins.md    # this inventory
 `globals`, `hash`, `help`, `id`, `input`, `locals`, `memoryview`,
 `object`, `open`, `ord`, `print`, `property`, `slice`, `staticmethod`,
 `super`, `from_bytes`, `to_bytes`
+
+## Blocked by bytecode (§3 gaps)
+
+Audit of **blocked** / partially-blocked names against
+`planning/builtins_next_steps_plan.md` §3. Prefer linking deep plans under
+`pycore_firmware/builtins/*.md` where they exist.
+
+| Bytecode / protocol gap | Blocked or limited builtins |
+| --- | --- |
+| Kwargs ROM wrappers (not a bytecode gap) | `print`/`sorted`/`max` kwargs still unimplemented in firmware; binder is ready for `CODE_OBJECT` |
+| `CO_VARARGS` / `CO_VARKEYWORDS` on defs | Multi-iter `zip(*args)` / `map` as Python `*args` parameters |
+| Exception tables / `RERAISE` | Real `TypeError` / `StopIteration` everywhere; comprehension option A/B |
+| `GET_ITER` / `FOR_ITER` on OBJECT | User-defined iterables (`__iter__` / `__next__`) |
+| `BI_ORD` / `BI_CHR` | `ord`, `chr`, `ascii` (see `ord.md`, `chr.md`) |
+| `LOAD_SUPER_ATTR` + descriptors | `super`, `property`, `classmethod` (see `super.md`, `property.md`) |
+| `COMPARE_OP` string ordering | `sorted` / `min` / `max` on str |
+| `FORMAT_*` / `BUILD_STRING` | Richer `format` / `str` / `print` |
+| Host `compile` / eval of source | `compile`, `eval`, `exec` (see `compile.md`, `eval.md`, `exec.md`) |
+| I/O device | `open`, `input`, `print` (native `BI_PRINT` trap path; see `open.md`) |
+| Async opcodes | `aiter`, `anext` |
+| Buffer / frozenset / slice kinds | `memoryview`, `bytes`/`bytearray` payload, `frozenset`, `slice` |
+| Frame / hash exposure | `locals`, `globals`, `hash`, `id` |

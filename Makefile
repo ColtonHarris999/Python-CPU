@@ -179,6 +179,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
+	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-attr-all \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
@@ -1197,6 +1198,7 @@ pycore-img-attr-all: \
 	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
+	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-builtin-max \
 	pycore-img-builtin-len-list
 
@@ -1236,6 +1238,12 @@ pycore-img-builtins-shadow:
 
 pycore-img-builtins-null-bit:
 	$(call PYCORE_IMAGE_RUN,builtins_null_bit,50000)
+
+pycore-img-firmware-rom-subset:
+	$(call PYCORE_IMAGE_RUN,firmware_rom_subset,200000)
+
+pycore-img-firmware-iterators: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,firmware_iterators,500000)
 
 pycore-img-load-name-builtin:
 	$(call PYCORE_IMAGE_RUN,load_name_builtin,50000)

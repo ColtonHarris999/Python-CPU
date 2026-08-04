@@ -21,14 +21,14 @@ def _parse_float_string(s):
             if started == 0:
                 neg = 1
                 continue
-            return 1 % 0
+            raise 1
         if ch == "+":
             if started == 0:
                 continue
-            return 1 % 0
+            raise 1
         if ch == ".":
             if in_frac:
-                return 1 % 0
+                raise 1
             in_frac = 1
             started = 1
             continue
@@ -54,7 +54,7 @@ def _parse_float_string(s):
         elif ch == "9":
             val = 9
         if val < 0:
-            return 1 % 0
+            raise 1
         started = 1
         if in_frac:
             frac = frac + val * place
@@ -62,7 +62,7 @@ def _parse_float_string(s):
         else:
             value = value * 10.0 + val * 1.0
     if started == 0:
-        return 1 % 0
+        raise 1
     result = value + frac
     if neg:
         return -result
