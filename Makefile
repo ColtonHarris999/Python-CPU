@@ -8,6 +8,9 @@ DOCKER_IMAGE ?= python-cpu-sim
 DOCKER_CONTAINER_WORKDIR ?= /work
 DOCKER_BUILD_FLAGS ?=
 DOCKER_RUN_FLAGS ?=
+# Git Bash (MSYS) rewrites absolute Unix paths like /work into
+# C:/Program Files/Git/work when invoking Windows docker.exe. Disable that.
+DOCKER_CLI ?= MSYS_NO_PATHCONV=1 docker
 
 PYCORE_SOURCE ?= pycore/programs/smoke_return.py
 PYCORE_FUNCTION ?= managed_entry
@@ -1759,10 +1762,10 @@ excore-test: excore-asm-tests excore-cpu-test
 pycore-test: pycore-python-tests pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib pycore-container pycore-img pycore-excore-system pycore-img-two-core
 
 docker-build:
-	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .
+	$(DOCKER_CLI) build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .
 
 docker-run-file: docker-build
-	docker run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" \
+	$(DOCKER_CLI) run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" \
 		$(DOCKER_IMAGE) make run-file \
 		RUN_SOURCE="$(RUN_SOURCE)" \
 		RUN_FUNCTION="$(RUN_FUNCTION)" \
@@ -1773,10 +1776,10 @@ docker-run-file: docker-build
 		RUN_MAX_CYCLES="$(RUN_MAX_CYCLES)"
 
 docker-pycore-test: docker-build
-	docker run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" $(DOCKER_IMAGE) make pycore-test
+	$(DOCKER_CLI) run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" $(DOCKER_IMAGE) make pycore-test
 
 docker-all-tests: docker-build
-	docker run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" $(DOCKER_IMAGE) make all-tests
+	$(DOCKER_CLI) run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" $(DOCKER_IMAGE) make all-tests
 
 # ---- Simulator / debugger UI (always two-core, Docker-first) --------------
 # TRACE_JSONL / RUN_SOURCE / MAX_CYCLES optional overrides for pycore-sim-trace.
@@ -1795,7 +1798,7 @@ sim-ui-e2e: excore-fw
 	SIM_UI_E2E=1 PYTHONPATH="$(CURDIR)" $(PYTHON) -m unittest sim_ui.tests.test_e2e_smoke -v
 
 docker-sim-ui-e2e: docker-build
-	docker run --rm $(DOCKER_RUN_FLAGS) \
+	$(DOCKER_CLI) run --rm $(DOCKER_RUN_FLAGS) \
 		-v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" \
 		-w "$(DOCKER_CONTAINER_WORKDIR)" \
 		-e PYTHONPATH="$(DOCKER_CONTAINER_WORKDIR)" \
@@ -1811,8 +1814,9 @@ sim-ui-serve: excore-fw
 sim-ui: sim-ui-web sim-ui-serve
 
 # Primary launch path: build image, publish :8000, serve UI + Verilator inside.
+# DOCKER_CLI sets MSYS_NO_PATHCONV=1 so Git Bash does not rewrite /work.
 docker-sim-ui: docker-build
-	docker run --rm -p 8000:8000 \
+	$(DOCKER_CLI) run --rm -p 8000:8000 \
 		$(DOCKER_RUN_FLAGS) \
 		-v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" \
 		-w "$(DOCKER_CONTAINER_WORKDIR)" \

@@ -23,6 +23,24 @@ Stop the container with Ctrl+C.
 
 That’s the whole setup: two Make targets after clone.
 
+### Windows (Git Bash) note
+
+If you run Make from **Git Bash** and see:
+
+```text
+the working directory 'C:/Program Files/Git/work' is invalid
+```
+
+Git Bash rewrote the container path `/work`. Pull the latest `ui` branch
+(Makefile now sets `MSYS_NO_PATHCONV=1` for Docker), or run:
+
+```bash
+MSYS_NO_PATHCONV=1 make docker-sim-ui
+```
+
+PowerShell / CMD do not need that workaround. Prefer those, or WSL, if Git
+Bash keeps mangling paths.
+
 ### WSL2 / Docker Desktop troubleshooting
 
 If `make docker-build` fails with something like:
