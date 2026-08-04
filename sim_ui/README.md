@@ -23,6 +23,49 @@ Stop the container with Ctrl+C.
 
 That’s the whole setup: two Make targets after clone.
 
+### WSL2 / Docker Desktop troubleshooting
+
+If `make docker-build` fails with something like:
+
+```text
+error getting credentials - err: fork/exec /usr/bin/docker-credential-desktop.exe: exec format error
+```
+
+Docker in WSL is trying to use the Windows Docker Desktop credential helper.
+Fix inside WSL:
+
+```bash
+# Inspect current config
+cat ~/.docker/config.json
+
+# Backup, then remove the Windows credential helper
+cp ~/.docker/config.json ~/.docker/config.json.bak
+python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path.home() / ".docker" / "config.json"
+cfg = json.loads(p.read_text()) if p.exists() else {}
+cfg.pop("credsStore", None)
+cfg.pop("credStore", None)
+# Keep per-registry helpers only if they are Linux binaries, not *.exe
+helpers = cfg.get("credHelpers") or {}
+cfg["credHelpers"] = {k: v for k, v in helpers.items() if not str(v).endswith(".exe")}
+if not cfg["credHelpers"]:
+    cfg.pop("credHelpers", None)
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(json.dumps(cfg, indent=2) + "\n")
+print("updated", p)
+print(p.read_text())
+PY
+
+# Retry
+make docker-build
+```
+
+Also confirm Docker Desktop → Settings → Resources → WSL Integration is
+enabled for your distro, and that `docker version` shows a Server section
+from inside WSL.
+
 ## How to use the simulation
 
 1. **Run the default program** — click **Run**. You should see `PASS` and
