@@ -180,6 +180,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
+	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
+	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
+	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
 	pycore-img-attr-all \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
@@ -1199,6 +1202,9 @@ pycore-img-attr-all: \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
+	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
+	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
+	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
 	pycore-img-builtin-max \
 	pycore-img-builtin-len-list
 
@@ -1244,6 +1250,24 @@ pycore-img-firmware-rom-subset:
 
 pycore-img-firmware-iterators: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,firmware_iterators,500000)
+
+pycore-img-firmware-wave3a:
+	$(call PYCORE_IMAGE_RUN,firmware_wave3a,200000)
+
+pycore-img-firmware-wave3-strings:
+	$(call PYCORE_IMAGE_RUN,firmware_wave3_strings,200000)
+
+pycore-img-firmware-wave3-pow:
+	$(call PYCORE_IMAGE_RUN,firmware_wave3_pow,200000)
+
+pycore-img-firmware-wave3-containers: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,firmware_wave3_containers,500000)
+
+pycore-img-firmware-sorted-kw: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,firmware_sorted_kw,500000)
+
+pycore-img-firmware-filter-pred: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,firmware_filter_pred,500000)
 
 pycore-img-load-name-builtin:
 	$(call PYCORE_IMAGE_RUN,load_name_builtin,50000)

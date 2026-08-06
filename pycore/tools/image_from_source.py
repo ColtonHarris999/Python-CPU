@@ -940,6 +940,7 @@ def _seed_globals_pairs(
 
 # (dict_key, source_stem, func_name) → pycore_firmware/builtins/{stem}.py
 ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
+    # Wave 1–2
     ("sum", "sum", "sum"),
     ("abs", "abs", "abs"),
     ("bool", "bool", "bool"),
@@ -948,6 +949,21 @@ ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
     ("enumerate", "enumerate", "enumerate"),
     ("map", "map", "map"),
     ("zip", "zip", "zip"),
+    # Wave 3A.1 — numeric / string / tuple
+    ("divmod", "divmod", "divmod"),
+    ("pow", "pow", "pow"),
+    ("round", "round", "round"),
+    ("bin", "bin", "bin"),
+    ("hex", "hex", "hex"),
+    ("oct", "oct", "oct"),
+    ("tuple", "tuple", "tuple"),
+    ("min", "min", "min"),
+    # Wave 3A.2 — containers / iterators (LIST grow → excore)
+    ("list", "list", "list"),
+    ("dict", "dict", "dict"),
+    ("reversed", "reversed", "reversed"),
+    ("filter", "filter", "filter"),
+    ("sorted", "sorted", "sorted"),
 )
 
 FIRMWARE_BUILTINS_DIR = (

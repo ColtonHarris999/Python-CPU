@@ -128,6 +128,12 @@ creation until frame-local namespaces exist.
    - `method_flag = 1`: replace TOS with attr/func and push `self` or `NULL`
      (no allocation on this path). Static → `[func, NULL]`.
 
+**Not yet special-cased:** requesting `__dict__`, `__class__`, or `__base__` as
+attribute *names* does **not** return the corresponding header fields — those
+names are looked up in `tp_dict` like any other key (usually miss → ATTR_ERROR).
+ROM `getattr` / `hasattr` / `isinstance` therefore stay **not seeded** until a
+LOAD_ATTR special-name path lands (see `planning/builtins_wave4_plan.md`).
+
 `STORE_ATTR` / `DELETE_ATTR` require `OBK_INSTANCE` and operate on `__dict__`
 only (type mutation is build-time).
 

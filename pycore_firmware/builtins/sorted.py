@@ -1,12 +1,12 @@
 """Return a new sorted list from an iterable (bubble sort).
 
-Positional-only in wave 3A; ``reverse=`` / ``key=`` land in wave 3B
-(``CALL_KW`` is live for CODE_OBJECT). COMPARE_OP is numeric-only on
+Supports ``reverse=`` via CALL_KW (CODE_OBJECT binder). ``key=`` is not
+implemented — passing a key is unsupported. COMPARE_OP is numeric-only on
 pycore — sorting strings/containers TYPE-traps.
 """
 
 
-def sorted(iterable):
+def sorted(iterable, reverse=False):
     out = []
     for x in iterable:
         out += [x]
@@ -17,7 +17,16 @@ def sorted(iterable):
     while i < n:
         j = 0
         while j < n - 1 - i:
-            if out[j] > out[j + 1]:
+            left = out[j]
+            right = out[j + 1]
+            swap = 0
+            if reverse:
+                if left < right:
+                    swap = 1
+            else:
+                if left > right:
+                    swap = 1
+            if swap:
                 tmp = out[j]
                 out[j] = out[j + 1]
                 out[j + 1] = tmp

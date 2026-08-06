@@ -1,8 +1,8 @@
 """Smallest item of an iterable, or of two arguments.
 
-Signature limited to (iterable) or (a, b) — *args / key= / default=
-need CALL_FUNCTION_EX / CALL_KW (deferred).
-Empty iterable returns None (CPython raises ValueError; RAISE deferred).
+Signature: ``min(iterable)`` or ``min(a, b)``. Varargs / key= / default=
+need CO_VARARGS or further CALL_KW work. Empty iterable returns None
+(CPython raises ValueError). Native BI_MAX remains for bare ``max(a, b)``.
 """
 
 

@@ -7,8 +7,9 @@ Current architecture and tag/layout docs live under `pycore/docs/` and
 | File | Contents |
 | --- | --- |
 | `builtins_bytecode_support_plan.md` | **Done (bytecode milestone):** LEGB-B, `BI_LEN` miss path, `TO_BOOL` widen, `RAISE_VARARGS`, `UNPACK_EX`, LIST_TO_TUPLE |
-| `builtins_next_steps_plan.md` | **Done through §4.4;** §4.5 points at wave 3 |
-| `builtins_rom_wave3_plan.md` | **Active:** next ROM seed wave (3A ready pure-Python, 3B kwargs, 3C polish) |
+| `builtins_next_steps_plan.md` | **Done through §4.5 (wave 3);** next is wave 4 |
+| `builtins_rom_wave3_plan.md` | **Done:** wave 3 ROM seed + `sorted(reverse=)` / tests |
+| `builtins_wave4_plan.md` | **Active:** print console, attr `__dict__`/`__class__`/`__base__`, ORD/CHR |
 | `call_kw_support_plan.md` | **Done (v1):** `CALL_KW` / `CALL_FUNCTION_EX` / `DICT_MERGE` on `CODE_OBJECT` |
 | `dict_set_bulk_contam_plan.md` | **Done:** `MAP_ADD` / `DICT_UPDATE` / `DICT_MERGE` / `SET_UPDATE` + contamination bit |
 | `optimization_plan.md` | Optional RTL cleanup / optimization backlog |
