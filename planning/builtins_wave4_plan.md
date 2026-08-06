@@ -254,7 +254,7 @@ Still hybrid: keep `BI_LEN` / `BI_RANGE` / `BI_SET` / `BI_MAX` positional.
 | Track | Owner | First deliverable |
 | --- | --- | --- |
 | A print console | excore + TB | `BI_PRINT` writes bytes; one stdout golden test |
-| B attr specials | pycore RTL (LOAD_ATTR) | `__dict__` / `__class__` / `__base__` |
+| B attr specials | pycore RTL (LOAD_ATTR) | §2 plan: specials in `CONT_LOAD_ATTR` + image tests, then ROM seed |
 | C ORD/CHR | pycore CALL FSM | `BI_ORD` / `BI_CHR` + image tests |
 | D bytecode | bytecode agent | `CO_VARARGS` or str `COMPARE_OP` |
 | E ROM seed | firmware agent | seed attr + ord/chr after B/C |
