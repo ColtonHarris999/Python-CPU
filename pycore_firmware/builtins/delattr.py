@@ -1,7 +1,7 @@
 """Delete attribute ``name`` from ``obj``.
 
-Interim: ``del obj.__dict__[name]``. Missing key → MEM_FAULT trap
-(no AttributeError object).
+``del obj.__dict__[name]``. Missing key → MEM_FAULT trap (no
+AttributeError object).
 """
 
 

@@ -28,7 +28,10 @@ Plan detail can live in `pycore_firmware/builtins/print.md` once started.
 
 ---
 
-## 2. Priority B — attribute protocol primitives (unblocks many builtins)
+## 2. Priority B — attribute protocol primitives — **DONE**
+
+**Status:** implemented on `builtins` (LOAD_ATTR specials + ROM seed).  
+Remaining wave-4 work is Priority A (print) / C (ORD/CHR) / D (bytecode).
 
 ### 2.0 Problem (why wave-3 skipped these)
 
@@ -169,12 +172,13 @@ already covers firmware `setattr` without STORE_ATTR-by-string.
 
 ### 2.6 Acceptance
 
-- [ ] `o.__dict__` returns a live dict; subscript/contains work
-- [ ] `o.__class__` is the seeded `OBK_TYPE`
-- [ ] `T.__base__` walks; terminates at `None`
-- [ ] Normal `o.x` / MRO method load **unchanged** (existing attr tests still green)
-- [ ] STORE/DELETE of the three names TYPE-traps
-- [ ] Firmware attr + isinstance helpers **in ROM** with green image tests
+- [x] `o.__dict__` returns a live dict; subscript/contains work (`img_attr_dunder_dict`)
+- [x] `o.__class__` is the seeded `OBK_TYPE` (`img_attr_dunder_class`)
+- [x] `T.__base__` walks (`img_attr_dunder_base`; `None` terminus via isinstance)
+- [x] Normal `o.x` / MRO method load **unchanged** (existing attr tests)
+- [x] STORE/DELETE of the three names TYPE-traps (`img_attr_dunder_*_trap`)
+- [x] Firmware attr + isinstance helpers **in ROM** (`img_firmware_attr_helpers`,
+  `img_firmware_isinstance`)
 
 ### 2.7 Explicitly out of scope for B
 
@@ -263,11 +267,14 @@ Still hybrid: keep `BI_LEN` / `BI_RANGE` / `BI_SET` / `BI_MAX` positional.
 
 ## 8. Success metric for wave 4
 
-At least one of:
+**Met for track B:** `hasattr`/`getattr`/`isinstance` (and friends) are in
+ROM with image tests.
+
+Still open for a full wave-4 close-out — at least one of:
 
 1. A program with `print(...)` checked via captured stdout in CI, **or**
-2. `hasattr`/`getattr`/`isinstance` in ROM with green image tests, **or**
+2. ~~`hasattr`/`getattr`/`isinstance` in ROM with green image tests~~ **done**, **or**
 3. `ord`/`chr` native + ROM/tests.
 
-Do not open a “seed everything remaining” PR without one of those
-primitives.
+Do not open a “seed everything remaining” PR without one of the remaining
+primitives (A or C).

@@ -1,7 +1,7 @@
 """Set attribute ``name`` on ``obj`` to ``value``.
 
-Interim: writes ``obj.__dict__[name] = value`` (STORE_SUBSCR).
-STORE_ATTR needs a compile-time co_names index, not a runtime string.
+Writes ``obj.__dict__[name] = value`` (STORE_SUBSCR). STORE_ATTR needs a
+compile-time co_names index, not a runtime string.
 """
 
 

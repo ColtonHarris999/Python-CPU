@@ -65,7 +65,16 @@ def host_entry_result(source: pathlib.Path, entry: str) -> int | bool:
                     f"SEED_TYPE_METHOD {spec.name}.{mspec.attr_name}"
                 )
             body[mspec.attr_name] = fn
-        typ = type(spec.name, (), body)
+        bases: tuple[type, ...] = ()
+        if spec.base_name is not None:
+            base_typ = type_objs.get(spec.base_name)
+            if base_typ is None:
+                raise ValueError(
+                    f"host seed: SEED_TYPE {spec.name!r} base={spec.base_name!r}: "
+                    "declare the base SEED_TYPE earlier in the source"
+                )
+            bases = (base_typ,)
+        typ = type(spec.name, bases, body)
         type_objs[spec.name] = typ
         namespace[spec.name] = typ
 

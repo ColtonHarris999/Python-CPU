@@ -538,9 +538,13 @@ class _ImageSerializer:
 
 @dataclass(frozen=True)
 class SeedTypeSpec:
-    """Build-time OBK_TYPE seed: ``# pycore-inject: SEED_TYPE Name [attr=int ...]``."""
+    """Build-time OBK_TYPE seed.
+
+    ``# pycore-inject: SEED_TYPE Name [base=Base] [attr=int ...]``
+    """
 
     name: str
+    base_name: str | None = None
     attrs: tuple[tuple[str, int], ...] = ()
 
 
@@ -627,7 +631,7 @@ def _parse_seed_kv_tokens(tokens: list[str]) -> tuple[dict[str, str], list[tuple
         if "=" not in tok:
             raise ValueError(f"seed token must be key=value, got {tok!r}")
         key, val = tok.split("=", 1)
-        if key in {"type", "slots"}:
+        if key in {"type", "slots", "base"}:
             opts[key] = val
             continue
         attrs.append((key, int(val)))
@@ -661,9 +665,17 @@ def parse_seed_pragmas(source_text: str) -> SeedSpecs:
         elif stripped.startswith(_INJECT_SEED_TYPE_PREFIX):
             rest = stripped[len(_INJECT_SEED_TYPE_PREFIX) :].strip().split()
             if not rest:
-                raise ValueError("SEED_TYPE expects '<Name> [attr=int ...]'")
-            _opts, attrs = _parse_seed_kv_tokens(rest[1:])
-            types.append(SeedTypeSpec(rest[0], tuple(attrs)))
+                raise ValueError(
+                    "SEED_TYPE expects '<Name> [base=Base] [attr=int ...]'"
+                )
+            opts, attrs = _parse_seed_kv_tokens(rest[1:])
+            types.append(
+                SeedTypeSpec(
+                    rest[0],
+                    base_name=opts.get("base"),
+                    attrs=tuple(attrs),
+                )
+            )
         elif stripped.startswith(_INJECT_SEED_INSTANCE_PREFIX):
             rest = stripped[len(_INJECT_SEED_INSTANCE_PREFIX) :].strip().split()
             if not rest:
@@ -896,7 +908,15 @@ def _seed_globals_pairs(
             slot_count=dict_min_slots(n_keys),
         )
         tp_name = tag_constant(spec.name, string_heap)
-        handle = heap.alloc_type(tp_name, tp_dict=tp_dict)
+        tp_base: Tagged | None = None
+        if spec.base_name is not None:
+            tp_base = type_handles.get(spec.base_name)
+            if tp_base is None:
+                raise ValueError(
+                    f"SEED_TYPE {spec.name!r} base={spec.base_name!r}: "
+                    "declare the base SEED_TYPE earlier in the source"
+                )
+        handle = heap.alloc_type(tp_name, tp_dict=tp_dict, tp_base=tp_base)
         type_handles[spec.name] = handle
         pairs.append((tag_constant(spec.name, string_heap), handle))
 
@@ -964,6 +984,13 @@ ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
     ("reversed", "reversed", "reversed"),
     ("filter", "filter", "filter"),
     ("sorted", "sorted", "sorted"),
+    # Wave 4B — attr protocol (needs LOAD_ATTR __dict__/__class__/__base__)
+    ("hasattr", "hasattr", "hasattr"),
+    ("getattr", "getattr", "getattr"),
+    ("setattr", "setattr", "setattr"),
+    ("delattr", "delattr", "delattr"),
+    ("isinstance", "isinstance", "isinstance"),
+    ("issubclass", "issubclass", "issubclass"),
 )
 
 FIRMWARE_BUILTINS_DIR = (

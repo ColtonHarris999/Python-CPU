@@ -33,7 +33,7 @@ These limit every firmware builtin:
 | List/set growth | `LIST_EXTEND` / `SET_UPDATE` need excore for non-empty work |
 | `UNPACK_EX` + `CALL_INTRINSIC_1` (LIST_TO_TUPLE) | Starred unpack and `(*lst,)` / list→tuple materialization are available |
 | Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`, `ord.md`, `chr.md` |
-| Next plan | `planning/builtins_wave4_plan.md` — print console, attr protocol, ORD/CHR |
+| Next plan | `planning/builtins_wave4_plan.md` — print console + ORD/CHR (§2 attr specials **done**) |
 
 ## Builtin functions
 
@@ -55,7 +55,7 @@ These limit every firmware builtin:
 | `classmethod` | Transform a method into a class method. | blocked | No classmethod kind; image folding rejects `@classmethod`. |
 | `compile` | Compile source into a code object usable by exec/eval. | blocked | See `compile.md`. |
 | `complex` | Create a complex number from real/imag or a string. | blocked | COMPLEX ALU tag exists; no runtime constructor. |
-| `delattr` | Delete a named attribute from an object. | in progress | Needs `LOAD_ATTR __dict__` returning the dict handle. |
+| `delattr` | Delete a named attribute from an object. | in ROM | `del obj.__dict__[name]` (instance dict only; no MRO). |
 | `dict` | Create a new dictionary. | in ROM | From iterable of pairs via `UNPACK_SEQUENCE` + `STORE_SUBSCR`. No kwargs ctor. |
 | `dir` | Return a list of valid attribute names for an object or the local scope. | in progress | Instance `__dict__` keys only; no-arg / MRO names blocked. |
 | `divmod` | Return the pair (quotient, remainder) of integer division. | in ROM | `(a // b, a % b)`. |
@@ -66,17 +66,17 @@ These limit every firmware builtin:
 | `float` | Convert a string or number to floating point. | in progress | `x * 1.0` for numerics; `_parse_float_string` helper; no auto str dispatch. |
 | `format` | Convert a value to a formatted representation ("format_spec"). | in progress | Empty spec → INT/BOOL/None stringify; non-empty specs blocked (`FORMAT_WITH_SPEC`). |
 | `frozenset` | Return a new frozenset object. | blocked | `PY_TAG_FROZENSET` reserved / unimplemented. |
-| `getattr` | Return the named attribute of an object, with optional default. | in progress | Needs `LOAD_ATTR __dict__` as dict-handle fetch; no MRO. |
+| `getattr` | Return the named attribute of an object, with optional default. | in ROM | `obj.__dict__[name]` or default; instance dict only (no MRO). |
 | `globals` | Return the current global symbol table as a dict. | blocked | Frame globals pointer not exposed to Python. |
-| `hasattr` | Return True if the object has the named attribute. | in progress | Needs `LOAD_ATTR __dict__` as dict-handle fetch; no MRO. |
+| `hasattr` | Return True if the object has the named attribute. | in ROM | Probes `obj.__dict__`; instance dict only (no MRO). |
 | `hash` | Return the hash value of an object. | blocked | Hash is internal to dict/set probes; not callable from Python. |
 | `help` | Invoke the built-in help system. | blocked | No docstring store / interactive I/O. |
 | `hex` | Convert an integer to a lowercase hexadecimal string prefixed with '0x'. | in ROM | String concat digit loop. |
 | `id` | Return the identity (unique integer) of an object. | blocked | No address-expose primitive. |
 | `input` | Read a line from stdin (after an optional prompt) and return it. | blocked | No stdin device. |
 | `int` | Convert a number or string to an integer. | in progress | Numeric truncate + `_parse_int_string` when `base` given; `int("5")` without base still needs tag dispatch. |
-| `isinstance` | Return True if the object is an instance of a type or tuple of types. | in progress | Needs `LOAD_ATTR __class__` / `__base__` (not in instance dict today). |
-| `issubclass` | Return True if a class is a subclass of a class or tuple of classes. | in progress | Needs `LOAD_ATTR __base__` on TYPE objects. |
+| `isinstance` | Return True if the object is an instance of a type or tuple of types. | in ROM | Single-class `classinfo`; walks `obj.__class__` → `__base__` (depth ≤ 8). |
+| `issubclass` | Return True if a class is a subclass of a class or tuple of classes. | in ROM | Single-class `classinfo`; walks `cls.__base__` (depth ≤ 8). |
 | `iter` | Return an iterator for an object (or call a sentinel-producing callable). | in progress | One-arg materializes a list; sentinel form `raise`s (fatal). |
 | `len` | Return the number of items in a container. | implemented | Miss path: `obj.__len__()`. Native `BI_LEN` owns container header reads. |
 | `list` | Create a new list, optionally from an iterable. | in ROM | `out += [x]` per element (excore LIST_EXTEND). |
@@ -98,7 +98,7 @@ These limit every firmware builtin:
 | `reversed` | Return a reverse iterator over a sequence. | in ROM | Returns a **list**. LIST grow → excore. |
 | `round` | Round a number to a given precision in decimal digits. | in ROM | Half-away-from-zero (not banker's rounding). |
 | `set` | Create a new set, optionally from an iterable. | implemented | `{*()}` / `{*iterable}` → SET_UPDATE (excore). Native `BI_SET` still on-core. |
-| `setattr` | Set a named attribute on an object. | in progress | Needs `LOAD_ATTR __dict__` as dict-handle fetch. |
+| `setattr` | Set a named attribute on an object. | in ROM | `obj.__dict__[name] = value` (instance dict only). |
 | `slice` | Return a slice object representing indices for extended slicing. | blocked | `BINARY_SLICE`/`STORE_SLICE` deferred; no slice object kind. |
 | `sorted` | Return a new sorted list from an iterable. | in ROM | Bubble sort; `reverse=` via CALL_KW; numeric COMPARE_OP only; no `key=`. |
 | `staticmethod` | Transform a method into a static method. | blocked | Image-time `BI_STATICMETHOD` (id 0) unwrap; runtime wrapper blocked. |
@@ -130,9 +130,9 @@ pycore_firmware/builtins/builtins.md    # this inventory
 | --- | --- |
 | Python modules | 73 |
 | Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`, `ord`, `chr`) |
-| Status: in ROM | 21 |
+| Status: in ROM | 27 |
 | Status: implemented | 5 (`len` miss path, `list_append`, `max` notes, `range` list form, `set` Python form) |
-| Status: in progress | 17 |
+| Status: in progress | 11 |
 | Status: blocked | 30 |
 
 ### In ROM (seeded as CODE_OBJECT in boot builtins dict)
@@ -140,11 +140,14 @@ pycore_firmware/builtins/builtins.md    # this inventory
 Wave 1–2: `abs`, `all`, `any`, `bool`, `enumerate`, `map`, `sum`, `zip`  
 Wave 3: `bin`, `dict`, `divmod`, `filter`, `hex`, `list`, `min`, `oct`,
 `pow`, `reversed`, `round`, `sorted`, `tuple`  
+Wave 4B: `delattr`, `getattr`, `hasattr`, `isinstance`, `issubclass`,
+`setattr`  
 
 Coverage: `img_firmware_rom_subset`, `img_firmware_iterators`,
 `img_firmware_wave3a`, `img_firmware_wave3_strings`, `img_firmware_wave3_pow`,
 `img_firmware_wave3_containers`, `img_firmware_sorted_kw`,
-`img_firmware_filter_pred`.
+`img_firmware_filter_pred`, `img_firmware_attr_helpers`,
+`img_firmware_isinstance`. Attr specials: `img_attr_dunder_*`.
 
 ### Implemented (not yet seeded / hybrid docs)
 
@@ -154,8 +157,7 @@ form; `BI_SET` owns dict)
 
 ### In progress (usable subset / hardware gaps)
 
-`callable`, `delattr`, `dir`, `float`, `format`, `getattr`, `hasattr`,
-`int`, `isinstance`, `issubclass`, `iter`, `next`, `repr`, `setattr`,
+`callable`, `dir`, `float`, `format`, `int`, `iter`, `next`, `repr`,
 `str`, `type`, `vars`
 
 ### Blocked (stub + notes/plans)

@@ -172,6 +172,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-attr-missing pycore-img-attr-type-trap \
 	pycore-img-attr-del pycore-img-attr-del-reinsert \
 	pycore-img-attr-shadow pycore-img-attr-mro \
+	pycore-img-attr-dunder-dict pycore-img-attr-dunder-class \
+	pycore-img-attr-dunder-base pycore-img-attr-dunder-store-trap \
+	pycore-img-attr-dunder-del-trap \
 	pycore-img-attr-grow-global pycore-img-seed-grow-global \
 	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
 	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
@@ -183,6 +186,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
 	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
+	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
 	pycore-img-attr-all \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
@@ -1183,6 +1187,21 @@ pycore-img-attr-shadow:
 pycore-img-attr-mro:
 	$(call PYCORE_IMAGE_RUN,attr_mro,50000)
 
+pycore-img-attr-dunder-dict:
+	$(call PYCORE_IMAGE_RUN,attr_dunder_dict,50000)
+
+pycore-img-attr-dunder-class:
+	$(call PYCORE_IMAGE_RUN,attr_dunder_class,50000)
+
+pycore-img-attr-dunder-base:
+	$(call PYCORE_IMAGE_RUN,attr_dunder_base,50000)
+
+pycore-img-attr-dunder-store-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,attr_dunder_store_trap,1,50000)
+
+pycore-img-attr-dunder-del-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,attr_dunder_del_trap,1,50000)
+
 pycore-img-attr-all: \
 	pycore-img-attr-basic \
 	pycore-img-attr-overwrite \
@@ -1193,6 +1212,11 @@ pycore-img-attr-all: \
 	pycore-img-attr-del-reinsert \
 	pycore-img-attr-shadow \
 	pycore-img-attr-mro \
+	pycore-img-attr-dunder-dict \
+	pycore-img-attr-dunder-class \
+	pycore-img-attr-dunder-base \
+	pycore-img-attr-dunder-store-trap \
+	pycore-img-attr-dunder-del-trap \
 	pycore-img-attr-grow-global \
 	pycore-img-seed-grow-global \
 	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
@@ -1205,6 +1229,7 @@ pycore-img-attr-all: \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
 	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
+	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
 	pycore-img-builtin-max \
 	pycore-img-builtin-len-list
 
@@ -1268,6 +1293,12 @@ pycore-img-firmware-sorted-kw: excore-fw
 
 pycore-img-firmware-filter-pred: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,firmware_filter_pred,500000)
+
+pycore-img-firmware-attr-helpers:
+	$(call PYCORE_IMAGE_RUN,firmware_attr_helpers,200000)
+
+pycore-img-firmware-isinstance:
+	$(call PYCORE_IMAGE_RUN,firmware_isinstance,200000)
 
 pycore-img-load-name-builtin:
 	$(call PYCORE_IMAGE_RUN,load_name_builtin,50000)

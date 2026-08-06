@@ -115,11 +115,22 @@ creation until frame-local namespaces exist.
 
 1. Resolve `co_names[namei]` (`namei = oparg >> 1`).
 2. Receiver must be `PY_TAG_OBJECT`; else `PY_TRAP_TYPE`.
-3. Read `ob_head`. `OBK_INSTANCE`: probe `__dict__` (field0). `OBK_TYPE`:
-   start the MRO at the type itself. Other kinds → `PY_TRAP_TYPE`.
-4. On instance miss, walk `ob_type` → `tp_base` (depth guard 8), probing each
+3. Read `ob_head`. Before any dict probe, SHORT_STR **special names**:
+
+   | Name | Receiver | Result |
+   | --- | --- | --- |
+   | `__dict__` | `OBK_INSTANCE` / `OBK_TYPE` | field0 dict handle (`MUT_COLLEC`) |
+   | `__class__` | `OBK_INSTANCE` | `ob_type` as `OBJECT` (TYPE_TRAP if 0) |
+   | `__class__` | `OBK_TYPE` | the type itself (identity; not host `type`) |
+   | `__base__` | `OBK_TYPE` | field1 `tp_base`, or `None` if unset/zero |
+   | `__base__` | `OBK_INSTANCE` | fall through to normal probe (usually ATTR_ERROR) |
+
+   Specials write back as **data** (replace TOS only; ignore `method_flag`).
+4. Else `OBK_INSTANCE`: probe field0 dict. `OBK_TYPE`: start the MRO at the
+   type itself. Other kinds → `PY_TRAP_TYPE`.
+5. On instance miss, walk `ob_type` → `tp_base` (depth guard 8), probing each
    `tp_dict`. Miss → `PY_TRAP_ATTR_ERROR` (15).
-5. Writeback:
+6. Writeback:
    - If the hit value is `OBJECT`/`OBK_BUILTIN` with `builtin_id=0`, unwrap
      `field1` as `CODE_OBJECT` and mark static (no `self` bind).
    - `method_flag = 0`: replace TOS; if source is TYPE and value is
@@ -128,14 +139,10 @@ creation until frame-local namespaces exist.
    - `method_flag = 1`: replace TOS with attr/func and push `self` or `NULL`
      (no allocation on this path). Static → `[func, NULL]`.
 
-**Not yet special-cased:** requesting `__dict__`, `__class__`, or `__base__` as
-attribute *names* does **not** return the corresponding header fields — those
-names are looked up in `tp_dict` like any other key (usually miss → ATTR_ERROR).
-ROM `getattr` / `hasattr` / `isinstance` therefore stay **not seeded** until a
-LOAD_ATTR special-name path lands (see `planning/builtins_wave4_plan.md`).
-
-`STORE_ATTR` / `DELETE_ATTR` require `OBK_INSTANCE` and operate on `__dict__`
-only (type mutation is build-time).
+`STORE_ATTR` / `DELETE_ATTR` require `OBK_INSTANCE` and operate on the instance
+dict only (type mutation is build-time). The special names `__dict__` /
+`__class__` / `__base__` are rejected with `PY_TRAP_TYPE` (no header mutation
+via Python).
 
 ## Tooling
 
@@ -147,14 +154,16 @@ only (type mutation is build-time).
 Attribute image tests may still seed objects via:
 
 ```
-# pycore-inject: SEED_TYPE T [attr=int ...]
-# pycore-inject: SEED_INSTANCE o [type=T] [slots=N] [attr=int ...]
+# pycore-inject: SEED_TYPE Base
+# pycore-inject: SEED_TYPE Child base=Base [attr=int ...]
+# pycore-inject: SEED_INSTANCE o [type=Child] [slots=N] [attr=int ...]
 ```
 
-Real `class` statements are preferred for new coverage (`img_class_*`,
-`img_staticmethod`). `run_image_test.py` mirrors seed pragmas with host
-`SimpleNamespace` / `type` objects so differential `managed_entry()` still
-works; host exec of real classes needs no seeding.
+`base=` must name an earlier `SEED_TYPE` (declaration order = allocation
+order). Real `class` statements are preferred for new coverage (`img_class_*`,
+`img_staticmethod`) but still reject explicit bases at fold time.
+`run_image_test.py` mirrors seed pragmas with host `type(name, bases, body)` /
+`SimpleNamespace` so differential `managed_entry()` still works.
 
 Python-side layout constants live in `pycore/tools/encoding.py`
 (`OBK_*`, `pack_ob_head`, `obj_field_val_addr`). RTL mirrors are in

@@ -29,6 +29,15 @@ WAVE3_NAMES = {
     "sorted",
 }
 
+WAVE4_ATTR_NAMES = {
+    "hasattr",
+    "getattr",
+    "setattr",
+    "delattr",
+    "isinstance",
+    "issubclass",
+}
+
 
 def _load_firmware(name: str):
     path = image_from_source.FIRMWARE_BUILTINS_DIR / f"{name}.py"
@@ -54,7 +63,8 @@ class RomFirmwareSeedTest(unittest.TestCase):
     def test_wave3_names_present(self) -> None:
         keys = {k for k, _, _ in image_from_source.ROM_FIRMWARE_BUILTINS}
         self.assertTrue(WAVE3_NAMES.issubset(keys), keys)
-        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 21)
+        self.assertTrue(WAVE4_ATTR_NAMES.issubset(keys), keys)
+        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 27)
 
     def test_seed_firmware_function_returns_code_object(self) -> None:
         serializer = image_from_source._ImageSerializer()
@@ -92,7 +102,7 @@ class RomFirmwareSeedTest(unittest.TestCase):
             len(result.code_handles),
             2 + len(image_from_source.ROM_FIRMWARE_BUILTINS),
         )
-        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 21)
+        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 27)
         self.assertGreater(len(result.program_slots), 0)
 
     def test_wave3_image_programs_build(self) -> None:
@@ -104,6 +114,8 @@ class RomFirmwareSeedTest(unittest.TestCase):
             "img_firmware_wave3_containers.py",
             "img_firmware_sorted_kw.py",
             "img_firmware_filter_pred.py",
+            "img_firmware_attr_helpers.py",
+            "img_firmware_isinstance.py",
         ):
             text = (root / name).read_text(encoding="utf-8")
             image = image_from_source.build_image_from_source_text(text, name)

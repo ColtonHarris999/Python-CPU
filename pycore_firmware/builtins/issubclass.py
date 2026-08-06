@@ -1,7 +1,7 @@
 """True if ``cls`` is a subclass of ``classinfo``.
 
 Single-class ``classinfo`` only; walks ``cls.__base__`` (depth ≤ 8).
-Tuple-of-classes form deferred (see isinstance.md notes in builtins.md).
+Tuple-of-classes form deferred.
 """
 
 

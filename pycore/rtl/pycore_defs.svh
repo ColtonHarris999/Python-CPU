@@ -1034,6 +1034,58 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_long_str_entry(
     end
 endfunction
 
+// SHORT_STR value constants for LOAD_ATTR special names (size in [127:124]).
+// Packed like CALL_INIT_NAME_VAL / CALL_LEN_NAME_VAL in pycore_core.sv.
+localparam logic [127:0] PY_ATTR_NAME_DICT  =
+    128'h85f5f646963745f5f000000000000000; // "__dict__"  size=8
+localparam logic [127:0] PY_ATTR_NAME_CLASS =
+    128'h95f5f636c6173735f5f0000000000000; // "__class__" size=9
+localparam logic [127:0] PY_ATTR_NAME_BASE  =
+    128'h85f5f626173655f5f000000000000000; // "__base__"  size=8
+
+function automatic logic pycore_attr_name_is_dict(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_dict =
+            (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_DICT);
+    end
+endfunction
+
+function automatic logic pycore_attr_name_is_class(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_class =
+            (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_CLASS);
+    end
+endfunction
+
+function automatic logic pycore_attr_name_is_base(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_base =
+            (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_BASE);
+    end
+endfunction
+
+// STORE/DELETE_ATTR reject these names (no header mutation via Python).
+function automatic logic pycore_attr_name_is_dunder_special(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_dunder_special =
+            pycore_attr_name_is_dict(tag, value) ||
+            pycore_attr_name_is_class(tag, value) ||
+            pycore_attr_name_is_base(tag, value);
+    end
+endfunction
+
 // -------------------------------------------------------------------------
 // DICT in-dmem layout v3 (all addresses 16-byte aligned):
 //

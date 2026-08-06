@@ -105,15 +105,18 @@
     localparam logic [5:0] CP_ITER_WB = 6'd23;
     localparam logic [5:0] CP_ITEM_WB = 6'd24;
     // Attribute protocol (LOAD/STORE/DELETE_ATTR):
-    //   CP_ATTR_HEAD     : ob_head ack — INSTANCE vs TYPE vs trap
-    //   CP_ATTR_IDICT    : instance/type field0 (__dict__/tp_dict) val+tag
+    //   CP_ATTR_HEAD     : ob_head ack — INSTANCE vs TYPE vs trap; dunder
+    //                      specials (__dict__/__class__/__base__) branch here
+    //   CP_ATTR_IDICT    : instance/type field0 (__dict__/tp_dict) val+tag;
+    //                      lfb_lo[1] → return handle (no dict probe)
     //   CP_ATTR_TYPE     : MRO step — guard depth, issue type ob_head read
     //   CP_ATTR_TDICT    : type ob_head ack → verify OBK_TYPE → field0
     //   CP_ATTR_WB       : writeback attr / func / bound-method handle
     //   CP_ATTR_WB_SELF  : method_flag follow-up (self or NULL)
     //   CP_ATTR_BOUND*   : allocate OBK_BOUND_METHOD (96B) field writes
     //   CP_ATTR_STATIC*  : unwrap OBK_BUILTIN id=0 (staticmethod) → CODE_OBJECT
-    //                      Overlay: lfb_lo[2]=1 marks static (no self bind).
+    //                      Overlay: lfb_lo[1]=dunder field return,
+    //                               lfb_lo[2]=1 marks static / skip OBJECT unwrap.
     localparam logic [5:0] CP_ATTR_HEAD = 6'd25;
     localparam logic [5:0] CP_ATTR_IDICT = 6'd26;
     localparam logic [5:0] CP_ATTR_TYPE = 6'd27;
