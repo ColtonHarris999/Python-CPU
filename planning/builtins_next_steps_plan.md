@@ -97,9 +97,14 @@ Related:
 
 ### 4.5 — **done** → see `planning/builtins_rom_wave3_plan.md`
 
-Wave 3 shipped 13 additional ROM builtins + kwargs tests.  
-**Next:** `planning/builtins_wave4_plan.md` (print console, attr protocol,
-`BI_ORD`/`BI_CHR`).
+Wave 3 shipped 13 additional ROM builtins + kwargs tests.
+
+### 4.6 — **done** (wave 4 §2 attr specials)
+
+`LOAD_ATTR` specials for `__dict__` / `__class__` / `__base__`; ROM seed of
+`hasattr` / `getattr` / `setattr` / `delattr` / `isinstance` / `issubclass`.  
+**Next:** `planning/builtins_wave4_plan.md` Priority A (print console) /
+C (`BI_ORD`/`BI_CHR`).
 
 ---
 
