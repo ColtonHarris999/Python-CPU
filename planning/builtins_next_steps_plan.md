@@ -95,13 +95,16 @@ Related:
 | **4.3** | ROM seed `enumerate`, `zip`, `map` + `img_firmware_iterators` (two-core) | Done |
 | **4.4** | Document blocked builtins vs §3 gaps in `builtins.md` | Done |
 
-### 4.5 — next
+### 4.5 — next → see `planning/builtins_rom_wave3_plan.md`
 
-1. Extend `ROM_FIRMWARE_BUILTINS` for remaining **implemented** names
-   (`sorted`, `min`, `filter`, …) where bytecode allows.
-2. Land kwargs ROM wrappers (`print`/`max`/`sorted`) against live `CALL_KW`.
-3. Convert remaining blocked-stub `% 0` paths when those builtins activate.
-4. Ask bytecode for exceptions / `ORD`/`CHR` / `CO_VARARGS` as needed.
+Wave 3 (active plan):
+
+1. **3A** — Seed remaining **implemented** names (`divmod`/`pow`/`tuple`/
+   `sorted`/`min`/`filter`/…); keep `BI_*` hybrids.
+2. **3B** — Kwargs ROM wrappers (`sorted(reverse=)`, optional `sum(start=)`);
+   do **not** replace `BI_MAX` yet; defer `print` until console MMIO.
+3. **3C** — Doc/status polish; `% 0`→`raise` only on activated modules.
+4. Wave 4+ — print console, `ORD`/`CHR`, descriptors, `CO_VARARGS`.
 
 ---
 

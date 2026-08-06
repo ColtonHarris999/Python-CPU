@@ -33,7 +33,7 @@ These limit every firmware builtin:
 | List/set growth | `LIST_EXTEND` / `SET_UPDATE` need excore for non-empty work |
 | `UNPACK_EX` + `CALL_INTRINSIC_1` (LIST_TO_TUPLE) | Starred unpack and `(*lst,)` / list→tuple materialization are available |
 | Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`, `ord.md`, `chr.md` |
-| Bytecode follow-up plan | `planning/builtins_next_steps_plan.md` — what the builtins agent should do next |
+| Next ROM wave plan | `planning/builtins_rom_wave3_plan.md` — seed more firmware builtins + kwargs |
 
 ## Builtin functions
 
@@ -169,7 +169,7 @@ Audit of **blocked** / partially-blocked names against
 
 | Bytecode / protocol gap | Blocked or limited builtins |
 | --- | --- |
-| Kwargs ROM wrappers (not a bytecode gap) | `print`/`sorted`/`max` kwargs still unimplemented in firmware; binder is ready for `CODE_OBJECT` |
+| Kwargs ROM wrappers (not a bytecode gap) | `sorted`/`max`/`print` kwargs still unimplemented in firmware; binder ready — see wave 3B/§6 in `builtins_rom_wave3_plan.md` |
 | `CO_VARARGS` / `CO_VARKEYWORDS` on defs | Multi-iter `zip(*args)` / `map` as Python `*args` parameters |
 | Exception tables / `RERAISE` | Real `TypeError` / `StopIteration` everywhere; comprehension option A/B |
 | `GET_ITER` / `FOR_ITER` on OBJECT | User-defined iterables (`__iter__` / `__next__`) |

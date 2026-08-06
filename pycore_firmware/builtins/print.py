@@ -1,8 +1,9 @@
 """Print objects to a stream.
 
-I/O is an excore concern (BI_PRINT → PY_TRAP_BUILTIN_CALL). Pure Python
-cannot write to a host stdout from the hart. sep/end/file kwargs need
-CALL_KW (deferred) even after I/O exists.
+I/O is an excore concern (BI_PRINT → PY_TRAP_BUILTIN_CALL). Needs a
+console MMIO + excore handler before ROM seeding (wave 4; see
+``planning/builtins_rom_wave3_plan.md`` §6). A CODE_OBJECT wrapper may
+use ``sep=`` / ``end=`` via CALL_KW once I/O exists.
 """
 
 

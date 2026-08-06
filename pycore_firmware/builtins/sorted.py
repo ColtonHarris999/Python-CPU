@@ -1,6 +1,7 @@
 """Return a new sorted list from an iterable (bubble sort).
 
-No key=/reverse= (CALL_KW deferred). COMPARE_OP is numeric-only on
+Positional-only in wave 3A; ``reverse=`` / ``key=`` land in wave 3B
+(``CALL_KW`` is live for CODE_OBJECT). COMPARE_OP is numeric-only on
 pycore — sorting strings/containers TYPE-traps.
 """
 
