@@ -105,7 +105,7 @@ These limit every firmware builtin:
 | `str` | Create a new string object from an object or buffer. | in progress | BOOL/None/INT decimal; STR identity needs tag probe. |
 | `sum` | Return the sum of a start value and an iterable of numbers. | in ROM | `start=` via CALL_KW. Bad `+` / non-iterable → TYPE trap. |
 | `super` | Return a proxy object that delegates method calls to a parent or sibling class. | blocked | See `super.md`. |
-| `tuple` | Create a new tuple, optionally from an iterable. | in ROM | Empty + iterable via list materialize + `(*out,)` / LIST_TO_TUPLE. |
+| `tuple` | Create a new tuple, optionally from an iterable. | in ROM | Iterable via list materialize + `(*out,)`. Empty `tuple()` (None default) still TYPE-traps on CALL fill — use `()` literal until fixed. |
 | `type` | Return the type of an object, or create a new type object. | in progress | One-arg: `obj.__class__`. Three-arg needs `LOAD_BUILD_CLASS`. |
 | `vars` | Return the __dict__ of an object, or locals() with no argument. | in progress | `obj.__dict__`; no-arg → `{}` (not real locals). |
 | `zip` | Iterate over several iterables in parallel, yielding tuples. | in ROM | Two iterables → **list** of pairs. LIST grow needs excore. |

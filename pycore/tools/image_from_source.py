@@ -993,6 +993,50 @@ FIRMWARE_BUILTINS_DIR = (
 )
 
 
+def _host_bi_print(x: object) -> None:
+    """Host stand-in for native ``_bi_print`` / ``BI_PRINT`` (CONSOLE_TX)."""
+    import sys
+
+    if x is None:
+        sys.stdout.write("None")
+    elif x is True:
+        sys.stdout.write("True")
+    elif x is False:
+        sys.stdout.write("False")
+    else:
+        sys.stdout.write(str(x))
+
+
+def load_rom_firmware_callables() -> dict[str, object]:
+    """Load ROM firmware bodies as host callables for golden / unit tests.
+
+    Mirrors the boot-record builtins dict: every ``ROM_FIRMWARE_BUILTINS``
+    entry plus a ``_bi_print`` stub so ``print`` can run on the host.
+    Firmware semantics differ from CPython in places (e.g. ``reversed`` /
+    ``filter`` return lists); host goldens must use these bodies.
+    """
+    out: dict[str, object] = {"_bi_print": _host_bi_print}
+    for dict_key, stem, func_name in ROM_FIRMWARE_BUILTINS:
+        path = FIRMWARE_BUILTINS_DIR / f"{stem}.py"
+        if not path.is_file():
+            raise FileNotFoundError(f"ROM firmware builtin source missing: {path}")
+        ns: dict[str, object] = {
+            "__name__": f"pycore_firmware.builtins.{stem}",
+            "_bi_print": _host_bi_print,
+            "len": len,
+            "range": range,
+        }
+        exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), ns)
+        fn = ns.get(func_name)
+        if not callable(fn):
+            raise ValueError(
+                f"firmware {path.name!r}: expected function {func_name!r}, "
+                f"got {type(fn).__name__}"
+            )
+        out[dict_key] = fn
+    return out
+
+
 def seed_firmware_function(
     serializer: _ImageSerializer,
     source_path: pathlib.Path,

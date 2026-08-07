@@ -24,9 +24,13 @@ Seeded into `ROM_FIRMWARE_BUILTINS`:
 
 (Plus prior wave 1–2 eight names → **21** ROM builtins total.)
 
-**Skipped (need hardware):** `hasattr` / `getattr` / `setattr` / `delattr` /
-`isinstance` / `issubclass` — `LOAD_ATTR` does not expose `__dict__` /
-`__class__` / `__base__` as fetchable attributes yet (see wave 4 §2).
+**Attr helpers (wave 4 §2):** `hasattr` / `getattr` / `setattr` / `delattr` /
+`isinstance` / `issubclass` are now ROM-seeded after `LOAD_ATTR` specials
+for `__dict__` / `__class__` / `__base__` — see `planning/builtins_wave4_plan.md`.
+
+**Known gap:** empty `tuple()` (firmware `tuple(iterable=None)`) still
+TYPE-traps on the None-default CALL fill path; image tests use `()` /
+`len(())` or `tuple(iterable)` instead. Tracked as a CALL default-fill fix.
 
 ### 3B — kwargs
 

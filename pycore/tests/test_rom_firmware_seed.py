@@ -280,36 +280,27 @@ WAVE3_PROGRAM_GOLDENS = {
 class RomFirmwareProgramGoldenTest(unittest.TestCase):
     """Run wave-3 image programs on the host against firmware bodies."""
 
-    def _firmware_ns(self) -> dict[str, object]:
-        names = (
-            "divmod",
-            "pow",
-            "round",
-            "bin",
-            "hex",
-            "oct",
-            "tuple",
-            "min",
-            "list",
-            "dict",
-            "reversed",
-            "filter",
-            "sorted",
-            "sum",
-        )
-        ns: dict[str, object] = {"range": range}
-        for name in names:
-            ns[name] = _load_firmware(name)
-        return ns
-
     def test_wave3_program_goldens(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1] / "programs"
         for fname, expect in WAVE3_PROGRAM_GOLDENS.items():
             with self.subTest(program=fname):
                 text = (root / fname).read_text(encoding="utf-8")
-                g = self._firmware_ns()
+                g = {"__name__": "__pycore_host__", "range": range}
+                g.update(image_from_source.load_rom_firmware_callables())
                 exec(compile(text, fname, "exec"), g)
                 self.assertEqual(g["managed_entry"](), expect)
+
+    def test_host_entry_result_matches_wave3_goldens(self) -> None:
+        """Makefile host-golden path must inject ROM firmware (not CPython)."""
+        from run_image_test import host_entry_result
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "programs"
+        for fname, expect in WAVE3_PROGRAM_GOLDENS.items():
+            with self.subTest(program=fname):
+                self.assertEqual(
+                    host_entry_result(root / fname, "managed_entry"),
+                    expect,
+                )
 
 
 if __name__ == "__main__":

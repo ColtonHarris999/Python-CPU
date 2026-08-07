@@ -11,6 +11,7 @@ import types
 from encoding import TAG_BOOL, TAG_INT, VAL_MASK
 from image_from_source import (
     build_image_from_source_text,
+    load_rom_firmware_callables,
     parse_seed_pragmas,
     require_python_3_14,
     write_image_outputs,
@@ -48,6 +49,11 @@ def host_entry_result(source: pathlib.Path, entry: str) -> int | bool:
 
     namespace: dict[str, object] = {"__name__": "__pycore_host__"}
     exec(compile(tree, str(source), "exec"), namespace)
+
+    # Match HW boot builtins: inject ROM firmware callables so host goldens
+    # follow firmware semantics (e.g. reversed/filter return lists).
+    for name, fn in load_rom_firmware_callables().items():
+        namespace.setdefault(name, fn)
 
     # Wire SEED_TYPE / SEED_TYPE_METHOD / SEED_INSTANCE after defs exist.
     methods_by_type: dict[str, list] = {}

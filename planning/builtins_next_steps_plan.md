@@ -56,7 +56,7 @@ Related:
    **Done:** `img_firmware_rom_subset.py`, `img_firmware_iterators.py`.
 6. **Update per-builtin status** in `builtins.md` as modules move from
    `implemented` → `in ROM`.
-   **Done** for the eight seeded names.
+   **Done** for all 28 `ROM_FIRMWARE_BUILTINS` names (waves 1–4).
 
 ---
 
@@ -65,6 +65,7 @@ Related:
 | Need | Why |
 | --- | --- |
 | `CO_VARKEYWORDS` on user defs | `def f(**k)` parameter packing |
+| None / missing positional default fill | `tuple()` / `f(x=None)` CALL fill TYPE-traps; blocks empty `tuple()` |
 | Optional `BI_*` keyword tables | Hardware kwargs without ROM wrapper |
 | Full exception tables / `RERAISE` | Real `TypeError`/`StopIteration`; comprehension option A/B |
 | `BI_LEN` tuple-mode RANGE + OBJECT `__bool__` | Complete truthiness / len protocol |
