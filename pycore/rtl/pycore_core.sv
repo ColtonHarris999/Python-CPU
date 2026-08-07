@@ -210,6 +210,9 @@ module pycore_core #(
     logic [127:0]                  call_kwdefaults_r;  // callee co_kwdefaults DICT
     logic [15:0]                   call_kwonly_r;
     logic [15:0]                   call_total_params_r;
+    logic                          call_varargs_r;     // callee CO_VARARGS flag
+    logic [5:0]                    call_after_varargs_sub_r;
+    logic                          call_varargs_to_frame_r;
     logic                          call_args_is_list_r; // EX expand source tag
     // Boot phase counter — reset walker for S_BOOT.
     logic [3:0]                    boot_phase_r;
@@ -1484,6 +1487,9 @@ module pycore_core #(
             call_kwdefaults_r    <= '0;
             call_kwonly_r        <= '0;
             call_total_params_r  <= '0;
+            call_varargs_r       <= 1'b0;
+            call_after_varargs_sub_r <= '0;
+            call_varargs_to_frame_r  <= 1'b0;
             call_args_is_list_r  <= 1'b0;
             call_code_addr_r     <= '0;
             call_entry_slot_r    <= '0;
@@ -1835,6 +1841,9 @@ module pycore_core #(
                             call_mode_r <= CALL_MODE_POS;
                         call_n_pos_r        <= '0;
                         call_n_kwargs_r     <= '0;
+                        call_varargs_r      <= 1'b0;
+                        call_after_varargs_sub_r <= '0;
+                        call_varargs_to_frame_r  <= 1'b0;
                         call_args_is_list_r <= 1'b0;
                         container_dmem_pending_r <= 1'b0;
                         fetch_skip_r         <= 1'b1;

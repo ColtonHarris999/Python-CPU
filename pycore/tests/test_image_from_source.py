@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dis
+import inspect
 import opcode
 import sys
 import unittest
@@ -41,7 +42,36 @@ class ImageTranscodingTest(unittest.TestCase):
             kwonlyargcount=4,
         )
 
-        self.assertEqual(unpack_code_metadata(meta), (7, 6, 5, 4))
+        self.assertEqual(unpack_code_metadata(meta), (7, 6, 5, 4, False))
+
+    def test_pack_code_metadata_includes_varargs_flag(self) -> None:
+        meta = pack_code_metadata(
+            stacksize=7,
+            nlocals=6,
+            argcount=5,
+            kwonlyargcount=4,
+            varargs=True,
+        )
+
+        self.assertEqual(unpack_code_metadata(meta), (7, 6, 5, 4, True))
+        self.assertEqual((meta >> 64) & 1, 1)
+
+    def test_validate_allows_varargs(self) -> None:
+        ns: dict[str, object] = {}
+        exec("def f(*args):\n    return 0\n", ns)
+        co = ns["f"].__code__
+
+        self.assertTrue(co.co_flags & inspect.CO_VARARGS)
+        image_from_source.validate_code_object(co)
+
+    def test_validate_still_rejects_varkeywords(self) -> None:
+        ns: dict[str, object] = {}
+        exec("def f(**kwargs):\n    return 0\n", ns)
+        co = ns["f"].__code__
+
+        self.assertTrue(co.co_flags & inspect.CO_VARKEYWORDS)
+        with self.assertRaisesRegex(ValueError, "CO_VARKEYWORDS"):
+            image_from_source.validate_code_object(co)
 
     def test_transcoding_preserves_raw_unit_count(self) -> None:
         code = _compile_module(
@@ -140,7 +170,10 @@ class ImageTranscodingTest(unittest.TestCase):
         f_addr = f_handle[1]
 
         metadata = result.heap.words[f_addr + CODE_FIELD_METADATA * 32]
-        self.assertEqual(unpack_code_metadata(metadata), (f_co.co_stacksize, 3, 2, 1))
+        self.assertEqual(
+            unpack_code_metadata(metadata),
+            (f_co.co_stacksize, 3, 2, 1, False),
+        )
 
         varnames_val = result.heap.words[f_addr + CODE_FIELD_CO_VARNAMES * 32]
         varnames_tag = (
@@ -155,6 +188,32 @@ class ImageTranscodingTest(unittest.TestCase):
         )
         self.assertEqual(kwdefaults_tag, TAG_MUT_COLLEC)
         self.assertEqual(mut_kind(kwdefaults_val), MUT_DICT)
+
+    def test_varargs_metadata_builds(self) -> None:
+        src = (
+            "def f(*a):\n"
+            "    return len(a)\n"
+            "\n"
+            "def managed_entry():\n"
+            "    return f(1, 2)\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        module_code = _compile_module(src)
+        f_co = next(
+            co for co in image_from_source.iter_code_objects(module_code)
+            if co.co_name == "f"
+        )
+
+        result = image_from_source.build_image_from_code(module_code)
+        f_handle = result.code_handles[id(f_co)]
+        f_addr = f_handle[1]
+        metadata = result.heap.words[f_addr + CODE_FIELD_METADATA * 32]
+
+        self.assertEqual(
+            unpack_code_metadata(metadata),
+            (f_co.co_stacksize, f_co.co_nlocals, 0, 0, True),
+        )
 
     def test_set_function_attribute_closure_rejected(self) -> None:
         with self.assertRaises(ValueError) as ctx:

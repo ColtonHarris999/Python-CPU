@@ -193,6 +193,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-default-arg pycore-img-default-arg-argc-trap \
 	pycore-img-call-kw pycore-img-call-kw-unexpected \
 	pycore-img-call-function-ex pycore-img-call-function-ex-kw \
+	pycore-img-varargs-basic pycore-img-varargs-empty \
+	pycore-img-varargs-kwonly pycore-img-varargs-call-ex \
 	pycore-img-bound-method-obj pycore-img-method-all \
 	pycore-img-class-simple pycore-img-class-const \
 	pycore-img-staticmethod pycore-img-class-two-instances \
@@ -1156,6 +1158,10 @@ pycore-img: \
 	pycore-img-set-grow-fatal \
 	pycore-img-attr-all \
 	pycore-img-method-all \
+	pycore-img-varargs-basic \
+	pycore-img-varargs-empty \
+	pycore-img-varargs-kwonly \
+	pycore-img-varargs-call-ex \
 	pycore-img-class-all \
 	pycore-img-allocator-list
 
@@ -1348,6 +1354,18 @@ pycore-img-call-function-ex:
 pycore-img-call-function-ex-kw:
 	$(call PYCORE_IMAGE_RUN,call_function_ex_kw,100000)
 
+pycore-img-varargs-basic:
+	$(call PYCORE_IMAGE_RUN,varargs_basic,100000)
+
+pycore-img-varargs-empty:
+	$(call PYCORE_IMAGE_RUN,varargs_empty,100000)
+
+pycore-img-varargs-kwonly:
+	$(call PYCORE_IMAGE_RUN,varargs_kwonly,100000)
+
+pycore-img-varargs-call-ex:
+	$(call PYCORE_IMAGE_RUN,varargs_call_ex,100000)
+
 pycore-img-bound-method-obj:
 	$(call PYCORE_IMAGE_RUN,bound_method_obj,100000)
 
@@ -1362,6 +1380,10 @@ pycore-img-method-all: \
 	pycore-img-call-kw-unexpected \
 	pycore-img-call-function-ex \
 	pycore-img-call-function-ex-kw \
+	pycore-img-varargs-basic \
+	pycore-img-varargs-empty \
+	pycore-img-varargs-kwonly \
+	pycore-img-varargs-call-ex \
 	pycore-img-bound-method-obj
 
 # ClassImageBuilder (M4): fold module-level class → OBK_TYPE + STORE_NAME.

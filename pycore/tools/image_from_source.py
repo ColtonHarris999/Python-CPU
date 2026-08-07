@@ -263,18 +263,10 @@ def _is_supported_opname(opname: str) -> bool:
 
 
 def validate_code_object(co: types.CodeType) -> None:
-    unsupported_arg_flags = co.co_flags & (
-        inspect.CO_VARARGS | inspect.CO_VARKEYWORDS
-    )
-    if unsupported_arg_flags:
-        names: list[str] = []
-        if co.co_flags & inspect.CO_VARARGS:
-            names.append("CO_VARARGS (*args)")
-        if co.co_flags & inspect.CO_VARKEYWORDS:
-            names.append("CO_VARKEYWORDS (**kwargs)")
+    if co.co_flags & inspect.CO_VARKEYWORDS:
         raise ValueError(
             f"Unsupported variadic arguments in code object {co.co_name!r}: "
-            + ", ".join(names)
+            "CO_VARKEYWORDS (**kwargs)"
         )
 
     for ins in iter_raw_instructions(co):
@@ -454,6 +446,7 @@ class _ImageSerializer:
             nlocals=co.co_nlocals,
             argcount=co.co_argcount,
             kwonlyargcount=co.co_kwonlyargcount,
+            varargs=bool(co.co_flags & inspect.CO_VARARGS),
             co_defaults=co_defaults,
             co_kwdefaults=co_kwdefaults,
         )
@@ -1005,9 +998,9 @@ def seed_firmware_function(
 ) -> Tagged:
     """Compile a firmware .py and serialize its named function as a CODE_OBJECT.
 
-    Defaults are taken from the live function object (``__defaults__``) and
-    stored in ``serializer.defaults_map`` for CALL arity fill — the same path
-    used for user functions after ``fold_function_defaults``.
+    Defaults are taken from the live function object (``__defaults__`` /
+    ``__kwdefaults__``) and stored in the serializer maps for CALL arity fill
+    — the same path used for user functions after ``fold_function_defaults``.
     """
     source_path = pathlib.Path(source_path)
     source_text = source_path.read_text(encoding="utf-8")
@@ -1025,6 +1018,9 @@ def seed_firmware_function(
     defaults = func.__defaults__
     if defaults:
         serializer.defaults_map[id(co)] = defaults
+    kwdefaults = func.__kwdefaults__
+    if kwdefaults:
+        serializer.kwdefaults_map[id(co)] = dict(kwdefaults)
     return serializer.serialize_code(co)
 
 
