@@ -15,16 +15,17 @@ not just more `.py` stubs.
 **Why first:** full-program tests can assert stdout instead of packing
 everything into one INT return.
 
+**Full plan (for review):** `planning/builtins_print_console_plan.md`
+
 | Layer | Work |
 | --- | --- |
-| MMIO | Add write-only console sink (e.g. `CONSOLE_TX` byte / ring) on excore MMIO map; TB captures to a log file |
-| Excore | Handle `PY_TRAP_BUILTIN_CALL` for `BI_PRINT`: stringify INT/BOOL/None/SHORT_STR, write bytes, `COMPLETED` + push `None` |
-| Firmware | Optional ROM `CODE_OBJECT` wrapper with `sep=` / `end=` (CALL_KW) that calls into native print or builds one string then traps |
-| Tests | `img_print_basic.py` + golden `.stdout`; extend `run_image_test` / Makefile to diff captured output |
+| MMIO | Write-only `CONSOLE_TX` (@ `0xF0`); TB captures to `sim.stdout` |
+| Excore | Handle trap 16 / `BI_PRINT`: stringify INT/BOOL/None/SHORT_STR (≤2 args), hardcoded sep/end, COMPLETED → `None` |
+| Firmware | Phase 2: optional ROM `CODE_OBJECT` wrapper with `sep=` / `end=` calling native sink |
+| Tests | `img_print_basic.py` + `.stdout` golden; TWOCORE + diff |
 
-**Out of scope for A:** full `str`/`repr` for containers; `file=` streams.
-
-Plan detail can live in `pycore_firmware/builtins/print.md` once started.
+**Out of scope for A MVP:** full `str`/`repr` for containers; `file=` streams;
+native kwargs on `OBK_BUILTIN`; `argc > 2` (FATAL until ROM wrapper / widen).
 
 ---
 

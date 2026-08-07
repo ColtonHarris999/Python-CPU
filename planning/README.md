@@ -10,6 +10,7 @@ Current architecture and tag/layout docs live under `pycore/docs/` and
 | `builtins_next_steps_plan.md` | **Done through §4.5 (wave 3);** next is wave 4 |
 | `builtins_rom_wave3_plan.md` | **Done:** wave 3 ROM seed + `sorted(reverse=)` / tests |
 | `builtins_wave4_plan.md` | **Active:** print console + ORD/CHR; §2 attr specials **done** |
+| `builtins_print_console_plan.md` | **Proposal:** `print()` / `BI_PRINT` + `CONSOLE_TX` + stdout goldens |
 | `call_kw_support_plan.md` | **Done (v1):** `CALL_KW` / `CALL_FUNCTION_EX` / `DICT_MERGE` on `CODE_OBJECT` |
 | `dict_set_bulk_contam_plan.md` | **Done:** `MAP_ADD` / `DICT_UPDATE` / `DICT_MERGE` / `SET_UPDATE` + contamination bit |
 | `optimization_plan.md` | Optional RTL cleanup / optimization backlog |

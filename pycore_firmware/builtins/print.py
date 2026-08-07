@@ -1,9 +1,9 @@
 """Print objects to a stream.
 
-I/O is an excore concern (BI_PRINT → PY_TRAP_BUILTIN_CALL). Needs a
-console MMIO + excore handler before ROM seeding (see
-``planning/builtins_wave4_plan.md`` §1). A CODE_OBJECT wrapper may use
-``sep=`` / ``end=`` via CALL_KW once I/O exists.
+I/O is an excore concern (BI_PRINT → PY_TRAP_BUILTIN_CALL). Full plan:
+``planning/builtins_print_console_plan.md``. A CODE_OBJECT wrapper may
+use ``sep=`` / ``end=`` via CALL_KW in Phase 2 once the console sink
+exists.
 """
 
 
