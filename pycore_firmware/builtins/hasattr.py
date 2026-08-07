@@ -1,8 +1,7 @@
 """True if ``obj`` has attribute ``name``.
 
-Interim: probes ``obj.__dict__`` with CONTAINS_OP (instances only).
-No MRO / class-attr walk (would need LOAD_ATTR by runtime string).
-Missing ``__dict__`` TYPE-traps on LOAD_ATTR.
+Probes ``obj.__dict__`` with CONTAINS_OP (instances only). No MRO /
+class-attr walk (would need LOAD_ATTR by runtime string).
 """
 
 

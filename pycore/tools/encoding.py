@@ -375,27 +375,30 @@ def pack_code_metadata(
     nlocals: int,
     argcount: int,
     kwonlyargcount: int = 0,
+    varargs: bool = False,
 ) -> int:
-    """Pack code metadata fields into value[63:0].
+    """Pack code metadata fields into value[64:0].
 
     Bits [15:0]=argcount, [31:16]=nlocals, [47:32]=stacksize,
-    [63:48]=kwonlyargcount.
+    [63:48]=kwonlyargcount, [64]=CO_VARARGS.
     """
     return (
-        ((kwonlyargcount & 0xFFFF) << 48)
+        ((1 if varargs else 0) << 64)
+        | ((kwonlyargcount & 0xFFFF) << 48)
         | ((stacksize & 0xFFFF) << 32)
         | ((nlocals & 0xFFFF) << 16)
         | (argcount & 0xFFFF)
     )
 
 
-def unpack_code_metadata(meta: int) -> tuple[int, int, int, int]:
-    """Return ``(stacksize, nlocals, argcount, kwonlyargcount)`` from metadata."""
+def unpack_code_metadata(meta: int) -> tuple[int, int, int, int, bool]:
+    """Return ``(stacksize, nlocals, argcount, kwonlyargcount, varargs)``."""
     return (
         (meta >> 32) & 0xFFFF,
         (meta >> 16) & 0xFFFF,
         meta & 0xFFFF,
         (meta >> 48) & 0xFFFF,
+        bool((meta >> 64) & 1),
     )
 
 

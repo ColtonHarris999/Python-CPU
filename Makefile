@@ -172,6 +172,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-attr-missing pycore-img-attr-type-trap \
 	pycore-img-attr-del pycore-img-attr-del-reinsert \
 	pycore-img-attr-shadow pycore-img-attr-mro \
+	pycore-img-attr-dunder-dict pycore-img-attr-dunder-class \
+	pycore-img-attr-dunder-base pycore-img-attr-dunder-store-trap \
+	pycore-img-attr-dunder-del-trap \
 	pycore-img-attr-grow-global pycore-img-seed-grow-global \
 	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
 	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
@@ -180,12 +183,24 @@ EXCORE_RTL_SRCS := \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
+	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
+	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
+	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
+	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
+	pycore-img-print-empty pycore-img-print-basic pycore-img-print-sep-end \
+	pycore-img-print-end-only pycore-img-print-none-sep \
+	pycore-img-print-many pycore-img-print-star pycore-img-print-star-kw \
+	pycore-img-print-neg pycore-img-print-bools pycore-img-print-type-trap \
 	pycore-img-attr-all \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
 	pycore-img-default-arg pycore-img-default-arg-argc-trap \
 	pycore-img-call-kw pycore-img-call-kw-unexpected \
 	pycore-img-call-function-ex pycore-img-call-function-ex-kw \
+	pycore-img-varargs-basic pycore-img-varargs-empty \
+	pycore-img-varargs-kwonly pycore-img-varargs-kwonly2 \
+	pycore-img-varargs-kwonly2-partial pycore-img-varargs-ex-kw \
+	pycore-img-varargs-call-ex \
 	pycore-img-bound-method-obj pycore-img-method-all \
 	pycore-img-class-simple pycore-img-class-const \
 	pycore-img-staticmethod pycore-img-class-two-instances \
@@ -483,6 +498,42 @@ define PYCORE_IMAGE_RUN_TWOCORE
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
 	./$(BUILD_DIR)/img_$(1)/verilator_twocore/Vtb_container
+endef
+
+# Two-core image run with console stdout golden (print / BI_PRINT).
+# Skips host execution (host print would pollute logs); EXPECTED_* are INT 0.
+define PYCORE_IMAGE_RUN_TWOCORE_STDOUT
+	mkdir -p $(BUILD_DIR)/img_$(1)
+	$(PYTHON) pycore/tools/image_from_source.py \
+		--source pycore/programs/img_$(1).py \
+		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
+		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
+		--string-hex $(BUILD_DIR)/img_$(1)/string_mem.hex \
+		--meta $(BUILD_DIR)/img_$(1)/image.meta \
+		--expected-tag 1 \
+		--expected-value 0
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/img_$(1)/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/img_$(1)/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/img_$(1)/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GEXCORE_EN=1 \
+		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d1 \
+		"-GEXPECTED_VALUE=128'd0" \
+		-GSTDOUT_PATH=\"$(BUILD_DIR)/img_$(1)/sim.stdout\" \
+		-GMAX_CYCLES=$(2) \
+		--Mdir $(BUILD_DIR)/img_$(1)/verilator_twocore \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/img_$(1)/verilator_twocore/Vtb_container && \
+	diff -u pycore/programs/img_$(1).stdout $(BUILD_DIR)/img_$(1)/sim.stdout
 endef
 
 define PYCORE_IMAGE_TRAP_RUN
@@ -1149,6 +1200,13 @@ pycore-img: \
 	pycore-img-set-grow-fatal \
 	pycore-img-attr-all \
 	pycore-img-method-all \
+	pycore-img-varargs-basic \
+	pycore-img-varargs-empty \
+	pycore-img-varargs-kwonly \
+	pycore-img-varargs-kwonly2 \
+	pycore-img-varargs-kwonly2-partial \
+	pycore-img-varargs-ex-kw \
+	pycore-img-varargs-call-ex \
 	pycore-img-class-all \
 	pycore-img-allocator-list
 
@@ -1180,6 +1238,21 @@ pycore-img-attr-shadow:
 pycore-img-attr-mro:
 	$(call PYCORE_IMAGE_RUN,attr_mro,50000)
 
+pycore-img-attr-dunder-dict:
+	$(call PYCORE_IMAGE_RUN,attr_dunder_dict,50000)
+
+pycore-img-attr-dunder-class:
+	$(call PYCORE_IMAGE_RUN,attr_dunder_class,50000)
+
+pycore-img-attr-dunder-base:
+	$(call PYCORE_IMAGE_RUN,attr_dunder_base,50000)
+
+pycore-img-attr-dunder-store-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,attr_dunder_store_trap,1,50000)
+
+pycore-img-attr-dunder-del-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,attr_dunder_del_trap,1,50000)
+
 pycore-img-attr-all: \
 	pycore-img-attr-basic \
 	pycore-img-attr-overwrite \
@@ -1190,6 +1263,11 @@ pycore-img-attr-all: \
 	pycore-img-attr-del-reinsert \
 	pycore-img-attr-shadow \
 	pycore-img-attr-mro \
+	pycore-img-attr-dunder-dict \
+	pycore-img-attr-dunder-class \
+	pycore-img-attr-dunder-base \
+	pycore-img-attr-dunder-store-trap \
+	pycore-img-attr-dunder-del-trap \
 	pycore-img-attr-grow-global \
 	pycore-img-seed-grow-global \
 	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
@@ -1199,6 +1277,14 @@ pycore-img-attr-all: \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
+	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
+	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
+	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
+	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
+	pycore-img-print-empty pycore-img-print-basic pycore-img-print-sep-end \
+	pycore-img-print-end-only pycore-img-print-none-sep \
+	pycore-img-print-many pycore-img-print-star pycore-img-print-star-kw \
+	pycore-img-print-neg pycore-img-print-bools pycore-img-print-type-trap \
 	pycore-img-builtin-max \
 	pycore-img-builtin-len-list
 
@@ -1244,6 +1330,63 @@ pycore-img-firmware-rom-subset:
 
 pycore-img-firmware-iterators: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,firmware_iterators,500000)
+
+pycore-img-firmware-wave3a:
+	$(call PYCORE_IMAGE_RUN,firmware_wave3a,200000)
+
+pycore-img-firmware-wave3-strings:
+	$(call PYCORE_IMAGE_RUN,firmware_wave3_strings,200000)
+
+pycore-img-firmware-wave3-pow:
+	$(call PYCORE_IMAGE_RUN,firmware_wave3_pow,200000)
+
+pycore-img-firmware-wave3-containers: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,firmware_wave3_containers,500000)
+
+pycore-img-firmware-sorted-kw: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,firmware_sorted_kw,500000)
+
+pycore-img-firmware-filter-pred: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,firmware_filter_pred,500000)
+
+pycore-img-firmware-attr-helpers:
+	$(call PYCORE_IMAGE_RUN,firmware_attr_helpers,200000)
+
+pycore-img-firmware-isinstance:
+	$(call PYCORE_IMAGE_RUN,firmware_isinstance,200000)
+
+pycore-img-print-empty: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_empty,200000)
+
+pycore-img-print-basic: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_basic,200000)
+
+pycore-img-print-sep-end: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_sep_end,200000)
+
+pycore-img-print-end-only: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_end_only,200000)
+
+pycore-img-print-none-sep: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_none_sep,200000)
+
+pycore-img-print-many: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_many,300000)
+
+pycore-img-print-star: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_star,300000)
+
+pycore-img-print-star-kw: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_star_kw,300000)
+
+pycore-img-print-neg: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_neg,200000)
+
+pycore-img-print-bools: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_bools,200000)
+
+pycore-img-print-type-trap: excore-fw
+	$(call PYCORE_IMAGE_TRAP_RUN_TWOCORE,print_type_trap,1,200000)
 
 pycore-img-load-name-builtin:
 	$(call PYCORE_IMAGE_RUN,load_name_builtin,50000)
@@ -1293,6 +1436,27 @@ pycore-img-call-function-ex:
 pycore-img-call-function-ex-kw:
 	$(call PYCORE_IMAGE_RUN,call_function_ex_kw,100000)
 
+pycore-img-varargs-basic:
+	$(call PYCORE_IMAGE_RUN,varargs_basic,100000)
+
+pycore-img-varargs-empty:
+	$(call PYCORE_IMAGE_RUN,varargs_empty,100000)
+
+pycore-img-varargs-kwonly:
+	$(call PYCORE_IMAGE_RUN,varargs_kwonly,100000)
+
+pycore-img-varargs-kwonly2:
+	$(call PYCORE_IMAGE_RUN,varargs_kwonly2,100000)
+
+pycore-img-varargs-kwonly2-partial:
+	$(call PYCORE_IMAGE_RUN,varargs_kwonly2_partial,100000)
+
+pycore-img-varargs-ex-kw:
+	$(call PYCORE_IMAGE_RUN,varargs_ex_kw,100000)
+
+pycore-img-varargs-call-ex:
+	$(call PYCORE_IMAGE_RUN,varargs_call_ex,100000)
+
 pycore-img-bound-method-obj:
 	$(call PYCORE_IMAGE_RUN,bound_method_obj,100000)
 
@@ -1307,6 +1471,13 @@ pycore-img-method-all: \
 	pycore-img-call-kw-unexpected \
 	pycore-img-call-function-ex \
 	pycore-img-call-function-ex-kw \
+	pycore-img-varargs-basic \
+	pycore-img-varargs-empty \
+	pycore-img-varargs-kwonly \
+	pycore-img-varargs-kwonly2 \
+	pycore-img-varargs-kwonly2-partial \
+	pycore-img-varargs-ex-kw \
+	pycore-img-varargs-call-ex \
 	pycore-img-bound-method-obj
 
 # ClassImageBuilder (M4): fold module-level class → OBK_TYPE + STORE_NAME.

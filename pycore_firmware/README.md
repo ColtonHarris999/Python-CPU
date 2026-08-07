@@ -25,5 +25,8 @@ fast paths. Bytecode and CALL work needed to finish this split is in
 | --- | --- |
 | `builtins/` | Pure-Python miss-path / ROM builtins + `builtins.md` inventory |
 
-Testing today uses hex images for specific memory locations (same flow as
-other pycore precompiled fixtures).
+Image tests compile these modules via `ROM_FIRMWARE_BUILTINS` in
+`pycore/tools/image_from_source.py` and seed them into the boot-record
+builtins dict. Host goldens in `run_image_test.py` inject the same bodies
+through `load_rom_firmware_callables()` so firmware semantics (e.g.
+`reversed` → list) match hardware.

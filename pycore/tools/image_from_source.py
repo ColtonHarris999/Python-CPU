@@ -263,18 +263,10 @@ def _is_supported_opname(opname: str) -> bool:
 
 
 def validate_code_object(co: types.CodeType) -> None:
-    unsupported_arg_flags = co.co_flags & (
-        inspect.CO_VARARGS | inspect.CO_VARKEYWORDS
-    )
-    if unsupported_arg_flags:
-        names: list[str] = []
-        if co.co_flags & inspect.CO_VARARGS:
-            names.append("CO_VARARGS (*args)")
-        if co.co_flags & inspect.CO_VARKEYWORDS:
-            names.append("CO_VARKEYWORDS (**kwargs)")
+    if co.co_flags & inspect.CO_VARKEYWORDS:
         raise ValueError(
             f"Unsupported variadic arguments in code object {co.co_name!r}: "
-            + ", ".join(names)
+            "CO_VARKEYWORDS (**kwargs)"
         )
 
     for ins in iter_raw_instructions(co):
@@ -454,6 +446,7 @@ class _ImageSerializer:
             nlocals=co.co_nlocals,
             argcount=co.co_argcount,
             kwonlyargcount=co.co_kwonlyargcount,
+            varargs=bool(co.co_flags & inspect.CO_VARARGS),
             co_defaults=co_defaults,
             co_kwdefaults=co_kwdefaults,
         )
@@ -538,9 +531,13 @@ class _ImageSerializer:
 
 @dataclass(frozen=True)
 class SeedTypeSpec:
-    """Build-time OBK_TYPE seed: ``# pycore-inject: SEED_TYPE Name [attr=int ...]``."""
+    """Build-time OBK_TYPE seed.
+
+    ``# pycore-inject: SEED_TYPE Name [base=Base] [attr=int ...]``
+    """
 
     name: str
+    base_name: str | None = None
     attrs: tuple[tuple[str, int], ...] = ()
 
 
@@ -627,7 +624,7 @@ def _parse_seed_kv_tokens(tokens: list[str]) -> tuple[dict[str, str], list[tuple
         if "=" not in tok:
             raise ValueError(f"seed token must be key=value, got {tok!r}")
         key, val = tok.split("=", 1)
-        if key in {"type", "slots"}:
+        if key in {"type", "slots", "base"}:
             opts[key] = val
             continue
         attrs.append((key, int(val)))
@@ -661,9 +658,17 @@ def parse_seed_pragmas(source_text: str) -> SeedSpecs:
         elif stripped.startswith(_INJECT_SEED_TYPE_PREFIX):
             rest = stripped[len(_INJECT_SEED_TYPE_PREFIX) :].strip().split()
             if not rest:
-                raise ValueError("SEED_TYPE expects '<Name> [attr=int ...]'")
-            _opts, attrs = _parse_seed_kv_tokens(rest[1:])
-            types.append(SeedTypeSpec(rest[0], tuple(attrs)))
+                raise ValueError(
+                    "SEED_TYPE expects '<Name> [base=Base] [attr=int ...]'"
+                )
+            opts, attrs = _parse_seed_kv_tokens(rest[1:])
+            types.append(
+                SeedTypeSpec(
+                    rest[0],
+                    base_name=opts.get("base"),
+                    attrs=tuple(attrs),
+                )
+            )
         elif stripped.startswith(_INJECT_SEED_INSTANCE_PREFIX):
             rest = stripped[len(_INJECT_SEED_INSTANCE_PREFIX) :].strip().split()
             if not rest:
@@ -896,7 +901,15 @@ def _seed_globals_pairs(
             slot_count=dict_min_slots(n_keys),
         )
         tp_name = tag_constant(spec.name, string_heap)
-        handle = heap.alloc_type(tp_name, tp_dict=tp_dict)
+        tp_base: Tagged | None = None
+        if spec.base_name is not None:
+            tp_base = type_handles.get(spec.base_name)
+            if tp_base is None:
+                raise ValueError(
+                    f"SEED_TYPE {spec.name!r} base={spec.base_name!r}: "
+                    "declare the base SEED_TYPE earlier in the source"
+                )
+        handle = heap.alloc_type(tp_name, tp_dict=tp_dict, tp_base=tp_base)
         type_handles[spec.name] = handle
         pairs.append((tag_constant(spec.name, string_heap), handle))
 
@@ -940,6 +953,7 @@ def _seed_globals_pairs(
 
 # (dict_key, source_stem, func_name) → pycore_firmware/builtins/{stem}.py
 ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
+    # Wave 1–2
     ("sum", "sum", "sum"),
     ("abs", "abs", "abs"),
     ("bool", "bool", "bool"),
@@ -948,11 +962,79 @@ ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
     ("enumerate", "enumerate", "enumerate"),
     ("map", "map", "map"),
     ("zip", "zip", "zip"),
+    # Wave 3A.1 — numeric / string / tuple
+    ("divmod", "divmod", "divmod"),
+    ("pow", "pow", "pow"),
+    ("round", "round", "round"),
+    ("bin", "bin", "bin"),
+    ("hex", "hex", "hex"),
+    ("oct", "oct", "oct"),
+    ("tuple", "tuple", "tuple"),
+    ("min", "min", "min"),
+    # Wave 3A.2 — containers / iterators (LIST grow → excore)
+    ("list", "list", "list"),
+    ("dict", "dict", "dict"),
+    ("reversed", "reversed", "reversed"),
+    ("filter", "filter", "filter"),
+    ("sorted", "sorted", "sorted"),
+    # Wave 4B — attr protocol (needs LOAD_ATTR __dict__/__class__/__base__)
+    ("hasattr", "hasattr", "hasattr"),
+    ("getattr", "getattr", "getattr"),
+    ("setattr", "setattr", "setattr"),
+    ("delattr", "delattr", "delattr"),
+    ("isinstance", "isinstance", "isinstance"),
+    ("issubclass", "issubclass", "issubclass"),
+    # Wave 4A — print(*args, sep=, end=) → _bi_print sink
+    ("print", "print", "print"),
 )
 
 FIRMWARE_BUILTINS_DIR = (
     pathlib.Path(__file__).resolve().parents[2] / "pycore_firmware" / "builtins"
 )
+
+
+def _host_bi_print(x: object) -> None:
+    """Host stand-in for native ``_bi_print`` / ``BI_PRINT`` (CONSOLE_TX)."""
+    import sys
+
+    if x is None:
+        sys.stdout.write("None")
+    elif x is True:
+        sys.stdout.write("True")
+    elif x is False:
+        sys.stdout.write("False")
+    else:
+        sys.stdout.write(str(x))
+
+
+def load_rom_firmware_callables() -> dict[str, object]:
+    """Load ROM firmware bodies as host callables for golden / unit tests.
+
+    Mirrors the boot-record builtins dict: every ``ROM_FIRMWARE_BUILTINS``
+    entry plus a ``_bi_print`` stub so ``print`` can run on the host.
+    Firmware semantics differ from CPython in places (e.g. ``reversed`` /
+    ``filter`` return lists); host goldens must use these bodies.
+    """
+    out: dict[str, object] = {"_bi_print": _host_bi_print}
+    for dict_key, stem, func_name in ROM_FIRMWARE_BUILTINS:
+        path = FIRMWARE_BUILTINS_DIR / f"{stem}.py"
+        if not path.is_file():
+            raise FileNotFoundError(f"ROM firmware builtin source missing: {path}")
+        ns: dict[str, object] = {
+            "__name__": f"pycore_firmware.builtins.{stem}",
+            "_bi_print": _host_bi_print,
+            "len": len,
+            "range": range,
+        }
+        exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), ns)
+        fn = ns.get(func_name)
+        if not callable(fn):
+            raise ValueError(
+                f"firmware {path.name!r}: expected function {func_name!r}, "
+                f"got {type(fn).__name__}"
+            )
+        out[dict_key] = fn
+    return out
 
 
 def seed_firmware_function(
@@ -962,9 +1044,9 @@ def seed_firmware_function(
 ) -> Tagged:
     """Compile a firmware .py and serialize its named function as a CODE_OBJECT.
 
-    Defaults are taken from the live function object (``__defaults__``) and
-    stored in ``serializer.defaults_map`` for CALL arity fill — the same path
-    used for user functions after ``fold_function_defaults``.
+    Defaults are taken from the live function object (``__defaults__`` /
+    ``__kwdefaults__``) and stored in the serializer maps for CALL arity fill
+    — the same path used for user functions after ``fold_function_defaults``.
     """
     source_path = pathlib.Path(source_path)
     source_text = source_path.read_text(encoding="utf-8")
@@ -982,6 +1064,9 @@ def seed_firmware_function(
     defaults = func.__defaults__
     if defaults:
         serializer.defaults_map[id(co)] = defaults
+    kwdefaults = func.__kwdefaults__
+    if kwdefaults:
+        serializer.kwdefaults_map[id(co)] = dict(kwdefaults)
     return serializer.serialize_code(co)
 
 
@@ -1005,9 +1090,9 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     """Allocate the module builtins dict for the boot-record pair-2 slot.
 
     Entries:
-      bytearray / max / len / print / range / set → OBK_BUILTIN (bound_self=NULL)
+      bytearray / max / len / _bi_print / range / set → OBK_BUILTIN (bound_self=NULL)
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
-      ROM_FIRMWARE_BUILTINS → CODE_OBJECT handles (pure-Python firmware)
+      ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
     """
     heap = serializer.heap
     string_heap = serializer.string_heap
@@ -1028,7 +1113,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (tag_constant("bytearray", string_heap), heap.alloc_builtin(BI_BYTEARRAY)),
         (tag_constant("max", string_heap), heap.alloc_builtin(BI_MAX)),
         (tag_constant("len", string_heap), heap.alloc_builtin(BI_LEN)),
-        (tag_constant("print", string_heap), heap.alloc_builtin(BI_PRINT)),
+        # Native console sink; public print is the ROM CODE_OBJECT below.
+        (tag_constant("_bi_print", string_heap), heap.alloc_builtin(BI_PRINT)),
         (tag_constant("range", string_heap), heap.alloc_builtin(BI_RANGE)),
         (tag_constant("set", string_heap), heap.alloc_builtin(BI_SET)),
         (tag_constant("int", string_heap), int_type),
@@ -1900,15 +1986,30 @@ def main() -> None:
     parser.add_argument("--dmem-hex", required=True)
     parser.add_argument("--string-hex", required=True)
     parser.add_argument("--meta", required=True)
+    parser.add_argument(
+        "--expected-tag",
+        type=int,
+        default=None,
+        help="Optional EXPECTED_TAG for image.meta (skips host execution)",
+    )
+    parser.add_argument(
+        "--expected-value",
+        type=int,
+        default=None,
+        help="Optional EXPECTED_VALUE for image.meta (skips host execution)",
+    )
     args = parser.parse_args()
 
     require_python_3_14()
-    image_from_source(
-        source=pathlib.Path(args.source),
+    result = build_image_from_source(pathlib.Path(args.source))
+    write_image_outputs(
+        result,
         program_hex=pathlib.Path(args.program_hex),
         dmem_hex=pathlib.Path(args.dmem_hex),
         string_hex=pathlib.Path(args.string_hex),
         meta=pathlib.Path(args.meta),
+        expected_tag=args.expected_tag,
+        expected_value=args.expected_value,
     )
 
 

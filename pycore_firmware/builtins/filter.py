@@ -1,7 +1,7 @@
 """Filter items where ``function`` is true — returns a list.
 
-``function is None`` keeps truthy items (TO_BOOL limits apply).
-Deviation: materializes results (no filter iterator / YIELD).
+``function is None`` keeps truthy items (widened TO_BOOL). Deviation:
+materializes results (no filter iterator / YIELD).
 """
 
 

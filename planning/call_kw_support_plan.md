@@ -208,7 +208,9 @@ in ROM Python once binder works.
 - [x] `builtins.md` unfreezes kwargs for ROM `CODE_OBJECT` modules.  
 - [x] `SUPPORTED_OPS` updated (`CALL_KW` / `CALL_FUNCTION_EX` / `DICT_MERGE`).  
 
-**v1 limits:** `OBK_BUILTIN`/TYPE kwargs and `CO_VARARGS`/`CO_VARKEYWORDS`
+**Follow-up (landed):** `CO_VARARGS` binder + ROM `print(*args, sep=, end=)`.
+
+**v1 limits (historical):** `OBK_BUILTIN`/TYPE kwargs and `CO_VARARGS`/`CO_VARKEYWORDS`
 parameters remain out of scope / trap.
 
 ---

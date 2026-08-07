@@ -82,6 +82,8 @@ module excore_mmio #(
     localparam logic [7:0] OFF_SP_DATA1   = 8'hE4;
     localparam logic [7:0] OFF_SP_DATA2   = 8'hE8;
     localparam logic [7:0] OFF_SP_DATA3   = 8'hEC;
+    // Write-only console byte (BI_PRINT). Captured by TB; RTL discards.
+    localparam logic [7:0] OFF_CONSOLE_TX = 8'hF0;
 
     logic [7:0] off;
     assign off = cpu_addr_i[7:0];

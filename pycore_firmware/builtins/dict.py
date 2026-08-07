@@ -1,7 +1,7 @@
 """Create a dict from an iterable of ``(key, value)`` pairs.
 
-No kwargs (CALL_KW deferred). No dict-comprehension MAP_ADD.
-Copying a mapping: iterate keys and ``out[k] = mapping[k]``.
+No kwargs constructor (``dict(a=1)``). Dict-display comprehensions use
+MAP_ADD on the caller side; this builtin builds via STORE_SUBSCR.
 """
 
 

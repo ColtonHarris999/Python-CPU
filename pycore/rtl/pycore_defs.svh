@@ -17,7 +17,9 @@ localparam int PYCORE_VAL_LSB = 0;                            // 0
 // derive port widths without magic numbers.
 localparam int PYCORE_ADDR_WIDTH       = 32;
 localparam int PYCORE_BLOCK_SHIFT      = 12;   // 4096 bytes / block
-localparam int PYCORE_IMEM_BLOCK_COUNT = 8;    // 32 KB instruction memory
+// 64 KB / 8-byte slots = 8192 words — ROM firmware + large images (e.g.
+// allocator_list) exceed the prior 32 KB / 4096-slot ceiling.
+localparam int PYCORE_IMEM_BLOCK_COUNT = 16;
 localparam int PYCORE_DMEM_BLOCK_COUNT = 32;   // 128 KB data memory
 localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
 localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot
@@ -1034,6 +1036,58 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_long_str_entry(
     end
 endfunction
 
+// SHORT_STR value constants for LOAD_ATTR special names (size in [127:124]).
+// Packed like CALL_INIT_NAME_VAL / CALL_LEN_NAME_VAL in pycore_core.sv.
+localparam logic [127:0] PY_ATTR_NAME_DICT  =
+    128'h85f5f646963745f5f000000000000000; // "__dict__"  size=8
+localparam logic [127:0] PY_ATTR_NAME_CLASS =
+    128'h95f5f636c6173735f5f0000000000000; // "__class__" size=9
+localparam logic [127:0] PY_ATTR_NAME_BASE  =
+    128'h85f5f626173655f5f000000000000000; // "__base__"  size=8
+
+function automatic logic pycore_attr_name_is_dict(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_dict =
+            (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_DICT);
+    end
+endfunction
+
+function automatic logic pycore_attr_name_is_class(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_class =
+            (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_CLASS);
+    end
+endfunction
+
+function automatic logic pycore_attr_name_is_base(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_base =
+            (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_BASE);
+    end
+endfunction
+
+// STORE/DELETE_ATTR reject these names (no header mutation via Python).
+function automatic logic pycore_attr_name_is_dunder_special(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_dunder_special =
+            pycore_attr_name_is_dict(tag, value) ||
+            pycore_attr_name_is_class(tag, value) ||
+            pycore_attr_name_is_base(tag, value);
+    end
+endfunction
+
 // -------------------------------------------------------------------------
 // DICT in-dmem layout v3 (all addresses 16-byte aligned):
 //
@@ -1791,6 +1845,7 @@ endfunction
 //               value[31:16] = nlocals
 //               value[47:32] = stacksize
 //               value[63:48] = kwonlyargcount
+//               value[64]    = CO_VARARGS
 //   field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
 //   field 5 : co_varnames (TUPLE handle; local/argument names)
 //   field 6 : co_kwdefaults (MUT_DICT handle; empty ⇒ no kw-only defaults)
@@ -1838,6 +1893,14 @@ function automatic logic [15:0] pycore_code_meta_kwonlyargcount(
 );
     begin
         pycore_code_meta_kwonlyargcount = meta[63:48];
+    end
+endfunction
+
+function automatic logic pycore_code_meta_varargs(
+    input logic [PYCORE_VAL_WIDTH-1:0] meta
+);
+    begin
+        pycore_code_meta_varargs = meta[64];
     end
 endfunction
 

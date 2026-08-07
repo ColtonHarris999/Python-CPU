@@ -137,7 +137,7 @@ whose ownership is being transferred.
 | 12 | `PY_TRAP_LIST_DELETE` | **recoverable** | mid-list `DELETE_SUBSCR` shift; excore COMPLETED pop 2 |
 | 13 | `PY_TRAP_SET_GROW` | **recoverable** | `SET_ADD` at load ≥ 2/3; excore realloc + insert |
 | 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | uncontaminated `SET_UPDATE` with a `LIST`/`SET`/`DICT` source; excore grow-to-fit + merge (dict source inserts keys). `TUPLE` sources and any contaminated operand are owned by pycore (`pycore_cont_bulk.svh`) instead of trapping |
-| 15 | `PY_TRAP_ATTR_ERROR` | fatal | `LOAD_ATTR` / `DELETE_ATTR` miss after instance `__dict__` + MRO |
+| 15 | `PY_TRAP_ATTR_ERROR` | fatal | `LOAD_ATTR` / `DELETE_ATTR` miss after instance dict + MRO (dunder `__dict__`/`__class__`/`__base__` are special-cased before probe; STORE/DELETE of those names → TYPE) |
 | 16 | `PY_TRAP_BUILTIN_CALL` | **recoverable** | builtin call handed to firmware |
 | 17 | `PY_TRAP_RAISE` | fatal | `RAISE_VARARGS` (no handler tables yet) |
 | 18 | `PY_TRAP_SLICE` | **recoverable** | slice helper |
@@ -388,9 +388,11 @@ word_idx  = block_off >> log2(DATA_WIDTH/8)
   value per transaction, 16-byte aligned in v1.
 
 Default memory map (all parameters in `pycore_defs.svh`): `ADDR_WIDTH = 32`,
-`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 8` (32 KB), `DMEM_BLOCK_COUNT = 32`
-(128 KB). Out-of-range or misaligned data accesses raise `MEM_FAULT` /
-`ADDR_ALIGN`.
+`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 16` (64 KB / 8192 instruction slots),
+`DMEM_BLOCK_COUNT = 32` (128 KB). Out-of-range or misaligned data accesses
+raise `MEM_FAULT` / `ADDR_ALIGN`. IMEM grew from 32 KB so boot images that
+seed the full `ROM_FIRMWARE_BUILTINS` set (plus large programs such as
+`allocator_list`) fit under `$readmemh`.
 
 PTR load/store reach data memory through two internal-only opcodes
 (`PY_OP_MEM_LOAD_PTR`, `PY_OP_MEM_STORE_PTR`) that are not part of the CPython
@@ -452,7 +454,8 @@ Serialized code objects are seven tagged-entry fields (32 bytes per field, 224B)
 field 0: entry_slot    (INT, imem slot index)
 field 1: co_consts     (TUPLE handle)
 field 2: co_names      (TUPLE handle)
-field 3: metadata      (INT, packed {kwonlyargcount, stacksize, nlocals, argcount})
+field 3: metadata      (INT, packed {kwonlyargcount, stacksize, nlocals,
+                     argcount, CO_VARARGS flag})
 field 4: co_defaults   (TUPLE handle)
 field 5: co_varnames   (TUPLE handle; parameter / local names)
 field 6: co_kwdefaults (MUT_DICT handle; empty if none)
@@ -462,9 +465,10 @@ The interim function model is **function == code object**: `MAKE_FUNCTION`
 checks that TOS is a `CODE_OBJECT` and leaves it in place. `CALL` /
 `CALL_KW` / `CALL_FUNCTION_EX` expect the matching CPython 3.14 stack
 shapes, validate the callable, bind args (positional and/or keyword via
-`co_varnames`), read the callee code-object fields, then enter the frame
-manager. `OBK_BUILTIN` kwargs remain `CALL_FILTER` (firmware `CODE_OBJECT`
-path). `DICT_MERGE` aliases the empty-dest call-site shape used for `**kwargs`;
+`co_varnames`, with `CO_VARARGS` packing excess positionals into `*args`),
+read the callee code-object fields, then enter the frame manager.
+`OBK_BUILTIN` kwargs remain `CALL_FILTER` (firmware `CODE_OBJECT` path —
+e.g. ROM `print` → native `_bi_print` / `BI_PRINT` → `CONSOLE_TX`). `DICT_MERGE` aliases the empty-dest call-site shape used for `**kwargs`;
 a non-empty uncontaminated dest raises `PY_TRAP_DICT_MERGE` (20) and the excore
 builds a fresh combined dict. `DICT_UPDATE` (`{**a, **b}` displays) and `MAP_ADD`
 (dict comprehensions) are also supported — see `bytecode_support.md` and the

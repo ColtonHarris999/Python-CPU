@@ -1,8 +1,8 @@
 """Get attribute ``name`` from ``obj``.
 
-Interim: ``obj.__dict__[name]`` only (instance dict). Optional default
-uses CONTAINS_OP then subscript — avoids AttributeError (RAISE deferred).
-Does not walk the MRO.
+Uses ``obj.__dict__`` (LOAD_ATTR special → instance dict handle). Optional
+default uses CONTAINS_OP then subscript — avoids AttributeError (RAISE
+deferred). Does not walk the MRO.
 """
 
 

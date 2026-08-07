@@ -365,6 +365,7 @@ class HeapImageBuilder:
         nlocals: int,
         argcount: int,
         kwonlyargcount: int = 0,
+        varargs: bool = False,
         co_defaults: Tagged | None = None,
         co_kwdefaults: Tagged | None = None,
     ) -> Tagged:
@@ -374,7 +375,7 @@ class HeapImageBuilder:
         field 1 : co_consts   (TUPLE handle)
         field 2 : co_names    (TUPLE handle)
         field 3 : metadata    (INT) — packed
-                  {kwonlyargcount, stacksize, nlocals, argcount}
+                  {varargs, kwonlyargcount, stacksize, nlocals, argcount}
         field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
         field 5 : co_varnames (TUPLE handle; local/argument names)
         field 6 : co_kwdefaults (MUT_DICT handle; empty ⇒ no kw-only defaults)
@@ -400,7 +401,7 @@ class HeapImageBuilder:
             (
                 TAG_INT,
                 pack_code_metadata(
-                    stacksize, nlocals, argcount, kwonlyargcount
+                    stacksize, nlocals, argcount, kwonlyargcount, varargs
                 ),
             ),                                 # field 3
             co_defaults,                       # field 4

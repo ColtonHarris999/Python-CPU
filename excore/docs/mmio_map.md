@@ -59,6 +59,16 @@ bit0 set, poll `SP_STATUS.busy` until clear, check `SP_STATUS.fault`, read
 `SP_DATA0..3`. A write is the same sequence with `SP_DATA0..3` written
 *before* `SP_CTRL` bit1, and no `SP_DATA` read afterward.
 
+## Console (write-only)
+
+| Offset | Name | Fields |
+| --- | --- | --- |
+| `0xF0` | `CONSOLE_TX` | WO; `[7:0]` = one output byte. Higher bits ignored. |
+
+Used by `BI_PRINT` (`PY_TRAP_BUILTIN_CALL`). Silicon may discard writes;
+Verilator TBs capture them to `sim.stdout` for golden diffs. Offset is in
+the free hole after `SP_DATA3` (`0xEC`) and can move later if needed.
+
 ## Message field widths (parameterized for future handlers)
 
 `MAX_TRAP_ENTRIES = 4`, `MAX_RES_ENTRIES = 2` — both are `excore_mmio`

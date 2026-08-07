@@ -1005,9 +1005,15 @@
                         // LOAD_ATTR — instance __dict__ then MRO tp_dict walk.
                         // Overlay: push_null=method_flag, src_len=type addr,
                         // count=MRO depth, lfb_hi=source (0=INSTANCE,1=TYPE),
-                        // lfb_lo[0]=in_type_walk, lfb_lo[2]=staticmethod unwrap,
+                        // lfb_lo[0]=in_type_walk, lfb_lo[1]=dunder field return
+                        //   (__dict__ via IDICT, __base__ via CP_VAL/CP_TAG),
+                        // lfb_lo[2]=staticmethod unwrap / skip OBJECT unwrap,
                         // src_buf=receiver addr,
                         // tag/val=name key during probe / attr value on hit.
+                        // Special SHORT_STR names before probe:
+                        //   __dict__  → field0 MUT_DICT handle (INSTANCE/TYPE)
+                        //   __class__ → ob_type (INSTANCE) or self (TYPE)
+                        //   __base__  → field1 tp_base or None (TYPE only)
                         // =====================================================
                         CONT_LOAD_ATTR: begin
                             unique case (container_phase_r)
@@ -1063,26 +1069,98 @@
                                         begin
                                             logic [63:0] attr_ob_type;
                                             logic [31:0] attr_ob_kind;
+                                            logic        name_is_dict;
+                                            logic        name_is_class;
+                                            logic        name_is_base;
                                             attr_ob_type = pycore_ob_type(container_rd_data_r);
                                             attr_ob_kind = pycore_ob_kind(container_rd_data_r);
+                                            name_is_dict = pycore_attr_name_is_dict(
+                                                container_tag_r, container_val_r);
+                                            name_is_class = pycore_attr_name_is_class(
+                                                container_tag_r, container_val_r);
+                                            name_is_base = pycore_attr_name_is_base(
+                                                container_tag_r, container_val_r);
                                             if (attr_ob_kind == PY_OBK_INSTANCE) begin
-                                                container_src_len_r     <= attr_ob_type[31:0];
-                                                container_count_r       <= 7'd0;
-                                                container_lfb_hi_r      <= 4'd0; // INSTANCE
-                                                container_lfb_lo_r      <= 4'd0; // not type-walk
-                                                container_finishing_r   <= 1'b0;
-                                                container_dmem_addr_r <=
-                                                    pycore_obj_field_val_addr(
-                                                        container_src_buf_r, 32'd0);
-                                                container_dmem_we_r      <= 1'b0;
-                                                container_dmem_pending_r <= 1'b1;
-                                                container_phase_r        <= CP_ATTR_IDICT;
+                                                if (name_is_dict) begin
+                                                    // Return field0 dict handle (no probe).
+                                                    container_src_len_r     <= attr_ob_type[31:0];
+                                                    container_count_r       <= 7'd0;
+                                                    container_lfb_hi_r      <= 4'd0;
+                                                    container_lfb_lo_r      <= 4'b0010; // [1]
+                                                    container_finishing_r   <= 1'b0;
+                                                    container_dmem_addr_r <=
+                                                        pycore_obj_field_val_addr(
+                                                            container_src_buf_r, 32'd0);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    container_phase_r        <= CP_ATTR_IDICT;
+                                                end else if (name_is_class) begin
+                                                    if (attr_ob_type == 64'd0) begin
+                                                        container_type_trap_r <= 1'b1;
+                                                    end else begin
+                                                        container_tag_r        <= PY_TAG_OBJECT;
+                                                        container_val_r        <=
+                                                            {64'd0, attr_ob_type};
+                                                        container_push_null_r  <= 1'b0;
+                                                        container_lfb_hi_r     <= 4'd0;
+                                                        container_lfb_lo_r     <= 4'b0100; // [2]
+                                                        container_phase_r      <= CP_ATTR_WB;
+                                                    end
+                                                end else begin
+                                                    container_src_len_r     <= attr_ob_type[31:0];
+                                                    container_count_r       <= 7'd0;
+                                                    container_lfb_hi_r      <= 4'd0; // INSTANCE
+                                                    container_lfb_lo_r      <= 4'd0; // not type-walk
+                                                    container_finishing_r   <= 1'b0;
+                                                    container_dmem_addr_r <=
+                                                        pycore_obj_field_val_addr(
+                                                            container_src_buf_r, 32'd0);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    container_phase_r        <= CP_ATTR_IDICT;
+                                                end
                                             end else if (attr_ob_kind == PY_OBK_TYPE) begin
-                                                container_src_len_r   <= container_src_buf_r;
-                                                container_count_r     <= 7'd0;
-                                                container_lfb_hi_r    <= 4'd1; // TYPE
-                                                container_lfb_lo_r    <= 4'd1; // type-walk
-                                                container_phase_r     <= CP_ATTR_TYPE;
+                                                if (name_is_dict) begin
+                                                    // Return tp_dict handle (field0).
+                                                    container_src_len_r     <= container_src_buf_r;
+                                                    container_count_r       <= 7'd0;
+                                                    container_lfb_hi_r      <= 4'd1;
+                                                    container_lfb_lo_r      <= 4'b0010; // [1]
+                                                    container_finishing_r   <= 1'b0;
+                                                    container_dmem_addr_r <=
+                                                        pycore_obj_field_val_addr(
+                                                            container_src_buf_r, 32'd0);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    container_phase_r        <= CP_ATTR_IDICT;
+                                                end else if (name_is_class) begin
+                                                    // Type.__class__ → self (identity).
+                                                    container_tag_r       <= PY_TAG_OBJECT;
+                                                    container_val_r       <=
+                                                        {96'd0, container_src_buf_r};
+                                                    container_push_null_r <= 1'b0;
+                                                    container_lfb_hi_r    <= 4'd1;
+                                                    container_lfb_lo_r    <= 4'b0100; // [2]
+                                                    container_phase_r     <= CP_ATTR_WB;
+                                                end else if (name_is_base) begin
+                                                    // Return tp_base (field1) or None.
+                                                    container_src_len_r     <= container_src_buf_r;
+                                                    container_count_r       <= 7'd0;
+                                                    container_lfb_hi_r      <= 4'd1;
+                                                    container_lfb_lo_r      <= 4'b0010; // [1]
+                                                    container_dmem_addr_r <=
+                                                        pycore_obj_field_val_addr(
+                                                            container_src_buf_r, 32'd1);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    container_phase_r        <= CP_VAL;
+                                                end else begin
+                                                    container_src_len_r   <= container_src_buf_r;
+                                                    container_count_r     <= 7'd0;
+                                                    container_lfb_hi_r    <= 4'd1; // TYPE
+                                                    container_lfb_lo_r    <= 4'd1; // type-walk
+                                                    container_phase_r     <= CP_ATTR_TYPE;
+                                                end
                                             end else begin
                                                 container_type_trap_r <= 1'b1;
                                             end
@@ -1091,10 +1169,14 @@
                                 end
 
                                 // field0 val then tag (__dict__ or tp_dict).
+                                // lfb_lo[1]: return the dict handle (dunder __dict__).
                                 CP_ATTR_IDICT: begin
                                     if (!container_dmem_pending_r) begin
                                         if (!container_finishing_r) begin
                                             container_base_r <= container_rd_data_r[31:0];
+                                            if (container_lfb_lo_r[1]) begin
+                                                container_val_r <= container_rd_data_r;
+                                            end
                                             container_dmem_addr_r <=
                                                 pycore_obj_field_tag_addr(
                                                     (container_lfb_lo_r[0] ?
@@ -1109,6 +1191,11 @@
                                             if (container_rd_data_r[3:0] !=
                                                     PY_TAG_MUT_COLLEC) begin
                                                 container_type_trap_r <= 1'b1;
+                                            end else if (container_lfb_lo_r[1]) begin
+                                                container_tag_r       <= PY_TAG_MUT_COLLEC;
+                                                container_push_null_r <= 1'b0;
+                                                container_lfb_lo_r    <= 4'b0100; // [2]
+                                                container_phase_r     <= CP_ATTR_WB;
                                             end else begin
                                                 container_dmem_addr_r    <= container_base_r;
                                                 container_dmem_we_r      <= 1'b0;
@@ -1339,7 +1426,28 @@
 
                                 CP_TAG: begin
                                     if (!container_dmem_pending_r) begin
-                                        if (pycore_is_none(
+                                        if (container_lfb_lo_r[1]) begin
+                                            // Dunder __base__: push tp_base or None.
+                                            if (pycore_is_none(
+                                                    container_rd_data_r[3:0],
+                                                    container_val_r) ||
+                                                (container_base_r == 32'd0)) begin
+                                                container_tag_r       <= PY_TAG_CONTROL;
+                                                container_val_r       <=
+                                                    {124'b0, PY_CTL_NONE};
+                                                container_push_null_r <= 1'b0;
+                                                container_lfb_lo_r    <= 4'b0100; // [2]
+                                                container_phase_r     <= CP_ATTR_WB;
+                                            end else if (container_rd_data_r[3:0] !=
+                                                         PY_TAG_OBJECT) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                container_tag_r       <= PY_TAG_OBJECT;
+                                                container_push_null_r <= 1'b0;
+                                                container_lfb_lo_r    <= 4'b0100; // [2]
+                                                container_phase_r     <= CP_ATTR_WB;
+                                            end
+                                        end else if (pycore_is_none(
                                                 container_rd_data_r[3:0],
                                                 container_val_r) ||
                                             (container_base_r == 32'd0)) begin
@@ -1610,6 +1718,11 @@
                                         if (!pycore_dict_key_tag_ok(container_rd_data_r[3:0])) begin
                                             container_type_trap_r <= 1'b1;
                                         end else if (cont_rs1_tag != PY_TAG_OBJECT) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else if (pycore_attr_name_is_dunder_special(
+                                                container_rd_data_r[3:0],
+                                                container_val_r)) begin
+                                            // No header mutation via STORE_ATTR.
                                             container_type_trap_r <= 1'b1;
                                         end else begin
                                             container_src_buf_r      <= cont_rs1_addr;
@@ -2069,6 +2182,11 @@
                                         if (!pycore_dict_key_tag_ok(container_rd_data_r[3:0])) begin
                                             container_type_trap_r <= 1'b1;
                                         end else if (cont_rs1_tag != PY_TAG_OBJECT) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else if (pycore_attr_name_is_dunder_special(
+                                                container_rd_data_r[3:0],
+                                                container_val_r)) begin
+                                            // No header mutation via DELETE_ATTR.
                                             container_type_trap_r <= 1'b1;
                                         end else begin
                                             container_src_buf_r      <= cont_rs1_addr;

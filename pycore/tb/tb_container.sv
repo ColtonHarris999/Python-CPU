@@ -36,7 +36,10 @@ module tb_container #(
     parameter string FW_HEX              = "",
     // When >= 0, assert trap_req_count == this value at the end of the run
     // (see trap_req_count above). Sentinel -1 (default) skips the check.
-    parameter int    EXPECTED_TRAP_REQ_COUNT = -1
+    parameter int    EXPECTED_TRAP_REQ_COUNT = -1,
+    // When non-empty and EXCORE_EN=1, capture CONSOLE_TX (MMIO 0xF0) writes
+    // to this path for stdout golden diffs (print tests).
+    parameter string STDOUT_PATH             = ""
 );
     localparam logic [3:0] CORE_S_WB = 4'd4;
 
@@ -85,6 +88,34 @@ module tb_container #(
             always @(posedge clk) begin
                 if (dut.trap_req_valid && dut.trap_req_ready) begin
                     trap_req_count <= trap_req_count + 1;
+                end
+            end
+
+            // Console capture: spy MMIO writes to CONSOLE_TX @ 0xF0.
+            int stdout_fd;
+            initial begin
+                stdout_fd = 0;
+                if (STDOUT_PATH.len() > 0) begin
+                    stdout_fd = $fopen(STDOUT_PATH, "w");
+                    if (stdout_fd == 0) begin
+                        $error("[FAIL] could not open STDOUT_PATH=%s", STDOUT_PATH);
+                        $finish;
+                    end
+                end
+            end
+            // Capture on the MMIO request pulse (req is one-cycle; ack is
+            // registered one cycle later so req&&ack never overlaps).
+            always @(posedge clk) begin
+                if ((stdout_fd != 0) &&
+                    dut.ex_mmio_req && dut.ex_mmio_we &&
+                    (dut.ex_mmio_addr[7:0] == 8'hF0)) begin
+                    $fwrite(stdout_fd, "%c", dut.ex_mmio_wdata[7:0]);
+                    $fflush(stdout_fd);
+                end
+            end
+            final begin
+                if (stdout_fd != 0) begin
+                    $fclose(stdout_fd);
                 end
             end
         end else begin : g_dut

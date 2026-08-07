@@ -87,16 +87,20 @@
                                 if ((call_mode_r == CALL_MODE_KW) ||
                                     (call_mode_r == CALL_MODE_EX_KW))
                                     call_argcount_r <= {8'b0, call_n_pos_r};
-                                else
+                                else begin
                                     call_argcount_r <= cur_arg_r[15:0];
+                                    call_n_pos_r    <= cur_arg_r[7:0];
+                                end
                             end else begin
                                 if ((call_mode_r == CALL_MODE_KW) ||
                                     (call_mode_r == CALL_MODE_EX_KW))
                                     call_argcount_r <=
                                         {8'b0, call_n_pos_r} + 16'd1;
-                                else
+                                else begin
                                     call_argcount_r <=
                                         cur_arg_r[15:0] + 16'd1;
+                                    call_n_pos_r    <= cur_arg_r[7:0];
+                                end
                                 call_new_locals_r <= RF_AW'(
                                     {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd1);
                             end
@@ -148,6 +152,8 @@
                                     container_rd_data_r);
                                 call_kwonly_r <= pycore_code_meta_kwonlyargcount(
                                     container_rd_data_r);
+                                call_varargs_r <= pycore_code_meta_varargs(
+                                    container_rd_data_r);
                                 call_total_params_r <=
                                     pycore_code_meta_argcount(container_rd_data_r)
                                     + pycore_code_meta_kwonlyargcount(
@@ -156,9 +162,12 @@
                                     call_code_addr_r, PYCORE_CODE_FIELD_CO_DEFAULTS);
                                 container_dmem_we_r      <= 1'b0;
                                 container_dmem_pending_r <= 1'b1;
-                                // KW / EX_KW enter binder at sub 32; POS at 0.
+                                // KW / EX_KW enter binder at sub 32.  POS calls
+                                // with kw-only locals use the same defaults path.
                                 if ((call_mode_r == CALL_MODE_KW) ||
-                                    (call_mode_r == CALL_MODE_EX_KW))
+                                    (call_mode_r == CALL_MODE_EX_KW) ||
+                                    (pycore_code_meta_kwonlyargcount(
+                                        container_rd_data_r) != 16'd0))
                                     call_sub_r <= 6'd32;
                                 else
                                     call_sub_r <= 6'd0;
@@ -311,9 +320,11 @@
                                         (call_mode_r == CALL_MODE_EX_KW))
                                         call_argcount_r <=
                                             {8'b0, call_n_pos_r} + 16'd1;
-                                    else
+                                    else begin
                                         call_argcount_r <=
                                             cur_arg_r[15:0] + 16'd1;
+                                        call_n_pos_r    <= cur_arg_r[7:0];
+                                    end
                                     call_new_locals_r <= RF_AW'(
                                         {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]}
                                         - 9'd1);
@@ -1595,15 +1606,21 @@
                                             logic [15:0] def_len;
                                             logic [15:0] meta_ac;
                                             logic [15:0] min_ac;
+                                            logic [15:0] local_slots;
                                             def_len = container_rd_data_r[79:64];
                                             meta_ac = call_meta_argc_r;
+                                            local_slots = meta_ac +
+                                                (call_varargs_r ? 16'd1 : 16'd0);
                                             if (def_len > meta_ac) begin
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
                                                 min_ac = meta_ac - def_len;
                                                 call_min_argc_r <= min_ac;
                                                 if ((call_argcount_r < min_ac) ||
-                                                    (call_argcount_r > meta_ac)) begin
+                                                    (!call_varargs_r &&
+                                                     (call_argcount_r > meta_ac))) begin
+                                                    call_filter_trap_r <= 1'b1;
+                                                end else if (local_slots > 16'd32) begin
                                                     call_filter_trap_r <= 1'b1;
                                                 end else if ((9'(call_new_locals_r)
                                                               + 9'(call_nlocals_r))
@@ -1614,6 +1631,10 @@
                                                     container_idx_r <=
                                                         call_argcount_r[6:0];
                                                     call_sub_r <= 6'd1;
+                                                end else if (call_varargs_r) begin
+                                                    call_after_varargs_sub_r <= 6'd0;
+                                                    call_varargs_to_frame_r  <= 1'b1;
+                                                    call_sub_r <= 6'd20;
                                                 end else begin
                                                     call_phase_r <= 4'd7;
                                                 end
@@ -1656,12 +1677,144 @@
                                             container_rd_data_r[3:0], container_val_r);
                                         if (({9'b0, container_idx_r} + 9'd1) >=
                                                 {2'b0, call_meta_argc_r[6:0]}) begin
-                                            call_sub_r   <= 6'd0;
-                                            call_phase_r <= 4'd7;
+                                            if (call_varargs_r) begin
+                                                call_argcount_r <= call_meta_argc_r;
+                                                call_after_varargs_sub_r <= 6'd0;
+                                                call_varargs_to_frame_r  <= 1'b1;
+                                                call_sub_r <= 6'd20;
+                                            end else begin
+                                                call_sub_r   <= 6'd0;
+                                                call_phase_r <= 4'd7;
+                                            end
                                         end else begin
                                             container_idx_r <= container_idx_r + 7'd1;
                                             call_sub_r <= 6'd1;
                                         end
+                                    end
+
+                                    // ------------------------------------------
+                                    // CO_VARARGS tuple pack (subs 20-24).
+                                    // Excess positionals live at locals[argcount..)
+                                    // until this copy completes.  CPython 3.14 in
+                                    // this toolchain orders varnames as positional,
+                                    // keyword-only, then *args, so the tuple local
+                                    // is argcount + kwonlyargcount.
+                                    // ------------------------------------------
+                                    6'd20: begin
+                                        if (!call_varargs_r) begin
+                                            if (call_varargs_to_frame_r) begin
+                                                call_phase_r <= 4'd7;
+                                            end else begin
+                                                call_sub_r <= call_after_varargs_sub_r;
+                                            end
+                                        end else begin
+                                            begin
+                                                logic [15:0] extra;
+                                                if (call_argcount_r <
+                                                        call_meta_argc_r)
+                                                    extra = 16'd0;
+                                                else
+                                                    extra = call_argcount_r -
+                                                            call_meta_argc_r;
+                                                if (extra[15:7] != 9'b0) begin
+                                                    call_filter_trap_r <= 1'b1;
+                                                end else if ((heap_ptr_r +
+                                                        pycore_tuple_alloc_bytes(
+                                                            {16'b0, extra})) >
+                                                        PYCORE_HEAP_LIMIT) begin
+                                                    container_mem_fault_r <= 1'b1;
+                                                end else begin
+                                                    container_count_r <= extra[6:0];
+                                                    container_base_r  <= heap_ptr_r;
+                                                    if (extra == 16'd0) begin
+                                                        container_wb_we_r <= 1'b1;
+                                                        container_wb_addr_r <= RF_AW'(
+                                                            call_new_locals_r +
+                                                            call_total_params_r[
+                                                                RF_AW-1:0]);
+                                                        container_wb_data_r <=
+                                                            pycore_make_entry(
+                                                                PY_TAG_TUPLE,
+                                                                {64'd0,
+                                                                 {32'b0, heap_ptr_r}});
+                                                        call_argcount_r <=
+                                                            call_total_params_r + 16'd1;
+                                                        call_sub_r <= 6'd24;
+                                                    end else begin
+                                                        heap_ptr_r <= heap_ptr_r +
+                                                            pycore_tuple_alloc_bytes(
+                                                                {16'b0, extra});
+                                                        container_idx_r <= 7'd0;
+                                                        container_rf_addr_r <= RF_AW'(
+                                                            call_new_locals_r +
+                                                            call_meta_argc_r[
+                                                                RF_AW-1:0]);
+                                                        call_sub_r <= 6'd21;
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                    6'd21: begin
+                                        container_tag_r <= cont_rf_rs1_tag;
+                                        container_val_r <= cont_rf_rs1_val;
+                                        container_dmem_addr_r <= pycore_tuple_val_addr(
+                                            container_base_r, {25'b0, container_idx_r});
+                                        container_dmem_we_r      <= 1'b1;
+                                        container_dmem_wdata_r   <= cont_rf_rs1_val;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd22;
+                                    end
+                                    6'd22: begin
+                                        container_dmem_addr_r <= pycore_tuple_tag_addr(
+                                            container_base_r, {25'b0, container_idx_r});
+                                        container_dmem_we_r      <= 1'b1;
+                                        container_dmem_wdata_r   <= {124'b0, container_tag_r};
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd23;
+                                    end
+                                    6'd23: begin
+                                        if ((container_idx_r + 7'd1) <
+                                                container_count_r) begin
+                                            container_idx_r <= container_idx_r + 7'd1;
+                                            container_rf_addr_r <= RF_AW'(
+                                                call_new_locals_r +
+                                                call_meta_argc_r[RF_AW-1:0] +
+                                                container_idx_r[RF_AW-1:0] +
+                                                RF_AW'(1));
+                                            call_sub_r <= 6'd21;
+                                        end else begin
+                                            container_wb_we_r <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                call_new_locals_r +
+                                                call_total_params_r[RF_AW-1:0]);
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_TUPLE,
+                                                {{57'b0, container_count_r},
+                                                 {32'b0, container_base_r}});
+                                            call_argcount_r <=
+                                                call_total_params_r + 16'd1;
+                                            call_sub_r <= 6'd24;
+                                        end
+                                    end
+                                    6'd24: begin
+                                        if (call_varargs_to_frame_r) begin
+                                            call_phase_r <= 4'd7;
+                                        end else begin
+                                            // Pack leaves container_idx at
+                                            // extra-1; KW bind uses it as the
+                                            // names/kwargs index — reset.
+                                            container_idx_r <= 7'd0;
+                                            call_sub_r <= call_after_varargs_sub_r;
+                                        end
+                                    end
+                                    6'd25: begin
+                                        // EX_KW kwargs dict: read used count.
+                                        container_dmem_addr_r <=
+                                            call_kw_names_r[31:0];
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd48;
                                     end
 
                                     // ------------------------------------------
@@ -1700,6 +1853,8 @@
                                             logic [15:0] meta_ac;
                                             logic [15:0] min_ac;
                                             logic [15:0] n_pos_eff;
+                                            logic [15:0] filled_pos;
+                                            logic [15:0] local_slots;
                                             def_len = call_defaults_len_r;
                                             meta_ac = call_meta_argc_r;
                                             // Method form: slot0 is self; pos
@@ -1711,15 +1866,18 @@
                                                             + 16'd1;
                                             else
                                                 n_pos_eff = {8'b0, call_n_pos_r};
+                                            filled_pos = (n_pos_eff > meta_ac) ?
+                                                meta_ac : n_pos_eff;
+                                            local_slots = call_total_params_r +
+                                                (call_varargs_r ? 16'd1 : 16'd0);
                                             if (def_len > meta_ac) begin
                                                 call_filter_trap_r <= 1'b1;
-                                            end else if (
-                                                    {8'b0, call_n_pos_r} >
-                                                    meta_ac) begin
+                                            end else if (!call_varargs_r &&
+                                                    (n_pos_eff > meta_ac)) begin
                                                 // Positional into kw-only.
                                                 call_filter_trap_r <= 1'b1;
                                             end else if (
-                                                    call_total_params_r > 16'd32) begin
+                                                    local_slots > 16'd32) begin
                                                 call_filter_trap_r <= 1'b1;
                                             end else if ((9'(call_new_locals_r)
                                                           + 9'(call_nlocals_r))
@@ -1730,24 +1888,22 @@
                                                 call_min_argc_r <= min_ac;
                                                 // filled_mask in call_range_start_r
                                                 call_range_start_r <=
-                                                    (n_pos_eff == 16'd0) ? 128'd0 :
-                                                    ((128'd1 << n_pos_eff) - 128'd1);
+                                                    (filled_pos == 16'd0) ? 128'd0 :
+                                                    ((128'd1 << filled_pos) - 128'd1);
+                                                call_varargs_to_frame_r <= 1'b0;
                                                 if ((call_mode_r == CALL_MODE_KW) &&
                                                     (call_n_kwargs_r != 8'd0)) begin
                                                     container_idx_r <= 7'd0;
                                                     call_sub_r <= 6'd35;
                                                 end else if (
                                                     call_mode_r == CALL_MODE_EX_KW) begin
-                                                    // kwargs dict: read used count
-                                                    container_dmem_addr_r <=
-                                                        call_kw_names_r[31:0];
-                                                    container_dmem_we_r <= 1'b0;
-                                                    container_dmem_pending_r <= 1'b1;
-                                                    call_sub_r <= 6'd48;
+                                                    call_after_varargs_sub_r <= 6'd25;
+                                                    call_sub_r <= 6'd20;
                                                 end else begin
                                                     // No kwargs: defaults only.
                                                     container_idx_r <= 7'd0;
-                                                    call_sub_r <= 6'd42;
+                                                    call_after_varargs_sub_r <= 6'd42;
+                                                    call_sub_r <= 6'd20;
                                                 end
                                             end
                                         end
@@ -1762,19 +1918,29 @@
                                     end
                                     6'd36: begin
                                         // Scratch lives where names sat:
-                                        // locals + n_pos + n_kwargs + i
-                                        container_wb_we_r   <= 1'b1;
-                                        container_wb_addr_r <= RF_AW'(
-                                            call_new_locals_r
-                                            + {1'b0, call_n_pos_r}
-                                            + {1'b0, call_n_kwargs_r}
-                                            + {1'b0, container_idx_r});
+                                        // normally locals + n_pos + n_kwargs + i.
+                                        // With CO_VARARGS, keep scratch above the
+                                        // *args local when those ranges overlap.
+                                        begin
+                                            logic [15:0] scratch_base;
+                                            scratch_base = {8'b0, call_n_pos_r}
+                                                           + {8'b0, call_n_kwargs_r};
+                                            if (call_varargs_r &&
+                                                (scratch_base <= call_total_params_r))
+                                                scratch_base = call_total_params_r + 16'd1;
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                call_new_locals_r
+                                                + scratch_base[RF_AW-1:0]
+                                                + {1'b0, container_idx_r});
+                                        end
                                         container_wb_data_r <= pycore_make_entry(
                                             cont_rf_rs1_tag, cont_rf_rs1_val);
                                         if (({1'b0, container_idx_r} + 8'd1) >=
                                                 call_n_kwargs_r) begin
                                             container_idx_r <= 7'd0;
-                                            call_sub_r <= 6'd37;
+                                            call_after_varargs_sub_r <= 6'd37;
+                                            call_sub_r <= 6'd20;
                                         end else begin
                                             container_idx_r <=
                                                 container_idx_r + 7'd1;
@@ -1857,11 +2023,20 @@
                                                 call_sub_r <= 6'd58;
                                             end else begin
                                                 // CALL_KW: value from scratch[j]
-                                                container_rf_addr_r <= RF_AW'(
-                                                    call_new_locals_r
-                                                    + {1'b0, call_n_pos_r}
-                                                    + {1'b0, call_n_kwargs_r}
-                                                    + {1'b0, container_idx_r});
+                                                begin
+                                                    logic [15:0] scratch_base;
+                                                    scratch_base = {8'b0, call_n_pos_r}
+                                                        + {8'b0, call_n_kwargs_r};
+                                                    if (call_varargs_r &&
+                                                        (scratch_base <=
+                                                            call_total_params_r))
+                                                        scratch_base =
+                                                            call_total_params_r + 16'd1;
+                                                    container_rf_addr_r <= RF_AW'(
+                                                        call_new_locals_r
+                                                        + scratch_base[RF_AW-1:0]
+                                                        + {1'b0, container_idx_r});
+                                                end
                                                 call_sub_r <= 6'd57;
                                             end
                                         end else if ((call_range_step_r[15:0] +
@@ -1959,7 +2134,8 @@
                                         if ({9'b0, container_idx_r} >=
                                                 {2'b0, call_total_params_r[6:0]}) begin
                                             // All params resolved.
-                                            call_argcount_r <= call_total_params_r;
+                                            call_argcount_r <= call_total_params_r
+                                                + (call_varargs_r ? 16'd1 : 16'd0);
                                             call_sub_r <= 6'd0;
                                             call_phase_r <= 4'd7;
                                         end else if (call_range_start_r[
@@ -2133,9 +2309,15 @@
                                     end
                                     6'd63: begin
                                         // Write probed dict value into a local.
-                                        // KW defaults path uses container_idx;
-                                        // EX_KW path uses call_range_step (k).
-                                        if (call_mode_r == CALL_MODE_EX_KW) begin
+                                        // Shared probe (58-63) serves both:
+                                        //   - EX_KW caller kwargs (order walk)
+                                        //   - kwdefaults fill (container_idx)
+                                        // Distinguish by which dict we probed;
+                                        // EX_KW + kwdefaults must NOT take the
+                                        // order-walk arm (hang / wrong slot).
+                                        if ((call_mode_r == CALL_MODE_EX_KW) &&
+                                            (container_base_r ==
+                                             call_kw_names_r[31:0])) begin
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
                                                 call_new_locals_r
