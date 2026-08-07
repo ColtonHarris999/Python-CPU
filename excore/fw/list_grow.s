@@ -2,7 +2,8 @@
 #
 # Dispatch loop, parked until MB_STATUS.trap_pending is set. Handles
 # PY_TRAP_LIST_GROW (9), LIST_EXTEND (10), DICT_GROW (11), LIST_DELETE (12),
-# SET_GROW (13), SET_UPDATE (14). Unknown codes -> FATAL(ILLEGAL_OPCODE).
+# SET_GROW (13), SET_UPDATE (14), BUILTIN_CALL (16 / BI_PRINT console sink).
+# Unknown codes -> FATAL(ILLEGAL_OPCODE).
 # Dict/set rich equality runs on pycore (former DICT_COLLISION retired).
 #
 # LIST_GROW (ENTRY[0]=list handle, ENTRY[1]=element):
@@ -36,6 +37,7 @@
     .equ MB_STATUS,      0x00
     .equ MB_TRAP_CODE,   0x04
     .equ MB_INSTR_LO,    0x0C
+    .equ MB_INSTR_HI,    0x10
     .equ MB_HEAP_PTR,    0x14
     .equ MB_E0_VAL0,     0x20
     .equ MB_E0_VAL3,     0x2C
@@ -69,6 +71,7 @@
     .equ SP_DATA1,       0xE4
     .equ SP_DATA2,       0xE8
     .equ SP_DATA3,       0xEC
+    .equ CONSOLE_TX,     0xF0
 
     .equ SP_CTRL_READ,   1
     .equ SP_CTRL_WRITE,  2
@@ -84,6 +87,7 @@
     .equ TRAP_LIST_DELETE,   12
     .equ TRAP_SET_GROW,      13
     .equ TRAP_SET_UPDATE,    14
+    .equ TRAP_BUILTIN_CALL,  16
     .equ TRAP_DICT_UPDATE,   19
     .equ TRAP_DICT_MERGE,    20
 
@@ -103,12 +107,17 @@
     .equ TAG_SHORT_STR,   7
     .equ TAG_LONG_STR,    8
     .equ TAG_MUT_COLLEC,  9
+    .equ TAG_OBJECT,     10
     .equ TAG_TOMBSTONE,  14
 
     # MUT_COLLEC kind is ENTRY value[127:124], i.e. VAL3[31:28].
     .equ MUT_LIST,        1
     .equ MUT_DICT,        2
     .equ MUT_SET,         3
+
+    .equ OBK_BUILTIN,     4
+    .equ BI_PRINT,        6
+    .equ PY_CTL_NONE,     1
 
     # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (frame stack at 0x1C000).
     .equ HEAP_LIMIT,     0x1C000
@@ -186,6 +195,8 @@ wait_trap:
     beq  t0, t1, tramp_set_grow
     li   t1, TRAP_SET_UPDATE
     beq  t0, t1, tramp_set_update
+    li   t1, TRAP_BUILTIN_CALL
+    beq  t0, t1, tramp_builtin_call
     li   t1, TRAP_DICT_UPDATE
     beq  t0, t1, tramp_dict_update
     li   t1, TRAP_DICT_MERGE
@@ -199,6 +210,8 @@ tramp_set_grow:
     j    do_set_grow
 tramp_set_update:
     j    do_set_update
+tramp_builtin_call:
+    j    do_builtin_call
 tramp_dict_update:
     j    do_dict_update
 tramp_dict_merge:
@@ -2624,3 +2637,317 @@ xd_fatal_type:
     j    fatal_type
 xd_fatal_mem:
     j    fatal_mem
+
+# ===========================================================================
+# BUILTIN_CALL (trap 16): OBK_BUILTIN / BI_PRINT one-argument console sink.
+# ===========================================================================
+do_builtin_call:
+    lw   t0, MB_E0_TAG(s11)
+    li   t1, TAG_OBJECT
+    bne  t0, t1, bi_fatal_illegal
+    lw   s0, MB_E0_VAL0(s11)       # s0 = builtin object addr
+
+    # ob_head at obj+0: kind lives in value[127:96] => SP_DATA3.
+    mv   a0, s0
+    jal  ra, sp_read
+    lw   t0, SP_DATA3(s11)
+    li   t1, OBK_BUILTIN
+    bne  t0, t1, bi_fatal_illegal
+
+    # field0 is builtin_id: value at obj+32, tag at obj+48.
+    addi a0, s0, 32
+    jal  ra, sp_read
+    lw   s1, SP_DATA0(s11)         # builtin_id low word
+    addi a0, s0, 48
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    li   t1, TAG_INT
+    bne  t0, t1, bi_fatal_illegal
+    li   t1, BI_PRINT
+    bne  s1, t1, bi_fatal_illegal
+    j    do_bi_print
+
+do_bi_print:
+    # CALL oparg is argc: arg = (MB_INSTR_LO >> 8) | (MB_INSTR_HI << 24).
+    lw   t0, MB_INSTR_LO(s11)
+    srli t0, t0, 8
+    lw   t1, MB_INSTR_HI(s11)
+    slli t1, t1, 24
+    or   t0, t0, t1
+    slli t0, t0, 16
+    srli t0, t0, 16                # argc low 16 bits
+    li   t1, 1
+    bne  t0, t1, bi_fatal_type
+
+    lw   t0, MB_E2_TAG(s11)
+    li   t1, TAG_SHORT_STR
+    beq  t0, t1, bi_print_short_str
+    li   t1, TAG_INT
+    beq  t0, t1, bi_print_int
+    li   t1, TAG_BOOL
+    beq  t0, t1, bi_print_bool
+    li   t1, TAG_CONTROL
+    beq  t0, t1, bi_print_control
+    li   t1, TAG_LONG_STR
+    beq  t0, t1, bi_print_long_str
+    j    bi_fatal_type
+
+bi_print_short_str:
+    lw   t0, MB_E2_VAL0(s11)
+    sw   t0, SCR_VVAL0(x0)
+    lw   t0, MB_E2_VAL1(s11)
+    sw   t0, SCR_VVAL1(x0)
+    lw   t0, MB_E2_VAL2(s11)
+    sw   t0, SCR_VVAL2(x0)
+    lw   t0, MB_E2_VAL3(s11)
+    sw   t0, SCR_VVAL3(x0)
+    jal  ra, emit_short_str
+    j    bi_print_completed
+
+bi_print_int:
+    lw   a0, MB_E2_VAL0(s11)
+    jal  ra, emit_int
+    j    bi_print_completed
+
+bi_print_bool:
+    lw   t0, MB_E2_VAL0(s11)
+    beq  t0, x0, bi_print_false
+    jal  ra, emit_true
+    j    bi_print_completed
+bi_print_false:
+    jal  ra, emit_false
+    j    bi_print_completed
+
+bi_print_control:
+    lw   t0, MB_E2_VAL0(s11)
+    li   t1, PY_CTL_NONE
+    bne  t0, t1, bi_fatal_type
+    jal  ra, emit_none
+    j    bi_print_completed
+
+bi_print_long_str:
+    # Phase 2 will stream LONG_STR via string_mem or a ROM character loop.
+    j    bi_fatal_type
+
+bi_print_completed:
+    li   t0, RES_COMPLETED
+    sw   t0, RES_CODE(s11)
+    li   t0, 3                     # callable + NULL/bound-self + arg0
+    sw   t0, RES_POP_COUNT(s11)
+    li   t0, 1
+    sw   t0, RES_PUSH_COUNT(s11)
+    lw   t0, MB_HEAP_PTR(s11)
+    sw   t0, RES_HEAP_PTR(s11)
+    li   t0, PY_CTL_NONE
+    sw   t0, RES_E0_VAL0(s11)
+    sw   x0, RES_E0_VAL1(s11)
+    sw   x0, RES_E0_VAL2(s11)
+    sw   x0, RES_E0_VAL3(s11)
+    li   t0, TAG_CONTROL
+    sw   t0, RES_E0_TAG(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
+# ---- BI_PRINT emit helpers -------------------------------------------------
+
+emit_byte:
+    sw   a0, CONSOLE_TX(s11)
+    jalr x0, ra, 0
+
+emit_true:
+    sw   ra, SCR_RA2(x0)
+    li   a0, 84                    # T
+    jal  ra, emit_byte
+    li   a0, 114                   # r
+    jal  ra, emit_byte
+    li   a0, 117                   # u
+    jal  ra, emit_byte
+    li   a0, 101                   # e
+    jal  ra, emit_byte
+    lw   ra, SCR_RA2(x0)
+    jalr x0, ra, 0
+
+emit_false:
+    sw   ra, SCR_RA2(x0)
+    li   a0, 70                    # F
+    jal  ra, emit_byte
+    li   a0, 97                    # a
+    jal  ra, emit_byte
+    li   a0, 108                   # l
+    jal  ra, emit_byte
+    li   a0, 115                   # s
+    jal  ra, emit_byte
+    li   a0, 101                   # e
+    jal  ra, emit_byte
+    lw   ra, SCR_RA2(x0)
+    jalr x0, ra, 0
+
+emit_none:
+    sw   ra, SCR_RA2(x0)
+    li   a0, 78                    # N
+    jal  ra, emit_byte
+    li   a0, 111                   # o
+    jal  ra, emit_byte
+    li   a0, 110                   # n
+    jal  ra, emit_byte
+    li   a0, 101                   # e
+    jal  ra, emit_byte
+    lw   ra, SCR_RA2(x0)
+    jalr x0, ra, 0
+
+emit_short_str:
+    sw   ra, SCR_RA2(x0)
+    lw   t0, SCR_VVAL3(x0)
+    srli s0, t0, 28                # remaining byte count
+    beq  s0, x0, ess_done
+    srli a0, t0, 20
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t0, 12
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t0, 4
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    andi t1, t0, 15
+    slli t1, t1, 4
+    lw   t2, SCR_VVAL2(x0)
+    srli a0, t2, 28
+    or   a0, a0, t1
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t2, 20
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t2, 12
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t2, 4
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    andi t1, t2, 15
+    slli t1, t1, 4
+    lw   t0, SCR_VVAL1(x0)
+    srli a0, t0, 28
+    or   a0, a0, t1
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t0, 20
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t0, 12
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t0, 4
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    andi t1, t0, 15
+    slli t1, t1, 4
+    lw   t2, SCR_VVAL0(x0)
+    srli a0, t2, 28
+    or   a0, a0, t1
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t2, 20
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t2, 12
+    andi a0, a0, 255
+    jal  ra, emit_byte
+    addi s0, s0, -1
+    beq  s0, x0, ess_done
+    srli a0, t2, 4
+    andi a0, a0, 255
+    jal  ra, emit_byte
+ess_done:
+    lw   ra, SCR_RA2(x0)
+    jalr x0, ra, 0
+
+emit_int:
+    sw   ra, SCR_RA2(x0)
+    mv   t3, a0                    # unsigned magnitude after sign handling
+    bne  t3, x0, ei_nonzero
+    li   a0, 48                    # 0
+    jal  ra, emit_byte
+    j    ei_done
+ei_nonzero:
+    li   s1, 0                     # have emitted a non-leading digit
+    bge  t3, x0, ei_digits
+    li   a0, 45                    # -
+    jal  ra, emit_byte
+    sub  t3, x0, t3
+ei_digits:
+    li   a0, 1000000000
+    jal  ra, emit_int_digit
+    li   a0, 100000000
+    jal  ra, emit_int_digit
+    li   a0, 10000000
+    jal  ra, emit_int_digit
+    li   a0, 1000000
+    jal  ra, emit_int_digit
+    li   a0, 100000
+    jal  ra, emit_int_digit
+    li   a0, 10000
+    jal  ra, emit_int_digit
+    li   a0, 1000
+    jal  ra, emit_int_digit
+    li   a0, 100
+    jal  ra, emit_int_digit
+    li   a0, 10
+    jal  ra, emit_int_digit
+    li   a0, 1
+    jal  ra, emit_int_digit
+ei_done:
+    lw   ra, SCR_RA2(x0)
+    jalr x0, ra, 0
+
+emit_int_digit:
+    li   t4, 0                     # digit for current power of ten
+eid_sub_loop:
+    bltu t3, a0, eid_counted
+    sub  t3, t3, a0
+    addi t4, t4, 1
+    j    eid_sub_loop
+eid_counted:
+    bne  s1, x0, eid_emit
+    bne  t4, x0, eid_start
+    li   t5, 1
+    bne  a0, t5, eid_ret
+eid_start:
+    li   s1, 1
+eid_emit:
+    sw   ra, SCR_RA3(x0)
+    addi a0, t4, 48
+    jal  ra, emit_byte
+    lw   ra, SCR_RA3(x0)
+eid_ret:
+    jalr x0, ra, 0
+
+bi_fatal_type:
+    j    fatal_type
+bi_fatal_illegal:
+    j    fatal_illegal
