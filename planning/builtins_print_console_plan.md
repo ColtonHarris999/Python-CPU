@@ -81,14 +81,21 @@ touch the two-arg mailbox limit.
 
 ---
 
-## 4. CALL binder fix (varargs + kwargs)
+## 4. CALL binder fixes (varargs + kwargs)
 
-After `CO_VARARGS` pack (subs 20–24), `container_idx_r` was left at
-`extra-1`. CALL_KW name binding reuses that index, so with ≥2 positionals
-into `*args` the first kwargs were skipped (defaults applied instead).
+1. After `CO_VARARGS` pack (subs 20–24), `container_idx_r` was left at
+   `extra-1`. CALL_KW name binding reuses that index, so with ≥2 positionals
+   into `*args` the first kwargs were skipped (defaults applied instead).
+   **Fix:** reset `container_idx_r` in sub 24 before `call_after_varargs_sub_r`.
 
-**Fix:** reset `container_idx_r` in sub 24 before `call_after_varargs_sub_r`.
-Regression: `img_varargs_kwonly2` / `img_print_sep_end`.
+2. Shared dict probe completion (sub 63) treated every `CALL_MODE_EX_KW`
+   probe as caller-kwargs order-walk. Filling remaining kw-only defaults
+   from `co_kwdefaults` then hung / wrote the wrong slot.
+   **Fix:** take the order-walk arm only when `container_base` is the
+   caller kwargs dict (`call_kw_names_r`).
+
+Regressions: `img_varargs_kwonly2`, `img_varargs_ex_kw`, `img_print_sep_end`,
+`img_print_star_kw`.
 
 ---
 

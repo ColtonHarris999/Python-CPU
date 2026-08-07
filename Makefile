@@ -198,7 +198,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-call-function-ex pycore-img-call-function-ex-kw \
 	pycore-img-varargs-basic pycore-img-varargs-empty \
 	pycore-img-varargs-kwonly pycore-img-varargs-kwonly2 \
-	pycore-img-varargs-kwonly2-partial pycore-img-varargs-call-ex \
+	pycore-img-varargs-kwonly2-partial pycore-img-varargs-ex-kw \
+	pycore-img-varargs-call-ex \
 	pycore-img-bound-method-obj pycore-img-method-all \
 	pycore-img-class-simple pycore-img-class-const \
 	pycore-img-staticmethod pycore-img-class-two-instances \
@@ -1203,6 +1204,7 @@ pycore-img: \
 	pycore-img-varargs-kwonly \
 	pycore-img-varargs-kwonly2 \
 	pycore-img-varargs-kwonly2-partial \
+	pycore-img-varargs-ex-kw \
 	pycore-img-varargs-call-ex \
 	pycore-img-class-all \
 	pycore-img-allocator-list
@@ -1441,6 +1443,9 @@ pycore-img-varargs-kwonly2:
 pycore-img-varargs-kwonly2-partial:
 	$(call PYCORE_IMAGE_RUN,varargs_kwonly2_partial,100000)
 
+pycore-img-varargs-ex-kw:
+	$(call PYCORE_IMAGE_RUN,varargs_ex_kw,100000)
+
 pycore-img-varargs-call-ex:
 	$(call PYCORE_IMAGE_RUN,varargs_call_ex,100000)
 
@@ -1463,6 +1468,7 @@ pycore-img-method-all: \
 	pycore-img-varargs-kwonly \
 	pycore-img-varargs-kwonly2 \
 	pycore-img-varargs-kwonly2-partial \
+	pycore-img-varargs-ex-kw \
 	pycore-img-varargs-call-ex \
 	pycore-img-bound-method-obj
 

@@ -2309,9 +2309,15 @@
                                     end
                                     6'd63: begin
                                         // Write probed dict value into a local.
-                                        // KW defaults path uses container_idx;
-                                        // EX_KW path uses call_range_step (k).
-                                        if (call_mode_r == CALL_MODE_EX_KW) begin
+                                        // Shared probe (58-63) serves both:
+                                        //   - EX_KW caller kwargs (order walk)
+                                        //   - kwdefaults fill (container_idx)
+                                        // Distinguish by which dict we probed;
+                                        // EX_KW + kwdefaults must NOT take the
+                                        // order-walk arm (hang / wrong slot).
+                                        if ((call_mode_r == CALL_MODE_EX_KW) &&
+                                            (container_base_r ==
+                                             call_kw_names_r[31:0])) begin
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
                                                 call_new_locals_r
