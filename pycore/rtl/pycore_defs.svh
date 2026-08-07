@@ -17,7 +17,9 @@ localparam int PYCORE_VAL_LSB = 0;                            // 0
 // derive port widths without magic numbers.
 localparam int PYCORE_ADDR_WIDTH       = 32;
 localparam int PYCORE_BLOCK_SHIFT      = 12;   // 4096 bytes / block
-localparam int PYCORE_IMEM_BLOCK_COUNT = 8;    // 32 KB instruction memory
+// 64 KB / 8-byte slots = 8192 words — ROM firmware + large images (e.g.
+// allocator_list) exceed the prior 32 KB / 4096-slot ceiling.
+localparam int PYCORE_IMEM_BLOCK_COUNT = 16;
 localparam int PYCORE_DMEM_BLOCK_COUNT = 32;   // 128 KB data memory
 localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
 localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot

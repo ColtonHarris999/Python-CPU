@@ -388,9 +388,11 @@ word_idx  = block_off >> log2(DATA_WIDTH/8)
   value per transaction, 16-byte aligned in v1.
 
 Default memory map (all parameters in `pycore_defs.svh`): `ADDR_WIDTH = 32`,
-`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 8` (32 KB), `DMEM_BLOCK_COUNT = 32`
-(128 KB). Out-of-range or misaligned data accesses raise `MEM_FAULT` /
-`ADDR_ALIGN`.
+`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 16` (64 KB / 8192 instruction slots),
+`DMEM_BLOCK_COUNT = 32` (128 KB). Out-of-range or misaligned data accesses
+raise `MEM_FAULT` / `ADDR_ALIGN`. IMEM grew from 32 KB so boot images that
+seed the full `ROM_FIRMWARE_BUILTINS` set (plus large programs such as
+`allocator_list`) fit under `$readmemh`.
 
 PTR load/store reach data memory through two internal-only opcodes
 (`PY_OP_MEM_LOAD_PTR`, `PY_OP_MEM_STORE_PTR`) that are not part of the CPython
