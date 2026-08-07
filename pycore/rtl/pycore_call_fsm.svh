@@ -1801,6 +1801,10 @@
                                         if (call_varargs_to_frame_r) begin
                                             call_phase_r <= 4'd7;
                                         end else begin
+                                            // Pack leaves container_idx at
+                                            // extra-1; KW bind uses it as the
+                                            // names/kwargs index — reset.
+                                            container_idx_r <= 7'd0;
                                             call_sub_r <= call_after_varargs_sub_r;
                                         end
                                     end

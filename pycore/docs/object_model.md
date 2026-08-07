@@ -59,12 +59,13 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 
 Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
 module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
-`bytearray` / `max` / `len` / `print` / `range` / `set` as `OBK_BUILTIN`
+`bytearray` / `max` / `len` / `_bi_print` / `range` / `set` as `OBK_BUILTIN`
 handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
-`to_bytes`, and ROM firmware names (`sum`, `abs`, `bool`, `all`, `any`,
-`enumerate`, `map`, `zip`, …) as `CODE_OBJECT` handles from
-`ROM_FIRMWARE_BUILTINS` in `image_from_source.py`. Total boot record size
-is `BOOT_RECORD_BYTES = 96`.
+`to_bytes`, and ROM firmware names (`print`, `sum`, `abs`, `bool`, `all`,
+`any`, `enumerate`, `map`, `zip`, …) as `CODE_OBJECT` handles from
+`ROM_FIRMWARE_BUILTINS` in `image_from_source.py`. Public `print` is the
+ROM wrapper; `_bi_print` (`BI_PRINT`) is the one-arg `CONSOLE_TX` sink.
+Total boot record size is `BOOT_RECORD_BYTES = 96`.
 
 **Resolution:** `LOAD_GLOBAL` / `LOAD_NAME` probe globals, then this
 builtins dict (LEGB **B**). **CALL** on an `OBK_BUILTIN` handle dispatches

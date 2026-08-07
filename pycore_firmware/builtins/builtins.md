@@ -91,7 +91,7 @@ These limit every firmware builtin:
 | `open` | Open a file and return a corresponding file object. | blocked | See `open.md`. |
 | `ord` | Return the Unicode code point for a one-character string. | blocked | See `ord.md`. |
 | `pow` | Return base**exp, optionally modulo mod. | in ROM | Binary modexp for non-neg exp; neg exp+mod → `raise`. |
-| `print` | Print objects to a stream (default stdout), separated by sep and ended by end. | blocked | `BI_PRINT` → excore I/O; kwargs/`*args` OK on a ROM `CODE_OBJECT` wrapper once seeded. |
+| `print` | Print objects to a stream (default stdout), separated by sep and ended by end. | in ROM | ROM `*args`/`sep=`/`end=` → `_bi_print` (`BI_PRINT` → `CONSOLE_TX`). LONG_STR Phase 2. |
 | `property` | Return a property attribute with optional getter/setter/deleter. | blocked | See `property.md`. |
 | `range` | Return an immutable sequence of numbers (start, stop, step). | implemented | Interim **list** materialization. Native `BI_RANGE` (`PY_TAG_RANGE`) preferred. |
 | `repr` | Return a string containing a printable representation of an object. | in progress | INT/BOOL/None only; containers/str quoting blocked. |
@@ -176,7 +176,7 @@ Audit of **blocked** / partially-blocked names against
 
 | Bytecode / protocol gap | Blocked or limited builtins |
 | --- | --- |
-| Kwargs ROM wrappers | `sorted(reverse=)` / `sum(start=)` in ROM; `max` stays `BI_MAX`; `print` waits on console (wave 4) |
+| Kwargs ROM wrappers | `sorted(reverse=)` / `sum(start=)` / `print(sep=,end=)` in ROM; `max` stays `BI_MAX` |
 | `CO_VARARGS` / `CO_VARKEYWORDS` on defs | Multi-iter `zip(*args)` / `map` as Python `*args` parameters |
 | Exception tables / `RERAISE` | Real `TypeError` / `StopIteration` everywhere; comprehension option A/B |
 | `GET_ITER` / `FOR_ITER` on OBJECT | User-defined iterables (`__iter__` / `__next__`) |

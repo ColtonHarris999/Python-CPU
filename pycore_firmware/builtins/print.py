@@ -1,11 +1,22 @@
-"""Print objects to a stream.
+"""Print objects to the console.
 
-I/O is an excore concern (BI_PRINT → PY_TRAP_BUILTIN_CALL). Full plan:
-``planning/builtins_print_console_plan.md``. A CODE_OBJECT wrapper may
-use ``sep=`` / ``end=`` via CALL_KW in Phase 2 once the console sink
-exists.
+Public ``print`` is a ROM CODE_OBJECT with full ``*args`` / ``sep=`` /
+``end=`` support (needs CO_VARARGS + CALL_KW). Each piece is handed to
+native ``_bi_print`` (OBK_BUILTIN / BI_PRINT → CONSOLE_TX).
+
+``_bi_print`` accepts one INT / BOOL / None / SHORT_STR. LONG_STR is
+Phase 2 on the native sink; this body never concatenates a full line so
+long user strings can later stream with ``for c in s: _bi_print(c)``.
 """
 
 
-def print(a=None, b=None, c=None, d=None):
-    return 1 % 0
+def print(*args, sep=" ", end="\n"):
+    n = len(args)
+    i = 0
+    while i < n:
+        if i > 0:
+            _bi_print(sep)
+        _bi_print(args[i])
+        i = i + 1
+    _bi_print(end)
+    return None

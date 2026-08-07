@@ -38,6 +38,10 @@ WAVE4_ATTR_NAMES = {
     "issubclass",
 }
 
+WAVE4_PRINT_NAMES = {
+    "print",
+}
+
 
 def _load_firmware(name: str):
     path = image_from_source.FIRMWARE_BUILTINS_DIR / f"{name}.py"
@@ -64,7 +68,8 @@ class RomFirmwareSeedTest(unittest.TestCase):
         keys = {k for k, _, _ in image_from_source.ROM_FIRMWARE_BUILTINS}
         self.assertTrue(WAVE3_NAMES.issubset(keys), keys)
         self.assertTrue(WAVE4_ATTR_NAMES.issubset(keys), keys)
-        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 27)
+        self.assertTrue(WAVE4_PRINT_NAMES.issubset(keys), keys)
+        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 28)
 
     def test_seed_firmware_function_returns_code_object(self) -> None:
         serializer = image_from_source._ImageSerializer()
@@ -102,8 +107,61 @@ class RomFirmwareSeedTest(unittest.TestCase):
             len(result.code_handles),
             2 + len(image_from_source.ROM_FIRMWARE_BUILTINS),
         )
-        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 27)
+        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 28)
         self.assertGreater(len(result.program_slots), 0)
+
+    def test_print_seed_has_kwdefaults_and_varargs(self) -> None:
+        import types
+
+        serializer = image_from_source._ImageSerializer()
+        path = image_from_source.FIRMWARE_BUILTINS_DIR / "print.py"
+        ns: dict[str, object] = {}
+        exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), ns)
+        print_fn = ns["print"]
+        assert isinstance(print_fn, types.FunctionType)
+        co = print_fn.__code__
+        self.assertTrue(co.co_flags & 0x04)  # CO_VARARGS
+        self.assertEqual(co.co_kwonlyargcount, 2)
+        self.assertEqual(print_fn.__kwdefaults__, {"sep": " ", "end": "\n"})
+        self.assertIn("_bi_print", co.co_names)
+        # seed_firmware_function re-execs; assert the map gets kwdefaults.
+        handle = image_from_source.seed_firmware_function(serializer, path, "print")
+        self.assertEqual(handle[0], TAG_CODE_OBJECT)
+        self.assertEqual(len(serializer.kwdefaults_map), 1)
+        self.assertEqual(
+            next(iter(serializer.kwdefaults_map.values())),
+            {"sep": " ", "end": "\n"},
+        )
+
+    def test_bi_print_seeded_as_native_builtin(self) -> None:
+        from encoding import (
+            BI_PRINT,
+            OBK_BUILTIN,
+            TAG_CODE_OBJECT,
+            int_value,
+            ob_kind,
+            obj_field_val_addr,
+        )
+
+        serializer = image_from_source._ImageSerializer()
+        image_from_source.build_builtins_dict(serializer)
+        # Public print is ROM; native sink must appear as OBK_BUILTIN(BI_PRINT).
+        rom_keys = {k for k, _, _ in image_from_source.ROM_FIRMWARE_BUILTINS}
+        self.assertIn("print", rom_keys)
+        self.assertNotIn("_bi_print", rom_keys)
+        found_sink = False
+        words = serializer.heap.words
+        for addr, head in words.items():
+            if ob_kind(head) != OBK_BUILTIN:
+                continue
+            if words.get(obj_field_val_addr(addr, 0)) == int_value(BI_PRINT):
+                found_sink = True
+                break
+        self.assertTrue(found_sink, "OBK_BUILTIN(BI_PRINT) not in builtins heap")
+        rom_pairs = image_from_source.seed_rom_firmware_builtins(
+            image_from_source._ImageSerializer()
+        )
+        self.assertTrue(any(h[0] == TAG_CODE_OBJECT for _, h in rom_pairs))
 
     def test_wave3_image_programs_build(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1] / "programs"
@@ -116,6 +174,10 @@ class RomFirmwareSeedTest(unittest.TestCase):
             "img_firmware_filter_pred.py",
             "img_firmware_attr_helpers.py",
             "img_firmware_isinstance.py",
+            "img_print_basic.py",
+            "img_print_sep_end.py",
+            "img_print_star_kw.py",
+            "img_varargs_kwonly2.py",
         ):
             text = (root / name).read_text(encoding="utf-8")
             image = image_from_source.build_image_from_source_text(text, name)

@@ -9,7 +9,7 @@
 //
 // Internally this module:
 //   1. Instantiates riscv_multicycle (active-high reset, memory_io buses).
-//   2. Serves instruction fetches from a private IMEM word array (default 8 KB).
+//   2. Serves instruction fetches from a private IMEM word array (default 16 KB).
 //   3. Decodes data_mem_req into scratch vs MMIO vs OOB, matching the
 //      registered one-cycle memory_io response style of singlecore's
 //      memory32 so the multicycle stage machine (fetch→…→writeback) makes
@@ -22,7 +22,7 @@
 
 module excore_cpu #(
     parameter string FW_HEX        = "",
-    parameter int    IMEM_WORDS    = 2048,  // 8 KB / 4 bytes per word (list+dict handlers)
+    parameter int    IMEM_WORDS    = 4096,  // 16 KB / 4 bytes per word (list+dict+print)
     parameter int    SCRATCH_WORDS = 256    // 1 KB / 4 bytes per word
 ) (
     input  logic        clk_i,

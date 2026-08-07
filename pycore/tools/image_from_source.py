@@ -984,6 +984,8 @@ ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
     ("delattr", "delattr", "delattr"),
     ("isinstance", "isinstance", "isinstance"),
     ("issubclass", "issubclass", "issubclass"),
+    # Wave 4A — print(*args, sep=, end=) → _bi_print sink
+    ("print", "print", "print"),
 )
 
 FIRMWARE_BUILTINS_DIR = (
@@ -1044,9 +1046,9 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     """Allocate the module builtins dict for the boot-record pair-2 slot.
 
     Entries:
-      bytearray / max / len / print / range / set → OBK_BUILTIN (bound_self=NULL)
+      bytearray / max / len / _bi_print / range / set → OBK_BUILTIN (bound_self=NULL)
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
-      ROM_FIRMWARE_BUILTINS → CODE_OBJECT handles (pure-Python firmware)
+      ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
     """
     heap = serializer.heap
     string_heap = serializer.string_heap
@@ -1067,7 +1069,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (tag_constant("bytearray", string_heap), heap.alloc_builtin(BI_BYTEARRAY)),
         (tag_constant("max", string_heap), heap.alloc_builtin(BI_MAX)),
         (tag_constant("len", string_heap), heap.alloc_builtin(BI_LEN)),
-        (tag_constant("print", string_heap), heap.alloc_builtin(BI_PRINT)),
+        # Native console sink; public print is the ROM CODE_OBJECT below.
+        (tag_constant("_bi_print", string_heap), heap.alloc_builtin(BI_PRINT)),
         (tag_constant("range", string_heap), heap.alloc_builtin(BI_RANGE)),
         (tag_constant("set", string_heap), heap.alloc_builtin(BI_SET)),
         (tag_constant("int", string_heap), int_type),
@@ -1939,15 +1942,30 @@ def main() -> None:
     parser.add_argument("--dmem-hex", required=True)
     parser.add_argument("--string-hex", required=True)
     parser.add_argument("--meta", required=True)
+    parser.add_argument(
+        "--expected-tag",
+        type=int,
+        default=None,
+        help="Optional EXPECTED_TAG for image.meta (skips host execution)",
+    )
+    parser.add_argument(
+        "--expected-value",
+        type=int,
+        default=None,
+        help="Optional EXPECTED_VALUE for image.meta (skips host execution)",
+    )
     args = parser.parse_args()
 
     require_python_3_14()
-    image_from_source(
-        source=pathlib.Path(args.source),
+    result = build_image_from_source(pathlib.Path(args.source))
+    write_image_outputs(
+        result,
         program_hex=pathlib.Path(args.program_hex),
         dmem_hex=pathlib.Path(args.dmem_hex),
         string_hex=pathlib.Path(args.string_hex),
         meta=pathlib.Path(args.meta),
+        expected_tag=args.expected_tag,
+        expected_value=args.expected_value,
     )
 
 

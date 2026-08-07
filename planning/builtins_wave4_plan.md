@@ -2,7 +2,7 @@
 
 **Audience:** next agent (firmware, bytecode, or excore)  
 **Prerequisite:** wave 3 ROM seed landed (`planning/builtins_rom_wave3_plan.md`)  
-**Current ROM set:** 21 `CODE_OBJECT` builtins in `ROM_FIRMWARE_BUILTINS`
+**Current ROM set:** 28 `CODE_OBJECT` builtins in `ROM_FIRMWARE_BUILTINS`
 
 Wave 3 finished the easy pure-Python seed + `sorted(reverse=)` /
 `sum(start=)`. Remaining work needs **new hardware / excore / bytecode**,
@@ -10,29 +10,25 @@ not just more `.py` stubs.
 
 ---
 
-## 1. Priority A — `print` console (testing win)
+## 1. Priority A — `print` console — **DONE**
 
-**Why first:** full-program tests can assert stdout instead of packing
-everything into one INT return.
+**Status:** hybrid MVP shipped (see `planning/builtins_print_console_plan.md`).
 
-**Full plan (for review):** `planning/builtins_print_console_plan.md`
-
-| Layer | Work |
+| Layer | Shipped |
 | --- | --- |
-| MMIO | Write-only `CONSOLE_TX` (@ `0xF0`); TB captures to `sim.stdout` |
-| Excore | Handle trap 16 / `BI_PRINT`: stringify INT/BOOL/None/SHORT_STR (≤2 args), hardcoded sep/end, COMPLETED → `None` |
-| Firmware | Phase 2: optional ROM `CODE_OBJECT` wrapper with `sep=` / `end=` calling native sink |
-| Tests | `img_print_basic.py` + `.stdout` golden; TWOCORE + diff |
+| MMIO | `CONSOLE_TX` @ `0xF0`; TB `STDOUT_PATH` capture |
+| Excore | Trap 16 / `BI_PRINT` one-arg sink (INT/BOOL/None/SHORT_STR) |
+| Firmware | ROM `print(*args, sep=, end=)` → `_bi_print` |
+| Tests | `img_print_*` stdout goldens + varargs/kwonly binder regressions |
 
-**Out of scope for A MVP:** full `str`/`repr` for containers; `file=` streams;
-native kwargs on `OBK_BUILTIN`; `argc > 2` (FATAL until ROM wrapper / widen).
+**Still Phase 2:** LONG_STR on sink; container `__str__`; `file=`.
 
 ---
 
 ## 2. Priority B — attribute protocol primitives — **DONE**
 
 **Status:** implemented on `builtins` (LOAD_ATTR specials + ROM seed).  
-Remaining wave-4 work is Priority A (print) / C (ORD/CHR) / D (bytecode).
+Remaining wave-4 work is Priority C (ORD/CHR) / D (bytecode).
 
 ### 2.0 Problem (why wave-3 skipped these)
 
