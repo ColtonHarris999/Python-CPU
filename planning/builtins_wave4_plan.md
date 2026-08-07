@@ -216,7 +216,7 @@ See existing `ord.md` / `chr.md`.
 
 | Item | Unlocks |
 | --- | --- |
-| `CO_VARARGS` / `CO_VARKEYWORDS` on defs | `zip(*args)`, `map(f, *iterables)`, `print(*args)` as Python |
+| `CO_VARKEYWORDS` on defs | `def f(**k)`; multi-`**` merge already partial |
 | Exception tables / real exception objects | Replace fatal `raise` / TYPE traps with `TypeError`/`StopIteration` |
 | `COMPARE_OP` string ordering | `sorted`/`min`/`max` on str |
 | `GET_ITER` / `FOR_ITER` on OBJECT | User `__iter__` / `__next__` |
@@ -254,24 +254,19 @@ Still hybrid: keep `BI_LEN` / `BI_RANGE` / `BI_SET` / `BI_MAX` positional.
 
 | Track | Owner | First deliverable |
 | --- | --- | --- |
-| A print console | excore + TB | `BI_PRINT` writes bytes; one stdout golden test |
-| B attr specials | pycore RTL (LOAD_ATTR) | §2 plan: specials in `CONT_LOAD_ATTR` + image tests, then ROM seed |
+| A print console | excore + TB | **Done** — ROM print + stdout goldens |
+| B attr specials | pycore RTL (LOAD_ATTR) | **Done** — specials + ROM seed |
 | C ORD/CHR | pycore CALL FSM | `BI_ORD` / `BI_CHR` + image tests |
-| D bytecode | bytecode agent | `CO_VARARGS` or str `COMPARE_OP` |
+| D bytecode | bytecode agent | `CO_VARKEYWORDS` or str `COMPARE_OP` |
 | E ROM seed | firmware agent | seed attr + ord/chr after B/C |
 
 ---
 
 ## 8. Success metric for wave 4
 
-**Met for track B:** `hasattr`/`getattr`/`isinstance` (and friends) are in
-ROM with image tests.
+**Met for track A:** `print(...)` stdout goldens on the two-core top.  
+**Met for track B:** `hasattr`/`getattr`/`isinstance` (and friends) in ROM.
 
-Still open for a full wave-4 close-out — at least one of:
+Still open for a full wave-4 close-out:
 
-1. A program with `print(...)` checked via captured stdout in CI, **or**
-2. ~~`hasattr`/`getattr`/`isinstance` in ROM with green image tests~~ **done**, **or**
-3. `ord`/`chr` native + ROM/tests.
-
-Do not open a “seed everything remaining” PR without one of the remaining
-primitives (A or C).
+3. `ord`/`chr` native + ROM/tests (Priority C).

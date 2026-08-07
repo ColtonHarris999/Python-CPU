@@ -28,7 +28,8 @@ Related:
 | `DICT_MERGE` empty-dest + EX-B `**kwargs` | Done — `img_call_function_ex_kw` |
 | `OBK_BUILTIN` / TYPE kwargs | Still `CALL_FILTER` (use ROM Python) |
 | Non-empty `DICT_MERGE` (multi-`**`) | Still `CALL_FILTER` |
-| `CO_VARARGS` / `CO_VARKEYWORDS` parameters | Still rejected by image tooling |
+| `CO_VARARGS` on defs | **Done** — binder packs `*args`; `img_varargs_*` / ROM `print` |
+| `CO_VARKEYWORDS` (`**kwargs` param) | Still rejected by image tooling |
 
 ---
 
@@ -63,8 +64,8 @@ Related:
 
 | Need | Why |
 | --- | --- |
-| `CO_VARARGS` / `CO_VARKEYWORDS` on user defs | `def f(*a, **k)` parameters |
-| Optional `BI_*` keyword tables | Hardware `print(sep=)` without ROM wrapper |
+| `CO_VARKEYWORDS` on user defs | `def f(**k)` parameter packing |
+| Optional `BI_*` keyword tables | Hardware kwargs without ROM wrapper |
 | Full exception tables / `RERAISE` | Real `TypeError`/`StopIteration`; comprehension option A/B |
 | `BI_LEN` tuple-mode RANGE + OBJECT `__bool__` | Complete truthiness / len protocol |
 | `GET_ITER`/`FOR_ITER` on OBJECT | Iterator protocol for user types |
@@ -102,9 +103,13 @@ Wave 3 shipped 13 additional ROM builtins + kwargs tests.
 ### 4.6 — **done** (wave 4 §2 attr specials)
 
 `LOAD_ATTR` specials for `__dict__` / `__class__` / `__base__`; ROM seed of
-`hasattr` / `getattr` / `setattr` / `delattr` / `isinstance` / `issubclass`.  
-**Next:** `planning/builtins_wave4_plan.md` Priority A (print console) /
-C (`BI_ORD`/`BI_CHR`).
+`hasattr` / `getattr` / `setattr` / `delattr` / `isinstance` / `issubclass`.
+
+### 4.7 — **done** (wave 4 §1 print console)
+
+ROM `print(*args, sep=, end=)` → `_bi_print` / `BI_PRINT` → `CONSOLE_TX`;
+stdout goldens via `PYCORE_IMAGE_RUN_TWOCORE_STDOUT`.  
+**Next:** `planning/builtins_wave4_plan.md` Priority C (`BI_ORD`/`BI_CHR`).
 
 ---
 

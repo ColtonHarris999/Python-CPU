@@ -191,6 +191,35 @@ class RomFirmwareSeedTest(unittest.TestCase):
 class RomFirmwareSemanticsTest(unittest.TestCase):
     """Host-level semantics for wave-3 firmware bodies."""
 
+    def test_print_body_kwargs(self) -> None:
+        """ROM print body joins with sep/end (host stand-in for _bi_print)."""
+        import io
+
+        path = image_from_source.FIRMWARE_BUILTINS_DIR / "print.py"
+        buf = io.StringIO()
+
+        def _bi_print(x):
+            if x is None:
+                buf.write("None")
+            elif x is True:
+                buf.write("True")
+            elif x is False:
+                buf.write("False")
+            else:
+                buf.write(str(x))
+
+        ns: dict[str, object] = {"_bi_print": _bi_print, "len": len}
+        exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), ns)
+        print_fn = ns["print"]
+        print_fn(1, 2, sep=",", end=";")
+        print_fn(3, end="")
+        print_fn()
+        self.assertEqual(buf.getvalue(), "1,2;3\n")
+        buf.seek(0)
+        buf.truncate(0)
+        print_fn(* (10, 20, 30), sep="-")
+        self.assertEqual(buf.getvalue(), "10-20-30\n")
+
     def test_numeric_helpers(self) -> None:
         divmod_ = _load_firmware("divmod")
         pow_ = _load_firmware("pow")

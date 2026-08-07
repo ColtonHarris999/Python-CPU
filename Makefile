@@ -188,6 +188,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
 	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
 	pycore-img-print-empty pycore-img-print-basic pycore-img-print-sep-end \
+	pycore-img-print-end-only pycore-img-print-none-sep \
 	pycore-img-print-many pycore-img-print-star pycore-img-print-star-kw \
 	pycore-img-print-neg pycore-img-print-bools pycore-img-print-type-trap \
 	pycore-img-attr-all \
@@ -1281,6 +1282,7 @@ pycore-img-attr-all: \
 	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
 	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
 	pycore-img-print-empty pycore-img-print-basic pycore-img-print-sep-end \
+	pycore-img-print-end-only pycore-img-print-none-sep \
 	pycore-img-print-many pycore-img-print-star pycore-img-print-star-kw \
 	pycore-img-print-neg pycore-img-print-bools pycore-img-print-type-trap \
 	pycore-img-builtin-max \
@@ -1361,6 +1363,12 @@ pycore-img-print-basic: excore-fw
 
 pycore-img-print-sep-end: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_sep_end,200000)
+
+pycore-img-print-end-only: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_end_only,200000)
+
+pycore-img-print-none-sep: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_none_sep,200000)
 
 pycore-img-print-many: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_many,300000)

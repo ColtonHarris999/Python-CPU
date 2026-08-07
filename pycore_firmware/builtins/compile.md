@@ -15,14 +15,14 @@ returns a code object usable by `eval` / `exec`.
    host-side `image_from_source.py` / `HeapImageBuilder.alloc_code`. There is
    no runtime opcode to allocate and fill `co_code` / `co_consts` /
    `co_names` / metadata from scratch.
-3. **Keyword arguments.** `flags`, `dont_inherit`, `optimize` need `CALL_KW`
-   (deferred).
+3. **Keyword arguments.** `CALL_KW` exists for ROM `CODE_OBJECT`s; a future
+   `compile` wrapper can take `flags=` / `optimize=` once a loader exists.
 4. **Source forms.** Accepting `ast.AST` requires the `ast` module (imports
    deferred).
 5. **Mode handling.** `"exec"` / `"eval"` / `"single"` imply different code
    object shapes and compiler entry points.
-6. **Error model.** Syntax errors need exception objects + `RAISE_VARARGS`
-   (both out of scope for image-boot).
+6. **Error model.** Syntax errors need exception objects + non-fatal raise
+   (fatal-only `RAISE_VARARGS` is insufficient for recoverable SyntaxError).
 
 ## Next steps
 
