@@ -120,6 +120,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-for-iter-object-list pycore-img-for-iter-object-next \
 	pycore-img-for-iter-object-exhaust pycore-img-for-iter-object-no-iter-trap \
 	pycore-img-for-iter-object-nested \
+	pycore-img-list-comp-basic pycore-img-list-comp-fast-clear \
+	pycore-img-for-loop-all \
 	pycore-img-nop \
 	pycore-container pycore-container-build-index pycore-container-store-subscr \
 	pycore-container-dict-lookup pycore-container-dict-store \
@@ -880,6 +882,26 @@ pycore-img-for-iter-object-no-iter-trap:
 
 pycore-img-for-iter-object-nested:
 	$(call PYCORE_IMAGE_RUN,for_iter_object_nested,400000)
+
+# Track C: real compile() list comprehensions (LIST_APPEND grow → two-core).
+pycore-img-list-comp-basic: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_comp_basic,400000)
+
+pycore-img-list-comp-fast-clear: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_comp_fast_clear,400000)
+
+pycore-img-for-loop-all: \
+	pycore-img-for-iter-all \
+	pycore-img-for-iter-object-list \
+	pycore-img-for-iter-object-next \
+	pycore-img-for-iter-object-exhaust \
+	pycore-img-for-iter-object-no-iter-trap \
+	pycore-img-for-iter-object-nested \
+	pycore-img-try-stopiteration \
+	pycore-img-try-stopiteration-nested \
+	pycore-img-raise-stopiteration-fatal \
+	pycore-img-list-comp-basic \
+	pycore-img-list-comp-fast-clear
 
 pycore-img-for-iter-all: \
 	pycore-img-for-iter \

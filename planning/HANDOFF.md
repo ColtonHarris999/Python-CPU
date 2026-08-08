@@ -13,7 +13,7 @@
   `POP_EXCEPT` / `RERAISE` + §7.7 handler bytecode closure (StopIteration tests).
 - [x] §10 step 6 — Track A GET_ITER OBJECT + HEAP_ITER + FOR_ITER + §6.1.1
   protocol raise boundary.
-- [ ] §10 step 7
+- [x] §10 step 7 — Track C list comp end-to-end (two-core).
 - [ ] §10 step 8
 
 ## Design locks
@@ -81,26 +81,25 @@
   → fatal `PY_TRAP_RAISE`.
 - Host `# pycore-expect: <int>` overrides `run_image_test` gold when CPython
   cannot execute the seeded program (list-returning `__iter__`).
+- Track C list comps from real `compile()` are accepted (`RERAISE` already
+  unlocked). Non-empty comps need `PYCORE_IMAGE_RUN_TWOCORE` for `LIST_APPEND`
+  grow. Aggregate target: `pycore-img-for-loop-all`.
 
 ## Verified
 
 - PASS — `make PYTHON=python3.14 pycore-python-tests` (216 tests).
-- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-list` (golden 6).
-- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-next` (golden 6).
-- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-exhaust` (golden 7).
-- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-no-iter-trap` (trap 1).
-- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-nested` (golden 9).
-- PASS — `make PYTHON=python3.14 pycore-img-container-call-spike`.
-- PASS — `make PYTHON=python3.14 pycore-img-try-stopiteration`.
-- PASS — `make PYTHON=python3.14 pycore-img-for-iter`.
+- PASS — `make PYTHON=python3.14 pycore-img-list-comp-basic` (golden 10; two-core).
+- PASS — `make PYTHON=python3.14 pycore-img-list-comp-fast-clear` (golden 106;
+  two-core; outer local restore via `LOAD_FAST_AND_CLEAR`).
 - BLOCKED — `make docker-all-tests` (no Docker daemon).
 
 ## Next session
 
-Implement exactly §10 step 7: Track C list comp end-to-end (two-core). Do not
-start docs-only step 8 until step 7 acceptance is met.
+Implement exactly §10 step 8: docs (`bytecode_support.md` Policy C→Option B,
+`architecture.md`, `pycore.json`) + RTL `CODE_NFIELDS`/`CODE_OBJECT_BYTES`
+8/256 sync. Optional dict comp + ROM `iter`/`next` only if time remains.
 
 ## Blockers
 
 - Required Docker CI remains unrun because no Docker daemon is available.
-- No open implementation questions or truncated §10 step 6 work.
+- No open implementation questions or truncated §10 step 7 work.
