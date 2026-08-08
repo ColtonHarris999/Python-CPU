@@ -2737,6 +2737,27 @@
                         3'd2: begin
                             if (!container_dmem_pending_r) begin
                                 names_base_r <= container_rd_data_r;
+                                if (container_call_returning_r) begin
+                                    // Restore the paused container instruction.
+                                    // The normal CALL stack algebra below keeps
+                                    // the returned value in RF; result_r gives
+                                    // the resumed arm a stable copy even though
+                                    // rs1_r will be restored to the iterator.
+                                    container_op_r <= container_call_saved_op_r;
+                                    container_phase_r <=
+                                        container_call_saved_phase_r;
+                                    cur_opcode_r <=
+                                        container_call_saved_opcode_r;
+                                    cur_arg_r <= container_call_saved_arg_r;
+                                    cur_pc_r <= container_call_saved_pc_r;
+                                    rs1_r <= container_call_saved_rs1_r;
+                                    rs2_r <= container_call_saved_rs2_r;
+                                    container_rf_addr_r <=
+                                        container_call_saved_tos_r;
+                                    container_call_result_r <= rs1_r;
+                                    container_call_return_valid_r <= 1'b1;
+                                    container_call_active_r <= 1'b0;
+                                end
                                 if (frame_ret_mode_r) begin
                                     // Discard __init__ return; require NONE.
                                     if (!pycore_is_none(

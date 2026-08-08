@@ -56,6 +56,10 @@ module pycore_core #(
     //               fixtures (tb_container programs) that hand-assemble
     //               streams using only LOAD_SMALL_INT and stack ops.
     parameter bit BOOT_EN = 1'b1,
+    // Test-only trigger for the §6.1 container↔CALL spike.  When enabled,
+    // CONT_GET_ITER may launch a CALL from a synthetic CALL-ready stack.
+    // Production object-iterator launch sites are added in §10 step 6.
+    parameter bit CONTAINER_CALL_SPIKE_EN = 1'b0,
     // EXCORE_EN = 1 : a recoverable trap (pycore_trap_recoverable(code))
     //                 enters S_TRAP_MARSHAL / S_TRAP_WAIT instead of
     //                 halting -- see pycore_excore_system.sv (Phase C).
@@ -270,6 +274,25 @@ module pycore_core #(
     logic [5:0]                    container_op_r;
     // Which phase within the current operation (CP_* constants above).
     logic [5:0]                    container_phase_r;
+    // Container↔CALL pause/resume contract (§6.1).  A container arm first
+    // arranges a normal CALL-ready RF stack, advances to a wait phase, and
+    // pulses container_call_pending_r.  The core snapshots the instruction
+    // context, runs S_CALL/S_RETURN unchanged, then re-enters S_CONTAINER with
+    // container_call_return_valid_r/result_r set.  CALL scratch may overwrite
+    // other container_* registers; iterator identity is preserved in saved_rs1.
+    logic                          container_call_pending_r;
+    logic                          container_call_active_r;
+    logic                          container_call_returning_r;
+    logic                          container_call_return_valid_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] container_call_result_r;
+    logic [5:0]                    container_call_saved_op_r;
+    logic [5:0]                    container_call_saved_phase_r;
+    logic [7:0]                    container_call_saved_opcode_r;
+    logic [31:0]                   container_call_saved_arg_r;
+    logic [31:0]                   container_call_saved_pc_r;
+    logic [RF_AW-1:0]              container_call_saved_tos_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] container_call_saved_rs1_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] container_call_saved_rs2_r;
     // LOAD_GLOBAL push-null bit (oparg & 1 in CPython 3.14).  Sampled at
     // container init so the CP_LG_WB_NULL follow-up knows whether to push
     // the sentinel after the primary value writeback.
@@ -876,6 +899,8 @@ module pycore_core #(
     logic                  frame_ret_mode_out;
     logic [63:0]           frame_saved_inst_out;
     logic [$clog2(MAX_CALL_DEPTH_CORE+1)-1:0] frame_active_depth;
+    logic [$clog2(MAX_CALL_DEPTH_CORE+1)-1:0]
+                          container_call_target_depth_r;
 
     // Push handshake (CALL path).
     logic                         frame_push_req;
@@ -1406,7 +1431,11 @@ module pycore_core #(
                 S_RETURN: begin
                     // Multi-phase RETURN: frame pop, then two dmem reads to
                     // reload caller's co_consts / co_names before redirect.
-                    if (return_phase_r == RET_PHASE_DONE) state_next = S_FETCH;
+                    // A container-launched outer call resumes its paused
+                    // S_CONTAINER arm; nested ordinary calls still fetch.
+                    if (return_phase_r == RET_PHASE_DONE)
+                        state_next = container_call_returning_r
+                                   ? S_CONTAINER : S_FETCH;
                 end
                 S_CONTAINER: begin
                     // CP_DONE is a terminal marker phase used uniformly by all
@@ -1415,7 +1444,9 @@ module pycore_core #(
                     // CP_DONE, so the CP_DONE always_ff case is intentionally empty.
                     // trap_marshal_pending_r (Phase C, EXCORE_EN=1) redirects the
                     // exit to S_TRAP_MARSHAL instead of S_FETCH.
-                    if (container_phase_r == CP_DONE) begin
+                    if (container_call_pending_r) begin
+                        state_next = S_CALL;
+                    end else if (container_phase_r == CP_DONE) begin
                         state_next = trap_marshal_pending_r ? S_TRAP_MARSHAL : S_FETCH;
                     end
                 end
@@ -1515,6 +1546,7 @@ module pycore_core #(
             call_saved_inst_r    <= '0;
             frame_ret_mode_r     <= 1'b0;
             frame_saved_inst_r   <= '0;
+            container_call_target_depth_r <= '0;
             call_filter_trap_r   <= 1'b0;
             return_type_trap_r   <= 1'b0;
             return_wb_data_r     <= '0;
@@ -1522,6 +1554,19 @@ module pycore_core #(
             heap_ptr_r               <= HEAP_INIT_PTR;
             container_op_r           <= '0;
             container_phase_r        <= '0;
+            container_call_pending_r <= 1'b0;
+            container_call_active_r <= 1'b0;
+            container_call_returning_r <= 1'b0;
+            container_call_return_valid_r <= 1'b0;
+            container_call_result_r <= '0;
+            container_call_saved_op_r <= '0;
+            container_call_saved_phase_r <= '0;
+            container_call_saved_opcode_r <= '0;
+            container_call_saved_arg_r <= '0;
+            container_call_saved_pc_r <= '0;
+            container_call_saved_tos_r <= '0;
+            container_call_saved_rs1_r <= '0;
+            container_call_saved_rs2_r <= '0;
             container_idx_r          <= '0;
             container_count_r        <= '0;
             container_base_r         <= '0;
@@ -1854,6 +1899,12 @@ module pycore_core #(
                         if (frame_active_depth > 0) begin
                             // There is a calling frame: pop the frame, reload
                             // caller consts/names, then redirect.
+                            // Depth identifies the outer protocol frame even
+                            // when its callee made ordinary nested calls.
+                            container_call_returning_r <=
+                                container_call_active_r &&
+                                (frame_active_depth ==
+                                 container_call_target_depth_r);
                             call_sent_r          <= 1'b0;
                             frame_dmem_pending_r <= 1'b0;
                             return_phase_r       <= 3'd0;
@@ -1929,26 +1980,68 @@ module pycore_core #(
                         container_rd_data_r <= dmem_rdata_i;
                     end
 
-                    // ---- Per-operation phase logic --------------------------
-                    unique case (container_op_r)
+                    // ---- Container-launched CALL handoff --------------------
+                    // The requesting arm has already staged the regular CALL
+                    // stack layout and moved to its wait phase.  Snapshot the
+                    // state that bytecode execution will overwrite, then enter
+                    // the existing positional CALL FSM without a second CALL
+                    // implementation.
+                    if (container_call_pending_r) begin
+                        container_call_pending_r <= 1'b0;
+                        container_call_active_r <= 1'b1;
+                        container_call_return_valid_r <= 1'b0;
+                        container_call_saved_op_r <= container_op_r;
+                        container_call_saved_phase_r <= container_phase_r;
+                        container_call_saved_opcode_r <= cur_opcode_r;
+                        container_call_saved_arg_r <= cur_arg_r;
+                        container_call_saved_pc_r <= cur_pc_r;
+                        container_call_saved_tos_r <= tos_r;
+                        container_call_saved_rs1_r <= rs1_r;
+                        container_call_saved_rs2_r <= rs2_r;
+                        container_call_target_depth_r <= frame_active_depth + 1'b1;
+                        // __iter__ / __next__ use CALL 0.  Preserve the
+                        // container oparg above (FOR_ITER needs its jump delta)
+                        // and present zero positional args to S_CALL; a staged
+                        // non-NULL self is counted by the existing method path.
+                        cur_arg_r <= 32'd0;
 
-                        // =====================================================
-                        // LIST / TUPLE / iterator ops
-                        `include "pycore_cont_list.svh"
+                        call_sent_r          <= 1'b0;
+                        frame_dmem_pending_r <= 1'b0;
+                        call_phase_r         <= 5'd0;
+                        call_sub_r           <= 6'd0;
+                        call_ret_mode_r      <= 1'b0;
+                        call_saved_inst_r    <= 64'b0;
+                        call_mode_r          <= CALL_MODE_POS;
+                        call_n_pos_r         <= '0;
+                        call_n_kwargs_r      <= '0;
+                        call_varargs_r       <= 1'b0;
+                        call_after_varargs_sub_r <= '0;
+                        call_varargs_to_frame_r  <= 1'b0;
+                        call_args_is_list_r  <= 1'b0;
+                        container_dmem_pending_r <= 1'b0;
+                        fetch_skip_r         <= 1'b1;
+                    end else begin
+                        // ---- Per-operation phase logic ----------------------
+                        unique case (container_op_r)
 
-                        // DICT / SET ops
-                        `include "pycore_cont_dict.svh"
+                            // =================================================
+                            // LIST / TUPLE / iterator ops
+                            `include "pycore_cont_list.svh"
 
-                        // Bulk DICT_UPDATE / DICT_MERGE / SET_UPDATE — excore
-                        // fast paths + contaminated/TUPLE pycore rehash loops.
-                        `include "pycore_cont_bulk.svh"
+                            // DICT / SET ops
+                            `include "pycore_cont_dict.svh"
 
-                        // Name/global/RF helpers (+ future object attrs)
-                        `include "pycore_cont_object.svh"
+                            // Bulk DICT_UPDATE / DICT_MERGE / SET_UPDATE —
+                            // excore fast paths plus pycore rehash loops.
+                            `include "pycore_cont_bulk.svh"
 
-                        default: ;
+                            // Name/global/RF helpers (+ future object attrs)
+                            `include "pycore_cont_object.svh"
 
-                    endcase
+                            default: ;
+
+                        endcase
+                    end
                 end // S_CONTAINER
 
                 // ----------------------------------------------------------

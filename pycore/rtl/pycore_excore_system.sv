@@ -27,6 +27,7 @@ module pycore_excore_system #(
     parameter string DMEM_HEX         = "",
     parameter logic [31:0] HEAP_INIT_PTR = PYCORE_HEAP_BASE,
     parameter bit    BOOT_EN          = 1'b1,
+    parameter bit    CONTAINER_CALL_SPIKE_EN = 1'b0,
     // Two-core top: EXCORE_EN defaults to 1 here (unlike pycore_core's own
     // default of 0, which is what pycore_system's legacy instantiation
     // relies on).
@@ -111,6 +112,7 @@ module pycore_excore_system #(
         .STRING_HEX(STRING_HEX),
         .HEAP_INIT_PTR(HEAP_INIT_PTR),
         .BOOT_EN(BOOT_EN),
+        .CONTAINER_CALL_SPIKE_EN(CONTAINER_CALL_SPIKE_EN),
         .EXCORE_EN(EXCORE_EN),
         .MAX_TRAP_ENTRIES(MAX_TRAP_ENTRIES),
         .MAX_RES_ENTRIES(MAX_RES_ENTRIES)

@@ -115,7 +115,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-for-iter-dict-grow \
 	pycore-img-for-iter-set-basic pycore-img-for-iter-set-empty \
 	pycore-img-for-iter-set-type-trap \
-	pycore-img-for-iter-all \
+	pycore-img-for-iter-all pycore-img-container-call-spike \
 	pycore-img-nop \
 	pycore-container pycore-container-build-index pycore-container-store-subscr \
 	pycore-container-dict-lookup pycore-container-dict-store \
@@ -463,6 +463,40 @@ define PYCORE_IMAGE_RUN
 	./$(BUILD_DIR)/img_$(1)/verilator/Vtb_container
 endef
 
+# Synthetic §6.1 spike: the generator rewrites the inner zero-arg CALL to
+# GET_ITER while preserving CALL's [callable, NULL] RF layout.  The test-only
+# core parameter launches S_CALL from S_CONTAINER and must resume with LIST.
+define PYCORE_CONTAINER_CALL_SPIKE_RUN
+	mkdir -p $(BUILD_DIR)/img_container_call_spike
+	$(PYTHON) pycore/tools/gen_container_call_spike.py \
+		--source pycore/programs/img_container_call_spike.py \
+		--program-hex $(BUILD_DIR)/img_container_call_spike/program.hex \
+		--dmem-hex $(BUILD_DIR)/img_container_call_spike/dmem.hex \
+		--string-hex $(BUILD_DIR)/img_container_call_spike/string_mem.hex \
+		--meta $(BUILD_DIR)/img_container_call_spike/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/img_container_call_spike/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/img_container_call_spike/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/img_container_call_spike/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GCONTAINER_CALL_SPIKE_EN=1 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d$$EXPECTED_TAG \
+		"-GEXPECTED_VALUE=128'd$$EXPECTED_VALUE" \
+		-GMAX_CYCLES=100000 \
+		--Mdir $(BUILD_DIR)/img_container_call_spike/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/img_container_call_spike/verilator/Vtb_container
+endef
+
 # Phase C full-regression companion to PYCORE_IMAGE_RUN: same image, run on
 # the two-core top (EXCORE_EN=1) instead of the legacy pycore_system.
 # Programs that need LIST_EXTEND / LIST_DELETE / DICT_GROW / SET_* traps
@@ -720,6 +754,9 @@ pycore-img-pop-jump-if-none:
 
 pycore-img-for-iter:
 	$(call PYCORE_IMAGE_RUN,for_iter,100000)
+
+pycore-img-container-call-spike:
+	$(PYCORE_CONTAINER_CALL_SPIKE_RUN)
 
 pycore-img-for-iter-type-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_type_trap,1,50000)
@@ -1170,6 +1207,7 @@ pycore-img: \
 	pycore-img-compare-op-type-trap \
 	pycore-img-pop-jump-if-none \
 	pycore-img-for-iter-all \
+	pycore-img-container-call-spike \
 	pycore-img-nop \
 	pycore-img-list-del-last-only \
 	pycore-img-list-contains-simple \

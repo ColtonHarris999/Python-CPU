@@ -20,7 +20,8 @@ module pycore_system #(
     parameter string STRING_HEX       = "pycore/programs/string_mem.hex",
     parameter string DMEM_HEX         = "",
     parameter logic [31:0] HEAP_INIT_PTR = PYCORE_HEAP_BASE,
-    parameter bit    BOOT_EN          = 1'b1
+    parameter bit    BOOT_EN          = 1'b1,
+    parameter bit    CONTAINER_CALL_SPIKE_EN = 1'b0
 ) (
     input  logic        clk_i,
     input  logic        rst_n_i,
@@ -56,7 +57,8 @@ module pycore_system #(
         .DMEM_DATA_W(DMEM_DATA_W),
         .STRING_HEX(STRING_HEX),
         .HEAP_INIT_PTR(HEAP_INIT_PTR),
-        .BOOT_EN(BOOT_EN)
+        .BOOT_EN(BOOT_EN),
+        .CONTAINER_CALL_SPIKE_EN(CONTAINER_CALL_SPIKE_EN)
     ) core (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),

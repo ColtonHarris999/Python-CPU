@@ -249,7 +249,20 @@
                         CONT_GET_ITER: begin
                             unique case (container_phase_r)
                                 CP_INIT: begin
-                                    if (pycore_is_list(cont_rs1_tag, cont_rs1_val)) begin
+                                    // §6.1 spike only: the fixture rewrites a
+                                    // zero-arg CALL to GET_ITER while preserving
+                                    // its [callable, NULL] stack.  This launches
+                                    // the existing CALL FSM and proves that its
+                                    // list return resumes this exact arm.  The
+                                    // production OBJECT path lands in step 6.
+                                    if (CONTAINER_CALL_SPIKE_EN &&
+                                        pycore_is_null(
+                                            cont_rs1_tag, cont_rs1_val)) begin
+                                        container_call_pending_r <= 1'b1;
+                                        container_phase_r <= CP_VAL;
+                                    end else if (pycore_is_list(
+                                                     cont_rs1_tag,
+                                                     cont_rs1_val)) begin
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
                                         container_wb_data_r <= pycore_make_entry(
@@ -379,6 +392,24 @@
                                         end
                                     end else begin
                                         container_type_trap_r <= 1'b1;
+                                    end
+                                end
+
+                                // Synthetic container↔CALL wait/resume phase.
+                                CP_VAL: begin
+                                    if (container_call_return_valid_r) begin
+                                        container_call_return_valid_r <= 1'b0;
+                                        container_call_returning_r <= 1'b0;
+                                        if (!pycore_is_list(
+                                                pycore_get_tag(
+                                                    container_call_result_r),
+                                                pycore_get_val(
+                                                    container_call_result_r))) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else begin
+                                            fetch_skip_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end
                                     end
                                 end
 
