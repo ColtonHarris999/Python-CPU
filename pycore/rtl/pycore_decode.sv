@@ -278,6 +278,23 @@ module pycore_decode (
                 end
             end
 
+            // Exception-handler opcodes (§7.3) — multi-cycle in S_CONTAINER.
+            PY_OP_PUSH_EXC_INFO: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
+            end
+            PY_OP_CHECK_EXC_MATCH: begin
+                rs1_sel_o = tos_index_i - 8'd1; // handler type
+                is_container_o = 1'b1;
+            end
+            PY_OP_POP_EXCEPT: begin
+                is_container_o = 1'b1;
+            end
+            PY_OP_RERAISE: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
+            end
+
             PY_OP_JUMP_FORWARD, PY_OP_JUMP_BACKWARD,
             PY_OP_POP_JUMP_IF_TRUE, PY_OP_POP_JUMP_IF_FALSE,
             PY_OP_POP_JUMP_IF_NONE, PY_OP_POP_JUMP_IF_NOT_NONE: begin

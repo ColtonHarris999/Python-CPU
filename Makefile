@@ -182,7 +182,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-load-name-builtin pycore-img-builtin-len-long-str pycore-img-builtin-len-range \
 	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
-	pycore-img-raise-stopiteration-fatal pycore-img-return-true \
+	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
+	pycore-img-try-stopiteration-nested pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
@@ -1315,7 +1316,8 @@ pycore-img-attr-all: \
 	pycore-img-load-name-builtin pycore-img-builtin-len-long-str pycore-img-builtin-len-range \
 	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
-	pycore-img-raise-stopiteration-fatal pycore-img-return-true \
+	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
+	pycore-img-try-stopiteration-nested pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
@@ -1458,6 +1460,12 @@ pycore-img-raise-varargs:
 
 pycore-img-raise-stopiteration-fatal:
 	$(call PYCORE_IMAGE_TRAP_RUN,raise_stopiteration_fatal,17,50000)
+
+pycore-img-try-stopiteration:
+	$(call PYCORE_IMAGE_RUN,try_stopiteration,100000)
+
+pycore-img-try-stopiteration-nested:
+	$(call PYCORE_IMAGE_RUN,try_stopiteration_nested,100000)
 
 pycore-img-return-true:
 	$(call PYCORE_IMAGE_RUN,return_true,50000)

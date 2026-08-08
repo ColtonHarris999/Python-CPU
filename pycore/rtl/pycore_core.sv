@@ -1048,13 +1048,20 @@ module pycore_core #(
     logic                  exc_empty;
     logic                  exc_full;
 
-    // Step 5 drives push/pop; step 4 only needs the module reset + dmem port.
-    assign exc_push_valid     = 1'b0;
-    assign exc_pop_valid      = 1'b0;
-    assign exc_push_prev_ptr  = 32'd0;
-    assign exc_push_exc_valid = 1'b0;
-    assign exc_push_exc_tag   = 4'd0;
-    assign exc_push_exc_addr  = 64'd0;
+    // Driven by CONT_PUSH_EXC_INFO / CONT_POP_EXCEPT / CONT_RERAISE.
+    logic        exc_push_valid_r;
+    logic [31:0] exc_push_prev_ptr_r;
+    logic        exc_push_exc_valid_r;
+    logic [3:0]  exc_push_exc_tag_r;
+    logic [63:0] exc_push_exc_addr_r;
+    logic        exc_pop_valid_r;
+
+    assign exc_push_valid     = exc_push_valid_r;
+    assign exc_pop_valid      = exc_pop_valid_r;
+    assign exc_push_prev_ptr  = exc_push_prev_ptr_r;
+    assign exc_push_exc_valid = exc_push_exc_valid_r;
+    assign exc_push_exc_tag   = exc_push_exc_tag_r;
+    assign exc_push_exc_addr  = exc_push_exc_addr_r;
 
     pycore_exc_stack #(
         .ADDR_WIDTH(ADDR_WIDTH)
@@ -1681,6 +1688,12 @@ module pycore_core #(
             active_exc_r             <= '0;
             active_exc_valid_r       <= 1'b0;
             iter_exhaust_type_r      <= '0;
+            exc_push_valid_r         <= 1'b0;
+            exc_push_prev_ptr_r      <= '0;
+            exc_push_exc_valid_r     <= 1'b0;
+            exc_push_exc_tag_r       <= '0;
+            exc_push_exc_addr_r      <= '0;
+            exc_pop_valid_r          <= 1'b0;
             container_attr_error_r   <= 1'b0;
             container_buf_r          <= '0;
             container_list_hdr_r     <= '0;
@@ -1924,6 +1937,14 @@ module pycore_core #(
                                     container_op_r <= CONT_SUBSCR_LIST;
                             end else if (cur_opcode_r == PY_OP_RAISE_VARARGS) begin
                                 container_op_r <= CONT_RAISE;
+                            end else if (cur_opcode_r == PY_OP_PUSH_EXC_INFO) begin
+                                container_op_r <= CONT_PUSH_EXC_INFO;
+                            end else if (cur_opcode_r == PY_OP_CHECK_EXC_MATCH) begin
+                                container_op_r <= CONT_CHECK_EXC_MATCH;
+                            end else if (cur_opcode_r == PY_OP_POP_EXCEPT) begin
+                                container_op_r <= CONT_POP_EXCEPT;
+                            end else if (cur_opcode_r == PY_OP_RERAISE) begin
+                                container_op_r <= CONT_RERAISE;
                             end
                         end
                         // state_next = S_MEM or S_CONTAINER (from always_comb)
@@ -2122,6 +2143,9 @@ module pycore_core #(
 
                             // RAISE_VARARGS 1 (§7.5)
                             `include "pycore_cont_raise.svh"
+
+                            // Handler opcodes (§7.3 / §7.6)
+                            `include "pycore_cont_exc.svh"
 
                             default: ;
 

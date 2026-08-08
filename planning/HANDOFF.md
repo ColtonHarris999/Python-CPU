@@ -9,7 +9,8 @@
   nested-call simulation spike.
 - [x] §10 step 4 — Track B dmem exc-info stack, boot/`iter_exhaust_type_r`,
   `get_exception_handler`, and §7.5 `RAISE_VARARGS` path.
-- [ ] §10 step 5
+- [x] §10 step 5 — active exception + `PUSH_EXC_INFO` / `CHECK_EXC_MATCH` /
+  `POP_EXCEPT` / `RERAISE` + §7.7 handler bytecode closure (StopIteration tests).
 - [ ] §10 step 6
 - [ ] §10 step 7
 - [ ] §10 step 8
@@ -54,46 +55,34 @@
 - Boot builtins seed a leaf `StopIteration` `OBK_TYPE`. The same handle is
   written to `ITER_EXHAUST_TYPE_ADDR` (`0x1BFE0`) and latched into
   `iter_exhaust_type_r` during `S_BOOT` (no builtins-dict probe).
-- `RAISE_VARARGS` 1 enters `CONT_RAISE`: allocate `OBK_EXCEPTION` (empty args
-  tuple `{size=0,addr=0}`), set `active_exc_*`, walk code field 7 varints as
-  relative slots, redirect on hit, else `PY_TRAP_RAISE`. Exc-stack push/pop
-  ports exist but stay idle until step 5 opcodes.
+- `RAISE_VARARGS` 1 / `CONT_RAISE`: allocate `OBK_EXCEPTION` (empty args tuple
+  `{size=0,addr=0}`), walk code field 7 varints as relative slots, redirect on
+  hit (do **not** set `active_exc_r` until `PUSH_EXC_INFO`), else set
+  `active_exc_*` and `PY_TRAP_RAISE`.
+- `PUSH_EXC_INFO`: dmem-push prior `active_exc_*`; stack `[exc]→[prev|None,exc]`;
+  set `active_exc_r` from TOS. `CHECK_EXC_MATCH`: v1 exact handle compare of
+  TOS type vs `active_exc.field0`; `[exc,type]→[exc,bool]`. `POP_EXCEPT`:
+  dmem-pop restore + pop TOS. `RERAISE` 0/1: re-enter table walk on TOS exc;
+  oparg=1 does **not** dmem-pop (cleanup bytecode already ran `POP_EXCEPT`).
 
 ## Verified
 
-- PASS — required Python 3.14 §0 preflight:
-  - `python3.14 -c "import dis; dis.dis('for x in [1]: pass')"`
-  - `python3.14 -c "import dis; dis.dis(compile('def f(): return [x for x in range(3)]','<x>','exec'))"`
-  - `python3.14 -c "from dis import _parse_exception_table; ..."`
-  - `python3.14 -c "import dis; ...; dis.dis(co)"`
 - PASS — `make PYTHON=python3.14 pycore-python-tests` (216 tests).
 - PASS — `make PYTHON=python3.14 pycore-img-raise-varargs` (trap 17).
-- PASS — `make PYTHON=python3.14 pycore-img-raise-stopiteration-fatal`
-  (trap 17; empty table miss after `OBK_EXCEPTION` build).
-- PASS — `make PYTHON=python3.14 pycore-img-for-iter-all`.
-- PASS — `make PYTHON=python3.14 pycore-img-container-call-spike`
-  (`len == 3`; 756 cycles).
-- BLOCKED — `make docker-all-tests` could not start because Docker is not
-  running:
-
-  ```text
-  ERROR: failed to connect to the docker API at unix:///var/run/docker.sock;
-  check if the path is correct and if the daemon is running:
-  dial unix /var/run/docker.sock: connect: no such file or directory
-  make: *** [docker-build] Error 1
-  ```
+- PASS — `make PYTHON=python3.14 pycore-img-raise-stopiteration-fatal` (trap 17).
+- PASS — `make PYTHON=python3.14 pycore-img-try-stopiteration` (golden 7; 513 cycles).
+- PASS — `make PYTHON=python3.14 pycore-img-try-stopiteration-nested`
+  (golden 11; 894 cycles; dmem exc-info + cleanup `RERAISE` 1).
+- BLOCKED — `make docker-all-tests` (no Docker daemon).
 
 ## Next session
 
-Implement exactly §10 step 5: Track B active-exception registers +
-`PUSH_EXC_INFO` / `CHECK_EXC_MATCH` / `POP_EXCEPT` / `RERAISE` + §7.7 handler
-bytecode closure. Do not start object iteration from step 6 or list-comp from
-step 7.
+Implement exactly §10 step 6: Track A GET_ITER object + HEAP_ITER + FOR_ITER
++ §6.1.1 container protocol raise boundary (`exc_type_matches` +
+`iter_exhaust_type_r`). Do not start list-comp Track C (step 7) or docs-only
+step 8.
 
 ## Blockers
 
 - Required Docker CI remains unrun because no Docker daemon is available.
-  Reproduce with `make docker-all-tests` after starting Docker.
-- Real `try/except StopIteration` image tests stay deferred to step 5 (need
-  unlocked `PUSH_EXC_INFO` / `CHECK_EXC_MATCH` / `POP_EXCEPT` / `RERAISE`).
-- No open implementation questions or truncated §10 step 4 work.
+- No open implementation questions or truncated §10 step 5 work.

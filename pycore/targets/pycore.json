@@ -457,7 +457,36 @@
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR",
-      "note": "minimal oparg=1 support: accepts TOS and raises fatal PY_TRAP_RAISE"
+      "obj_group": "OBJ_EXC",
+      "note": "oparg=1 builds OBK_EXCEPTION, walks co_exceptiontable, redirects or PY_TRAP_RAISE"
+    },
+    "PUSH_EXC_INFO": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "note": "dmem exc-info push + stack [prev, exc]; sets active_exc_r"
+    },
+    "CHECK_EXC_MATCH": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "note": "v1 exact type-handle match against active_exc.field0; [exc,type]->[exc,bool]"
+    },
+    "POP_EXCEPT": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "note": "pop dmem exc-info node; restore active_exc_*; pop TOS prev"
+    },
+    "RERAISE": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "note": "re-raise TOS through table walk; oparg=1 restores outer active first"
     },
     "RESUME": {
       "support": "strip",

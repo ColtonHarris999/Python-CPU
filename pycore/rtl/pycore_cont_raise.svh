@@ -74,9 +74,8 @@ CONT_RAISE: begin
                         container_probe_r        <= 32'd5;
                     end
                     default: begin
-                        active_exc_r <= pycore_make_entry(
-                            PY_TAG_OBJECT, {{96{1'b0}}, container_base_r});
-                        active_exc_valid_r <= 1'b1;
+                        // Exception object ready. active_exc_r is set only on
+                        // table miss (fatal) or by PUSH_EXC_INFO on a hit.
                         tos_r              <= tos_r - RF_AW'(1);
                         container_tag_r    <= PY_TAG_OBJECT;
                         container_val_r    <= {{96{1'b0}}, container_base_r};
@@ -107,6 +106,9 @@ CONT_RAISE: begin
                 if (container_rd_data_r[3:0] != PY_TAG_TUPLE) begin
                     container_type_trap_r <= 1'b1;
                 end else if (container_slot_count_r == 32'd0) begin
+                    active_exc_r          <= pycore_make_entry(
+                        PY_TAG_OBJECT, container_val_r);
+                    active_exc_valid_r    <= 1'b1;
                     container_raise_trap_r <= 1'b1;
                     fetch_skip_r          <= 1'b1;
                     container_phase_r     <= CP_DONE;
@@ -155,6 +157,9 @@ CONT_RAISE: begin
                     if (container_order_shift_val_r[6]) begin
                         if ((container_probe_r + 32'd1) >=
                                 container_slot_count_r) begin
+                            active_exc_r           <= pycore_make_entry(
+                                PY_TAG_OBJECT, container_val_r);
+                            active_exc_valid_r     <= 1'b1;
                             container_raise_trap_r <= 1'b1;
                             fetch_skip_r          <= 1'b1;
                             container_phase_r     <= CP_DONE;
@@ -203,6 +208,9 @@ CONT_RAISE: begin
                 endcase
                 if (container_order_idx_r[1:0] != 2'd3) begin
                     if (container_probe_r >= container_slot_count_r) begin
+                        active_exc_r           <= pycore_make_entry(
+                            PY_TAG_OBJECT, container_val_r);
+                        active_exc_valid_r     <= 1'b1;
                         container_raise_trap_r <= 1'b1;
                         fetch_skip_r          <= 1'b1;
                         container_phase_r     <= CP_DONE;
@@ -253,6 +261,9 @@ CONT_RAISE: begin
                     container_phase_r  <= CP_DONE;
                 end
             end else if (container_probe_r >= container_slot_count_r) begin
+                active_exc_r           <= pycore_make_entry(
+                    PY_TAG_OBJECT, container_val_r);
+                active_exc_valid_r     <= 1'b1;
                 container_raise_trap_r <= 1'b1;
                 fetch_skip_r          <= 1'b1;
                 container_phase_r     <= CP_DONE;
