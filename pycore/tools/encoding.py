@@ -72,8 +72,12 @@ IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
 BOOT_RECORD_ADDR = 0x03E0
 BOOT_RECORD_BYTES = 96
 HEAP_BASE = BOOT_RECORD_ADDR + BOOT_RECORD_BYTES  # 0x0440
-# Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (below frame stack at 0x1C000).
-HEAP_LIMIT = 0x1C000
+# Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (below exc-info arena at 0x1B000).
+HEAP_LIMIT = 0x1B000
+# Exc-info stack arena (§5.5); last tagged entry holds the boot StopIteration latch.
+EXC_STACK_BASE = 0x1B000
+EXC_STACK_BYTES = 0x1000
+ITER_EXHAUST_TYPE_ADDR = EXC_STACK_BASE + EXC_STACK_BYTES - 32  # 0x1BFE0
 
 # Code-object field indices (tuple-element convention at code addr).
 CODE_FIELD_ENTRY_SLOT = 0

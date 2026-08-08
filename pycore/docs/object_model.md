@@ -61,11 +61,15 @@ Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
 module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
 `bytearray` / `max` / `len` / `_bi_print` / `range` / `set` as `OBK_BUILTIN`
 handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
-`to_bytes`, and ROM firmware names (`print`, `sum`, `abs`, `bool`, `all`,
-`any`, `enumerate`, `map`, `zip`, …) as `CODE_OBJECT` handles from
-`ROM_FIRMWARE_BUILTINS` in `image_from_source.py`. Public `print` is the
-ROM wrapper; `_bi_print` (`BI_PRINT`) is the one-arg `CONSOLE_TX` sink.
-Total boot record size is `BOOT_RECORD_BYTES = 96`.
+`to_bytes`, `StopIteration` as a leaf `OBK_TYPE` (`tp_base = None`), and ROM
+firmware names (`print`, `sum`, `abs`, `bool`, `all`, `any`, `enumerate`,
+`map`, `zip`, …) as `CODE_OBJECT` handles from `ROM_FIRMWARE_BUILTINS` in
+`image_from_source.py`. Public `print` is the ROM wrapper; `_bi_print`
+(`BI_PRINT`) is the one-arg `CONSOLE_TX` sink. The same `StopIteration`
+handle is also written to the exc-arena sidecar at
+`ITER_EXHAUST_TYPE_ADDR` (`0x1BFE0`) so `S_BOOT` can latch
+`iter_exhaust_type_r` without probing the builtins dict. Total boot record
+size is `BOOT_RECORD_BYTES = 96`.
 
 **Resolution:** `LOAD_GLOBAL` / `LOAD_NAME` probe globals, then this
 builtins dict (LEGB **B**). **CALL** on an `OBK_BUILTIN` handle dispatches

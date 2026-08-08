@@ -453,6 +453,11 @@ module pycore_core #(
     // value persists for exactly one clock cycle.
     logic                          container_type_trap_r;
     logic                          container_mem_fault_r;
+    logic                          container_raise_trap_r;
+    // Active exception (§7.6) + boot StopIteration latch (§7.4).
+    logic [PYCORE_ENTRY_WIDTH-1:0] active_exc_r;
+    logic                          active_exc_valid_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] iter_exhaust_type_r;
     // One-cycle pulse: LOAD/DELETE_ATTR miss after __dict__ + MRO → ATTR_ERROR.
     logic                          container_attr_error_r;
 
@@ -619,8 +624,8 @@ module pycore_core #(
                 id_tos_delta = -3'sd1;
             end
             PY_OP_RAISE_VARARGS: begin
-                // The fatal trap is raised in EX before any pop can commit.
-                id_tos_delta = -3'sd1;
+                // CONT_RAISE pops TOS; keep WB delta at 0 for the container path.
+                id_tos_delta = 3'sd0;
             end
             PY_OP_POP_JUMP_IF_TRUE, PY_OP_POP_JUMP_IF_FALSE,
             PY_OP_POP_JUMP_IF_NONE, PY_OP_POP_JUMP_IF_NOT_NONE: begin
@@ -815,12 +820,10 @@ module pycore_core #(
                 end
                 ex_entry = rs1_r;
             end
-            // RAISE_VARARGS 1: accept any TOS and halt with PY_TRAP_RAISE.
-            // Other arities are outside the minimal exception subset.
+            // RAISE_VARARGS 1 routes to CONT_RAISE (S_CONTAINER). Other arities
+            // remain outside the supported subset.
             PY_OP_RAISE_VARARGS: begin
-                if (cur_arg_r == 32'd1) begin
-                    exec_raise_pulse = (state_r == S_EXEC);
-                end else begin
+                if (cur_arg_r != 32'd1) begin
                     exec_type_trap_pulse = (state_r == S_EXEC);
                 end
                 ex_entry = rs1_r;
@@ -1008,18 +1011,82 @@ module pycore_core #(
     );
 
     // ---------------------------------------------------------------------
-    // Dmem mux: three sources share the single dmem port.
+    // Dmem mux: four sources share the single dmem port.
     //   1. frame_dmem_active (S_CALL / S_RETURN): frame push/pop.
     //   2. container_dmem_active: heap alloc / element R/W (S_CONTAINER)
     //      AND boot-record + code-object field reads (S_BOOT, S_CALL,
     //      S_RETURN before frame_dmem_pending_r goes high).
-    //   3. ms_dmem_* (S_MEM): normal PTR load/store.
+    //   3. exc_dmem_active: exc-info stack push/pop (§5.5; step 5 opcodes).
+    //   4. ms_dmem_* (S_MEM): normal PTR load/store.
     // Only one of container_dmem_pending_r / frame_dmem_pending_r may be
     // high at a time (the FSM issues them sequentially); S_MEM never
     // overlaps with 1 or 2.
     // ---------------------------------------------------------------------
     logic frame_dmem_active;
     logic container_dmem_active;
+    logic exc_dmem_active;
+    logic                  exc_push_valid;
+    logic                  exc_pop_valid;
+    logic [31:0]           exc_push_prev_ptr;
+    logic                  exc_push_exc_valid;
+    logic [3:0]            exc_push_exc_tag;
+    logic [63:0]           exc_push_exc_addr;
+    logic                  exc_push_ready;
+    logic                  exc_push_fault;
+    logic                  exc_pop_ready;
+    logic                  exc_pop_fault;
+    logic [31:0]           exc_pop_prev_ptr;
+    logic                  exc_pop_exc_valid;
+    logic [3:0]            exc_pop_exc_tag;
+    logic [63:0]           exc_pop_exc_addr;
+    logic                  exc_dmem_req;
+    logic                  exc_dmem_we;
+    logic [ADDR_WIDTH-1:0] exc_dmem_addr;
+    logic [127:0]          exc_dmem_wdata;
+    logic [ADDR_WIDTH-1:0] exc_sp;
+    logic [ADDR_WIDTH-1:0] exc_head;
+    logic                  exc_empty;
+    logic                  exc_full;
+
+    // Step 5 drives push/pop; step 4 only needs the module reset + dmem port.
+    assign exc_push_valid     = 1'b0;
+    assign exc_pop_valid      = 1'b0;
+    assign exc_push_prev_ptr  = 32'd0;
+    assign exc_push_exc_valid = 1'b0;
+    assign exc_push_exc_tag   = 4'd0;
+    assign exc_push_exc_addr  = 64'd0;
+
+    pycore_exc_stack #(
+        .ADDR_WIDTH(ADDR_WIDTH)
+    ) u_exc_stack (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .exc_sp_o(exc_sp),
+        .exc_head_o(exc_head),
+        .empty_o(exc_empty),
+        .full_o(exc_full),
+        .push_valid_i(exc_push_valid),
+        .push_prev_ptr_i(exc_push_prev_ptr),
+        .push_exc_valid_i(exc_push_exc_valid),
+        .push_exc_tag_i(exc_push_exc_tag),
+        .push_exc_addr_i(exc_push_exc_addr),
+        .push_ready_o(exc_push_ready),
+        .push_fault_o(exc_push_fault),
+        .pop_valid_i(exc_pop_valid),
+        .pop_ready_o(exc_pop_ready),
+        .pop_fault_o(exc_pop_fault),
+        .pop_prev_ptr_o(exc_pop_prev_ptr),
+        .pop_exc_valid_o(exc_pop_exc_valid),
+        .pop_exc_tag_o(exc_pop_exc_tag),
+        .pop_exc_addr_o(exc_pop_exc_addr),
+        .dmem_req_o(exc_dmem_req),
+        .dmem_we_o(exc_dmem_we),
+        .dmem_addr_o(exc_dmem_addr),
+        .dmem_wdata_o(exc_dmem_wdata),
+        .dmem_ack_i(dmem_ack_i),
+        .dmem_rdata_i(dmem_rdata_i)
+    );
+
     assign frame_dmem_active     = frame_dmem_pending_r &&
                                    ((state_r == S_CALL) || (state_r == S_RETURN));
     assign container_dmem_active = container_dmem_pending_r &&
@@ -1027,16 +1094,22 @@ module pycore_core #(
                                     (state_r == S_BOOT)      ||
                                     (state_r == S_CALL)      ||
                                     (state_r == S_RETURN));
+    assign exc_dmem_active       = exc_dmem_req &&
+                                   !frame_dmem_active && !container_dmem_active;
 
     assign dmem_req_o   = frame_dmem_active     ? 1'b1 :
-                          container_dmem_active ? 1'b1 : ms_dmem_req;
+                          container_dmem_active ? 1'b1 :
+                          exc_dmem_active       ? 1'b1 : ms_dmem_req;
     assign dmem_we_o    = frame_dmem_active     ? (state_r == S_CALL) :
-                          container_dmem_active ? container_dmem_we_r  : ms_dmem_we;
+                          container_dmem_active ? container_dmem_we_r  :
+                          exc_dmem_active       ? exc_dmem_we         : ms_dmem_we;
     assign dmem_addr_o  = frame_dmem_active     ?
                               ((state_r == S_CALL) ? frame_push_addr : frame_pop_addr) :
-                          container_dmem_active ? container_dmem_addr_r  : ms_dmem_addr;
+                          container_dmem_active ? container_dmem_addr_r :
+                          exc_dmem_active       ? exc_dmem_addr        : ms_dmem_addr;
     assign dmem_wdata_o = frame_dmem_active     ? frame_push_data :
-                          container_dmem_active ? container_dmem_wdata_r : ms_dmem_wdata;
+                          container_dmem_active ? container_dmem_wdata_r :
+                          exc_dmem_active       ? exc_dmem_wdata       : ms_dmem_wdata;
 
     // ---------------------------------------------------------------------
     // Trap aggregation (single in-flight instruction).
@@ -1090,7 +1163,8 @@ module pycore_core #(
                             exec_mem_fault_pulse ||
                             container_mem_fault_r ||
                             imem_fault_i ||
-                            ((container_dmem_active || frame_dmem_active) &&
+                            ((container_dmem_active || frame_dmem_active ||
+                              exc_dmem_active) &&
                              dmem_ack_i && dmem_fault_i);
     assign addr_align_sig = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ADDR_ALIGN)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_ADDR_ALIGN));
@@ -1112,7 +1186,7 @@ module pycore_core #(
     logic attr_error_sig;
     assign attr_error_sig     = container_attr_error_r;
     logic raise_sig;
-    assign raise_sig          = exec_raise_pulse;
+    assign raise_sig          = exec_raise_pulse || container_raise_trap_r;
     // Phase C: excore reported RES_FATAL for a trap it was handed — forward
     // its fatal_code as a normal halt (see S_TRAP_WAIT).
     logic excore_fatal_sig;
@@ -1603,6 +1677,10 @@ module pycore_core #(
             container_wb_data_r      <= '0;
             container_type_trap_r    <= 1'b0;
             container_mem_fault_r    <= 1'b0;
+            container_raise_trap_r   <= 1'b0;
+            active_exc_r             <= '0;
+            active_exc_valid_r       <= 1'b0;
+            iter_exhaust_type_r      <= '0;
             container_attr_error_r   <= 1'b0;
             container_buf_r          <= '0;
             container_list_hdr_r     <= '0;
@@ -1661,8 +1739,9 @@ module pycore_core #(
             return_wb_we_r       <= 1'b0;
             return_type_trap_r   <= 1'b0;
             container_wb_we_r     <= 1'b0;
-            container_type_trap_r <= 1'b0;
-            container_mem_fault_r <= 1'b0;
+            container_type_trap_r  <= 1'b0;
+            container_mem_fault_r  <= 1'b0;
+            container_raise_trap_r <= 1'b0;
             container_attr_error_r <= 1'b0;
             container_list_grow_trap_r   <= 1'b0;
             container_list_extend_trap_r <= 1'b0;
@@ -1715,6 +1794,7 @@ module pycore_core #(
                             container_dmem_pending_r <= 1'b0;
                             container_type_trap_r    <= 1'b0;
                             container_mem_fault_r    <= 1'b0;
+                            container_raise_trap_r   <= 1'b0;
                             container_attr_error_r   <= 1'b0;
                             container_wb_we_r        <= 1'b0;
                             container_contam_r       <= 1'b0;
@@ -1842,6 +1922,8 @@ module pycore_core #(
                                     container_op_r <= CONT_SUBSCR_TUPLE;
                                 else
                                     container_op_r <= CONT_SUBSCR_LIST;
+                            end else if (cur_opcode_r == PY_OP_RAISE_VARARGS) begin
+                                container_op_r <= CONT_RAISE;
                             end
                         end
                         // state_next = S_MEM or S_CONTAINER (from always_comb)
@@ -2038,6 +2120,9 @@ module pycore_core #(
                             // Name/global/RF helpers (+ future object attrs)
                             `include "pycore_cont_object.svh"
 
+                            // RAISE_VARARGS 1 (§7.5)
+                            `include "pycore_cont_raise.svh"
+
                             default: ;
 
                         endcase
@@ -2057,8 +2142,9 @@ module pycore_core #(
                 //   Phase 6 : verify builtins DICT; issue entry_slot.
                 //   Phase 7 : latch entry_slot; issue co_consts.
                 //   Phase 8 : latch consts_base_r; issue co_names.
-                //   Phase 9 : latch names_base_r; go to redirect.
-                //   Phase 10: redirect fetch to entry_slot; go DONE.
+                //   Phase 9 : latch names_base_r; issue StopIteration sidecar VAL.
+                //   Phase 10: latch sidecar VAL; issue sidecar TAG.
+                //   Phase 11: latch iter_exhaust_type_r; redirect fetch.
                 //   Phase 15: terminal marker → S_FETCH.
                 //
                 // Boot record layout (see pycore_defs.svh):
@@ -2181,14 +2267,34 @@ module pycore_core #(
                         4'd9: begin
                             if (!container_dmem_pending_r) begin
                                 names_base_r <= container_rd_data_r;
-                                boot_phase_r <= 4'd10;
+                                container_dmem_addr_r    <=
+                                    PYCORE_ITER_EXHAUST_TYPE_ADDR;
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_pending_r <= 1'b1;
+                                boot_phase_r             <= 4'd10;
                             end
                         end
 
                         4'd10: begin
-                            redirect_pending_r <= 1'b1;
-                            redirect_tgt_r     <= call_entry_slot_r[31:0];
-                            boot_phase_r       <= BOOT_PHASE_DONE;
+                            if (!container_dmem_pending_r) begin
+                                // Sidecar VAL half of the StopIteration handle.
+                                container_val_r <= container_rd_data_r;
+                                container_dmem_addr_r    <=
+                                    PYCORE_ITER_EXHAUST_TYPE_ADDR + 32'd16;
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_pending_r <= 1'b1;
+                                boot_phase_r             <= 4'd11;
+                            end
+                        end
+
+                        4'd11: begin
+                            if (!container_dmem_pending_r) begin
+                                iter_exhaust_type_r <= pycore_make_entry(
+                                    container_rd_data_r[3:0], container_val_r);
+                                redirect_pending_r <= 1'b1;
+                                redirect_tgt_r     <= call_entry_slot_r[31:0];
+                                boot_phase_r       <= BOOT_PHASE_DONE;
+                            end
                         end
 
                         default: ;

@@ -133,6 +133,27 @@ class RomFirmwareSeedTest(unittest.TestCase):
             {"sep": " ", "end": "\n"},
         )
 
+    def test_stopiteration_seeded_and_sidecared(self) -> None:
+        from encoding import (
+            ITER_EXHAUST_TYPE_ADDR,
+            MUT_DICT,
+            OBK_TYPE,
+            TAG_MUT_COLLEC,
+            TAG_OBJECT,
+            is_mut_kind,
+            ob_kind,
+        )
+
+        serializer = image_from_source._ImageSerializer()
+        builtins = image_from_source.build_builtins_dict(serializer)
+        self.assertEqual(builtins[0], TAG_MUT_COLLEC)
+        self.assertTrue(is_mut_kind(builtins, MUT_DICT))
+        words = serializer.heap.words
+        self.assertIn(ITER_EXHAUST_TYPE_ADDR, words)
+        self.assertEqual(words[ITER_EXHAUST_TYPE_ADDR + 16] & 0xF, TAG_OBJECT)
+        type_addr = words[ITER_EXHAUST_TYPE_ADDR] & ((1 << 64) - 1)
+        self.assertEqual(ob_kind(words[type_addr]), OBK_TYPE)
+
     def test_bi_print_seeded_as_native_builtin(self) -> None:
         from encoding import (
             BI_PRINT,

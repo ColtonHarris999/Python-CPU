@@ -26,6 +26,7 @@ from encoding import (
     CODE_OBJECT_NFIELDS,
     HEAP_BASE,
     HEAP_LIMIT,
+    ITER_EXHAUST_TYPE_ADDR,
     OBK_BOUND_METHOD,
     OBK_BUILTIN,
     OBK_BYTEARRAY,
@@ -621,6 +622,16 @@ class HeapImageBuilder:
         self._write_tagged(addr + 32, globals_dict[0], globals_dict[1])
         self._write_tagged(addr + 64, builtins_dict[0], builtins_dict[1])
 
+    def write_iter_exhaust_type(self, stop_iteration: Tagged) -> None:
+        """Write the boot StopIteration handle into the exc-arena sidecar."""
+        if stop_iteration[0] != TAG_OBJECT:
+            raise ValueError("iter exhaust type must be an OBJECT handle")
+        if ITER_EXHAUST_TYPE_ADDR % 16 != 0:
+            raise ValueError("ITER_EXHAUST_TYPE_ADDR must be 16-byte aligned")
+        self._write_tagged(
+            ITER_EXHAUST_TYPE_ADDR, stop_iteration[0], stop_iteration[1]
+        )
+
     def alloc_empty_globals(self, n_store_names: int) -> Tagged:
         """Empty dict pre-sized for runtime STORE_NAME / STORE_GLOBAL inserts."""
         slots = dict_slot_count_for_stores(n_store_names)
@@ -633,11 +644,20 @@ class HeapImageBuilder:
         Missing addresses are written as zero so the file covers the full bank
         span when total_bytes is set (default: end of image rounded up, at
         least through self.ptr).
+
+        Words at or above ``HEAP_LIMIT`` (exc-arena sidecars) are appended with
+        ``$readmemh`` ``@`` address directives so images stay compact.
         """
         path = pathlib.Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        contiguous_addrs = [a for a in self.words if a < HEAP_LIMIT]
+        sparse_addrs = sorted(a for a in self.words if a >= HEAP_LIMIT)
         if total_bytes is None:
-            total_bytes = max(self.ptr, max(self.words.keys(), default=0) + 16)
+            cont_end = max(
+                self.ptr,
+                (max(contiguous_addrs) + 16) if contiguous_addrs else 0,
+            )
+            total_bytes = cont_end
         # Round up to a whole word.
         nwords = (total_bytes + 15) // 16
         lines: list[str] = []
@@ -645,4 +665,7 @@ class HeapImageBuilder:
             addr = i * 16
             word = self.words.get(addr, 0)
             lines.append(f"{word:032x}")
+        for addr in sparse_addrs:
+            lines.append(f"@{addr >> 4:x}")
+            lines.append(f"{self.words[addr]:032x}")
         path.write_text("\n".join(lines) + "\n", encoding="ascii")

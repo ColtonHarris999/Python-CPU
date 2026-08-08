@@ -266,12 +266,16 @@ module pycore_decode (
                 alu_op_o = PY_ALU_PASS;
             end
 
-            // RAISE_VARARGS: minimal fatal raise path.  oparg validation and
-            // PY_TRAP_RAISE pulse are handled in core EX.
+            // RAISE_VARARGS 1: CONT_RAISE builds OBK_EXCEPTION and walks the
+            // exception table (§7.5). Other arities still type-trap in EX.
             PY_OP_RAISE_VARARGS: begin
                 rs1_sel_o = tos_index_i - 8'd1;
-                pop_stack_o = 1'b1;
                 alu_op_o = PY_ALU_PASS;
+                if (arg_i == 32'd1) begin
+                    is_container_o = 1'b1;
+                end else begin
+                    pop_stack_o = 1'b1;
+                end
             end
 
             PY_OP_JUMP_FORWARD, PY_OP_JUMP_BACKWARD,

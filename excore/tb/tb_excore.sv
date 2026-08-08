@@ -440,10 +440,10 @@ module tb_excore #(
         // Scenario 4: OOM -> FATAL(MEM_FAULT), memory untouched.
         // ------------------------------------------------------------------
         do_reset();
-        obj_addr = 32'h1BF00;
-        old_buf  = 32'h1BF20;
+        obj_addr = 32'h1AF00;
+        old_buf  = 32'h1AF20;
         // new_cap would be 8 (doubling from 4); 8*32=256B from a heap_ptr
-        // near the limit overflows PYCORE_HEAP_LIMIT (0x1C000).
+        // near the limit overflows PYCORE_HEAP_LIMIT (0x1B000).
         poke_slot(obj_addr, {64'd4, 64'd2});
         poke_slot(obj_addr + 16, {96'd0, old_buf});
         poke_slot(old_buf,      128'd1);
@@ -451,7 +451,7 @@ module tb_excore #(
         poke_slot(old_buf + 32, 128'd2);
         poke_slot(old_buf + 48, {124'b0, 4'd1});
 
-        run_list_grow(obj_addr, {4'd1, 128'd7}, 32'h1BF80, 20000);
+        run_list_grow(obj_addr, {4'd1, 128'd7}, 32'h1AF80, 20000);
 
         check(res_code == RES_FATAL, "scenario4: expected RES_FATAL");
         check(res_fatal_code == PY_TRAP_MEM_FAULT,

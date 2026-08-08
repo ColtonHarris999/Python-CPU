@@ -1096,7 +1096,11 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     Entries:
       bytearray / max / len / _bi_print / range / set → OBK_BUILTIN (bound_self=NULL)
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
+      StopIteration → leaf OBK_TYPE (tp_base = None / 0) for RAISE / except
       ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
+
+    Also writes the StopIteration handle to the exc-arena boot sidecar so
+    ``S_BOOT`` can latch ``iter_exhaust_type_r`` without a dict probe.
     """
     heap = serializer.heap
     string_heap = serializer.string_heap
@@ -1113,6 +1117,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         tag_constant("int", string_heap),
         tp_dict=int_tp_dict,
     )
+    stop_iteration = heap.alloc_type(tag_constant("StopIteration", string_heap))
+    heap.write_iter_exhaust_type(stop_iteration)
     pairs: list[tuple[Tagged, Tagged]] = [
         (tag_constant("bytearray", string_heap), heap.alloc_builtin(BI_BYTEARRAY)),
         (tag_constant("max", string_heap), heap.alloc_builtin(BI_MAX)),
@@ -1122,6 +1128,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (tag_constant("range", string_heap), heap.alloc_builtin(BI_RANGE)),
         (tag_constant("set", string_heap), heap.alloc_builtin(BI_SET)),
         (tag_constant("int", string_heap), int_type),
+        (tag_constant("StopIteration", string_heap), stop_iteration),
     ]
     pairs.extend(seed_rom_firmware_builtins(serializer))
     return heap.alloc_dict(pairs, slot_count=dict_min_slots(len(pairs)))

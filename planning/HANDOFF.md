@@ -7,7 +7,8 @@
   host byte-offset-to-slot conversion, and unit tests.
 - [x] §10 step 3 — container↔CALL pause/resume contract plus a synthetic
   nested-call simulation spike.
-- [ ] §10 step 4
+- [x] §10 step 4 — Track B dmem exc-info stack, boot/`iter_exhaust_type_r`,
+  `get_exception_handler`, and §7.5 `RAISE_VARARGS` path.
 - [ ] §10 step 5
 - [ ] §10 step 6
 - [ ] §10 step 7
@@ -25,7 +26,8 @@
   (target >> 1)` (§5.6). RTL must not redo byte-offset arithmetic.
 - Do not update the RTL code-object constants in `pycore_defs.svh` before §10
   step 8; those constants are currently documentation-only and have no RTL
-  consumers.
+  consumers. Field index 7 is readable via `pycore_code_field_val_addr` /
+  `PYCORE_CODE_FIELD_CO_EXCEPTIONTABLE` without bumping `CODE_NFIELDS`.
 - A container arm launches a protocol call only after arranging an ordinary
   positional-CALL RF layout, moving to its wait phase, and setting
   `container_call_pending_r`. The shared handoff snapshots the container
@@ -47,6 +49,15 @@
   `CONT_GET_ITER` arm consumes an already CALL-ready `[callable, NULL]` stack;
   real OBJECT resolution, bound-self staging, and HEAP_ITER behavior remain
   §10 step 6.
+- Heap ends at `PYCORE_HEAP_LIMIT = 0x1B000`. Exc-info arena occupies
+  `0x1B000–0x1BFFF` (`pycore_exc_stack`); frame stack remains `0x1C000–0x1FFFF`.
+- Boot builtins seed a leaf `StopIteration` `OBK_TYPE`. The same handle is
+  written to `ITER_EXHAUST_TYPE_ADDR` (`0x1BFE0`) and latched into
+  `iter_exhaust_type_r` during `S_BOOT` (no builtins-dict probe).
+- `RAISE_VARARGS` 1 enters `CONT_RAISE`: allocate `OBK_EXCEPTION` (empty args
+  tuple `{size=0,addr=0}`), set `active_exc_*`, walk code field 7 varints as
+  relative slots, redirect on hit, else `PY_TRAP_RAISE`. Exc-stack push/pop
+  ports exist but stay idle until step 5 opcodes.
 
 ## Verified
 
@@ -55,15 +66,13 @@
   - `python3.14 -c "import dis; dis.dis(compile('def f(): return [x for x in range(3)]','<x>','exec'))"`
   - `python3.14 -c "from dis import _parse_exception_table; ..."`
   - `python3.14 -c "import dis; ...; dis.dis(co)"`
-- PASS — `PYTHONPATH=pycore/tools python3.14 -m unittest pycore.tests.test_exception_table pycore.tests.test_image_from_source`
-  (53 tests).
-- PASS — `make PYTHON=python3.14 pycore-python-tests` (215 tests).
-- PASS — `make PYTHON=python3.14 pycore-img-for-iter-all` (all native
-  `img_for_iter_*` regressions).
+- PASS — `make PYTHON=python3.14 pycore-python-tests` (216 tests).
+- PASS — `make PYTHON=python3.14 pycore-img-raise-varargs` (trap 17).
+- PASS — `make PYTHON=python3.14 pycore-img-raise-stopiteration-fatal`
+  (trap 17; empty table miss after `OBK_EXCEPTION` build).
+- PASS — `make PYTHON=python3.14 pycore-img-for-iter-all`.
 - PASS — `make PYTHON=python3.14 pycore-img-container-call-spike`
-  (`__iter__` launches from `S_CONTAINER`, makes a nested ordinary CALL,
-  returns a three-element LIST, resumes the paused arm, then returns `len == 3`;
-  751 cycles).
+  (`len == 3`; 756 cycles).
 - BLOCKED — `make docker-all-tests` could not start because Docker is not
   running:
 
@@ -76,15 +85,15 @@
 
 ## Next session
 
-Implement exactly §10 step 4: Track B dmem exception stack,
-boot/`iter_exhaust_type_r` (§7.4), `get_exception_handler`, and the §7.5 raise
-path. Do not start active-exception opcodes from step 5 or object iteration from
-step 6.
+Implement exactly §10 step 5: Track B active-exception registers +
+`PUSH_EXC_INFO` / `CHECK_EXC_MATCH` / `POP_EXCEPT` / `RERAISE` + §7.7 handler
+bytecode closure. Do not start object iteration from step 6 or list-comp from
+step 7.
 
 ## Blockers
 
 - Required Docker CI remains unrun because no Docker daemon is available.
   Reproduce with `make docker-all-tests` after starting Docker.
-- Production bound-method/self staging is intentionally deferred to §10 step 6;
-  the default-off synthetic trigger tests only the shared step 3 handoff.
-- No open implementation questions or truncated §10 step 3 work.
+- Real `try/except StopIteration` image tests stay deferred to step 5 (need
+  unlocked `PUSH_EXC_INFO` / `CHECK_EXC_MATCH` / `POP_EXCEPT` / `RERAISE`).
+- No open implementation questions or truncated §10 step 4 work.

@@ -1670,11 +1670,20 @@ endfunction
 // Default memory map (DMEM_BLOCK_COUNT=32 → 128 KB):
 //   0x00000 – 0x003DF  reserved / user PTR data
 //   0x003E0 – 0x0043F  boot record (96 B: code / globals / builtins)
-//   0x00440 – 0x1BFFF  container heap (this region)
+//   0x00440 – 0x1AFFF  container heap (this region)
+//   0x1B000 – 0x1BFFF  (4 KB) exc-info stack arena (§5.5)
 //   0x1C000 – 0x1FFFF  (16 KB) call-frame stack
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0440;
-localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0001_C000;
+localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0001_B000;
+localparam logic [31:0] PYCORE_EXC_STACK_BASE  = 32'h0001_B000;
+localparam logic [31:0] PYCORE_EXC_STACK_BYTES = 32'h0000_1000;
+localparam logic [31:0] PYCORE_EXC_NODE_BYTES  = 32'd32;
+localparam logic [31:0] PYCORE_EXC_STACK_MAX   = 32'd128;
+// Boot sidecar: StopIteration type handle written by image_from_source and
+// latched into iter_exhaust_type_r during S_BOOT (same type seeded in builtins).
+localparam logic [31:0] PYCORE_ITER_EXHAUST_TYPE_ADDR =
+    PYCORE_EXC_STACK_BASE + PYCORE_EXC_STACK_BYTES - 32'd32;
 
 // -------------------------------------------------------------------------
 // LIST in-dmem layout v2 — growable split object/buffer (Phase A).
@@ -1860,6 +1869,10 @@ localparam logic [31:0] PYCORE_CODE_FIELD_METADATA      = 32'd3;
 localparam logic [31:0] PYCORE_CODE_FIELD_CO_DEFAULTS   = 32'd4;
 localparam logic [31:0] PYCORE_CODE_FIELD_CO_VARNAMES   = 32'd5;
 localparam logic [31:0] PYCORE_CODE_FIELD_CO_KWDEFAULTS = 32'd6;
+// Field 7 is co_exceptiontable (host already serializes 8 fields / 256 B).
+// CODE_NFIELDS / CODE_OBJECT_BYTES stay documentation-only at 7/224 until
+// §10 step 8; pycore_code_field_* helpers are index-based and already work.
+localparam logic [31:0] PYCORE_CODE_FIELD_CO_EXCEPTIONTABLE = 32'd7;
 localparam logic [31:0] PYCORE_CODE_NFIELDS             = 32'd7;
 localparam logic [31:0] PYCORE_CODE_OBJECT_BYTES        = 32'd224;
 
