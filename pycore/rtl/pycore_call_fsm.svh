@@ -2743,6 +2743,9 @@
                                     // the returned value in RF; result_r gives
                                     // the resumed arm a stable copy even though
                                     // rs1_r will be restored to the iterator.
+                                    // Protocol raise unwind (§6.1.1) restores
+                                    // the same context but leaves call_exc_*
+                                    // pending and does not set return_valid.
                                     container_op_r <= container_call_saved_op_r;
                                     container_phase_r <=
                                         container_call_saved_phase_r;
@@ -2754,36 +2757,53 @@
                                     rs2_r <= container_call_saved_rs2_r;
                                     container_rf_addr_r <=
                                         container_call_saved_tos_r;
-                                    container_call_result_r <= rs1_r;
-                                    container_call_return_valid_r <= 1'b1;
                                     container_call_active_r <= 1'b0;
-                                end
-                                if (frame_ret_mode_r) begin
-                                    // Discard __init__ return; require NONE.
-                                    if (!pycore_is_none(
-                                            pycore_get_tag(rs1_r),
-                                            pycore_get_val(rs1_r))) begin
-                                        return_type_trap_r <= 1'b1;
-                                    end else begin
+                                    container_call_exc_unwind_r <= 1'b0;
+                                    if (call_exc_pending_r) begin
+                                        // Restore iterable/ITER under TOS; no
+                                        // return value from the protocol CALL.
                                         return_wb_we_r   <= 1'b1;
                                         return_wb_addr_r <= call_tos_base_r;
-                                        return_wb_data_r <= pycore_make_entry(
-                                            PY_TAG_OBJECT,
-                                            {{64{1'b0}}, frame_saved_inst_r});
-                                        tos_r              <= call_tos_base_r
-                                                              + RF_AW'(1);
+                                        return_wb_data_r <=
+                                            container_call_saved_rs1_r;
+                                        tos_r <= call_tos_base_r + RF_AW'(1);
+                                        redirect_pending_r <= 1'b1;
+                                        redirect_tgt_r <=
+                                            call_entry_slot_r[31:0];
+                                        return_phase_r <= RET_PHASE_DONE;
+                                    end else begin
+                                        container_call_result_r <= rs1_r;
+                                        container_call_return_valid_r <= 1'b1;
+                                    end
+                                end
+                                if (!call_exc_pending_r) begin
+                                    if (frame_ret_mode_r) begin
+                                        // Discard __init__ return; require NONE.
+                                        if (!pycore_is_none(
+                                                pycore_get_tag(rs1_r),
+                                                pycore_get_val(rs1_r))) begin
+                                            return_type_trap_r <= 1'b1;
+                                        end else begin
+                                            return_wb_we_r   <= 1'b1;
+                                            return_wb_addr_r <= call_tos_base_r;
+                                            return_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_OBJECT,
+                                                {{64{1'b0}}, frame_saved_inst_r});
+                                            tos_r              <= call_tos_base_r
+                                                                  + RF_AW'(1);
+                                            redirect_pending_r <= 1'b1;
+                                            redirect_tgt_r     <= call_entry_slot_r[31:0];
+                                            return_phase_r     <= RET_PHASE_DONE;
+                                        end
+                                    end else begin
+                                        return_wb_we_r     <= 1'b1;
+                                        return_wb_addr_r   <= call_tos_base_r;
+                                        return_wb_data_r   <= rs1_r;
+                                        tos_r              <= call_tos_base_r + RF_AW'(1);
                                         redirect_pending_r <= 1'b1;
                                         redirect_tgt_r     <= call_entry_slot_r[31:0];
                                         return_phase_r     <= RET_PHASE_DONE;
                                     end
-                                end else begin
-                                    return_wb_we_r     <= 1'b1;
-                                    return_wb_addr_r   <= call_tos_base_r;
-                                    return_wb_data_r   <= rs1_r;
-                                    tos_r              <= call_tos_base_r + RF_AW'(1);
-                                    redirect_pending_r <= 1'b1;
-                                    redirect_tgt_r     <= call_entry_slot_r[31:0];
-                                    return_phase_r     <= RET_PHASE_DONE;
                                 end
                             end
                         end

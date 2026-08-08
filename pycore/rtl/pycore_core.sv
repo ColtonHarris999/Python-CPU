@@ -293,6 +293,20 @@ module pycore_core #(
     logic [RF_AW-1:0]              container_call_saved_tos_r;
     logic [PYCORE_ENTRY_WIDTH-1:0] container_call_saved_rs1_r;
     logic [PYCORE_ENTRY_WIDTH-1:0] container_call_saved_rs2_r;
+    // §6.1.1: protocol-launched CALL raised; resume paused container with
+    // call_exc_* instead of return_valid.  Exc unwind reuses S_RETURN pop.
+    logic                          call_exc_pending_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] call_exc_handle_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] call_exc_type_r;
+    logic                          container_call_exc_unwind_r;
+    // Borrow CONT_LOAD_ATTR to resolve __iter__/__next__; remember home op.
+    logic                          container_proto_resolve_r;
+    logic [5:0]                    container_proto_op_r;
+    // FOR_ITER HEAP_ITER: ITER hybrid preserved while rs1 holds the OBJECT
+    // receiver for ATTR / method-self staging.
+    logic [PYCORE_ENTRY_WIDTH-1:0] container_proto_iter_r;
+    // Raising type entry stashed at CONT_RAISE entry (before OBK_EXCEPTION).
+    logic [PYCORE_ENTRY_WIDTH-1:0] raise_type_entry_r;
     // LOAD_GLOBAL push-null bit (oparg & 1 in CPython 3.14).  Sampled at
     // container init so the CP_LG_WB_NULL follow-up knows whether to push
     // the sentinel after the primary value writeback.
@@ -1155,6 +1169,7 @@ module pycore_core #(
                             (exec_in && dec_is_branch && branch_trap) ||
                             exec_type_trap_pulse ||
                             container_type_trap_r ||
+                            (container_attr_error_r && container_proto_resolve_r) ||
                             return_type_trap_r;
     assign stack_fault_sig = (state_r == S_WB) && !dec_is_call && !dec_is_return &&
                               !route_container &&
@@ -1191,7 +1206,8 @@ module pycore_core #(
     assign set_grow_sig       = container_set_grow_trap_r;
     assign set_update_sig     = container_set_update_trap_r;
     logic attr_error_sig;
-    assign attr_error_sig     = container_attr_error_r;
+    // Protocol resolve treats ATTR miss as TYPE (no __iter__/__next__).
+    assign attr_error_sig     = container_attr_error_r && !container_proto_resolve_r;
     logic raise_sig;
     assign raise_sig          = exec_raise_pulse || container_raise_trap_r;
     // Phase C: excore reported RES_FATAL for a trap it was handed — forward
@@ -1514,6 +1530,7 @@ module pycore_core #(
                     // reload caller's co_consts / co_names before redirect.
                     // A container-launched outer call resumes its paused
                     // S_CONTAINER arm; nested ordinary calls still fetch.
+                    // Protocol raise unwind (§6.1.1) also resumes S_CONTAINER.
                     if (return_phase_r == RET_PHASE_DONE)
                         state_next = container_call_returning_r
                                    ? S_CONTAINER : S_FETCH;
@@ -1527,6 +1544,8 @@ module pycore_core #(
                     // exit to S_TRAP_MARSHAL instead of S_FETCH.
                     if (container_call_pending_r) begin
                         state_next = S_CALL;
+                    end else if (container_call_exc_unwind_r) begin
+                        state_next = S_RETURN;
                     end else if (container_phase_r == CP_DONE) begin
                         state_next = trap_marshal_pending_r ? S_TRAP_MARSHAL : S_FETCH;
                     end
@@ -1648,6 +1667,14 @@ module pycore_core #(
             container_call_saved_tos_r <= '0;
             container_call_saved_rs1_r <= '0;
             container_call_saved_rs2_r <= '0;
+            call_exc_pending_r <= 1'b0;
+            call_exc_handle_r <= '0;
+            call_exc_type_r <= '0;
+            container_call_exc_unwind_r <= 1'b0;
+            container_proto_resolve_r <= 1'b0;
+            container_proto_op_r <= '0;
+            container_proto_iter_r <= '0;
+            raise_type_entry_r <= '0;
             container_idx_r          <= '0;
             container_count_r        <= '0;
             container_base_r         <= '0;
@@ -2099,7 +2126,12 @@ module pycore_core #(
                         container_call_saved_arg_r <= cur_arg_r;
                         container_call_saved_pc_r <= cur_pc_r;
                         container_call_saved_tos_r <= tos_r;
-                        container_call_saved_rs1_r <= rs1_r;
+                        // HEAP_ITER protocol: rs1 holds the OBJECT receiver for
+                        // CALL; the ITER hybrid was stashed in proto_iter_r.
+                        container_call_saved_rs1_r <=
+                            (container_op_r == CONT_FOR_ITER &&
+                             container_phase_r == CP_COPY_VAL_WB)
+                                ? container_proto_iter_r : rs1_r;
                         container_call_saved_rs2_r <= rs2_r;
                         container_call_target_depth_r <= frame_active_depth + 1'b1;
                         // __iter__ / __next__ use CALL 0.  Preserve the

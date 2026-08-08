@@ -15,6 +15,7 @@ CONT_RAISE: begin
         CP_INIT: begin
             container_tag_r <= pycore_get_tag(rs1_r);
             container_val_r <= pycore_get_val(rs1_r);
+            raise_type_entry_r <= rs1_r;
             if ((heap_ptr_r + PYCORE_OBJ_EXCEPTION_BYTES) > PYCORE_HEAP_LIMIT) begin
                 container_mem_fault_r <= 1'b1;
             end else begin
@@ -106,12 +107,30 @@ CONT_RAISE: begin
                 if (container_rd_data_r[3:0] != PY_TAG_TUPLE) begin
                     container_type_trap_r <= 1'b1;
                 end else if (container_slot_count_r == 32'd0) begin
-                    active_exc_r          <= pycore_make_entry(
-                        PY_TAG_OBJECT, container_val_r);
-                    active_exc_valid_r    <= 1'b1;
-                    container_raise_trap_r <= 1'b1;
-                    fetch_skip_r          <= 1'b1;
-                    container_phase_r     <= CP_DONE;
+                    if (container_call_active_r &&
+                        (frame_active_depth ==
+                         container_call_target_depth_r)) begin
+                        // §6.1.1: protocol-launched CALL → resume container.
+                        call_exc_handle_r <= pycore_make_entry(
+                            PY_TAG_OBJECT, container_val_r);
+                        call_exc_type_r <= raise_type_entry_r;
+                        call_exc_pending_r <= 1'b1;
+                        container_call_exc_unwind_r <= 1'b1;
+                        container_call_returning_r <= 1'b1;
+                        call_sent_r <= 1'b0;
+                        frame_dmem_pending_r <= 1'b0;
+                        return_phase_r <= 3'd0;
+                        container_dmem_pending_r <= 1'b0;
+                        fetch_skip_r <= 1'b1;
+                        container_phase_r <= CP_DONE;
+                    end else begin
+                        active_exc_r <= pycore_make_entry(
+                            PY_TAG_OBJECT, container_val_r);
+                        active_exc_valid_r <= 1'b1;
+                        container_raise_trap_r <= 1'b1;
+                        fetch_skip_r <= 1'b1;
+                        container_phase_r <= CP_DONE;
+                    end
                 end else begin
                     container_probe_r        <= 32'd0;
                     container_order_idx_r    <= 32'd0;
@@ -157,12 +176,30 @@ CONT_RAISE: begin
                     if (container_order_shift_val_r[6]) begin
                         if ((container_probe_r + 32'd1) >=
                                 container_slot_count_r) begin
-                            active_exc_r           <= pycore_make_entry(
-                                PY_TAG_OBJECT, container_val_r);
-                            active_exc_valid_r     <= 1'b1;
-                            container_raise_trap_r <= 1'b1;
-                            fetch_skip_r          <= 1'b1;
-                            container_phase_r     <= CP_DONE;
+                            if (container_call_active_r &&
+                                (frame_active_depth ==
+                                 container_call_target_depth_r)) begin
+                                // §6.1.1: protocol-launched CALL → resume container.
+                                call_exc_handle_r <= pycore_make_entry(
+                                    PY_TAG_OBJECT, container_val_r);
+                                call_exc_type_r <= raise_type_entry_r;
+                                call_exc_pending_r <= 1'b1;
+                                container_call_exc_unwind_r <= 1'b1;
+                                container_call_returning_r <= 1'b1;
+                                call_sent_r <= 1'b0;
+                                frame_dmem_pending_r <= 1'b0;
+                                return_phase_r <= 3'd0;
+                                container_dmem_pending_r <= 1'b0;
+                                fetch_skip_r <= 1'b1;
+                                container_phase_r <= CP_DONE;
+                            end else begin
+                                active_exc_r <= pycore_make_entry(
+                                    PY_TAG_OBJECT, container_val_r);
+                                active_exc_valid_r <= 1'b1;
+                                container_raise_trap_r <= 1'b1;
+                                fetch_skip_r <= 1'b1;
+                                container_phase_r <= CP_DONE;
+                            end
                         end else begin
                             container_dmem_addr_r    <= pycore_tuple_val_addr(
                                 container_buf_r, container_probe_r + 32'd1);
@@ -208,12 +245,30 @@ CONT_RAISE: begin
                 endcase
                 if (container_order_idx_r[1:0] != 2'd3) begin
                     if (container_probe_r >= container_slot_count_r) begin
-                        active_exc_r           <= pycore_make_entry(
-                            PY_TAG_OBJECT, container_val_r);
-                        active_exc_valid_r     <= 1'b1;
-                        container_raise_trap_r <= 1'b1;
-                        fetch_skip_r          <= 1'b1;
-                        container_phase_r     <= CP_DONE;
+                        if (container_call_active_r &&
+                            (frame_active_depth ==
+                             container_call_target_depth_r)) begin
+                            // §6.1.1: protocol-launched CALL → resume container.
+                            call_exc_handle_r <= pycore_make_entry(
+                                PY_TAG_OBJECT, container_val_r);
+                            call_exc_type_r <= raise_type_entry_r;
+                            call_exc_pending_r <= 1'b1;
+                            container_call_exc_unwind_r <= 1'b1;
+                            container_call_returning_r <= 1'b1;
+                            call_sent_r <= 1'b0;
+                            frame_dmem_pending_r <= 1'b0;
+                            return_phase_r <= 3'd0;
+                            container_dmem_pending_r <= 1'b0;
+                            fetch_skip_r <= 1'b1;
+                            container_phase_r <= CP_DONE;
+                        end else begin
+                            active_exc_r <= pycore_make_entry(
+                                PY_TAG_OBJECT, container_val_r);
+                            active_exc_valid_r <= 1'b1;
+                            container_raise_trap_r <= 1'b1;
+                            fetch_skip_r <= 1'b1;
+                            container_phase_r <= CP_DONE;
+                        end
                     end else begin
                         container_order_len_r    <= 64'd0;
                         container_insert_new_r   <= 1'b1;
@@ -261,12 +316,30 @@ CONT_RAISE: begin
                     container_phase_r  <= CP_DONE;
                 end
             end else if (container_probe_r >= container_slot_count_r) begin
-                active_exc_r           <= pycore_make_entry(
-                    PY_TAG_OBJECT, container_val_r);
-                active_exc_valid_r     <= 1'b1;
-                container_raise_trap_r <= 1'b1;
-                fetch_skip_r          <= 1'b1;
-                container_phase_r     <= CP_DONE;
+                if (container_call_active_r &&
+                    (frame_active_depth ==
+                     container_call_target_depth_r)) begin
+                    // §6.1.1: protocol-launched CALL → resume container.
+                    call_exc_handle_r <= pycore_make_entry(
+                        PY_TAG_OBJECT, container_val_r);
+                    call_exc_type_r <= raise_type_entry_r;
+                    call_exc_pending_r <= 1'b1;
+                    container_call_exc_unwind_r <= 1'b1;
+                    container_call_returning_r <= 1'b1;
+                    call_sent_r <= 1'b0;
+                    frame_dmem_pending_r <= 1'b0;
+                    return_phase_r <= 3'd0;
+                    container_dmem_pending_r <= 1'b0;
+                    fetch_skip_r <= 1'b1;
+                    container_phase_r <= CP_DONE;
+                end else begin
+                    active_exc_r <= pycore_make_entry(
+                        PY_TAG_OBJECT, container_val_r);
+                    active_exc_valid_r <= 1'b1;
+                    container_raise_trap_r <= 1'b1;
+                    fetch_skip_r <= 1'b1;
+                    container_phase_r <= CP_DONE;
+                end
             end else begin
                 container_order_idx_r    <= 32'd0;
                 container_order_len_r    <= 64'd0;

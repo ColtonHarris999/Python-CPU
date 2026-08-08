@@ -11,7 +11,8 @@
   `get_exception_handler`, and §7.5 `RAISE_VARARGS` path.
 - [x] §10 step 5 — active exception + `PUSH_EXC_INFO` / `CHECK_EXC_MATCH` /
   `POP_EXCEPT` / `RERAISE` + §7.7 handler bytecode closure (StopIteration tests).
-- [ ] §10 step 6
+- [x] §10 step 6 — Track A GET_ITER OBJECT + HEAP_ITER + FOR_ITER + §6.1.1
+  protocol raise boundary.
 - [ ] §10 step 7
 - [ ] §10 step 8
 
@@ -48,8 +49,7 @@
   not assume arbitrary scratch survived.
 - `CONTAINER_CALL_SPIKE_EN` is default-off and test-only. Its synthetic
   `CONT_GET_ITER` arm consumes an already CALL-ready `[callable, NULL]` stack;
-  real OBJECT resolution, bound-self staging, and HEAP_ITER behavior remain
-  §10 step 6.
+  production OBJECT path is §10 step 6.
 - Heap ends at `PYCORE_HEAP_LIMIT = 0x1B000`. Exc-info arena occupies
   `0x1B000–0x1BFFF` (`pycore_exc_stack`); frame stack remains `0x1C000–0x1FFFF`.
 - Boot builtins seed a leaf `StopIteration` `OBK_TYPE`. The same handle is
@@ -64,25 +64,43 @@
   TOS type vs `active_exc.field0`; `[exc,type]→[exc,bool]`. `POP_EXCEPT`:
   dmem-pop restore + pop TOS. `RERAISE` 0/1: re-enter table walk on TOS exc;
   oparg=1 does **not** dmem-pop (cleanup bytecode already ran `POP_EXCEPT`).
+- Track A protocol resolve borrows `CONT_LOAD_ATTR` with
+  `container_proto_resolve_r` / `container_proto_op_r`, fixed SHORT_STR names
+  `PY_ATTR_NAME_ITER` / `PY_ATTR_NAME_NEXT`, and method-form staging. ATTR miss
+  under proto → `PY_TRAP_TYPE`.
+- `GET_ITER` on `OBJECT`: resolve `__iter__`, protocol CALL; on return convert
+  LIST/TUPLE/native containers / `PY_TAG_ITER` / else wrap `HEAP_ITER` kind 4.
+- `FOR_ITER` on `HEAP_ITER`: resolve `__next__` (ITER hybrid stashed in
+  `container_proto_iter_r` while `rs1` holds the OBJECT receiver); wait on
+  `CP_COPY_VAL_WB`.
+- §6.1.1: table-miss inside a protocol-launched CALL at
+  `container_call_target_depth_r` sets `call_exc_pending_r` /
+  `call_exc_handle_r` / `call_exc_type_r` and unwinds via `S_RETURN` (no
+  `return_valid`). `FOR_ITER` matches `call_exc_type_r` against
+  `iter_exhaust_type_r` → native exhaust redirect; mismatch / `GET_ITER` raise
+  → fatal `PY_TRAP_RAISE`.
+- Host `# pycore-expect: <int>` overrides `run_image_test` gold when CPython
+  cannot execute the seeded program (list-returning `__iter__`).
 
 ## Verified
 
 - PASS — `make PYTHON=python3.14 pycore-python-tests` (216 tests).
-- PASS — `make PYTHON=python3.14 pycore-img-raise-varargs` (trap 17).
-- PASS — `make PYTHON=python3.14 pycore-img-raise-stopiteration-fatal` (trap 17).
-- PASS — `make PYTHON=python3.14 pycore-img-try-stopiteration` (golden 7; 513 cycles).
-- PASS — `make PYTHON=python3.14 pycore-img-try-stopiteration-nested`
-  (golden 11; 894 cycles; dmem exc-info + cleanup `RERAISE` 1).
+- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-list` (golden 6).
+- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-next` (golden 6).
+- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-exhaust` (golden 7).
+- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-no-iter-trap` (trap 1).
+- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-nested` (golden 9).
+- PASS — `make PYTHON=python3.14 pycore-img-container-call-spike`.
+- PASS — `make PYTHON=python3.14 pycore-img-try-stopiteration`.
+- PASS — `make PYTHON=python3.14 pycore-img-for-iter`.
 - BLOCKED — `make docker-all-tests` (no Docker daemon).
 
 ## Next session
 
-Implement exactly §10 step 6: Track A GET_ITER object + HEAP_ITER + FOR_ITER
-+ §6.1.1 container protocol raise boundary (`exc_type_matches` +
-`iter_exhaust_type_r`). Do not start list-comp Track C (step 7) or docs-only
-step 8.
+Implement exactly §10 step 7: Track C list comp end-to-end (two-core). Do not
+start docs-only step 8 until step 7 acceptance is met.
 
 ## Blockers
 
 - Required Docker CI remains unrun because no Docker daemon is available.
-- No open implementation questions or truncated §10 step 5 work.
+- No open implementation questions or truncated §10 step 6 work.

@@ -1604,9 +1604,30 @@
                                         container_wb_data_r <=
                                             pycore_make_control(PY_CTL_NULL);
                                     end
-                                    tos_r             <= tos_r + RF_AW'(1);
-                                    fetch_skip_r      <= 1'b1;
-                                    container_phase_r <= CP_DONE;
+                                    tos_r <= tos_r + RF_AW'(1);
+                                    if (container_proto_resolve_r) begin
+                                        // Require a real method form for protocol.
+                                        if (!((container_lfb_hi_r[0]) &&
+                                              (container_tag_r ==
+                                               PY_TAG_CODE_OBJECT) &&
+                                              !container_lfb_lo_r[2])) begin
+                                            container_type_trap_r <= 1'b1;
+                                            container_proto_resolve_r <= 1'b0;
+                                        end else begin
+                                            // Stage done → launch protocol CALL;
+                                            // home op waits on return / call_exc.
+                                            container_op_r <= container_proto_op_r;
+                                            container_phase_r <=
+                                                (container_proto_op_r ==
+                                                 CONT_FOR_ITER)
+                                                    ? CP_COPY_VAL_WB : CP_VAL;
+                                            container_call_pending_r <= 1'b1;
+                                            container_proto_resolve_r <= 1'b0;
+                                        end
+                                    end else begin
+                                        fetch_skip_r      <= 1'b1;
+                                        container_phase_r <= CP_DONE;
+                                    end
                                 end
 
                                 CP_ATTR_BOUND0: begin

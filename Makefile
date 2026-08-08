@@ -117,6 +117,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-for-iter-set-basic pycore-img-for-iter-set-empty \
 	pycore-img-for-iter-set-type-trap \
 	pycore-img-for-iter-all pycore-img-container-call-spike \
+	pycore-img-for-iter-object-list pycore-img-for-iter-object-next \
+	pycore-img-for-iter-object-exhaust pycore-img-for-iter-object-no-iter-trap \
+	pycore-img-for-iter-object-nested \
 	pycore-img-nop \
 	pycore-container pycore-container-build-index pycore-container-store-subscr \
 	pycore-container-dict-lookup pycore-container-dict-store \
@@ -863,6 +866,21 @@ pycore-img-for-iter-set-empty:
 pycore-img-for-iter-set-type-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_set_type_trap,1,50000)
 
+pycore-img-for-iter-object-list:
+	$(call PYCORE_IMAGE_RUN,for_iter_object_list,200000)
+
+pycore-img-for-iter-object-next:
+	$(call PYCORE_IMAGE_RUN,for_iter_object_next,400000)
+
+pycore-img-for-iter-object-exhaust:
+	$(call PYCORE_IMAGE_RUN,for_iter_object_exhaust,200000)
+
+pycore-img-for-iter-object-no-iter-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_object_no_iter_trap,1,100000)
+
+pycore-img-for-iter-object-nested:
+	$(call PYCORE_IMAGE_RUN,for_iter_object_nested,400000)
+
 pycore-img-for-iter-all: \
 	pycore-img-for-iter \
 	pycore-img-for-iter-type-trap \
@@ -899,6 +917,11 @@ pycore-img-for-iter-all: \
 	pycore-img-for-iter-set-basic \
 	pycore-img-for-iter-set-empty \
 	pycore-img-for-iter-set-type-trap \
+	pycore-img-for-iter-object-list \
+	pycore-img-for-iter-object-next \
+	pycore-img-for-iter-object-exhaust \
+	pycore-img-for-iter-object-no-iter-trap \
+	pycore-img-for-iter-object-nested \
 	pycore-container-for-iter-end-for
 
 pycore-img-nop:

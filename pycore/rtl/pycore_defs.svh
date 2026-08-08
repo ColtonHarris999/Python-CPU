@@ -864,6 +864,14 @@ function automatic logic pycore_iter_valid(
                 pycore_iter_valid = common_magic &&
                                     (value[3:0] == 4'b0) &&
                                     (value[95:64] <= value[63:32]);
+            // Heap iterator: addr is the iterator OBJECT; index/size/aux unused.
+            PY_ITER_KIND_HEAP_ITER:
+                pycore_iter_valid = common_magic &&
+                                    (value[3:0] == 4'b0) &&
+                                    (value[115:96] == 20'b0) &&
+                                    (value[95:64] == 32'b0) &&
+                                    (value[63:32] == 32'b0) &&
+                                    (value[31:0] != 32'b0);
             default:
                 pycore_iter_valid = 1'b0;
         endcase
@@ -1048,6 +1056,10 @@ localparam logic [127:0] PY_ATTR_NAME_CLASS =
     128'h95f5f636c6173735f5f0000000000000; // "__class__" size=9
 localparam logic [127:0] PY_ATTR_NAME_BASE  =
     128'h85f5f626173655f5f000000000000000; // "__base__"  size=8
+localparam logic [127:0] PY_ATTR_NAME_ITER  =
+    128'h85f5f697465725f5f000000000000000; // "__iter__"  size=8
+localparam logic [127:0] PY_ATTR_NAME_NEXT  =
+    128'h85f5f6e6578745f5f000000000000000; // "__next__"  size=8
 
 function automatic logic pycore_attr_name_is_dict(
     input logic [3:0] tag,

@@ -41,6 +41,15 @@ class _RemoveEntryCall(ast.NodeTransformer):
 def host_entry_result(source: pathlib.Path, entry: str) -> int | bool:
     source = pathlib.Path(source)
     source_text = source.read_text(encoding="utf-8")
+    # Optional override when host execution cannot mirror HW semantics
+    # (e.g. __iter__ returning a list is legal on PyCore Track A but not
+    # on CPython).  Format: `# pycore-expect: <int>`
+    for line in source_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# pycore-expect:"):
+            raw = stripped.split(":", 1)[1].strip()
+            return int(raw, 0)
+
     seeds = parse_seed_pragmas(source_text)
 
     tree = ast.parse(source_text, filename=str(source))
