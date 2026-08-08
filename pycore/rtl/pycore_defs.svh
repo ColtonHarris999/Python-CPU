@@ -1858,7 +1858,7 @@ function automatic logic [31:0] pycore_tuple_alloc_bytes(
 endfunction
 
 // -------------------------------------------------------------------------
-// CODE OBJECT in-dmem layout (tuple-element convention, 7 fields = 224 bytes):
+// CODE OBJECT in-dmem layout (tuple-element convention, 8 fields = 256 bytes):
 //
 //   Handle: { PY_TAG_CODE_OBJECT, {64'd0, addr[63:0]} }
 //
@@ -1874,6 +1874,7 @@ endfunction
 //   field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
 //   field 5 : co_varnames (TUPLE handle; local/argument names)
 //   field 6 : co_kwdefaults (MUT_DICT handle; empty ⇒ no kw-only defaults)
+//   field 7 : co_exceptiontable (TUPLE of INT bytes; raw CPython table)
 //
 // Interim model: a "function object" IS a code-object handle (function ≡ code).
 // Defaults live on the code object; closures are future work.
@@ -1885,12 +1886,11 @@ localparam logic [31:0] PYCORE_CODE_FIELD_METADATA      = 32'd3;
 localparam logic [31:0] PYCORE_CODE_FIELD_CO_DEFAULTS   = 32'd4;
 localparam logic [31:0] PYCORE_CODE_FIELD_CO_VARNAMES   = 32'd5;
 localparam logic [31:0] PYCORE_CODE_FIELD_CO_KWDEFAULTS = 32'd6;
-// Field 7 is co_exceptiontable (host already serializes 8 fields / 256 B).
-// CODE_NFIELDS / CODE_OBJECT_BYTES stay documentation-only at 7/224 until
-// §10 step 8; pycore_code_field_* helpers are index-based and already work.
+// Field 7 is co_exceptiontable (INT-byte TUPLE). Matches host
+// encoding.CODE_OBJECT_NFIELDS / CODE_OBJECT_BYTES (8 / 256).
 localparam logic [31:0] PYCORE_CODE_FIELD_CO_EXCEPTIONTABLE = 32'd7;
-localparam logic [31:0] PYCORE_CODE_NFIELDS             = 32'd7;
-localparam logic [31:0] PYCORE_CODE_OBJECT_BYTES        = 32'd224;
+localparam logic [31:0] PYCORE_CODE_NFIELDS             = 32'd8;
+localparam logic [31:0] PYCORE_CODE_OBJECT_BYTES        = 32'd256;
 
 function automatic logic [31:0] pycore_code_field_val_addr(
     input logic [31:0] addr,

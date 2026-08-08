@@ -227,6 +227,7 @@
     "OBJ_EXC": {
       "distance": 5,
       "needs_subsystem": "exception state + stack unwinder",
+      "note": "v1: RAISE_VARARGS/PUSH_EXC_INFO/CHECK_EXC_MATCH/POP_EXCEPT/RERAISE + dmem exc stack + co_exceptiontable; remaining members still deferred",
       "members": [
         "PUSH_EXC_INFO",
         "POP_EXCEPT",
@@ -699,12 +700,14 @@
     "GET_ITER": {
       "support": "execute",
       "hw_class": "OBJECT",
-      "fold": "BAR"
+      "fold": "BAR",
+      "note": "native LIST/TUPLE/RANGE/STR/DICT/SET + OBJECT __iter__ protocol; HEAP_ITER kind 4"
     },
     "FOR_ITER": {
       "support": "execute",
       "hw_class": "OBJECT",
-      "fold": "BAR"
+      "fold": "BAR",
+      "note": "native kinds + HEAP_ITER __next__; StopIteration via call_exc + iter_exhaust_type_r"
     },
     "LOAD_ATTR": {
       "support": "execute",

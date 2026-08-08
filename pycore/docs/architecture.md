@@ -448,17 +448,18 @@ caches the module code object's `co_consts` and `co_names`, latches
 entry slot. `BOOT_EN=0` remains available for hand-authored hex fixtures that
 skip the boot record.
 
-Serialized code objects are seven tagged-entry fields (32 bytes per field, 224B):
+Serialized code objects are eight tagged-entry fields (32 bytes per field, 256B):
 
 ```text
-field 0: entry_slot    (INT, imem slot index)
-field 1: co_consts     (TUPLE handle)
-field 2: co_names      (TUPLE handle)
-field 3: metadata      (INT, packed {kwonlyargcount, stacksize, nlocals,
-                     argcount, CO_VARARGS flag})
-field 4: co_defaults   (TUPLE handle)
-field 5: co_varnames   (TUPLE handle; parameter / local names)
-field 6: co_kwdefaults (MUT_DICT handle; empty if none)
+field 0: entry_slot         (INT, imem slot index)
+field 1: co_consts          (TUPLE handle)
+field 2: co_names           (TUPLE handle)
+field 3: metadata           (INT, packed {kwonlyargcount, stacksize, nlocals,
+                          argcount, CO_VARARGS flag})
+field 4: co_defaults        (TUPLE handle)
+field 5: co_varnames        (TUPLE handle; parameter / local names)
+field 6: co_kwdefaults      (MUT_DICT handle; empty if none)
+field 7: co_exceptiontable  (TUPLE of INT bytes; raw CPython table)
 ```
 
 The interim function model is **function == code object**: `MAKE_FUNCTION`
@@ -524,17 +525,21 @@ container objects.  The heap occupies a fixed region of data memory:
 
 ```text
 PYCORE_HEAP_BASE  = 0x0000_0440  (first byte after the 96-byte boot record)
-PYCORE_HEAP_LIMIT = 0x0001_C000  (just below the call-frame stack)
+PYCORE_HEAP_LIMIT = 0x0001_B000  (just below the exc-info arena)
+PYCORE_EXC_STACK  = 0x0001_B000 – 0x0001_BFFF  (4 KB; pycore_exc_stack)
+FRAME_STACK       = 0x0001_C000 – 0x0001_FFFF  (call frames)
 ```
 
-Capacity: ~110 KB.  A `heap_ptr_r` register in `pycore_core.sv` starts at
-`HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE`) and advances monotonically; there
-is no free list (no object reclamation in this prototype).  Overflow traps
-`PY_TRAP_MEM_FAULT`.  A preloaded static heap image sets `HEAP_INIT_PTR` to the
-first free byte above the static objects so bump allocation does not overwrite
-them.  `DMEM_HEX` on `pycore_system` / `pycore_dmem` preloads the whole dmem
-bank (not just the first 4 KB block).  The boot record occupies
-`[0x3e0, 0x440)` and must not overlap heap objects.
+Capacity: ~106 KB of object heap.  A `heap_ptr_r` register in `pycore_core.sv`
+starts at `HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE`) and advances
+monotonically; there is no free list (no object reclamation in this
+prototype).  Overflow traps `PY_TRAP_MEM_FAULT`.  A preloaded static heap
+image sets `HEAP_INIT_PTR` to the first free byte above the static objects so
+bump allocation does not overwrite them.  `DMEM_HEX` on `pycore_system` /
+`pycore_dmem` preloads the whole dmem bank (not just the first 4 KB block).
+The boot record occupies `[0x3e0, 0x440)` and must not overlap heap objects.
+Boot also seeds builtins `StopIteration` and a sidecar at
+`ITER_EXHAUST_TYPE_ADDR` (`0x1BFE0`) for `FOR_ITER` protocol exhaustion.
 
 ### LIST in-dmem layout
 
@@ -596,23 +601,30 @@ memory-ownership handoff plus `O(length)` element copy in firmware,
 amortized `O(1)` across appends because the excore doubles capacity on
 every grow.
 
-#### LIST/TUPLE/RANGE/STR/DICT/SET iteration
+#### LIST/TUPLE/RANGE/STR/DICT/SET + object iteration
 
 `GET_ITER` accepts LIST, TUPLE, STR, DICT, SET, and `PY_TAG_RANGE` handles and
 rewrites TOS to an internal `PY_TAG_ITER` hybrid iterator. Its 128-bit payload is
 `magic[127:120], kind[119:116], aux[115:96], index[95:64],
 size/stop[63:32], addr[31:0]`. Kinds 0/1/2/3 are LIST/TUPLE/RANGE/STR;
-HEAP_ITER reserves kind 4; kinds 5/6 are DICT/SET. LIST stores
+kind 4 is `HEAP_ITER` (object protocol); kinds 5/6 are DICT/SET. LIST stores
 `size=0, addr=list_object`;
 TUPLE stores its immutable length and element-buffer address. RANGE stores
 `index=current, size=stop, aux=step, addr=0`. STR stores a UTF-8 byte offset
 in `index`, the byte length in `size`, and a byte-addressed `string_mem` base
 in `addr`; `aux` is zero. DICT stores an insertion-order index/length and a
 20-bit mutation-version snapshot. SET stores a hash-slot index/count and a
-20-bit `used` snapshot.
+20-bit `used` snapshot. `HEAP_ITER` stores `addr=iterator_object` with other
+fields zero.
 Validity is per-kind rather than a global ITER rule. `PY_TAG_ITER` is not emitted
 by the image serializer, so malformed, unknown, or incomplete kinds raise
 `PY_TRAP_TYPE` in `FOR_ITER`.
+
+On `OBJECT`/`OBK_INSTANCE`, `GET_ITER` resolves `__iter__` (instance dict then
+type MRO, same as `LOAD_ATTR`), pauses `S_CONTAINER`, and runs a protocol
+`S_CALL` with method-form `[CODE, self]`. The return value is converted: native
+containers reuse the arms above, an existing `PY_TAG_ITER` is kept, otherwise
+one `HEAP_ITER` wrap is applied. Missing `__iter__` → `PY_TRAP_TYPE`.
 
 `FOR_ITER` runs in `S_CONTAINER`. TUPLE iteration compares the index with the
 captured immutable size and reads the inline element slots. LIST iteration
@@ -620,8 +632,9 @@ re-reads the stable object header and `ob_item` each step, so length changes
 and buffer growth are observed like CPython list iterators. A yield updates
 the iterator and pushes the element in two RF beats. Exhaustion leaves the
 iterator at TOS and redirects over `END_FOR` to `POP_ITER`, which performs the
-single pop. Unsupported Python iterator types raise `PY_TRAP_TYPE`; there is
-no generic `__iter__` / `__next__` dispatch.
+single pop. `HEAP_ITER` resolves `__next__` the same way; a protocol-launched
+`StopIteration` (`call_exc_*` + boot-latched `iter_exhaust_type_r`) takes the
+native exhaustion redirect without a user `try/except`.
 
 DICT `FOR_ITER` reads keys from the insertion-order sidecar, never from
 hash-slot order. SET scans hash slots and skips UNINIT/tombstone tags; its
@@ -677,11 +690,10 @@ Invalid lead bytes, truncated sequences, and invalid continuation bytes raise
 `PY_TRAP_TYPE`. Empty strings take the normal exhaustion redirect on their
 first `FOR_ITER`.
 
-The remaining reserved kind is a deliberate trap-until-complete socket, not a
-partial implementation. Dict views still require HEAP_ITER even though direct
-DICT key iteration is native. Generators
-remain last because they require YIELD and suspended-frame state. Until each
-prerequisite lands, both unsupported sources and forged reserved kinds
+`HEAP_ITER` is live for custom `__iter__`/`__next__` objects. Dict views that
+are not plain DICT key iteration still go through that path. Generators
+remain deferred because they require YIELD and suspended-frame state. Until
+each remaining prerequisite lands, unsupported sources and malformed kinds
 TYPE-trap rather than taking a plausible but incomplete path.
 
 #### `LIST_EXTEND`
