@@ -214,12 +214,15 @@ See existing `ord.md` / `chr.md`.
 
 ## 4. Priority D — bytecode / CALL follow-ups
 
+**Active plan:** [`planning/for_loop_full_support_plan.md`](for_loop_full_support_plan.md)
+(object iterators, StopIteration-only exception tables, comprehensions).
+
 | Item | Unlocks |
 | --- | --- |
 | `CO_VARKEYWORDS` on defs | `def f(**k)`; multi-`**` merge already partial |
-| Exception tables / real exception objects | Replace fatal `raise` / TYPE traps with `TypeError`/`StopIteration` |
+| Exception tables / real exception objects | **→ for-loop plan Track B** (StopIteration only in v1) |
 | `COMPARE_OP` string ordering | `sorted`/`min`/`max` on str |
-| `GET_ITER` / `FOR_ITER` on OBJECT | User `__iter__` / `__next__` |
+| `GET_ITER` / `FOR_ITER` on OBJECT | **→ for-loop plan Track A** |
 | `FORMAT_*` / `BUILD_STRING` | Richer `str`/`format`/`print` |
 | `LOAD_SUPER_ATTR` + descriptors | `super`, `property`, `classmethod` |
 | `TO_BOOL` OBJECT `__bool__`/`__len__` | Truthiness protocol completion |

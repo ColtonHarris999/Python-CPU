@@ -437,6 +437,9 @@ class _ImageSerializer:
             ],
             slot_count=dict_min_slots(max(len(kwdefaults_py), 1)),
         )
+        co_exceptiontable = self.heap.alloc_tuple(
+            [(TAG_INT, int_value(byte)) for byte in co.co_exceptiontable]
+        )
         handle = self.heap.add_code_object(
             entry_slot,
             co_consts,
@@ -449,6 +452,7 @@ class _ImageSerializer:
             varargs=bool(co.co_flags & inspect.CO_VARARGS),
             co_defaults=co_defaults,
             co_kwdefaults=co_kwdefaults,
+            co_exceptiontable=co_exceptiontable,
         )
         self.code_handles[co_id] = handle
         return handle

@@ -16,6 +16,7 @@ from encoding import (
     BOOT_RECORD_ADDR,
     CODE_FIELD_CO_CONSTS,
     CODE_FIELD_CO_DEFAULTS,
+    CODE_FIELD_CO_EXCEPTIONTABLE,
     CODE_FIELD_CO_KWDEFAULTS,
     CODE_FIELD_CO_NAMES,
     CODE_FIELD_CO_VARNAMES,
@@ -368,8 +369,9 @@ class HeapImageBuilder:
         varargs: bool = False,
         co_defaults: Tagged | None = None,
         co_kwdefaults: Tagged | None = None,
+        co_exceptiontable: Tagged | None = None,
     ) -> Tagged:
-        """Allocate a 224-byte code object (7 tagged-entry fields).
+        """Allocate a 256-byte code object (8 tagged-entry fields).
 
         field 0 : entry_slot  (INT) — imem slot index of the first code unit
         field 1 : co_consts   (TUPLE handle)
@@ -379,8 +381,9 @@ class HeapImageBuilder:
         field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
         field 5 : co_varnames (TUPLE handle; local/argument names)
         field 6 : co_kwdefaults (MUT_DICT handle; empty ⇒ no kw-only defaults)
+        field 7 : co_exceptiontable (TUPLE of raw byte INTs)
         """
-        assert CODE_OBJECT_NFIELDS == 7
+        assert CODE_OBJECT_NFIELDS == 8
         assert co_consts[0] == TAG_TUPLE
         assert co_names[0] == TAG_TUPLE
         if co_varnames[0] != TAG_TUPLE:
@@ -393,6 +396,10 @@ class HeapImageBuilder:
             co_kwdefaults = self.alloc_dict([], slot_count=4)
         if not is_mut_kind(co_kwdefaults, MUT_DICT):
             raise ValueError("co_kwdefaults must be a MUT_DICT handle")
+        if co_exceptiontable is None:
+            co_exceptiontable = self.alloc_tuple([])
+        if co_exceptiontable[0] != TAG_TUPLE:
+            raise ValueError("co_exceptiontable must be a TUPLE handle")
         addr = self._alloc(CODE_OBJECT_BYTES)
         fields: list[Tagged] = [
             (TAG_INT, int_value(entry_slot)),  # field 0
@@ -407,6 +414,7 @@ class HeapImageBuilder:
             co_defaults,                       # field 4
             co_varnames,                       # field 5
             co_kwdefaults,                     # field 6
+            co_exceptiontable,                 # field 7
         ]
         # Silence unused-import lint for field index constants (documented API).
         assert CODE_FIELD_ENTRY_SLOT == 0
@@ -416,6 +424,7 @@ class HeapImageBuilder:
         assert CODE_FIELD_CO_DEFAULTS == 4
         assert CODE_FIELD_CO_VARNAMES == 5
         assert CODE_FIELD_CO_KWDEFAULTS == 6
+        assert CODE_FIELD_CO_EXCEPTIONTABLE == 7
         for i, (tag, val) in enumerate(fields):
             self._write_tagged(addr + i * 32, tag, val)
         return TAG_CODE_OBJECT, addr & ((1 << 64) - 1)
