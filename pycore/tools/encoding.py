@@ -79,6 +79,34 @@ EXC_STACK_BASE = 0x1B000
 EXC_STACK_BYTES = 0x1000
 ITER_EXHAUST_TYPE_ADDR = EXC_STACK_BASE + EXC_STACK_BYTES - 32  # 0x1BFE0
 
+# LIST element buffer stride (bytes); mirror pycore list layout (32B/element).
+LIST_ELEMENT_BYTES = 32
+# Minimum / maximum word capacities for allocator_list (_zeros needs % 16 == 0).
+# Min must cover CHUNKSIZE (64) + prologue for the CS:APP free-list workload.
+ALLOCATOR_LIST_CAPACITY_MIN = 128
+ALLOCATOR_LIST_CAPACITY_MAX = 4096
+
+
+def allocator_list_capacity(available_bytes: int) -> int:
+    """Safe list-word capacity for ``allocator_list`` under a live heap budget.
+
+    Callers should pass ``HEAP_LIMIT - HEAP_INIT_PTR`` (runtime bump headroom
+    after the static image).  Each word becomes one LIST cell (32 B); LIST_EXTEND
+    grow may briefly need ~2× the final buffer, and we keep additional slack so
+    the Allocator object and temporaries still fit.  Result is a multiple of 16
+    for ``_zeros``.
+    """
+    if available_bytes <= 0:
+        return ALLOCATOR_LIST_CAPACITY_MIN
+    # 32 B/cell × 4 ≈ cell + grow peak + object/slack.
+    words = available_bytes // (LIST_ELEMENT_BYTES * 4)
+    words = (words // 16) * 16
+    if words < ALLOCATOR_LIST_CAPACITY_MIN:
+        return ALLOCATOR_LIST_CAPACITY_MIN
+    if words > ALLOCATOR_LIST_CAPACITY_MAX:
+        return ALLOCATOR_LIST_CAPACITY_MAX
+    return words
+
 # Code-object field indices (tuple-element convention at code addr).
 CODE_FIELD_ENTRY_SLOT = 0
 CODE_FIELD_CO_CONSTS = 1

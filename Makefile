@@ -356,7 +356,7 @@ pycore-frame-fib:
 # Host smoke always runs. Image-boot targets are wired now but fail until
 # LOAD_ATTR / classes / bound-method CALL land (M2–M6 / M8).
 pycore-allocator-host:
-	$(PYTHON) -c "import runpy; ns=runpy.run_path('pycore/programs/allocator_list.py'); assert isinstance(ns['managed_entry'](), int); ns=runpy.run_path('pycore/programs/allocator_bytes.py'); assert isinstance(ns['managed_entry'](), int); print('allocator host smoke ok')"
+	PYTHONPATH=pycore/tools:$$PYTHONPATH $(PYTHON) -c 'from pathlib import Path; import runpy, tempfile; from run_image_test import apply_heap_list_capacity_inject; text=apply_heap_list_capacity_inject(Path("pycore/programs/allocator_list.py").read_text(), filename="allocator_list.py"); p=Path(tempfile.mkdtemp())/"a.py"; p.write_text(text); ns=runpy.run_path(str(p)); assert isinstance(ns["managed_entry"](), int); ns=runpy.run_path("pycore/programs/allocator_bytes.py"); assert isinstance(ns["managed_entry"](), int); print("allocator host smoke ok")'
 
 define PYCORE_IMAGE_RUN_SRC
 	mkdir -p $(BUILD_DIR)/$(1)

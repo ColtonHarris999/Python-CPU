@@ -66,20 +66,29 @@
 
 ## Verified
 
-- PASS — `make PYTHON=python3.14 pycore-python-tests` (216 tests).
+- PASS — `make PYTHON=python3.14 pycore-python-tests` (220 tests).
 - PASS — `make PYTHON=python3.14 pycore-img-list-comp-basic` (golden 10).
 - PASS — `make PYTHON=python3.14 pycore-img-list-comp-fast-clear` (golden 106).
 - PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-list` (step 6).
 - PASS — `make PYTHON=python3.14 pycore-img-try-stopiteration` (step 5).
+- PASS — `make PYTHON=python3.14 pycore-img-allocator-list` (adaptive CAPACITY;
+  golden 3) — fixes CI `PY_TRAP_MEM_FAULT` after Track B `HEAP_LIMIT=0x1B000`.
 - BLOCKED — `make docker-all-tests` (no Docker daemon).
+
+## Follow-on fix (post §10)
+
+- `allocator_list` no longer hardcodes `Allocator(512)`. Image build probes
+  `HEAP_INIT_PTR`, then injects `CAPACITY = allocator_list_capacity(HEAP_LIMIT -
+  HEAP_INIT_PTR)` via `# pycore-inject: HEAP_LIST_CAPACITY CAPACITY` in
+  `run_image_test.py`. Host smoke uses the same inject path.
 
 ## Next session
 
-Plan §10 steps 1–8 are complete on this branch. Remaining work is optional
-follow-on (dict comps, ROM `iter`/`next`) and unblocking
-`make docker-all-tests` once a Docker daemon is available. Prefer merge prep /
-CI green over new scope.
+Plan §10 steps 1–8 are complete on this branch; adaptive allocator_list fix is
+landed locally. Prefer CI green on PR #66 over new scope. Optional follow-ons:
+dict comps, ROM `iter`/`next`.
 
 ## Blockers
 
-- Required Docker CI remains unrun because no Docker daemon is available.
+- Required Docker CI remains unrun locally (no Docker daemon); re-push should
+  re-trigger GitHub Actions `all-tests`.

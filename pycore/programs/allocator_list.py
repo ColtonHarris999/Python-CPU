@@ -1,3 +1,4 @@
+# pycore-inject: HEAP_LIST_CAPACITY CAPACITY
 """CS:APP-style explicit free-list allocator over a list of integer words.
 
 This is the M6 target program: same allocator shape as allocator_bytes.py, but
@@ -7,7 +8,12 @@ M7 builtin subsystem.
 
 WSIZE=1 means one list cell is one "word". Boundary tags, coalescing, and the
 explicit free list are otherwise the textbook design.
+
+CAPACITY is rewritten by run_image_test from the live heap budget
+(HEAP_LIMIT - HEAP_INIT_PTR) so heap-map changes do not OOM _zeros().
 """
+
+CAPACITY = 32  # placeholder; overwritten when HEAP_LIST_CAPACITY inject runs
 
 WSIZE = 1
 DSIZE = 2
@@ -37,7 +43,7 @@ def _zeros(n):
 
 
 class Allocator:
-    def __init__(self, capacity=512):
+    def __init__(self, capacity):
         self.mem = _zeros(capacity)
         self.mem_max = capacity
         self.brk = 0
@@ -217,7 +223,7 @@ class Allocator:
 
 
 def managed_entry():
-    a = Allocator(512)
+    a = Allocator(CAPACITY)
     p1 = a.alloc(3)
     p2 = a.alloc(12)
     p3 = a.alloc(3)
