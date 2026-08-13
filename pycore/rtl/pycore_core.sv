@@ -444,6 +444,8 @@ module pycore_core #(
     logic                          rf_set_locals_r;
     logic [RF_AW-1:0]              rf_new_locals_r;
     logic                          rf_init_frame_r;
+    logic [RF_AW-1:0]              rf_init_from_r;
+    logic [RF_AW-1:0]              rf_init_until_r;
 
     // ---------------------------------------------------------------------
     // IF: instruction fetch
@@ -975,6 +977,8 @@ module pycore_core #(
         .set_locals_base_i(rf_set_locals_r),
         .new_locals_base_i(rf_new_locals_r),
         .init_frame_i(rf_init_frame_r),
+        .init_from_i(rf_init_from_r),
+        .init_until_i(rf_init_until_r),
         .push_stack_i(1'b0),
         .pop_stack_i(1'b0),
         .tos_ptr_o(),
@@ -1468,6 +1472,8 @@ module pycore_core #(
             rf_set_locals_r      <= 1'b0;
             rf_new_locals_r      <= '0;
             rf_init_frame_r      <= 1'b0;
+            rf_init_from_r       <= '0;
+            rf_init_until_r      <= '0;
             return_wb_we_r       <= 1'b0;
             return_wb_addr_r     <= '0;
             // Arch regs for image boot.

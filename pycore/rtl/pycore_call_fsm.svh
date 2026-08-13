@@ -193,7 +193,16 @@
                                 cur_locals_base_r    <= frame_next_locals_base;
                                 rf_set_locals_r      <= 1'b1;
                                 rf_new_locals_r      <= frame_next_locals_base;
-                                rf_init_frame_r      <= (call_argcount_r == 16'd0);
+                                // UNINIT-clear only unfilled locals
+                                // [call_argcount, nlocals). Filled args /
+                                // defaults / *args must survive — the old
+                                // (argc==0) wipe of all 32 slots erased
+                                // co_defaults after phase-14 fill (tuple(),
+                                // f(x=None), etc.).
+                                rf_init_frame_r      <=
+                                    (call_argcount_r < call_nlocals_r);
+                                rf_init_from_r       <= call_argcount_r[RF_AW-1:0];
+                                rf_init_until_r      <= call_nlocals_r[RF_AW-1:0];
                                 tos_r                <= frame_next_locals_base
                                                         + call_nlocals_r[6:0];
                                 call_sent_r          <= 1'b0;
@@ -1683,6 +1692,12 @@
                                                 call_varargs_to_frame_r  <= 1'b1;
                                                 call_sub_r <= 6'd20;
                                             end else begin
+                                                // All positional params now
+                                                // filled (args + defaults).
+                                                // Bump argc so phase-7 ranged
+                                                // UNINIT clear starts after
+                                                // them instead of wiping them.
+                                                call_argcount_r <= call_meta_argc_r;
                                                 call_sub_r   <= 6'd0;
                                                 call_phase_r <= 4'd7;
                                             end

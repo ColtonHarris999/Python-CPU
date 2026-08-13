@@ -274,6 +274,7 @@ WAVE3_PROGRAM_GOLDENS = {
     "img_firmware_wave3_containers.py": 349,
     "img_firmware_sorted_kw.py": 460,
     "img_firmware_filter_pred.py": 9,
+    "img_firmware_tuple_empty.py": 103,
 }
 
 

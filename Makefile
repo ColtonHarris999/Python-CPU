@@ -187,6 +187,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
 	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
 	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
+	pycore-img-firmware-tuple-empty \
 	pycore-img-print-empty pycore-img-print-basic pycore-img-print-sep-end \
 	pycore-img-print-end-only pycore-img-print-none-sep \
 	pycore-img-print-many pycore-img-print-star pycore-img-print-star-kw \
@@ -195,6 +196,12 @@ EXCORE_RTL_SRCS := \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
 	pycore-img-default-arg pycore-img-default-arg-argc-trap \
+	pycore-img-default-none pycore-img-default-false-zero \
+	pycore-img-default-empty-tuple pycore-img-default-multi-zero-argc \
+	pycore-img-default-arg-too-many pycore-img-default-kwonly-none \
+	pycore-img-default-partial-none pycore-img-default-call-ex-empty \
+	pycore-img-default-nested pycore-img-method-default \
+	pycore-img-varargs-pos-defaults \
 	pycore-img-call-kw pycore-img-call-kw-unexpected \
 	pycore-img-call-function-ex pycore-img-call-function-ex-kw \
 	pycore-img-varargs-basic pycore-img-varargs-empty \
@@ -202,6 +209,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-varargs-kwonly2-partial pycore-img-varargs-ex-kw \
 	pycore-img-varargs-call-ex \
 	pycore-img-bound-method-obj pycore-img-method-all \
+	pycore-img-call-all \
 	pycore-img-class-simple pycore-img-class-const \
 	pycore-img-staticmethod pycore-img-class-two-instances \
 	pycore-img-class-all \
@@ -1200,6 +1208,7 @@ pycore-img: \
 	pycore-img-set-grow-fatal \
 	pycore-img-attr-all \
 	pycore-img-method-all \
+	pycore-img-call-all \
 	pycore-img-varargs-basic \
 	pycore-img-varargs-empty \
 	pycore-img-varargs-kwonly \
@@ -1281,6 +1290,7 @@ pycore-img-attr-all: \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
 	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
 	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
+	pycore-img-firmware-tuple-empty \
 	pycore-img-print-empty pycore-img-print-basic pycore-img-print-sep-end \
 	pycore-img-print-end-only pycore-img-print-none-sep \
 	pycore-img-print-many pycore-img-print-star pycore-img-print-star-kw \
@@ -1355,6 +1365,9 @@ pycore-img-firmware-attr-helpers:
 pycore-img-firmware-isinstance:
 	$(call PYCORE_IMAGE_RUN,firmware_isinstance,200000)
 
+pycore-img-firmware-tuple-empty:
+	$(call PYCORE_IMAGE_RUN,firmware_tuple_empty,100000)
+
 pycore-img-print-empty: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_empty,200000)
 
@@ -1424,6 +1437,39 @@ pycore-img-default-arg:
 pycore-img-default-arg-argc-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,default_arg_argc_trap,6,50000)
 
+pycore-img-default-none:
+	$(call PYCORE_IMAGE_RUN,default_none,50000)
+
+pycore-img-default-false-zero:
+	$(call PYCORE_IMAGE_RUN,default_false_zero,50000)
+
+pycore-img-default-empty-tuple:
+	$(call PYCORE_IMAGE_RUN,default_empty_tuple,50000)
+
+pycore-img-default-multi-zero-argc:
+	$(call PYCORE_IMAGE_RUN,default_multi_zero_argc,50000)
+
+pycore-img-default-arg-too-many:
+	$(call PYCORE_IMAGE_TRAP_RUN,default_arg_too_many,6,50000)
+
+pycore-img-default-kwonly-none:
+	$(call PYCORE_IMAGE_RUN,default_kwonly_none,100000)
+
+pycore-img-default-partial-none:
+	$(call PYCORE_IMAGE_RUN,default_partial_none,50000)
+
+pycore-img-default-call-ex-empty:
+	$(call PYCORE_IMAGE_RUN,default_call_ex_empty,100000)
+
+pycore-img-default-nested:
+	$(call PYCORE_IMAGE_RUN,default_nested,50000)
+
+pycore-img-method-default:
+	$(call PYCORE_IMAGE_RUN,method_default,100000)
+
+pycore-img-varargs-pos-defaults:
+	$(call PYCORE_IMAGE_RUN,varargs_pos_defaults,100000)
+
 pycore-img-call-kw:
 	$(call PYCORE_IMAGE_RUN,call_kw,100000)
 
@@ -1460,6 +1506,42 @@ pycore-img-varargs-call-ex:
 pycore-img-bound-method-obj:
 	$(call PYCORE_IMAGE_RUN,bound_method_obj,100000)
 
+# Full CALL binder regression: defaults / kwargs / varargs / EX / methods.
+pycore-img-call-all: \
+	pycore-img-call-chain \
+	pycore-img-bad-argc \
+	pycore-img-noncallable \
+	pycore-img-default-arg \
+	pycore-img-default-arg-argc-trap \
+	pycore-img-default-none \
+	pycore-img-default-false-zero \
+	pycore-img-default-empty-tuple \
+	pycore-img-default-multi-zero-argc \
+	pycore-img-default-arg-too-many \
+	pycore-img-default-kwonly-none \
+	pycore-img-default-partial-none \
+	pycore-img-default-call-ex-empty \
+	pycore-img-default-nested \
+	pycore-img-method-default \
+	pycore-img-varargs-pos-defaults \
+	pycore-img-call-kw \
+	pycore-img-call-kw-unexpected \
+	pycore-img-call-function-ex \
+	pycore-img-call-function-ex-kw \
+	pycore-img-varargs-basic \
+	pycore-img-varargs-empty \
+	pycore-img-varargs-kwonly \
+	pycore-img-varargs-kwonly2 \
+	pycore-img-varargs-kwonly2-partial \
+	pycore-img-varargs-ex-kw \
+	pycore-img-varargs-call-ex \
+	pycore-img-bound-method-obj \
+	pycore-img-method-call \
+	pycore-img-method-nested \
+	pycore-img-ctor-noinit \
+	pycore-img-ctor-init \
+	pycore-img-firmware-tuple-empty
+
 pycore-img-method-all: \
 	pycore-img-method-call \
 	pycore-img-method-nested \
@@ -1467,6 +1549,17 @@ pycore-img-method-all: \
 	pycore-img-ctor-init \
 	pycore-img-default-arg \
 	pycore-img-default-arg-argc-trap \
+	pycore-img-default-none \
+	pycore-img-default-false-zero \
+	pycore-img-default-empty-tuple \
+	pycore-img-default-multi-zero-argc \
+	pycore-img-default-arg-too-many \
+	pycore-img-default-kwonly-none \
+	pycore-img-default-partial-none \
+	pycore-img-default-call-ex-empty \
+	pycore-img-default-nested \
+	pycore-img-method-default \
+	pycore-img-varargs-pos-defaults \
 	pycore-img-call-kw \
 	pycore-img-call-kw-unexpected \
 	pycore-img-call-function-ex \

@@ -65,7 +65,6 @@ Related:
 | Need | Why |
 | --- | --- |
 | `CO_VARKEYWORDS` on user defs | `def f(**k)` parameter packing |
-| None / missing positional default fill | `tuple()` / `f(x=None)` CALL fill TYPE-traps; blocks empty `tuple()` |
 | Optional `BI_*` keyword tables | Hardware kwargs without ROM wrapper |
 | Full exception tables / `RERAISE` | Real `TypeError`/`StopIteration`; comprehension option A/B |
 | `BI_LEN` tuple-mode RANGE + OBJECT `__bool__` | Complete truthiness / len protocol |

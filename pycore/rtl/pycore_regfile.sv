@@ -19,6 +19,10 @@ module pycore_regfile #(
     input  logic                         set_locals_base_i,
     input  logic [$clog2(RF_DEPTH)-1:0]  new_locals_base_i,
     input  logic                         init_frame_i,
+    // Clear RF slots [new_locals_base + init_from .. new_locals_base + init_until)
+    // to UNINIT. Filled parameter slots (args + defaults + *args) stay intact.
+    input  logic [$clog2(RF_DEPTH)-1:0]  init_from_i,
+    input  logic [$clog2(RF_DEPTH)-1:0]  init_until_i,
     input  logic                         push_stack_i,
     input  logic                         pop_stack_i,
     output logic [$clog2(RF_DEPTH)-1:0]  tos_ptr_o,
@@ -67,11 +71,15 @@ module pycore_regfile #(
 
             if (init_frame_i) begin
                 int j;
+                // Only wipe unfilled slots (temps / unbound locals). Parameter
+                // slots [0, init_from) already hold args / defaults / *args.
                 for (j = 0; j < LOCAL_COUNT; j++) begin
-                    if ((new_locals_base_i + j) < RF_DEPTH) begin
-                        rf[new_locals_base_i + j] = uninitialized_entry();
-                    end else begin
-                        stack_fault_r <= 1'b1;
+                    if ((j >= int'(init_from_i)) && (j < int'(init_until_i))) begin
+                        if ((new_locals_base_i + j) < RF_DEPTH) begin
+                            rf[new_locals_base_i + j] = uninitialized_entry();
+                        end else begin
+                            stack_fault_r <= 1'b1;
+                        end
                     end
                 end
             end
