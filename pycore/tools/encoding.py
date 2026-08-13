@@ -376,14 +376,19 @@ def pack_code_metadata(
     argcount: int,
     kwonlyargcount: int = 0,
     varargs: bool = False,
+    varkeywords: bool = False,
+    posonlyargcount: int = 0,
 ) -> int:
-    """Pack code metadata fields into value[64:0].
+    """Pack code metadata fields into value[81:0].
 
     Bits [15:0]=argcount, [31:16]=nlocals, [47:32]=stacksize,
-    [63:48]=kwonlyargcount, [64]=CO_VARARGS.
+    [63:48]=kwonlyargcount, [64]=CO_VARARGS, [65]=CO_VARKEYWORDS,
+    [81:66]=posonlyargcount.
     """
     return (
-        ((1 if varargs else 0) << 64)
+        ((posonlyargcount & 0xFFFF) << 66)
+        | ((1 if varkeywords else 0) << 65)
+        | ((1 if varargs else 0) << 64)
         | ((kwonlyargcount & 0xFFFF) << 48)
         | ((stacksize & 0xFFFF) << 32)
         | ((nlocals & 0xFFFF) << 16)
@@ -391,14 +396,20 @@ def pack_code_metadata(
     )
 
 
-def unpack_code_metadata(meta: int) -> tuple[int, int, int, int, bool]:
-    """Return ``(stacksize, nlocals, argcount, kwonlyargcount, varargs)``."""
+def unpack_code_metadata(
+    meta: int,
+) -> tuple[int, int, int, int, bool, bool, int]:
+    """Return ``(stacksize, nlocals, argcount, kwonlyargcount, varargs,
+    varkeywords, posonlyargcount)``.
+    """
     return (
         (meta >> 32) & 0xFFFF,
         (meta >> 16) & 0xFFFF,
         meta & 0xFFFF,
         (meta >> 48) & 0xFFFF,
         bool((meta >> 64) & 1),
+        bool((meta >> 65) & 1),
+        (meta >> 66) & 0xFFFF,
     )
 
 

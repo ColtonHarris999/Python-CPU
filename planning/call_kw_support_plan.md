@@ -220,15 +220,18 @@ in ROM Python once binder works.
 
 **Follow-up (landed):** `CO_VARARGS` binder + ROM `print(*args, sep=, end=)`.
 
-**Still open:** `CO_VARKEYWORDS` (`**kwargs` parameter packing).
+**Follow-up (landed):** `CO_VARKEYWORDS` + `co_posonlyargcount` binder parity —
+see `planning/co_varkeywords_call_parity.md`.
+
+**Still open:** none for user-def `*args` / `**kwargs` packing on `CODE_OBJECT`
+(builtins kwargs still firmware / `CALL_FILTER` as noted above).
 
 ---
 
 ## 7. Explicit non-goals (this plan)
 
-- Full `*args` / `**kwargs` **parameter** objects on user functions
-  (`CO_VARARGS` / `CO_VARKEYWORDS`) — can be a fast follow once binder
-  exists; not required for `CALL_KW` of ordinary named params.  
+- ~~Full `*args` / `**kwargs` **parameter** objects on user functions
+  (`CO_VARARGS` / `CO_VARKEYWORDS`)~~ — landed; see follow-ups above.
 - Rich TypeError exception objects (fatal/`CALL_FILTER` is enough initially,
   same as `RAISE_VARARGS` minimum).  
 - Native `BI_MAX(key=)` / `BI_PRINT(sep=)` hardware tables (optional v2).  
