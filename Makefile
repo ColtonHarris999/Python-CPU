@@ -216,6 +216,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-varkw-many pycore-img-varkw-kwonly pycore-img-varkw-combo \
 	pycore-img-varkw-method pycore-img-varkw-dup-trap \
 	pycore-img-varkw-kwonly-missing-trap \
+	pycore-img-method-call-kw \
 	pycore-img-bound-method-obj pycore-img-method-all \
 	pycore-img-call-all \
 	pycore-img-class-simple pycore-img-class-const \
@@ -1553,6 +1554,9 @@ pycore-img-varkw-combo:
 pycore-img-varkw-method:
 	$(call PYCORE_IMAGE_RUN,varkw_method,150000)
 
+pycore-img-method-call-kw:
+	$(call PYCORE_IMAGE_RUN,method_call_kw,100000)
+
 pycore-img-varkw-dup-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,varkw_dup_trap,6,50000)
 
@@ -1605,6 +1609,7 @@ pycore-img-call-all: \
 	pycore-img-varkw-kwonly \
 	pycore-img-varkw-combo \
 	pycore-img-varkw-method \
+	pycore-img-method-call-kw \
 	pycore-img-varkw-dup-trap \
 	pycore-img-varkw-kwonly-missing-trap \
 	pycore-img-bound-method-obj \
@@ -1644,6 +1649,7 @@ pycore-img-method-all: \
 	pycore-img-varargs-ex-kw \
 	pycore-img-varargs-call-ex \
 	pycore-img-varkw-method \
+	pycore-img-method-call-kw \
 	pycore-img-bound-method-obj
 
 # ClassImageBuilder (M4): fold module-level class → OBK_TYPE + STORE_NAME.

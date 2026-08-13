@@ -1939,17 +1939,20 @@
                                             end
                                         end
                                     end
-                                    // 35: copy kwargs[i] → scratch[i] (RF)
+                                    // 35: copy kwargs[i] → scratch[i] (RF).
+                                    // Incoming kwargs sit at locals[argcount+i]
+                                    // (free: argcount==n_pos; method: includes
+                                    // self so kwargs start after self+positionals).
                                     6'd35: begin
                                         container_rf_addr_r <= RF_AW'(
                                             call_new_locals_r
-                                            + {1'b0, call_n_pos_r}
+                                            + call_argcount_r[RF_AW-1:0]
                                             + {1'b0, container_idx_r});
                                         call_sub_r <= 6'd36;
                                     end
                                     6'd36: begin
-                                        // Scratch lives where names sat:
-                                        // normally locals + n_pos + n_kwargs + i.
+                                        // Scratch lives past self/pos/kwargs:
+                                        // normally locals + argcount + n_kwargs + i.
                                         // With CO_VARARGS / CO_VARKEYWORDS, keep
                                         // scratch above the *args and **kwargs
                                         // locals when those ranges overlap.

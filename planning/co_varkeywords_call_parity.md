@@ -48,10 +48,17 @@ Tooling / RTL:
   `call_argcount` so phase-7 UNINIT clear does not wipe the packed dict.
 - Keyword scratch RF region sits above `*args` and `**kwargs` locals.
 
-### 1.3 Related CALL hole closed: `co_posonlyargcount`
+### 1.3 Related CALL holes closed
 
-Without serializing / enforcing `/`, `f(a, /)` incorrectly accepted `f(a=1)`.
-That is now metadata + binder behavior (trap without varkw; pack with varkw).
+1. **`co_posonlyargcount`:** Without serializing / enforcing `/`, `f(a, /)`
+   incorrectly accepted `f(a=1)`. That is now metadata + binder behavior
+   (trap without varkw; pack with varkw).
+2. **Method-form `CALL_KW` kwargs source:** Incoming keyword values were read
+   from `locals[n_pos + i]`, which is correct for free functions but wrong for
+   bound methods where `self` occupies `locals[0]` and kwargs start at
+   `locals[argcount + i]` (`argcount == n_pos + 1`). Scratch base now uses
+   `argcount + n_kwargs` for the same reason. Covered by `img_method_call_kw`
+   and `img_varkw_method`.
 
 ---
 
@@ -99,6 +106,7 @@ Host goldens come from CPython 3.14 via `run_image_test.py`; HW checks the same
 | `varkw_kwonly` | Kw-only defaults + leftover packing | `16` |
 | `varkw_combo` | defaults + `*args` + kw-only + `**kwargs` | `1628` |
 | `varkw_method` | Bound method `self` + `**kwargs` | `13` |
+| `method_call_kw` | Bound method + CALL_KW without varkw (self/kw slot hole) | `55` |
 | `varkw_dup_trap` | `f(1, a=2)` with `**k` still duplicate → trap 6 | trap |
 | `varkw_kwonly_missing_trap` | Required kw-only missing w/ extras → trap 6 | trap |
 

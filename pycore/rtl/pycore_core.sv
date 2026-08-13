@@ -1317,10 +1317,12 @@ module pycore_core #(
     // Local index where CALL_KW parks the copied keyword values.  They must
     // survive the *args tuple pack and the **kwargs dict install, so the
     // scratch area starts above every real local of the callee.
+    // Use call_argcount (not n_pos) so method-form calls — where self occupies
+    // locals[0] and call_argcount == n_pos+1 — place scratch past self+pos+kwargs.
     logic [15:0] call_kw_scratch_base;
     always_comb begin
         logic [15:0] locals_end;
-        call_kw_scratch_base = {8'b0, call_n_pos_r} + {8'b0, call_n_kwargs_r};
+        call_kw_scratch_base = call_argcount_r + {8'b0, call_n_kwargs_r};
         locals_end = call_total_params_r
                      + (call_varargs_r ? 16'd1 : 16'd0)
                      + (call_varkw_r ? 16'd1 : 16'd0);
