@@ -211,6 +211,18 @@ module pycore_core #(
     logic [15:0]                   call_kwonly_r;
     logic [15:0]                   call_total_params_r;
     logic                          call_varargs_r;     // callee CO_VARARGS flag
+    logic                          call_varkw_r;       // callee CO_VARKEYWORDS
+    logic [15:0]                   call_posonly_r;     // co_posonlyargcount
+    // **kwargs dict under construction: {slot_count[31:0], obj_addr[31:0]}.
+    // Order buffer and hash table follow the object contiguously, so both
+    // pointers are derived (cont_varkw_order_ptr / cont_varkw_table_ptr).
+    logic [127:0]                  call_varkw_dict_r;
+    // Bitmask of caller keyword indices that matched no formal parameter and
+    // therefore belong in **kwargs (CALL_KW: names-tuple index; EX_KW: kwargs
+    // dict order-sidecar index).
+    logic [127:0]                  call_varkw_left_r;
+    logic [4:0]                    call_varkw_step_r;  // nested step, subs 52-55
+    logic                          call_varkw_alloced_r;
     logic [5:0]                    call_after_varargs_sub_r;
     logic                          call_varargs_to_frame_r;
     logic                          call_args_is_list_r; // EX expand source tag
@@ -1284,6 +1296,39 @@ module pycore_core #(
         container_tag_r, container_val_r,
         container_probe_tag_r, container_rd_data_r);
 
+    // **kwargs dict being packed by the CALL binder (subs 52-55).  The object,
+    // its order sidecar and its hash table are allocated contiguously, exactly
+    // like BUILD_MAP, so only base + slot count need to be carried around.
+    logic [31:0] cont_varkw_base;
+    logic [31:0] cont_varkw_slots;
+    logic [31:0] cont_varkw_order_ptr;
+    logic [31:0] cont_varkw_table_ptr;
+    assign cont_varkw_base      = call_varkw_dict_r[31:0];
+    assign cont_varkw_slots     = call_varkw_dict_r[63:32];
+    assign cont_varkw_order_ptr = cont_varkw_base + 32'd48;
+    assign cont_varkw_table_ptr = cont_varkw_base + 32'd48 +
+                                  (cont_varkw_slots << 5);
+
+    // Probe advance inside the **kwargs table: (probe + 1) & (slots - 1).
+    logic [31:0] cont_varkw_probe_next;
+    assign cont_varkw_probe_next = (container_probe_r + 32'd1) &
+                                   (cont_varkw_slots - 32'd1);
+
+    // Local index where CALL_KW parks the copied keyword values.  They must
+    // survive the *args tuple pack and the **kwargs dict install, so the
+    // scratch area starts above every real local of the callee.
+    logic [15:0] call_kw_scratch_base;
+    always_comb begin
+        logic [15:0] locals_end;
+        call_kw_scratch_base = {8'b0, call_n_pos_r} + {8'b0, call_n_kwargs_r};
+        locals_end = call_total_params_r
+                     + (call_varargs_r ? 16'd1 : 16'd0)
+                     + (call_varkw_r ? 16'd1 : 16'd0);
+        if ((call_varargs_r || call_varkw_r) &&
+            (call_kw_scratch_base < locals_end))
+            call_kw_scratch_base = locals_end;
+    end
+
     logic cont_set_needs_grow;
     assign cont_set_needs_grow = pycore_set_needs_grow(
         container_used_r, {32'b0, container_slot_count_r});
@@ -1494,6 +1539,12 @@ module pycore_core #(
             call_kwonly_r        <= '0;
             call_total_params_r  <= '0;
             call_varargs_r       <= 1'b0;
+            call_varkw_r         <= 1'b0;
+            call_posonly_r       <= '0;
+            call_varkw_dict_r    <= '0;
+            call_varkw_left_r    <= '0;
+            call_varkw_step_r    <= '0;
+            call_varkw_alloced_r <= 1'b0;
             call_after_varargs_sub_r <= '0;
             call_varargs_to_frame_r  <= 1'b0;
             call_args_is_list_r  <= 1'b0;
@@ -1848,6 +1899,11 @@ module pycore_core #(
                         call_n_pos_r        <= '0;
                         call_n_kwargs_r     <= '0;
                         call_varargs_r      <= 1'b0;
+                        call_varkw_r        <= 1'b0;
+                        call_posonly_r      <= '0;
+                        call_varkw_left_r   <= '0;
+                        call_varkw_step_r   <= '0;
+                        call_varkw_alloced_r <= 1'b0;
                         call_after_varargs_sub_r <= '0;
                         call_varargs_to_frame_r  <= 1'b0;
                         call_args_is_list_r <= 1'b0;
