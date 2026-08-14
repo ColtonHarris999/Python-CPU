@@ -1273,6 +1273,7 @@ pycore-img: \
 	pycore-img-pop-jump-if-none \
 	pycore-img-for-iter-all \
 	pycore-img-container-call-spike \
+	pycore-img-for-loop-all \
 	pycore-img-nop \
 	pycore-img-list-del-last-only \
 	pycore-img-list-contains-simple \

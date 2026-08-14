@@ -2211,6 +2211,9 @@ module pycore_core #(
                         // non-NULL self is counted by the existing method path.
                         cur_arg_r <= 32'd0;
 
+                        // Match S_EXEC CALL entry reset so leftover binder
+                        // scratch (CALL_KW / **kwargs / posonly) cannot leak
+                        // into a protocol CALL 0 for __iter__/__next__.
                         call_sent_r          <= 1'b0;
                         frame_dmem_pending_r <= 1'b0;
                         call_phase_r         <= 5'd0;
@@ -2220,7 +2223,14 @@ module pycore_core #(
                         call_mode_r          <= CALL_MODE_POS;
                         call_n_pos_r         <= '0;
                         call_n_kwargs_r      <= '0;
+                        call_kw_val_base_r   <= '0;
+                        call_kw_scratch_base_r <= '0;
                         call_varargs_r       <= 1'b0;
+                        call_varkw_r         <= 1'b0;
+                        call_posonly_r       <= '0;
+                        call_varkw_left_r    <= '0;
+                        call_varkw_step_r    <= '0;
+                        call_varkw_alloced_r <= 1'b0;
                         call_after_varargs_sub_r <= '0;
                         call_varargs_to_frame_r  <= 1'b0;
                         call_args_is_list_r  <= 1'b0;

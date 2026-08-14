@@ -458,8 +458,9 @@ Serialized code objects are eight tagged-entry fields (32 bytes per field, 256B)
 field 0: entry_slot         (INT, imem slot index)
 field 1: co_consts          (TUPLE handle)
 field 2: co_names           (TUPLE handle)
-field 3: metadata           (INT, packed {kwonlyargcount, stacksize, nlocals,
-                          argcount, CO_VARARGS flag})
+field 3: metadata           (INT, packed {posonlyargcount, CO_VARKEYWORDS,
+                          CO_VARARGS, kwonlyargcount, stacksize, nlocals,
+                          argcount})
 field 4: co_defaults        (TUPLE handle)
 field 5: co_varnames        (TUPLE handle; parameter / local names)
 field 6: co_kwdefaults      (MUT_DICT handle; empty if none)
@@ -470,7 +471,9 @@ The interim function model is **function == code object**: `MAKE_FUNCTION`
 checks that TOS is a `CODE_OBJECT` and leaves it in place. `CALL` /
 `CALL_KW` / `CALL_FUNCTION_EX` expect the matching CPython 3.14 stack
 shapes, validate the callable, bind args (positional and/or keyword via
-`co_varnames`, with `CO_VARARGS` packing excess positionals into `*args`),
+`co_varnames`, with `CO_VARARGS` packing excess positionals into `*args` and
+`CO_VARKEYWORDS` packing leftover keywords into `**kwargs`; positional-only
+params use `co_posonlyargcount`),
 read the callee code-object fields, then enter the frame manager.
 `OBK_BUILTIN` kwargs remain `CALL_FILTER` (firmware `CODE_OBJECT` path —
 e.g. ROM `print` → native `_bi_print` / `BI_PRINT` → `CONSOLE_TX`). `DICT_MERGE` aliases the empty-dest call-site shape used for `**kwargs`;

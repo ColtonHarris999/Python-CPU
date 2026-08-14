@@ -35,7 +35,10 @@
 - Protocol calls always present `cur_arg_r = 0` to `S_CALL`; the original
   container oparg is restored on return. This is required because `FOR_ITER`'s
   oparg is a jump delta, not a CALL argument count. A staged non-NULL self is
-  still counted by the existing method-call path.
+  still counted by the existing method-call path. The handoff also clears
+  CALL_KW / `**kwargs` / posonly binder scratch (`call_kw_*`, `call_varkw_*`,
+  `call_posonly_r`) so leftover state from ordinary calls cannot leak into a
+  protocol CALL 0.
 - `container_call_active_r` plus the saved target frame depth distinguishes the
   outer protocol return from ordinary nested returns. Nested calls resume
   fetch; only the outer return restores the saved container context and
@@ -66,14 +69,15 @@
 
 ## Verified
 
-- PASS — `make PYTHON=python3.14 pycore-python-tests` (220 tests).
-- PASS — `make PYTHON=python3.14 pycore-img-list-comp-basic` (golden 10).
-- PASS — `make PYTHON=python3.14 pycore-img-list-comp-fast-clear` (golden 106).
-- PASS — `make PYTHON=python3.14 pycore-img-for-iter-object-list` (step 6).
-- PASS — `make PYTHON=python3.14 pycore-img-try-stopiteration` (step 5).
-- PASS — `make PYTHON=python3.14 pycore-img-allocator-list` (adaptive CAPACITY;
-  golden 3) — fixes CI `PY_TRAP_MEM_FAULT` after Track B `HEAP_LIMIT=0x1B000`.
-- BLOCKED — `make docker-all-tests` (no Docker daemon).
+- PASS — `make PYTHON=python3.14 pycore-python-tests` (223 tests) after
+  merge with main (#67/#68).
+- PASS — `make PYTHON=python3.14 pycore-img-for-loop-all` (46 image/fixture
+  PASSes: object iterators, try/StopIteration, list comps).
+- PASS — `make PYTHON=python3.14 pycore-img-call-all` (50 PASSes: defaults,
+  varkw, posonly, CALL_KW).
+- PASS — collision spot-checks: `varkw-no-wipe`, `default-multi-zero-argc`,
+  `for-iter-object-next`, `try-stopiteration`, `list-comp-basic`.
+- BLOCKED — `make docker-all-tests` may still need a Docker daemon locally.
 
 ## Follow-on fix (post §10)
 
@@ -84,11 +88,14 @@
 
 ## Next session
 
-Plan §10 steps 1–8 are complete on this branch; adaptive allocator_list fix is
-landed locally. Prefer CI green on PR #66 over new scope. Optional follow-ons:
-dict comps, ROM `iter`/`next`.
+Merged `origin/main` (PR #67 argc==0 defaults wipe fix + PR #68
+`CO_VARKEYWORDS` / posonly CALL binder) into this branch. Schema is unified:
+8-field / 256B code objects with field-7 exception tables **and** metadata
+bits for varkw/posonly. Prefer re-verify `pycore-img-for-loop-all` +
+`pycore-img-call-all` then CI green on PR #66. Optional follow-ons: dict comps,
+ROM `iter`/`next`.
 
 ## Blockers
 
-- Required Docker CI remains unrun locally (no Docker daemon); re-push should
+- Required Docker CI may be unrun locally (no Docker daemon); push should
   re-trigger GitHub Actions `all-tests`.
