@@ -1,11 +1,13 @@
 # Planning and historical notes
 
-Documents here are **not** the source of truth for the current system.
-Current architecture and tag/layout docs live under `pycore/docs/` and
+Documents here are **not** the source of truth for the current system
+(except active product briefs awaiting implementation). Current
+architecture and tag/layout docs live under `pycore/docs/` and
 `excore/docs/`.
 
 | File | Contents |
 | --- | --- |
+| `pycore_sim_debugger_ui_prompt.md` | **Ready for handoff:** interactive PyCore simulator/debugger UI — implement on branch `ui_simulation` |
 | `builtins_bytecode_support_plan.md` | **Done (bytecode milestone):** LEGB-B, `BI_LEN` miss path, `TO_BOOL` widen, `RAISE_VARARGS`, `UNPACK_EX`, LIST_TO_TUPLE |
 | `builtins_next_steps_plan.md` | **Done through §4.5 (wave 3);** next is wave 4 |
 | `builtins_rom_wave3_plan.md` | **Done:** wave 3 ROM seed + `sorted(reverse=)` / tests |

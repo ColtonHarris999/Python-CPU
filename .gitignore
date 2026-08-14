@@ -2,3 +2,6 @@ build/
 .DS_Store
 __pycache__/
 *.pyc
+sim_ui/web/node_modules/
+sim_ui/web/dist/
+.venv/

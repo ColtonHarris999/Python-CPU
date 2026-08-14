@@ -1,0 +1,575 @@
+"""Build image + run traced two-core Verilator sim for a UI session."""
+
+from __future__ import annotations
+
+import ast
+import json
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable
+
+from .decode import DmemImage, decode_heap_object, parse_entry_hex
+from .disasm import disasm_program_hex
+from .trace_parse import (
+    filter_keypoints,
+    label_frames_with_varnames,
+    parse_trace_jsonl,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TOOLS = REPO_ROOT / "pycore" / "tools"
+BUILD_ROOT = REPO_ROOT / "build" / "sim_ui"
+DEFAULT_MAX_CYCLES = 200_000
+DEFAULT_MAX_SOURCE_BYTES = 200_000
+
+ProgressCb = Callable[[str, dict[str, Any] | None], None]
+
+
+@dataclass
+class Session:
+    id: str
+    dir: Path
+    status: str = "pending"
+    phase: str = "queued"
+    error: str | None = None
+    source: str = ""
+    entry: str = "managed_entry"
+    max_cycles: int = DEFAULT_MAX_CYCLES
+    keypoint_mode: bool = False
+    created_at: float = field(default_factory=time.time)
+    result: dict[str, Any] | None = None
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    steps_full: list[dict[str, Any]] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    disasm: list[dict[str, Any]] = field(default_factory=list)
+    end: dict[str, Any] | None = None
+    dmem_final: DmemImage | None = None
+    progress_log: list[dict[str, Any]] = field(default_factory=list)
+
+
+_SESSIONS: dict[str, Session] = {}
+_LOCK = threading.Lock()
+
+
+def session_get(sid: str) -> Session | None:
+    return _SESSIONS.get(sid)
+
+
+def list_example_sources() -> list[dict[str, str]]:
+    examples = [
+        ("smoke", "Smoke return 42", "pycore/programs/img_smoke.py"),
+        ("smoke_12", "Smoke return 12", "sim_ui/fixtures/smoke_return.py"),
+        ("recursion", "Fibonacci recursion (frames)", "pycore/programs/img_recursion.py"),
+        ("call_chain", "Nested call chain", "pycore/programs/img_call_chain.py"),
+        ("call_kw", "CALL_KW keyword args", "pycore/programs/img_call_kw.py"),
+        ("call_function_ex", "CALL_FUNCTION_EX *args", "pycore/programs/img_call_function_ex.py"),
+        ("containers", "List/dict/tuple basics", "pycore/programs/img_containers.py"),
+        ("list_extend", "LIST_EXTEND → excore mailbox", "pycore/programs/img_list_extend.py"),
+        ("dict_update", "DICT_UPDATE bulk trap", "pycore/programs/img_dict_update.py"),
+        ("dict_merge", "DICT_MERGE bulk trap", "pycore/programs/img_dict_merge.py"),
+        ("set_update", "SET_UPDATE bulk trap", "pycore/programs/img_set_update.py"),
+        ("dict_update_obj", "Contaminated dict update (pycore)", "pycore/programs/img_dict_update_obj.py"),
+        ("undef_global", "Fatal NAME/global trap", "pycore/programs/img_undef_global.py"),
+    ]
+    out = []
+    for key, title, rel in examples:
+        path = REPO_ROOT / rel
+        if path.is_file():
+            out.append(
+                {
+                    "id": key,
+                    "title": title,
+                    "path": rel,
+                    "source": path.read_text(encoding="utf-8"),
+                }
+            )
+    return out
+
+
+def health_check() -> dict[str, Any]:
+    py_ver = sys.version_info
+    verilator = shutil.which("verilator")
+    fw = REPO_ROOT / "build" / "excore_fw" / "list_grow.hex"
+    return {
+        "ok": py_ver[:2] == (3, 14) and verilator is not None,
+        "python": f"{py_ver.major}.{py_ver.minor}.{py_ver.micro}",
+        "python_3_14": py_ver[:2] == (3, 14),
+        "verilator": verilator is not None,
+        "verilator_path": verilator,
+        "excore_fw": fw.is_file(),
+        "excore_fw_path": str(fw) if fw.is_file() else None,
+        "two_core": True,
+        "repo_root": str(REPO_ROOT),
+    }
+
+
+def _set_phase(sess: Session, phase: str, detail: dict[str, Any] | None = None) -> None:
+    sess.phase = phase
+    entry = {"t": time.time(), "phase": phase, "detail": detail or {}}
+    sess.progress_log.append(entry)
+    (sess.dir / "progress.json").write_text(
+        json.dumps({"status": sess.status, "phase": phase, "log": sess.progress_log[-20:]}, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _ensure_fw() -> Path:
+    fw = REPO_ROOT / "build" / "excore_fw" / "list_grow.hex"
+    if fw.is_file():
+        return fw
+    subprocess.run(
+        ["make", "excore-fw"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    if not fw.is_file():
+        raise RuntimeError("excore-fw build failed — missing list_grow.hex")
+    return fw
+
+
+def _build_image(session_dir: Path, source_text: str, entry: str) -> dict[str, Any]:
+    if str(TOOLS) not in sys.path:
+        sys.path.insert(0, str(TOOLS))
+    from image_from_source import (  # type: ignore
+        build_image_from_source_text,
+        write_image_outputs,
+    )
+    from run_image_test import expected_tag_value, host_entry_result  # type: ignore
+
+    src_path = session_dir / "source.py"
+    src_path.write_text(source_text, encoding="utf-8")
+
+    expected: dict[str, Any] = {"available": False}
+    try:
+        host_val = host_entry_result(src_path, entry)
+        tag, value = expected_tag_value(host_val)
+        expected = {
+            "available": True,
+            "tag": tag,
+            "value": value,
+            "host_display": repr(host_val),
+        }
+    except Exception as exc:  # noqa: BLE001
+        expected = {"available": False, "error": str(exc)}
+
+    try:
+        result = build_image_from_source_text(source_text, filename=str(src_path))
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Image build failed (unsupported syntax/opcode?): {exc}") from exc
+
+    write_image_outputs(
+        result,
+        program_hex=session_dir / "program.hex",
+        dmem_hex=session_dir / "dmem.hex",
+        string_hex=session_dir / "string_mem.hex",
+        meta=session_dir / "image.meta",
+        expected_tag=expected.get("tag") if expected.get("available") else None,
+        expected_value=expected.get("value") if expected.get("available") else None,
+    )
+    meta: dict[str, str] = {}
+    for line in (session_dir / "image.meta").read_text(encoding="utf-8").splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            meta[k.strip()] = v.strip()
+    return {"meta": meta, "expected": expected}
+
+
+def _run_verilator_trace(
+    session_dir: Path,
+    *,
+    heap_init_ptr: int,
+    max_cycles: int,
+    expected: dict[str, Any],
+) -> None:
+    fw = _ensure_fw()
+    rtl_srcs = [
+        "pycore/rtl/pycore_tag_decode.sv",
+        "pycore/rtl/pycore_promote.sv",
+        "pycore/rtl/pycore_int_alu.sv",
+        "pycore/rtl/pycore_mul.sv",
+        "pycore/rtl/pycore_div.sv",
+        "pycore/rtl/pycore_fpu.sv",
+        "pycore/rtl/pycore_complex_alu.sv",
+        "pycore/rtl/pycore_string_mem.sv",
+        "pycore/rtl/pycore_exec.sv",
+        "pycore/rtl/pycore_regfile.sv",
+        "pycore/rtl/pycore_fetch.sv",
+        "pycore/rtl/pycore_decode.sv",
+        "pycore/rtl/pycore_branch.sv",
+        "pycore/rtl/pycore_trap.sv",
+        "pycore/rtl/pycore_frame.sv",
+        "pycore/rtl/pycore_mem_block.sv",
+        "pycore/rtl/pycore_mem_bank.sv",
+        "pycore/rtl/pycore_imem.sv",
+        "pycore/rtl/pycore_dmem.sv",
+        "pycore/rtl/pycore_mem_stage.sv",
+        "pycore/rtl/pycore_core.sv",
+        "pycore/rtl/pycore_system.sv",
+        "excore/rtl/excore_cpu.sv",
+        "excore/rtl/excore_mmio.sv",
+        "excore/rtl/trap_mailbox.sv",
+        "pycore/rtl/pycore_excore_system.sv",
+        "pycore/tb/tb_sim_trace.sv",
+    ]
+    mdir = session_dir / "verilator"
+    mdir.mkdir(parents=True, exist_ok=True)
+    prog = session_dir / "program.hex"
+    dmem = session_dir / "dmem.hex"
+    smem = session_dir / "string_mem.hex"
+    trace = session_dir / "trace.jsonl"
+    dmem_final = session_dir / "dmem_final.hex"
+
+    g_args = [
+        f'-GPROG_HEX="{prog}"',
+        f'-GSTRING_HEX="{smem}"',
+        f'-GDMEM_HEX="{dmem}"',
+        f'-GFW_HEX="{fw}"',
+        f'-GTRACE_JSONL="{trace}"',
+        f'-GDMEM_FINAL_HEX="{dmem_final}"',
+        "-GBOOT_EN=1",
+        "-GCHECK_ENTRY_RETURN=1",
+        f"-GHEAP_INIT_PTR={heap_init_ptr}",
+        f"-GMAX_CYCLES={max_cycles}",
+    ]
+    if expected.get("available"):
+        g_args.append("-GHAS_EXPECTED=1")
+        g_args.append(f"-GEXPECTED_TAG=4'd{expected['tag']}")
+        g_args.append(f"-GEXPECTED_VALUE=128'd{expected['value']}")
+
+    cmd = [
+        "verilator",
+        "-sv",
+        "--binary",
+        "--timing",
+        "+incdir+pycore/rtl",
+        "+incdir+excore/rtl/singlecore",
+        "--top-module",
+        "tb_sim_trace",
+        *g_args,
+        "--Mdir",
+        str(mdir),
+        "-Wall",
+        "-Wno-fatal",
+        *rtl_srcs,
+    ]
+    build = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    (session_dir / "verilator_build.log").write_text(
+        build.stdout + "\n" + build.stderr, encoding="utf-8"
+    )
+    if build.returncode != 0:
+        raise RuntimeError(
+            "Verilator build failed.\n" + (build.stderr or build.stdout)[-4000:]
+        )
+
+    exe = mdir / "Vtb_sim_trace"
+    if not exe.is_file():
+        candidates = list(mdir.glob("**/Vtb_sim_trace"))
+        if not candidates:
+            raise RuntimeError("Verilator binary Vtb_sim_trace not found")
+        exe = candidates[0]
+
+    run = subprocess.run(
+        [str(exe)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=max(120, max_cycles // 1000 + 60),
+    )
+    (session_dir / "sim_run.log").write_text(
+        run.stdout + "\n" + run.stderr, encoding="utf-8"
+    )
+    if not trace.is_file():
+        raise RuntimeError(
+            "Simulation produced no trace.jsonl.\n"
+            + (run.stderr or run.stdout)[-4000:]
+        )
+
+
+def _extract_varnames(dmem: DmemImage | None, code_addrs: set[int]) -> dict[int, list[str]]:
+    from .decode import CODE_FIELD_CO_VARNAMES, TAG_SHORT_STR, TAG_TUPLE, decode_entry
+
+    out: dict[int, list[str]] = {}
+    if dmem is None:
+        return out
+    for addr in code_addrs:
+        try:
+            f_addr = addr + CODE_FIELD_CO_VARNAMES * 32
+            tag_word = dmem.read_word(f_addr + 16)
+            val = dmem.read_word(f_addr)
+            tag = tag_word & 0xF
+            if tag != TAG_TUPLE:
+                continue
+            size = (val >> 64) & 0xFFFFFFFF
+            taddr = val & ((1 << 64) - 1)
+            names: list[str] = []
+            for i in range(min(size, 32)):
+                e_tag, e_val = dmem.read_entry_pair(taddr + i * 32)
+                dec = decode_entry(e_tag, e_val)
+                if e_tag == TAG_SHORT_STR:
+                    disp = dec.get("display", "")
+                    if isinstance(disp, str) and len(disp) >= 2 and disp[0] in "'\"":
+                        names.append(ast_literal(disp))
+                    else:
+                        names.append(str(disp))
+                else:
+                    names.append(dec.get("display", f"v{i}"))
+            out[addr] = names
+        except Exception:
+            continue
+    return out
+
+
+def ast_literal(s: str) -> str:
+    try:
+        v = ast.literal_eval(s)
+        return v if isinstance(v, str) else s
+    except Exception:
+        return s.strip("'\"")
+
+
+def _func_names_from_source(source: str) -> dict[str, list[str]]:
+    """Map function name -> co_varnames-like list from source AST."""
+    out: dict[str, list[str]] = {}
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return out
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            names = [a.arg for a in node.args.args]
+            names += [a.arg for a in node.args.kwonlyargs]
+            out[node.name] = names
+    return out
+
+
+def _match_func_names(
+    varnames_by_code: dict[int, list[str]],
+    source_funcs: dict[str, list[str]],
+) -> dict[int, str]:
+    """Best-effort code_addr → function name via co_varnames equality."""
+    mapping: dict[int, str] = {}
+    for addr, names in varnames_by_code.items():
+        for fname, fnames in source_funcs.items():
+            if names and names == fnames:
+                mapping[addr] = fname
+                break
+    return mapping
+
+
+def _run_session_pipeline(sess: Session) -> None:
+    try:
+        _set_phase(sess, "building_image")
+        built = _build_image(sess.dir, sess.source, sess.entry)
+        heap_init = int(built["meta"].get("HEAP_INIT_PTR", "0"))
+
+        _set_phase(sess, "compiling_sim")
+        _run_verilator_trace(
+            sess.dir,
+            heap_init_ptr=heap_init,
+            max_cycles=sess.max_cycles,
+            expected=built["expected"],
+        )
+
+        _set_phase(sess, "parsing_trace")
+        parsed = parse_trace_jsonl(sess.dir / "trace.jsonl")
+        dmem_final_path = sess.dir / "dmem_final.hex"
+        dmem = (
+            DmemImage.from_hex_file(dmem_final_path) if dmem_final_path.is_file() else None
+        )
+        code_addrs = {int(s.get("cur_code") or 0) for s in parsed["steps"]}
+        code_addrs |= {
+            int(fr.get("code_addr") or 0)
+            for s in parsed["steps"]
+            for fr in (s.get("frames") or [])
+        }
+        code_addrs.discard(0)
+        varnames = _extract_varnames(dmem, code_addrs)
+        source_funcs = _func_names_from_source(sess.source)
+        func_names = _match_func_names(varnames, source_funcs)
+        # Prefer entry name for the managed_entry varnames match.
+        for addr, names in varnames.items():
+            if sess.entry in source_funcs and names == source_funcs[sess.entry]:
+                func_names[addr] = sess.entry
+        label_frames_with_varnames(parsed["steps"], varnames, func_names)
+
+        # Enrich heap_delta with end-of-run decode when possible.
+        if dmem is not None:
+            for step in parsed["steps"]:
+                enriched = []
+                for root in step.get("heap_delta") or []:
+                    item = dict(root)
+                    addr = root.get("addr_int")
+                    if isinstance(addr, int) and root.get("tag") == "MUT_COLLEC":
+                        try:
+                            from .decode import make_dict, make_list, make_set
+
+                            kind = root.get("kind")
+                            if kind == "LIST":
+                                tag, val = make_list(addr, bool(root.get("contaminated")))
+                            elif kind == "DICT":
+                                tag, val = make_dict(addr, bool(root.get("contaminated")))
+                            elif kind == "SET":
+                                tag, val = make_set(addr, bool(root.get("contaminated")))
+                            else:
+                                tag = val = None  # type: ignore
+                            if tag is not None:
+                                dec = decode_heap_object(dmem, tag, val)
+                                item["summary"] = dec.get("summary", item.get("summary"))
+                                if dec.get("routing_note"):
+                                    item["routing_note"] = dec["routing_note"]
+                        except Exception:
+                            pass
+                    enriched.append(item)
+                step["heap_delta"] = enriched
+
+        sess.steps_full = parsed["steps"]
+        sess.steps = (
+            filter_keypoints(parsed["steps"]) if sess.keypoint_mode else parsed["steps"]
+        )
+        sess.events = parsed["events"]
+        sess.end = parsed["end"]
+        sess.disasm = disasm_program_hex(sess.dir / "program.hex")
+        sess.dmem_final = dmem
+        sess.result = {
+            "expected": built["expected"],
+            "meta": built["meta"],
+            "end": sess.end,
+            "step_count": len(sess.steps),
+            "step_count_full": len(sess.steps_full),
+            "event_count": len(parsed["events"]),
+            "keypoint_mode": sess.keypoint_mode,
+        }
+        sess.status = "ready"
+        _set_phase(sess, "ready", {"steps": len(sess.steps)})
+        (sess.dir / "session.json").write_text(
+            json.dumps(
+                {
+                    "id": sess.id,
+                    "entry": sess.entry,
+                    "max_cycles": sess.max_cycles,
+                    "keypoint_mode": sess.keypoint_mode,
+                    "result": sess.result,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception as exc:  # noqa: BLE001
+        sess.status = "error"
+        sess.error = str(exc)
+        _set_phase(sess, "error", {"error": str(exc)})
+        (sess.dir / "error.txt").write_text(str(exc), encoding="utf-8")
+
+
+def create_session(
+    source: str,
+    *,
+    entry: str = "managed_entry",
+    max_cycles: int = DEFAULT_MAX_CYCLES,
+    keypoint_mode: bool = False,
+    background: bool = False,
+) -> Session:
+    if len(source.encode("utf-8")) > DEFAULT_MAX_SOURCE_BYTES:
+        raise ValueError(f"source exceeds {DEFAULT_MAX_SOURCE_BYTES} bytes")
+    if max_cycles < 1000 or max_cycles > 5_000_000:
+        raise ValueError("max_cycles out of allowed range [1000, 5000000]")
+    if not entry.isidentifier():
+        raise ValueError("entry must be a valid identifier")
+
+    sid = uuid.uuid4().hex[:12]
+    session_dir = BUILD_ROOT / sid
+    session_dir.mkdir(parents=True, exist_ok=True)
+    sess = Session(
+        id=sid,
+        dir=session_dir,
+        source=source,
+        entry=entry,
+        max_cycles=max_cycles,
+        keypoint_mode=keypoint_mode,
+        status="running",
+    )
+    with _LOCK:
+        _SESSIONS[sid] = sess
+    _set_phase(sess, "starting")
+
+    if background:
+        threading.Thread(target=_run_session_pipeline, args=(sess,), daemon=True).start()
+        return sess
+
+    _run_session_pipeline(sess)
+    return sess
+
+
+def set_keypoint_mode(sess: Session, enabled: bool) -> None:
+    sess.keypoint_mode = enabled
+    if sess.steps_full:
+        sess.steps = filter_keypoints(sess.steps_full) if enabled else list(sess.steps_full)
+        if sess.result is not None:
+            sess.result["step_count"] = len(sess.steps)
+            sess.result["keypoint_mode"] = enabled
+
+
+def get_step(sess: Session, n: int) -> dict[str, Any]:
+    if n < 0 or n >= len(sess.steps):
+        raise IndexError(f"step {n} out of range 0..{len(sess.steps)-1}")
+    return sess.steps[n]
+
+
+def get_heap(sess: Session, addr: int, step: int | None = None) -> dict[str, Any]:
+    if sess.dmem_final is None:
+        raise RuntimeError("no final dmem image available")
+    tag = None
+    value = None
+    if step is not None and 0 <= step < len(sess.steps):
+        snap = sess.steps[step]
+        candidates = list(snap.get("stack") or []) + list(snap.get("locals_window") or [])
+        for fr in snap.get("frames") or []:
+            candidates.extend((fr.get("locals") or {}).values())
+        for entry in candidates:
+            if entry.get("addr") == addr:
+                tag = entry.get("tag_id")
+                raw = entry.get("raw", "0")
+                _, value = parse_entry_hex(raw[2:] if raw.startswith("0x") else raw)
+                break
+        # Prefer heap_delta kind if present.
+        for root in snap.get("heap_delta") or []:
+            if root.get("addr_int") == addr and root.get("kind"):
+                from .decode import make_dict, make_list, make_set
+
+                contam = bool(root.get("contaminated"))
+                kind = root["kind"]
+                if kind == "LIST":
+                    tag, value = make_list(addr, contam)
+                elif kind == "DICT":
+                    tag, value = make_dict(addr, contam)
+                elif kind == "SET":
+                    tag, value = make_set(addr, contam)
+                break
+    if tag is None:
+        from .decode import make_list
+
+        tag, value = make_list(addr)
+    return decode_heap_object(sess.dmem_final, tag, value)
+
+
+def prune_sessions(ttl_s: float = 3600.0, max_keep: int = 20) -> None:
+    now = time.time()
+    with _LOCK:
+        items = sorted(_SESSIONS.values(), key=lambda s: s.created_at, reverse=True)
+        for i, sess in enumerate(items):
+            stale = (now - sess.created_at) > ttl_s or i >= max_keep
+            if stale:
+                _SESSIONS.pop(sess.id, None)

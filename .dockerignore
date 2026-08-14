@@ -1,2 +1,8 @@
 build
 .git
+**/__pycache__
+**/*.pyc
+sim_ui/web/node_modules
+sim_ui/web/dist
+.DS_Store
+singlecore.zip
