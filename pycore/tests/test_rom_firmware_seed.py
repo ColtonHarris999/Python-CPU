@@ -135,6 +135,7 @@ class RomFirmwareSeedTest(unittest.TestCase):
 
     def test_stopiteration_seeded_and_sidecared(self) -> None:
         from encoding import (
+            CTL_NONE,
             ITER_EXHAUST_TYPE_ADDR,
             MUT_DICT,
             OBK_TYPE,
@@ -142,6 +143,8 @@ class RomFirmwareSeedTest(unittest.TestCase):
             TAG_OBJECT,
             is_mut_kind,
             ob_kind,
+            obj_field_tag_addr,
+            obj_field_val_addr,
         )
 
         serializer = image_from_source._ImageSerializer()
@@ -153,6 +156,13 @@ class RomFirmwareSeedTest(unittest.TestCase):
         self.assertEqual(words[ITER_EXHAUST_TYPE_ADDR + 16] & 0xF, TAG_OBJECT)
         type_addr = words[ITER_EXHAUST_TYPE_ADDR] & ((1 << 64) - 1)
         self.assertEqual(ob_kind(words[type_addr]), OBK_TYPE)
+        # Relinked: field1 is Exception (OBJECT), not None.
+        self.assertEqual(
+            words[obj_field_tag_addr(type_addr, 1)] & 0xF, TAG_OBJECT
+        )
+        self.assertNotEqual(
+            words[obj_field_val_addr(type_addr, 1)] & 0xF, CTL_NONE
+        )
 
     def test_bi_print_seeded_as_native_builtin(self) -> None:
         from encoding import (

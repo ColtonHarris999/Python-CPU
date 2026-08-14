@@ -15,7 +15,8 @@ Current architecture and tag/layout docs live under `pycore/docs/` and
 | `native_compiler_plan.md` | **Proposed (Plan 2):** parser, AST, symbol table, codegen, assembler, `CODE_OBJECT` fabrication, `compile()` + string `exec`/`eval`, on-device source store, **self-hosting bootstrap** |
 | `builtins_print_console_plan.md` | **Done:** ROM `print` + `_bi_print` / `CONSOLE_TX` + stdout goldens |
 | `call_kw_support_plan.md` | **Done (v1):** `CALL_KW` / `CALL_FUNCTION_EX` / `DICT_MERGE` on `CODE_OBJECT` |
-| `for_loop_full_support_plan.md` | **Active:** GET_ITER/FOR_ITER on OBJECT + StopIteration exception tables + comprehensions |
+| `for_loop_full_support_plan.md` | **Done (PR #66):** GET_ITER/FOR_ITER on OBJECT + StopIteration exception tables + comprehensions |
+| `exceptions_full_support_plan.md` | **Active:** Track 1 + T5-A landed on `cursor/exceptions-full-t1-match`; next is T2 construction. Type tracker: `pycore/docs/exception_support.md` + `pycore.json` `exceptions.types` |
 | `dict_set_bulk_contam_plan.md` | **Done:** `MAP_ADD` / `DICT_UPDATE` / `DICT_MERGE` / `SET_UPDATE` + contamination bit |
 | `optimization_plan.md` | Optional RTL cleanup / optimization backlog |
 | `dead_code_report.md` | Historical dead-code audit notes |

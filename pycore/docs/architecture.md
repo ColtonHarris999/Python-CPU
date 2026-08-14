@@ -7,7 +7,10 @@ intentionally absent.
 
 Bytecode support status (fully supported / partially supported / unsupported) is
 tracked separately in `pycore/docs/bytecode_support.md` so decode and
-preprocessing changes can be reviewed against one explicit matrix.
+preprocessing changes can be reviewed against one explicit matrix. The machine
+catalog is `pycore/targets/pycore.json` (`opcodes`). Built-in exception **types**
+are tracked the same way in `pycore/docs/exception_support.md` and
+`pycore.json` → `exceptions.types`.
 
 Paper-oriented systems notes (LaTeX) for near-complete subsystems live under
 `docs/paper/` — start with `docs/paper/systems/call_fsm.tex` for the CALL FSM
@@ -552,7 +555,7 @@ image sets `HEAP_INIT_PTR` to the first free byte above the static objects so
 bump allocation does not overwrite them.  `DMEM_HEX` on `pycore_system` /
 `pycore_dmem` preloads the whole dmem bank (not just the first 4 KB block).
 The boot record occupies `[0x3e0, 0x440)` and must not overlap heap objects.
-Boot also seeds builtins `StopIteration` and a sidecar at
+Boot also seeds Wave A exception types (including `StopIteration`) and a sidecar at
 `ITER_EXHAUST_TYPE_ADDR` (`0x1BFE0`) for `FOR_ITER` protocol exhaustion.
 
 ### LIST in-dmem layout

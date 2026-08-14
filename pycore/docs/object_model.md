@@ -2,7 +2,8 @@
 
 This document records the load-bearing decisions for general heap objects
 under `PY_TAG_OBJECT`. It is the companion to `architecture.md` (traps /
-mailbox) and `bytecode_support.md` (opcode tables).
+mailbox), `bytecode_support.md` (opcode tables), and `exception_support.md`
+(which built-in exception types are seeded).
 
 ## D1 — Keep the 4-bit tag; kind under OBJECT
 
@@ -71,8 +72,9 @@ module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
 `_bi_exec_globals` as
 `OBK_BUILTIN`
 handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
-`to_bytes`, `StopIteration` plus `SyntaxError` / `ValueError` / `TypeError` /
-`IndexError` as leaf `OBK_TYPE`s (`tp_base = None`), and ROM
+`to_bytes`, Wave A exception types as `OBK_TYPE` (`BaseException` →
+`Exception` → leaves including `StopIteration` and `SyntaxError`; exception
+`ob_flags` bit set; see `exception_support.md`), and ROM
 firmware names (`print`, `sum`, `abs`, `bool`, `all`, `any`, `enumerate`,
 `map`, `zip`, `exec`, `eval`, …) as `CODE_OBJECT` handles from `ROM_FIRMWARE_BUILTINS` in
 `image_from_source.py`. Public `print` is the ROM wrapper; `_bi_print`

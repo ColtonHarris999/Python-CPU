@@ -227,7 +227,7 @@
     "OBJ_EXC": {
       "distance": 5,
       "needs_subsystem": "exception state + stack unwinder",
-      "note": "v1: RAISE_VARARGS/PUSH_EXC_INFO/CHECK_EXC_MATCH/POP_EXCEPT/RERAISE + dmem exc stack + co_exceptiontable; remaining members still deferred",
+      "note": "v1 execute/partial: RAISE_VARARGS (oparg 1) / PUSH_EXC_INFO / CHECK_EXC_MATCH (identity+MRO+tuples) / POP_EXCEPT / RERAISE (0/1) + dmem exc stack + co_exceptiontable. Remaining members are trap. Types: exceptions.types + pycore/docs/exception_support.md. SETUP_* / POP_BLOCK are compiler pseudo-ops (never in co_code). Plan tracks in planning/exceptions_full_support_plan.md.",
       "members": [
         "PUSH_EXC_INFO",
         "POP_EXCEPT",
@@ -253,6 +253,996 @@
         "SET_FUNCTION_ATTRIBUTE",
         "PUSH_NULL"
       ]
+    }
+  },
+  "exceptions": {
+    "//": "Built-in exception types. Human table: pycore/docs/exception_support.md. Hierarchy: https://docs.python.org/3/library/exceptions.html. seed_track is which plan track inserts the type; uses_tracks consume it.",
+    "support_levels": {
+      "seeded": "OBK_TYPE in boot builtins dict",
+      "absent": "not in boot dict",
+      "alias": "name binds to alias_of handle once that type is seeded",
+      "skip": "explicitly not planned"
+    },
+    "match_levels": {
+      "none": "CHECK_EXC_MATCH cannot see this type (not seeded)",
+      "identity": "exact type-handle compare only",
+      "mro": "identity then tp_base walk (Track 1)"
+    },
+    "construct_levels": {
+      "none": "cannot raise this type",
+      "raise-type": "RAISE_VARARGS 1 treats TOS as a type and allocs OBK_EXCEPTION",
+      "call": "CALL on the type allocs OBK_EXCEPTION (Track 2)"
+    },
+    "types": {
+      "BaseException": {
+        "status": "seeded",
+        "tp_base": null,
+        "tp_base_actual": null,
+        "seed_track": "T1",
+        "uses_tracks": [
+          "T1",
+          "T5-C",
+          "T11",
+          "T12"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [],
+        "wave": "A",
+        "note": "root; bare except is this without a matcher"
+      },
+      "Exception": {
+        "status": "seeded",
+        "tp_base": "BaseException",
+        "tp_base_actual": "BaseException",
+        "seed_track": "T1",
+        "uses_tracks": [
+          "T1",
+          "T2",
+          "T5-A",
+          "T10"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [],
+        "wave": "A",
+        "note": "ubiquity test: except Exception catches Wave A leaves, not SystemExit/KeyboardInterrupt/GeneratorExit"
+      },
+      "StopIteration": {
+        "status": "seeded",
+        "tp_base": "Exception",
+        "tp_base_actual": "Exception",
+        "seed_track": "landed-B",
+        "uses_tracks": [
+          "T1",
+          "T2",
+          "T12"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [
+          "FOR_ITER-exhaust"
+        ],
+        "wave": "A",
+        "note": "relinked tp_base=Exception (same handle pattern: allocated after Exception); FOR_ITER exhaust still identity vs iter_exhaust_type_r"
+      },
+      "ArithmeticError": {
+        "status": "seeded",
+        "tp_base": "Exception",
+        "tp_base_actual": "Exception",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T5-A"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [],
+        "wave": "A"
+      },
+      "ZeroDivisionError": {
+        "status": "seeded",
+        "tp_base": "ArithmeticError",
+        "tp_base_actual": "ArithmeticError",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T5-A",
+          "T6"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [
+          "PY_TRAP_DIV_ZERO"
+        ],
+        "wave": "A"
+      },
+      "LookupError": {
+        "status": "seeded",
+        "tp_base": "Exception",
+        "tp_base_actual": "Exception",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T5-A"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [],
+        "wave": "A"
+      },
+      "IndexError": {
+        "status": "seeded",
+        "tp_base": "LookupError",
+        "tp_base_actual": "LookupError",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T5-A",
+          "T6"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [
+          "MEM_FAULT-seq-oob"
+        ],
+        "wave": "A"
+      },
+      "KeyError": {
+        "status": "seeded",
+        "tp_base": "LookupError",
+        "tp_base_actual": "LookupError",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T5-A",
+          "T6"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [
+          "MEM_FAULT-dict-miss"
+        ],
+        "wave": "A"
+      },
+      "NameError": {
+        "status": "seeded",
+        "tp_base": "Exception",
+        "tp_base_actual": "Exception",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T5-A",
+          "T6"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [
+          "MEM_FAULT-name-miss"
+        ],
+        "wave": "A"
+      },
+      "UnboundLocalError": {
+        "status": "seeded",
+        "tp_base": "NameError",
+        "tp_base_actual": "NameError",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T5-A",
+          "T6"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [
+          "MEM_FAULT-unbound-local"
+        ],
+        "wave": "A"
+      },
+      "TypeError": {
+        "status": "seeded",
+        "tp_base": "Exception",
+        "tp_base_actual": "Exception",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T2",
+          "T5-A",
+          "T6"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [
+          "PY_TRAP_TYPE"
+        ],
+        "wave": "A",
+        "note": "firmware raise TypeError after Wave A; Track 6 TYPE trap"
+      },
+      "ValueError": {
+        "status": "seeded",
+        "tp_base": "Exception",
+        "tp_base_actual": "Exception",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T5-A"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [],
+        "wave": "A",
+        "note": "firmware raise ValueError after Wave A; wrong value not wrong type"
+      },
+      "AttributeError": {
+        "status": "seeded",
+        "tp_base": "Exception",
+        "tp_base_actual": "Exception",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T5-A",
+          "T6"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [
+          "PY_TRAP_ATTR_ERROR"
+        ],
+        "wave": "A"
+      },
+      "RuntimeError": {
+        "status": "seeded",
+        "tp_base": "Exception",
+        "tp_base_actual": "Exception",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T4",
+          "T5-A"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [],
+        "wave": "A",
+        "note": "Track 4 bare raise with no active exception"
+      },
+      "AssertionError": {
+        "status": "seeded",
+        "tp_base": "Exception",
+        "tp_base_actual": "Exception",
+        "seed_track": "T5-A",
+        "uses_tracks": [
+          "T5-A",
+          "T7"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [],
+        "wave": "A",
+        "note": "Track 7 LOAD_COMMON_CONSTANT 0"
+      },
+      "OverflowError": {
+        "status": "absent",
+        "tp_base": "ArithmeticError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B"
+      },
+      "MemoryError": {
+        "status": "absent",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B",
+          "T6"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "heap OOM only after MEM_FAULT site split"
+      },
+      "ImportError": {
+        "status": "absent",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B"
+      },
+      "ModuleNotFoundError": {
+        "status": "absent",
+        "tp_base": "ImportError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B"
+      },
+      "NotImplementedError": {
+        "status": "absent",
+        "tp_base": "RuntimeError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B"
+      },
+      "RecursionError": {
+        "status": "absent",
+        "tp_base": "RuntimeError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B"
+      },
+      "PythonFinalizationError": {
+        "status": "absent",
+        "tp_base": "RuntimeError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "low; seed with RuntimeError family if cheap"
+      },
+      "OSError": {
+        "status": "absent",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "stub only; no errno-to-subclass constructor"
+      },
+      "EnvironmentError": {
+        "status": "alias",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "alias_of": "OSError",
+        "wave": "B",
+        "note": "CPython alias of OSError; bind the same handle"
+      },
+      "IOError": {
+        "status": "alias",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "alias_of": "OSError",
+        "wave": "B",
+        "note": "CPython alias of OSError; bind the same handle"
+      },
+      "WindowsError": {
+        "status": "alias",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "alias_of": "OSError",
+        "wave": "B",
+        "note": "CPython alias of OSError; bind the same handle"
+      },
+      "BlockingIOError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "ChildProcessError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "ConnectionError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "BrokenPipeError": {
+        "status": "absent",
+        "tp_base": "ConnectionError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "ConnectionAbortedError": {
+        "status": "absent",
+        "tp_base": "ConnectionError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "ConnectionRefusedError": {
+        "status": "absent",
+        "tp_base": "ConnectionError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "ConnectionResetError": {
+        "status": "absent",
+        "tp_base": "ConnectionError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "FileExistsError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "FileNotFoundError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "InterruptedError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "IsADirectoryError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "NotADirectoryError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "PermissionError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "ProcessLookupError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "TimeoutError": {
+        "status": "absent",
+        "tp_base": "OSError",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "do not seed; Wave B stubs OSError only"
+      },
+      "BufferError": {
+        "status": "absent",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "seed only if something raises it"
+      },
+      "EOFError": {
+        "status": "absent",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "seed only if something raises it"
+      },
+      "ReferenceError": {
+        "status": "absent",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "seed only if something raises it"
+      },
+      "SystemError": {
+        "status": "absent",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T5-B",
+        "uses_tracks": [
+          "T5-B"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "B",
+        "note": "seed only if something raises it"
+      },
+      "SystemExit": {
+        "status": "absent",
+        "tp_base": "BaseException",
+        "tp_base_actual": null,
+        "seed_track": "T5-C",
+        "uses_tracks": [
+          "T5-C"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C",
+        "note": "not under Exception"
+      },
+      "KeyboardInterrupt": {
+        "status": "absent",
+        "tp_base": "BaseException",
+        "tp_base_actual": null,
+        "seed_track": "T5-C",
+        "uses_tracks": [
+          "T5-C"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C",
+        "note": "not under Exception"
+      },
+      "GeneratorExit": {
+        "status": "absent",
+        "tp_base": "BaseException",
+        "tp_base_actual": null,
+        "seed_track": "T12",
+        "uses_tracks": [
+          "T12"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C",
+        "note": "not under Exception; generator plan"
+      },
+      "StopAsyncIteration": {
+        "status": "absent",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T12",
+        "uses_tracks": [
+          "T12"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C",
+        "note": "async iterators; generator/async plan"
+      },
+      "BaseExceptionGroup": {
+        "status": "absent",
+        "tp_base": "BaseException",
+        "tp_base_actual": null,
+        "seed_track": "T11",
+        "uses_tracks": [
+          "T11"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C",
+        "note": "except Exception must not catch this"
+      },
+      "ExceptionGroup": {
+        "status": "absent",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "T11",
+        "uses_tracks": [
+          "T11"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C",
+        "note": "v1 tp_base=Exception only; also BaseExceptionGroup in CPython"
+      },
+      "SyntaxError": {
+        "status": "seeded",
+        "tp_base": "Exception",
+        "tp_base_actual": "Exception",
+        "seed_track": "T1",
+        "uses_tracks": [
+          "T5-C"
+        ],
+        "match": "mro",
+        "construct": "raise-type",
+        "trap_map": [],
+        "wave": "C",
+        "note": "Pulled onto T1 rebase: Plan 1 P7 already had a leaf SyntaxError and exact-match tests. IndentationError/TabError stay absent."
+      },
+      "IndentationError": {
+        "status": "absent",
+        "tp_base": "SyntaxError",
+        "tp_base_actual": null,
+        "seed_track": "T5-C",
+        "uses_tracks": [
+          "T5-C"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C"
+      },
+      "TabError": {
+        "status": "absent",
+        "tp_base": "IndentationError",
+        "tp_base_actual": null,
+        "seed_track": "T5-C",
+        "uses_tracks": [
+          "T5-C"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C"
+      },
+      "UnicodeError": {
+        "status": "absent",
+        "tp_base": "ValueError",
+        "tp_base_actual": null,
+        "seed_track": "T5-C",
+        "uses_tracks": [
+          "T5-C"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C"
+      },
+      "UnicodeDecodeError": {
+        "status": "absent",
+        "tp_base": "UnicodeError",
+        "tp_base_actual": null,
+        "seed_track": "T5-C",
+        "uses_tracks": [
+          "T5-C"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C"
+      },
+      "UnicodeEncodeError": {
+        "status": "absent",
+        "tp_base": "UnicodeError",
+        "tp_base_actual": null,
+        "seed_track": "T5-C",
+        "uses_tracks": [
+          "T5-C"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C"
+      },
+      "UnicodeTranslateError": {
+        "status": "absent",
+        "tp_base": "UnicodeError",
+        "tp_base_actual": null,
+        "seed_track": "T5-C",
+        "uses_tracks": [
+          "T5-C"
+        ],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "C"
+      },
+      "FloatingPointError": {
+        "status": "skip",
+        "tp_base": "ArithmeticError",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "docs: not currently used"
+      },
+      "Warning": {
+        "status": "skip",
+        "tp_base": "Exception",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "UserWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "DeprecationWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "PendingDeprecationWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "SyntaxWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "RuntimeWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "FutureWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "ImportWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "UnicodeWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "BytesWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "ResourceWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "EncodingWarning": {
+        "status": "skip",
+        "tp_base": "Warning",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "seed the warnings family only if something emits them"
+      },
+      "_IncompleteInputError": {
+        "status": "skip",
+        "tp_base": "SyntaxError",
+        "tp_base_actual": null,
+        "seed_track": "skip",
+        "uses_tracks": [],
+        "match": "none",
+        "construct": "none",
+        "trap_map": [],
+        "wave": "skip",
+        "note": "CPython 3.13+ REPL incomplete-input; not in the public exceptions.html tree; skip"
+      }
     }
   },
   "opcodes": {
@@ -455,39 +1445,132 @@
       "fold": "BAR"
     },
     "RAISE_VARARGS": {
-      "support": "execute",
+      "support": "partial",
       "hw_class": "OBJECT",
       "fold": "BAR",
       "obj_group": "OBJ_EXC",
-      "note": "oparg=1 builds OBK_EXCEPTION, walks co_exceptiontable, redirects or PY_TRAP_RAISE"
+      "note": "oparg=1 builds OBK_EXCEPTION, walks co_exceptiontable, redirects or PY_TRAP_RAISE; type vs instance is Track 2; see exception_support.md",
+      "supported_opargs": [
+        1
+      ],
+      "plan_track": "T4",
+      "message": "oparg 1 only: alloc OBK_EXCEPTION from TOS-as-type, walk co_exceptiontable; oparg 0/2 are Track 4"
     },
     "PUSH_EXC_INFO": {
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR",
       "obj_group": "OBJ_EXC",
-      "note": "dmem exc-info push + stack [prev, exc]; sets active_exc_r"
+      "note": "dmem exc-info push + stack [prev, exc]; sets active_exc_r",
+      "plan_track": "landed-B"
     },
     "CHECK_EXC_MATCH": {
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR",
       "obj_group": "OBJ_EXC",
-      "note": "v1 exact type-handle match against active_exc.field0; [exc,type]->[exc,bool]"
+      "note": "identity then tp_base walk (depth 8) + one-level except (A,B) tuples cap 8; nested tuples TYPE; see exception_support.md",
+      "plan_track": "landed-T1"
     },
     "POP_EXCEPT": {
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR",
       "obj_group": "OBJ_EXC",
-      "note": "pop dmem exc-info node; restore active_exc_*; pop TOS prev"
+      "note": "pop dmem exc-info node; restore active_exc_*; pop TOS prev",
+      "plan_track": "landed-B"
     },
     "RERAISE": {
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR",
       "obj_group": "OBJ_EXC",
-      "note": "re-raise TOS through table walk; oparg=1 restores outer active first"
+      "note": "re-raise TOS through table walk; oparg 0/1 landed; oparg 2 is Track 9 (with)",
+      "supported_opargs": [
+        0,
+        1
+      ],
+      "plan_track": "T9"
+    },
+    "CHECK_EG_MATCH": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "plan_track": "T11",
+      "note": "except*; Track 11 ExceptionGroup"
+    },
+    "WITH_EXCEPT_START": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "plan_track": "T9",
+      "note": "with exception path; Track 9"
+    },
+    "POP_BLOCK": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "plan_track": "never",
+      "note": "compiler-only pseudo-op; never in co_code; try/finally uses exception tables"
+    },
+    "SETUP_FINALLY": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "plan_track": "never",
+      "note": "compiler-only pseudo-op; never in co_code; try/finally uses exception tables + RERAISE"
+    },
+    "SETUP_WITH": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "plan_track": "never",
+      "note": "compiler-only pseudo-op; never in co_code; with uses LOAD_SPECIAL + WITH_EXCEPT_START"
+    },
+    "SETUP_CLEANUP": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "plan_track": "never",
+      "note": "compiler-only pseudo-op; never in co_code"
+    },
+    "EXIT_INIT_CHECK": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "plan_track": "never",
+      "note": "object.__init__ None-check; not in the exceptions plan"
+    },
+    "LOAD_SPECIAL": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_NS",
+      "plan_track": "T9",
+      "note": "with __enter__/__exit__; Track 9"
+    },
+    "LOAD_COMMON_CONSTANT": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_NS",
+      "plan_track": "T7",
+      "note": "assert: oparg 0 is AssertionError; Track 7; see exception_support.md"
+    },
+    "CALL_INTRINSIC_2": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_CALL",
+      "plan_track": "T11",
+      "note": "except* INTRINSIC_PREP_RERAISE_STAR; Track 11"
     },
     "RESUME": {
       "support": "strip",
@@ -552,7 +1635,7 @@
       "support": "execute",
       "hw_class": "FRAME",
       "fold": "BAR",
-      "note": "CODE_OBJECT binder via co_varnames; OBK_BUILTIN/TYPE kwargs → CALL_FILTER"
+      "note": "CODE_OBJECT binder via co_varnames; OBK_BUILTIN/TYPE kwargs \u2192 CALL_FILTER"
     },
     "CALL_FUNCTION_EX": {
       "support": "execute",
@@ -564,13 +1647,13 @@
       "support": "partial",
       "hw_class": "OBJECT",
       "fold": "BAR",
-      "note": "Empty-dest alias fast path; non-empty uncontaminated dest → excore DICT_MERGE trap; contaminated dest/src → CALL_FILTER"
+      "note": "Empty-dest alias fast path; non-empty uncontaminated dest \u2192 excore DICT_MERGE trap; contaminated dest/src \u2192 CALL_FILTER"
     },
     "DICT_UPDATE": {
       "support": "partial",
       "hw_class": "OBJECT",
       "fold": "BAR",
-      "note": "Uncontaminated A.update(B) → excore DICT_UPDATE trap (grow-to-fit, overwrite dups); contaminated → type trap (pycore bulk update gap)"
+      "note": "Uncontaminated A.update(B) \u2192 excore DICT_UPDATE trap (grow-to-fit, overwrite dups); contaminated \u2192 type trap (pycore bulk update gap)"
     },
     "MAP_ADD": {
       "support": "partial",
@@ -638,19 +1721,22 @@
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR",
-      "note": "LIST/TUPLE only; length mismatch → TYPE; 1 CACHE unit"
+      "note": "LIST/TUPLE only; length mismatch \u2192 TYPE; 1 CACHE unit"
     },
     "UNPACK_EX": {
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR",
-      "note": "LIST/TUPLE only; middle rest allocated as LIST; wrong length → TYPE"
+      "note": "LIST/TUPLE only; middle rest allocated as LIST; wrong length \u2192 TYPE"
     },
     "CALL_INTRINSIC_1": {
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR",
-      "note": "INTRINSIC_LIST_TO_TUPLE (arg 6) only; other intrinsic ids rejected by image tooling"
+      "note": "INTRINSIC_LIST_TO_TUPLE (arg 6) only; other intrinsic ids rejected by image tooling",
+      "supported_opargs": [
+        6
+      ]
     },
     "BUILD_MAP": {
       "support": "execute",

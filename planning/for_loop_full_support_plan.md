@@ -1,6 +1,6 @@
 # For-loop full support — implementation plan
 
-**Status:** Ready for handoff  
+**Status:** Done (PR #66 / Track A–C landed; follow-on → [`exceptions_full_support_plan.md`](exceptions_full_support_plan.md))  
 **Audience:** bytecode / pycore RTL agent (primary); firmware agent (iter/next follow-up)  
 **Parent:** `planning/builtins_wave4_plan.md` §4 (Priority D) + `planning/builtins_next_steps_plan.md` §3  
 **Prerequisites on `main`:** `CALL` / `CALL_KW` / `CO_VARARGS` ([planning/call_kw_support_plan.md](call_kw_support_plan.md)); LOAD_ATTR dunder specials ([planning/builtins_wave4_plan.md](builtins_wave4_plan.md) §2); native GET_ITER/FOR_ITER for LIST/TUPLE/RANGE/STR/DICT/SET  
@@ -661,9 +661,9 @@ Land as sequential commits; CI: `make docker-all-tests`.
 
 ## 15. Follow-on (after this plan)
 
+- Exception type tree + MRO/tuple `CHECK_EXC_MATCH` — [`exceptions_full_support_plan.md`](exceptions_full_support_plan.md) (Track 1 + T5-A landed on `cursor/exceptions-full-t1-match`; next is T2 construction)
 - Generators (`YIELD_VALUE`) — separate plan  
-- Seed `TypeError` / `KeyError` / … + MRO-aware `exc_type_matches`  
-- `CO_VARKEYWORDS` — unrelated but listed in wave 4 §4  
+- `CO_VARKEYWORDS` — landed via PR #68 / main merge into for-loop branch  
 - `BI_ORD` / `BI_CHR` — wave 4 §3  
 - ROM seed `iter` / `next` on real protocol  
 

@@ -201,7 +201,11 @@ EXCORE_RTL_SRCS := \
 	pycore-img-builtin-chr-range-trap pycore-img-builtin-chr-surrogate-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
-	pycore-img-try-stopiteration-nested pycore-img-return-true \
+	pycore-img-try-stopiteration-nested \
+	pycore-img-try-exception pycore-img-try-typeerror \
+	pycore-img-try-tuple-match pycore-img-try-lookuperror \
+	pycore-img-try-except-miss pycore-img-exc-all \
+	pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
@@ -1136,9 +1140,7 @@ pycore-img-for-loop-all: \
 	pycore-img-for-iter-object-exhaust \
 	pycore-img-for-iter-object-no-iter-trap \
 	pycore-img-for-iter-object-nested \
-	pycore-img-try-stopiteration \
-	pycore-img-try-stopiteration-nested \
-	pycore-img-raise-stopiteration-fatal \
+	pycore-img-exc-all \
 	pycore-img-list-comp-basic \
 	pycore-img-list-comp-fast-clear
 
@@ -1612,7 +1614,11 @@ pycore-img-attr-all: \
 	pycore-img-builtin-chr-range-trap pycore-img-builtin-chr-surrogate-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
-	pycore-img-try-stopiteration-nested pycore-img-return-true \
+	pycore-img-try-stopiteration-nested \
+	pycore-img-try-exception pycore-img-try-typeerror \
+	pycore-img-try-tuple-match pycore-img-try-lookuperror \
+	pycore-img-try-except-miss pycore-img-exc-all \
+	pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
@@ -1789,6 +1795,31 @@ pycore-img-try-stopiteration:
 
 pycore-img-try-stopiteration-nested:
 	$(call PYCORE_IMAGE_RUN,try_stopiteration_nested,100000)
+
+pycore-img-try-exception:
+	$(call PYCORE_IMAGE_RUN,try_exception,100000)
+
+pycore-img-try-typeerror:
+	$(call PYCORE_IMAGE_RUN,try_typeerror,100000)
+
+pycore-img-try-tuple-match:
+	$(call PYCORE_IMAGE_RUN,try_tuple_match,100000)
+
+pycore-img-try-lookuperror:
+	$(call PYCORE_IMAGE_RUN,try_lookuperror,100000)
+
+pycore-img-try-except-miss:
+	$(call PYCORE_IMAGE_TRAP_RUN,try_except_miss,17,100000)
+
+pycore-img-exc-all: \
+	pycore-img-try-stopiteration \
+	pycore-img-try-stopiteration-nested \
+	pycore-img-raise-stopiteration-fatal \
+	pycore-img-try-exception \
+	pycore-img-try-typeerror \
+	pycore-img-try-tuple-match \
+	pycore-img-try-lookuperror \
+	pycore-img-try-except-miss
 
 pycore-img-return-true:
 	$(call PYCORE_IMAGE_RUN,return_true,50000)

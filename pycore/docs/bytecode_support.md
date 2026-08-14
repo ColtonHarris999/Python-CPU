@@ -3,6 +3,38 @@
 This file classifies bytecodes into fully supported, partially supported, and
 fully unsupported for the current PyCore implementation.
 
+**Machine source of truth:** `pycore/targets/pycore.json` → `opcodes`
+(`support` / `hw_class` / `fold` / `supported_opargs` / `plan_track`).
+The analyzer (`pycore/tools/btanalyze`) reads that file. This document is
+the human notes — including semantic ceilings that remain even when JSON
+says `execute` (e.g. `COMPARE_OP` numeric-only).
+
+**Exception types** are tracked separately, the same way: machine catalog in
+`pycore.json` → `exceptions.types`, human table in
+[`exception_support.md`](exception_support.md). Roadmap:
+[`planning/exceptions_full_support_plan.md`](../../planning/exceptions_full_support_plan.md).
+
+## Inventory (from `pycore.json`)
+
+Listed opcode rows only (unlisted CPython names still resolve via `obj_groups`
+as `trap` / `INTERNAL` strip). Recompute after changing `opcodes`:
+
+| `support` | Count | Meaning for the analyzer |
+| --- | --- | --- |
+| `execute` | 63 | hardware runs the documented subset |
+| `partial` | 6 | runs, with a named ceiling (`message` / `supported_opargs`) |
+| `strip` | 1 | `RESUME` (control marker) |
+| `reject` | 3 | image tooling / decode refuse |
+| `trap` | 10 | listed but not implemented (explicit OBJ_EXC / assert / with / except* rows) |
+
+`partial` today includes `RAISE_VARARGS` (oparg 1 only). Object-protocol
+opcodes are suppressed in the default analyzer view (`fit=infeasible`);
+`--include-out-of-scope` reports `partial` as **warn** so remaining ceilings
+are visible.
+
+JSON `plan_track` on an opcode names the exceptions-plan track that lifts it
+(`T1` … `T12`, `landed-B`, or `never` for compiler pseudo-ops).
+
 ## Fully supported bytecodes
 
 
@@ -44,11 +76,10 @@ fully unsupported for the current PyCore implementation.
 | `END_FOR`                               | Removes one loop-cleanup value.                                                             | `POP_TOP`-equivalent. Natural FOR_ITER exhaustion skips it; direct RTL coverage: `for_iter_end_for`.                                                                                                                                                                                                                                                                                                                                       |
 | `POP_ITER`                              | Pops iterator state in loop/iteration sequences.                                            | Stack-pointer decrement at the FOR_ITER exhaustion target. Layer D: `img_for_iter`.                                                                                                                                                                                                                                                                                                                                                        |
 | `RETURN_VALUE`                          | Returns the top-of-stack value from a function.                                             | Implemented return datapath is active. CPython 3.14 emits `LOAD_CONST`+`RETURN_VALUE` for `return True/False/None` (`RETURN_CONST` is absent). Layer D: `img_return_true`. |
-| `RAISE_VARARGS`                         | Raises an exception (oparg 0/1/2).                                                          | oparg `1`: build `OBK_EXCEPTION`, walk `co_exceptiontable` (code field 7); hit → redirect (active exc set by `PUSH_EXC_INFO`); miss → `PY_TRAP_RAISE` (17) unless a container protocol CALL is active (§6.1.1). Other opargs → `TYPE`. Layer D: `img_raise_varargs`, `img_try_stopiteration*`. |
-| `PUSH_EXC_INFO`                         | Handler entry: push prior active exception, expose current.                                 | dmem exc-info push; stack `[exc]→[prev\|None,exc]`; latches `active_exc_r`. |
-| `CHECK_EXC_MATCH`                       | `except T:` type test.                                                                      | v1 exact type-handle match of TOS vs `active_exc.field0`; `[exc,type]→[exc,bool]`. |
+| `PUSH_EXC_INFO`                         | Handler entry: push prior active exception, expose current.                                 | dmem exc-info push; stack `[exc]→[prev\|None,exc]`; latches `active_exc_r`. Type matching is `CHECK_EXC_MATCH`. See [`exception_support.md`](exception_support.md). |
+| `CHECK_EXC_MATCH`                       | `except T:` type test.                                                                      | Identity, then `tp_base` walk (depth 8). `except (A, B):` one-level tuples (length ≤ 8); nested tuples → `TYPE`. `[exc,type]→[exc,bool]`. Layer D: `img_try_stopiteration*`, `img_try_exception`, `img_try_tuple_match`. |
 | `POP_EXCEPT`                            | Exit `except` block.                                                                        | dmem-pop restore of prior active exc + pop TOS. |
-| `RERAISE`                               | Re-raise (oparg 0/1).                                                                       | Re-enter table walk on TOS exception; oparg `1` does **not** dmem-pop (cleanup already ran `POP_EXCEPT`). Used by comprehension cleanup and nested handlers. |
+| `RERAISE`                               | Re-raise (oparg 0/1).                                                                       | Re-enter table walk on TOS exception; oparg `1` does **not** dmem-pop (cleanup already ran `POP_EXCEPT`). Oparg `2` is Track 9 (`with`). Used by comprehension cleanup and nested handlers. |
 | `UNPACK_EX`                             | Starred unpack: `before`, rest list, `after`.                                               | LIST/TUPLE sources only; allocates the middle rest as a LIST. Wrong length → `TYPE`. Layer D: `img_unpack_ex`. |
 | `CALL_INTRINSIC_1` (arg 6)              | `INTRINSIC_LIST_TO_TUPLE`.                                                                  | Copies a LIST into a new TUPLE (CPython 3.14 `(*lst,)` / `tuple` materialization). Other intrinsic ids remain deferred. Layer D: `img_list_to_tuple`. |
 | `JUMP_FORWARD`                          | Unconditionally jumps forward by relative offset.                                           | Fully handled by branch unit.                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -78,7 +109,8 @@ fully unsupported for the current PyCore implementation.
 | `BINARY_OP`            | Performs binary arithmetic/bitwise operation selected by `oparg`.                                                    | Arithmetic/bitwise opargs use the existing ALU path; `NB_SUBSCR` (oparg 26) routes to `S_CONTAINER`. `NB_INPLACE_ADD` (13) with a LIST lhs routes to LIST_EXTEND semantics and supports LIST/TUPLE rhs, including the existing excore grow path. Unsupported variants trap or are rejected by preprocess.                                                                                                                                                                                                                                                         |
 | `COMPARE_OP`           | Compares TOS-2 and TOS-1 using the packed CPython 3.14 `oparg`, replacing both with `BOOL`.                          | Selectors `0..5` (`<,<=,==,!=,>,>=`); native `INT`/`BOOL`/`FLOAT` fast path, net stack −1. Non-numeric tags trap `PY_TRAP_TYPE` (1); there is no generic rich-compare protocol. Layer D: `img_compare_op`, `img_compare_op_type_trap`.                                                                                                                                                                                                                                                                                                                            |
 | `GET_ITER`             | Replaces TOS with iterator state.                                                                                    | Native LIST/TUPLE/STR/DICT/SET/`PY_TAG_RANGE` → hybrid `PY_TAG_ITER` (kinds 0–3, 5–6). `OBJECT`/`OBK_INSTANCE`: resolve `__iter__`, protocol `CALL`; return converts native containers / existing `ITER`, else wraps `HEAP_ITER` kind 4. Missing `__iter__` → `TYPE`. Coverage: `img_for_iter_*`, `img_for_iter_object_*`. |
-| `FOR_ITER`             | Advances the iterator at TOS, pushing one value or taking the exhaustion edge.                                       | Native kinds as before. `HEAP_ITER`: resolve `__next__`, protocol `CALL`; `StopIteration` via §6.1.1 `call_exc_*` + `iter_exhaust_type_r` → native exhaust redirect. Size-changing DICT/SET mutation → `TYPE`. Exhaustion skips `END_FOR` and redirects to `POP_ITER`. |
+| `FOR_ITER`             | Advances the iterator at TOS, pushing one value or taking the exhaustion edge.                                       | Native kinds as before. `HEAP_ITER`: resolve `__next__`, protocol `CALL`; `StopIteration` via §6.1.1 `call_exc_*` + `iter_exhaust_type_r` → native exhaust redirect (handle **identity**, not MRO — see [`exception_support.md`](exception_support.md)). Size-changing DICT/SET mutation → `TYPE`. Exhaustion skips `END_FOR` and redirects to `POP_ITER`. |
+| `RAISE_VARARGS`        | Raises an exception (oparg 0/1/2).                                                                                   | JSON `partial`; `supported_opargs: [1]`. oparg `1`: build `OBK_EXCEPTION` treating TOS as a **type**, walk `co_exceptiontable` (code field 7); hit → redirect (active exc set by `PUSH_EXC_INFO`); miss → `PY_TRAP_RAISE` (17) unless a container protocol CALL is active (§6.1.1). Oparg 0/2 → `TYPE` until Track 4. Type vs instance is Track 2. Wave A types are seeded. Layer D: `img_raise_varargs`, `img_try_stopiteration*`, `img_try_exception`. |
 | `JUMP_IF_TRUE_OR_POP`  | Jumps if truthy else pops TOS.                                                                                       | Not part of the current image-boot subset.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `JUMP_IF_FALSE_OR_POP` | Jumps if falsy else pops TOS.                                                                                        | Not part of the current image-boot subset.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `LIST_APPEND`          | Appends TOS to the list `oparg` slots below it (`list, unused[oparg-1], v -- list, unused[oparg-1]`); pops only `v`. | Fast path (`CONT_LIST_APPEND`, opcode 78): spare capacity (`length < capacity`) appends in place, 5 dmem ops, no trap. Grow path (`length == capacity`) raises `PY_TRAP_LIST_GROW` (trap 9) before any commit. With `EXCORE_EN=1` the excore doubles the buffer (floor 4), copies, appends, and returns `COMPLETED`. With `EXCORE_EN=0` it is fatal. Comprehensions serialize through GET_ITER/FOR_ITER for LIST/TUPLE sources; a non-empty result still needs this grow/excore path. Spare-capacity coverage remains hand-assembled.                             |
@@ -111,9 +143,11 @@ this milestone:
 1. **INT/BOOL/FLOAT cross-tag keys stay on pycore.** Rich equality
   (`True == 1`, `1.0 == 1`, …) runs on the probe path for dict and set.
    Only capacity-changing / O(n) memmove work is offloaded to excore.
-2. **Missing dict key →** `PY_TRAP_MEM_FAULT`**.** There is no `KeyError` object;
-  absent keys raise the memory-fault trap (KeyError analog). `CONTAINS_OP`
-   misses push `False` instead.
+2. **Missing dict key →** `PY_TRAP_MEM_FAULT`**.** There is no `KeyError` object
+  yet (`KeyError` is `absent` in [`exception_support.md`](exception_support.md));
+  absent keys raise the memory-fault trap (KeyError analog). Track 6 splits this
+  site to `KeyError` after T5-A seeds it. `CONTAINS_OP` misses push `False`
+  instead.
 3. **Negative list/tuple indices trap.** Bounds checks are unsigned; negative
   INT indices do not wrap to `size + idx`.
 4. **Non-interned runtime strings as dict keys.** `LONG_STR` equality is
@@ -151,9 +185,10 @@ this milestone:
    instead of raising. The flow relies on `co_stacksize`-valid bytecode. A
    stack-limit trap is future work.
 11. **Unbound local →** `PY_TRAP_MEM_FAULT`**.** CPython raises
-  `UnboundLocalError`; PyCore has no exception objects, so a second `del`
+  `UnboundLocalError` (`absent` until T5-A). A second `del`
    (`DELETE_FAST` on `UNINIT`) and use-after-`del` / maybe-unbound loads
-   (`LOAD_FAST_CHECK` on `UNINIT`) both trap memory-fault (7).
+   (`LOAD_FAST_CHECK` on `UNINIT`) both trap memory-fault (7). Track 6
+   converts this site after the type is seeded.
 12. `LOAD_FAST_AND_CLEAR` **unbound ≠** `DELETE_FAST`**.** CPython pushes
   `NULL` and clears; PyCore pushes `PY_TAG_UNINIT` and clears. Already-unbound
    slots do not trap (comprehension save of a maybe-unbound outer local).
@@ -176,10 +211,10 @@ this milestone:
 16. **Exceptions do not propagate across frames.** `RAISE_VARARGS` walks only
   the raising code object's own `co_exceptiontable`; a miss is
    `PY_TRAP_RAISE` (17) even when a caller has a matching handler. Keep a raise
-   and its handler in one frame. Boot seeds leaf `OBK_TYPE`s for
-   `StopIteration`, `SyntaxError`, `ValueError`, `TypeError` and `IndexError`;
-   `CHECK_EXC_MATCH` is exact-handle, and `OBK_EXCEPTION.args` is always empty,
-   so messages are passed by writing a global before raising. Coverage:
+   and its handler in one frame until Track 3. Boot seeds Wave A exception
+   types (including `SyntaxError` under `Exception`). `CHECK_EXC_MATCH` is
+   identity then MRO; `OBK_EXCEPTION.args` is always empty until Track 2, so
+   messages are passed by writing a global before raising. Coverage:
    `img_try_exc_types`, `img_try_exc_cross_frame_fatal`,
    `img_try_syntaxerror_msg`.
 17. `COMPARE_OP` **numeric ceiling.** Native comparison uses the signed 64-bit
@@ -199,6 +234,35 @@ CPython list/set/dict comprehensions embed exception-table cleanup that uses
 `compile()` run on the two-core top when `LIST_APPEND` grow is required
 (`img_list_comp_basic`, `img_list_comp_fast_clear`). Dict comps that need
 `MAP_ADD` + grow remain a follow-on (use `MAP_ADD_SEQ` inject until then).
+
+## Exception-related opcodes (`OBJ_EXC` + assert / with)
+
+Type objects are **not** opcodes — see [`exception_support.md`](exception_support.md).
+This table is the opcode half of that tracker. `plan_track` is the exceptions
+plan track that lifts the row (`never` = compiler pseudo; do not implement).
+
+
+| Bytecode                 | JSON `support` | `plan_track` | Note |
+| ------------------------ | -------------- | ------------ | ---- |
+| `RAISE_VARARGS`          | `partial`      | T4 (oparg 0/2); T2 type-vs-instance | oparg 1 landed-B |
+| `PUSH_EXC_INFO`          | `execute`      | landed-B     | |
+| `CHECK_EXC_MATCH`        | `execute`      | landed-T1    | identity + `tp_base` walk + one-level tuples |
+| `POP_EXCEPT`             | `execute`      | landed-B     | |
+| `RERAISE`                | `execute`      | T9 (oparg 2) | oparg 0/1 landed-B |
+| `CHECK_EG_MATCH`         | `trap`         | T11          | `except*` |
+| `WITH_EXCEPT_START`      | `trap`         | T9           | `with` exception path |
+| `LOAD_SPECIAL`           | `trap`         | T9           | `OBJ_NS`; `__enter__`/`__exit__` |
+| `LOAD_COMMON_CONSTANT`   | `trap`         | T7           | `OBJ_NS`; oparg 0 = `AssertionError` |
+| `CALL_INTRINSIC_2`       | `trap`         | T11          | `INTRINSIC_PREP_RERAISE_STAR` |
+| `SETUP_FINALLY`          | `trap`         | never        | compiler pseudo; **not** in `co_code` |
+| `SETUP_WITH`             | `trap`         | never        | compiler pseudo |
+| `SETUP_CLEANUP`          | `trap`         | never        | compiler pseudo |
+| `POP_BLOCK`              | `trap`         | never        | compiler pseudo |
+| `EXIT_INIT_CHECK`        | `trap`         | never        | not part of the exceptions plan |
+
+Real `try/finally` / `with` in CPython 3.14 use exception tables + `RERAISE`,
+not `SETUP_*`. Image tooling must keep rejecting the pseudo-ops if they ever
+appear.
 
 ## Deferred container opcodes
 
