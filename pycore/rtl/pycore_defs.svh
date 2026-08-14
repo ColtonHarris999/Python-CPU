@@ -1871,6 +1871,8 @@ endfunction
 //               value[47:32] = stacksize
 //               value[63:48] = kwonlyargcount
 //               value[64]    = CO_VARARGS
+//               value[65]    = CO_VARKEYWORDS
+//               value[81:66] = posonlyargcount
 //   field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
 //   field 5 : co_varnames (TUPLE handle; local/argument names)
 //   field 6 : co_kwdefaults (MUT_DICT handle; empty ⇒ no kw-only defaults)
@@ -1930,6 +1932,22 @@ function automatic logic pycore_code_meta_varargs(
 );
     begin
         pycore_code_meta_varargs = meta[64];
+    end
+endfunction
+
+function automatic logic pycore_code_meta_varkeywords(
+    input logic [PYCORE_VAL_WIDTH-1:0] meta
+);
+    begin
+        pycore_code_meta_varkeywords = meta[65];
+    end
+endfunction
+
+function automatic logic [15:0] pycore_code_meta_posonlyargcount(
+    input logic [PYCORE_VAL_WIDTH-1:0] meta
+);
+    begin
+        pycore_code_meta_posonlyargcount = meta[81:66];
     end
 endfunction
 

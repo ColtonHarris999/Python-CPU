@@ -209,12 +209,28 @@ module pycore_core #(
     logic [1:0]                    call_mode_r;
     logic [7:0]                    call_n_pos_r;
     logic [7:0]                    call_n_kwargs_r;
+    // Latched CALL_KW stack bases (set once in binder sub 34).  Must not track
+    // call_argcount_r: *args packing bumps argc and would move scratch.
+    logic [15:0]                   call_kw_val_base_r;     // incoming kwargs[i]
+    logic [15:0]                   call_kw_scratch_base_r; // parked kwargs[i]
     logic [127:0]                  call_kw_names_r;    // names TUPLE or kwargs DICT
     logic [127:0]                  call_varnames_r;    // callee co_varnames TUPLE
     logic [127:0]                  call_kwdefaults_r;  // callee co_kwdefaults DICT
     logic [15:0]                   call_kwonly_r;
     logic [15:0]                   call_total_params_r;
     logic                          call_varargs_r;     // callee CO_VARARGS flag
+    logic                          call_varkw_r;       // callee CO_VARKEYWORDS
+    logic [15:0]                   call_posonly_r;     // co_posonlyargcount
+    // **kwargs dict under construction: {slot_count[31:0], obj_addr[31:0]}.
+    // Order buffer and hash table follow the object contiguously, so both
+    // pointers are derived (cont_varkw_order_ptr / cont_varkw_table_ptr).
+    logic [127:0]                  call_varkw_dict_r;
+    // Bitmask of caller keyword indices that matched no formal parameter and
+    // therefore belong in **kwargs (CALL_KW: names-tuple index; EX_KW: kwargs
+    // dict order-sidecar index).
+    logic [127:0]                  call_varkw_left_r;
+    logic [4:0]                    call_varkw_step_r;  // nested step, subs 52-55
+    logic                          call_varkw_alloced_r;
     logic [5:0]                    call_after_varargs_sub_r;
     logic                          call_varargs_to_frame_r;
     logic                          call_args_is_list_r; // EX expand source tag
@@ -486,6 +502,8 @@ module pycore_core #(
     logic                          rf_set_locals_r;
     logic [RF_AW-1:0]              rf_new_locals_r;
     logic                          rf_init_frame_r;
+    logic [RF_AW-1:0]              rf_init_from_r;
+    logic [RF_AW-1:0]              rf_init_until_r;
 
     // ---------------------------------------------------------------------
     // IF: instruction fetch
@@ -1017,6 +1035,8 @@ module pycore_core #(
         .set_locals_base_i(rf_set_locals_r),
         .new_locals_base_i(rf_new_locals_r),
         .init_frame_i(rf_init_frame_r),
+        .init_from_i(rf_init_from_r),
+        .init_until_i(rf_init_until_r),
         .push_stack_i(1'b0),
         .pop_stack_i(1'b0),
         .tos_ptr_o(),
@@ -1402,6 +1422,40 @@ module pycore_core #(
         container_tag_r, container_val_r,
         container_probe_tag_r, container_rd_data_r);
 
+    // **kwargs dict being packed by the CALL binder (subs 52-55).  The object,
+    // its order sidecar and its hash table are allocated contiguously, exactly
+    // like BUILD_MAP, so only base + slot count need to be carried around.
+    logic [31:0] cont_varkw_base;
+    logic [31:0] cont_varkw_slots;
+    logic [31:0] cont_varkw_order_ptr;
+    logic [31:0] cont_varkw_table_ptr;
+    assign cont_varkw_base      = call_varkw_dict_r[31:0];
+    assign cont_varkw_slots     = call_varkw_dict_r[63:32];
+    assign cont_varkw_order_ptr = cont_varkw_base + 32'd48;
+    assign cont_varkw_table_ptr = cont_varkw_base + 32'd48 +
+                                  (cont_varkw_slots << 5);
+
+    // Probe advance inside the **kwargs table: (probe + 1) & (slots - 1).
+    logic [31:0] cont_varkw_probe_next;
+    assign cont_varkw_probe_next = (container_probe_r + 32'd1) &
+                                   (cont_varkw_slots - 32'd1);
+
+    // Combinational helper used only when latching scratch bases in sub 34.
+    // Prefer call_argcount (includes self for method form) over n_pos so
+    // bound-method CALL_KW copies from the correct stack slots.  Do not use
+    // this wire after *args packing — argc has changed by then.
+    logic [15:0] call_kw_scratch_base_now;
+    always_comb begin
+        logic [15:0] locals_end;
+        call_kw_scratch_base_now = call_argcount_r + {8'b0, call_n_kwargs_r};
+        locals_end = call_total_params_r
+                     + (call_varargs_r ? 16'd1 : 16'd0)
+                     + (call_varkw_r ? 16'd1 : 16'd0);
+        if ((call_varargs_r || call_varkw_r) &&
+            (call_kw_scratch_base_now < locals_end))
+            call_kw_scratch_base_now = locals_end;
+    end
+
     logic cont_set_needs_grow;
     assign cont_set_needs_grow = pycore_set_needs_grow(
         container_used_r, {32'b0, container_slot_count_r});
@@ -1599,6 +1653,8 @@ module pycore_core #(
             rf_set_locals_r      <= 1'b0;
             rf_new_locals_r      <= '0;
             rf_init_frame_r      <= 1'b0;
+            rf_init_from_r       <= '0;
+            rf_init_until_r      <= '0;
             return_wb_we_r       <= 1'b0;
             return_wb_addr_r     <= '0;
             // Arch regs for image boot.
@@ -1613,12 +1669,20 @@ module pycore_core #(
             call_mode_r          <= 2'd0; // CALL_MODE_POS
             call_n_pos_r         <= '0;
             call_n_kwargs_r      <= '0;
+            call_kw_val_base_r   <= '0;
+            call_kw_scratch_base_r <= '0;
             call_kw_names_r      <= '0;
             call_varnames_r      <= '0;
             call_kwdefaults_r    <= '0;
             call_kwonly_r        <= '0;
             call_total_params_r  <= '0;
             call_varargs_r       <= 1'b0;
+            call_varkw_r         <= 1'b0;
+            call_posonly_r       <= '0;
+            call_varkw_dict_r    <= '0;
+            call_varkw_left_r    <= '0;
+            call_varkw_step_r    <= '0;
+            call_varkw_alloced_r <= 1'b0;
             call_after_varargs_sub_r <= '0;
             call_varargs_to_frame_r  <= 1'b0;
             call_args_is_list_r  <= 1'b0;
@@ -2016,7 +2080,14 @@ module pycore_core #(
                             call_mode_r <= CALL_MODE_POS;
                         call_n_pos_r        <= '0;
                         call_n_kwargs_r     <= '0;
+                        call_kw_val_base_r  <= '0;
+                        call_kw_scratch_base_r <= '0;
                         call_varargs_r      <= 1'b0;
+                        call_varkw_r        <= 1'b0;
+                        call_posonly_r      <= '0;
+                        call_varkw_left_r   <= '0;
+                        call_varkw_step_r   <= '0;
+                        call_varkw_alloced_r <= 1'b0;
                         call_after_varargs_sub_r <= '0;
                         call_varargs_to_frame_r  <= 1'b0;
                         call_args_is_list_r <= 1'b0;

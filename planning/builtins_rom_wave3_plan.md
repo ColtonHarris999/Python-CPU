@@ -28,9 +28,8 @@ Seeded into `ROM_FIRMWARE_BUILTINS`:
 `isinstance` / `issubclass` are now ROM-seeded after `LOAD_ATTR` specials
 for `__dict__` / `__class__` / `__base__` — see `planning/builtins_wave4_plan.md`.
 
-**Known gap:** empty `tuple()` (firmware `tuple(iterable=None)`) still
-TYPE-traps on the None-default CALL fill path; image tests use `()` /
-`len(())` or `tuple(iterable)` instead. Tracked as a CALL default-fill fix.
+**Empty `tuple()`:** works — CALL phase-7 ranged UNINIT clear preserves
+`co_defaults` fills when `argc==0` (see `planning/call_kw_support_plan.md`).
 
 ### 3B — kwargs
 

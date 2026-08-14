@@ -19,9 +19,8 @@ def managed_entry():
         total += 20
     if oct(8) == "0o10":
         total += 30
-    # Empty-tuple literal + len (not tuple() — None-default CALL fill for
-    # firmware ``tuple(iterable=None)`` still TYPE-traps; tracked separately).
-    if len(()) == 0:
+    # Empty tuple via ROM ``tuple()`` (None-default CALL fill).
+    if len(tuple()) == 0:
         total += 100
     total += min(9, 4)
     return total

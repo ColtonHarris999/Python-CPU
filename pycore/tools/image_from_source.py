@@ -264,12 +264,6 @@ def _is_supported_opname(opname: str) -> bool:
 
 
 def validate_code_object(co: types.CodeType) -> None:
-    if co.co_flags & inspect.CO_VARKEYWORDS:
-        raise ValueError(
-            f"Unsupported variadic arguments in code object {co.co_name!r}: "
-            "CO_VARKEYWORDS (**kwargs)"
-        )
-
     for ins in iter_raw_instructions(co):
         if ins.opname == "CACHE":
             continue
@@ -451,6 +445,8 @@ class _ImageSerializer:
             argcount=co.co_argcount,
             kwonlyargcount=co.co_kwonlyargcount,
             varargs=bool(co.co_flags & inspect.CO_VARARGS),
+            varkeywords=bool(co.co_flags & inspect.CO_VARKEYWORDS),
+            posonlyargcount=co.co_posonlyargcount,
             co_defaults=co_defaults,
             co_kwdefaults=co_kwdefaults,
             co_exceptiontable=co_exceptiontable,

@@ -43,7 +43,9 @@ class ImageTranscodingTest(unittest.TestCase):
             kwonlyargcount=4,
         )
 
-        self.assertEqual(unpack_code_metadata(meta), (7, 6, 5, 4, False))
+        self.assertEqual(
+            unpack_code_metadata(meta), (7, 6, 5, 4, False, False, 0)
+        )
 
     def test_pack_code_metadata_includes_varargs_flag(self) -> None:
         meta = pack_code_metadata(
@@ -54,8 +56,26 @@ class ImageTranscodingTest(unittest.TestCase):
             varargs=True,
         )
 
-        self.assertEqual(unpack_code_metadata(meta), (7, 6, 5, 4, True))
+        self.assertEqual(
+            unpack_code_metadata(meta), (7, 6, 5, 4, True, False, 0)
+        )
         self.assertEqual((meta >> 64) & 1, 1)
+
+    def test_pack_code_metadata_includes_varkeywords_and_posonly(self) -> None:
+        meta = pack_code_metadata(
+            stacksize=7,
+            nlocals=6,
+            argcount=5,
+            kwonlyargcount=4,
+            varargs=True,
+            varkeywords=True,
+            posonlyargcount=2,
+        )
+        self.assertEqual(
+            unpack_code_metadata(meta), (7, 6, 5, 4, True, True, 2)
+        )
+        self.assertEqual((meta >> 65) & 1, 1)
+        self.assertEqual((meta >> 66) & 0xFFFF, 2)
 
     def test_validate_allows_varargs(self) -> None:
         ns: dict[str, object] = {}
@@ -65,14 +85,20 @@ class ImageTranscodingTest(unittest.TestCase):
         self.assertTrue(co.co_flags & inspect.CO_VARARGS)
         image_from_source.validate_code_object(co)
 
-    def test_validate_still_rejects_varkeywords(self) -> None:
+    def test_validate_allows_varkeywords(self) -> None:
         ns: dict[str, object] = {}
         exec("def f(**kwargs):\n    return 0\n", ns)
         co = ns["f"].__code__
 
         self.assertTrue(co.co_flags & inspect.CO_VARKEYWORDS)
-        with self.assertRaisesRegex(ValueError, "CO_VARKEYWORDS"):
-            image_from_source.validate_code_object(co)
+        image_from_source.validate_code_object(co)
+
+    def test_validate_allows_posonly(self) -> None:
+        ns: dict[str, object] = {}
+        exec("def f(a, /, b=1):\n    return a + b\n", ns)
+        co = ns["f"].__code__
+        self.assertEqual(co.co_posonlyargcount, 1)
+        image_from_source.validate_code_object(co)
 
     def test_transcoding_preserves_raw_unit_count(self) -> None:
         code = _compile_module(
@@ -203,7 +229,7 @@ class ImageTranscodingTest(unittest.TestCase):
         metadata = result.heap.words[f_addr + CODE_FIELD_METADATA * 32]
         self.assertEqual(
             unpack_code_metadata(metadata),
-            (f_co.co_stacksize, 3, 2, 1, False),
+            (f_co.co_stacksize, 3, 2, 1, False, False, 0),
         )
 
         varnames_val = result.heap.words[f_addr + CODE_FIELD_CO_VARNAMES * 32]
@@ -243,7 +269,45 @@ class ImageTranscodingTest(unittest.TestCase):
 
         self.assertEqual(
             unpack_code_metadata(metadata),
-            (f_co.co_stacksize, f_co.co_nlocals, 0, 0, True),
+            (f_co.co_stacksize, f_co.co_nlocals, 0, 0, True, False, 0),
+        )
+
+    def test_varkeywords_and_posonly_metadata_builds(self) -> None:
+        # Avoid defaults so MAKE_FUNCTION needs no SET_FUNCTION_ATTRIBUTE fold.
+        src = (
+            "def f(a, /, *args, **k):\n"
+            "    return a + len(args) + len(k)\n"
+            "\n"
+            "def managed_entry():\n"
+            "    return f(1, 2, z=3)\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        module_code = _compile_module(src)
+        f_co = next(
+            co for co in image_from_source.iter_code_objects(module_code)
+            if co.co_name == "f"
+        )
+
+        result = image_from_source.build_image_from_code(module_code)
+        f_handle = result.code_handles[id(f_co)]
+        f_addr = f_handle[1]
+        metadata = result.heap.words[f_addr + CODE_FIELD_METADATA * 32]
+
+        self.assertEqual(f_co.co_posonlyargcount, 1)
+        self.assertTrue(f_co.co_flags & inspect.CO_VARARGS)
+        self.assertTrue(f_co.co_flags & inspect.CO_VARKEYWORDS)
+        self.assertEqual(
+            unpack_code_metadata(metadata),
+            (
+                f_co.co_stacksize,
+                f_co.co_nlocals,
+                f_co.co_argcount,
+                f_co.co_kwonlyargcount,
+                True,
+                True,
+                1,
+            ),
         )
 
     def test_set_function_attribute_closure_rejected(self) -> None:

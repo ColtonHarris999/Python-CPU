@@ -92,14 +92,18 @@ Nothing here requires new ISA inventiveness; it is CALL FSM + image schema work.
 Implement one **argument binder** used by `CALL`, `CALL_KW`, and (after
 expand) `CALL_FUNCTION_EX`:
 
-1. Start with locals slots `0 .. nlocals-1` = UNINIT (or leave unused slots).
-2. Place positional args into slots `0 .. n_pos-1`.
-3. For each `(name, value)` in kwargs: find index `i` in `co_varnames[0 ..
+1. Place positional args into slots `0 .. n_pos-1` (they already sit at the
+   new locals base on the stack).
+2. For each `(name, value)` in kwargs: find index `i` in `co_varnames[0 ..
    argcount+kwonly)` with string equality; if missing → `CALL_FILTER` /
    future TypeError; if already filled → duplicate-kw trap.
-4. Fill remaining slots from `co_defaults` / `co_kwdefaults`.
-5. If any required slot still UNINIT → missing-arg trap.
-6. Enter frame as today (phase 7).
+3. Fill remaining parameter slots from `co_defaults` / `co_kwdefaults`.
+4. If any required slot still UNINIT → missing-arg trap.
+5. Enter frame (phase 7): UNINIT-clear only **unfilled** locals
+   `[filled_argc, nlocals)` — never wipe slots that already hold args /
+   defaults / `*args`. (Historical bug: `rf_init_frame` wiped all 32 slots
+   whenever supplied `argc==0`, erasing `co_defaults` after fill — broke
+   `tuple()` / `f(x=None)`.)
 
 `CALL` becomes “binder with empty kwargs”. That keeps one source of truth.
 
@@ -205,21 +209,29 @@ in ROM Python once binder works.
 - [x] Non-empty `DICT_MERGE` / `DICT_UPDATE` / `MAP_ADD` / `SET_UPDATE` (see
       `planning/dict_set_bulk_contam_plan.md`).  
 - [x] Existing positional CALL / defaults path kept (`img_default_arg`).  
+- [x] All-defaults `argc==0` fills (`img_default_none`, False/0/`()`, multi,
+      nested, method default, ROM `tuple()` via `img_firmware_tuple_empty`).  
+- [x] Too-many positionals trap (`img_default_arg_too_many`).  
+- [x] Kw-only None default (`img_default_kwonly_none`).  
+- [x] Positional defaults + `*args` (`img_varargs_pos_defaults`).  
+- [x] EX empty `*()` / `**{}` all-defaults (`img_default_call_ex_empty`).  
 - [x] `builtins.md` unfreezes kwargs for ROM `CODE_OBJECT` modules.  
 - [x] `SUPPORTED_OPS` updated (`CALL_KW` / `CALL_FUNCTION_EX` / `DICT_MERGE`).  
 
 **Follow-up (landed):** `CO_VARARGS` binder + ROM `print(*args, sep=, end=)`.
 
-**v1 limits (historical):** `OBK_BUILTIN`/TYPE kwargs and `CO_VARARGS`/`CO_VARKEYWORDS`
-parameters remain out of scope / trap.
+**Follow-up (landed):** `CO_VARKEYWORDS` + `co_posonlyargcount` binder parity —
+see `planning/co_varkeywords_call_parity.md`.
+
+**Still open:** none for user-def `*args` / `**kwargs` packing on `CODE_OBJECT`
+(builtins kwargs still firmware / `CALL_FILTER` as noted above).
 
 ---
 
 ## 7. Explicit non-goals (this plan)
 
-- Full `*args` / `**kwargs` **parameter** objects on user functions
-  (`CO_VARARGS` / `CO_VARKEYWORDS`) — can be a fast follow once binder
-  exists; not required for `CALL_KW` of ordinary named params.  
+- ~~Full `*args` / `**kwargs` **parameter** objects on user functions
+  (`CO_VARARGS` / `CO_VARKEYWORDS`)~~ — landed; see follow-ups above.
 - Rich TypeError exception objects (fatal/`CALL_FILTER` is enough initially,
   same as `RAISE_VARARGS` minimum).  
 - Native `BI_MAX(key=)` / `BI_PRINT(sep=)` hardware tables (optional v2).  

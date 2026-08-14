@@ -29,7 +29,7 @@ Related:
 | `OBK_BUILTIN` / TYPE kwargs | Still `CALL_FILTER` (use ROM Python) |
 | Non-empty `DICT_MERGE` (multi-`**`) | Still `CALL_FILTER` |
 | `CO_VARARGS` on defs | **Done** — binder packs `*args`; `img_varargs_*` / ROM `print` |
-| `CO_VARKEYWORDS` (`**kwargs` param) | Still rejected by image tooling |
+| `CO_VARKEYWORDS` (`**kwargs` param) | **Done** — binder packs leftovers; `img_varkw_*` / posonly parity (`planning/co_varkeywords_call_parity.md`) |
 
 ---
 
@@ -64,8 +64,7 @@ Related:
 
 | Need | Why |
 | --- | --- |
-| `CO_VARKEYWORDS` on user defs | `def f(**k)` parameter packing |
-| None / missing positional default fill | `tuple()` / `f(x=None)` CALL fill TYPE-traps; blocks empty `tuple()` |
+| `CO_VARKEYWORDS` on user defs | **Done** — `def f(**k)` packing + posonly; see `planning/co_varkeywords_call_parity.md` |
 | Optional `BI_*` keyword tables | Hardware kwargs without ROM wrapper |
 | Full exception tables / `RERAISE` | **Active:** [`for_loop_full_support_plan.md`](for_loop_full_support_plan.md) Track B (StopIteration only); retires comprehension Policy C when Track C lands |
 | `BI_LEN` tuple-mode RANGE + OBJECT `__bool__` | Complete truthiness / len protocol |
