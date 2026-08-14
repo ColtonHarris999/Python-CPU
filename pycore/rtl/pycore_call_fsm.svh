@@ -154,18 +154,32 @@
                                     container_rd_data_r);
                                 call_varargs_r <= pycore_code_meta_varargs(
                                     container_rd_data_r);
+                                call_varkw_r <= pycore_code_meta_varkeywords(
+                                    container_rd_data_r);
+                                call_posonly_r <=
+                                    pycore_code_meta_posonlyargcount(
+                                        container_rd_data_r);
                                 call_total_params_r <=
                                     pycore_code_meta_argcount(container_rd_data_r)
                                     + pycore_code_meta_kwonlyargcount(
                                         container_rd_data_r);
+                                // Fresh **kwargs bookkeeping for this call.
+                                call_varkw_left_r    <= 128'd0;
+                                call_varkw_step_r    <= 5'd0;
+                                call_varkw_alloced_r <= 1'b0;
                                 container_dmem_addr_r    <= pycore_code_field_val_addr(
                                     call_code_addr_r, PYCORE_CODE_FIELD_CO_DEFAULTS);
                                 container_dmem_we_r      <= 1'b0;
                                 container_dmem_pending_r <= 1'b1;
                                 // KW / EX_KW enter binder at sub 32.  POS calls
                                 // with kw-only locals use the same defaults path.
+                                // CO_VARKEYWORDS also forces the binder: even a
+                                // purely positional call must install the (then
+                                // empty) **kwargs dict local.
                                 if ((call_mode_r == CALL_MODE_KW) ||
                                     (call_mode_r == CALL_MODE_EX_KW) ||
+                                    pycore_code_meta_varkeywords(
+                                        container_rd_data_r) ||
                                     (pycore_code_meta_kwonlyargcount(
                                         container_rd_data_r) != 16'd0))
                                     call_sub_r <= 6'd32;
@@ -193,7 +207,16 @@
                                 cur_locals_base_r    <= frame_next_locals_base;
                                 rf_set_locals_r      <= 1'b1;
                                 rf_new_locals_r      <= frame_next_locals_base;
-                                rf_init_frame_r      <= (call_argcount_r == 16'd0);
+                                // UNINIT-clear only unfilled locals
+                                // [call_argcount, nlocals). Filled args /
+                                // defaults / *args must survive — the old
+                                // (argc==0) wipe of all 32 slots erased
+                                // co_defaults after phase-14 fill (tuple(),
+                                // f(x=None), etc.).
+                                rf_init_frame_r      <=
+                                    (call_argcount_r < call_nlocals_r);
+                                rf_init_from_r       <= call_argcount_r[RF_AW-1:0];
+                                rf_init_until_r      <= call_nlocals_r[RF_AW-1:0];
                                 tos_r                <= frame_next_locals_base
                                                         + call_nlocals_r[6:0];
                                 call_sent_r          <= 1'b0;
@@ -1610,7 +1633,8 @@
                                             def_len = container_rd_data_r[79:64];
                                             meta_ac = call_meta_argc_r;
                                             local_slots = meta_ac +
-                                                (call_varargs_r ? 16'd1 : 16'd0);
+                                                (call_varargs_r ? 16'd1 : 16'd0) +
+                                                (call_varkw_r ? 16'd1 : 16'd0);
                                             if (def_len > meta_ac) begin
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
@@ -1683,6 +1707,12 @@
                                                 call_varargs_to_frame_r  <= 1'b1;
                                                 call_sub_r <= 6'd20;
                                             end else begin
+                                                // All positional params now
+                                                // filled (args + defaults).
+                                                // Bump argc so phase-7 ranged
+                                                // UNINIT clear starts after
+                                                // them instead of wiping them.
+                                                call_argcount_r <= call_meta_argc_r;
                                                 call_sub_r   <= 6'd0;
                                                 call_phase_r <= 4'd7;
                                             end
@@ -1869,7 +1899,8 @@
                                             filled_pos = (n_pos_eff > meta_ac) ?
                                                 meta_ac : n_pos_eff;
                                             local_slots = call_total_params_r +
-                                                (call_varargs_r ? 16'd1 : 16'd0);
+                                                (call_varargs_r ? 16'd1 : 16'd0) +
+                                                (call_varkw_r ? 16'd1 : 16'd0);
                                             if (def_len > meta_ac) begin
                                                 call_filter_trap_r <= 1'b1;
                                             end else if (!call_varargs_r &&
@@ -1891,6 +1922,11 @@
                                                     (filled_pos == 16'd0) ? 128'd0 :
                                                     ((128'd1 << filled_pos) - 128'd1);
                                                 call_varargs_to_frame_r <= 1'b0;
+                                                // Freeze KW stack bases before
+                                                // *args packing mutates argc.
+                                                call_kw_val_base_r <= call_argcount_r;
+                                                call_kw_scratch_base_r <=
+                                                    call_kw_scratch_base_now;
                                                 if ((call_mode_r == CALL_MODE_KW) &&
                                                     (call_n_kwargs_r != 8'd0)) begin
                                                     container_idx_r <= 7'd0;
@@ -1908,32 +1944,26 @@
                                             end
                                         end
                                     end
-                                    // 35: copy kwargs[i] → scratch[i] (RF)
+                                    // 35: copy kwargs[i] → scratch[i] (RF).
+                                    // Incoming kwargs sit at locals[val_base+i]
+                                    // (free: val_base==n_pos; method: includes
+                                    // self so kwargs start after self+positionals).
+                                    // Bases were latched in sub 34.
                                     6'd35: begin
                                         container_rf_addr_r <= RF_AW'(
                                             call_new_locals_r
-                                            + {1'b0, call_n_pos_r}
+                                            + call_kw_val_base_r[RF_AW-1:0]
                                             + {1'b0, container_idx_r});
                                         call_sub_r <= 6'd36;
                                     end
                                     6'd36: begin
-                                        // Scratch lives where names sat:
-                                        // normally locals + n_pos + n_kwargs + i.
-                                        // With CO_VARARGS, keep scratch above the
-                                        // *args local when those ranges overlap.
-                                        begin
-                                            logic [15:0] scratch_base;
-                                            scratch_base = {8'b0, call_n_pos_r}
-                                                           + {8'b0, call_n_kwargs_r};
-                                            if (call_varargs_r &&
-                                                (scratch_base <= call_total_params_r))
-                                                scratch_base = call_total_params_r + 16'd1;
-                                            container_wb_we_r   <= 1'b1;
-                                            container_wb_addr_r <= RF_AW'(
-                                                call_new_locals_r
-                                                + scratch_base[RF_AW-1:0]
-                                                + {1'b0, container_idx_r});
-                                        end
+                                        // Scratch lives past self/pos/kwargs and
+                                        // above *args / **kwargs when needed.
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            call_new_locals_r
+                                            + call_kw_scratch_base_r[RF_AW-1:0]
+                                            + {1'b0, container_idx_r});
                                         container_wb_data_r <= pycore_make_entry(
                                             cont_rf_rs1_tag, cont_rf_rs1_val);
                                         if (({1'b0, container_idx_r} + 8'd1) >=
@@ -1982,13 +2012,22 @@
                                     end
                                     // 40: read varnames[k] val/tag; compare
                                     6'd40: begin
-                                        container_dmem_addr_r <=
-                                            pycore_tuple_val_addr(
-                                                call_varnames_r[31:0],
-                                                call_range_step_r[31:0]);
-                                        container_dmem_we_r      <= 1'b0;
-                                        container_dmem_pending_r <= 1'b1;
-                                        call_sub_r <= 6'd41;
+                                        if (call_range_step_r[15:0] >=
+                                                call_total_params_r) begin
+                                            // No formal left to try (callee has
+                                            // none at all, or *args / **kwargs
+                                            // names follow).  Sub 56 handles it
+                                            // as "no match" without a read.
+                                            call_sub_r <= 6'd56;
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_tuple_val_addr(
+                                                    call_varnames_r[31:0],
+                                                    call_range_step_r[31:0]);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_sub_r <= 6'd41;
+                                        end
                                     end
                                     6'd41: begin
                                         call_range_stop_r <= container_rd_data_r;
@@ -2002,51 +2041,112 @@
                                     end
                                     // 56: compare name vs varnames[k]
                                     6'd56: begin
-                                        if (pycore_dict_key_rich_eq(
-                                                container_tag_r,
-                                                container_val_r,
-                                                container_rd_data_r[3:0],
-                                                call_range_stop_r)) begin
-                                            // Found slot k — check filled bit
-                                            if (call_range_start_r[
-                                                    call_range_step_r[4:0]]) begin
-                                                call_filter_trap_r <= 1'b1;
-                                            end else if (call_mode_r ==
-                                                         CALL_MODE_EX_KW) begin
-                                                // Value via kwargs dict probe.
-                                                container_base_r <=
-                                                    call_kw_names_r[31:0];
-                                                container_dmem_addr_r <=
-                                                    call_kw_names_r[31:0];
-                                                container_dmem_we_r <= 1'b0;
-                                                container_dmem_pending_r <= 1'b1;
-                                                call_sub_r <= 6'd58;
-                                            end else begin
-                                                // CALL_KW: value from scratch[j]
-                                                begin
-                                                    logic [15:0] scratch_base;
-                                                    scratch_base = {8'b0, call_n_pos_r}
-                                                        + {8'b0, call_n_kwargs_r};
-                                                    if (call_varargs_r &&
-                                                        (scratch_base <=
-                                                            call_total_params_r))
-                                                        scratch_base =
-                                                            call_total_params_r + 16'd1;
+                                        begin
+                                            logic in_range;
+                                            logic name_match;
+                                            logic posonly_hit;
+                                            logic exhausted;
+                                            in_range = (call_range_step_r[15:0] <
+                                                        call_total_params_r);
+                                            name_match = in_range &&
+                                                pycore_dict_key_rich_eq(
+                                                    container_tag_r,
+                                                    container_val_r,
+                                                    container_rd_data_r[3:0],
+                                                    call_range_stop_r);
+                                            // A positional-only formal never
+                                            // accepts a keyword of the same
+                                            // name — it is "unexpected" too.
+                                            posonly_hit = name_match &&
+                                                (call_range_step_r[15:0] <
+                                                 call_posonly_r);
+                                            exhausted = !name_match &&
+                                                ((call_range_step_r[15:0] +
+                                                  16'd1) >=
+                                                 call_total_params_r);
+                                            if (posonly_hit || exhausted) begin
+                                                // Unexpected keyword: **kwargs
+                                                // takes it, otherwise TypeError.
+                                                if (!call_varkw_r) begin
+                                                    call_filter_trap_r <= 1'b1;
+                                                end else if ((call_mode_r ==
+                                                        CALL_MODE_EX_KW) &&
+                                                        (container_order_idx_r[31:7]
+                                                         != 25'b0)) begin
+                                                    // Leftover mask only spans
+                                                    // 128 keyword indices.
+                                                    call_filter_trap_r <= 1'b1;
+                                                end else if (call_mode_r ==
+                                                        CALL_MODE_EX_KW) begin
+                                                    call_varkw_left_r <=
+                                                        call_varkw_left_r |
+                                                        (128'd1 <<
+                                                         container_order_idx_r[6:0]);
+                                                    if ((container_order_idx_r
+                                                         + 32'd1) >=
+                                                            container_order_len_r[31:0])
+                                                    begin
+                                                        container_idx_r <= 7'd0;
+                                                        call_sub_r <= 6'd42;
+                                                    end else begin
+                                                        container_order_idx_r <=
+                                                            container_order_idx_r
+                                                            + 32'd1;
+                                                        container_dmem_addr_r <=
+                                                            pycore_dict_order_val_addr(
+                                                                container_order_ptr_r,
+                                                                container_order_idx_r
+                                                                + 32'd1);
+                                                        container_dmem_we_r <= 1'b0;
+                                                        container_dmem_pending_r
+                                                            <= 1'b1;
+                                                        call_sub_r <= 6'd50;
+                                                    end
+                                                end else begin
+                                                    call_varkw_left_r <=
+                                                        call_varkw_left_r |
+                                                        (128'd1 <<
+                                                         container_idx_r);
+                                                    if (({1'b0, container_idx_r}
+                                                         + 8'd1) >=
+                                                            call_n_kwargs_r) begin
+                                                        container_idx_r <= 7'd0;
+                                                        call_sub_r <= 6'd42;
+                                                    end else begin
+                                                        container_idx_r <=
+                                                            container_idx_r + 7'd1;
+                                                        call_sub_r <= 6'd37;
+                                                    end
+                                                end
+                                            end else if (name_match) begin
+                                                // Found slot k — check filled bit
+                                                if (call_range_start_r[
+                                                        call_range_step_r[4:0]]) begin
+                                                    call_filter_trap_r <= 1'b1;
+                                                end else if (call_mode_r ==
+                                                             CALL_MODE_EX_KW) begin
+                                                    // Value via kwargs dict probe.
+                                                    container_base_r <=
+                                                        call_kw_names_r[31:0];
+                                                    container_dmem_addr_r <=
+                                                        call_kw_names_r[31:0];
+                                                    container_dmem_we_r <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    call_sub_r <= 6'd58;
+                                                end else begin
+                                                    // CALL_KW: value from scratch[j]
                                                     container_rf_addr_r <= RF_AW'(
                                                         call_new_locals_r
-                                                        + scratch_base[RF_AW-1:0]
+                                                        + call_kw_scratch_base_r[
+                                                            RF_AW-1:0]
                                                         + {1'b0, container_idx_r});
+                                                    call_sub_r <= 6'd57;
                                                 end
-                                                call_sub_r <= 6'd57;
+                                            end else begin
+                                                call_range_step_r <=
+                                                    call_range_step_r + 128'd1;
+                                                call_sub_r <= 6'd40;
                                             end
-                                        end else if ((call_range_step_r[15:0] +
-                                                      16'd1) >=
-                                                     call_total_params_r) begin
-                                            call_filter_trap_r <= 1'b1; // unexpected
-                                        end else begin
-                                            call_range_step_r <=
-                                                call_range_step_r + 128'd1;
-                                            call_sub_r <= 6'd40;
                                         end
                                     end
                                     // 57: write scratch value into locals[k]
@@ -2133,11 +2233,18 @@
                                     6'd45: begin
                                         if ({9'b0, container_idx_r} >=
                                                 {2'b0, call_total_params_r[6:0]}) begin
-                                            // All params resolved.
-                                            call_argcount_r <= call_total_params_r
-                                                + (call_varargs_r ? 16'd1 : 16'd0);
-                                            call_sub_r <= 6'd0;
-                                            call_phase_r <= 4'd7;
+                                            // All params resolved.  CO_VARKEYWORDS
+                                            // still owes the **kwargs local, even
+                                            // when nothing was left over.
+                                            if (call_varkw_r) begin
+                                                call_varkw_step_r <= 5'd0;
+                                                call_sub_r <= 6'd52;
+                                            end else begin
+                                                call_argcount_r <= call_total_params_r
+                                                    + (call_varargs_r ? 16'd1 : 16'd0);
+                                                call_sub_r <= 6'd0;
+                                                call_phase_r <= 4'd7;
+                                            end
                                         end else if (call_range_start_r[
                                                          container_idx_r[4:0]]) begin
                                             container_idx_r <=
@@ -2423,6 +2530,448 @@
                                                 container_rd_data_r[3:0];
                                             call_range_step_r <= 128'd0;
                                             call_sub_r <= 6'd40;
+                                        end
+                                    end
+
+                                    // ------------------------------------------
+                                    // CO_VARKEYWORDS pack (subs 52-55).
+                                    // Keywords that bound to no formal were
+                                    // recorded in call_varkw_left_r; they are
+                                    // inserted into a fresh dict installed as the
+                                    // last local (after positionals, kw-only and
+                                    // *args).  The dict is pre-sized for every
+                                    // caller keyword, so no grow can happen here.
+                                    // Nested progress lives in call_varkw_step_r;
+                                    // the dict itself in call_varkw_dict_r.
+                                    // ------------------------------------------
+                                    // 52: allocate object + order + table,
+                                    //     write the header with used = 0.
+                                    6'd52: begin
+                                        if (call_varkw_alloced_r) begin
+                                            call_varkw_step_r <= 5'd0;
+                                            call_sub_r <= 6'd53;
+                                        end else begin
+                                            logic [6:0]  n_kw;
+                                            logic [31:0] slots;
+                                            // Upper bound on leftovers: the
+                                            // caller's keyword count.
+                                            if (call_varkw_left_r == 128'd0)
+                                                n_kw = 7'd0;
+                                            else if (call_mode_r == CALL_MODE_EX_KW)
+                                                n_kw = container_order_len_r[6:0];
+                                            else
+                                                n_kw = call_n_kwargs_r[6:0];
+                                            slots = pycore_dict_min_slots(n_kw);
+                                            if ((heap_ptr_r +
+                                                    pycore_dict_alloc_bytes(slots)) >
+                                                    PYCORE_HEAP_LIMIT) begin
+                                                container_mem_fault_r <= 1'b1;
+                                            end else begin
+                                                heap_ptr_r <= heap_ptr_r +
+                                                    pycore_dict_alloc_bytes(slots);
+                                                call_varkw_dict_r <=
+                                                    {64'b0, slots, heap_ptr_r};
+                                                call_varkw_alloced_r <= 1'b1;
+                                                container_used_r <= 64'd0;
+                                                container_dmem_addr_r  <= heap_ptr_r;
+                                                container_dmem_we_r    <= 1'b1;
+                                                container_dmem_wdata_r <=
+                                                    pycore_dict_header(
+                                                        {32'b0, slots}, 64'd0);
+                                                container_dmem_pending_r <= 1'b1;
+                                                call_varkw_step_r <= 5'd0;
+                                                call_sub_r <= 6'd53;
+                                            end
+                                        end
+                                    end
+                                    // 53: dict metadata word, then the packed
+                                    //     {order_ptr, table_ptr} slot.
+                                    6'd53: begin
+                                        if (call_varkw_step_r == 5'd0) begin
+                                            container_dmem_addr_r <=
+                                                pycore_dict_meta_addr(
+                                                    cont_varkw_base);
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <= 128'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd1;
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_dict_table_ptr_addr(
+                                                    cont_varkw_base);
+                                            container_dmem_we_r <= 1'b1;
+                                            container_dmem_wdata_r <= {
+                                                32'b0, cont_varkw_order_ptr,
+                                                32'b0, cont_varkw_table_ptr
+                                            };
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_idx_r   <= 7'd0;
+                                            call_varkw_step_r <= 5'd0;
+                                            call_sub_r <= 6'd54;
+                                        end
+                                    end
+                                    // 54: insert leftovers one at a time.
+                                    //   step 0     : walk the leftover mask
+                                    //   steps 1-3  : CALL_KW key + scratch value
+                                    //   steps 8-11 : EX_KW key from order sidecar
+                                    //   steps 4-7  : EX_KW value from the table
+                                    //   steps 12-17: insert into the new dict
+                                    6'd54: begin
+                                        unique case (call_varkw_step_r)
+                                        5'd0: begin
+                                            if (call_varkw_left_r == 128'd0) begin
+                                                call_varkw_step_r <= 5'd0;
+                                                call_sub_r <= 6'd55;
+                                            end else if (!call_varkw_left_r[
+                                                    container_idx_r]) begin
+                                                container_idx_r <=
+                                                    container_idx_r + 7'd1;
+                                            end else if (call_mode_r ==
+                                                    CALL_MODE_EX_KW) begin
+                                                // Caller kwargs dict header.
+                                                container_dmem_addr_r <=
+                                                    call_kw_names_r[31:0];
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                call_varkw_step_r <= 5'd8;
+                                            end else begin
+                                                // CALL_KW: key from names tuple.
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_val_addr(
+                                                        call_kw_names_r[31:0],
+                                                        {25'b0, container_idx_r});
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                call_varkw_step_r <= 5'd1;
+                                            end
+                                        end
+                                        5'd1: begin
+                                            container_val_r <= container_rd_data_r;
+                                            container_dmem_addr_r <=
+                                                pycore_tuple_tag_addr(
+                                                    call_kw_names_r[31:0],
+                                                    {25'b0, container_idx_r});
+                                            container_dmem_we_r <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd2;
+                                        end
+                                        5'd2: begin
+                                            container_tag_r <=
+                                                container_rd_data_r[3:0];
+                                            // Value still parked in the kw scratch.
+                                            container_rf_addr_r <= RF_AW'(
+                                                call_new_locals_r
+                                                + call_kw_scratch_base_r[RF_AW-1:0]
+                                                + {1'b0, container_idx_r});
+                                            call_varkw_step_r <= 5'd3;
+                                        end
+                                        5'd3: begin
+                                            // Latch value, start the insert probe.
+                                            logic [31:0] probe0;
+                                            call_range_stop_r <= cont_rf_rs1_val;
+                                            call_range_step_r <=
+                                                {124'b0, cont_rf_rs1_tag};
+                                            probe0 = pycore_dict_key_hash(
+                                                container_tag_r, container_val_r)
+                                                & (cont_varkw_slots - 32'd1);
+                                            container_probe_r   <= probe0;
+                                            container_probe_n_r <= 32'd0;
+                                            container_dmem_addr_r <=
+                                                pycore_dict_ktag_addr(
+                                                    cont_varkw_table_ptr, probe0);
+                                            container_dmem_we_r <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd12;
+                                        end
+                                        // EX_KW: re-read the caller kwargs dict.
+                                        5'd8: begin
+                                            container_slot_count_r <=
+                                                cont_dict_hdr_slots[31:0];
+                                            container_dmem_addr_r <=
+                                                pycore_dict_table_ptr_addr(
+                                                    call_kw_names_r[31:0]);
+                                            container_dmem_we_r <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd9;
+                                        end
+                                        5'd9: begin
+                                            container_buf_r <= cont_dict_table_ptr;
+                                            container_order_ptr_r <=
+                                                cont_dict_order_ptr;
+                                            container_dmem_addr_r <=
+                                                pycore_dict_order_val_addr(
+                                                    cont_dict_order_ptr,
+                                                    {25'b0, container_idx_r});
+                                            container_dmem_we_r <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd10;
+                                        end
+                                        5'd10: begin
+                                            container_val_r <= container_rd_data_r;
+                                            container_dmem_addr_r <=
+                                                pycore_dict_order_tag_addr(
+                                                    container_order_ptr_r,
+                                                    {25'b0, container_idx_r});
+                                            container_dmem_we_r <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd11;
+                                        end
+                                        5'd11: begin
+                                            // Key complete; probe the caller
+                                            // table for its value.
+                                            logic [31:0] probe0;
+                                            container_tag_r <=
+                                                container_rd_data_r[3:0];
+                                            probe0 = pycore_dict_key_hash(
+                                                container_rd_data_r[3:0],
+                                                container_val_r)
+                                                & (container_slot_count_r - 32'd1);
+                                            container_probe_r   <= probe0;
+                                            container_probe_n_r <= 32'd0;
+                                            container_dmem_addr_r <=
+                                                pycore_dict_ktag_addr(
+                                                    container_buf_r, probe0);
+                                            container_dmem_we_r <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd4;
+                                        end
+                                        5'd4: begin
+                                            if (pycore_dict_slot_empty(
+                                                    container_rd_data_r)) begin
+                                                call_filter_trap_r <= 1'b1; // miss
+                                            end else if (pycore_dict_tombstone(
+                                                    container_rd_data_r[3:0])) begin
+                                                container_probe_n_r <=
+                                                    container_probe_n_r + 32'd1;
+                                                if ((container_probe_n_r + 32'd1) >=
+                                                        container_slot_count_r) begin
+                                                    call_filter_trap_r <= 1'b1;
+                                                end else begin
+                                                    container_probe_r <=
+                                                        cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r,
+                                                            cont_probe_next);
+                                                    container_dmem_we_r <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end
+                                            end else begin
+                                                call_self_tag_r <=
+                                                    container_rd_data_r[3:0];
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_kval_addr(
+                                                        container_buf_r,
+                                                        container_probe_r);
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                call_varkw_step_r <= 5'd5;
+                                            end
+                                        end
+                                        5'd5: begin
+                                            if (!pycore_dict_key_rich_eq(
+                                                    container_tag_r,
+                                                    container_val_r,
+                                                    call_self_tag_r,
+                                                    container_rd_data_r)) begin
+                                                container_probe_n_r <=
+                                                    container_probe_n_r + 32'd1;
+                                                if ((container_probe_n_r + 32'd1) >=
+                                                        container_slot_count_r) begin
+                                                    call_filter_trap_r <= 1'b1;
+                                                end else begin
+                                                    container_probe_r <=
+                                                        cont_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            container_buf_r,
+                                                            cont_probe_next);
+                                                    container_dmem_we_r <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    call_varkw_step_r <= 5'd4;
+                                                end
+                                            end else begin
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_vval_addr(
+                                                        container_buf_r,
+                                                        container_probe_r);
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                call_varkw_step_r <= 5'd6;
+                                            end
+                                        end
+                                        5'd6: begin
+                                            call_range_stop_r <= container_rd_data_r;
+                                            container_dmem_addr_r <=
+                                                pycore_dict_vtag_addr(
+                                                    container_buf_r,
+                                                    container_probe_r);
+                                            container_dmem_we_r <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd7;
+                                        end
+                                        5'd7: begin
+                                            // Value complete; start insert probe.
+                                            logic [31:0] probe0;
+                                            call_range_step_r <=
+                                                {124'b0, container_rd_data_r[3:0]};
+                                            probe0 = pycore_dict_key_hash(
+                                                container_tag_r, container_val_r)
+                                                & (cont_varkw_slots - 32'd1);
+                                            container_probe_r   <= probe0;
+                                            container_probe_n_r <= 32'd0;
+                                            container_dmem_addr_r <=
+                                                pycore_dict_ktag_addr(
+                                                    cont_varkw_table_ptr, probe0);
+                                            container_dmem_we_r <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd12;
+                                        end
+                                        // Insert key/value into the new dict.
+                                        5'd12: begin
+                                            if (pycore_dict_slot_empty(
+                                                    container_rd_data_r)) begin
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_kval_addr(
+                                                        cont_varkw_table_ptr,
+                                                        container_probe_r);
+                                                container_dmem_we_r    <= 1'b1;
+                                                container_dmem_wdata_r <=
+                                                    container_val_r;
+                                                container_dmem_pending_r <= 1'b1;
+                                                call_varkw_step_r <= 5'd13;
+                                            end else begin
+                                                // Keys within one keyword source
+                                                // are unique, so an occupied slot
+                                                // is always a hash collision.
+                                                container_probe_n_r <=
+                                                    container_probe_n_r + 32'd1;
+                                                if ((container_probe_n_r + 32'd1) >=
+                                                        cont_varkw_slots) begin
+                                                    container_mem_fault_r <= 1'b1;
+                                                end else begin
+                                                    container_probe_r <=
+                                                        cont_varkw_probe_next;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            cont_varkw_table_ptr,
+                                                            cont_varkw_probe_next);
+                                                    container_dmem_we_r <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                end
+                                            end
+                                        end
+                                        5'd13: begin
+                                            container_dmem_addr_r <=
+                                                pycore_dict_ktag_addr(
+                                                    cont_varkw_table_ptr,
+                                                    container_probe_r);
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                pycore_dict_key_tag_word(
+                                                    container_tag_r,
+                                                    container_val_r);
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd14;
+                                        end
+                                        5'd14: begin
+                                            container_dmem_addr_r <=
+                                                pycore_dict_vval_addr(
+                                                    cont_varkw_table_ptr,
+                                                    container_probe_r);
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                call_range_stop_r;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd15;
+                                        end
+                                        5'd15: begin
+                                            container_dmem_addr_r <=
+                                                pycore_dict_vtag_addr(
+                                                    cont_varkw_table_ptr,
+                                                    container_probe_r);
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                {124'b0, call_range_step_r[3:0]};
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd16;
+                                        end
+                                        5'd16: begin
+                                            // Order sidecar keeps insertion order.
+                                            container_dmem_addr_r <=
+                                                pycore_dict_order_val_addr(
+                                                    cont_varkw_order_ptr,
+                                                    container_used_r[31:0]);
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                container_val_r;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd17;
+                                        end
+                                        5'd17: begin
+                                            container_dmem_addr_r <=
+                                                pycore_dict_order_tag_addr(
+                                                    cont_varkw_order_ptr,
+                                                    container_used_r[31:0]);
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                {124'b0, container_tag_r};
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_used_r <=
+                                                container_used_r + 64'd1;
+                                            call_varkw_left_r <= call_varkw_left_r
+                                                & ~(128'd1 << container_idx_r);
+                                            container_idx_r <=
+                                                container_idx_r + 7'd1;
+                                            call_varkw_step_r <= 5'd0;
+                                        end
+                                        default: call_filter_trap_r <= 1'b1;
+                                        endcase
+                                    end
+                                    // 55: publish used / order_len, install the
+                                    //     dict as the **kwargs local, then frame.
+                                    6'd55: begin
+                                        if (call_varkw_step_r == 5'd0) begin
+                                            container_dmem_addr_r  <=
+                                                cont_varkw_base;
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                pycore_dict_header(
+                                                    {32'b0, cont_varkw_slots},
+                                                    container_used_r);
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd1;
+                                        end else if (call_varkw_step_r == 5'd1) begin
+                                            container_dmem_addr_r <=
+                                                pycore_dict_meta_addr(
+                                                    cont_varkw_base);
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                pycore_dict_meta(
+                                                    container_used_r,
+                                                    container_used_r);
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_varkw_step_r <= 5'd2;
+                                        end else begin
+                                            // **kwargs follows positionals,
+                                            // kw-only and *args.  Bump argcount
+                                            // so the phase-7 UNINIT clear starts
+                                            // above it.
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                call_new_locals_r
+                                                + call_total_params_r[RF_AW-1:0]
+                                                + (call_varargs_r ? RF_AW'(1)
+                                                                  : RF_AW'(0)));
+                                            container_wb_data_r <= pycore_make_mut(
+                                                PY_MUT_DICT,
+                                                {32'b0, cont_varkw_base}, 1'b0);
+                                            call_argcount_r <= call_total_params_r
+                                                + (call_varargs_r ? 16'd1 : 16'd0)
+                                                + 16'd1;
+                                            call_varkw_step_r <= 5'd0;
+                                            call_sub_r   <= 6'd0;
+                                            call_phase_r <= 4'd7;
                                         end
                                     end
 

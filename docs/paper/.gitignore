@@ -1,0 +1,10 @@
+# LaTeX aux / intermediate (keep .tex sources; PDF optional)
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
