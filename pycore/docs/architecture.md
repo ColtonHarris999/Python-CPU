@@ -9,6 +9,10 @@ Bytecode support status (fully supported / partially supported / unsupported) is
 tracked separately in `pycore/docs/bytecode_support.md` so decode and
 preprocessing changes can be reviewed against one explicit matrix.
 
+Paper-oriented systems notes (LaTeX) for near-complete subsystems live under
+`docs/paper/` — start with `docs/paper/systems/call_fsm.tex` for the CALL FSM
+and shared argument binder.
+
 ## Two-core system: pycore + excore
 
 The system is two cores: **pycore** (this document's subject — the
