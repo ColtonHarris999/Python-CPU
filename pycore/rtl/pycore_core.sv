@@ -205,6 +205,10 @@ module pycore_core #(
     logic [1:0]                    call_mode_r;
     logic [7:0]                    call_n_pos_r;
     logic [7:0]                    call_n_kwargs_r;
+    // Latched CALL_KW stack bases (set once in binder sub 34).  Must not track
+    // call_argcount_r: *args packing bumps argc and would move scratch.
+    logic [15:0]                   call_kw_val_base_r;     // incoming kwargs[i]
+    logic [15:0]                   call_kw_scratch_base_r; // parked kwargs[i]
     logic [127:0]                  call_kw_names_r;    // names TUPLE or kwargs DICT
     logic [127:0]                  call_varnames_r;    // callee co_varnames TUPLE
     logic [127:0]                  call_kwdefaults_r;  // callee co_kwdefaults DICT
@@ -1314,21 +1318,20 @@ module pycore_core #(
     assign cont_varkw_probe_next = (container_probe_r + 32'd1) &
                                    (cont_varkw_slots - 32'd1);
 
-    // Local index where CALL_KW parks the copied keyword values.  They must
-    // survive the *args tuple pack and the **kwargs dict install, so the
-    // scratch area starts above every real local of the callee.
-    // Use call_argcount (not n_pos) so method-form calls — where self occupies
-    // locals[0] and call_argcount == n_pos+1 — place scratch past self+pos+kwargs.
-    logic [15:0] call_kw_scratch_base;
+    // Combinational helper used only when latching scratch bases in sub 34.
+    // Prefer call_argcount (includes self for method form) over n_pos so
+    // bound-method CALL_KW copies from the correct stack slots.  Do not use
+    // this wire after *args packing — argc has changed by then.
+    logic [15:0] call_kw_scratch_base_now;
     always_comb begin
         logic [15:0] locals_end;
-        call_kw_scratch_base = call_argcount_r + {8'b0, call_n_kwargs_r};
+        call_kw_scratch_base_now = call_argcount_r + {8'b0, call_n_kwargs_r};
         locals_end = call_total_params_r
                      + (call_varargs_r ? 16'd1 : 16'd0)
                      + (call_varkw_r ? 16'd1 : 16'd0);
         if ((call_varargs_r || call_varkw_r) &&
-            (call_kw_scratch_base < locals_end))
-            call_kw_scratch_base = locals_end;
+            (call_kw_scratch_base_now < locals_end))
+            call_kw_scratch_base_now = locals_end;
     end
 
     logic cont_set_needs_grow;
@@ -1535,6 +1538,8 @@ module pycore_core #(
             call_mode_r          <= 2'd0; // CALL_MODE_POS
             call_n_pos_r         <= '0;
             call_n_kwargs_r      <= '0;
+            call_kw_val_base_r   <= '0;
+            call_kw_scratch_base_r <= '0;
             call_kw_names_r      <= '0;
             call_varnames_r      <= '0;
             call_kwdefaults_r    <= '0;
@@ -1900,6 +1905,8 @@ module pycore_core #(
                             call_mode_r <= CALL_MODE_POS;
                         call_n_pos_r        <= '0;
                         call_n_kwargs_r     <= '0;
+                        call_kw_val_base_r  <= '0;
+                        call_kw_scratch_base_r <= '0;
                         call_varargs_r      <= 1'b0;
                         call_varkw_r        <= 1'b0;
                         call_posonly_r      <= '0;

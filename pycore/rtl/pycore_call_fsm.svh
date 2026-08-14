@@ -1922,6 +1922,11 @@
                                                     (filled_pos == 16'd0) ? 128'd0 :
                                                     ((128'd1 << filled_pos) - 128'd1);
                                                 call_varargs_to_frame_r <= 1'b0;
+                                                // Freeze KW stack bases before
+                                                // *args packing mutates argc.
+                                                call_kw_val_base_r <= call_argcount_r;
+                                                call_kw_scratch_base_r <=
+                                                    call_kw_scratch_base_now;
                                                 if ((call_mode_r == CALL_MODE_KW) &&
                                                     (call_n_kwargs_r != 8'd0)) begin
                                                     container_idx_r <= 7'd0;
@@ -1940,26 +1945,24 @@
                                         end
                                     end
                                     // 35: copy kwargs[i] → scratch[i] (RF).
-                                    // Incoming kwargs sit at locals[argcount+i]
-                                    // (free: argcount==n_pos; method: includes
+                                    // Incoming kwargs sit at locals[val_base+i]
+                                    // (free: val_base==n_pos; method: includes
                                     // self so kwargs start after self+positionals).
+                                    // Bases were latched in sub 34.
                                     6'd35: begin
                                         container_rf_addr_r <= RF_AW'(
                                             call_new_locals_r
-                                            + call_argcount_r[RF_AW-1:0]
+                                            + call_kw_val_base_r[RF_AW-1:0]
                                             + {1'b0, container_idx_r});
                                         call_sub_r <= 6'd36;
                                     end
                                     6'd36: begin
-                                        // Scratch lives past self/pos/kwargs:
-                                        // normally locals + argcount + n_kwargs + i.
-                                        // With CO_VARARGS / CO_VARKEYWORDS, keep
-                                        // scratch above the *args and **kwargs
-                                        // locals when those ranges overlap.
+                                        // Scratch lives past self/pos/kwargs and
+                                        // above *args / **kwargs when needed.
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
                                             call_new_locals_r
-                                            + call_kw_scratch_base[RF_AW-1:0]
+                                            + call_kw_scratch_base_r[RF_AW-1:0]
                                             + {1'b0, container_idx_r});
                                         container_wb_data_r <= pycore_make_entry(
                                             cont_rf_rs1_tag, cont_rf_rs1_val);
@@ -2134,7 +2137,7 @@
                                                     // CALL_KW: value from scratch[j]
                                                     container_rf_addr_r <= RF_AW'(
                                                         call_new_locals_r
-                                                        + call_kw_scratch_base[
+                                                        + call_kw_scratch_base_r[
                                                             RF_AW-1:0]
                                                         + {1'b0, container_idx_r});
                                                     call_sub_r <= 6'd57;
@@ -2658,7 +2661,7 @@
                                             // Value still parked in the kw scratch.
                                             container_rf_addr_r <= RF_AW'(
                                                 call_new_locals_r
-                                                + call_kw_scratch_base[RF_AW-1:0]
+                                                + call_kw_scratch_base_r[RF_AW-1:0]
                                                 + {1'b0, container_idx_r});
                                             call_varkw_step_r <= 5'd3;
                                         end

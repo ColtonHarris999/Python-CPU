@@ -56,9 +56,12 @@ Tooling / RTL:
 2. **Method-form `CALL_KW` kwargs source:** Incoming keyword values were read
    from `locals[n_pos + i]`, which is correct for free functions but wrong for
    bound methods where `self` occupies `locals[0]` and kwargs start at
-   `locals[argcount + i]` (`argcount == n_pos + 1`). Scratch base now uses
-   `argcount + n_kwargs` for the same reason. Covered by `img_method_call_kw`
-   and `img_varkw_method`.
+   `locals[argcount + i]` (`argcount == n_pos + 1`). Covered by
+   `img_method_call_kw` and `img_varkw_method`.
+3. **Scratch base must be latched:** A combinational scratch base derived from
+   `call_argcount` moved after `*args` packing bumped argc, so later binder
+   reads missed the parked kwargs (`img_varargs_kwonly` regression). Sub 34 now
+   latches `call_kw_val_base_r` / `call_kw_scratch_base_r`.
 
 ---
 
