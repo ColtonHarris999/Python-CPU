@@ -12,6 +12,7 @@ Current architecture and tag/layout docs live under `pycore/docs/` and
 | `builtins_wave4_plan.md` | **Active:** ORD/CHR + bytecode; §1 print + §2 attr specials **done** |
 | `builtins_print_console_plan.md` | **Done:** ROM `print` + `_bi_print` / `CONSOLE_TX` + stdout goldens |
 | `call_kw_support_plan.md` | **Done (v1):** `CALL_KW` / `CALL_FUNCTION_EX` / `DICT_MERGE` on `CODE_OBJECT` |
+| `for_loop_full_support_plan.md` | **Active:** GET_ITER/FOR_ITER on OBJECT + StopIteration exception tables + comprehensions |
 | `dict_set_bulk_contam_plan.md` | **Done:** `MAP_ADD` / `DICT_UPDATE` / `DICT_MERGE` / `SET_UPDATE` + contamination bit |
 | `optimization_plan.md` | Optional RTL cleanup / optimization backlog |
 | `dead_code_report.md` | Historical dead-code audit notes |

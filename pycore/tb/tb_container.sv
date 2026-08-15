@@ -21,6 +21,8 @@ module tb_container #(
     // container fixtures use BOOT_EN=0 (no image-boot walk); real image
     // programs built by image_from_source.py use BOOT_EN=1.
     parameter bit    BOOT_EN             = 1'b0,
+    // Enables the synthetic §6.1 container↔CALL launch fixture.
+    parameter bit    CONTAINER_CALL_SPIKE_EN = 1'b0,
     // CHECK_ENTRY_RETURN: when 1, capture the return value at the frame
     // depth where the module entry function returns to module scope
     // (frame_active_depth == 1).  Used by image-boot tests where the
@@ -71,6 +73,7 @@ module tb_container #(
                 .DMEM_HEX  (DMEM_HEX),
                 .HEAP_INIT_PTR(HEAP_INIT_PTR),
                 .BOOT_EN(BOOT_EN),
+                .CONTAINER_CALL_SPIKE_EN(CONTAINER_CALL_SPIKE_EN),
                 .EXCORE_EN(1'b1),
                 .FW_HEX(FW_HEX)
             ) dut (
@@ -124,7 +127,8 @@ module tb_container #(
                 .STRING_HEX(STRING_HEX),
                 .DMEM_HEX  (DMEM_HEX),
                 .HEAP_INIT_PTR(HEAP_INIT_PTR),
-                .BOOT_EN(BOOT_EN)
+                .BOOT_EN(BOOT_EN),
+                .CONTAINER_CALL_SPIKE_EN(CONTAINER_CALL_SPIKE_EN)
             ) dut (
                 .clk_i(clk),
                 .rst_n_i(rst_n),

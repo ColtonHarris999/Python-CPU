@@ -119,8 +119,8 @@
     .equ BI_PRINT,        6
     .equ PY_CTL_NONE,     1
 
-    # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (frame stack at 0x1C000).
-    .equ HEAP_LIMIT,     0x1C000
+    # Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (exc arena at 0x1B000).
+    .equ HEAP_LIMIT,     0x1B000
 
     # Private scratch (CPU data RAM @ 0x0) for key/value + helper state.
     .equ SCR_RA,         0x00

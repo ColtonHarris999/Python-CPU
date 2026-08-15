@@ -132,6 +132,10 @@ SUPPORTED_OPS = {
     # CPython 3.14 emits LOAD_CONST + RETURN_VALUE; RETURN_CONST is absent.
     "RETURN_VALUE",
     "RAISE_VARARGS",
+    "PUSH_EXC_INFO",
+    "CHECK_EXC_MATCH",
+    "POP_EXCEPT",
+    "RERAISE",
     "LOAD_GLOBAL",
     "LOAD_NAME",
     "STORE_NAME",
@@ -173,9 +177,6 @@ DEFERRED_OPS: dict[str, str] = {
     "IMPORT_NAME": "imports are deferred",
     "IMPORT_FROM": "imports are deferred",
     "SETUP_FINALLY": "exception handling is deferred",
-    "PUSH_EXC_INFO": "exception handling is deferred",
-    "CHECK_EXC_MATCH": "exception handling is deferred",
-    "RERAISE": "exception handling is deferred",
     "WITH_EXCEPT_START": "context-manager exception path is deferred",
     "YIELD_VALUE": "generators are deferred",
     "SEND": "generators/coroutines are deferred",
@@ -431,6 +432,9 @@ class _ImageSerializer:
             ],
             slot_count=dict_min_slots(max(len(kwdefaults_py), 1)),
         )
+        co_exceptiontable = self.heap.alloc_tuple(
+            [(TAG_INT, int_value(byte)) for byte in co.co_exceptiontable]
+        )
         handle = self.heap.add_code_object(
             entry_slot,
             co_consts,
@@ -445,6 +449,7 @@ class _ImageSerializer:
             posonlyargcount=co.co_posonlyargcount,
             co_defaults=co_defaults,
             co_kwdefaults=co_kwdefaults,
+            co_exceptiontable=co_exceptiontable,
         )
         self.code_handles[co_id] = handle
         return handle
@@ -1088,7 +1093,11 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     Entries:
       bytearray / max / len / _bi_print / range / set → OBK_BUILTIN (bound_self=NULL)
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
+      StopIteration → leaf OBK_TYPE (tp_base = None / 0) for RAISE / except
       ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
+
+    Also writes the StopIteration handle to the exc-arena boot sidecar so
+    ``S_BOOT`` can latch ``iter_exhaust_type_r`` without a dict probe.
     """
     heap = serializer.heap
     string_heap = serializer.string_heap
@@ -1105,6 +1114,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         tag_constant("int", string_heap),
         tp_dict=int_tp_dict,
     )
+    stop_iteration = heap.alloc_type(tag_constant("StopIteration", string_heap))
+    heap.write_iter_exhaust_type(stop_iteration)
     pairs: list[tuple[Tagged, Tagged]] = [
         (tag_constant("bytearray", string_heap), heap.alloc_builtin(BI_BYTEARRAY)),
         (tag_constant("max", string_heap), heap.alloc_builtin(BI_MAX)),
@@ -1114,6 +1125,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (tag_constant("range", string_heap), heap.alloc_builtin(BI_RANGE)),
         (tag_constant("set", string_heap), heap.alloc_builtin(BI_SET)),
         (tag_constant("int", string_heap), int_type),
+        (tag_constant("StopIteration", string_heap), stop_iteration),
     ]
     pairs.extend(seed_rom_firmware_builtins(serializer))
     return heap.alloc_dict(pairs, slot_count=dict_min_slots(len(pairs)))

@@ -72,8 +72,40 @@ IMEM_SLOT_HEX_DIGITS = IMEM_SLOT_BITS // 4  # 16
 BOOT_RECORD_ADDR = 0x03E0
 BOOT_RECORD_BYTES = 96
 HEAP_BASE = BOOT_RECORD_ADDR + BOOT_RECORD_BYTES  # 0x0440
-# Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (below frame stack at 0x1C000).
-HEAP_LIMIT = 0x1C000
+# Mirror PYCORE_HEAP_LIMIT in pycore_defs.svh (below exc-info arena at 0x1B000).
+HEAP_LIMIT = 0x1B000
+# Exc-info stack arena (§5.5); last tagged entry holds the boot StopIteration latch.
+EXC_STACK_BASE = 0x1B000
+EXC_STACK_BYTES = 0x1000
+ITER_EXHAUST_TYPE_ADDR = EXC_STACK_BASE + EXC_STACK_BYTES - 32  # 0x1BFE0
+
+# LIST element buffer stride (bytes); mirror pycore list layout (32B/element).
+LIST_ELEMENT_BYTES = 32
+# Minimum / maximum word capacities for allocator_list (_zeros needs % 16 == 0).
+# Min must cover CHUNKSIZE (64) + prologue for the CS:APP free-list workload.
+ALLOCATOR_LIST_CAPACITY_MIN = 128
+ALLOCATOR_LIST_CAPACITY_MAX = 4096
+
+
+def allocator_list_capacity(available_bytes: int) -> int:
+    """Safe list-word capacity for ``allocator_list`` under a live heap budget.
+
+    Callers should pass ``HEAP_LIMIT - HEAP_INIT_PTR`` (runtime bump headroom
+    after the static image).  Each word becomes one LIST cell (32 B); LIST_EXTEND
+    grow may briefly need ~2× the final buffer, and we keep additional slack so
+    the Allocator object and temporaries still fit.  Result is a multiple of 16
+    for ``_zeros``.
+    """
+    if available_bytes <= 0:
+        return ALLOCATOR_LIST_CAPACITY_MIN
+    # 32 B/cell × 4 ≈ cell + grow peak + object/slack.
+    words = available_bytes // (LIST_ELEMENT_BYTES * 4)
+    words = (words // 16) * 16
+    if words < ALLOCATOR_LIST_CAPACITY_MIN:
+        return ALLOCATOR_LIST_CAPACITY_MIN
+    if words > ALLOCATOR_LIST_CAPACITY_MAX:
+        return ALLOCATOR_LIST_CAPACITY_MAX
+    return words
 
 # Code-object field indices (tuple-element convention at code addr).
 CODE_FIELD_ENTRY_SLOT = 0
@@ -83,8 +115,9 @@ CODE_FIELD_METADATA = 3
 CODE_FIELD_CO_DEFAULTS = 4
 CODE_FIELD_CO_VARNAMES = 5
 CODE_FIELD_CO_KWDEFAULTS = 6
-CODE_OBJECT_NFIELDS = 7
-CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 224
+CODE_FIELD_CO_EXCEPTIONTABLE = 7
+CODE_OBJECT_NFIELDS = 8
+CODE_OBJECT_BYTES = CODE_OBJECT_NFIELDS * 32  # 256
 
 # General OBJECT kinds under TAG_OBJECT (mirror PY_OBK_* in pycore_defs.svh).
 OBK_INSTANCE = 1

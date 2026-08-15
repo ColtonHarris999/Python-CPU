@@ -6,15 +6,29 @@ from __future__ import annotations
 import argparse
 import ast
 import pathlib
+import re
 import types
 
-from encoding import TAG_BOOL, TAG_INT, VAL_MASK
+from encoding import (
+    HEAP_LIMIT,
+    TAG_BOOL,
+    TAG_INT,
+    VAL_MASK,
+    allocator_list_capacity,
+)
 from image_from_source import (
     build_image_from_source_text,
     load_rom_firmware_callables,
     parse_seed_pragmas,
     require_python_3_14,
     write_image_outputs,
+)
+
+# `# pycore-inject: HEAP_LIST_CAPACITY CAPACITY` — rewrite module-level CAPACITY
+# from the live bump-heap budget after a probe image build.
+_HEAP_LIST_CAPACITY_RE = re.compile(
+    r"^#\s*pycore-inject:\s*HEAP_LIST_CAPACITY\s+(\w+)\s*$",
+    re.MULTILINE,
 )
 
 
@@ -38,17 +52,73 @@ class _RemoveEntryCall(ast.NodeTransformer):
         return node
 
 
-def host_entry_result(source: pathlib.Path, entry: str) -> int | bool:
-    source = pathlib.Path(source)
-    source_text = source.read_text(encoding="utf-8")
+def expected_tag_value(value: int | bool) -> tuple[int, int]:
+    if isinstance(value, bool):
+        return TAG_BOOL, int(value)
+    return TAG_INT, int(value) & VAL_MASK
+
+
+def parse_heap_list_capacity_inject(source_text: str) -> str | None:
+    """Return the injected name (e.g. ``CAPACITY``) when the pragma is present."""
+    match = _HEAP_LIST_CAPACITY_RE.search(source_text)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def rewrite_capacity_assignment(source_text: str, name: str, capacity: int) -> str:
+    pattern = re.compile(
+        rf"^({re.escape(name)})\s*=\s*\d+\s*(#.*)?$",
+        re.MULTILINE,
+    )
+    rewritten, n = pattern.subn(rf"\1 = {capacity}", source_text, count=1)
+    if n != 1:
+        raise ValueError(
+            f"pycore-inject HEAP_LIST_CAPACITY: expected one assignment "
+            f"for {name!r}, found {n}"
+        )
+    return rewritten
+
+
+def apply_heap_list_capacity_inject(
+    source_text: str,
+    *,
+    filename: str,
+) -> str:
+    """Probe-build then rewrite CAPACITY from ``HEAP_LIMIT - HEAP_INIT_PTR``."""
+    name = parse_heap_list_capacity_inject(source_text)
+    if name is None:
+        return source_text
+    probe_text = rewrite_capacity_assignment(source_text, name, 32)
+    probe = build_image_from_source_text(probe_text, filename)
+    available = HEAP_LIMIT - probe.heap_init_ptr
+    capacity = allocator_list_capacity(available)
+    return rewrite_capacity_assignment(source_text, name, capacity)
+
+
+def host_entry_result_from_text(
+    source_text: str,
+    *,
+    filename: str,
+    entry: str,
+) -> int | bool:
+    # Optional override when host execution cannot mirror HW semantics
+    # (e.g. __iter__ returning a list is legal on PyCore Track A but not
+    # on CPython).  Format: `# pycore-expect: <int>`
+    for line in source_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# pycore-expect:"):
+            raw = stripped.split(":", 1)[1].strip()
+            return int(raw, 0)
+
     seeds = parse_seed_pragmas(source_text)
 
-    tree = ast.parse(source_text, filename=str(source))
+    tree = ast.parse(source_text, filename=filename)
     tree = _RemoveEntryCall(entry).visit(tree)
     ast.fix_missing_locations(tree)
 
     namespace: dict[str, object] = {"__name__": "__pycore_host__"}
-    exec(compile(tree, str(source), "exec"), namespace)
+    exec(compile(tree, filename, "exec"), namespace)
 
     # Match HW boot builtins: inject ROM firmware callables so host goldens
     # follow firmware semantics (e.g. reversed/filter return lists).
@@ -108,7 +178,7 @@ def host_entry_result(source: pathlib.Path, entry: str) -> int | bool:
 
     fn = namespace.get(entry)
     if not callable(fn):
-        raise ValueError(f"Entry function {entry!r} not found in {source}")
+        raise ValueError(f"Entry function {entry!r} not found in {filename}")
     result = fn()
     if not isinstance(result, (bool, int)):
         raise ValueError(
@@ -118,10 +188,15 @@ def host_entry_result(source: pathlib.Path, entry: str) -> int | bool:
     return result
 
 
-def expected_tag_value(value: int | bool) -> tuple[int, int]:
-    if isinstance(value, bool):
-        return TAG_BOOL, int(value)
-    return TAG_INT, int(value) & VAL_MASK
+def host_entry_result(source: pathlib.Path, entry: str) -> int | bool:
+    source = pathlib.Path(source)
+    source_text = source.read_text(encoding="utf-8")
+    source_text = apply_heap_list_capacity_inject(
+        source_text, filename=str(source)
+    )
+    return host_entry_result_from_text(
+        source_text, filename=str(source), entry=entry
+    )
 
 
 def run_image_test(
@@ -135,9 +210,15 @@ def run_image_test(
 ) -> tuple[int, int]:
     require_python_3_14()
     source = pathlib.Path(source)
-    expected = host_entry_result(source, entry)
+    source_text = apply_heap_list_capacity_inject(
+        source.read_text(encoding="utf-8"),
+        filename=str(source),
+    )
+    expected = host_entry_result_from_text(
+        source_text, filename=str(source), entry=entry
+    )
     expected_tag, expected_value = expected_tag_value(expected)
-    image = build_image_from_source_text(source.read_text(encoding="utf-8"), str(source))
+    image = build_image_from_source_text(source_text, str(source))
     write_image_outputs(
         image,
         program_hex=program_hex,

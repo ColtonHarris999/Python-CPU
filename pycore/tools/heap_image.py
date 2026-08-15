@@ -16,6 +16,7 @@ from encoding import (
     BOOT_RECORD_ADDR,
     CODE_FIELD_CO_CONSTS,
     CODE_FIELD_CO_DEFAULTS,
+    CODE_FIELD_CO_EXCEPTIONTABLE,
     CODE_FIELD_CO_KWDEFAULTS,
     CODE_FIELD_CO_NAMES,
     CODE_FIELD_CO_VARNAMES,
@@ -25,6 +26,7 @@ from encoding import (
     CODE_OBJECT_NFIELDS,
     HEAP_BASE,
     HEAP_LIMIT,
+    ITER_EXHAUST_TYPE_ADDR,
     OBK_BOUND_METHOD,
     OBK_BUILTIN,
     OBK_BYTEARRAY,
@@ -370,8 +372,9 @@ class HeapImageBuilder:
         posonlyargcount: int = 0,
         co_defaults: Tagged | None = None,
         co_kwdefaults: Tagged | None = None,
+        co_exceptiontable: Tagged | None = None,
     ) -> Tagged:
-        """Allocate a 224-byte code object (7 tagged-entry fields).
+        """Allocate a 256-byte code object (8 tagged-entry fields).
 
         field 0 : entry_slot  (INT) — imem slot index of the first code unit
         field 1 : co_consts   (TUPLE handle)
@@ -382,8 +385,9 @@ class HeapImageBuilder:
         field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
         field 5 : co_varnames (TUPLE handle; local/argument names)
         field 6 : co_kwdefaults (MUT_DICT handle; empty ⇒ no kw-only defaults)
+        field 7 : co_exceptiontable (TUPLE of raw byte INTs)
         """
-        assert CODE_OBJECT_NFIELDS == 7
+        assert CODE_OBJECT_NFIELDS == 8
         assert co_consts[0] == TAG_TUPLE
         assert co_names[0] == TAG_TUPLE
         if co_varnames[0] != TAG_TUPLE:
@@ -396,6 +400,10 @@ class HeapImageBuilder:
             co_kwdefaults = self.alloc_dict([], slot_count=4)
         if not is_mut_kind(co_kwdefaults, MUT_DICT):
             raise ValueError("co_kwdefaults must be a MUT_DICT handle")
+        if co_exceptiontable is None:
+            co_exceptiontable = self.alloc_tuple([])
+        if co_exceptiontable[0] != TAG_TUPLE:
+            raise ValueError("co_exceptiontable must be a TUPLE handle")
         addr = self._alloc(CODE_OBJECT_BYTES)
         fields: list[Tagged] = [
             (TAG_INT, int_value(entry_slot)),  # field 0
@@ -416,6 +424,7 @@ class HeapImageBuilder:
             co_defaults,                       # field 4
             co_varnames,                       # field 5
             co_kwdefaults,                     # field 6
+            co_exceptiontable,                 # field 7
         ]
         # Silence unused-import lint for field index constants (documented API).
         assert CODE_FIELD_ENTRY_SLOT == 0
@@ -425,6 +434,7 @@ class HeapImageBuilder:
         assert CODE_FIELD_CO_DEFAULTS == 4
         assert CODE_FIELD_CO_VARNAMES == 5
         assert CODE_FIELD_CO_KWDEFAULTS == 6
+        assert CODE_FIELD_CO_EXCEPTIONTABLE == 7
         for i, (tag, val) in enumerate(fields):
             self._write_tagged(addr + i * 32, tag, val)
         return TAG_CODE_OBJECT, addr & ((1 << 64) - 1)
@@ -621,6 +631,16 @@ class HeapImageBuilder:
         self._write_tagged(addr + 32, globals_dict[0], globals_dict[1])
         self._write_tagged(addr + 64, builtins_dict[0], builtins_dict[1])
 
+    def write_iter_exhaust_type(self, stop_iteration: Tagged) -> None:
+        """Write the boot StopIteration handle into the exc-arena sidecar."""
+        if stop_iteration[0] != TAG_OBJECT:
+            raise ValueError("iter exhaust type must be an OBJECT handle")
+        if ITER_EXHAUST_TYPE_ADDR % 16 != 0:
+            raise ValueError("ITER_EXHAUST_TYPE_ADDR must be 16-byte aligned")
+        self._write_tagged(
+            ITER_EXHAUST_TYPE_ADDR, stop_iteration[0], stop_iteration[1]
+        )
+
     def alloc_empty_globals(self, n_store_names: int) -> Tagged:
         """Empty dict pre-sized for runtime STORE_NAME / STORE_GLOBAL inserts."""
         slots = dict_slot_count_for_stores(n_store_names)
@@ -633,11 +653,20 @@ class HeapImageBuilder:
         Missing addresses are written as zero so the file covers the full bank
         span when total_bytes is set (default: end of image rounded up, at
         least through self.ptr).
+
+        Words at or above ``HEAP_LIMIT`` (exc-arena sidecars) are appended with
+        ``$readmemh`` ``@`` address directives so images stay compact.
         """
         path = pathlib.Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        contiguous_addrs = [a for a in self.words if a < HEAP_LIMIT]
+        sparse_addrs = sorted(a for a in self.words if a >= HEAP_LIMIT)
         if total_bytes is None:
-            total_bytes = max(self.ptr, max(self.words.keys(), default=0) + 16)
+            cont_end = max(
+                self.ptr,
+                (max(contiguous_addrs) + 16) if contiguous_addrs else 0,
+            )
+            total_bytes = cont_end
         # Round up to a whole word.
         nwords = (total_bytes + 15) // 16
         lines: list[str] = []
@@ -645,4 +674,7 @@ class HeapImageBuilder:
             addr = i * 16
             word = self.words.get(addr, 0)
             lines.append(f"{word:032x}")
+        for addr in sparse_addrs:
+            lines.append(f"@{addr >> 4:x}")
+            lines.append(f"{self.words[addr]:032x}")
         path.write_text("\n".join(lines) + "\n", encoding="ascii")

@@ -45,6 +45,7 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_imem.sv \
 	pycore/rtl/pycore_dmem.sv \
 	pycore/rtl/pycore_mem_stage.sv \
+	pycore/rtl/pycore_exc_stack.sv \
 	pycore/rtl/pycore_core.sv \
 	pycore/rtl/pycore_system.sv \
 	excore/rtl/excore_cpu.sv \
@@ -115,7 +116,12 @@ EXCORE_RTL_SRCS := \
 	pycore-img-for-iter-dict-grow \
 	pycore-img-for-iter-set-basic pycore-img-for-iter-set-empty \
 	pycore-img-for-iter-set-type-trap \
-	pycore-img-for-iter-all \
+	pycore-img-for-iter-all pycore-img-container-call-spike \
+	pycore-img-for-iter-object-list pycore-img-for-iter-object-next \
+	pycore-img-for-iter-object-exhaust pycore-img-for-iter-object-no-iter-trap \
+	pycore-img-for-iter-object-nested \
+	pycore-img-list-comp-basic pycore-img-list-comp-fast-clear \
+	pycore-img-for-loop-all \
 	pycore-img-nop \
 	pycore-container pycore-container-build-index pycore-container-store-subscr \
 	pycore-container-dict-lookup pycore-container-dict-store \
@@ -180,7 +186,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
 	pycore-img-load-name-builtin pycore-img-builtin-len-long-str pycore-img-builtin-len-range \
 	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
-	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
+	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
+	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
+	pycore-img-try-stopiteration-nested pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
@@ -365,7 +373,7 @@ pycore-frame-fib:
 # Host smoke always runs. Image-boot targets are wired now but fail until
 # LOAD_ATTR / classes / bound-method CALL land (M2–M6 / M8).
 pycore-allocator-host:
-	$(PYTHON) -c "import runpy; ns=runpy.run_path('pycore/programs/allocator_list.py'); assert isinstance(ns['managed_entry'](), int); ns=runpy.run_path('pycore/programs/allocator_bytes.py'); assert isinstance(ns['managed_entry'](), int); print('allocator host smoke ok')"
+	PYTHONPATH=pycore/tools:$$PYTHONPATH $(PYTHON) -c 'from pathlib import Path; import runpy, tempfile; from run_image_test import apply_heap_list_capacity_inject; text=apply_heap_list_capacity_inject(Path("pycore/programs/allocator_list.py").read_text(), filename="allocator_list.py"); p=Path(tempfile.mkdtemp())/"a.py"; p.write_text(text); ns=runpy.run_path(str(p)); assert isinstance(ns["managed_entry"](), int); ns=runpy.run_path("pycore/programs/allocator_bytes.py"); assert isinstance(ns["managed_entry"](), int); print("allocator host smoke ok")'
 
 define PYCORE_IMAGE_RUN_SRC
 	mkdir -p $(BUILD_DIR)/$(1)
@@ -478,6 +486,40 @@ define PYCORE_IMAGE_RUN
 		-Wall -Wno-fatal \
 		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
 	./$(BUILD_DIR)/img_$(1)/verilator/Vtb_container
+endef
+
+# Synthetic §6.1 spike: the generator rewrites the inner zero-arg CALL to
+# GET_ITER while preserving CALL's [callable, NULL] RF layout.  The test-only
+# core parameter launches S_CALL from S_CONTAINER and must resume with LIST.
+define PYCORE_CONTAINER_CALL_SPIKE_RUN
+	mkdir -p $(BUILD_DIR)/img_container_call_spike
+	$(PYTHON) pycore/tools/gen_container_call_spike.py \
+		--source pycore/programs/img_container_call_spike.py \
+		--program-hex $(BUILD_DIR)/img_container_call_spike/program.hex \
+		--dmem-hex $(BUILD_DIR)/img_container_call_spike/dmem.hex \
+		--string-hex $(BUILD_DIR)/img_container_call_spike/string_mem.hex \
+		--meta $(BUILD_DIR)/img_container_call_spike/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"$(BUILD_DIR)/img_container_call_spike/program.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/img_container_call_spike/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/img_container_call_spike/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GCONTAINER_CALL_SPIKE_EN=1 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d$$EXPECTED_TAG \
+		"-GEXPECTED_VALUE=128'd$$EXPECTED_VALUE" \
+		-GMAX_CYCLES=100000 \
+		--Mdir $(BUILD_DIR)/img_container_call_spike/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/img_container_call_spike/verilator/Vtb_container
 endef
 
 # Phase C full-regression companion to PYCORE_IMAGE_RUN: same image, run on
@@ -738,6 +780,9 @@ pycore-img-pop-jump-if-none:
 pycore-img-for-iter:
 	$(call PYCORE_IMAGE_RUN,for_iter,100000)
 
+pycore-img-container-call-spike:
+	$(PYCORE_CONTAINER_CALL_SPIKE_RUN)
+
 pycore-img-for-iter-type-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_type_trap,1,50000)
 
@@ -840,6 +885,41 @@ pycore-img-for-iter-set-empty:
 pycore-img-for-iter-set-type-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_set_type_trap,1,50000)
 
+pycore-img-for-iter-object-list:
+	$(call PYCORE_IMAGE_RUN,for_iter_object_list,200000)
+
+pycore-img-for-iter-object-next:
+	$(call PYCORE_IMAGE_RUN,for_iter_object_next,400000)
+
+pycore-img-for-iter-object-exhaust:
+	$(call PYCORE_IMAGE_RUN,for_iter_object_exhaust,200000)
+
+pycore-img-for-iter-object-no-iter-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,for_iter_object_no_iter_trap,1,100000)
+
+pycore-img-for-iter-object-nested:
+	$(call PYCORE_IMAGE_RUN,for_iter_object_nested,400000)
+
+# Track C: real compile() list comprehensions (LIST_APPEND grow → two-core).
+pycore-img-list-comp-basic: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_comp_basic,400000)
+
+pycore-img-list-comp-fast-clear: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_comp_fast_clear,400000)
+
+pycore-img-for-loop-all: \
+	pycore-img-for-iter-all \
+	pycore-img-for-iter-object-list \
+	pycore-img-for-iter-object-next \
+	pycore-img-for-iter-object-exhaust \
+	pycore-img-for-iter-object-no-iter-trap \
+	pycore-img-for-iter-object-nested \
+	pycore-img-try-stopiteration \
+	pycore-img-try-stopiteration-nested \
+	pycore-img-raise-stopiteration-fatal \
+	pycore-img-list-comp-basic \
+	pycore-img-list-comp-fast-clear
+
 pycore-img-for-iter-all: \
 	pycore-img-for-iter \
 	pycore-img-for-iter-type-trap \
@@ -876,6 +956,11 @@ pycore-img-for-iter-all: \
 	pycore-img-for-iter-set-basic \
 	pycore-img-for-iter-set-empty \
 	pycore-img-for-iter-set-type-trap \
+	pycore-img-for-iter-object-list \
+	pycore-img-for-iter-object-next \
+	pycore-img-for-iter-object-exhaust \
+	pycore-img-for-iter-object-no-iter-trap \
+	pycore-img-for-iter-object-nested \
 	pycore-container-for-iter-end-for
 
 pycore-img-nop:
@@ -1187,6 +1272,8 @@ pycore-img: \
 	pycore-img-compare-op-type-trap \
 	pycore-img-pop-jump-if-none \
 	pycore-img-for-iter-all \
+	pycore-img-container-call-spike \
+	pycore-img-for-loop-all \
 	pycore-img-nop \
 	pycore-img-list-del-last-only \
 	pycore-img-list-contains-simple \
@@ -1292,7 +1379,9 @@ pycore-img-attr-all: \
 	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
 	pycore-img-load-name-builtin pycore-img-builtin-len-long-str pycore-img-builtin-len-range \
 	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
-	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs pycore-img-return-true \
+	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
+	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
+	pycore-img-try-stopiteration-nested pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
@@ -1436,6 +1525,15 @@ pycore-img-to-bool-containers:
 
 pycore-img-raise-varargs:
 	$(call PYCORE_IMAGE_TRAP_RUN,raise_varargs,17,50000)
+
+pycore-img-raise-stopiteration-fatal:
+	$(call PYCORE_IMAGE_TRAP_RUN,raise_stopiteration_fatal,17,50000)
+
+pycore-img-try-stopiteration:
+	$(call PYCORE_IMAGE_RUN,try_stopiteration,100000)
+
+pycore-img-try-stopiteration-nested:
+	$(call PYCORE_IMAGE_RUN,try_stopiteration_nested,100000)
 
 pycore-img-return-true:
 	$(call PYCORE_IMAGE_RUN,return_true,50000)
@@ -1754,10 +1852,10 @@ pycore-container-dict-full-insert:
 	# Load ≥ 2/3 / last-slot insert → PY_TRAP_DICT_GROW (11), not MEM_FAULT.
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d11 -GSTRING_HEX=\"pycore/programs/dict_full_insert_str.hex\" -GMAX_CYCLES=20000,pycore_container_dict_full_insert)
 
-# HEAP_INIT_PTR = 0x1BF9C so BUILD_LIST 3 (112 bytes) exceeds PYCORE_HEAP_LIMIT
-# (0x1C000 after the 128 KB dmem / heap widen for object programs).
+# HEAP_INIT_PTR = 0x1AF9C so BUILD_LIST 3 (112 bytes) exceeds PYCORE_HEAP_LIMIT
+# (0x1B000; exc-info arena begins there).
 pycore-container-list-oom:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h0001bf9c",pycore_container_list_oom)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 -GSTRING_HEX=\"pycore/programs/list_oom_str.hex\" "-GHEAP_INIT_PTR=32\'h0001af9c",pycore_container_list_oom)
 
 # Natural FOR_ITER exhaustion skips END_FOR, so this raw stream executes
 # END_FOR directly and verifies its POP_TOP-equivalent stack effect.
@@ -1910,7 +2008,7 @@ pycore-excore-grow-from-zero: excore-fw pycore-excore-integration-fixtures
 pycore-excore-fast-path-no-trap: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,fast_path_no_trap,-GEXPECTED_TAG=4\'d1 "-GEXPECTED_VALUE=128'd9" -GEXPECTED_TRAP_REQ_COUNT=0)
 
-# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0x1C000) so the excore's
+# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0x1B000) so the excore's
 # doubled buffer (cap 4 -> 8, 256 bytes) cannot fit -> FATAL(MEM_FAULT).
 pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 	mkdir -p $(BUILD_DIR)/grow_oom_fatal
@@ -1924,7 +2022,7 @@ pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXCORE_EN=1 \
 		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
-		"-GHEAP_INIT_PTR=32'h0001bf80" \
+		"-GHEAP_INIT_PTR=32'h0001af80" \
 		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 \
 		--Mdir $(BUILD_DIR)/grow_oom_fatal/verilator \
 		-Wall -Wno-fatal \
@@ -2000,7 +2098,7 @@ pycore-excore-extend-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		-GCHECK_ENTRY_RETURN=0 \
 		-GEXCORE_EN=1 \
 		-GFW_HEX=\"$(EXCORE_FW_HEX)\" \
-		"-GHEAP_INIT_PTR=32'h0001bf80" \
+		"-GHEAP_INIT_PTR=32'h0001af80" \
 		-GEXPECT_TRAP=1 -GEXPECTED_TRAP_CODE=5\'d7 \
 		--Mdir $(BUILD_DIR)/extend_oom_fatal/verilator \
 		-Wall -Wno-fatal \

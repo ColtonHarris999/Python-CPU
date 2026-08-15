@@ -20,7 +20,7 @@ jobs:
   all-tests:
     name: all-tests
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 210
 
     steps:
       - name: Checkout

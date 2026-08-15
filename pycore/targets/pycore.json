@@ -227,6 +227,7 @@
     "OBJ_EXC": {
       "distance": 5,
       "needs_subsystem": "exception state + stack unwinder",
+      "note": "v1: RAISE_VARARGS/PUSH_EXC_INFO/CHECK_EXC_MATCH/POP_EXCEPT/RERAISE + dmem exc stack + co_exceptiontable; remaining members still deferred",
       "members": [
         "PUSH_EXC_INFO",
         "POP_EXCEPT",
@@ -457,7 +458,36 @@
       "support": "execute",
       "hw_class": "OBJECT",
       "fold": "BAR",
-      "note": "minimal oparg=1 support: accepts TOS and raises fatal PY_TRAP_RAISE"
+      "obj_group": "OBJ_EXC",
+      "note": "oparg=1 builds OBK_EXCEPTION, walks co_exceptiontable, redirects or PY_TRAP_RAISE"
+    },
+    "PUSH_EXC_INFO": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "note": "dmem exc-info push + stack [prev, exc]; sets active_exc_r"
+    },
+    "CHECK_EXC_MATCH": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "note": "v1 exact type-handle match against active_exc.field0; [exc,type]->[exc,bool]"
+    },
+    "POP_EXCEPT": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "note": "pop dmem exc-info node; restore active_exc_*; pop TOS prev"
+    },
+    "RERAISE": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_EXC",
+      "note": "re-raise TOS through table walk; oparg=1 restores outer active first"
     },
     "RESUME": {
       "support": "strip",
@@ -670,12 +700,14 @@
     "GET_ITER": {
       "support": "execute",
       "hw_class": "OBJECT",
-      "fold": "BAR"
+      "fold": "BAR",
+      "note": "native LIST/TUPLE/RANGE/STR/DICT/SET + OBJECT __iter__ protocol; HEAP_ITER kind 4"
     },
     "FOR_ITER": {
       "support": "execute",
       "hw_class": "OBJECT",
-      "fold": "BAR"
+      "fold": "BAR",
+      "note": "native kinds + HEAP_ITER __next__; StopIteration via call_exc + iter_exhaust_type_r"
     },
     "LOAD_ATTR": {
       "support": "execute",

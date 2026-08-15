@@ -12,6 +12,7 @@ if sys.version_info[:2] != (3, 14):
     raise unittest.SkipTest("image_from_source tests require Python 3.14")
 
 from encoding import (
+    CODE_FIELD_CO_EXCEPTIONTABLE,
     CODE_FIELD_CO_KWDEFAULTS,
     CODE_FIELD_CO_VARNAMES,
     CODE_FIELD_METADATA,
@@ -126,6 +127,36 @@ class ImageTranscodingTest(unittest.TestCase):
         self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
         self.assertGreaterEqual(len(result.code_handles), 3)
         self.assertGreater(len(result.program_slots), 0)
+
+    def test_exception_table_round_trips_in_code_field_7(self) -> None:
+        sample = _compile_module(
+            "def f():\n"
+            "    return [x for x in range(3)]\n"
+        ).co_consts[0]
+        module_code = _compile_module("answer = 42\n").replace(
+            co_exceptiontable=sample.co_exceptiontable
+        )
+
+        result = image_from_source.build_image_from_code(module_code)
+        code_addr = result.module_code[1]
+        field_addr = code_addr + CODE_FIELD_CO_EXCEPTIONTABLE * 32
+        tuple_value = result.heap.words[field_addr]
+        tuple_tag = result.heap.words[field_addr + 16] & 0xF
+        tuple_length = tuple_value >> 64
+        tuple_addr = tuple_value & ((1 << 64) - 1)
+
+        self.assertEqual(tuple_tag, TAG_TUPLE)
+        self.assertEqual(tuple_length, len(sample.co_exceptiontable))
+        self.assertEqual(
+            [
+                (
+                    result.heap.words[tuple_addr + index * 32 + 16] & 0xF,
+                    result.heap.words[tuple_addr + index * 32],
+                )
+                for index in range(tuple_length)
+            ],
+            [(TAG_INT, byte) for byte in sample.co_exceptiontable],
+        )
 
     def test_unsupported_opcode_rejected_clearly(self) -> None:
         with self.assertRaises(ValueError) as ctx:

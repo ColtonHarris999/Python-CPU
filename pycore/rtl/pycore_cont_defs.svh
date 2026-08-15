@@ -40,6 +40,11 @@
     localparam logic [5:0] CONT_DICT_MERGE = 6'd36;// DICT_MERGE (empty-dest fast path)
     localparam logic [5:0] CONT_DICT_UPDATE = 6'd37;// DICT_UPDATE (A.update(B))
     localparam logic [5:0] CONT_MAP_ADD = 6'd38;// MAP_ADD (dict[key]=value, pop 2)
+    localparam logic [5:0] CONT_RAISE = 6'd39;// RAISE_VARARGS 1 (§7.5)
+    localparam logic [5:0] CONT_PUSH_EXC_INFO = 6'd40;// PUSH_EXC_INFO
+    localparam logic [5:0] CONT_CHECK_EXC_MATCH = 6'd41;// CHECK_EXC_MATCH
+    localparam logic [5:0] CONT_POP_EXCEPT = 6'd42;// POP_EXCEPT
+    localparam logic [5:0] CONT_RERAISE = 6'd43;// RERAISE 0/1
 
     // Container phases (stored in container_phase_r, 6-bit).
     //

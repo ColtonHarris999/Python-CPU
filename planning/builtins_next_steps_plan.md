@@ -11,9 +11,9 @@ Related:
 - Prior bytecode plan: `planning/builtins_bytecode_support_plan.md`
 - Inventory: `pycore_firmware/builtins/builtins.md`
 - Opcode matrix: `pycore/docs/bytecode_support.md`
-- **Active implementation plan:** ROM firmware builtins — Cursor plan *ROM firmware builtins §4.1*
-  - **Phase 1:** **Done** — `sum`, `abs`, `bool`, `all`, `any` via shared `seed_rom_firmware_builtins()`
-  - **Phase 2:** **Done** — §4.2–§4.4 (`enumerate`/`zip`/`map`, `% 0`→`raise` priority sweep, blocked-gap docs)
+- **Active implementation plan:** [`planning/for_loop_full_support_plan.md`](for_loop_full_support_plan.md)
+  (GET_ITER/FOR_ITER on OBJECT, StopIteration-only exception tables, list/dict comps)
+- **Prior ROM firmware work:** **Done** — waves 1–4 (`ROM_FIRMWARE_BUILTINS`, print console, attr specials)
 
 ---
 
@@ -66,9 +66,9 @@ Related:
 | --- | --- |
 | `CO_VARKEYWORDS` on user defs | **Done** — `def f(**k)` packing + posonly; see `planning/co_varkeywords_call_parity.md` |
 | Optional `BI_*` keyword tables | Hardware kwargs without ROM wrapper |
-| Full exception tables / `RERAISE` | Real `TypeError`/`StopIteration`; comprehension option A/B |
+| Full exception tables / `RERAISE` | **Active:** [`for_loop_full_support_plan.md`](for_loop_full_support_plan.md) Track B (StopIteration only); retires comprehension Policy C when Track C lands |
 | `BI_LEN` tuple-mode RANGE + OBJECT `__bool__` | Complete truthiness / len protocol |
-| `GET_ITER`/`FOR_ITER` on OBJECT | Iterator protocol for user types |
+| `GET_ITER`/`FOR_ITER` on OBJECT | **Active:** [`for_loop_full_support_plan.md`](for_loop_full_support_plan.md) Track A |
 | `BI_ORD` / `BI_CHR` | Unblock `ord`/`chr` / `ascii` |
 | `LOAD_SUPER_ATTR` + descriptors | `super` / `property` / `classmethod` |
 | `COMPARE_OP` string ordering | `sorted`/`min`/`max` on str |

@@ -233,7 +233,11 @@ localparam logic [7:0] PY_OP_END_FOR          = 8'd9;
 localparam logic [7:0] PY_OP_GET_ITER         = 8'd16;
 localparam logic [7:0] PY_OP_MAKE_FUNCTION    = 8'd23;
 localparam logic [7:0] PY_OP_NOP              = 8'd27;
+localparam logic [7:0] PY_OP_CHECK_EXC_MATCH  = 8'd6;
+localparam logic [7:0] PY_OP_POP_EXCEPT       = 8'd29;
 localparam logic [7:0] PY_OP_NOT_TAKEN        = 8'd28;
+localparam logic [7:0] PY_OP_PUSH_EXC_INFO    = 8'd32;
+localparam logic [7:0] PY_OP_RERAISE          = 8'd105;
 localparam logic [7:0] PY_OP_POP_ITER         = 8'd30;
 localparam logic [7:0] PY_OP_POP_TOP          = 8'd31;
 localparam logic [7:0] PY_OP_PUSH_NULL        = 8'd33;
@@ -860,6 +864,14 @@ function automatic logic pycore_iter_valid(
                 pycore_iter_valid = common_magic &&
                                     (value[3:0] == 4'b0) &&
                                     (value[95:64] <= value[63:32]);
+            // Heap iterator: addr is the iterator OBJECT; index/size/aux unused.
+            PY_ITER_KIND_HEAP_ITER:
+                pycore_iter_valid = common_magic &&
+                                    (value[3:0] == 4'b0) &&
+                                    (value[115:96] == 20'b0) &&
+                                    (value[95:64] == 32'b0) &&
+                                    (value[63:32] == 32'b0) &&
+                                    (value[31:0] != 32'b0);
             default:
                 pycore_iter_valid = 1'b0;
         endcase
@@ -1044,6 +1056,10 @@ localparam logic [127:0] PY_ATTR_NAME_CLASS =
     128'h95f5f636c6173735f5f0000000000000; // "__class__" size=9
 localparam logic [127:0] PY_ATTR_NAME_BASE  =
     128'h85f5f626173655f5f000000000000000; // "__base__"  size=8
+localparam logic [127:0] PY_ATTR_NAME_ITER  =
+    128'h85f5f697465725f5f000000000000000; // "__iter__"  size=8
+localparam logic [127:0] PY_ATTR_NAME_NEXT  =
+    128'h85f5f6e6578745f5f000000000000000; // "__next__"  size=8
 
 function automatic logic pycore_attr_name_is_dict(
     input logic [3:0] tag,
@@ -1670,11 +1686,20 @@ endfunction
 // Default memory map (DMEM_BLOCK_COUNT=32 → 128 KB):
 //   0x00000 – 0x003DF  reserved / user PTR data
 //   0x003E0 – 0x0043F  boot record (96 B: code / globals / builtins)
-//   0x00440 – 0x1BFFF  container heap (this region)
+//   0x00440 – 0x1AFFF  container heap (this region)
+//   0x1B000 – 0x1BFFF  (4 KB) exc-info stack arena (§5.5)
 //   0x1C000 – 0x1FFFF  (16 KB) call-frame stack
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0440;
-localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0001_C000;
+localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0001_B000;
+localparam logic [31:0] PYCORE_EXC_STACK_BASE  = 32'h0001_B000;
+localparam logic [31:0] PYCORE_EXC_STACK_BYTES = 32'h0000_1000;
+localparam logic [31:0] PYCORE_EXC_NODE_BYTES  = 32'd32;
+localparam logic [31:0] PYCORE_EXC_STACK_MAX   = 32'd128;
+// Boot sidecar: StopIteration type handle written by image_from_source and
+// latched into iter_exhaust_type_r during S_BOOT (same type seeded in builtins).
+localparam logic [31:0] PYCORE_ITER_EXHAUST_TYPE_ADDR =
+    PYCORE_EXC_STACK_BASE + PYCORE_EXC_STACK_BYTES - 32'd32;
 
 // -------------------------------------------------------------------------
 // LIST in-dmem layout v2 — growable split object/buffer (Phase A).
@@ -1833,7 +1858,7 @@ function automatic logic [31:0] pycore_tuple_alloc_bytes(
 endfunction
 
 // -------------------------------------------------------------------------
-// CODE OBJECT in-dmem layout (tuple-element convention, 7 fields = 224 bytes):
+// CODE OBJECT in-dmem layout (tuple-element convention, 8 fields = 256 bytes):
 //
 //   Handle: { PY_TAG_CODE_OBJECT, {64'd0, addr[63:0]} }
 //
@@ -1851,6 +1876,7 @@ endfunction
 //   field 4 : co_defaults (TUPLE handle; empty ⇒ exact argc match)
 //   field 5 : co_varnames (TUPLE handle; local/argument names)
 //   field 6 : co_kwdefaults (MUT_DICT handle; empty ⇒ no kw-only defaults)
+//   field 7 : co_exceptiontable (TUPLE of INT bytes; raw CPython table)
 //
 // Interim model: a "function object" IS a code-object handle (function ≡ code).
 // Defaults live on the code object; closures are future work.
@@ -1862,8 +1888,11 @@ localparam logic [31:0] PYCORE_CODE_FIELD_METADATA      = 32'd3;
 localparam logic [31:0] PYCORE_CODE_FIELD_CO_DEFAULTS   = 32'd4;
 localparam logic [31:0] PYCORE_CODE_FIELD_CO_VARNAMES   = 32'd5;
 localparam logic [31:0] PYCORE_CODE_FIELD_CO_KWDEFAULTS = 32'd6;
-localparam logic [31:0] PYCORE_CODE_NFIELDS             = 32'd7;
-localparam logic [31:0] PYCORE_CODE_OBJECT_BYTES        = 32'd224;
+// Field 7 is co_exceptiontable (INT-byte TUPLE). Matches host
+// encoding.CODE_OBJECT_NFIELDS / CODE_OBJECT_BYTES (8 / 256).
+localparam logic [31:0] PYCORE_CODE_FIELD_CO_EXCEPTIONTABLE = 32'd7;
+localparam logic [31:0] PYCORE_CODE_NFIELDS             = 32'd8;
+localparam logic [31:0] PYCORE_CODE_OBJECT_BYTES        = 32'd256;
 
 function automatic logic [31:0] pycore_code_field_val_addr(
     input logic [31:0] addr,

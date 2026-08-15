@@ -249,7 +249,20 @@
                         CONT_GET_ITER: begin
                             unique case (container_phase_r)
                                 CP_INIT: begin
-                                    if (pycore_is_list(cont_rs1_tag, cont_rs1_val)) begin
+                                    // §6.1 spike only: the fixture rewrites a
+                                    // zero-arg CALL to GET_ITER while preserving
+                                    // its [callable, NULL] stack.  This launches
+                                    // the existing CALL FSM and proves that its
+                                    // list return resumes this exact arm.  The
+                                    // production OBJECT path lands in step 6.
+                                    if (CONTAINER_CALL_SPIKE_EN &&
+                                        pycore_is_null(
+                                            cont_rs1_tag, cont_rs1_val)) begin
+                                        container_call_pending_r <= 1'b1;
+                                        container_phase_r <= CP_VAL;
+                                    end else if (pycore_is_list(
+                                                     cont_rs1_tag,
+                                                     cont_rs1_val)) begin
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
                                         container_wb_data_r <= pycore_make_entry(
@@ -377,8 +390,140 @@
                                                         cont_rs1_val[19:0]));
                                             container_phase_r <= CP_ITER_WB;
                                         end
+                                    end else if (cont_rs1_tag == PY_TAG_OBJECT) begin
+                                        // Track A: resolve __iter__ via LOAD_ATTR
+                                        // phases, then protocol CALL (§6.2).
+                                        container_src_buf_r <= cont_rs1_addr;
+                                        container_tag_r <= PY_TAG_SHORT_STR;
+                                        container_val_r <= PY_ATTR_NAME_ITER;
+                                        container_push_null_r <= 1'b1;
+                                        container_finishing_r <= 1'b0;
+                                        container_proto_resolve_r <= 1'b1;
+                                        container_proto_op_r <= CONT_GET_ITER;
+                                        container_dmem_addr_r <= cont_rs1_addr;
+                                        container_dmem_we_r <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_op_r <= CONT_LOAD_ATTR;
+                                        container_phase_r <= CP_ATTR_HEAD;
                                     end else begin
                                         container_type_trap_r <= 1'b1;
+                                    end
+                                end
+
+                                // Protocol CALL wait/resume (§6.1 / spike).
+                                CP_VAL: begin
+                                    if (call_exc_pending_r) begin
+                                        // GET_ITER protocol raise → fatal v1.
+                                        call_exc_pending_r <= 1'b0;
+                                        active_exc_r <= call_exc_handle_r;
+                                        active_exc_valid_r <= 1'b1;
+                                        container_raise_trap_r <= 1'b1;
+                                        fetch_skip_r <= 1'b1;
+                                        container_phase_r <= CP_DONE;
+                                    end else if (container_call_return_valid_r) begin
+                                        container_call_return_valid_r <= 1'b0;
+                                        container_call_returning_r <= 1'b0;
+                                        if (CONTAINER_CALL_SPIKE_EN &&
+                                            pycore_is_null(
+                                                cont_rs1_tag, cont_rs1_val)) begin
+                                            // Spike: prove pause/resume only.
+                                            if (!pycore_is_list(
+                                                    pycore_get_tag(
+                                                        container_call_result_r),
+                                                    pycore_get_val(
+                                                        container_call_result_r))) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                fetch_skip_r <= 1'b1;
+                                                container_phase_r <= CP_DONE;
+                                            end
+                                        end else begin
+                                            // Production: convert __iter__ return.
+                                            begin
+                                                logic [3:0] rtag;
+                                                logic [PYCORE_VAL_WIDTH-1:0] rval;
+                                                rtag = pycore_get_tag(
+                                                    container_call_result_r);
+                                                rval = pycore_get_val(
+                                                    container_call_result_r);
+                                                if (pycore_is_list(rtag, rval)) begin
+                                                    container_wb_we_r <= 1'b1;
+                                                    container_wb_addr_r <=
+                                                        RF_AW'(tos_r - RF_AW'(1));
+                                                    container_wb_data_r <=
+                                                        pycore_make_entry(
+                                                            PY_TAG_ITER,
+                                                            pycore_iter_value(
+                                                                PY_ITER_KIND_LIST,
+                                                                32'd0, 32'd0,
+                                                                rval[31:0]));
+                                                    container_phase_r <= CP_ITER_WB;
+                                                end else if (rtag == PY_TAG_TUPLE) begin
+                                                    container_wb_we_r <= 1'b1;
+                                                    container_wb_addr_r <=
+                                                        RF_AW'(tos_r - RF_AW'(1));
+                                                    container_wb_data_r <=
+                                                        pycore_make_entry(
+                                                            PY_TAG_ITER,
+                                                            pycore_iter_value(
+                                                                PY_ITER_KIND_TUPLE,
+                                                                32'd0,
+                                                                pycore_tuple_size(
+                                                                    rval)[31:0],
+                                                                rval[31:0]));
+                                                    container_phase_r <= CP_ITER_WB;
+                                                end else if (rtag == PY_TAG_ITER) begin
+                                                    container_wb_we_r <= 1'b1;
+                                                    container_wb_addr_r <=
+                                                        RF_AW'(tos_r - RF_AW'(1));
+                                                    container_wb_data_r <=
+                                                        container_call_result_r;
+                                                    container_phase_r <= CP_ITER_WB;
+                                                end else if (rtag == PY_TAG_OBJECT) begin
+                                                    container_wb_we_r <= 1'b1;
+                                                    container_wb_addr_r <=
+                                                        RF_AW'(tos_r - RF_AW'(1));
+                                                    container_wb_data_r <=
+                                                        pycore_make_entry(
+                                                            PY_TAG_ITER,
+                                                            pycore_iter_value(
+                                                                PY_ITER_KIND_HEAP_ITER,
+                                                                32'd0, 32'd0,
+                                                                rval[31:0]));
+                                                    container_phase_r <= CP_ITER_WB;
+                                                end else if (rtag == PY_TAG_RANGE) begin
+                                                    // Re-enter native RANGE arm
+                                                    // by rewriting TOS and
+                                                    // restarting GET_ITER.
+                                                    container_wb_we_r <= 1'b1;
+                                                    container_wb_addr_r <=
+                                                        RF_AW'(tos_r - RF_AW'(1));
+                                                    container_wb_data_r <=
+                                                        container_call_result_r;
+                                                    rs1_r <=
+                                                        container_call_result_r;
+                                                    container_phase_r <= CP_INIT;
+                                                end else if (pycore_is_dict(
+                                                                 rtag, rval) ||
+                                                             pycore_is_set(
+                                                                 rtag, rval) ||
+                                                             (rtag ==
+                                                              PY_TAG_SHORT_STR) ||
+                                                             (rtag ==
+                                                              PY_TAG_LONG_STR)) begin
+                                                    container_wb_we_r <= 1'b1;
+                                                    container_wb_addr_r <=
+                                                        RF_AW'(tos_r - RF_AW'(1));
+                                                    container_wb_data_r <=
+                                                        container_call_result_r;
+                                                    rs1_r <=
+                                                        container_call_result_r;
+                                                    container_phase_r <= CP_INIT;
+                                                end else begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end
+                                            end
+                                        end
                                     end
                                 end
 
@@ -699,10 +844,72 @@
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r <= CP_DICT_ORDER_FINAL;
                                             end
+                                            PY_ITER_KIND_HEAP_ITER: begin
+                                                // Resolve __next__ on the heap
+                                                // iterator OBJECT (§6.3).
+                                                container_proto_iter_r <= rs1_r;
+                                                rs1_r <= pycore_make_entry(
+                                                    PY_TAG_OBJECT,
+                                                    {{96{1'b0}}, cont_iter_addr});
+                                                container_src_buf_r <=
+                                                    cont_iter_addr;
+                                                container_tag_r <=
+                                                    PY_TAG_SHORT_STR;
+                                                container_val_r <=
+                                                    PY_ATTR_NAME_NEXT;
+                                                container_push_null_r <= 1'b1;
+                                                container_finishing_r <= 1'b0;
+                                                container_proto_resolve_r <= 1'b1;
+                                                container_proto_op_r <=
+                                                    CONT_FOR_ITER;
+                                                container_dmem_addr_r <=
+                                                    cont_iter_addr;
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_op_r <= CONT_LOAD_ATTR;
+                                                container_phase_r <= CP_ATTR_HEAD;
+                                            end
                                             default: begin
                                                 container_type_trap_r <= 1'b1;
                                             end
                                         endcase
+                                    end
+                                end
+
+                                // HEAP_ITER protocol CALL wait (§6.1.1 / §6.3).
+                                CP_COPY_VAL_WB: begin
+                                    if (call_exc_pending_r) begin
+                                        call_exc_pending_r <= 1'b0;
+                                        container_call_returning_r <= 1'b0;
+                                        if (call_exc_type_r ==
+                                                iter_exhaust_type_r) begin
+                                            redirect_pending_r <= 1'b1;
+                                            redirect_tgt_r <=
+                                                cur_pc_r + 32'd1 +
+                                                {24'b0, PY_CACHE_FOR_ITER} +
+                                                cur_arg_r + 32'd1;
+                                            fetch_skip_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            active_exc_r <= call_exc_handle_r;
+                                            active_exc_valid_r <= 1'b1;
+                                            container_raise_trap_r <= 1'b1;
+                                            fetch_skip_r <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end
+                                    end else if (container_call_return_valid_r) begin
+                                        container_call_return_valid_r <= 1'b0;
+                                        container_call_returning_r <= 1'b0;
+                                        // Keep HEAP_ITER at tos-1; push item.
+                                        container_wb_we_r <= 1'b1;
+                                        container_wb_addr_r <=
+                                            RF_AW'(tos_r - RF_AW'(1));
+                                        container_wb_data_r <= rs1_r;
+                                        container_tag_r <= pycore_get_tag(
+                                            container_call_result_r);
+                                        container_val_r <= pycore_get_val(
+                                            container_call_result_r);
+                                        container_phase_r <= CP_ITER_WB;
                                     end
                                 end
 
