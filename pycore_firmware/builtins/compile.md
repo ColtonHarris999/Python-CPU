@@ -2,6 +2,12 @@
 
 Status: **blocked** (stub in `compile.py`)
 
+**Full step-by-step plan:** [`planning/compile_exec_plan.md`](../../planning/compile_exec_plan.md)
+supersedes the "Next steps" / "Recommendation" sections below. The blockers
+listed here remain accurate; the recommendation has changed — a self-hosted ROM
+Python compiler plus a writable code arena is now the planned route, not
+host-only `compile()`.
+
 ## Goal
 
 `compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1)`
