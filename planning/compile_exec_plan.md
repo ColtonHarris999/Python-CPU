@@ -86,7 +86,7 @@ hosts a tokenizer/parser today.
 
 | Operation | Today |
 | --- | --- |
-| `s[i]` | **Type-traps** — `NB_SUBSCR` falls through to `CONT_SUBSCR_LIST`, which requires a LIST |
+| `s[i]` | **Works** — `CONT_SUBSCR_STR`, character-indexed (P0.2 landed; was a type trap) |
 | `"x" in "abc"` | **Type-traps** — `CONTAINS_OP` routes strings to the LIST handler |
 | `s1 < s2` | **Type-traps** — only same-tag `==` / `!=` is native |
 | `ord` / `chr` | **Blocked** (wave-4 Priority C) |
@@ -218,7 +218,7 @@ delivers `exec(code_object)` / `eval(code_object)` with zero RTL work.
 
 | Phase | Deliverable | Layer | Blocks |
 | --- | --- | --- | --- |
-| P0 | `ord`, `chr`, `s[i]` | RTL + firmware | B4 |
+| P0 | `ord`, `chr`, `s[i]` (**`s[i]` done**) | RTL + firmware | B4 |
 | P1 | Writable code arena | RTL | B1 |
 | P2 | `CODE_OBJECT` fabrication builtins | RTL | B2 |
 | P3 | `exec(code)` / `eval(code)` | firmware + tooling | — |
@@ -234,19 +234,20 @@ delivers `exec(code_object)` / `eval(code_object)` with zero RTL work.
 ## 5. Phase 0 — string and character primitives
 
 Prerequisite for any tokenizer. P0.1 is already queued as wave-4 Priority C in
-[`builtins_wave4_plan.md`](builtins_wave4_plan.md) §3.
+[`builtins_wave4_plan.md`](builtins_wave4_plan.md) §3. **P0.2 (`s[i]`) is
+done** — see §5.2.
 
 ### 5.0 Why the tokenizer needs so little
 
-`list(s)` already works (ROM `list` iterates via `GET_ITER` STR and appends),
-and **list** subscript works. So `chars = list(src)` + `chars[i]` gives random
-access without STR subscript, and character classes can be dict/set lookups
-(`c in DIGITS`) since dict/set probes support `SHORT_STR` keys. That means the
-tokenizer can be written today with **no `ord` at all**.
+With `s[i]` shipped (§5.2), the lexer can index the source string directly and
+no longer needs the `chars = list(src)` workaround, which cost a 32-byte heap
+object per character. Character classes can be dict/set lookups
+(`c in DIGITS`) since dict/set probes support `SHORT_STR` keys, so the tokenizer
+can be written today with **no `ord` at all**.
 
-We still do P0.1/P0.2 because they make the lexer an order of magnitude
-cheaper (one `ord` compare vs. a dict probe per char) and because `chr` is
-required to decode escapes in string literals.
+We still want P0.1 because `ord` range compares are far cheaper than a dict
+probe per character, and because `chr` is required to decode escapes in string
+literals.
 
 ### 5.1 `BI_ORD` / `BI_CHR` (RTL, CALL FSM)
 
@@ -272,27 +273,42 @@ required to decode escapes in string literals.
 (`PYCORE_IMAGE_TRAP_RUN` with code 1). Then ROM-seed `ascii` and add
 `img_firmware_ascii.py`.
 
-### 5.2 STR subscript `s[i]` (RTL)
+### 5.2 STR subscript `s[i]` — **DONE**
 
-1. In `pycore_core.sv` `NB_SUBSCR` routing (~line 2021), add a string branch
-   before the LIST default:
+Shipped as `CONT_SUBSCR_STR` (6'd44). Total cost was ~120 lines of RTL and
+**no tooling change**, because `BINARY_OP` / `NB_SUBSCR` was already an accepted
+oparg — `s[i]` built fine and only trapped at runtime.
 
-```systemverilog
-else if (pycore_is_string_tag(cont_rs1_tag))
-    container_op_r <= CONT_SUBSCR_STR;
-```
+What made it cheap: `pycore_string_mem.sv` already exposes a **combinational**
+4-byte read port (`read_addr_i` / `read_data_o`) wired into the container path
+for STR `FOR_ITER`, and `pycore_defs.svh` already had
+`pycore_utf8_char_width`, `pycore_utf8_cont_valid`, `pycore_short_str_byte`,
+and `pycore_make_short_str_entry`.
 
-2. New `CONT_SUBSCR_STR` arm in `pycore/rtl/pycore_cont_list.svh`: bounds-check
-   the `INT`/`BOOL` index against the STR length (inline size nibble for
-   `SHORT_STR`, `{len, addr}` for `LONG_STR`), then produce a one-character
-   `SHORT_STR`. **Index by character, not byte** — reuse the same UTF-8 width
-   walk as `BI_ORD` so `s[i]` matches `for c in s` ordering.
-3. Out of range → `PY_TRAP_MEM_FAULT` (consistent with list/tuple). Negative
-   indices still trap (deviation 3).
+Implementation notes:
 
-**Tests:** `img_str_subscr.py`, `img_str_subscr_long.py`,
-`img_str_subscr_unicode.py`, `img_str_subscr_oob_trap.py`. Update
-`bytecode_support.md` `NB_SUBSCR` row.
+1. `pycore_core.sv` routes `NB_SUBSCR` on `pycore_is_string_tag` to the new arm,
+   and muxes `string_read_addr` between the iterator and the subscript walk.
+2. `cont_str_win` presents the **same 4-byte, lead-byte-first window** for both
+   tags — `SHORT_STR` bytes come from the inline payload via
+   `pycore_short_str_byte`, `LONG_STR` bytes from `string_read_data`. One decode
+   path serves both, and **no `string_mem` snapshot is allocated** (unlike STR
+   `GET_ITER`, which snapshots `SHORT_STR` and therefore leaks runtime string
+   space on every call).
+3. The arm walks one character per cycle (`container_probe_r` = byte offset,
+   `container_src_len_r` = characters left to skip), so cost is O(i) — the same
+   model as STR `FOR_ITER`. Reuses `CP_INIT` / `CP_VAL` / `CP_DONE`.
+4. Index past the last character → `PY_TRAP_MEM_FAULT`; malformed UTF-8 →
+   `PY_TRAP_TYPE`. Negative indices still trap (deviation 3).
+
+**Tests (all passing):** `img_str_subscr`, `img_str_subscr_long`,
+`img_str_subscr_unicode`, `img_str_subscr_loop`, `img_str_subscr_oob_trap`,
+`img_str_subscr_char_oob_trap`.
+
+Documented as `bytecode_support.md` deviation 14: `len(s)` is a **byte** count
+while `s[i]` and `for c in s` are **character**-stepped. They agree for ASCII;
+for non-ASCII `range(len(s))` overruns and faults rather than returning a
+partial byte.
 
 ### 5.3 Deferred to P9
 
