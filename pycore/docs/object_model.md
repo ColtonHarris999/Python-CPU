@@ -64,7 +64,8 @@ module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
 `bytearray` / `max` / `len` / `_bi_print` / `range` / `set` / `ord` / `chr` as
 `OBK_BUILTIN`
 handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
-`to_bytes`, `StopIteration` as a leaf `OBK_TYPE` (`tp_base = None`), and ROM
+`to_bytes`, `StopIteration` plus `SyntaxError` / `ValueError` / `TypeError` /
+`IndexError` as leaf `OBK_TYPE`s (`tp_base = None`), and ROM
 firmware names (`print`, `sum`, `abs`, `bool`, `all`, `any`, `enumerate`,
 `map`, `zip`, …) as `CODE_OBJECT` handles from `ROM_FIRMWARE_BUILTINS` in
 `image_from_source.py`. Public `print` is the ROM wrapper; `_bi_print`

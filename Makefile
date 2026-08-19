@@ -96,6 +96,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-str-subscr pycore-img-str-subscr-long \
 	pycore-img-exec-all \
 	pycore-img-slice-all \
+	pycore-img-exc-types-all \
 	pycore-img-str-subscr-unicode pycore-img-str-subscr-loop \
 	pycore-img-str-subscr-oob-trap pycore-img-str-subscr-char-oob-trap \
 	pycore-img-scalar-all \
@@ -809,6 +810,29 @@ pycore-img-slice-str-neg-trap:
 
 pycore-img-slice-list-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,slice_list_trap,1,50000)
+
+pycore-img-try-syntaxerror:
+	$(call PYCORE_IMAGE_RUN,try_syntaxerror,50000)
+
+pycore-img-try-exc-types:
+	$(call PYCORE_IMAGE_RUN,try_exc_types,100000)
+
+pycore-img-try-syntaxerror-msg:
+	$(call PYCORE_IMAGE_RUN,try_syntaxerror_msg,50000)
+
+pycore-img-raise-syntaxerror-fatal:
+	$(call PYCORE_IMAGE_TRAP_RUN,raise_syntaxerror_fatal,17,50000)
+
+pycore-img-try-exc-cross-frame-fatal:
+	$(call PYCORE_IMAGE_TRAP_RUN,try_exc_cross_frame_fatal,17,50000)
+
+# Plan 1 P7: seeded leaf exception types for firmware error reporting.
+pycore-img-exc-types-all: \
+	pycore-img-try-syntaxerror \
+	pycore-img-try-exc-types \
+	pycore-img-try-syntaxerror-msg \
+	pycore-img-raise-syntaxerror-fatal \
+	pycore-img-try-exc-cross-frame-fatal
 
 # Plan 1 P6.1: BINARY_SLICE on strings (character-indexed, CPython clamping).
 pycore-img-slice-all: \

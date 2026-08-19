@@ -171,7 +171,16 @@ this milestone:
    the character count, so `range(len(s))` walks past the last character and
    `s[i]` traps `PY_TRAP_MEM_FAULT` instead of silently returning a partial
    continuation byte. Coverage: `img_str_subscr_char_oob_trap`.
-16. `COMPARE_OP` **numeric ceiling.** Native comparison uses the signed 64-bit
+16. **Exceptions do not propagate across frames.** `RAISE_VARARGS` walks only
+  the raising code object's own `co_exceptiontable`; a miss is
+   `PY_TRAP_RAISE` (17) even when a caller has a matching handler. Keep a raise
+   and its handler in one frame. Boot seeds leaf `OBK_TYPE`s for
+   `StopIteration`, `SyntaxError`, `ValueError`, `TypeError` and `IndexError`;
+   `CHECK_EXC_MATCH` is exact-handle, and `OBK_EXCEPTION.args` is always empty,
+   so messages are passed by writing a global before raising. Coverage:
+   `img_try_exc_types`, `img_try_exc_cross_frame_fatal`,
+   `img_try_syntaxerror_msg`.
+17. `COMPARE_OP` **numeric ceiling.** Native comparison uses the signed 64-bit
   INT fast path and existing INT/BOOL-to-FLOAT promotion. Integers outside
    that range and mixed large-INT/FLOAT precision boundaries do not provide
    CPython arbitrary-precision comparison semantics. Strings, `None`,

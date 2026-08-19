@@ -1170,6 +1170,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         → OBK_BUILTIN (bound_self=NULL)
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
       StopIteration → leaf OBK_TYPE (tp_base = None / 0) for RAISE / except
+      SyntaxError / ValueError / TypeError / IndexError → leaf OBK_TYPEs
       ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
 
     Also writes the StopIteration handle to the exc-arena boot sidecar so
@@ -1192,6 +1193,14 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     )
     stop_iteration = heap.alloc_type(tag_constant("StopIteration", string_heap))
     heap.write_iter_exhaust_type(stop_iteration)
+    # Leaf exception types (tp_base = None) for firmware error reporting.
+    # CHECK_EXC_MATCH is exact-handle in v1, so a flat set is enough; the
+    # tokenizer and parser need SyntaxError, and the rest unblock error paths
+    # across pycore_firmware (Plan 1 P7).
+    exc_types = [
+        (name, heap.alloc_type(tag_constant(name, string_heap)))
+        for name in ("SyntaxError", "ValueError", "TypeError", "IndexError")
+    ]
     pairs: list[tuple[Tagged, Tagged]] = [
         (tag_constant("bytearray", string_heap), heap.alloc_builtin(BI_BYTEARRAY)),
         (tag_constant("max", string_heap), heap.alloc_builtin(BI_MAX)),
@@ -1205,6 +1214,9 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (tag_constant("int", string_heap), int_type),
         (tag_constant("StopIteration", string_heap), stop_iteration),
     ]
+    pairs.extend(
+        (tag_constant(name, string_heap), handle) for name, handle in exc_types
+    )
     pairs.extend(seed_rom_firmware_builtins(serializer))
     return heap.alloc_dict(pairs, slot_count=dict_min_slots(len(pairs)))
 
