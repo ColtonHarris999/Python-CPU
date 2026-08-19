@@ -189,6 +189,10 @@ EXCORE_RTL_SRCS := \
 	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
 	pycore-img-load-name-builtin pycore-img-builtin-len-long-str pycore-img-builtin-len-range \
 	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
+	pycore-img-builtin-ord pycore-img-builtin-chr \
+	pycore-img-builtin-ord-unicode pycore-img-builtin-ord-scan \
+	pycore-img-builtin-ord-len-trap pycore-img-builtin-ord-type-trap \
+	pycore-img-builtin-chr-range-trap pycore-img-builtin-chr-surrogate-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested pycore-img-return-true \
@@ -1406,6 +1410,10 @@ pycore-img-attr-all: \
 	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
 	pycore-img-load-name-builtin pycore-img-builtin-len-long-str pycore-img-builtin-len-range \
 	pycore-img-builtin-len-empty-range pycore-img-builtin-len-obj pycore-img-builtin-len-obj-missing \
+	pycore-img-builtin-ord pycore-img-builtin-chr \
+	pycore-img-builtin-ord-unicode pycore-img-builtin-ord-scan \
+	pycore-img-builtin-ord-len-trap pycore-img-builtin-ord-type-trap \
+	pycore-img-builtin-chr-range-trap pycore-img-builtin-chr-surrogate-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested pycore-img-return-true \
@@ -1543,6 +1551,30 @@ pycore-img-builtin-len-obj:
 
 pycore-img-builtin-len-obj-missing:
 	$(call PYCORE_IMAGE_TRAP_RUN,builtin_len_obj_missing,15,50000)
+
+pycore-img-builtin-ord:
+	$(call PYCORE_IMAGE_RUN,builtin_ord,50000)
+
+pycore-img-builtin-chr:
+	$(call PYCORE_IMAGE_RUN,builtin_chr,50000)
+
+pycore-img-builtin-ord-unicode:
+	$(call PYCORE_IMAGE_RUN,builtin_ord_unicode,100000)
+
+pycore-img-builtin-ord-scan:
+	$(call PYCORE_IMAGE_RUN,builtin_ord_scan,100000)
+
+pycore-img-builtin-ord-len-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,builtin_ord_len_trap,1,50000)
+
+pycore-img-builtin-ord-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,builtin_ord_type_trap,1,50000)
+
+pycore-img-builtin-chr-range-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,builtin_chr_range_trap,1,50000)
+
+pycore-img-builtin-chr-surrogate-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,builtin_chr_surrogate_trap,1,50000)
 
 pycore-img-to-bool-none:
 	$(call PYCORE_IMAGE_RUN,to_bool_none,50000)

@@ -20,9 +20,11 @@ from typing import Iterable
 
 from encoding import (
     BI_BYTEARRAY,
+    BI_CHR,
     BI_FROM_BYTES,
     BI_LEN,
     BI_MAX,
+    BI_ORD,
     BI_PRINT,
     BI_RANGE,
     BI_SET,
@@ -1091,7 +1093,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     """Allocate the module builtins dict for the boot-record pair-2 slot.
 
     Entries:
-      bytearray / max / len / _bi_print / range / set → OBK_BUILTIN (bound_self=NULL)
+      bytearray / max / len / _bi_print / range / set / ord / chr
+        → OBK_BUILTIN (bound_self=NULL)
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
       StopIteration → leaf OBK_TYPE (tp_base = None / 0) for RAISE / except
       ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
@@ -1124,6 +1127,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (tag_constant("_bi_print", string_heap), heap.alloc_builtin(BI_PRINT)),
         (tag_constant("range", string_heap), heap.alloc_builtin(BI_RANGE)),
         (tag_constant("set", string_heap), heap.alloc_builtin(BI_SET)),
+        (tag_constant("ord", string_heap), heap.alloc_builtin(BI_ORD)),
+        (tag_constant("chr", string_heap), heap.alloc_builtin(BI_CHR)),
         (tag_constant("int", string_heap), int_type),
         (tag_constant("StopIteration", string_heap), stop_iteration),
     ]
