@@ -231,6 +231,7 @@ localparam logic [4:0] PY_ALU_ILLEGAL   = 5'd31;
 //   python3.14 -c "import opcode; print({n:opcode.opmap[n] for n in [...]})"
 // -------------------------------------------------------------------------
 localparam logic [7:0] PY_OP_CACHE            = 8'd0;
+localparam logic [7:0] PY_OP_BINARY_SLICE     = 8'd1;
 localparam logic [7:0] PY_OP_END_FOR          = 8'd9;
 localparam logic [7:0] PY_OP_GET_ITER         = 8'd16;
 localparam logic [7:0] PY_OP_MAKE_FUNCTION    = 8'd23;

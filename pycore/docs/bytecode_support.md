@@ -63,6 +63,7 @@ fully unsupported for the current PyCore implementation.
 | `BUILD_SET`                             | Pops `count` values, allocates a set, pushes a `MUT_COLLEC`/`MUT_SET` handle.               | Open-addressed element table (32B/slot). Same hash/rich-eq key rules as dict (no values). Deleted slots use the dedicated `PY_TAG_TOMBSTONE`. Images: `img_set_*`.                                                                                                                                                                                                                                                                                              |
 | `BINARY_OP` with oparg `NB_SUBSCR` (26) | Subscript read `x[k]`.                                                                      | `LIST`/`TUPLE`: unsigned bounds-checked index read. `DICT`: linear-probe lookup; missing key traps `PY_TRAP_MEM_FAULT`. Dict keys may be `INT`/`BOOL`/`FLOAT`/`SHORT_STR`/`LONG_STR`; other key tags trap `PY_TRAP_TYPE`. `SHORT_STR`/`LONG_STR` (`CONT_SUBSCR_STR`): walks one UTF-8 **character** per cycle from the start, so `s[i]` agrees with `for c in s` (cost is O(i), like STR `FOR_ITER`); returns a one-character `SHORT_STR`. Index past the last character traps `PY_TRAP_MEM_FAULT`; malformed UTF-8 traps `PY_TRAP_TYPE`. Layer D: `img_str_subscr`, `img_str_subscr_long`, `img_str_subscr_unicode`, `img_str_subscr_loop`, `img_str_subscr_oob_trap`, `img_str_subscr_char_oob_trap`. |
 | `STORE_SUBSCR`                          | Subscript write `x[k] = v`.                                                                 | `LIST`: bounds-checked index write. `DICT`: same-tag / rich-eq upsert on pycore (tombstone reuse); new-key insert at load ≥ 2/3 → `DICT_GROW` (11). `TUPLE`/`SET`: `TYPE`. Pops key, container, value (3 items). Prefer `d={}` + stores or locals for `BUILD_MAP` (CPython 3.14 may emit `BUILD_CONST_KEY_MAP` for constant `{k:v}`).                                                                                                      |
+| `BINARY_SLICE`                          | Slice read `x[a:b]` (stack `subject, start, stop`).                                          | Strings only (`CONT_SLICE_STR`). Bounds are **character** indices, matching `s[i]` and `for c in s`; one UTF-8 walk resolves them to byte offsets, so cost is O(stop). Out-of-range bounds **clamp** like CPython (`"abc"[1:99] == "bc"`), `stop <= start` gives `""`, and omitted bounds arrive as `None`. Result ≤15 bytes is an inline `SHORT_STR`, longer goes to `string_mem` as `LONG_STR` via the slice port. Negative bounds trap `PY_TRAP_TYPE` (deviation 3); LIST/TUPLE subjects trap `PY_TRAP_TYPE` (not implemented). Note CPython folds all-literal slices (`s[1:3]`, `s[:]`) into a `slice` constant + `NB_SUBSCR` instead, which is still deferred. Layer D: `img_slice_str*`, `img_slice_list_trap`. |
 | `COPY`                                  | Duplicates the stack entry at depth `oparg`, pushing a copy to TOS.                         | Clone of the `LOAD_FAST` datapath: reads RF slot `tos_index - oparg` and pushes the `{tag, value}` entry verbatim. Tag-agnostic, no trap. Value-stack-overflow is not detected (see deviation 10).                                                                                                                                                                                                                                         |
 | `SWAP`                                  | Swaps TOS with the stack entry at depth `oparg`.                                            | Two-beat `S_CONTAINER` RF exchange (`CONT_LFB_PAIR` clone): writes deep→TOS then TOS→deep; tag-agnostic, net stack 0, no trap.                                                                                                                                                                                                                                                                                                             |
 
@@ -158,14 +159,19 @@ this milestone:
   (tag + payload). Equal unboxed `INT`/`FLOAT`/`SHORT_STR` values always
    `is`; CPython heap objects with equal value may not. Handle tags
    (`LIST`/`DICT`/`TUPLE`/…) remain pointer-identity.
-14. **String length is bytes, indexing and iteration are characters.** `BI_LEN`
+14. **Slice bounds are unsigned and clamp; negatives trap.** `BINARY_SLICE`
+  clamps out-of-range bounds exactly as CPython does, but a negative bound
+   traps `PY_TRAP_TYPE` rather than counting from the end (the same unsigned
+   rule as deviation 3 for indices). So `s[1:99]` works and `s[1:-1]` traps.
+   Coverage: `img_slice_str_clamp`, `img_slice_str_neg_trap`.
+15. **String length is bytes, indexing and iteration are characters.** `BI_LEN`
   returns the UTF-8 **byte** count from the `SHORT_STR` size nibble or the
    `LONG_STR` descriptor, while `s[i]` and `for c in s` both step whole
    **characters**. The two agree for ASCII. For non-ASCII, `len(s)` overstates
    the character count, so `range(len(s))` walks past the last character and
    `s[i]` traps `PY_TRAP_MEM_FAULT` instead of silently returning a partial
    continuation byte. Coverage: `img_str_subscr_char_oob_trap`.
-15. `COMPARE_OP` **numeric ceiling.** Native comparison uses the signed 64-bit
+16. `COMPARE_OP` **numeric ceiling.** Native comparison uses the signed 64-bit
   INT fast path and existing INT/BOOL-to-FLOAT promotion. Integers outside
    that range and mixed large-INT/FLOAT precision boundaries do not provide
    CPython arbitrary-precision comparison semantics. Strings, `None`,
@@ -193,6 +199,6 @@ illegal. Each entry has a TODO hook ready for a follow-up PR.
 
 | Bytecode              | Description                               | Deferral reason                                                        |
 | --------------------- | ----------------------------------------- | ---------------------------------------------------------------------- |
-| `BINARY_SLICE`        | Slice read `x[a:b]`.                      | Requires multi-element copy allocation.                                |
-| `STORE_SLICE`         | Slice write `x[a:b] = v`.                 | Same.                                                                  |
+| `STORE_SLICE`         | Slice write `x[a:b] = v`.                 | Requires multi-element copy allocation.                                |
+| `slice` **constants** | All-literal slices (`s[1:3]`, `s[:]`).    | CPython folds these to a `slice` constant + `NB_SUBSCR`; needs slice objects. Use a variable bound to get `BINARY_SLICE`. |
 | `BUILD_CONST_KEY_MAP` | Const-key map literal.                    | Use `BUILD_MAP` + stores, or empty dict + `STORE_SUBSCR`.              |

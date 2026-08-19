@@ -47,7 +47,11 @@
     localparam logic [5:0] CONT_RERAISE = 6'd43;
     // NB_SUBSCR on SHORT_STR / LONG_STR. Walks UTF-8 characters (not bytes) so
     // s[i] agrees with `for c in s`; reuses CP_INIT / CP_VAL / CP_DONE.
-    localparam logic [5:0] CONT_SUBSCR_STR = 6'd44;// RERAISE 0/1
+    localparam logic [5:0] CONT_SUBSCR_STR = 6'd44;
+    // BINARY_SLICE on SHORT_STR / LONG_STR. Walks UTF-8 characters to convert
+    // the character bounds into byte offsets, then uses the string_mem slice
+    // port. Reuses CP_INIT / CP_VAL / CP_TAG / CP_DONE.
+    localparam logic [5:0] CONT_SLICE_STR = 6'd45;// RERAISE 0/1
 
     // Container phases (stored in container_phase_r, 6-bit).
     //

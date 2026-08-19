@@ -95,6 +95,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-str-eq pycore-img-str-lt-trap \
 	pycore-img-str-subscr pycore-img-str-subscr-long \
 	pycore-img-exec-all \
+	pycore-img-slice-all \
 	pycore-img-str-subscr-unicode pycore-img-str-subscr-loop \
 	pycore-img-str-subscr-oob-trap pycore-img-str-subscr-char-oob-trap \
 	pycore-img-scalar-all \
@@ -782,6 +783,45 @@ pycore-img-exec-bad-arg-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,exec_bad_arg_trap,6,50000)
 
 # Plan 1 P3: exec/eval on precompiled CODE_OBJECTs (SEED_CODE payloads).
+pycore-img-slice-str:
+	$(call PYCORE_IMAGE_RUN,slice_str,50000)
+
+pycore-img-slice-str-open:
+	$(call PYCORE_IMAGE_RUN,slice_str_open,50000)
+
+pycore-img-slice-str-clamp:
+	$(call PYCORE_IMAGE_RUN,slice_str_clamp,50000)
+
+pycore-img-slice-str-long:
+	$(call PYCORE_IMAGE_RUN,slice_str_long,100000)
+
+pycore-img-slice-str-unicode:
+	$(call PYCORE_IMAGE_RUN,slice_str_unicode,100000)
+
+pycore-img-slice-str-empty:
+	$(call PYCORE_IMAGE_RUN,slice_str_empty,50000)
+
+pycore-img-slice-str-scan:
+	$(call PYCORE_IMAGE_RUN,slice_str_scan,200000)
+
+pycore-img-slice-str-neg-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,slice_str_neg_trap,1,50000)
+
+pycore-img-slice-list-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,slice_list_trap,1,50000)
+
+# Plan 1 P6.1: BINARY_SLICE on strings (character-indexed, CPython clamping).
+pycore-img-slice-all: \
+	pycore-img-slice-str \
+	pycore-img-slice-str-open \
+	pycore-img-slice-str-clamp \
+	pycore-img-slice-str-long \
+	pycore-img-slice-str-unicode \
+	pycore-img-slice-str-empty \
+	pycore-img-slice-str-scan \
+	pycore-img-slice-str-neg-trap \
+	pycore-img-slice-list-trap
+
 pycore-img-exec-all: \
 	pycore-img-exec-code-basic \
 	pycore-img-exec-code-globals-rw \

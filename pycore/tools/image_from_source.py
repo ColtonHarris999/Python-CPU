@@ -121,6 +121,7 @@ SUPPORTED_OPS = {
     "UNPACK_SEQUENCE",
     "UNPACK_EX",
     "STORE_SUBSCR",
+    "BINARY_SLICE",
     "DELETE_SUBSCR",
     "CONTAINS_OP",
     "COPY",
@@ -163,7 +164,6 @@ SUPPORTED_OPS = {
 }
 
 DEFERRED_OPS: dict[str, str] = {
-    "BINARY_SLICE": "slice notation support is deferred",
     "STORE_SLICE": "slice assignment support is deferred",
     # Classes are emitted at image-build time (M4 ClassImageBuilder); hardware
     # LOAD_BUILD_CLASS needs frame-local namespaces and is intentionally out.

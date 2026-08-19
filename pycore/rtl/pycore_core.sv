@@ -726,6 +726,18 @@ module pycore_core #(
     logic [31:0]                   string_snapshot_addr;
     logic [31:0]                   string_read_addr;
     logic [31:0]                   string_read_data;
+    // BINARY_SLICE port: driven from CONT_SLICE_STR once the character bounds
+    // have been walked into byte offsets.
+    logic                          string_slice_valid;
+    logic [63:0]                   string_slice_start;
+    logic [63:0]                   string_slice_len;
+    logic                          string_slice_ok;
+    logic [PYCORE_ENTRY_WIDTH-1:0] string_slice_result;
+    // CONT_SLICE_STR walk state: the stop bound arrives one cycle after CP_INIT
+    // (RF read latency), so `armed` distinguishes the latch cycle from the
+    // walk steps that follow.
+    logic [31:0]                   container_slice_stop_r;
+    logic                          container_slice_armed_r;
 
     pycore_string_mem #(
         .STRING_MEM_BYTES(STRING_MEM_BYTES),
@@ -748,6 +760,12 @@ module pycore_core #(
         .snapshot_payload_i(string_snapshot_payload),
         .snapshot_ok_o(string_snapshot_ok),
         .snapshot_addr_o(string_snapshot_addr),
+        .slice_valid_i(string_slice_valid),
+        .slice_src_i(rs1_r),
+        .slice_start_i(string_slice_start),
+        .slice_len_i(string_slice_len),
+        .slice_ok_o(string_slice_ok),
+        .slice_result_o(string_slice_result),
         .read_addr_i(string_read_addr),
         .read_data_o(string_read_data)
     );
@@ -1401,8 +1419,11 @@ module pycore_core #(
     logic [31:0] cont_str_len;
     logic [31:0] cont_str_base;
     logic [31:0] cont_str_win;
+    // Both string walkers (s[i] and s[a:b]) index the subject with
+    // container_probe_r and share one decode window.
     assign cont_str_subscr_active = (state_r == S_CONTAINER) &&
-                                    (container_op_r == CONT_SUBSCR_STR);
+                                    ((container_op_r == CONT_SUBSCR_STR) ||
+                                     (container_op_r == CONT_SLICE_STR));
     assign cont_str_len  = (cont_rs1_tag == PY_TAG_SHORT_STR)
                          ? {28'b0, pycore_short_str_size(cont_rs1_val)}
                          : pycore_long_str_size(cont_rs1_val)[31:0];
@@ -1419,6 +1440,14 @@ module pycore_core #(
     assign string_read_addr = cont_str_subscr_active
                             ? (cont_str_base + container_probe_r)
                             : (cont_iter_addr + cont_iter_index);
+
+    // CONT_SLICE_STR hands the resolved byte range to string_mem in CP_TAG:
+    // container_base_r is the start byte, container_probe_r the end byte.
+    assign string_slice_valid = (state_r == S_CONTAINER) &&
+                                (container_op_r == CONT_SLICE_STR) &&
+                                (container_phase_r == CP_TAG);
+    assign string_slice_start = {32'b0, container_base_r};
+    assign string_slice_len   = {32'b0, container_probe_r - container_base_r};
 
     // Dict-specific combinational helpers.
     // Slot count computed from container_count_r (pairs), used during BUILD_MAP init.
@@ -1817,6 +1846,8 @@ module pycore_core #(
             container_list_grow_trap_r   <= 1'b0;
             container_src_buf_r          <= '0;
             container_src_len_r          <= '0;
+            container_slice_stop_r       <= '0;
+            container_slice_armed_r      <= 1'b0;
             container_src_is_tuple_r     <= 1'b0;
             container_unpack_before_r    <= '0;
             container_unpack_after_r     <= '0;
@@ -2054,6 +2085,11 @@ module pycore_core #(
                                     container_op_r <= CONT_SUBSCR_STR;
                                 else
                                     container_op_r <= CONT_SUBSCR_LIST;
+                            end else if (cur_opcode_r == PY_OP_BINARY_SLICE) begin
+                                // Strings only for now; the arm type-traps any
+                                // other subject. list/tuple slicing needs an
+                                // alloc + element copy (Plan 1 P6.1 follow-on).
+                                container_op_r <= CONT_SLICE_STR;
                             end else if (cur_opcode_r == PY_OP_RAISE_VARARGS) begin
                                 container_op_r <= CONT_RAISE;
                             end else if (cur_opcode_r == PY_OP_PUSH_EXC_INFO) begin
