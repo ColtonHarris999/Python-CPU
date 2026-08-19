@@ -908,3 +908,17 @@ CPO = total_cycles / dynamic_opcodes
 Secondary metrics are type-trap rate and unit utilization. The helper
 `pycore/tools/cosim_trace.py` summarizes traces containing `opcode=`, `unit=`,
 and `trap=` fields.
+
+## Code memory regions
+
+The PC indexes an 8-byte code slot, and that slot space is split between a
+read-only ROM (the image) and a writable code RAM:
+
+```text
+slot 0x0000 .. 0x1FFF   CODE ROM   pycore_imem      READ_ONLY    64 KB
+slot 0x2000 .. 0xA1FF   CODE RAM   pycore_code_ram  writable    256 KB
+```
+
+`pycore_code_mem.sv` muxes the two and is a drop-in replacement for
+`pycore_imem`. Full details, sizing rationale, and the planned module/loader
+format are in [`code_loading.md`](code_loading.md).

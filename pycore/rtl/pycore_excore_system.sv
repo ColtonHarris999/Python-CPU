@@ -23,6 +23,7 @@ module pycore_excore_system #(
     parameter int    IMEM_BLOCK_COUNT = PYCORE_IMEM_BLOCK_COUNT,
     parameter int    DMEM_BLOCK_COUNT = PYCORE_DMEM_BLOCK_COUNT,
     parameter string PROG_HEX         = "pycore/programs/program.hex",
+    parameter string CODE_RAM_HEX     = "",
     parameter string STRING_HEX       = "pycore/programs/string_mem.hex",
     parameter string DMEM_HEX         = "",
     parameter logic [31:0] HEAP_INIT_PTR = PYCORE_HEAP_BASE,
@@ -157,12 +158,13 @@ module pycore_excore_system #(
         .dbg_wb_entry_o(dbg_wb_entry_o)
     );
 
-    pycore_imem #(
+    pycore_code_mem #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .DATA_WIDTH(IMEM_DATA_W),
         .BLOCK_SHIFT(BLOCK_SHIFT),
-        .BLOCK_COUNT(IMEM_BLOCK_COUNT),
-        .INIT_HEX(PROG_HEX)
+        .ROM_BLOCK_COUNT(IMEM_BLOCK_COUNT),
+        .INIT_HEX(PROG_HEX),
+        .CODE_RAM_HEX(CODE_RAM_HEX)
     ) imem (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),

@@ -9,6 +9,7 @@
 // return. When EXPECT_TRAP == 0, any trap is a failure (legacy behavior).
 module tb_container #(
     parameter string PROG_HEX       = "pycore/programs/list_build_index.hex",
+    parameter string CODE_RAM_HEX   = "",
     parameter string STRING_HEX     = "pycore/programs/string_mem.hex",
     parameter string DMEM_HEX       = "",
     parameter logic [31:0] HEAP_INIT_PTR = PYCORE_HEAP_BASE,
@@ -69,6 +70,7 @@ module tb_container #(
         if (EXCORE_EN) begin : g_dut
             pycore_excore_system #(
                 .PROG_HEX  (PROG_HEX),
+                .CODE_RAM_HEX(CODE_RAM_HEX),
                 .STRING_HEX(STRING_HEX),
                 .DMEM_HEX  (DMEM_HEX),
                 .HEAP_INIT_PTR(HEAP_INIT_PTR),
@@ -124,6 +126,7 @@ module tb_container #(
         end else begin : g_dut
             pycore_system #(
                 .PROG_HEX  (PROG_HEX),
+                .CODE_RAM_HEX(CODE_RAM_HEX),
                 .STRING_HEX(STRING_HEX),
                 .DMEM_HEX  (DMEM_HEX),
                 .HEAP_INIT_PTR(HEAP_INIT_PTR),

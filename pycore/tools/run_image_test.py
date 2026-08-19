@@ -16,6 +16,7 @@ from encoding import (
     VAL_MASK,
     allocator_list_capacity,
 )
+from encoding import CODE_RAM_SLOT_BASE
 from image_from_source import (
     build_image_from_source_text,
     load_rom_firmware_callables,
@@ -230,6 +231,7 @@ def run_image_test(
     dmem_hex: pathlib.Path,
     string_hex: pathlib.Path,
     meta: pathlib.Path,
+    slot_base: int = 0,
 ) -> tuple[int, int]:
     require_python_3_14()
     source = pathlib.Path(source)
@@ -241,7 +243,9 @@ def run_image_test(
         source_text, filename=str(source), entry=entry
     )
     expected_tag, expected_value = expected_tag_value(expected)
-    image = build_image_from_source_text(source_text, str(source))
+    image = build_image_from_source_text(
+        source_text, str(source), slot_base=slot_base
+    )
     write_image_outputs(
         image,
         program_hex=program_hex,
@@ -262,6 +266,15 @@ def main() -> None:
     parser.add_argument("--dmem-hex", default="pycore/programs/dmem.hex")
     parser.add_argument("--string-hex", default="pycore/programs/string_mem.hex")
     parser.add_argument("--meta", default="pycore/programs/image.meta")
+    parser.add_argument(
+        "--code-ram",
+        action="store_true",
+        help=(
+            "Place the program in code RAM: entry slots are offset by "
+            "CODE_RAM_SLOT_BASE and --program-hex is meant for CODE_RAM_HEX "
+            "(Plan 1 P1)."
+        ),
+    )
     args = parser.parse_args()
 
     run_image_test(
@@ -271,6 +284,7 @@ def main() -> None:
         dmem_hex=pathlib.Path(args.dmem_hex),
         string_hex=pathlib.Path(args.string_hex),
         meta=pathlib.Path(args.meta),
+        slot_base=CODE_RAM_SLOT_BASE if args.code_ram else 0,
     )
 
 

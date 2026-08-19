@@ -87,6 +87,7 @@ the serialized `co_consts` tuple. Do not use the old inline three-slot
 | Tag map | `pycore/docs/tags.md` |
 | Bytecode support matrix | `pycore/docs/bytecode_support.md` |
 | Object model | `pycore/docs/object_model.md` |
+| Code loading / code regions | `pycore/docs/code_loading.md` |
 | Image / preprocessing flow | `pycore/docs/preprocessing_breakdown.md` |
 | Dict + excore split | `pycore/docs/dict_excore.md` |
 | Sets + hash-container split | `pycore/docs/set_excore.md` |

@@ -21,6 +21,7 @@ from typing import Iterable
 from encoding import (
     BI_BYTEARRAY,
     BI_CHR,
+    CODE_RAM_SLOT_BASE,
     BI_FROM_BYTES,
     BI_LEN,
     BI_MAX,
@@ -382,12 +383,17 @@ class _ImageSerializer:
         defaults_map: dict[int, tuple] | None = None,
         kwdefaults_map: dict[int, dict] | None = None,
         type_refs: dict[str, Tagged] | None = None,
+        slot_base: int = 0,
     ) -> None:
         # HEAP_BASE is defined as the first byte after the boot record.
         static_base = HEAP_BASE
         self.heap = HeapImageBuilder(base=static_base)
         self.string_heap = StringHeapBuilder()
         self.program_slots: list[str] = []
+        # Slot index of program_slots[0] in the code address space. Non-zero
+        # places the whole image in code RAM (Plan 1 P1): entry_slot values are
+        # offset so the PC lands in the writable region.
+        self.slot_base = slot_base
         self.code_handles: dict[int, Tagged] = {}
         self.entry_slots: dict[int, int] = {}
         self.defaults_map: dict[int, tuple] = defaults_map or {}
@@ -406,7 +412,7 @@ class _ImageSerializer:
             if isinstance(const, types.CodeType):
                 self.serialize_code(const)
 
-        entry_slot = len(self.program_slots)
+        entry_slot = self.slot_base + len(self.program_slots)
         self.program_slots.extend(transcode_code_units(co))
         self.entry_slots[co_id] = entry_slot
 
@@ -1228,6 +1234,7 @@ def build_image_from_code(
     defaults_map: dict[int, tuple] | None = None,
     kwdefaults_map: dict[int, dict] | None = None,
     class_specs: list[ClassBuildSpec] | None = None,
+    slot_base: int = 0,
 ) -> ImageBuildResult:
     require_python_3_14()
     validate_code_tree(module_code)
@@ -1242,6 +1249,7 @@ def build_image_from_code(
     serializer = _ImageSerializer(
         defaults_map=defaults_map,
         kwdefaults_map=kwdefaults_map,
+        slot_base=slot_base,
     )
     # Method codes + OBK_TYPE must exist before module consts resolve type refs.
     serializer.alloc_class_types(class_specs)
@@ -1980,7 +1988,9 @@ def fold_module_classes(
     return new_module, specs
 
 
-def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildResult:
+def build_image_from_source_text(
+    source_text: str, filename: str, *, slot_base: int = 0
+) -> ImageBuildResult:
     seeds = parse_seed_pragmas(source_text)
     module_code = compile(source_text, filename, "exec")
     module_code = apply_lfac_injects(module_code, source_text)
@@ -1999,13 +2009,18 @@ def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildR
         defaults_map=defaults_map,
         kwdefaults_map=kwdefaults_map,
         class_specs=class_specs,
+        slot_base=slot_base,
     )
 
 
-def build_image_from_source(source: pathlib.Path) -> ImageBuildResult:
+def build_image_from_source(
+    source: pathlib.Path, *, slot_base: int = 0
+) -> ImageBuildResult:
     source = pathlib.Path(source)
     source_text = source.read_text(encoding="utf-8")
-    return build_image_from_source_text(source_text, str(source))
+    return build_image_from_source_text(
+        source_text, str(source), slot_base=slot_base
+    )
 
 
 def write_text(path: pathlib.Path, text: str) -> None:
@@ -2105,10 +2120,22 @@ def main() -> None:
         default=None,
         help="Optional EXPECTED_VALUE for image.meta (skips host execution)",
     )
+    parser.add_argument(
+        "--code-ram",
+        action="store_true",
+        help=(
+            "Place the whole program in code RAM instead of ROM: entry slots "
+            "are offset by PYCORE_CODE_RAM_SLOT_BASE and the slots are written "
+            "to --program-hex for loading via CODE_RAM_HEX (Plan 1 P1)."
+        ),
+    )
     args = parser.parse_args()
 
     require_python_3_14()
-    result = build_image_from_source(pathlib.Path(args.source))
+    result = build_image_from_source(
+        pathlib.Path(args.source),
+        slot_base=CODE_RAM_SLOT_BASE if args.code_ram else 0,
+    )
     write_image_outputs(
         result,
         program_hex=pathlib.Path(args.program_hex),

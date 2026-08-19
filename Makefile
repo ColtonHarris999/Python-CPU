@@ -43,6 +43,8 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
 	pycore/rtl/pycore_mem_bank.sv \
 	pycore/rtl/pycore_imem.sv \
+	pycore/rtl/pycore_code_ram.sv \
+	pycore/rtl/pycore_code_mem.sv \
 	pycore/rtl/pycore_dmem.sv \
 	pycore/rtl/pycore_mem_stage.sv \
 	pycore/rtl/pycore_exc_stack.sv \
@@ -97,6 +99,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-exec-all \
 	pycore-img-slice-all \
 	pycore-img-exc-types-all \
+	pycore-img-code-ram-all \
 	pycore-img-str-subscr-unicode pycore-img-str-subscr-loop \
 	pycore-img-str-subscr-oob-trap pycore-img-str-subscr-char-oob-trap \
 	pycore-img-scalar-all \
@@ -498,6 +501,44 @@ define PYCORE_IMAGE_RUN
 	./$(BUILD_DIR)/img_$(1)/verilator/Vtb_container
 endef
 
+# Plan 1 P1: same differential flow as PYCORE_IMAGE_RUN, but the program is
+# built with entry slots offset into code RAM and loaded through CODE_RAM_HEX
+# with an empty ROM. A function must produce the same result whichever region
+# it executes from, which is the definitive check that the fetch region mux is
+# transparent.
+define PYCORE_IMAGE_RUN_CODERAM
+	mkdir -p $(BUILD_DIR)/imgcr_$(1)
+	$(PYTHON) pycore/tools/run_image_test.py \
+		--source pycore/programs/img_$(1).py \
+		--entry managed_entry \
+		--code-ram \
+		--program-hex $(BUILD_DIR)/imgcr_$(1)/code_ram.hex \
+		--dmem-hex $(BUILD_DIR)/imgcr_$(1)/dmem.hex \
+		--string-hex $(BUILD_DIR)/imgcr_$(1)/string_mem.hex \
+		--meta $(BUILD_DIR)/imgcr_$(1)/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/imgcr_$(1)/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/imgcr_$(1)/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/imgcr_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_container \
+		-GPROG_HEX=\"\" \
+		-GCODE_RAM_HEX=\"$(BUILD_DIR)/imgcr_$(1)/code_ram.hex\" \
+		-GSTRING_HEX=\"$(BUILD_DIR)/imgcr_$(1)/string_mem.hex\" \
+		-GDMEM_HEX=\"$(BUILD_DIR)/imgcr_$(1)/dmem.hex\" \
+		-GBOOT_EN=1 \
+		-GCHECK_ENTRY_RETURN=1 \
+		-GHEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		-GEXPECTED_TAG=4\'d$$EXPECTED_TAG \
+		"-GEXPECTED_VALUE=128'd$$EXPECTED_VALUE" \
+		-GMAX_CYCLES=$(2) \
+		--Mdir $(BUILD_DIR)/imgcr_$(1)/verilator \
+		-Wall -Wno-fatal \
+		$(PYCORE_RTL_SRCS) pycore/tb/tb_container.sv && \
+	./$(BUILD_DIR)/imgcr_$(1)/verilator/Vtb_container
+endef
+
 # Synthetic §6.1 spike: the generator rewrites the inner zero-arg CALL to
 # GET_ITER while preserving CALL's [callable, NULL] RF layout.  The test-only
 # core parameter launches S_CALL from S_CONTAINER and must resume with LIST.
@@ -825,6 +866,17 @@ pycore-img-raise-syntaxerror-fatal:
 
 pycore-img-try-exc-cross-frame-fatal:
 	$(call PYCORE_IMAGE_TRAP_RUN,try_exc_cross_frame_fatal,17,50000)
+
+pycore-img-code-ram-call-rom:
+	$(call PYCORE_IMAGE_RUN,code_ram_call,100000)
+
+pycore-img-code-ram-call:
+	$(call PYCORE_IMAGE_RUN_CODERAM,code_ram_call,100000)
+
+# Plan 1 P1: the same program from ROM and from code RAM must agree.
+pycore-img-code-ram-all: \
+	pycore-img-code-ram-call-rom \
+	pycore-img-code-ram-call
 
 # Plan 1 P7: seeded leaf exception types for firmware error reporting.
 pycore-img-exc-types-all: \

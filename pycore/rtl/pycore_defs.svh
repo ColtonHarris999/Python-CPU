@@ -2134,6 +2134,28 @@ endfunction
 // PYCORE_HEAP_BASE == PYCORE_BOOT_RECORD_ADDR + PYCORE_BOOT_RECORD_BYTES.
 // Written by image_from_source.py; read by S_BOOT at reset when BOOT_EN=1.
 // -------------------------------------------------------------------------
+// -------------------------------------------------------------------------
+// Code address space (Plan 1 P1).  The PC is a slot index; fetch converts it
+// to a byte address with `pc << 3`.  Two regions share that space:
+//
+//   slot 0x0000 .. 0x1FFF   CODE ROM  pycore_imem      READ_ONLY, image-loaded
+//   slot 0x2000 .. 0x9FFF   CODE RAM  pycore_code_ram  writable, loadable
+//
+// PYCORE_CODE_RAM_SLOT_BASE equals the ROM's slot count
+// (PYCORE_IMEM_BLOCK_COUNT * 4096 / 8), so `entry_slot` semantics do not
+// change: code in RAM is simply code with a large entry slot.  ROM stays
+// genuinely read-only, which is what keeps a bad loader from corrupting the
+// boot image.  Sizing rationale is in pycore/docs/code_loading.md.
+// -------------------------------------------------------------------------
+localparam int PYCORE_CODE_RAM_BLOCK_COUNT = 64;   // 64 * 4 KB = 256 KB
+localparam logic [31:0] PYCORE_CODE_RAM_SLOT_BASE = 32'h0000_2000;
+localparam logic [31:0] PYCORE_CODE_RAM_SLOTS     = 32'h0000_8000;  // 32768
+localparam logic [31:0] PYCORE_CODE_RAM_SLOT_LIMIT =
+    PYCORE_CODE_RAM_SLOT_BASE + PYCORE_CODE_RAM_SLOTS;
+// Byte address of the first code-RAM slot (slot index << 3).
+localparam logic [31:0] PYCORE_CODE_RAM_BYTE_BASE =
+    PYCORE_CODE_RAM_SLOT_BASE << 3;
+
 localparam logic [31:0] PYCORE_BOOT_RECORD_ADDR = 32'h0000_03E0;
 localparam logic [31:0] PYCORE_BOOT_RECORD_BYTES = 32'd96;
 
