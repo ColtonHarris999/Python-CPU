@@ -2,9 +2,11 @@
 
 Status: **blocked** (stub in `eval.py`)
 
-**Full step-by-step plan:** [`planning/compile_exec_plan.md`](../../planning/compile_exec_plan.md)
-(§8 phase 3 for the code-object form, §9 for the `globals=` override, §13 for
-the string form).
+**Full step-by-step plan:** the code-object form and the `globals=` override are
+[`planning/code_loading_bios_tokenizer_plan.md`](../../planning/code_loading_bios_tokenizer_plan.md)
+§8 (Plan 1); the string form is
+[`planning/native_compiler_plan.md`](../../planning/native_compiler_plan.md)
+§8.1 (Plan 2).
 
 ## Goal
 
