@@ -2,6 +2,12 @@
 
 Status: **blocked** (stub in `exec.py`)
 
+**Full step-by-step plan:** [`planning/compile_exec_plan.md`](../../planning/compile_exec_plan.md)
+(§8 phase 3 for the code-object form, §13 for the string form). Note that
+`exec(code_object)` needs **no hardware change**: `CALL` on a `CODE_OBJECT` in a
+variable already works, and `STORE_NAME` / `LOAD_NAME` already target the module
+globals dict.
+
 ## Goal
 
 `exec(object, globals=None, locals=None)` runs statements from a string or

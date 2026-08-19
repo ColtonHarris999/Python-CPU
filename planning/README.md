@@ -10,6 +10,7 @@ Current architecture and tag/layout docs live under `pycore/docs/` and
 | `builtins_next_steps_plan.md` | **Done through §4.5 (wave 3);** next is wave 4 |
 | `builtins_rom_wave3_plan.md` | **Done:** wave 3 ROM seed + `sorted(reverse=)` / tests |
 | `builtins_wave4_plan.md` | **Active:** ORD/CHR + bytecode; §1 print + §2 attr specials **done** |
+| `compile_exec_plan.md` | **Proposed:** runtime `compile()` / `exec()` / `eval()` — writable code arena, `CODE_OBJECT` fabrication, self-hosted ROM compiler |
 | `builtins_print_console_plan.md` | **Done:** ROM `print` + `_bi_print` / `CONSOLE_TX` + stdout goldens |
 | `call_kw_support_plan.md` | **Done (v1):** `CALL_KW` / `CALL_FUNCTION_EX` / `DICT_MERGE` on `CODE_OBJECT` |
 | `for_loop_full_support_plan.md` | **Active:** GET_ITER/FOR_ITER on OBJECT + StopIteration exception tables + comprehensions |

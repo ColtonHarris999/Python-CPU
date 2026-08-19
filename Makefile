@@ -93,6 +93,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-unpack-tuple pycore-img-unpack-list pycore-img-unpack-len-trap \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-str-eq pycore-img-str-lt-trap \
+	pycore-img-str-subscr pycore-img-str-subscr-long \
+	pycore-img-str-subscr-unicode pycore-img-str-subscr-loop \
+	pycore-img-str-subscr-oob-trap pycore-img-str-subscr-char-oob-trap \
 	pycore-img-scalar-all \
 	pycore-img-is-op \
 	pycore-img-compare-op pycore-img-compare-op-type-trap \
@@ -752,6 +755,24 @@ pycore-img-str-eq:
 pycore-img-str-lt-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,str_lt_trap,1,50000)
 
+pycore-img-str-subscr:
+	$(call PYCORE_IMAGE_RUN,str_subscr,50000)
+
+pycore-img-str-subscr-long:
+	$(call PYCORE_IMAGE_RUN,str_subscr_long,50000)
+
+pycore-img-str-subscr-unicode:
+	$(call PYCORE_IMAGE_RUN,str_subscr_unicode,50000)
+
+pycore-img-str-subscr-loop:
+	$(call PYCORE_IMAGE_RUN,str_subscr_loop,100000)
+
+pycore-img-str-subscr-oob-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,str_subscr_oob_trap,7,50000)
+
+pycore-img-str-subscr-char-oob-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,str_subscr_char_oob_trap,7,50000)
+
 pycore-img-scalar-all: \
 	pycore-img-unary-invert \
 	pycore-img-align-mask \
@@ -763,7 +784,13 @@ pycore-img-scalar-all: \
 	pycore-img-unpack-ex \
 	pycore-img-list-to-tuple \
 	pycore-img-str-eq \
-	pycore-img-str-lt-trap
+	pycore-img-str-lt-trap \
+	pycore-img-str-subscr \
+	pycore-img-str-subscr-long \
+	pycore-img-str-subscr-unicode \
+	pycore-img-str-subscr-loop \
+	pycore-img-str-subscr-oob-trap \
+	pycore-img-str-subscr-char-oob-trap
 
 pycore-img-is-op:
 	$(call PYCORE_IMAGE_RUN,is_op,50000)

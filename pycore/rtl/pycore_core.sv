@@ -1392,7 +1392,33 @@ module pycore_core #(
         (container_phase_r == CP_INIT) &&
         (cont_rs1_tag == PY_TAG_SHORT_STR) &&
         (string_snapshot_size != 4'b0);
-    assign string_read_addr = cont_iter_addr + cont_iter_index;
+    // CONT_SUBSCR_STR geometry. container_probe_r is the current byte offset
+    // into the subject string; cont_str_win presents the same 4-byte,
+    // lead-byte-first window as string_read_data so a single UTF-8 decode
+    // serves both string tags — SHORT_STR bytes are inline in the handle,
+    // LONG_STR bytes live in string_mem. No snapshot allocation is needed.
+    logic        cont_str_subscr_active;
+    logic [31:0] cont_str_len;
+    logic [31:0] cont_str_base;
+    logic [31:0] cont_str_win;
+    assign cont_str_subscr_active = (state_r == S_CONTAINER) &&
+                                    (container_op_r == CONT_SUBSCR_STR);
+    assign cont_str_len  = (cont_rs1_tag == PY_TAG_SHORT_STR)
+                         ? {28'b0, pycore_short_str_size(cont_rs1_val)}
+                         : pycore_long_str_size(cont_rs1_val)[31:0];
+    assign cont_str_base = (cont_rs1_tag == PY_TAG_SHORT_STR)
+                         ? 32'd0
+                         : pycore_long_str_addr(cont_rs1_val)[31:0];
+    assign cont_str_win  = (cont_rs1_tag == PY_TAG_SHORT_STR)
+        ? {pycore_short_str_byte(cont_rs1_val, container_probe_r + 32'd3),
+           pycore_short_str_byte(cont_rs1_val, container_probe_r + 32'd2),
+           pycore_short_str_byte(cont_rs1_val, container_probe_r + 32'd1),
+           pycore_short_str_byte(cont_rs1_val, container_probe_r)}
+        : string_read_data;
+
+    assign string_read_addr = cont_str_subscr_active
+                            ? (cont_str_base + container_probe_r)
+                            : (cont_iter_addr + cont_iter_index);
 
     // Dict-specific combinational helpers.
     // Slot count computed from container_count_r (pairs), used during BUILD_MAP init.
@@ -2024,6 +2050,8 @@ module pycore_core #(
                                     container_op_r <= CONT_SUBSCR_DICT;
                                 else if (cont_rs1_tag == PY_TAG_TUPLE)
                                     container_op_r <= CONT_SUBSCR_TUPLE;
+                                else if (pycore_is_string_tag(cont_rs1_tag))
+                                    container_op_r <= CONT_SUBSCR_STR;
                                 else
                                     container_op_r <= CONT_SUBSCR_LIST;
                             end else if (cur_opcode_r == PY_OP_RAISE_VARARGS) begin

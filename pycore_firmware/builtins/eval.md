@@ -2,6 +2,10 @@
 
 Status: **blocked** (stub in `eval.py`)
 
+**Full step-by-step plan:** [`planning/compile_exec_plan.md`](../../planning/compile_exec_plan.md)
+(§8 phase 3 for the code-object form, §9 for the `globals=` override, §13 for
+the string form).
+
 ## Goal
 
 `eval(expression, globals=None, locals=None)` evaluates an expression from a

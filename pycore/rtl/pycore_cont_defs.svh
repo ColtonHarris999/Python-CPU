@@ -44,7 +44,10 @@
     localparam logic [5:0] CONT_PUSH_EXC_INFO = 6'd40;// PUSH_EXC_INFO
     localparam logic [5:0] CONT_CHECK_EXC_MATCH = 6'd41;// CHECK_EXC_MATCH
     localparam logic [5:0] CONT_POP_EXCEPT = 6'd42;// POP_EXCEPT
-    localparam logic [5:0] CONT_RERAISE = 6'd43;// RERAISE 0/1
+    localparam logic [5:0] CONT_RERAISE = 6'd43;
+    // NB_SUBSCR on SHORT_STR / LONG_STR. Walks UTF-8 characters (not bytes) so
+    // s[i] agrees with `for c in s`; reuses CP_INIT / CP_VAL / CP_DONE.
+    localparam logic [5:0] CONT_SUBSCR_STR = 6'd44;// RERAISE 0/1
 
     // Container phases (stored in container_phase_r, 6-bit).
     //

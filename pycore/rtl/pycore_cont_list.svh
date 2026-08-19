@@ -246,6 +246,121 @@
                             endcase
                         end // CONT_SUBSCR_LIST
 
+                        CONT_SUBSCR_STR: begin
+                            // rs1_r = subject string (SHORT_STR or LONG_STR)
+                            // rs2_r = index          (INT or BOOL)
+                            //
+                            // Walks one UTF-8 character per cycle from the
+                            // start of the string, so cost is O(index) — the
+                            // same model as STR FOR_ITER.  Indexing is by
+                            // character, so s[i] agrees with `for c in s`.
+                            // container_probe_r   = current byte offset
+                            // container_src_len_r = characters left to skip
+                            // cont_str_win supplies the 4-byte decode window
+                            // for both tags (see pycore_core.sv), so no
+                            // string_mem snapshot is allocated here.
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    logic [32:0] str_end;
+                                    str_end = {1'b0, cont_str_base} +
+                                              {1'b0, cont_str_len};
+                                    if (cont_rs2_tag != PY_TAG_INT &&
+                                        cont_rs2_tag != PY_TAG_BOOL) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else if ((cont_rs1_tag == PY_TAG_LONG_STR) &&
+                                                 ((pycore_long_str_size(
+                                                       cont_rs1_val)[63:32] != 32'b0) ||
+                                                  (pycore_long_str_addr(
+                                                       cont_rs1_val)[63:32] != 32'b0) ||
+                                                  str_end[32] ||
+                                                  (str_end > STRING_MEM_BYTES))) begin
+                                        // Same descriptor sanity as STR GET_ITER.
+                                        container_type_trap_r <= 1'b1;
+                                    end else if (cont_key_u >=
+                                                 {32'b0, cont_str_len}) begin
+                                        // Byte length bounds the character
+                                        // count, so index >= len(s) can never
+                                        // resolve.  Unsigned compare, so
+                                        // negative indices do not wrap.
+                                        container_mem_fault_r <= 1'b1;
+                                    end else begin
+                                        container_probe_r   <= 32'd0;
+                                        container_src_len_r <= cont_key_u[31:0];
+                                        container_phase_r   <= CP_VAL;
+                                    end
+                                end
+
+                                CP_VAL: begin
+                                    logic [2:0] width;
+                                    logic [32:0] char_end;
+                                    logic continuations_valid;
+                                    logic [119:0] char_payload;
+                                    width = pycore_utf8_char_width(
+                                        cont_str_win[7:0]);
+                                    char_end = {1'b0, container_probe_r} +
+                                               {30'b0, width};
+                                    continuations_valid =
+                                        ((width < 3'd2) ||
+                                         pycore_utf8_cont_valid(
+                                             cont_str_win[15:8])) &&
+                                        ((width < 3'd3) ||
+                                         pycore_utf8_cont_valid(
+                                             cont_str_win[23:16])) &&
+                                        ((width < 3'd4) ||
+                                         pycore_utf8_cont_valid(
+                                             cont_str_win[31:24]));
+                                    char_payload = '0;
+                                    char_payload[119:112] = cont_str_win[7:0];
+                                    if (width >= 3'd2)
+                                        char_payload[111:104] =
+                                            cont_str_win[15:8];
+                                    if (width >= 3'd3)
+                                        char_payload[103:96] =
+                                            cont_str_win[23:16];
+                                    if (width >= 3'd4)
+                                        char_payload[95:88] =
+                                            cont_str_win[31:24];
+
+                                    if (container_probe_r >= cont_str_len) begin
+                                        // Ran off the end while skipping: the
+                                        // index exceeds the character count.
+                                        // Only reachable for non-ASCII, where
+                                        // len(s) (bytes) > character count.
+                                        container_mem_fault_r <= 1'b1;
+                                    end else if ((width == 3'd0) ||
+                                                 (char_end >
+                                                  {1'b0, cont_str_len}) ||
+                                                 !continuations_valid) begin
+                                        // Malformed UTF-8 in the subject.
+                                        container_type_trap_r <= 1'b1;
+                                    end else if (container_src_len_r != 32'd0) begin
+                                        container_probe_r   <= char_end[31:0];
+                                        container_src_len_r <=
+                                            container_src_len_r - 32'd1;
+                                    end else begin
+                                        // Landed on the requested character:
+                                        // result replaces the container slot
+                                        // at tos-2 and the index is popped.
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <=
+                                            RF_AW'(tos_r - RF_AW'(2));
+                                        container_wb_data_r <=
+                                            pycore_make_short_str_entry(
+                                                {1'b0, width}, char_payload);
+                                        tos_r             <= tos_r - RF_AW'(1);
+                                        fetch_skip_r      <= 1'b1;
+                                        container_phase_r <= CP_DONE;
+                                    end
+                                end
+
+                                CP_DONE: ;
+
+                                default: ;
+
+                            endcase
+                        end // CONT_SUBSCR_STR
+
                         CONT_GET_ITER: begin
                             unique case (container_phase_r)
                                 CP_INIT: begin
