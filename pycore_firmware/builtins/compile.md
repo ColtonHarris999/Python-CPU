@@ -2,11 +2,17 @@
 
 Status: **blocked** (stub in `compile.py`)
 
-**Full step-by-step plan:** [`planning/compile_exec_plan.md`](../../planning/compile_exec_plan.md)
-supersedes the "Next steps" / "Recommendation" sections below. The blockers
-listed here remain accurate; the recommendation has changed — a self-hosted ROM
-Python compiler plus a writable code arena is now the planned route, not
-host-only `compile()`.
+**Full step-by-step plan:**
+[`planning/native_compiler_plan.md`](../../planning/native_compiler_plan.md)
+(Plan 2), which depends on
+[`planning/code_loading_bios_tokenizer_plan.md`](../../planning/code_loading_bios_tokenizer_plan.md)
+(Plan 1) for code loading and the tokenizer. Both supersede the "Next steps" /
+"Recommendation" sections below.
+
+The blockers listed here remain accurate; the recommendation has changed. A
+self-hosted ROM Python compiler is now the planned route rather than host-only
+`compile()`, with the tokenizer ported from PyPy's regex-free DFA tokenizer and
+codegen written against PyCore's opcode subset.
 
 ## Goal
 

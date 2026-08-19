@@ -35,7 +35,7 @@ These limit every firmware builtin:
 | `UNPACK_EX` + `CALL_INTRINSIC_1` (LIST_TO_TUPLE) | Starred unpack and `(*lst,)` / list→tuple materialization are available |
 | Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`. `ord.md` / `chr.md` are shipped notes. |
 | Next plan | `planning/builtins_wave4_plan.md` — §1 print, §2 attr specials, §3 ORD/CHR all **done**; §4 bytecode follow-ups remain |
-| `compile`/`exec`/`eval` plan | `planning/compile_exec_plan.md` — code arena + `CODE_OBJECT` fabrication + self-hosted ROM compiler |
+| `compile`/`exec`/`eval` plan | `planning/code_loading_bios_tokenizer_plan.md` (Plan 1: code loading, BIOS, tokenizer) then `planning/native_compiler_plan.md` (Plan 2: parser → codegen → self-hosting) |
 
 ## Builtin functions
 

@@ -2,11 +2,16 @@
 
 Status: **blocked** (stub in `exec.py`)
 
-**Full step-by-step plan:** [`planning/compile_exec_plan.md`](../../planning/compile_exec_plan.md)
-(§8 phase 3 for the code-object form, §13 for the string form). Note that
-`exec(code_object)` needs **no hardware change**: `CALL` on a `CODE_OBJECT` in a
-variable already works, and `STORE_NAME` / `LOAD_NAME` already target the module
-globals dict.
+**Full step-by-step plan:** the code-object form is
+[`planning/code_loading_bios_tokenizer_plan.md`](../../planning/code_loading_bios_tokenizer_plan.md)
+§8 (Plan 1); the string form is
+[`planning/native_compiler_plan.md`](../../planning/native_compiler_plan.md)
+§8.1 (Plan 2).
+
+Note that `exec(code_object)` needs **no hardware change**: `CALL` on a
+`CODE_OBJECT` in a variable already works, and `STORE_NAME` / `LOAD_NAME`
+already target the module globals dict — which is exactly module-scope `exec`
+semantics. It is the first thing Plan 1 ships.
 
 ## Goal
 
