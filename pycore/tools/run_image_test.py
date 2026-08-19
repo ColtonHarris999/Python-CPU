@@ -125,6 +125,20 @@ def host_entry_result_from_text(
     for name, fn in load_rom_firmware_callables().items():
         namespace.setdefault(name, fn)
 
+    # exec/eval need host stand-ins: the ROM bodies call the code object, and
+    # CPython code objects are not callable. Binding `namespace` as the payload
+    # globals reproduces the device, where a module-mode code object's
+    # STORE_NAME / LOAD_NAME hit the one boot-record globals dict.
+    def _host_exec(code, globals=None):
+        exec(code, namespace if globals is None else globals)
+        return None
+
+    def _host_eval(code, globals=None):
+        return eval(code, namespace if globals is None else globals)
+
+    namespace["exec"] = _host_exec
+    namespace["eval"] = _host_eval
+
     # Wire SEED_TYPE / SEED_TYPE_METHOD / SEED_INSTANCE after defs exist.
     methods_by_type: dict[str, list] = {}
     for m in seeds.type_methods:
@@ -175,6 +189,15 @@ def host_entry_result_from_text(
         for name, val in spec.attrs:
             setattr(obj, name, val)
         namespace[spec.name] = obj
+
+    # SEED_CODE: mirror the device's precompiled payload with a host code
+    # object so exec()/eval() goldens run identically on both sides. The
+    # payload must share the entry's globals, since device STORE_NAME writes
+    # the one module globals dict.
+    for cspec in seeds.codes:
+        namespace[cspec.name] = compile(
+            cspec.source, f"<seed:{cspec.name}>", cspec.mode
+        )
 
     fn = namespace.get(entry)
     if not callable(fn):

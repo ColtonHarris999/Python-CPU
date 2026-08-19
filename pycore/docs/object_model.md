@@ -165,7 +165,15 @@ Attribute image tests may still seed objects via:
 # pycore-inject: SEED_TYPE Base
 # pycore-inject: SEED_TYPE Child base=Base [attr=int ...]
 # pycore-inject: SEED_INSTANCE o [type=Child] [slots=N] [attr=int ...]
+# pycore-inject: SEED_CODE name [mode=exec|eval] source="<text>"
 ```
+
+`SEED_CODE` host-`compile()`s `source` in `mode`, validates it with
+`validate_code_tree`, serializes it like any other code object (its bytecode
+joins the same imem pool), and binds the handle to `name` in module globals.
+That is how a program gets a precompiled `CODE_OBJECT` to hand to `exec` /
+`eval` before runtime `compile()` exists. `\n` / `\t` escapes are expanded;
+`source=` comes last and is quoted, so it may contain spaces and `=`.
 
 `base=` must name an earlier `SEED_TYPE` (declaration order = allocation
 order). Real `class` statements are preferred for new coverage (`img_class_*`,

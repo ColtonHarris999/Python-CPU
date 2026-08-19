@@ -570,21 +570,41 @@ class SeedInstanceSpec:
 
 
 @dataclass(frozen=True)
+class SeedCodeSpec:
+    """Build-time ``CODE_OBJECT`` seed for ``exec`` / ``eval`` payloads.
+
+    ``# pycore-inject: SEED_CODE name mode=exec source="x = 1 + 2"``
+
+    The source is host-``compile()``d in ``mode`` and serialized like any other
+    code object, then bound to ``name`` in the module globals. This is how a
+    program under test gets hold of a precompiled code object before runtime
+    ``compile()`` exists (Plan 1 P3). Newlines may be written as ``\\n``.
+    """
+
+    name: str
+    mode: str = "exec"
+    source: str = ""
+
+
+@dataclass(frozen=True)
 class SeedSpecs:
     types: tuple[SeedTypeSpec, ...] = ()
     type_methods: tuple[SeedTypeMethodSpec, ...] = ()
     instances: tuple[SeedInstanceSpec, ...] = ()
+    codes: tuple[SeedCodeSpec, ...] = ()
 
     @property
     def global_names(self) -> set[str]:
         names = {t.name for t in self.types}
         names.update(i.name for i in self.instances)
+        names.update(c.name for c in self.codes)
         return names
 
 
 _INJECT_SEED_TYPE_PREFIX = "# pycore-inject: SEED_TYPE "
 _INJECT_SEED_TYPE_METHOD_PREFIX = "# pycore-inject: SEED_TYPE_METHOD "
 _INJECT_SEED_INSTANCE_PREFIX = "# pycore-inject: SEED_INSTANCE "
+_INJECT_SEED_CODE_PREFIX = "# pycore-inject: SEED_CODE "
 _OP_NOP = _OM["NOP"]
 _OP_MAKE_FUNCTION = _OM["MAKE_FUNCTION"]
 _OP_SET_FUNCTION_ATTRIBUTE = _OM["SET_FUNCTION_ATTRIBUTE"]
@@ -634,14 +654,53 @@ def _parse_seed_kv_tokens(tokens: list[str]) -> tuple[dict[str, str], list[tuple
     return opts, attrs
 
 
+def _parse_seed_code_pragma(rest: str) -> SeedCodeSpec:
+    """Parse ``<name> mode=<mode> source="<text>"``.
+
+    ``source=`` is last and quoted, so it may contain spaces and ``=``.
+    """
+    src_key = "source="
+    idx = rest.find(src_key)
+    if idx < 0:
+        raise ValueError(
+            'SEED_CODE expects \'<name> [mode=exec|eval] source="<text>"\', '
+            f"got {rest!r}"
+        )
+    head = rest[:idx].split()
+    raw = rest[idx + len(src_key) :].strip()
+    if len(raw) < 2 or raw[0] != raw[-1] or raw[0] not in "\"'":
+        raise ValueError(f"SEED_CODE source= must be quoted, got {raw!r}")
+    source = raw[1:-1].replace("\\n", "\n").replace("\\t", "\t")
+    if not head:
+        raise ValueError(f"SEED_CODE expects a name, got {rest!r}")
+    mode = "exec"
+    for tok in head[1:]:
+        key, _, val = tok.partition("=")
+        if key != "mode" or not val:
+            raise ValueError(
+                f"SEED_CODE only accepts mode=, got {tok!r}"
+            )
+        mode = val
+    if mode not in ("exec", "eval"):
+        raise ValueError(f"SEED_CODE mode must be exec or eval, got {mode!r}")
+    return SeedCodeSpec(head[0], mode=mode, source=source)
+
+
 def parse_seed_pragmas(source_text: str) -> SeedSpecs:
-    """Parse SEED_TYPE / SEED_TYPE_METHOD / SEED_INSTANCE pragmas."""
+    """Parse SEED_TYPE / SEED_TYPE_METHOD / SEED_INSTANCE / SEED_CODE pragmas."""
     types: list[SeedTypeSpec] = []
     type_methods: list[SeedTypeMethodSpec] = []
     instances: list[SeedInstanceSpec] = []
+    codes: list[SeedCodeSpec] = []
     for line in source_text.splitlines():
         stripped = line.strip()
-        if stripped.startswith(_INJECT_SEED_TYPE_METHOD_PREFIX):
+        if stripped.startswith(_INJECT_SEED_CODE_PREFIX):
+            codes.append(
+                _parse_seed_code_pragma(
+                    stripped[len(_INJECT_SEED_CODE_PREFIX) :].strip()
+                )
+            )
+        elif stripped.startswith(_INJECT_SEED_TYPE_METHOD_PREFIX):
             rest = stripped[len(_INJECT_SEED_TYPE_METHOD_PREFIX) :].strip()
             if "=" not in rest:
                 raise ValueError(
@@ -692,7 +751,9 @@ def parse_seed_pragmas(source_text: str) -> SeedSpecs:
                     attrs=tuple(attrs),
                 )
             )
-    return SeedSpecs(tuple(types), tuple(type_methods), tuple(instances))
+    return SeedSpecs(
+        tuple(types), tuple(type_methods), tuple(instances), tuple(codes)
+    )
 
 
 def fold_function_defaults(
@@ -989,7 +1050,15 @@ ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
     ("issubclass", "issubclass", "issubclass"),
     # Wave 4A — print(*args, sep=, end=) → _bi_print sink
     ("print", "print", "print"),
+    # Plan 1 P3 — exec/eval on precompiled CODE_OBJECTs (no new hardware)
+    ("exec", "exec", "exec"),
+    ("eval", "eval", "eval"),
 )
+
+# ROM bodies whose device semantics cannot be reproduced by running the same
+# source under CPython. ``run_image_test.py`` binds host stand-ins for these
+# after the test program's namespace exists; see ``exec.py``'s host note.
+HOST_STANDIN_BUILTINS: frozenset[str] = frozenset({"exec", "eval"})
 
 FIRMWARE_BUILTINS_DIR = (
     pathlib.Path(__file__).resolve().parents[2] / "pycore_firmware" / "builtins"
@@ -1017,6 +1086,10 @@ def load_rom_firmware_callables() -> dict[str, object]:
     entry plus a ``_bi_print`` stub so ``print`` can run on the host.
     Firmware semantics differ from CPython in places (e.g. ``reversed`` /
     ``filter`` return lists); host goldens must use these bodies.
+
+    ``HOST_STANDIN_BUILTINS`` names are still loaded and validated here, but
+    callers are expected to override them (``run_image_test.py`` does) because
+    their device semantics are not reproducible by running the same source.
     """
     out: dict[str, object] = {"_bi_print": _host_bi_print}
     for dict_key, stem, func_name in ROM_FIRMWARE_BUILTINS:
@@ -1166,6 +1239,15 @@ def build_image_from_code(
     seed_pairs = _seed_globals_pairs(
         serializer.heap, serializer.string_heap, seeds, code_by_name
     )
+    # SEED_CODE payloads are compiled and serialized like any other code object,
+    # so their bytecode joins the same imem pool as the module's.
+    for cspec in seeds.codes:
+        payload = compile(cspec.source, f"<seed:{cspec.name}>", cspec.mode)
+        validate_code_tree(payload)
+        handle = serializer.serialize_code(payload)
+        seed_pairs.append(
+            (tag_constant(cspec.name, serializer.string_heap), handle)
+        )
     if seed_pairs:
         if len(seed_pairs) >= globals_slot_count:
             globals_slot_count = dict_slot_count_for_stores(len(seed_pairs) + 1)

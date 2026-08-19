@@ -94,6 +94,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-str-eq pycore-img-str-lt-trap \
 	pycore-img-str-subscr pycore-img-str-subscr-long \
+	pycore-img-exec-all \
 	pycore-img-str-subscr-unicode pycore-img-str-subscr-loop \
 	pycore-img-str-subscr-oob-trap pycore-img-str-subscr-char-oob-trap \
 	pycore-img-scalar-all \
@@ -761,6 +762,33 @@ pycore-img-str-lt-trap:
 
 pycore-img-str-subscr:
 	$(call PYCORE_IMAGE_RUN,str_subscr,50000)
+
+pycore-img-exec-code-basic:
+	$(call PYCORE_IMAGE_RUN,exec_code_basic,50000)
+
+pycore-img-exec-code-globals-rw:
+	$(call PYCORE_IMAGE_RUN,exec_code_globals_rw,50000)
+
+pycore-img-exec-code-returns-none:
+	$(call PYCORE_IMAGE_RUN,exec_code_returns_none,50000)
+
+pycore-img-exec-code-nested:
+	$(call PYCORE_IMAGE_RUN,exec_code_nested,50000)
+
+pycore-img-eval-code-expr:
+	$(call PYCORE_IMAGE_RUN,eval_code_expr,50000)
+
+pycore-img-exec-bad-arg-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,exec_bad_arg_trap,6,50000)
+
+# Plan 1 P3: exec/eval on precompiled CODE_OBJECTs (SEED_CODE payloads).
+pycore-img-exec-all: \
+	pycore-img-exec-code-basic \
+	pycore-img-exec-code-globals-rw \
+	pycore-img-exec-code-returns-none \
+	pycore-img-exec-code-nested \
+	pycore-img-eval-code-expr \
+	pycore-img-exec-bad-arg-trap
 
 pycore-img-str-subscr-long:
 	$(call PYCORE_IMAGE_RUN,str_subscr_long,50000)

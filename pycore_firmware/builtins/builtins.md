@@ -62,8 +62,8 @@ These limit every firmware builtin:
 | `dir` | Return a list of valid attribute names for an object or the local scope. | in progress | Instance `__dict__` keys only; no-arg / MRO names blocked. |
 | `divmod` | Return the pair (quotient, remainder) of integer division. | in ROM | `(a // b, a % b)`. |
 | `enumerate` | Return an enumerate object yielding (index, item) pairs. | in ROM | Returns a **list** of pairs (no YIELD). LIST grow needs excore. |
-| `eval` | Evaluate a Python expression from a string or code object. | blocked | See `eval.md`. |
-| `exec` | Execute Python statements from a string or code object. | blocked | See `exec.md`. |
+| `eval` | Evaluate a Python expression from a string or code object. | in ROM | Code-object form only (`"eval"` mode returns the expression value). String form needs runtime `compile` (Plan 2). |
+| `exec` | Execute Python statements from a string or code object. | in ROM | Code-object form only: `code()` then `None`. Module-mode `STORE_NAME`/`LOAD_NAME` hit the boot globals dict, so this is module-scope `exec`. String form needs runtime `compile` (Plan 2). Non-code arg → `CALL_FILTER`. |
 | `filter` | Construct an iterator of items for which a function returns true. | in ROM | Returns a **list**; `function is None` uses TO_BOOL. LIST grow → excore. |
 | `float` | Convert a string or number to floating point. | in progress | `x * 1.0` for numerics; `_parse_float_string` helper; no auto str dispatch. |
 | `format` | Convert a value to a formatted representation ("format_spec"). | in progress | Empty spec → INT/BOOL/None stringify; non-empty specs blocked (`FORMAT_WITH_SPEC`). |
@@ -132,11 +132,11 @@ pycore_firmware/builtins/builtins.md    # this inventory
 | --- | --- |
 | Python modules | 73 |
 | Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`; `ord` / `chr` now shipped notes) |
-| Status: in ROM | 28 (incl. `print`) |
+| Status: in ROM | 30 (incl. `print`, `exec`, `eval`) |
 | Status: native | 2 (`ord`, `chr`) |
 | Status: implemented | 5 (`len` miss path, `list_append`, `max` notes, `range` list form, `set` Python form) |
 | Status: in progress | 11 |
-| Status: blocked | 28 |
+| Status: blocked | 26 |
 
 ### In ROM (seeded as CODE_OBJECT in boot builtins dict)
 
@@ -145,6 +145,7 @@ Wave 3: `bin`, `dict`, `divmod`, `filter`, `hex`, `list`, `min`, `oct`,
 `pow`, `reversed`, `round`, `sorted`, `tuple`  
 Wave 4B: `delattr`, `getattr`, `hasattr`, `isinstance`, `issubclass`,
 `setattr`  
+Plan 1 P3: `exec`, `eval` (precompiled `CODE_OBJECT` forms)  
 
 Coverage: `img_firmware_rom_subset`, `img_firmware_iterators`,
 `img_firmware_wave3a`, `img_firmware_wave3_strings`, `img_firmware_wave3_pow`,
@@ -180,7 +181,7 @@ form; `BI_SET` owns dict)
 ### Blocked (stub + notes/plans)
 
 `aiter`, `anext`, `ascii`, `breakpoint`, `bytearray`, `bytes`,
-`classmethod`, `compile`, `complex`, `eval`, `exec`, `frozenset`,
+`classmethod`, `compile`, `complex`, `frozenset`,
 `globals`, `hash`, `help`, `id`, `input`, `locals`, `memoryview`,
 `object`, `open`, `property`, `slice`, `staticmethod`,
 `super`, `from_bytes`, `to_bytes`
