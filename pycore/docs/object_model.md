@@ -56,10 +56,13 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | 7 | `LEN` | Tag fast paths (LIST/TUPLE/DICT/SET/STR/inline RANGE); INSTANCE `__len__` via own `tp_dict` |
 | 8 | `RANGE` | Emits `PY_TAG_RANGE` |
 | 9 | `SET` | Native empty / from-list-or-tuple constructor |
+| 10 | `ORD` | One-character STR → INT code point. Always SHORT_STR (any string ≤15 bytes is), so the UTF-8 decode reads the inline payload — one cycle, no `string_mem` access. Non-STR / not exactly one character / malformed UTF-8 → `TYPE` |
+| 11 | `CHR` | INT code point → one-character SHORT_STR (1–4 UTF-8 bytes inline). Rejects > U+10FFFF, negatives, and lone surrogates (`TYPE`) |
 
 Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
 module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
-`bytearray` / `max` / `len` / `_bi_print` / `range` / `set` as `OBK_BUILTIN`
+`bytearray` / `max` / `len` / `_bi_print` / `range` / `set` / `ord` / `chr` as
+`OBK_BUILTIN`
 handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
 `to_bytes`, `StopIteration` as a leaf `OBK_TYPE` (`tp_base = None`), and ROM
 firmware names (`print`, `sum`, `abs`, `bool`, `all`, `any`, `enumerate`,

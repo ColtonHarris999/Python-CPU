@@ -191,6 +191,8 @@ localparam logic [31:0] PY_BI_PRINT        = 32'd6;
 localparam logic [31:0] PY_BI_LEN          = 32'd7;
 localparam logic [31:0] PY_BI_RANGE        = 32'd8;
 localparam logic [31:0] PY_BI_SET          = 32'd9;
+localparam logic [31:0] PY_BI_ORD          = 32'd10;
+localparam logic [31:0] PY_BI_CHR          = 32'd11;
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;
@@ -900,6 +902,91 @@ function automatic logic pycore_utf8_cont_valid(
 );
     begin
         pycore_utf8_cont_valid = (byte_value[7:6] == 2'b10);
+    end
+endfunction
+
+// Decode a UTF-8 sequence to its code point (BI_ORD).  `bytes` holds the
+// encoded bytes lead-byte-first (b0 in [7:0], b1 in [15:8], …), the same
+// window shape string_mem reads and cont_str_win present.  Callers must first
+// check the width with pycore_utf8_char_width and the continuation bytes with
+// pycore_utf8_cont_valid; overlong forms are not detected (they cannot be
+// produced by the tooling or by chr / concat / s[i]).
+function automatic logic [31:0] pycore_utf8_decode(
+    input logic [2:0]  width,
+    input logic [31:0] bytes
+);
+    begin
+        unique case (width)
+            3'd1: pycore_utf8_decode = {25'b0, bytes[6:0]};
+            3'd2: pycore_utf8_decode = {21'b0, bytes[4:0], bytes[13:8]};
+            3'd3: pycore_utf8_decode = {16'b0, bytes[3:0], bytes[13:8],
+                                        bytes[21:16]};
+            3'd4: pycore_utf8_decode = {11'b0, bytes[2:0], bytes[13:8],
+                                        bytes[21:16], bytes[29:24]};
+            default: pycore_utf8_decode = 32'b0;
+        endcase
+    end
+endfunction
+
+// Surrogates have no well-formed UTF-8 encoding.  PyCore stores strings as
+// UTF-8, so BI_CHR rejects them even though CPython allows lone surrogates.
+function automatic logic pycore_utf8_is_surrogate(input logic [31:0] cp);
+    begin
+        pycore_utf8_is_surrogate = (cp >= 32'h0000_D800) &&
+                                   (cp <= 32'h0000_DFFF);
+    end
+endfunction
+
+// Encoded byte width for a code point; 0 means out of range (> U+10FFFF).
+function automatic logic [2:0] pycore_utf8_encode_width(
+    input logic [31:0] cp
+);
+    begin
+        if (cp < 32'h0000_0080)
+            pycore_utf8_encode_width = 3'd1;
+        else if (cp < 32'h0000_0800)
+            pycore_utf8_encode_width = 3'd2;
+        else if (cp < 32'h0001_0000)
+            pycore_utf8_encode_width = 3'd3;
+        else if (cp <= 32'h0010_FFFF)
+            pycore_utf8_encode_width = 3'd4;
+        else
+            pycore_utf8_encode_width = 3'd0;
+    end
+endfunction
+
+// Encode a code point as a SHORT_STR payload (BI_CHR): byte 0 at [119:112],
+// matching pycore_short_str_byte / pycore_make_short_str_entry.  `width` must
+// come from pycore_utf8_encode_width and be non-zero.
+function automatic logic [119:0] pycore_utf8_encode_payload(
+    input logic [31:0] cp,
+    input logic [2:0]  width
+);
+    logic [119:0] payload;
+    begin
+        payload = '0;
+        unique case (width)
+            3'd1: begin
+                payload[119:112] = {1'b0, cp[6:0]};
+            end
+            3'd2: begin
+                payload[119:112] = {3'b110, cp[10:6]};
+                payload[111:104] = {2'b10, cp[5:0]};
+            end
+            3'd3: begin
+                payload[119:112] = {4'b1110, cp[15:12]};
+                payload[111:104] = {2'b10, cp[11:6]};
+                payload[103:96]  = {2'b10, cp[5:0]};
+            end
+            3'd4: begin
+                payload[119:112] = {5'b11110, cp[20:18]};
+                payload[111:104] = {2'b10, cp[17:12]};
+                payload[103:96]  = {2'b10, cp[11:6]};
+                payload[95:88]   = {2'b10, cp[5:0]};
+            end
+            default: ;
+        endcase
+        pycore_utf8_encode_payload = payload;
     end
 endfunction
 
