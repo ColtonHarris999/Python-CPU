@@ -200,15 +200,20 @@ Also useful after B lands (not blockers for the specials themselves):
 
 ---
 
-## 3. Priority C — `BI_ORD` / `BI_CHR` (native, not custom opcodes)
+## 3. Priority C — `BI_ORD` / `BI_CHR` — **DONE**
 
 | Id | Behavior |
 | --- | --- |
-| `BI_ORD` | One-char STR → INT code point (reuse STR FOR_ITER UTF-8 decode) |
-| `BI_CHR` | INT → one-char SHORT_STR (UTF-8 encode, range checks) |
+| `BI_ORD` (10) | One-char SHORT_STR → INT code point; reuses the STR FOR_ITER UTF-8 helpers |
+| `BI_CHR` (11) | INT → one-char SHORT_STR (1–4 bytes inline); rejects > U+10FFFF, negatives, surrogates |
 
-Seed `ord` / `chr` in builtins dict; then firmware `ascii` becomes feasible.
-See existing `ord.md` / `chr.md`.
+Both are single-cycle with no dmem or `string_mem` access: a one-character
+string is always a `SHORT_STR`, so its bytes are inline in the handle (and a
+`LONG_STR` is therefore always a length error for `ord`). Seeded in the boot
+builtins dict. Shipped notes in `ord.md` / `chr.md`.
+
+`ascii` is still blocked, but now only on `repr` for str (quoting plus
+`\xNN` / `\uNNNN` escape construction) — not on character primitives.
 
 ---
 
@@ -259,7 +264,7 @@ Still hybrid: keep `BI_LEN` / `BI_RANGE` / `BI_SET` / `BI_MAX` positional.
 | --- | --- | --- |
 | A print console | excore + TB | **Done** — ROM print + stdout goldens |
 | B attr specials | pycore RTL (LOAD_ATTR) | **Done** — specials + ROM seed |
-| C ORD/CHR | pycore CALL FSM | `BI_ORD` / `BI_CHR` + image tests |
+| C ORD/CHR | pycore CALL FSM | **Done** — `BI_ORD` / `BI_CHR` + `img_builtin_ord*` / `img_builtin_chr*` |
 | D bytecode | bytecode agent | `CO_VARKEYWORDS` or str `COMPARE_OP` |
 | E ROM seed | firmware agent | seed attr + ord/chr after B/C |
 
@@ -268,8 +273,8 @@ Still hybrid: keep `BI_LEN` / `BI_RANGE` / `BI_SET` / `BI_MAX` positional.
 ## 8. Success metric for wave 4
 
 **Met for track A:** `print(...)` stdout goldens on the two-core top.  
-**Met for track B:** `hasattr`/`getattr`/`isinstance` (and friends) in ROM.
+**Met for track B:** `hasattr`/`getattr`/`isinstance` (and friends) in ROM.  
+**Met for track C:** `ord`/`chr` native + image tests (Priority C).
 
-Still open for a full wave-4 close-out:
-
-3. `ord`/`chr` native + ROM/tests (Priority C).
+Wave 4 is closed. Remaining follow-ups are Priority D bytecode items (§4),
+tracked from `planning/README.md`.

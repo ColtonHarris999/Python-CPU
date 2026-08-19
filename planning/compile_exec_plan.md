@@ -89,8 +89,8 @@ hosts a tokenizer/parser today.
 | `s[i]` | **Works** — `CONT_SUBSCR_STR`, character-indexed (P0.2 landed; was a type trap) |
 | `"x" in "abc"` | **Type-traps** — `CONTAINS_OP` routes strings to the LIST handler |
 | `s1 < s2` | **Type-traps** — only same-tag `==` / `!=` is native |
-| `ord` / `chr` | **Blocked** (wave-4 Priority C) |
 | `s1 + s2` | Works (SHORT_STR inline, else LONG_STR in `string_mem`) |
+| `ord` / `chr` | **Works** — native `BI_ORD` / `BI_CHR` (P0.1 landed) |
 | `s1 == s2` | Works — 128-bit descriptor/payload compare |
 | `for c in s` | Works (`GET_ITER` STR kind) |
 | `len(s)` | Works (`BI_LEN`) |
@@ -218,7 +218,7 @@ delivers `exec(code_object)` / `eval(code_object)` with zero RTL work.
 
 | Phase | Deliverable | Layer | Blocks |
 | --- | --- | --- | --- |
-| P0 | `ord`, `chr`, `s[i]` (**`s[i]` done**) | RTL + firmware | B4 |
+| P0 | `ord`, `chr`, `s[i]` — **all done** | RTL + firmware | B4 |
 | P1 | Writable code arena | RTL | B1 |
 | P2 | `CODE_OBJECT` fabrication builtins | RTL | B2 |
 | P3 | `exec(code)` / `eval(code)` | firmware + tooling | — |
@@ -233,45 +233,70 @@ delivers `exec(code_object)` / `eval(code_object)` with zero RTL work.
 
 ## 5. Phase 0 — string and character primitives
 
-Prerequisite for any tokenizer. P0.1 is already queued as wave-4 Priority C in
-[`builtins_wave4_plan.md`](builtins_wave4_plan.md) §3. **P0.2 (`s[i]`) is
-done** — see §5.2.
+Prerequisite for any tokenizer. **Both parts are done:** P0.1 (`ord` / `chr`,
+also wave-4 Priority C in [`builtins_wave4_plan.md`](builtins_wave4_plan.md) §3)
+in §5.1, and P0.2 (`s[i]`) in §5.2. Phase 0 is closed.
 
 ### 5.0 Why the tokenizer needs so little
 
-With `s[i]` shipped (§5.2), the lexer can index the source string directly and
-no longer needs the `chars = list(src)` workaround, which cost a 32-byte heap
-object per character. Character classes can be dict/set lookups
-(`c in DIGITS`) since dict/set probes support `SHORT_STR` keys, so the tokenizer
-can be written today with **no `ord` at all**.
+With `s[i]` (§5.2) and `ord` (§5.1) shipped, the lexer can index the source
+string directly and classify characters with integer range compares. It no
+longer needs either of the workarounds this section originally planned around:
+`chars = list(src)` (a 32-byte heap object per source character) or dict/set
+probes for character classes. `chr` covers escape decoding in string literals.
 
-We still want P0.1 because `ord` range compares are far cheaper than a dict
-probe per character, and because `chr` is required to decode escapes in string
-literals.
+`img_builtin_ord_scan` is exactly this pattern end to end:
 
-### 5.1 `BI_ORD` / `BI_CHR` (RTL, CALL FSM)
+```python
+for i in range(len(src)):
+    cp = ord(src[i])
+    if cp >= 48:
+        if cp <= 57:
+            digits += 1
+```
 
-1. Assign `PY_BI_ORD = 32'd10`, `PY_BI_CHR = 32'd11` in
-   `pycore/rtl/pycore_defs.svh` (next free after `PY_BI_SET = 9`); mirror
-   `BI_ORD` / `BI_CHR` in `pycore/tools/encoding.py`.
-2. `BI_ORD`: argc 1. `SHORT_STR` with a single UTF-8 character → `INT`
-   code point, reusing the width-decode logic the STR `FOR_ITER` iterator
-   already has in `pycore_cont_list.svh`. Wrong length or non-STR →
-   `PY_TRAP_TYPE`. `LONG_STR` of one char routes through the same decode
-   against `string_mem`.
-3. `BI_CHR`: argc 1. `INT` in `0 .. 0x10FFFF`, surrogates
-   `0xD800..0xDFFF` rejected → `PY_TRAP_TYPE`. Encode 1–4 UTF-8 bytes into an
-   inline `SHORT_STR`.
-4. Seed `ord` / `chr` as `OBK_BUILTIN` handles in `build_builtins_dict`.
-5. Update `pycore/docs/object_model.md` builtin-id table and
-   `pycore_firmware/builtins/builtins.md` (`ord`/`chr` → **in ROM**);
-   delete the now-stale `ord.md` / `chr.md` blockers sections.
+### 5.1 `BI_ORD` / `BI_CHR` — **DONE**
 
-**Tests:** `img_builtin_ord.py`, `img_builtin_chr.py`,
-`img_builtin_ord_unicode.py` (multi-byte round trip),
-`img_builtin_ord_len_trap.py`, `img_builtin_chr_range_trap.py`
-(`PYCORE_IMAGE_TRAP_RUN` with code 1). Then ROM-seed `ascii` and add
-`img_firmware_ascii.py`.
+Shipped as `PY_BI_ORD = 10` / `PY_BI_CHR = 11`, seeded as `OBK_BUILTIN` handles
+in `build_builtins_dict` and mirrored as `BI_ORD` / `BI_CHR` in
+`pycore/tools/encoding.py`.
+
+Both are **single-cycle with no dmem or `string_mem` access**, which is simpler
+than this plan originally assumed. The reason: **a one-character string is
+always a `SHORT_STR`**, because every string of ≤15 bytes is (`tag_constant`
+picks by encoded length, runtime concat in `pycore_string_mem.sv` does the same,
+and `s[i]` returns `SHORT_STR`). So:
+
+- `ord` reads its bytes from the inline payload via `pycore_short_str_byte` —
+  the planned `LONG_STR` path is unnecessary, since a `LONG_STR` is by
+  construction longer than one character and is simply a length error.
+- `chr` writes 1–4 encoded bytes straight into an inline `SHORT_STR` handle, so
+  no string-heap allocation is involved.
+
+New helpers in `pycore_defs.svh` alongside the existing
+`pycore_utf8_char_width` / `pycore_utf8_cont_valid`: `pycore_utf8_decode`,
+`pycore_utf8_encode_width`, `pycore_utf8_encode_payload`,
+`pycore_utf8_is_surrogate`. The CALL FSM gains sub-states 52 (ORD) and 53 (CHR)
+in the `OBK_BUILTIN` dispatch table.
+
+Errors: non-string / multi-character / malformed UTF-8 / out-of-range /
+negative / surrogate all raise `PY_TRAP_TYPE`; wrong argc raises
+`PY_TRAP_CALL_FILTER`. Overlong encodings are not detected, matching STR
+`FOR_ITER` and `s[i]`.
+
+**Deviation:** `chr` rejects lone surrogates (`0xD800..0xDFFF`) even though
+CPython allows them — they have no well-formed UTF-8 encoding, and every PyCore
+string path assumes UTF-8. This preserves `ord(chr(n)) == n` for all accepted
+`n`. Documented in `chr.md`.
+
+**Tests (all passing):** `img_builtin_ord`, `img_builtin_chr`,
+`img_builtin_ord_unicode` (all four widths + round trip), `img_builtin_ord_scan`
+(the `ord(s[i])` classification loop this phase exists to enable),
+`img_builtin_ord_len_trap`, `img_builtin_ord_type_trap`,
+`img_builtin_chr_range_trap`, `img_builtin_chr_surrogate_trap`.
+
+`ascii` remains blocked, but now only on `repr` for str (quoting plus
+`\xNN` / `\uNNNN` escape construction) — not on character primitives.
 
 ### 5.2 STR subscript `s[i]` — **DONE**
 
@@ -870,7 +895,7 @@ alongside `pycore-img-attr-all` / `pycore-img-call-all`.
 
 | Track | Owner | First deliverable |
 | --- | --- | --- |
-| P0 strings/chars | pycore RTL (CALL FSM + container) | `BI_ORD` / `BI_CHR` + `img_builtin_ord` |
+| P0 strings/chars | pycore RTL (CALL FSM + container) | **Done** — `s[i]`, `BI_ORD`, `BI_CHR` |
 | P1 arena | pycore RTL (fetch/mem) | `pycore_code_arena.sv` + `img_arena_call` |
 | P2 fabrication | pycore RTL (CALL FSM) + tooling | `img_code_new_call` |
 | P3 exec/eval | firmware + tooling | `SEED_CODE` + `img_exec_code_basic` |
@@ -885,7 +910,10 @@ alongside `pycore-img-attr-all` / `pycore-img-call-all`.
 
 If the goal is the earliest possible end-to-end `exec("x = 1 + 2")`:
 
-**P3 → P1 → P2 → P0.1 → P6 → P7 (expressions + assignment only) → P8.**
+**P3 → P1 → P2 → P6 → P7 (expressions + assignment only) → P8.**
+
+P0 is already complete, so the character primitives a tokenizer needs
+(`s[i]`, `ord`, `chr`) are in place.
 
 P4 (globals override), P5 (SyntaxError), and the rest of the grammar can all
 follow, because module-scope `exec` needs neither. P3 on its own is worth

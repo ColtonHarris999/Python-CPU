@@ -15,7 +15,8 @@ Status values: **not implemented** (stub only), **blocked** (stub +
 documented hard dependency), **in progress** (partial pure-Python with
 known gaps), **implemented** (pure-Python source ready for ROM compile
 on the supported opcode subset), **in ROM** (compiled into the boot
-image).
+image as a `CODE_OBJECT`), **native** (a hardware `BI_*` owns the
+builtins-dict entry and no pure-Python body is possible).
 
 ## Cross-cutting pycore constraints
 
@@ -32,8 +33,8 @@ These limit every firmware builtin:
 | Comprehensions emit `RERAISE` | Policy C: prefer `out += [x]` / `{*iterable}` (see `bytecode_support.md`) |
 | List/set growth | `LIST_EXTEND` / `SET_UPDATE` need excore for non-empty work |
 | `UNPACK_EX` + `CALL_INTRINSIC_1` (LIST_TO_TUPLE) | Starred unpack and `(*lst,)` / list→tuple materialization are available |
-| Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`, `ord.md`, `chr.md` |
-| Next plan | `planning/builtins_wave4_plan.md` — print console + ORD/CHR (§2 attr specials **done**) |
+| Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`. `ord.md` / `chr.md` are shipped notes. |
+| Next plan | `planning/builtins_wave4_plan.md` — §1 print, §2 attr specials, §3 ORD/CHR all **done**; §4 bytecode follow-ups remain |
 | `compile`/`exec`/`eval` plan | `planning/compile_exec_plan.md` — code arena + `CODE_OBJECT` fabrication + self-hosted ROM compiler |
 
 ## Builtin functions
@@ -45,14 +46,14 @@ These limit every firmware builtin:
 | `all` | Return True if all elements of the iterable are true (or if empty). | in ROM | Uses widened TO_BOOL; empty → True. |
 | `anext` | Return the next item from an asynchronous iterator. | blocked | Async/await deferred. |
 | `any` | Return True if any element of the iterable is true. | in ROM | Uses widened TO_BOOL; empty → False. |
-| `ascii` | Return an ASCII-only repr, escaping non-ASCII characters. | blocked | Needs `repr` for str + `ord` for non-ASCII escapes. |
+| `ascii` | Return an ASCII-only repr, escaping non-ASCII characters. | blocked | `ord` / `chr` now available; still needs `repr` for str (quoting + `\xNN` / `\uNNNN` escape building). |
 | `bin` | Convert an integer to a binary string prefixed with '0b'. | in ROM | String concat digit loop. |
 | `bool` | Return a Boolean value; subclass of int used as the Boolean type. | in ROM | Truthiness only — does not fabricate a `bool` type object. |
 | `breakpoint` | Drop into the debugger at the call site (PEP 553). | blocked | No `sys.breakpointhook` / debugger. |
 | `bytearray` | Return a new mutable bytearray object. | blocked | Seeded as `BI_BYTEARRAY`; CALL → excore. Cannot alloc in pure Python. |
 | `bytes` | Return a new immutable bytes object. | blocked | `PY_TAG_BYTES` exists; no runtime constructor API. |
 | `callable` | Return True if the object appears callable. | in progress | Heuristic via `__call__` in `__dict__`; no tag probe for `CODE_OBJECT`. |
-| `chr` | Return the Unicode character for an integer code point. | blocked | See `chr.md` — need `BI_CHR` / string-from-bytes. |
+| `chr` | Return the Unicode character for an integer code point. | native | `BI_CHR` (id 11): INT → one-character SHORT_STR, 1–4 UTF-8 bytes inline. Rejects > U+10FFFF, negatives, and lone surrogates → TYPE trap (CPython allows surrogates). |
 | `classmethod` | Transform a method into a class method. | blocked | No classmethod kind; image folding rejects `@classmethod`. |
 | `compile` | Compile source into a code object usable by exec/eval. | blocked | See `compile.md`. |
 | `complex` | Create a complex number from real/imag or a string. | blocked | COMPLEX ALU tag exists; no runtime constructor. |
@@ -90,7 +91,7 @@ These limit every firmware builtin:
 | `object` | Return a new featureless object; base for all classes. | blocked | No `OBK_INSTANCE` alloc without a class body. |
 | `oct` | Convert an integer to an octal string prefixed with '0o'. | in ROM | String concat digit loop. |
 | `open` | Open a file and return a corresponding file object. | blocked | See `open.md`. |
-| `ord` | Return the Unicode code point for a one-character string. | blocked | See `ord.md`. |
+| `ord` | Return the Unicode code point for a one-character string. | native | `BI_ORD` (id 10): one-character SHORT_STR → INT. A one-character string is always SHORT_STR, so the decode is inline (no `string_mem` read). Non-STR / multi-character → TYPE trap. |
 | `pow` | Return base**exp, optionally modulo mod. | in ROM | Binary modexp for non-neg exp; neg exp+mod → `raise`. |
 | `print` | Print objects to a stream (default stdout), separated by sep and ended by end. | in ROM | ROM `*args`/`sep=`/`end=` → `_bi_print` (`BI_PRINT` → `CONSOLE_TX`). LONG_STR Phase 2. |
 | `property` | Return a property attribute with optional getter/setter/deleter. | blocked | See `property.md`. |
@@ -130,11 +131,12 @@ pycore_firmware/builtins/builtins.md    # this inventory
 | Kind | Count |
 | --- | --- |
 | Python modules | 73 |
-| Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`, `ord`, `chr`) |
-| Status: in ROM | 27 |
+| Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`; `ord` / `chr` now shipped notes) |
+| Status: in ROM | 28 (incl. `print`) |
+| Status: native | 2 (`ord`, `chr`) |
 | Status: implemented | 5 (`len` miss path, `list_append`, `max` notes, `range` list form, `set` Python form) |
 | Status: in progress | 11 |
-| Status: blocked | 30 |
+| Status: blocked | 28 |
 
 ### In ROM (seeded as CODE_OBJECT in boot builtins dict)
 
@@ -150,6 +152,20 @@ Coverage: `img_firmware_rom_subset`, `img_firmware_iterators`,
 `img_firmware_filter_pred`, `img_firmware_attr_helpers`,
 `img_firmware_isinstance`. Attr specials: `img_attr_dunder_*`.
 
+### Native (hardware `BI_*` owns the builtins-dict entry)
+
+`ord` (`BI_ORD`, id 10), `chr` (`BI_CHR`, id 11). No pure-Python body is
+possible: reading UTF-8 payload bytes as an integer and building a string from
+raw bytes are exactly the primitives Python lacks here. Both complete in one
+cycle with no dmem or `string_mem` access, because a one-character string is
+always a `SHORT_STR` and its bytes are inline in the handle.
+
+Coverage: `img_builtin_ord`, `img_builtin_chr`, `img_builtin_ord_unicode`
+(all four UTF-8 widths + `ord(chr(n))` round trip), `img_builtin_ord_scan`
+(`ord(s[i])` classification loop), `img_builtin_ord_len_trap`,
+`img_builtin_ord_type_trap`, `img_builtin_chr_range_trap`,
+`img_builtin_chr_surrogate_trap`.
+
 ### Implemented (not yet seeded / hybrid docs)
 
 `len` (miss-path body; `BI_LEN` owns dict entry), `list_append`, `max`
@@ -163,10 +179,10 @@ form; `BI_SET` owns dict)
 
 ### Blocked (stub + notes/plans)
 
-`aiter`, `anext`, `ascii`, `breakpoint`, `bytearray`, `bytes`, `chr`,
+`aiter`, `anext`, `ascii`, `breakpoint`, `bytearray`, `bytes`,
 `classmethod`, `compile`, `complex`, `eval`, `exec`, `frozenset`,
 `globals`, `hash`, `help`, `id`, `input`, `locals`, `memoryview`,
-`object`, `open`, `ord`, `print`, `property`, `slice`, `staticmethod`,
+`object`, `open`, `property`, `slice`, `staticmethod`,
 `super`, `from_bytes`, `to_bytes`
 
 ## Blocked by bytecode (§3 gaps)
@@ -181,7 +197,7 @@ Audit of **blocked** / partially-blocked names against
 | `CO_VARARGS` / `CO_VARKEYWORDS` on defs | Multi-iter `zip(*args)` / `map` as Python `*args` parameters |
 | Exception tables / `RERAISE` | Real `TypeError` / `StopIteration` everywhere; comprehension option A/B |
 | `GET_ITER` / `FOR_ITER` on OBJECT | User-defined iterables (`__iter__` / `__next__`) |
-| `BI_ORD` / `BI_CHR` | `ord`, `chr`, `ascii` (see `ord.md`, `chr.md`) |
+| ~~`BI_ORD` / `BI_CHR`~~ | **Done** — `ord` / `chr` are native (ids 10 / 11). `ascii` now only needs `repr` for str |
 | `LOAD_SUPER_ATTR` + descriptors | `super`, `property`, `classmethod` (see `super.md`, `property.md`) |
 | `COMPARE_OP` string ordering | `sorted` / `min` / `max` on str |
 | `FORMAT_*` / `BUILD_STRING` | Richer `format` / `str` / `print` |
