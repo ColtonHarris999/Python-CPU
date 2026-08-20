@@ -1409,6 +1409,10 @@ pycore-img-two-core: \
 	pycore-img-attr-many
 
 pycore-img: \
+	pycore-img-exec-all \
+	pycore-img-slice-all \
+	pycore-img-exc-types-all \
+	pycore-img-code-ram-all \
 	pycore-img-smoke \
 	pycore-img-call-chain \
 	pycore-img-str-consts \
