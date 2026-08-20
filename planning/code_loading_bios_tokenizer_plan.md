@@ -1,6 +1,6 @@
 # Plan 1 — code loading, BIOS boot, and the tokenizer
 
-**Status:** in progress — P1, P3, P6.1 (strings), P7 shipped; see §5
+**Status:** in progress — P1, P3, P6.1 (strings), P7, P8 shipped; P2, P4, P5, P6.2–6.4, P9 open. See §5
 **Audience:** pycore RTL agent, bytecode agent, firmware agent, tooling agent
 **Successor:** [`native_compiler_plan.md`](native_compiler_plan.md) (Plan 2)
 **Supersedes:** the P1–P6 phases of `compile_exec_plan.md`
@@ -232,7 +232,7 @@ P6 is the long pole and is independent of P1–P5, so it can run in parallel.
 | P5 | BIOS in ROM, boot descriptor, payload dispatch | firmware + RTL + tooling | Open |
 | P6 | `BINARY_SLICE`, list/str methods, string interning | RTL | **P6.1 strings done**; methods / ordering / interning open |
 | P7 | Exception types with messages | RTL + firmware | **Types done**; `args` payload open |
-| P8 | Heap / code-RAM mark and release | RTL + firmware | Open |
+| P8 | Heap / code-RAM mark and release | RTL + firmware | **Done** |
 | P9 | On-device tokenizer | firmware + tooling | Open |
 
 ### 5.1 What shipped, and what each phase learned
@@ -243,6 +243,7 @@ P6 is the long pole and is independent of P1–P5, so it can run in parallel.
 | **P3** | ROM `exec`/`eval` bodies plus the `SEED_CODE` pragma. Confirmed the plan's claim: no hardware change was needed. `exec`/`eval` do need **host stand-ins** (recorded in `HOST_STANDIN_BUILTINS`) because CPython code objects are not callable, so `run_image_test.py` binds them to the test namespace. |
 | **P6.1** | `BINARY_SLICE` on strings via a new `string_mem` slice port. Two surprises about what CPython emits: all-literal slices (`s[1:3]`, `s[:]`) are folded to a `slice` **constant** + `NB_SUBSCR` and never reach `BINARY_SLICE`, and omitted bounds arrive as `None`. List/tuple slicing is still open. |
 | **P7** | Four leaf exception types seeded. Testing exposed that **exceptions do not propagate across frames** (`RAISE_VARARGS` walks only the raising code object's table), now deviation 16 and pinned by `img_try_exc_cross_frame_fatal`. |
+| **P8** | `code_ram_ptr_r` plus `_bi_heap_mark`/`_bi_heap_release`/`_bi_code_mark`/`_bi_code_release`. Releases validate the mark against its region and the current cursor, so a stale mark faults. `img_heap_mark_release` pins the property that matters: reallocating after a release lands at the same address. |
 
 ---
 
