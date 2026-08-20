@@ -1,6 +1,6 @@
 # Plan 1 — code loading, BIOS boot, and the tokenizer
 
-**Status:** proposed
+**Status:** in progress — P1, P3, P6.1 (strings), P7 shipped; see §5
 **Audience:** pycore RTL agent, bytecode agent, firmware agent, tooling agent
 **Successor:** [`native_compiler_plan.md`](native_compiler_plan.md) (Plan 2)
 **Supersedes:** the P1–P6 phases of `compile_exec_plan.md`
@@ -220,20 +220,29 @@ graph TD
     P5 --> P9
 ```
 
-**P3 is shippable immediately with no RTL** and should go first for early value.
+**P3 was shippable immediately with no RTL** and went first, as planned.
 P6 is the long pole and is independent of P1–P5, so it can run in parallel.
 
-| Phase | Deliverable | Layer |
-| --- | --- | --- |
-| P1 | ROM + writable code RAM, fetch region mux | RTL |
-| P2 | Module image format, `_bi_load_module`, relocation | RTL + tooling |
-| P3 | `exec(code)` / `eval(code)` | firmware + tooling |
-| P4 | Per-frame globals, `exec(code, globals)` | RTL |
-| P5 | BIOS in ROM, boot descriptor, payload dispatch | firmware + RTL + tooling |
-| P6 | `BINARY_SLICE`, list/str methods, string interning | RTL |
-| P7 | Exception types with messages | RTL + firmware |
-| P8 | Heap / code-RAM mark and release | RTL + firmware |
-| P9 | On-device tokenizer | firmware + tooling |
+| Phase | Deliverable | Layer | Status |
+| --- | --- | --- | --- |
+| P1 | ROM + writable code RAM, fetch region mux | RTL | **Done** |
+| P2 | Module image format, `_bi_load_module`, relocation | RTL + tooling | Open |
+| P3 | `exec(code)` / `eval(code)` | firmware + tooling | **Done** |
+| P4 | Per-frame globals, `exec(code, globals)` | RTL | Open |
+| P5 | BIOS in ROM, boot descriptor, payload dispatch | firmware + RTL + tooling | Open |
+| P6 | `BINARY_SLICE`, list/str methods, string interning | RTL | **P6.1 strings done**; methods / ordering / interning open |
+| P7 | Exception types with messages | RTL + firmware | **Types done**; `args` payload open |
+| P8 | Heap / code-RAM mark and release | RTL + firmware | Open |
+| P9 | On-device tokenizer | firmware + tooling | Open |
+
+### 5.1 What shipped, and what each phase learned
+
+| Phase | Outcome |
+| --- | --- |
+| **P1** | `pycore_code_ram.sv` + `pycore_code_mem.sv` region mux; `--code-ram` build mode. `img_code_ram_call` runs the same program from ROM and from RAM (empty ROM in the second case) with identical results *and* identical cycle counts. Details in `pycore/docs/code_loading.md`. |
+| **P3** | ROM `exec`/`eval` bodies plus the `SEED_CODE` pragma. Confirmed the plan's claim: no hardware change was needed. `exec`/`eval` do need **host stand-ins** (recorded in `HOST_STANDIN_BUILTINS`) because CPython code objects are not callable, so `run_image_test.py` binds them to the test namespace. |
+| **P6.1** | `BINARY_SLICE` on strings via a new `string_mem` slice port. Two surprises about what CPython emits: all-literal slices (`s[1:3]`, `s[:]`) are folded to a `slice` **constant** + `NB_SUBSCR` and never reach `BINARY_SLICE`, and omitted bounds arrive as `None`. List/tuple slicing is still open. |
+| **P7** | Four leaf exception types seeded. Testing exposed that **exceptions do not propagate across frames** (`RAISE_VARARGS` walks only the raising code object's table), now deviation 16 and pinned by `img_try_exc_cross_frame_fatal`. |
 
 ---
 
