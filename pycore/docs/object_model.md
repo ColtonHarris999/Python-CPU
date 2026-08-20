@@ -62,17 +62,19 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | 13 | `HEAP_RELEASE` | Restores `heap_ptr_r`. Mark must be within `[HEAP_INIT_PTR, heap_ptr_r]`, else `MEM_FAULT` |
 | 14 | `CODE_MARK` | Zero-arg; returns `code_ram_ptr_r` (a slot index) as `INT` |
 | 15 | `CODE_RELEASE` | Restores `code_ram_ptr_r`. Mark must be within `[CODE_RAM_INIT_SLOT, code_ram_ptr_r]`, else `MEM_FAULT` |
+| 16 | `EXEC_GLOBALS` | `_bi_exec_globals(code, dict)`: enter a `CODE_OBJECT` with `globals_base_r` pointed at a `MUT_DICT`. Wrong argc → `CALL_FILTER`; non-code / non-dict → `TYPE`. The caller's globals come back on RETURN. |
 
 Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
 module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
 `bytearray` / `max` / `len` / `_bi_print` / `range` / `set` / `ord` / `chr` /
-`_bi_heap_mark` / `_bi_heap_release` / `_bi_code_mark` / `_bi_code_release` as
+`_bi_heap_mark` / `_bi_heap_release` / `_bi_code_mark` / `_bi_code_release` /
+`_bi_exec_globals` as
 `OBK_BUILTIN`
 handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
 `to_bytes`, `StopIteration` plus `SyntaxError` / `ValueError` / `TypeError` /
 `IndexError` as leaf `OBK_TYPE`s (`tp_base = None`), and ROM
 firmware names (`print`, `sum`, `abs`, `bool`, `all`, `any`, `enumerate`,
-`map`, `zip`, …) as `CODE_OBJECT` handles from `ROM_FIRMWARE_BUILTINS` in
+`map`, `zip`, `exec`, `eval`, …) as `CODE_OBJECT` handles from `ROM_FIRMWARE_BUILTINS` in
 `image_from_source.py`. Public `print` is the ROM wrapper; `_bi_print`
 (`BI_PRINT`) is the one-arg `CONSOLE_TX` sink. The same `StopIteration`
 handle is also written to the exc-arena sidecar at

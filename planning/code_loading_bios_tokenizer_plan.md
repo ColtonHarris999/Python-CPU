@@ -1,6 +1,6 @@
 # Plan 1 — code loading, BIOS boot, and the tokenizer
 
-**Status:** in progress — P1, P3, P6.1 (strings), P7, P8 shipped; P2, P4, P5, P6.2–6.4, P9 open. See §5
+**Status:** in progress — P1, P3, P4, P6.1 (strings), P7, P8 shipped; P2, P5, P6.2–6.4, P9 open. See §5
 **Audience:** pycore RTL agent, bytecode agent, firmware agent, tooling agent
 **Successor:** [`native_compiler_plan.md`](native_compiler_plan.md) (Plan 2)
 **Supersedes:** the P1–P6 phases of `compile_exec_plan.md`
@@ -228,7 +228,7 @@ P6 is the long pole and is independent of P1–P5, so it can run in parallel.
 | P1 | ROM + writable code RAM, fetch region mux | RTL | **Done** |
 | P2 | Module image format, `_bi_load_module`, relocation | RTL + tooling | Open |
 | P3 | `exec(code)` / `eval(code)` | firmware + tooling | **Done** |
-| P4 | Per-frame globals, `exec(code, globals)` | RTL | Open |
+| P4 | Per-frame globals, `exec(code, globals)` | RTL | **Done** |
 | P5 | BIOS in ROM, boot descriptor, payload dispatch | firmware + RTL + tooling | Open |
 | P6 | `BINARY_SLICE`, list/str methods, string interning | RTL | **P6.1 strings done**; methods / ordering / interning open |
 | P7 | Exception types with messages | RTL + firmware | **Types done**; `args` payload open |
@@ -244,6 +244,7 @@ P6 is the long pole and is independent of P1–P5, so it can run in parallel.
 | **P6.1** | `BINARY_SLICE` on strings via a new `string_mem` slice port. Two surprises about what CPython emits: all-literal slices (`s[1:3]`, `s[:]`) are folded to a `slice` **constant** + `NB_SUBSCR` and never reach `BINARY_SLICE`, and omitted bounds arrive as `None`. List/tuple slicing is still open. |
 | **P7** | Four leaf exception types seeded. Testing exposed that **exceptions do not propagate across frames** (`RAISE_VARARGS` walks only the raising code object's table), now deviation 16 and pinned by `img_try_exc_cross_frame_fatal`. |
 | **P8** | `code_ram_ptr_r` plus `_bi_heap_mark`/`_bi_heap_release`/`_bi_code_mark`/`_bi_code_release`. Releases validate the mark against its region and the current cursor, so a stale mark faults. `img_heap_mark_release` pins the property that matters: reallocating after a release lands at the same address. |
+| **P4** | Frame slot 1 bits `[127:97]` save the caller's `globals_base_r[30:0]`. `_bi_exec_globals(code, dict)` rewrites a builtin CALL as a 0-arg code-object CALL with that dict as the callee's globals. `exec(code, globals=None)` / `eval(code, globals=None)` are ROM wrappers. Functions remain code objects with no `__globals__`: a helper called from an exec'd payload sees the exec dict, not the module where it was defined. |
 
 ---
 

@@ -824,6 +824,21 @@ pycore-img-eval-code-expr:
 pycore-img-exec-bad-arg-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,exec_bad_arg_trap,6,50000)
 
+pycore-img-exec-globals-dict:
+	$(call PYCORE_IMAGE_RUN,exec_globals_dict,100000)
+
+pycore-img-exec-globals-read:
+	$(call PYCORE_IMAGE_RUN,exec_globals_read,100000)
+
+pycore-img-exec-globals-restore:
+	$(call PYCORE_IMAGE_RUN,exec_globals_restore,100000)
+
+pycore-img-exec-globals-nested:
+	$(call PYCORE_IMAGE_RUN,exec_globals_nested,100000)
+
+pycore-img-exec-globals-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,exec_globals_type_trap,1,50000)
+
 # Plan 1 P3: exec/eval on precompiled CODE_OBJECTs (SEED_CODE payloads).
 pycore-img-slice-str:
 	$(call PYCORE_IMAGE_RUN,slice_str,50000)
@@ -931,7 +946,12 @@ pycore-img-exec-all: \
 	pycore-img-exec-code-returns-none \
 	pycore-img-exec-code-nested \
 	pycore-img-eval-code-expr \
-	pycore-img-exec-bad-arg-trap
+	pycore-img-exec-bad-arg-trap \
+	pycore-img-exec-globals-dict \
+	pycore-img-exec-globals-read \
+	pycore-img-exec-globals-restore \
+	pycore-img-exec-globals-nested \
+	pycore-img-exec-globals-type-trap
 
 pycore-img-str-subscr-long:
 	$(call PYCORE_IMAGE_RUN,str_subscr_long,50000)

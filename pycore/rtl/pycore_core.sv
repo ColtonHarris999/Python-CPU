@@ -186,9 +186,10 @@ module pycore_core #(
     logic [127:0]                  consts_base_r;
     logic [127:0]                  names_base_r;
     // Globals dictionary base address (byte address of the DICT header).
-    // Latched once by S_BOOT and read/written by LOAD_GLOBAL / LOAD_NAME /
-    // STORE_NAME / STORE_GLOBAL.  Zero when BOOT_EN=0 — legacy container
-    // tests that never touch a global will not read this register.
+    // Latched by S_BOOT; CALL/RETURN save and restore it per frame so
+    // `_bi_exec_globals` can point a callee at a supplied MUT_DICT.
+    // Zero when BOOT_EN=0 — legacy container tests that never touch a global
+    // will not read this register.
     logic [31:0]                   globals_base_r;
     logic [31:0]                   builtins_base_r;
 
@@ -269,6 +270,10 @@ module pycore_core #(
     // Mode installed for the frame being pushed (1 ⇒ discard return, push self).
     logic                          call_ret_mode_r;
     logic [63:0]                   call_saved_inst_r;
+    // Plan 1 P4: pending globals switch applied at frame init, after the
+    // caller's globals_base_r has been packed into the descriptor.
+    logic                          call_globals_override_en_r;
+    logic [31:0]                   call_globals_override_r;
     // Live / latched ret-mode for S_RETURN writeback (from frame pop).
     logic                          frame_ret_mode_r;
     logic [63:0]                   frame_saved_inst_r;
@@ -930,8 +935,9 @@ module pycore_core #(
     // ---------------------------------------------------------------------
     // Frame manager (pycore_frame).
     // On CALL the current frame descriptor {pc_return, tos_base, locals_base,
-    // cur_code} is pushed to a DRAM stack as two 128-bit slots. On RETURN the
-    // two slots are popped back and the core reloads caller code-object fields.
+    // cur_code, globals_base} is pushed to a DRAM stack as two 128-bit slots.
+    // On RETURN the two slots are popped back and the core reloads caller
+    // code-object fields and restores globals_base_r.
     // The core mediates those dmem transactions through the push/pop handshake.
     //
     // The frame stack lives at the top of the 128 KB data memory
@@ -955,6 +961,7 @@ module pycore_core #(
     logic [31:0]           frame_cur_code_out;
     logic                  frame_ret_mode_out;
     logic [63:0]           frame_saved_inst_out;
+    logic [31:0]           frame_globals_base_out;
     logic [$clog2(MAX_CALL_DEPTH_CORE+1)-1:0] frame_active_depth;
     logic [$clog2(MAX_CALL_DEPTH_CORE+1)-1:0]
                           container_call_target_depth_r;
@@ -994,6 +1001,7 @@ module pycore_core #(
         .cur_code_in_i(cur_code_r),
         .ret_mode_in_i(call_ret_mode_r),
         .saved_inst_in_i(call_saved_inst_r),
+        .globals_base_in_i(globals_base_r),
         .new_locals_base_in_i(call_new_locals_r),
         .pc_return_out_o(frame_pc_return_out),
         .tos_base_out_o(frame_tos_base_out),
@@ -1001,6 +1009,7 @@ module pycore_core #(
         .cur_code_out_o(frame_cur_code_out),
         .ret_mode_out_o(frame_ret_mode_out),
         .saved_inst_out_o(frame_saved_inst_out),
+        .globals_base_out_o(frame_globals_base_out),
         .next_locals_base_o(frame_next_locals_base),
         .init_new_frame_o(frame_init_new_frame),
         .return_done_o(frame_return_done),
@@ -1767,6 +1776,8 @@ module pycore_core #(
             call_inst_addr_r     <= '0;
             call_ret_mode_r      <= 1'b0;
             call_saved_inst_r    <= '0;
+            call_globals_override_en_r <= 1'b0;
+            call_globals_override_r    <= '0;
             frame_ret_mode_r     <= 1'b0;
             frame_saved_inst_r   <= '0;
             container_call_target_depth_r <= '0;
@@ -2141,6 +2152,8 @@ module pycore_core #(
                         call_sub_r           <= 6'd0;
                         call_ret_mode_r      <= 1'b0;
                         call_saved_inst_r    <= 64'b0;
+                        call_globals_override_en_r <= 1'b0;
+                        call_globals_override_r    <= 32'b0;
                         if (cur_opcode_r == PY_OP_CALL_KW)
                             call_mode_r <= CALL_MODE_KW;
                         else if (cur_opcode_r == PY_OP_CALL_FUNCTION_EX)
@@ -2289,6 +2302,8 @@ module pycore_core #(
                         call_sub_r           <= 6'd0;
                         call_ret_mode_r      <= 1'b0;
                         call_saved_inst_r    <= 64'b0;
+                        call_globals_override_en_r <= 1'b0;
+                        call_globals_override_r    <= 32'b0;
                         call_mode_r          <= CALL_MODE_POS;
                         call_n_pos_r         <= '0;
                         call_n_kwargs_r      <= '0;

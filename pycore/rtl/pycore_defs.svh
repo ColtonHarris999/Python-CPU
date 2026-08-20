@@ -200,6 +200,10 @@ localparam logic [31:0] PY_BI_HEAP_MARK    = 32'd12;
 localparam logic [31:0] PY_BI_HEAP_RELEASE = 32'd13;
 localparam logic [31:0] PY_BI_CODE_MARK    = 32'd14;
 localparam logic [31:0] PY_BI_CODE_RELEASE = 32'd15;
+// Enter a CODE_OBJECT with globals_base_r pointed at a supplied MUT_DICT
+// (Plan 1 P4).  The CALL/RETURN path saves the caller's globals in the
+// frame descriptor so they come back on return.
+localparam logic [31:0] PY_BI_EXEC_GLOBALS = 32'd16;
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;

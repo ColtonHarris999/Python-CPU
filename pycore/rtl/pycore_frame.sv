@@ -16,7 +16,9 @@
 //     bits [31:0]    caller cur_code_r (code-object byte address)
 //     bit  [32]      ret_discard_push_self for the frame being entered
 //     bits [96:33]   saved_instance_addr (64 bits) for that frame
-//     remaining      zero
+//     bits [127:97]  caller globals_base_r[30:0] (Plan 1 P4)
+//                    dmem is 128 KB, so bit 31 of the address is always 0
+//                    and 31 bits are enough without growing the descriptor.
 //
 // On return the core re-reads the caller's co_consts / co_names from the
 // restored code object (2 field reads). Slot1's ret-mode / saved-instance
@@ -56,6 +58,7 @@ module pycore_frame #(
     input  logic [31:0]                  cur_code_in_i,
     input  logic                         ret_mode_in_i,
     input  logic [63:0]                  saved_inst_in_i,
+    input  logic [31:0]                  globals_base_in_i,
     input  logic [$clog2(RF_DEPTH)-1:0]  new_locals_base_in_i,
     output logic [31:0]                  pc_return_out_o,
     output logic [$clog2(RF_DEPTH)-1:0]  tos_base_out_o,
@@ -63,6 +66,7 @@ module pycore_frame #(
     output logic [31:0]                  cur_code_out_o,
     output logic                         ret_mode_out_o,
     output logic [63:0]                  saved_inst_out_o,
+    output logic [31:0]                  globals_base_out_o,
     output logic [$clog2(RF_DEPTH)-1:0]  next_locals_base_o,
     output logic                         init_new_frame_o,
     output logic                         return_done_o,
@@ -109,6 +113,7 @@ module pycore_frame #(
     logic [31:0]          cur_code_r;
     logic                 ret_mode_r;
     logic [63:0]          saved_inst_r;
+    logic [30:0]          globals_base_r;
 
     logic init_new_frame_r;
     logic return_done_r;
@@ -126,16 +131,18 @@ module pycore_frame #(
     assign cur_code_out_o      = cur_code_r;
     assign ret_mode_out_o      = ret_mode_r;
     assign saved_inst_out_o    = saved_inst_r;
+    assign globals_base_out_o  = {1'b0, globals_base_r};
     assign head_ptr_out_o      = (depth_r > 0) ? STACK_BASE_ADDR : '0;
     assign tail_ptr_out_o      = (depth_r > 0) ?
                                (sp_r - FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0]) : '0;
 
     // Push: beat0 writes slot0 at sp_r; beat1 writes slot1 at sp_r+16.
-    // Slot1: [31:0]=cur_code, [32]=ret_mode, [96:33]=saved_inst.
+    // Slot1: [31:0]=cur_code, [32]=ret_mode, [96:33]=saved_inst,
+    //        [127:97]=globals_base[30:0].
     assign push_req_o  = (state_r == FS_PUSHING);
     assign push_addr_o = beat_r ? (sp_r + FRAME_SLOT_BYTES[ADDR_WIDTH-1:0]) : sp_r;
     assign push_data_o = beat_r ?
-        {{(PYCORE_DMEM_DATA_WIDTH-97){1'b0}},
+        {globals_base_in_i[30:0],
          saved_inst_in_i,
          ret_mode_in_i,
          cur_code_in_i} :
@@ -183,6 +190,7 @@ module pycore_frame #(
             cur_code_r       <= 32'b0;
             ret_mode_r       <= 1'b0;
             saved_inst_r     <= 64'b0;
+            globals_base_r   <= 31'b0;
             init_new_frame_r <= 1'b0;
             return_done_r    <= 1'b0;
             frame_fault_r    <= 1'b0;
@@ -233,10 +241,12 @@ module pycore_frame #(
                 FS_POPPING: begin
                     if (pop_ack_i) begin
                         if (!beat_r) begin
-                            // First beat: slot1 → cur_code / ret_mode / saved_inst
-                            cur_code_r   <= pop_data_i[31:0];
-                            ret_mode_r   <= pop_data_i[32];
-                            saved_inst_r <= pop_data_i[96:33];
+                            // First beat: slot1 → cur_code / ret_mode /
+                            // saved_inst / globals_base
+                            cur_code_r     <= pop_data_i[31:0];
+                            ret_mode_r     <= pop_data_i[32];
+                            saved_inst_r   <= pop_data_i[96:33];
+                            globals_base_r <= pop_data_i[127:97];
                             beat_r       <= 1'b1;
                             pop_addr_r   <= sp_r - FRAME_ENTRY_BYTES[ADDR_WIDTH-1:0];
                         end else begin

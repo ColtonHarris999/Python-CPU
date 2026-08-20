@@ -227,6 +227,12 @@
                                 // Live ret-mode for the frame just entered.
                                 frame_ret_mode_r     <= call_ret_mode_r;
                                 frame_saved_inst_r   <= call_saved_inst_r;
+                                // Switch globals after the caller's pointer
+                                // has already been packed into the descriptor.
+                                if (call_globals_override_en_r) begin
+                                    globals_base_r <= call_globals_override_r;
+                                    call_globals_override_en_r <= 1'b0;
+                                end
                                 redirect_pending_r   <= 1'b1;
                                 redirect_tgt_r       <= call_entry_slot_r[31:0];
                                 call_phase_r         <= CALL_PHASE_DONE;
@@ -374,8 +380,10 @@
                         //   sub4-5: MAX - read args; compare; writeback
                         //   sub6-8: LEN - builtin containers / strings / inline range
                         //   sub40-51: LEN - INSTANCE.__len__ own tp_dict probe
-                        //   sub12-23: RANGE - normalize args, allocate object
-                        //   else: marshal PY_TRAP_BUILTIN_CALL
+//   sub12-23: RANGE - normalize args, allocate object
+//   sub54-57: heap/code mark and release
+//   sub58-59: EXEC_GLOBALS - type-check args, join phase 3 as a 0-arg call
+//   else: marshal PY_TRAP_BUILTIN_CALL
                         // --------------------------------------------------
                         4'd13: begin
                             unique case (call_sub_r)
@@ -509,6 +517,16 @@
                                                                9'd1);
                                                     call_sub_r <= 6'd24;
                                                 end
+                                            end
+                                        end else if (call_entry_slot_r[31:0] ==
+                                                     PY_BI_EXEC_GLOBALS) begin
+                                            // Two-arg: code object + MUT_DICT.
+                                            if (cur_arg_r[15:0] != 16'd2) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {2'b0, tos_r} - 9'd2);
+                                                call_sub_r <= 6'd58;
                                             end
                                         end else if (EXCORE_EN &&
                                             pycore_trap_recoverable(PY_TRAP_BUILTIN_CALL)) begin
@@ -1520,6 +1538,45 @@
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 6'd0;
+                                    end
+                                end
+                                // 58/59: _bi_exec_globals(code, dict)
+                                // Rewrite this builtin CALL as a 0-arg call
+                                // of `code` whose frame uses `dict` as
+                                // globals.  call_tos_base_r stays tos-4 so
+                                // RETURN pops the builtin, the NULL
+                                // sentinel, and both arguments.
+                                6'd58: begin
+                                    if (cont_rf_rs1_tag != PY_TAG_CODE_OBJECT) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        call_code_addr_r    <= cont_rf_rs1_val[31:0];
+                                        container_rf_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd1);
+                                        call_sub_r          <= 6'd59;
+                                    end
+                                end
+                                6'd59: begin
+                                    if (!pycore_is_dict(
+                                            cont_rf_rs1_tag, cont_rf_rs1_val)) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        call_globals_override_en_r <= 1'b1;
+                                        call_globals_override_r    <=
+                                            pycore_mut_addr(cont_rf_rs1_val)[31:0];
+                                        call_argcount_r   <= 16'd0;
+                                        call_n_pos_r      <= 8'd0;
+                                        call_new_locals_r <= tos_r;
+                                        call_mode_r       <= CALL_MODE_POS;
+                                        call_ret_mode_r   <= 1'b0;
+                                        container_dmem_addr_r    <=
+                                            pycore_code_field_val_addr(
+                                                call_code_addr_r,
+                                                PYCORE_CODE_FIELD_ENTRY_SLOT);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r               <= 6'd0;
+                                        call_phase_r             <= 5'd3;
                                     end
                                 end
                                 default: call_filter_trap_r <= 1'b1;
@@ -3483,6 +3540,7 @@
                                 rf_set_locals_r      <= 1'b1;
                                 rf_new_locals_r      <= frame_locals_base_out;
                                 cur_code_r           <= frame_cur_code_out;
+                                globals_base_r       <= frame_globals_base_out;
                                 call_tos_base_r      <= frame_tos_base_out;
                                 call_entry_slot_r    <= {32'b0, frame_pc_return_out};
                                 // Callee ret-mode was packed into the frame at

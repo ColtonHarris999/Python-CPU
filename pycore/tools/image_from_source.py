@@ -23,6 +23,7 @@ from encoding import (
     BI_CHR,
     BI_CODE_MARK,
     BI_CODE_RELEASE,
+    BI_EXEC_GLOBALS,
     BI_HEAP_MARK,
     BI_HEAP_RELEASE,
     CODE_RAM_SLOT_BASE,
@@ -1178,6 +1179,9 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     Entries:
       bytearray / max / len / _bi_print / range / set / ord / chr
         → OBK_BUILTIN (bound_self=NULL)
+      _bi_heap_mark / _bi_heap_release / _bi_code_mark / _bi_code_release
+        → OBK_BUILTIN
+      _bi_exec_globals → OBK_BUILTIN (Plan 1 P4)
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
       StopIteration → leaf OBK_TYPE (tp_base = None / 0) for RAISE / except
       SyntaxError / ValueError / TypeError / IndexError → leaf OBK_TYPEs
@@ -1238,6 +1242,10 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (
             tag_constant("_bi_code_release", string_heap),
             heap.alloc_builtin(BI_CODE_RELEASE),
+        ),
+        (
+            tag_constant("_bi_exec_globals", string_heap),
+            heap.alloc_builtin(BI_EXEC_GLOBALS),
         ),
         (tag_constant("int", string_heap), int_type),
         (tag_constant("StopIteration", string_heap), stop_iteration),
