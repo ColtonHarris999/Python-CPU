@@ -58,10 +58,15 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | 9 | `SET` | Native empty / from-list-or-tuple constructor |
 | 10 | `ORD` | One-character STR → INT code point. Always SHORT_STR (any string ≤15 bytes is), so the UTF-8 decode reads the inline payload — one cycle, no `string_mem` access. Non-STR / not exactly one character / malformed UTF-8 → `TYPE` |
 | 11 | `CHR` | INT code point → one-character SHORT_STR (1–4 UTF-8 bytes inline). Rejects > U+10FFFF, negatives, and lone surrogates (`TYPE`) |
+| 12 | `HEAP_MARK` | Zero-arg; returns `heap_ptr_r` as `INT` |
+| 13 | `HEAP_RELEASE` | Restores `heap_ptr_r`. Mark must be within `[HEAP_INIT_PTR, heap_ptr_r]`, else `MEM_FAULT` |
+| 14 | `CODE_MARK` | Zero-arg; returns `code_ram_ptr_r` (a slot index) as `INT` |
+| 15 | `CODE_RELEASE` | Restores `code_ram_ptr_r`. Mark must be within `[CODE_RAM_INIT_SLOT, code_ram_ptr_r]`, else `MEM_FAULT` |
 
 Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
 module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
-`bytearray` / `max` / `len` / `_bi_print` / `range` / `set` / `ord` / `chr` as
+`bytearray` / `max` / `len` / `_bi_print` / `range` / `set` / `ord` / `chr` /
+`_bi_heap_mark` / `_bi_heap_release` / `_bi_code_mark` / `_bi_code_release` as
 `OBK_BUILTIN`
 handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
 `to_bytes`, `StopIteration` plus `SyntaxError` / `ValueError` / `TypeError` /

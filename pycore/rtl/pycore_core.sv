@@ -47,6 +47,8 @@ module pycore_core #(
     // image sets this above the static objects so runtime allocations do
     // not overwrite them.  Default matches an empty heap.
     parameter logic [31:0] HEAP_INIT_PTR = PYCORE_HEAP_BASE,
+    // First writable code-RAM slot; images may pre-place code above it.
+    parameter logic [31:0] CODE_RAM_INIT_SLOT = PYCORE_CODE_RAM_SLOT_BASE,
     // BOOT_EN = 1 : after reset, walk the PYCORE_BOOT_RECORD_ADDR pair to
     //               locate the module code object + globals dict, cache
     //               consts/names, and jump fetch to the module entry slot
@@ -724,6 +726,8 @@ module pycore_core #(
     logic [119:0]                  string_snapshot_payload;
     logic                          string_snapshot_ok;
     logic [31:0]                   string_snapshot_addr;
+    // Code-RAM bump cursor (slot index). Mark/release moves it (Plan 1 P8).
+    logic [31:0]                   code_ram_ptr_r;
     logic [31:0]                   string_read_addr;
     logic [31:0]                   string_read_data;
     // BINARY_SLICE port: driven from CONT_SLICE_STR once the character bounds
@@ -1771,6 +1775,7 @@ module pycore_core #(
             return_wb_data_r     <= '0;
             // Container / heap allocator reset.
             heap_ptr_r               <= HEAP_INIT_PTR;
+            code_ram_ptr_r           <= CODE_RAM_INIT_SLOT;
             container_op_r           <= '0;
             container_phase_r        <= '0;
             container_call_pending_r <= 1'b0;

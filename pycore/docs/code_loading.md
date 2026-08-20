@@ -70,6 +70,10 @@ arrive later:
 | `_bi_load_module` | P2 | Copies a module image's text section into RAM |
 | `_bi_code_emit` | Plan 2 C6 | Writes one code word, for a code generator |
 
+The code-RAM bump cursor `code_ram_ptr_r` exists and starts at
+`CODE_RAM_INIT_SLOT` (default `PYCORE_CODE_RAM_SLOT_BASE`); only mark/release
+moves it so far.
+
 **Excore cannot write code memory at all.** The two cores share dmem but keep
 private instruction memories, so every code-memory writer must run on-core.
 
@@ -130,3 +134,30 @@ section, must fault rather than corrupt.
 
 Intended phasing: fixed-base copy first, then text relocation, then data
 relocation, then two modules where the second base depends on the first.
+
+## 5. Region marks (P8, shipped)
+
+Both the heap and code RAM are bump allocators with no collector, so a program
+that loads modules or compiles repeatedly would leak until reset. Four
+primitives make lifetimes reclaimable when they nest:
+
+| Builtin | Behaviour |
+| --- | --- |
+| `_bi_heap_mark()` | Returns `heap_ptr_r` |
+| `_bi_heap_release(mark)` | Restores `heap_ptr_r` |
+| `_bi_code_mark()` | Returns `code_ram_ptr_r` |
+| `_bi_code_release(mark)` | Restores `code_ram_ptr_r` |
+
+A release validates that the mark lies inside its region and at or below the
+current cursor; a stale or out-of-region mark raises `PY_TRAP_MEM_FAULT` rather
+than "un-freeing" memory that was never allocated.
+
+**This is not garbage collection, and must not be treated as such.** Releasing
+to a mark invalidates every handle allocated after it, with no detection: a
+surviving reference becomes a dangling handle that will read whatever the next
+allocation puts there. The rule is therefore: **release only when nothing
+allocated after the mark can still be reachable**, and let one owner (the BIOS,
+once it exists) hold the marks rather than scattering them through firmware.
+
+Real tracing GC remains future work; `README.md` already lists it as a
+milestone.

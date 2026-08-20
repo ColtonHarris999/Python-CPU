@@ -193,6 +193,13 @@ localparam logic [31:0] PY_BI_RANGE        = 32'd8;
 localparam logic [31:0] PY_BI_SET          = 32'd9;
 localparam logic [31:0] PY_BI_ORD          = 32'd10;
 localparam logic [31:0] PY_BI_CHR          = 32'd11;
+// Region mark / release (Plan 1 P8).  Not a garbage collector: releasing to a
+// mark invalidates every handle allocated after it, with no detection.  See
+// pycore/docs/code_loading.md for the ownership rule.
+localparam logic [31:0] PY_BI_HEAP_MARK    = 32'd12;
+localparam logic [31:0] PY_BI_HEAP_RELEASE = 32'd13;
+localparam logic [31:0] PY_BI_CODE_MARK    = 32'd14;
+localparam logic [31:0] PY_BI_CODE_RELEASE = 32'd15;
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;

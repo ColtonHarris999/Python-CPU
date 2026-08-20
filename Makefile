@@ -873,6 +873,33 @@ pycore-img-code-ram-call-rom:
 pycore-img-code-ram-call:
 	$(call PYCORE_IMAGE_RUN_CODERAM,code_ram_call,100000)
 
+pycore-img-heap-mark-release:
+	$(call PYCORE_IMAGE_RUN,heap_mark_release,100000)
+
+pycore-img-code-mark-release:
+	$(call PYCORE_IMAGE_RUN,code_mark_release,50000)
+
+pycore-img-heap-release-stale-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,heap_release_stale_trap,7,50000)
+
+pycore-img-heap-release-below-base-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,heap_release_below_base_trap,7,50000)
+
+pycore-img-code-release-stale-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,code_release_stale_trap,7,50000)
+
+pycore-img-heap-mark-argc-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,heap_mark_argc_trap,6,50000)
+
+# Plan 1 P8: region mark / release for heap and code RAM.
+pycore-img-marks-all: \
+	pycore-img-heap-mark-release \
+	pycore-img-code-mark-release \
+	pycore-img-heap-release-stale-trap \
+	pycore-img-heap-release-below-base-trap \
+	pycore-img-code-release-stale-trap \
+	pycore-img-heap-mark-argc-trap
+
 # Plan 1 P1: the same program from ROM and from code RAM must agree.
 pycore-img-code-ram-all: \
 	pycore-img-code-ram-call-rom \
@@ -1413,6 +1440,7 @@ pycore-img: \
 	pycore-img-slice-all \
 	pycore-img-exc-types-all \
 	pycore-img-code-ram-all \
+	pycore-img-marks-all \
 	pycore-img-smoke \
 	pycore-img-call-chain \
 	pycore-img-str-consts \

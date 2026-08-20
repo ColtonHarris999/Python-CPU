@@ -448,6 +448,33 @@
                                                     {2'b0, cur_arg_r[6:0]});
                                                 call_sub_r <= 6'd12;
                                             end
+                                        end else if ((call_entry_slot_r[31:0] ==
+                                                      PY_BI_HEAP_MARK) ||
+                                                     (call_entry_slot_r[31:0] ==
+                                                      PY_BI_CODE_MARK)) begin
+                                            // Zero-arg: read a bump cursor.
+                                            if (cur_arg_r[15:0] != 16'd0) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                call_sub_r <=
+                                                    (call_entry_slot_r[31:0] ==
+                                                     PY_BI_HEAP_MARK)
+                                                    ? 6'd54 : 6'd55;
+                                            end
+                                        end else if ((call_entry_slot_r[31:0] ==
+                                                      PY_BI_HEAP_RELEASE) ||
+                                                     (call_entry_slot_r[31:0] ==
+                                                      PY_BI_CODE_RELEASE)) begin
+                                            if (cur_arg_r[15:0] != 16'd1) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {2'b0, tos_r} - 9'd1);
+                                                call_sub_r <=
+                                                    (call_entry_slot_r[31:0] ==
+                                                     PY_BI_HEAP_RELEASE)
+                                                    ? 6'd56 : 6'd57;
+                                            end
                                         end else if (call_entry_slot_r[31:0] ==
                                                      PY_BI_ORD) begin
                                             if (cur_arg_r[15:0] != 16'd1) begin
@@ -1411,6 +1438,88 @@
                                             call_phase_r <= CALL_PHASE_DONE;
                                             call_sub_r   <= 6'd0;
                                         end
+                                    end
+                                end
+                                // Region marks (Plan 1 P8).  Zero-arg reads
+                                // return the cursor; releases restore it after
+                                // validating the mark lies inside the region
+                                // and at or below the current cursor, so a
+                                // stale mark faults instead of un-freeing
+                                // memory that was never allocated.
+                                //
+                                // 54: _bi_heap_mark()  -> INT
+                                6'd54: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, tos_r} - 9'd2);
+                                    container_wb_data_r <= pycore_make_entry(
+                                        PY_TAG_INT, {{96{1'b0}}, heap_ptr_r});
+                                    tos_r <= RF_AW'({2'b0, tos_r} - 9'd1);
+                                    fetch_skip_r <= 1'b1;
+                                    call_phase_r <= CALL_PHASE_DONE;
+                                    call_sub_r   <= 6'd0;
+                                end
+                                // 55: _bi_code_mark() -> INT
+                                6'd55: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, tos_r} - 9'd2);
+                                    container_wb_data_r <= pycore_make_entry(
+                                        PY_TAG_INT,
+                                        {{96{1'b0}}, code_ram_ptr_r});
+                                    tos_r <= RF_AW'({2'b0, tos_r} - 9'd1);
+                                    fetch_skip_r <= 1'b1;
+                                    call_phase_r <= CALL_PHASE_DONE;
+                                    call_sub_r   <= 6'd0;
+                                end
+                                // 56: _bi_heap_release(mark)
+                                6'd56: begin
+                                    if ((cont_rf_rs1_tag != PY_TAG_INT) ||
+                                        (cont_rf_rs1_val[127:32] != 96'b0) ||
+                                        (cont_rf_rs1_val[31:0] <
+                                         HEAP_INIT_PTR) ||
+                                        (cont_rf_rs1_val[31:0] >
+                                         heap_ptr_r)) begin
+                                        container_mem_fault_r <= 1'b1;
+                                    end else begin
+                                        heap_ptr_r <= cont_rf_rs1_val[31:0];
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <=
+                                            pycore_make_entry(
+                                                PY_TAG_CONTROL,
+                                                {{124{1'b0}}, PY_CTL_NONE});
+                                        tos_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 6'd0;
+                                    end
+                                end
+                                // 57: _bi_code_release(mark)
+                                6'd57: begin
+                                    if ((cont_rf_rs1_tag != PY_TAG_INT) ||
+                                        (cont_rf_rs1_val[127:32] != 96'b0) ||
+                                        (cont_rf_rs1_val[31:0] <
+                                         CODE_RAM_INIT_SLOT) ||
+                                        (cont_rf_rs1_val[31:0] >
+                                         code_ram_ptr_r)) begin
+                                        container_mem_fault_r <= 1'b1;
+                                    end else begin
+                                        code_ram_ptr_r <= cont_rf_rs1_val[31:0];
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <=
+                                            pycore_make_entry(
+                                                PY_TAG_CONTROL,
+                                                {{124{1'b0}}, PY_CTL_NONE});
+                                        tos_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 6'd0;
                                     end
                                 end
                                 default: call_filter_trap_r <= 1'b1;

@@ -140,6 +140,10 @@ BI_RANGE = 8
 BI_SET = 9
 BI_ORD = 10
 BI_CHR = 11
+BI_HEAP_MARK = 12
+BI_HEAP_RELEASE = 13
+BI_CODE_MARK = 14
+BI_CODE_RELEASE = 15
 
 # Code address space (mirror pycore_defs.svh PYCORE_CODE_RAM_*).
 # The ROM holds IMEM_BLOCK_COUNT * 4096 / 8 slots; code RAM starts right after.
