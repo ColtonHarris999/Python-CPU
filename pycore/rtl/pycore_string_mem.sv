@@ -24,6 +24,18 @@ module pycore_string_mem #(
     output logic snapshot_ok_o,
     output logic [31:0] snapshot_addr_o,
 
+    // Slice port (BINARY_SLICE): copy slice_len_i bytes starting at byte
+    // slice_start_i of slice_src_i.  Mirrors the concat path: results of <= 15
+    // bytes come back inline as SHORT_STR with no allocation, longer ones are
+    // written to the runtime string region and returned as LONG_STR.  The
+    // caller has already converted character indices to byte offsets.
+    input  logic slice_valid_i,
+    input  logic [PYCORE_ENTRY_WIDTH-1:0] slice_src_i,
+    input  logic [63:0] slice_start_i,
+    input  logic [63:0] slice_len_i,
+    output logic slice_ok_o,
+    output logic [PYCORE_ENTRY_WIDTH-1:0] slice_result_o,
+
     input  logic [31:0] read_addr_i,
     output logic [31:0] read_data_o
 );
@@ -183,6 +195,72 @@ module pycore_string_mem #(
         end
     end
 
+    // ---------------------------------------------------------------------
+    // Slice path.  Byte-accurate: the container FSM resolved character
+    // indices to byte offsets before asserting slice_valid_i.
+    // ---------------------------------------------------------------------
+    logic [3:0]   slice_src_tag;
+    logic [PYCORE_VAL_WIDTH-1:0] slice_src_value;
+    logic         slice_store_fire;
+    logic [63:0]  slice_dst_addr;
+    logic [63:0]  slice_alloc_next;
+
+    assign slice_src_tag   = pycore_get_tag(slice_src_i);
+    assign slice_src_value = pycore_get_val(slice_src_i);
+
+    always_comb begin
+        int i;
+        logic [7:0]  byte_value;
+        logic [119:0] payload;
+        logic [63:0] src_len;
+        logic [63:0] src_end;
+        logic [63:0] dst_end;
+
+        slice_ok_o       = 1'b0;
+        slice_result_o   = pycore_make_entry(PY_TAG_OBJECT, '0);
+        slice_store_fire = 1'b0;
+        slice_dst_addr   = 64'b0;
+        slice_alloc_next = string_heap_alloc_r;
+        payload          = '0;
+        byte_value       = 8'h00;
+
+        src_len = (slice_src_tag == PY_TAG_SHORT_STR)
+                ? {60'b0, pycore_short_str_size(slice_src_value)}
+                : pycore_long_str_size(slice_src_value);
+        src_end = slice_start_i + slice_len_i;
+
+        if (slice_valid_i && pycore_is_string_tag(slice_src_tag) &&
+            (src_end >= slice_start_i) && (src_end <= src_len) &&
+            (slice_len_i <= STRING_MAX_LEN_U64)) begin
+            if (slice_len_i <= PYCORE_SHORT_STR_MAX_BYTES) begin
+                for (i = 0; i < PYCORE_SHORT_STR_MAX_BYTES; i++) begin
+                    if (i < slice_len_i) begin
+                        byte_value = string_operand_byte(
+                            slice_src_tag, slice_src_value,
+                            slice_start_i + i);
+                        payload[119-(i*8)-:8] = byte_value;
+                    end
+                end
+                slice_ok_o     = 1'b1;
+                slice_result_o = pycore_make_short_str_entry(
+                    slice_len_i[3:0], payload);
+            end else begin
+                slice_dst_addr =
+                    (string_heap_alloc_r < STRING_RUNTIME_BASE_U64) ?
+                    STRING_RUNTIME_BASE_U64 : string_heap_alloc_r;
+                dst_end = slice_dst_addr + slice_len_i;
+                if ((dst_end >= slice_dst_addr) &&
+                    (dst_end <= STRING_MEM_BYTES_U64)) begin
+                    slice_ok_o       = 1'b1;
+                    slice_store_fire = 1'b1;
+                    slice_alloc_next = dst_end;
+                    slice_result_o   = pycore_make_long_str_entry(
+                        slice_len_i, slice_dst_addr);
+                end
+            end
+        end
+    end
+
     always_comb begin
         logic [63:0] snapshot_end;
         snapshot_addr_o = string_heap_alloc_r[31:0];
@@ -242,6 +320,19 @@ module pycore_string_mem #(
             end
             string_heap_alloc_r <= string_heap_alloc_r +
                                    {60'b0, snapshot_size_i};
+        end else if (slice_valid_i && slice_ok_o && slice_store_fire) begin
+            int i;
+            logic [7:0] byte_value;
+            int unsigned dst_idx;
+            for (i = 0; i < STRING_MAX_LEN; i++) begin
+                if (i < slice_len_i) begin
+                    byte_value = string_operand_byte(
+                        slice_src_tag, slice_src_value, slice_start_i + i);
+                    dst_idx = int'(slice_dst_addr + i);
+                    string_mem[dst_idx] = byte_value;
+                end
+            end
+            string_heap_alloc_r <= slice_alloc_next;
         end
     end
 

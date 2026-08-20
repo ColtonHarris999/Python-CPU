@@ -21,6 +21,12 @@ from typing import Iterable
 from encoding import (
     BI_BYTEARRAY,
     BI_CHR,
+    BI_CODE_MARK,
+    BI_CODE_RELEASE,
+    BI_EXEC_GLOBALS,
+    BI_HEAP_MARK,
+    BI_HEAP_RELEASE,
+    CODE_RAM_SLOT_BASE,
     BI_FROM_BYTES,
     BI_LEN,
     BI_MAX,
@@ -121,6 +127,7 @@ SUPPORTED_OPS = {
     "UNPACK_SEQUENCE",
     "UNPACK_EX",
     "STORE_SUBSCR",
+    "BINARY_SLICE",
     "DELETE_SUBSCR",
     "CONTAINS_OP",
     "COPY",
@@ -163,7 +170,6 @@ SUPPORTED_OPS = {
 }
 
 DEFERRED_OPS: dict[str, str] = {
-    "BINARY_SLICE": "slice notation support is deferred",
     "STORE_SLICE": "slice assignment support is deferred",
     # Classes are emitted at image-build time (M4 ClassImageBuilder); hardware
     # LOAD_BUILD_CLASS needs frame-local namespaces and is intentionally out.
@@ -382,12 +388,17 @@ class _ImageSerializer:
         defaults_map: dict[int, tuple] | None = None,
         kwdefaults_map: dict[int, dict] | None = None,
         type_refs: dict[str, Tagged] | None = None,
+        slot_base: int = 0,
     ) -> None:
         # HEAP_BASE is defined as the first byte after the boot record.
         static_base = HEAP_BASE
         self.heap = HeapImageBuilder(base=static_base)
         self.string_heap = StringHeapBuilder()
         self.program_slots: list[str] = []
+        # Slot index of program_slots[0] in the code address space. Non-zero
+        # places the whole image in code RAM (Plan 1 P1): entry_slot values are
+        # offset so the PC lands in the writable region.
+        self.slot_base = slot_base
         self.code_handles: dict[int, Tagged] = {}
         self.entry_slots: dict[int, int] = {}
         self.defaults_map: dict[int, tuple] = defaults_map or {}
@@ -406,7 +417,7 @@ class _ImageSerializer:
             if isinstance(const, types.CodeType):
                 self.serialize_code(const)
 
-        entry_slot = len(self.program_slots)
+        entry_slot = self.slot_base + len(self.program_slots)
         self.program_slots.extend(transcode_code_units(co))
         self.entry_slots[co_id] = entry_slot
 
@@ -570,21 +581,41 @@ class SeedInstanceSpec:
 
 
 @dataclass(frozen=True)
+class SeedCodeSpec:
+    """Build-time ``CODE_OBJECT`` seed for ``exec`` / ``eval`` payloads.
+
+    ``# pycore-inject: SEED_CODE name mode=exec source="x = 1 + 2"``
+
+    The source is host-``compile()``d in ``mode`` and serialized like any other
+    code object, then bound to ``name`` in the module globals. This is how a
+    program under test gets hold of a precompiled code object before runtime
+    ``compile()`` exists (Plan 1 P3). Newlines may be written as ``\\n``.
+    """
+
+    name: str
+    mode: str = "exec"
+    source: str = ""
+
+
+@dataclass(frozen=True)
 class SeedSpecs:
     types: tuple[SeedTypeSpec, ...] = ()
     type_methods: tuple[SeedTypeMethodSpec, ...] = ()
     instances: tuple[SeedInstanceSpec, ...] = ()
+    codes: tuple[SeedCodeSpec, ...] = ()
 
     @property
     def global_names(self) -> set[str]:
         names = {t.name for t in self.types}
         names.update(i.name for i in self.instances)
+        names.update(c.name for c in self.codes)
         return names
 
 
 _INJECT_SEED_TYPE_PREFIX = "# pycore-inject: SEED_TYPE "
 _INJECT_SEED_TYPE_METHOD_PREFIX = "# pycore-inject: SEED_TYPE_METHOD "
 _INJECT_SEED_INSTANCE_PREFIX = "# pycore-inject: SEED_INSTANCE "
+_INJECT_SEED_CODE_PREFIX = "# pycore-inject: SEED_CODE "
 _OP_NOP = _OM["NOP"]
 _OP_MAKE_FUNCTION = _OM["MAKE_FUNCTION"]
 _OP_SET_FUNCTION_ATTRIBUTE = _OM["SET_FUNCTION_ATTRIBUTE"]
@@ -634,14 +665,53 @@ def _parse_seed_kv_tokens(tokens: list[str]) -> tuple[dict[str, str], list[tuple
     return opts, attrs
 
 
+def _parse_seed_code_pragma(rest: str) -> SeedCodeSpec:
+    """Parse ``<name> mode=<mode> source="<text>"``.
+
+    ``source=`` is last and quoted, so it may contain spaces and ``=``.
+    """
+    src_key = "source="
+    idx = rest.find(src_key)
+    if idx < 0:
+        raise ValueError(
+            'SEED_CODE expects \'<name> [mode=exec|eval] source="<text>"\', '
+            f"got {rest!r}"
+        )
+    head = rest[:idx].split()
+    raw = rest[idx + len(src_key) :].strip()
+    if len(raw) < 2 or raw[0] != raw[-1] or raw[0] not in "\"'":
+        raise ValueError(f"SEED_CODE source= must be quoted, got {raw!r}")
+    source = raw[1:-1].replace("\\n", "\n").replace("\\t", "\t")
+    if not head:
+        raise ValueError(f"SEED_CODE expects a name, got {rest!r}")
+    mode = "exec"
+    for tok in head[1:]:
+        key, _, val = tok.partition("=")
+        if key != "mode" or not val:
+            raise ValueError(
+                f"SEED_CODE only accepts mode=, got {tok!r}"
+            )
+        mode = val
+    if mode not in ("exec", "eval"):
+        raise ValueError(f"SEED_CODE mode must be exec or eval, got {mode!r}")
+    return SeedCodeSpec(head[0], mode=mode, source=source)
+
+
 def parse_seed_pragmas(source_text: str) -> SeedSpecs:
-    """Parse SEED_TYPE / SEED_TYPE_METHOD / SEED_INSTANCE pragmas."""
+    """Parse SEED_TYPE / SEED_TYPE_METHOD / SEED_INSTANCE / SEED_CODE pragmas."""
     types: list[SeedTypeSpec] = []
     type_methods: list[SeedTypeMethodSpec] = []
     instances: list[SeedInstanceSpec] = []
+    codes: list[SeedCodeSpec] = []
     for line in source_text.splitlines():
         stripped = line.strip()
-        if stripped.startswith(_INJECT_SEED_TYPE_METHOD_PREFIX):
+        if stripped.startswith(_INJECT_SEED_CODE_PREFIX):
+            codes.append(
+                _parse_seed_code_pragma(
+                    stripped[len(_INJECT_SEED_CODE_PREFIX) :].strip()
+                )
+            )
+        elif stripped.startswith(_INJECT_SEED_TYPE_METHOD_PREFIX):
             rest = stripped[len(_INJECT_SEED_TYPE_METHOD_PREFIX) :].strip()
             if "=" not in rest:
                 raise ValueError(
@@ -692,7 +762,9 @@ def parse_seed_pragmas(source_text: str) -> SeedSpecs:
                     attrs=tuple(attrs),
                 )
             )
-    return SeedSpecs(tuple(types), tuple(type_methods), tuple(instances))
+    return SeedSpecs(
+        tuple(types), tuple(type_methods), tuple(instances), tuple(codes)
+    )
 
 
 def fold_function_defaults(
@@ -989,7 +1061,15 @@ ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
     ("issubclass", "issubclass", "issubclass"),
     # Wave 4A — print(*args, sep=, end=) → _bi_print sink
     ("print", "print", "print"),
+    # Plan 1 P3 — exec/eval on precompiled CODE_OBJECTs (no new hardware)
+    ("exec", "exec", "exec"),
+    ("eval", "eval", "eval"),
 )
+
+# ROM bodies whose device semantics cannot be reproduced by running the same
+# source under CPython. ``run_image_test.py`` binds host stand-ins for these
+# after the test program's namespace exists; see ``exec.py``'s host note.
+HOST_STANDIN_BUILTINS: frozenset[str] = frozenset({"exec", "eval"})
 
 FIRMWARE_BUILTINS_DIR = (
     pathlib.Path(__file__).resolve().parents[2] / "pycore_firmware" / "builtins"
@@ -1017,6 +1097,10 @@ def load_rom_firmware_callables() -> dict[str, object]:
     entry plus a ``_bi_print`` stub so ``print`` can run on the host.
     Firmware semantics differ from CPython in places (e.g. ``reversed`` /
     ``filter`` return lists); host goldens must use these bodies.
+
+    ``HOST_STANDIN_BUILTINS`` names are still loaded and validated here, but
+    callers are expected to override them (``run_image_test.py`` does) because
+    their device semantics are not reproducible by running the same source.
     """
     out: dict[str, object] = {"_bi_print": _host_bi_print}
     for dict_key, stem, func_name in ROM_FIRMWARE_BUILTINS:
@@ -1095,8 +1179,12 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     Entries:
       bytearray / max / len / _bi_print / range / set / ord / chr
         → OBK_BUILTIN (bound_self=NULL)
+      _bi_heap_mark / _bi_heap_release / _bi_code_mark / _bi_code_release
+        → OBK_BUILTIN
+      _bi_exec_globals → OBK_BUILTIN (Plan 1 P4)
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
       StopIteration → leaf OBK_TYPE (tp_base = None / 0) for RAISE / except
+      SyntaxError / ValueError / TypeError / IndexError → leaf OBK_TYPEs
       ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
 
     Also writes the StopIteration handle to the exc-arena boot sidecar so
@@ -1119,6 +1207,14 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     )
     stop_iteration = heap.alloc_type(tag_constant("StopIteration", string_heap))
     heap.write_iter_exhaust_type(stop_iteration)
+    # Leaf exception types (tp_base = None) for firmware error reporting.
+    # CHECK_EXC_MATCH is exact-handle in v1, so a flat set is enough; the
+    # tokenizer and parser need SyntaxError, and the rest unblock error paths
+    # across pycore_firmware (Plan 1 P7).
+    exc_types = [
+        (name, heap.alloc_type(tag_constant(name, string_heap)))
+        for name in ("SyntaxError", "ValueError", "TypeError", "IndexError")
+    ]
     pairs: list[tuple[Tagged, Tagged]] = [
         (tag_constant("bytearray", string_heap), heap.alloc_builtin(BI_BYTEARRAY)),
         (tag_constant("max", string_heap), heap.alloc_builtin(BI_MAX)),
@@ -1129,9 +1225,34 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (tag_constant("set", string_heap), heap.alloc_builtin(BI_SET)),
         (tag_constant("ord", string_heap), heap.alloc_builtin(BI_ORD)),
         (tag_constant("chr", string_heap), heap.alloc_builtin(BI_CHR)),
+        # Region marks: internal primitives, so underscore-prefixed like
+        # _bi_print. Releasing to a mark is not GC -- see code_loading.md.
+        (
+            tag_constant("_bi_heap_mark", string_heap),
+            heap.alloc_builtin(BI_HEAP_MARK),
+        ),
+        (
+            tag_constant("_bi_heap_release", string_heap),
+            heap.alloc_builtin(BI_HEAP_RELEASE),
+        ),
+        (
+            tag_constant("_bi_code_mark", string_heap),
+            heap.alloc_builtin(BI_CODE_MARK),
+        ),
+        (
+            tag_constant("_bi_code_release", string_heap),
+            heap.alloc_builtin(BI_CODE_RELEASE),
+        ),
+        (
+            tag_constant("_bi_exec_globals", string_heap),
+            heap.alloc_builtin(BI_EXEC_GLOBALS),
+        ),
         (tag_constant("int", string_heap), int_type),
         (tag_constant("StopIteration", string_heap), stop_iteration),
     ]
+    pairs.extend(
+        (tag_constant(name, string_heap), handle) for name, handle in exc_types
+    )
     pairs.extend(seed_rom_firmware_builtins(serializer))
     return heap.alloc_dict(pairs, slot_count=dict_min_slots(len(pairs)))
 
@@ -1143,6 +1264,7 @@ def build_image_from_code(
     defaults_map: dict[int, tuple] | None = None,
     kwdefaults_map: dict[int, dict] | None = None,
     class_specs: list[ClassBuildSpec] | None = None,
+    slot_base: int = 0,
 ) -> ImageBuildResult:
     require_python_3_14()
     validate_code_tree(module_code)
@@ -1157,6 +1279,7 @@ def build_image_from_code(
     serializer = _ImageSerializer(
         defaults_map=defaults_map,
         kwdefaults_map=kwdefaults_map,
+        slot_base=slot_base,
     )
     # Method codes + OBK_TYPE must exist before module consts resolve type refs.
     serializer.alloc_class_types(class_specs)
@@ -1166,6 +1289,15 @@ def build_image_from_code(
     seed_pairs = _seed_globals_pairs(
         serializer.heap, serializer.string_heap, seeds, code_by_name
     )
+    # SEED_CODE payloads are compiled and serialized like any other code object,
+    # so their bytecode joins the same imem pool as the module's.
+    for cspec in seeds.codes:
+        payload = compile(cspec.source, f"<seed:{cspec.name}>", cspec.mode)
+        validate_code_tree(payload)
+        handle = serializer.serialize_code(payload)
+        seed_pairs.append(
+            (tag_constant(cspec.name, serializer.string_heap), handle)
+        )
     if seed_pairs:
         if len(seed_pairs) >= globals_slot_count:
             globals_slot_count = dict_slot_count_for_stores(len(seed_pairs) + 1)
@@ -1886,7 +2018,9 @@ def fold_module_classes(
     return new_module, specs
 
 
-def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildResult:
+def build_image_from_source_text(
+    source_text: str, filename: str, *, slot_base: int = 0
+) -> ImageBuildResult:
     seeds = parse_seed_pragmas(source_text)
     module_code = compile(source_text, filename, "exec")
     module_code = apply_lfac_injects(module_code, source_text)
@@ -1905,13 +2039,18 @@ def build_image_from_source_text(source_text: str, filename: str) -> ImageBuildR
         defaults_map=defaults_map,
         kwdefaults_map=kwdefaults_map,
         class_specs=class_specs,
+        slot_base=slot_base,
     )
 
 
-def build_image_from_source(source: pathlib.Path) -> ImageBuildResult:
+def build_image_from_source(
+    source: pathlib.Path, *, slot_base: int = 0
+) -> ImageBuildResult:
     source = pathlib.Path(source)
     source_text = source.read_text(encoding="utf-8")
-    return build_image_from_source_text(source_text, str(source))
+    return build_image_from_source_text(
+        source_text, str(source), slot_base=slot_base
+    )
 
 
 def write_text(path: pathlib.Path, text: str) -> None:
@@ -2011,10 +2150,22 @@ def main() -> None:
         default=None,
         help="Optional EXPECTED_VALUE for image.meta (skips host execution)",
     )
+    parser.add_argument(
+        "--code-ram",
+        action="store_true",
+        help=(
+            "Place the whole program in code RAM instead of ROM: entry slots "
+            "are offset by PYCORE_CODE_RAM_SLOT_BASE and the slots are written "
+            "to --program-hex for loading via CODE_RAM_HEX (Plan 1 P1)."
+        ),
+    )
     args = parser.parse_args()
 
     require_python_3_14()
-    result = build_image_from_source(pathlib.Path(args.source))
+    result = build_image_from_source(
+        pathlib.Path(args.source),
+        slot_base=CODE_RAM_SLOT_BASE if args.code_ram else 0,
+    )
     write_image_outputs(
         result,
         program_hex=pathlib.Path(args.program_hex),

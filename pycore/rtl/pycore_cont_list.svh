@@ -361,6 +361,157 @@
                             endcase
                         end // CONT_SUBSCR_STR
 
+                        CONT_SLICE_STR: begin
+                            // rs1_r = subject string, rs2_r = start,
+                            // stop read from RF[tos-1] via container_rf_addr_r.
+                            //
+                            // Bounds are CHARACTER indices (consistent with
+                            // s[i] and `for c in s`), so one pass walks UTF-8
+                            // characters from the front, recording the byte
+                            // offset when the start index is reached and
+                            // finishing at the stop index or end of string --
+                            // which is also how out-of-range bounds get clamped
+                            // the way CPython clamps them.
+                            //
+                            // container_base_r       = start byte offset
+                            // container_probe_r      = current byte offset
+                            // container_src_len_r    = current character index
+                            // container_slot_count_r = stop character index
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    // Subject must be a string: list / tuple
+                                    // slicing is not implemented yet.
+                                    if (!pycore_is_string_tag(
+                                            cont_rs1_tag)) begin
+                                        container_type_trap_r <= 1'b1;
+                                    // `s[:b]` passes None for start; CPython
+                                    // emits LOAD_CONST None rather than 0.
+                                    end else if (pycore_is_none(cont_rs2_tag,
+                                                       cont_rs2_val)) begin
+                                        container_rf_addr_r <=
+                                            RF_AW'(tos_r - RF_AW'(1));
+                                        container_probe_r   <= 32'd0;
+                                        container_src_len_r <= 32'd0;
+                                        container_base_r    <= 32'd0;
+                                        container_phase_r   <= CP_VAL;
+                                    end else if (cont_rs2_tag != PY_TAG_INT &&
+                                                 cont_rs2_tag != PY_TAG_BOOL) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else if (cont_rs2_val[127:32] !=
+                                                 96'b0) begin
+                                        // Negative or > 32-bit start. Negative
+                                        // slice bounds do not wrap (deviation 3).
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        container_rf_addr_r <=
+                                            RF_AW'(tos_r - RF_AW'(1));
+                                        container_probe_r   <= 32'd0;
+                                        container_src_len_r <= 32'd0;
+                                        container_base_r    <= 32'd0;
+                                        container_phase_r   <= CP_VAL;
+                                    end
+                                end
+
+                                CP_VAL: begin
+                                    // First entry latches the stop bound (the
+                                    // RF address settled last cycle); later
+                                    // entries are walk steps.
+                                    logic [2:0] width;
+                                    logic [32:0] char_end;
+                                    logic continuations_valid;
+                                    logic [31:0] stop_idx;
+                                    logic [31:0] start_idx;
+                                    width = pycore_utf8_char_width(
+                                        cont_str_win[7:0]);
+                                    char_end = {1'b0, container_probe_r} +
+                                               {30'b0, width};
+                                    continuations_valid =
+                                        ((width < 3'd2) ||
+                                         pycore_utf8_cont_valid(
+                                             cont_str_win[15:8])) &&
+                                        ((width < 3'd3) ||
+                                         pycore_utf8_cont_valid(
+                                             cont_str_win[23:16])) &&
+                                        ((width < 3'd4) ||
+                                         pycore_utf8_cont_valid(
+                                             cont_str_win[31:24]));
+                                    start_idx = pycore_is_none(cont_rs2_tag,
+                                                               cont_rs2_val)
+                                              ? 32'd0 : cont_rs2_val[31:0];
+                                    stop_idx  = container_slice_stop_r;
+
+                                    if (!container_slice_armed_r) begin
+                                        // `s[a:]` passes None for stop, which
+                                        // means "to the end"; the walk's own
+                                        // length clamp then terminates it.
+                                        if (pycore_is_none(cont_rf_rs1_tag,
+                                                           cont_rf_rs1_val)) begin
+                                            container_slice_stop_r <= 32'hFFFF_FFFF;
+                                            container_slice_armed_r <= 1'b1;
+                                        end else if (cont_rf_rs1_tag != PY_TAG_INT &&
+                                            cont_rf_rs1_tag != PY_TAG_BOOL) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else if (cont_rf_rs1_val[127:32] !=
+                                                     96'b0) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else begin
+                                            container_slice_stop_r <=
+                                                cont_rf_rs1_val[31:0];
+                                            container_slice_armed_r <= 1'b1;
+                                        end
+                                    end else if ((container_src_len_r >=
+                                                  stop_idx) ||
+                                                 (container_probe_r >=
+                                                  cont_str_len)) begin
+                                        // Reached the stop index, or ran out of
+                                        // string: clamp here.  If start was
+                                        // never reached the slice is empty, so
+                                        // collapse it to a zero-length range.
+                                        if (container_src_len_r <= start_idx)
+                                            container_base_r <=
+                                                container_probe_r;
+                                        container_phase_r <= CP_TAG;
+                                    end else if ((width == 3'd0) ||
+                                                 (char_end >
+                                                  {1'b0, cont_str_len}) ||
+                                                 !continuations_valid) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        if (container_src_len_r == start_idx)
+                                            container_base_r <=
+                                                container_probe_r;
+                                        container_probe_r   <= char_end[31:0];
+                                        container_src_len_r <=
+                                            container_src_len_r + 32'd1;
+                                    end
+                                end
+
+                                CP_TAG: begin
+                                    // string_slice_* is asserted for this phase
+                                    // and the result is combinational.
+                                    if (!string_slice_ok) begin
+                                        container_mem_fault_r <= 1'b1;
+                                    end else begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <=
+                                            RF_AW'(tos_r - RF_AW'(3));
+                                        container_wb_data_r <=
+                                            string_slice_result;
+                                        tos_r <= RF_AW'(tos_r - RF_AW'(2));
+                                        fetch_skip_r <= 1'b1;
+                                        container_slice_armed_r <= 1'b0;
+                                        container_phase_r <= CP_DONE;
+                                    end
+                                end
+
+                                CP_DONE: ;
+
+                                default: ;
+
+                            endcase
+                        end // CONT_SLICE_STR
+
                         CONT_GET_ITER: begin
                             unique case (container_phase_r)
                                 CP_INIT: begin

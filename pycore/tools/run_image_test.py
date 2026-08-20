@@ -16,6 +16,7 @@ from encoding import (
     VAL_MASK,
     allocator_list_capacity,
 )
+from encoding import CODE_RAM_SLOT_BASE
 from image_from_source import (
     build_image_from_source_text,
     load_rom_firmware_callables,
@@ -125,6 +126,20 @@ def host_entry_result_from_text(
     for name, fn in load_rom_firmware_callables().items():
         namespace.setdefault(name, fn)
 
+    # exec/eval need host stand-ins: the ROM bodies call the code object, and
+    # CPython code objects are not callable. Binding `namespace` as the payload
+    # globals reproduces the device, where a module-mode code object's
+    # STORE_NAME / LOAD_NAME hit the one boot-record globals dict.
+    def _host_exec(code, globals=None):
+        exec(code, namespace if globals is None else globals)
+        return None
+
+    def _host_eval(code, globals=None):
+        return eval(code, namespace if globals is None else globals)
+
+    namespace["exec"] = _host_exec
+    namespace["eval"] = _host_eval
+
     # Wire SEED_TYPE / SEED_TYPE_METHOD / SEED_INSTANCE after defs exist.
     methods_by_type: dict[str, list] = {}
     for m in seeds.type_methods:
@@ -176,6 +191,15 @@ def host_entry_result_from_text(
             setattr(obj, name, val)
         namespace[spec.name] = obj
 
+    # SEED_CODE: mirror the device's precompiled payload with a host code
+    # object so exec()/eval() goldens run identically on both sides. The
+    # payload must share the entry's globals, since device STORE_NAME writes
+    # the one module globals dict.
+    for cspec in seeds.codes:
+        namespace[cspec.name] = compile(
+            cspec.source, f"<seed:{cspec.name}>", cspec.mode
+        )
+
     fn = namespace.get(entry)
     if not callable(fn):
         raise ValueError(f"Entry function {entry!r} not found in {filename}")
@@ -207,6 +231,7 @@ def run_image_test(
     dmem_hex: pathlib.Path,
     string_hex: pathlib.Path,
     meta: pathlib.Path,
+    slot_base: int = 0,
 ) -> tuple[int, int]:
     require_python_3_14()
     source = pathlib.Path(source)
@@ -218,7 +243,9 @@ def run_image_test(
         source_text, filename=str(source), entry=entry
     )
     expected_tag, expected_value = expected_tag_value(expected)
-    image = build_image_from_source_text(source_text, str(source))
+    image = build_image_from_source_text(
+        source_text, str(source), slot_base=slot_base
+    )
     write_image_outputs(
         image,
         program_hex=program_hex,
@@ -239,6 +266,15 @@ def main() -> None:
     parser.add_argument("--dmem-hex", default="pycore/programs/dmem.hex")
     parser.add_argument("--string-hex", default="pycore/programs/string_mem.hex")
     parser.add_argument("--meta", default="pycore/programs/image.meta")
+    parser.add_argument(
+        "--code-ram",
+        action="store_true",
+        help=(
+            "Place the program in code RAM: entry slots are offset by "
+            "CODE_RAM_SLOT_BASE and --program-hex is meant for CODE_RAM_HEX "
+            "(Plan 1 P1)."
+        ),
+    )
     args = parser.parse_args()
 
     run_image_test(
@@ -248,6 +284,7 @@ def main() -> None:
         dmem_hex=pathlib.Path(args.dmem_hex),
         string_hex=pathlib.Path(args.string_hex),
         meta=pathlib.Path(args.meta),
+        slot_base=CODE_RAM_SLOT_BASE if args.code_ram else 0,
     )
 
 

@@ -26,12 +26,14 @@ module tb_frame;
     logic [31:0]   cur_code_in;
     logic          ret_mode_in;
     logic [63:0]   saved_inst_in;
+    logic [31:0]   globals_base_in;
     logic [31:0]   pc_return_out;
     logic [RF_AW-1:0] tos_base_out;
     logic [RF_AW-1:0] locals_base_out;
     logic [31:0]   cur_code_out;
     logic          ret_mode_out;
     logic [63:0]   saved_inst_out;
+    logic [31:0]   globals_base_out;
     logic [RF_AW-1:0] next_locals_base;
     logic          init_new_frame;
     logic          return_done;
@@ -65,6 +67,7 @@ module tb_frame;
         .cur_code_in_i(cur_code_in),
         .ret_mode_in_i(ret_mode_in),
         .saved_inst_in_i(saved_inst_in),
+        .globals_base_in_i(globals_base_in),
         .new_locals_base_in_i(new_locals_base_in),
         .pc_return_out_o(pc_return_out),
         .tos_base_out_o(tos_base_out),
@@ -72,6 +75,7 @@ module tb_frame;
         .cur_code_out_o(cur_code_out),
         .ret_mode_out_o(ret_mode_out),
         .saved_inst_out_o(saved_inst_out),
+        .globals_base_out_o(globals_base_out),
         .next_locals_base_o(next_locals_base),
         .init_new_frame_o(init_new_frame),
         .return_done_o(return_done),
@@ -146,6 +150,7 @@ module tb_frame;
             tos_base_in    = tos[RF_AW-1:0];
             locals_base_in = locals[RF_AW-1:0];
             cur_code_in    = 32'hC0DE_0000 ^ pc_ret[31:0];
+            globals_base_in = 32'h0000_0400 ^ pc_ret[31:0];
             @(posedge clk);
             @(negedge clk);
             call_valid = 1'b0;
@@ -202,6 +207,7 @@ module tb_frame;
         cur_code_in      = '0;
         ret_mode_in      = 1'b0;
         saved_inst_in    = 64'b0;
+        globals_base_in  = '0;
 
         #20;
         rst_n = 1'b1;
@@ -239,6 +245,8 @@ module tb_frame;
               "locals_base_out should be 1 after popping frame 2");
         check(cur_code_out == (32'hC0DE_0000 ^ 32'h300),
               "cur_code_out mismatch for frame 2");
+        check(globals_base_out == (32'h0000_0400 ^ 32'h300),
+              "globals_base_out mismatch for frame 2");
 
         // Return from frame 1.
         do_return(1'b0);
@@ -246,6 +254,8 @@ module tb_frame;
         check(pc_return_out == 32'h200, "pc_return_out mismatch for frame 1");
         check(cur_code_out == (32'hC0DE_0000 ^ 32'h200),
               "cur_code_out mismatch for frame 1");
+        check(globals_base_out == (32'h0000_0400 ^ 32'h200),
+              "globals_base_out mismatch for frame 1");
 
         // Return from frame 0.
         do_return(1'b0);
@@ -253,6 +263,8 @@ module tb_frame;
         check(pc_return_out == 32'h100, "pc_return_out mismatch for frame 0");
         check(cur_code_out == (32'hC0DE_0000 ^ 32'h100),
               "cur_code_out mismatch for frame 0");
+        check(globals_base_out == (32'h0000_0400 ^ 32'h100),
+              "globals_base_out mismatch for frame 0");
         check(head_ptr_out == 0, "head pointer should be 0 when stack is empty");
 
         // ------------------------------------------------------------------

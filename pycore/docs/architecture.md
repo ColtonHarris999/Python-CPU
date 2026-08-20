@@ -419,11 +419,17 @@ Each CALL pushes a two-slot, 32-byte frame descriptor:
 
 ```text
 slot 0: { pc_return[31:0], tos_base, locals_base, zero padding }
-slot 1: { zero padding, caller cur_code[31:0] }
+slot 1: { globals_base[30:0], saved_instance_addr[63:0],
+          ret_discard_push_self, caller cur_code[31:0] }
 ```
 
+`globals_base_r` is saved and restored across CALL/RETURN so
+`_bi_exec_globals(code, dict)` can point a callee at a supplied `MUT_DICT`
+and the caller gets its original globals back. The address is 31 bits because
+dmem is 128 KB; `FRAME_ENTRY_BYTES` stays 32.
+
 Each RETURN pops slot 1 then slot 0, restores the caller's code object pointer,
-PC, TOS base, and locals base, then reloads the caller's `co_consts` and
+PC, TOS base, locals base, and globals base, then reloads the caller's `co_consts` and
 `co_names` from the code object before fetch resumes. Frame depth is bounded by
 the reserved frame-stack region (`0x1C000`-`0x1FFFF`).
 
@@ -492,12 +498,13 @@ tag slot) before pushing the tagged entry. An inline or small const cache is
 future work.
 
 `LOAD_GLOBAL` and `LOAD_NAME` read the name from `co_names`, then probe the
-module globals dict; on a miss they fall back once to the boot-record builtins
+current frame's globals dict (`globals_base_r`); on a miss they fall back once to the boot-record builtins
 dict (`builtins_base_r`, latched in `S_BOOT`). A name missing from both traps
 `PY_TRAP_MEM_FAULT`. `LOAD_NAME` is currently equivalent to
 globals-then-builtins lookup at module scope (LEGB **G** then **B**; locals
 and enclosing cells are not yet on this path). `STORE_NAME` and
-`STORE_GLOBAL` update the globals dict only.
+`STORE_GLOBAL` update the current frame's globals dict only. `_bi_exec_globals`
+points `globals_base_r` at a caller-supplied `MUT_DICT` for the callee frame.
 
 Builtin **CALL** uses the same LEGB load to obtain a callable, then:
 
@@ -908,3 +915,17 @@ CPO = total_cycles / dynamic_opcodes
 Secondary metrics are type-trap rate and unit utilization. The helper
 `pycore/tools/cosim_trace.py` summarizes traces containing `opcode=`, `unit=`,
 and `trap=` fields.
+
+## Code memory regions
+
+The PC indexes an 8-byte code slot, and that slot space is split between a
+read-only ROM (the image) and a writable code RAM:
+
+```text
+slot 0x0000 .. 0x1FFF   CODE ROM   pycore_imem      READ_ONLY    64 KB
+slot 0x2000 .. 0xA1FF   CODE RAM   pycore_code_ram  writable    256 KB
+```
+
+`pycore_code_mem.sv` muxes the two and is a drop-in replacement for
+`pycore_imem`. Full details, sizing rationale, and the planned module/loader
+format are in [`code_loading.md`](code_loading.md).

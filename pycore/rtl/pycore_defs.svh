@@ -193,6 +193,17 @@ localparam logic [31:0] PY_BI_RANGE        = 32'd8;
 localparam logic [31:0] PY_BI_SET          = 32'd9;
 localparam logic [31:0] PY_BI_ORD          = 32'd10;
 localparam logic [31:0] PY_BI_CHR          = 32'd11;
+// Region mark / release (Plan 1 P8).  Not a garbage collector: releasing to a
+// mark invalidates every handle allocated after it, with no detection.  See
+// pycore/docs/code_loading.md for the ownership rule.
+localparam logic [31:0] PY_BI_HEAP_MARK    = 32'd12;
+localparam logic [31:0] PY_BI_HEAP_RELEASE = 32'd13;
+localparam logic [31:0] PY_BI_CODE_MARK    = 32'd14;
+localparam logic [31:0] PY_BI_CODE_RELEASE = 32'd15;
+// Enter a CODE_OBJECT with globals_base_r pointed at a supplied MUT_DICT
+// (Plan 1 P4).  The CALL/RETURN path saves the caller's globals in the
+// frame descriptor so they come back on return.
+localparam logic [31:0] PY_BI_EXEC_GLOBALS = 32'd16;
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;
@@ -231,6 +242,7 @@ localparam logic [4:0] PY_ALU_ILLEGAL   = 5'd31;
 //   python3.14 -c "import opcode; print({n:opcode.opmap[n] for n in [...]})"
 // -------------------------------------------------------------------------
 localparam logic [7:0] PY_OP_CACHE            = 8'd0;
+localparam logic [7:0] PY_OP_BINARY_SLICE     = 8'd1;
 localparam logic [7:0] PY_OP_END_FOR          = 8'd9;
 localparam logic [7:0] PY_OP_GET_ITER         = 8'd16;
 localparam logic [7:0] PY_OP_MAKE_FUNCTION    = 8'd23;
@@ -2133,6 +2145,28 @@ endfunction
 // PYCORE_HEAP_BASE == PYCORE_BOOT_RECORD_ADDR + PYCORE_BOOT_RECORD_BYTES.
 // Written by image_from_source.py; read by S_BOOT at reset when BOOT_EN=1.
 // -------------------------------------------------------------------------
+// -------------------------------------------------------------------------
+// Code address space (Plan 1 P1).  The PC is a slot index; fetch converts it
+// to a byte address with `pc << 3`.  Two regions share that space:
+//
+//   slot 0x0000 .. 0x1FFF   CODE ROM  pycore_imem      READ_ONLY, image-loaded
+//   slot 0x2000 .. 0x9FFF   CODE RAM  pycore_code_ram  writable, loadable
+//
+// PYCORE_CODE_RAM_SLOT_BASE equals the ROM's slot count
+// (PYCORE_IMEM_BLOCK_COUNT * 4096 / 8), so `entry_slot` semantics do not
+// change: code in RAM is simply code with a large entry slot.  ROM stays
+// genuinely read-only, which is what keeps a bad loader from corrupting the
+// boot image.  Sizing rationale is in pycore/docs/code_loading.md.
+// -------------------------------------------------------------------------
+localparam int PYCORE_CODE_RAM_BLOCK_COUNT = 64;   // 64 * 4 KB = 256 KB
+localparam logic [31:0] PYCORE_CODE_RAM_SLOT_BASE = 32'h0000_2000;
+localparam logic [31:0] PYCORE_CODE_RAM_SLOTS     = 32'h0000_8000;  // 32768
+localparam logic [31:0] PYCORE_CODE_RAM_SLOT_LIMIT =
+    PYCORE_CODE_RAM_SLOT_BASE + PYCORE_CODE_RAM_SLOTS;
+// Byte address of the first code-RAM slot (slot index << 3).
+localparam logic [31:0] PYCORE_CODE_RAM_BYTE_BASE =
+    PYCORE_CODE_RAM_SLOT_BASE << 3;
+
 localparam logic [31:0] PYCORE_BOOT_RECORD_ADDR = 32'h0000_03E0;
 localparam logic [31:0] PYCORE_BOOT_RECORD_BYTES = 32'd96;
 

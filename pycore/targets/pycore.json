@@ -662,6 +662,7 @@
       "hw_class": "OBJECT",
       "fold": "BAR"
     },
+    "BINARY_SLICE": {"support": "execute", "hw_class": "OBJECT", "fold": "BAR", "note": "strings only; CHARACTER-indexed bounds that clamp like CPython; negative bounds and LIST/TUPLE subjects \u2192 TYPE"},
     "STORE_SUBSCR": {
       "support": "execute",
       "hw_class": "OBJECT",

@@ -385,6 +385,16 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
+            // BINARY_SLICE: stack is [subject, start, stop] with stop at TOS.
+            // The container FSM reads stop from RF[tos-1] through its own port;
+            // the result replaces the subject and two entries are popped.
+            PY_OP_BINARY_SLICE: begin
+                rs1_sel_o = tos_index_i - 8'd3;  // subject
+                rs2_sel_o = tos_index_i - 8'd2;  // start
+                rd_sel_o  = tos_index_i - 8'd3;
+                is_container_o = 1'b1;
+            end
+
             // DELETE_SUBSCR: same key/container wiring as STORE_SUBSCR; both
             // popped by the container FSM (no value operand).
             PY_OP_DELETE_SUBSCR: begin
