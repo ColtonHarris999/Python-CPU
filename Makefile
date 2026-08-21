@@ -203,8 +203,11 @@ EXCORE_RTL_SRCS := \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
 	pycore-img-try-exception pycore-img-try-typeerror \
+	pycore-img-raise-typeerror-call pycore-img-raise-instance \
 	pycore-img-try-tuple-match pycore-img-try-lookuperror \
-	pycore-img-try-except-miss pycore-img-exc-all \
+	pycore-img-try-except-miss pycore-img-bare-raise \
+	pycore-img-bare-raise-no-active pycore-img-try-except-else \
+	pycore-img-try-finally pycore-img-try-except-as pycore-img-exc-all \
 	pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
@@ -884,7 +887,10 @@ pycore-img-raise-syntaxerror-fatal:
 	$(call PYCORE_IMAGE_TRAP_RUN,raise_syntaxerror_fatal,17,50000)
 
 pycore-img-try-exc-cross-frame-fatal:
-	$(call PYCORE_IMAGE_TRAP_RUN,try_exc_cross_frame_fatal,17,50000)
+	$(call PYCORE_IMAGE_RUN,try_exc_cross_frame_fatal,100000)
+
+pycore-img-try-callee-unhandled:
+	$(call PYCORE_IMAGE_TRAP_RUN,try_callee_unhandled,17,100000)
 
 pycore-img-code-ram-call-rom:
 	$(call PYCORE_IMAGE_RUN,code_ram_call,100000)
@@ -1116,6 +1122,9 @@ pycore-img-for-iter-object-list:
 
 pycore-img-for-iter-object-next:
 	$(call PYCORE_IMAGE_RUN,for_iter_object_next,400000)
+
+pycore-img-for-iter-object-raise-catch:
+	$(call PYCORE_IMAGE_RUN,for_iter_object_raise_catch,400000)
 
 pycore-img-for-iter-object-exhaust:
 	$(call PYCORE_IMAGE_RUN,for_iter_object_exhaust,200000)
@@ -1616,8 +1625,11 @@ pycore-img-attr-all: \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
 	pycore-img-try-exception pycore-img-try-typeerror \
+	pycore-img-raise-typeerror-call pycore-img-raise-instance \
 	pycore-img-try-tuple-match pycore-img-try-lookuperror \
-	pycore-img-try-except-miss pycore-img-exc-all \
+	pycore-img-try-except-miss pycore-img-bare-raise \
+	pycore-img-bare-raise-no-active pycore-img-try-except-else \
+	pycore-img-try-finally pycore-img-try-except-as pycore-img-exc-all \
 	pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
@@ -1802,6 +1814,12 @@ pycore-img-try-exception:
 pycore-img-try-typeerror:
 	$(call PYCORE_IMAGE_RUN,try_typeerror,100000)
 
+pycore-img-raise-typeerror-call:
+	$(call PYCORE_IMAGE_RUN,raise_typeerror_call,100000)
+
+pycore-img-raise-instance:
+	$(call PYCORE_IMAGE_RUN,raise_instance,100000)
+
 pycore-img-try-tuple-match:
 	$(call PYCORE_IMAGE_RUN,try_tuple_match,100000)
 
@@ -1811,15 +1829,40 @@ pycore-img-try-lookuperror:
 pycore-img-try-except-miss:
 	$(call PYCORE_IMAGE_TRAP_RUN,try_except_miss,17,100000)
 
+pycore-img-bare-raise:
+	$(call PYCORE_IMAGE_RUN,bare_raise,100000)
+
+pycore-img-bare-raise-no-active:
+	$(call PYCORE_IMAGE_TRAP_RUN,bare_raise_no_active,17,50000)
+
+pycore-img-try-except-else:
+	$(call PYCORE_IMAGE_RUN,try_except_else,100000)
+
+pycore-img-try-finally:
+	$(call PYCORE_IMAGE_RUN,try_finally,150000)
+
+pycore-img-try-except-as:
+	$(call PYCORE_IMAGE_RUN,try_except_as,100000)
+
 pycore-img-exc-all: \
 	pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
 	pycore-img-raise-stopiteration-fatal \
 	pycore-img-try-exception \
 	pycore-img-try-typeerror \
+	pycore-img-raise-typeerror-call \
+	pycore-img-raise-instance \
 	pycore-img-try-tuple-match \
 	pycore-img-try-lookuperror \
-	pycore-img-try-except-miss
+	pycore-img-try-except-miss \
+	pycore-img-bare-raise \
+	pycore-img-bare-raise-no-active \
+	pycore-img-try-except-else \
+	pycore-img-try-finally \
+	pycore-img-try-except-as \
+	pycore-img-try-exc-cross-frame-fatal \
+	pycore-img-try-callee-unhandled \
+	pycore-img-for-iter-object-raise-catch
 
 pycore-img-return-true:
 	$(call PYCORE_IMAGE_RUN,return_true,50000)

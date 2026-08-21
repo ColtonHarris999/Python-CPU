@@ -227,7 +227,7 @@
     "OBJ_EXC": {
       "distance": 5,
       "needs_subsystem": "exception state + stack unwinder",
-      "note": "v1 execute/partial: RAISE_VARARGS (oparg 1) / PUSH_EXC_INFO / CHECK_EXC_MATCH (identity+MRO+tuples) / POP_EXCEPT / RERAISE (0/1) + dmem exc stack + co_exceptiontable. Remaining members are trap. Types: exceptions.types + pycore/docs/exception_support.md. SETUP_* / POP_BLOCK are compiler pseudo-ops (never in co_code). Plan tracks in planning/exceptions_full_support_plan.md.",
+      "note": "v1 execute/partial: RAISE_VARARGS (oparg 0/1) / PUSH_EXC_INFO / CHECK_EXC_MATCH (identity+MRO+tuples) / POP_EXCEPT / RERAISE (0/1) + dmem exc stack + co_exceptiontable. Remaining members are trap. Types: exceptions.types + pycore/docs/exception_support.md. SETUP_* / POP_BLOCK are compiler pseudo-ops (never in co_code). Plan tracks in planning/exceptions_full_support_plan.md.",
       "members": [
         "PUSH_EXC_INFO",
         "POP_EXCEPT",
@@ -286,7 +286,7 @@
           "T12"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [],
         "wave": "A",
         "note": "root; bare except is this without a matcher"
@@ -303,7 +303,7 @@
           "T10"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [],
         "wave": "A",
         "note": "ubiquity test: except Exception catches Wave A leaves, not SystemExit/KeyboardInterrupt/GeneratorExit"
@@ -319,7 +319,7 @@
           "T12"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [
           "FOR_ITER-exhaust"
         ],
@@ -335,7 +335,7 @@
           "T5-A"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [],
         "wave": "A"
       },
@@ -349,7 +349,7 @@
           "T6"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [
           "PY_TRAP_DIV_ZERO"
         ],
@@ -364,7 +364,7 @@
           "T5-A"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [],
         "wave": "A"
       },
@@ -378,7 +378,7 @@
           "T6"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [
           "MEM_FAULT-seq-oob"
         ],
@@ -394,7 +394,7 @@
           "T6"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [
           "MEM_FAULT-dict-miss"
         ],
@@ -410,7 +410,7 @@
           "T6"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [
           "MEM_FAULT-name-miss"
         ],
@@ -426,7 +426,7 @@
           "T6"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [
           "MEM_FAULT-unbound-local"
         ],
@@ -443,7 +443,7 @@
           "T6"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [
           "PY_TRAP_TYPE"
         ],
@@ -459,7 +459,7 @@
           "T5-A"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [],
         "wave": "A",
         "note": "firmware raise ValueError after Wave A; wrong value not wrong type"
@@ -474,7 +474,7 @@
           "T6"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [
           "PY_TRAP_ATTR_ERROR"
         ],
@@ -490,7 +490,7 @@
           "T5-A"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [],
         "wave": "A",
         "note": "Track 4 bare raise with no active exception"
@@ -505,7 +505,7 @@
           "T7"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [],
         "wave": "A",
         "note": "Track 7 LOAD_COMMON_CONSTANT 0"
@@ -992,7 +992,7 @@
           "T5-C"
         ],
         "match": "mro",
-        "construct": "raise-type",
+        "construct": "call",
         "trap_map": [],
         "wave": "C",
         "note": "Pulled onto T1 rebase: Plan 1 P7 already had a leaf SyntaxError and exact-match tests. IndentationError/TabError stay absent."
@@ -1449,12 +1449,13 @@
       "hw_class": "OBJECT",
       "fold": "BAR",
       "obj_group": "OBJ_EXC",
-      "note": "oparg=1 builds OBK_EXCEPTION, walks co_exceptiontable, redirects or PY_TRAP_RAISE; type vs instance is Track 2; see exception_support.md",
+      "note": "oparg=0 reuses active_exc_r (no active exception is fatal until a RuntimeError sidecar exists); oparg=1 accepts an exception type or OBK_EXCEPTION instance; both walk co_exceptiontable and redirect or PY_TRAP_RAISE; see exception_support.md",
       "supported_opargs": [
+        0,
         1
       ],
       "plan_track": "T4",
-      "message": "oparg 1 only: alloc OBK_EXCEPTION from TOS-as-type, walk co_exceptiontable; oparg 0/2 are Track 4"
+      "message": "oparg 0/1: reuse active exception for bare raise or allocate/reuse TOS exception, then walk co_exceptiontable; oparg 2 raise-from remains unsupported"
     },
     "PUSH_EXC_INFO": {
       "support": "execute",

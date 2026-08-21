@@ -51,9 +51,14 @@ Counts are derived from `exceptions.types`. Recompute after every seed PR:
 | `skip` | 14 | warnings family + `FloatingPointError` + `_IncompleteInputError` |
 
 Today Wave A is **seeded** with documented `tp_base` links and `match = mro`.
-`RAISE_VARARGS` 1 still treats TOS as a type (`construct = raise-type`).
-`CALL TypeError("x")` still allocates `OBK_INSTANCE` (Track 2). FOR_ITER
-exhaustion still uses handle **identity** vs `iter_exhaust_type_r`, not MRO.
+`SyntaxError` is also seeded (`tp_base=Exception`) so Plan 1 P7 tests still
+resolve the name. All seeded exception types have `construct = call`: `CALL`
+allocates an `OBK_EXCEPTION` with zero or one positional argument, and
+`RAISE_VARARGS` 1 accepts either a type or an existing exception instance;
+oparg 0 reuses the active exception. Bare raise without an active exception
+remains fatal `PY_TRAP_RAISE` until a boot `RuntimeError` sidecar exists.
+FOR_ITER exhaustion still uses handle **identity** vs `iter_exhaust_type_r`,
+not MRO.
 
 ## Tracker
 
@@ -76,10 +81,10 @@ itself).
 | `KeyError` | seeded | T5-A | T6 | trap map not converted yet |
 | `NameError` | seeded | T5-A | T6 | trap map not converted yet |
 | `UnboundLocalError` | seeded | T5-A | T6 | trap map not converted yet |
-| `TypeError` | seeded | T5-A | T2 / T6 | raise-type only; CALL still INSTANCE |
-| `ValueError` | seeded | T5-A | T2 | raise-type only |
+| `TypeError` | seeded | T5-A | T6 | CALL constructs `OBK_EXCEPTION`; TYPE trap mapping remains |
+| `ValueError` | seeded | T5-A | — | CALL constructs `OBK_EXCEPTION` |
 | `AttributeError` | seeded | T5-A | T6 | trap map not converted yet |
-| `RuntimeError` | seeded | T5-A | T4 | Track 4 bare `raise` with no active exception |
+| `RuntimeError` | seeded | T5-A | T4 | seeded, but bare `raise` with no active exception remains fatal until its handle has a boot sidecar |
 | `AssertionError` | seeded | T5-A | T7 | `LOAD_COMMON_CONSTANT` still trap |
 | `SyntaxError` | seeded | T1 rebase | — | Plan 1 P7 leaf pulled under `Exception`; `IndentationError`/`TabError` stay absent |
 
@@ -166,7 +171,7 @@ names (Track 10 adds **user** types).
 | --- | --- | --- |
 | T2 Construction | any seeded exception type (tests: `StopIteration`, `TypeError`) | `CALL` with exception `ob_flags` → `OBK_EXCEPTION`; `RAISE` type vs instance |
 | T3 Cross-frame unwind | none new | preserves the already-built object across `S_RETURN` |
-| T4 `RAISE_VARARGS` 0/2 | `RuntimeError` (T5-A) for bare `raise` with no active exc | oparg 0 re-raise; oparg 2 optional `raise from` |
+| T4 `RAISE_VARARGS` 0/2 | `RuntimeError` (T5-A) intended for bare `raise` with no active exc | oparg 0 re-raise landed; no-active fallback is fatal pending sidecar; oparg 2 remains out |
 | T6 Trap→raise | `TypeError`, `AttributeError`, `ZeroDivisionError`; later `IndexError` / `KeyError` / `NameError` / `UnboundLocalError` | boot-sidecar handles; enter `CONT_RAISE` next cycle |
 | T7 `assert` | `AssertionError` (T5-A) | `LOAD_COMMON_CONSTANT` 0 is a register write of that handle |
 | T8 try/finally/else/as | whatever the test raises | tests only; no new types |

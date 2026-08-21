@@ -47,7 +47,7 @@ class ExceptionCatalogTest(unittest.TestCase):
         row = TARGET.exceptions["StopIteration"]
         self.assertEqual(row["tp_base_actual"], "Exception")
         self.assertEqual(row["match"], "mro")
-        self.assertEqual(row["construct"], "raise-type")
+        self.assertEqual(row["construct"], "call")
 
     def test_matching_parents_are_seeded(self) -> None:
         for name, parent in (("BaseException", None), ("Exception", "BaseException")):
@@ -132,14 +132,16 @@ class ExceptionOpcodeTrackingTest(unittest.TestCase):
         self.assertEqual(TARGET.opcodes["RERAISE"]["support"], "execute")
         self.assertEqual(TARGET.opcodes["RAISE_VARARGS"]["support"], "partial")
         self.assertEqual(TARGET.opcodes["CHECK_EXC_MATCH"]["support"], "execute")
-        self.assertEqual(TARGET.opcodes["RAISE_VARARGS"]["supported_opargs"], [1])
+        self.assertEqual(TARGET.opcodes["RAISE_VARARGS"]["supported_opargs"], [0, 1])
         self.assertEqual(TARGET.opcodes["RERAISE"]["supported_opargs"], [0, 1])
 
     def test_raise_oparg_ceiling(self) -> None:
-        ok = TARGET.classify("RAISE_VARARGS", 1)
-        bad = TARGET.classify("RAISE_VARARGS", 0)
-        self.assertTrue(ok.arg_supported)
-        self.assertFalse(bad.arg_supported)
+        bare = TARGET.classify("RAISE_VARARGS", 0)
+        one = TARGET.classify("RAISE_VARARGS", 1)
+        chained = TARGET.classify("RAISE_VARARGS", 2)
+        self.assertTrue(bare.arg_supported)
+        self.assertTrue(one.arg_supported)
+        self.assertFalse(chained.arg_supported)
 
     def test_raise_partial_is_warn_when_in_scope(self) -> None:
         info = TARGET.classify("RAISE_VARARGS", 1)
