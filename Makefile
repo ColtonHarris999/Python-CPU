@@ -1797,7 +1797,7 @@ pycore-img-to-bool-containers:
 	$(call PYCORE_IMAGE_RUN,to_bool_containers,100000)
 
 pycore-img-raise-varargs:
-	$(call PYCORE_IMAGE_TRAP_RUN,raise_varargs,17,50000)
+	$(call PYCORE_IMAGE_TRAP_RUN,raise_varargs,1,50000)
 
 pycore-img-raise-stopiteration-fatal:
 	$(call PYCORE_IMAGE_TRAP_RUN,raise_stopiteration_fatal,17,50000)
