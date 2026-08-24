@@ -87,6 +87,10 @@ localparam logic [31:0] PY_OBK_BUILTIN      = 32'd4;
 localparam logic [31:0] PY_OBK_BYTEARRAY    = 32'd5;  // legacy; prefer MUT_BYTEARRAY
 localparam logic [31:0] PY_OBK_EXCEPTION    = 32'd6;
 
+// OBK_TYPE ob_flags bit 0: seeded exception type so CALL can allocate
+// OBK_EXCEPTION without walking tp_base (exceptions plan §2.4 / Track 2).
+localparam logic [31:0] PYCORE_OB_FLAG_EXC_TYPE = 32'd1;
+
 localparam int PYCORE_SHORT_STR_MAX_BYTES = 15;
 localparam int PYCORE_SHORT_STR_SIZE_MSB  = 127;
 localparam int PYCORE_SHORT_STR_SIZE_LSB  = 124;

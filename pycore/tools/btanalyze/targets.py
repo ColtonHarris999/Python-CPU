@@ -8,6 +8,11 @@ onto hardware. It is two orthogonal taxonomies plus the current support state:
   ``fit`` tier (native/costly/heavy/infeasible). Independent of ``support``.
 * ``fold``     -- the dataflow shape (SRC/UNY/RDX/SNK/BRC/BAR) used by folding.
 
+The same file also carries ``exceptions.types``: built-in exception type
+status (seeded/absent/alias/skip), documented ``tp_base``, and which
+exceptions-plan track seeds or consumes each name. Human table:
+``pycore/docs/exception_support.md``.
+
 The file is JSON (stdlib-only). ``.yaml``/``.yml`` is accepted opportunistically
 when PyYAML happens to be importable, so YAML stays opt-in without a hard dep.
 """
@@ -138,6 +143,11 @@ class TargetModel:
         self.opcodes = {k: v for k, v in data["opcodes"].items() if k != "//"}
         self.fold_groups = list(data["fold_groups"])
         self.max_fold_len = int(data["max_fold_len"])
+        exc = data.get("exceptions") or {}
+        self.exc_support_levels = dict(exc.get("support_levels") or {})
+        self.exceptions = {
+            k: v for k, v in (exc.get("types") or {}).items() if k != "//"
+        }
         self._validate()
         self._opname_to_group = self._build_group_index()
 
@@ -159,6 +169,51 @@ class TargetModel:
         for group in self.fold_groups:
             if "name" not in group or "cats" not in group:
                 raise ValueError(f"fold_group missing name/cats: {group}")
+        self._validate_exceptions()
+
+    def _validate_exceptions(self) -> None:
+        """Require a complete built-in exception catalog next to the opcode matrix."""
+        required_exc_levels = {"seeded", "absent", "alias", "skip"}
+        if not self.exc_support_levels:
+            raise ValueError("target missing exceptions.support_levels")
+        missing_levels = required_exc_levels - set(self.exc_support_levels)
+        if missing_levels:
+            raise ValueError(
+                f"target missing exception support_levels: {sorted(missing_levels)}"
+            )
+        if not self.exceptions:
+            raise ValueError("target missing exceptions.types")
+        required_keys = {
+            "status", "tp_base", "seed_track", "uses_tracks", "match", "construct",
+        }
+        match_levels = {"none", "identity", "mro"}
+        construct_levels = {"none", "raise-type", "call"}
+        for name, entry in self.exceptions.items():
+            missing = required_keys - set(entry)
+            if missing:
+                raise ValueError(
+                    f"exception {name!r} missing {sorted(missing)}"
+                )
+            if entry["status"] not in self.exc_support_levels:
+                raise ValueError(
+                    f"exception {name!r} has unknown status {entry['status']!r}"
+                )
+            if entry["match"] not in match_levels:
+                raise ValueError(
+                    f"exception {name!r} has unknown match {entry['match']!r}"
+                )
+            if entry["construct"] not in construct_levels:
+                raise ValueError(
+                    f"exception {name!r} has unknown construct {entry['construct']!r}"
+                )
+            if not isinstance(entry["uses_tracks"], list):
+                raise ValueError(f"exception {name!r} uses_tracks must be a list")
+            if entry["status"] == "alias" and "alias_of" not in entry:
+                raise ValueError(f"exception {name!r} alias missing alias_of")
+            if entry["status"] == "seeded" and "tp_base_actual" not in entry:
+                raise ValueError(
+                    f"exception {name!r} seeded but missing tp_base_actual"
+                )
 
     def _build_group_index(self) -> dict[str, str]:
         index: dict[str, str] = {}
@@ -237,6 +292,11 @@ class TargetModel:
             shift = entry.get("selector_shift", 5)
             selectors = set(entry.get("supported_selectors", []))
             if selectors and (arg >> shift) not in selectors:
+                arg_supported = False
+
+        supported_opargs = entry.get("supported_opargs")
+        if supported_opargs is not None and arg is not None:
+            if arg not in set(supported_opargs):
                 arg_supported = False
 
         return self._make_info(

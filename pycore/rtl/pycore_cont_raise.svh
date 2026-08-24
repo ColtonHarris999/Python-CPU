@@ -1,5 +1,7 @@
-// CONT_RAISE — RAISE_VARARGS 1 (§7.5): build OBK_EXCEPTION, walk
-// co_exceptiontable (code field 7), redirect on hit or PY_TRAP_RAISE on miss.
+// CONT_RAISE — RAISE_VARARGS 0/1 (§7.5): reuse active_exc_r for bare raise,
+// or build/reuse TOS OBK_EXCEPTION, then walk co_exceptiontable (code field 7).
+// Bare raise without an active exception is fatal PY_TRAP_RAISE until a boot
+// RuntimeError sidecar exists; never probe builtins combinationally in EX.
 //
 // Phases reuse CP_* codes (op-local).
 //   container_probe_r      : exception-object write step, then table byte index
@@ -13,27 +15,90 @@
 CONT_RAISE: begin
     unique case (container_phase_r)
         CP_INIT: begin
-            container_tag_r <= pycore_get_tag(rs1_r);
-            container_val_r <= pycore_get_val(rs1_r);
-            raise_type_entry_r <= rs1_r;
-            if ((heap_ptr_r + PYCORE_OBJ_EXCEPTION_BYTES) > PYCORE_HEAP_LIMIT) begin
-                container_mem_fault_r <= 1'b1;
+            if (cur_arg_r == 32'd0) begin
+                if (!active_exc_valid_r ||
+                    (pycore_get_tag(active_exc_r) != PY_TAG_OBJECT)) begin
+                    container_raise_trap_r <= 1'b1;
+                    fetch_skip_r           <= 1'b1;
+                    container_phase_r      <= CP_DONE;
+                end else begin
+                    // The handler-established active exception is already an
+                    // OBK_EXCEPTION. Keep stack effect 0, recover its type,
+                    // then enter the same CP_VAL table walk as `raise e`.
+                    container_tag_r  <= PY_TAG_OBJECT;
+                    container_val_r  <= pycore_get_val(active_exc_r);
+                    container_base_r <= pycore_get_val(active_exc_r)[31:0];
+                    container_dmem_addr_r <= pycore_obj_field_val_addr(
+                        pycore_get_val(active_exc_r)[31:0], 32'd0);
+                    container_dmem_we_r      <= 1'b0;
+                    container_dmem_pending_r <= 1'b1;
+                    container_probe_r        <= 32'd7;
+                    container_phase_r        <= CP_HDR;
+                end
             end else begin
-                container_base_r         <= heap_ptr_r;
-                heap_ptr_r              <= heap_ptr_r + PYCORE_OBJ_EXCEPTION_BYTES;
-                container_dmem_addr_r    <= heap_ptr_r;
-                container_dmem_we_r      <= 1'b1;
-                container_dmem_wdata_r   <= pycore_pack_ob_head(
-                    PY_OBK_EXCEPTION, 32'd0, 64'd0);
-                container_dmem_pending_r <= 1'b1;
-                container_probe_r        <= 32'd0;
-                container_phase_r        <= CP_HDR;
+                container_tag_r <= pycore_get_tag(rs1_r);
+                container_val_r <= pycore_get_val(rs1_r);
+                raise_type_entry_r <= rs1_r;
+                if (pycore_get_tag(rs1_r) != PY_TAG_OBJECT) begin
+                    container_type_trap_r <= 1'b1;
+                end else begin
+                    // One head read distinguishes a type from an existing
+                    // exception instance. Allocation follows only for TYPE.
+                    container_dmem_addr_r    <= cont_rs1_addr;
+                    container_dmem_we_r      <= 1'b0;
+                    container_dmem_pending_r <= 1'b1;
+                    container_probe_r        <= 32'd6;
+                    container_phase_r        <= CP_HDR;
+                end
             end
         end
 
         CP_HDR: begin
             if (!container_dmem_pending_r) begin
                 unique case (container_probe_r[3:0])
+                    4'd6: begin
+                        if (pycore_ob_kind(container_rd_data_r) ==
+                                PY_OBK_EXCEPTION) begin
+                            // Reuse the existing object.  Read field0 once so
+                            // protocol FOR_ITER compares the canonical type
+                            // even for `raise e`, where rs1 was the instance.
+                            container_base_r <= container_val_r[31:0];
+                            tos_r            <= tos_r - RF_AW'(1);
+                            container_tag_r  <= PY_TAG_OBJECT;
+                            container_dmem_addr_r <= pycore_obj_field_val_addr(
+                                container_val_r[31:0], 32'd0);
+                            container_dmem_we_r      <= 1'b0;
+                            container_dmem_pending_r <= 1'b1;
+                            container_probe_r        <= 32'd7;
+                        end else if (pycore_ob_kind(container_rd_data_r) ==
+                                     PY_OBK_TYPE) begin
+                            if ((heap_ptr_r + PYCORE_OBJ_EXCEPTION_BYTES) >
+                                    PYCORE_HEAP_LIMIT) begin
+                                container_mem_fault_r <= 1'b1;
+                            end else begin
+                                container_base_r      <= heap_ptr_r;
+                                heap_ptr_r <= heap_ptr_r +
+                                    PYCORE_OBJ_EXCEPTION_BYTES;
+                                container_dmem_addr_r  <= heap_ptr_r;
+                                container_dmem_we_r    <= 1'b1;
+                                container_dmem_wdata_r <= pycore_pack_ob_head(
+                                    PY_OBK_EXCEPTION, 32'd0, 64'd0);
+                                container_dmem_pending_r <= 1'b1;
+                                container_probe_r <= 32'd0;
+                            end
+                        end else begin
+                            container_type_trap_r <= 1'b1;
+                        end
+                    end
+                    4'd7: begin
+                        raise_type_entry_r <= pycore_make_entry(
+                            PY_TAG_OBJECT, container_rd_data_r);
+                        container_dmem_addr_r <= pycore_code_field_val_addr(
+                            cur_code_r, PYCORE_CODE_FIELD_CO_EXCEPTIONTABLE);
+                        container_dmem_we_r      <= 1'b0;
+                        container_dmem_pending_r <= 1'b1;
+                        container_phase_r        <= CP_VAL;
+                    end
                     4'd0: begin
                         container_dmem_addr_r    <= container_base_r + 32'd16;
                         container_dmem_we_r      <= 1'b1;
@@ -92,6 +157,10 @@ CONT_RAISE: begin
 
         CP_VAL: begin
             if (!container_dmem_pending_r) begin
+                // An ordinary-frame unwind uses call_exc_pending_r only to
+                // route S_RETURN back here.  Ownership is now CONT_RAISE's.
+                call_exc_pending_r      <= 1'b0;
+                container_call_exc_unwind_r <= 1'b0;
                 container_buf_r        <= container_rd_data_r[31:0];
                 container_slot_count_r <= container_rd_data_r[95:64];
                 container_dmem_addr_r    <= pycore_tuple_tag_addr(
@@ -117,6 +186,20 @@ CONT_RAISE: begin
                         call_exc_pending_r <= 1'b1;
                         container_call_exc_unwind_r <= 1'b1;
                         container_call_returning_r <= 1'b1;
+                        call_sent_r <= 1'b0;
+                        frame_dmem_pending_r <= 1'b0;
+                        return_phase_r <= 3'd0;
+                        container_dmem_pending_r <= 1'b0;
+                        fetch_skip_r <= 1'b1;
+                        container_phase_r <= CP_DONE;
+                    end else if (frame_active_depth > 0) begin
+                        // Ordinary Python CALL: preserve the built exception,
+                        // pop through S_RETURN, then walk the caller table.
+                        call_exc_handle_r <= pycore_make_entry(
+                            PY_TAG_OBJECT, container_val_r);
+                        call_exc_pending_r <= 1'b1;
+                        container_call_exc_unwind_r <= 1'b1;
+                        container_call_returning_r <= 1'b0;
                         call_sent_r <= 1'b0;
                         frame_dmem_pending_r <= 1'b0;
                         return_phase_r <= 3'd0;
@@ -192,6 +275,18 @@ CONT_RAISE: begin
                                 container_dmem_pending_r <= 1'b0;
                                 fetch_skip_r <= 1'b1;
                                 container_phase_r <= CP_DONE;
+                            end else if (frame_active_depth > 0) begin
+                                call_exc_handle_r <= pycore_make_entry(
+                                    PY_TAG_OBJECT, container_val_r);
+                                call_exc_pending_r <= 1'b1;
+                                container_call_exc_unwind_r <= 1'b1;
+                                container_call_returning_r <= 1'b0;
+                                call_sent_r <= 1'b0;
+                                frame_dmem_pending_r <= 1'b0;
+                                return_phase_r <= 3'd0;
+                                container_dmem_pending_r <= 1'b0;
+                                fetch_skip_r <= 1'b1;
+                                container_phase_r <= CP_DONE;
                             end else begin
                                 active_exc_r <= pycore_make_entry(
                                     PY_TAG_OBJECT, container_val_r);
@@ -255,6 +350,18 @@ CONT_RAISE: begin
                             call_exc_pending_r <= 1'b1;
                             container_call_exc_unwind_r <= 1'b1;
                             container_call_returning_r <= 1'b1;
+                            call_sent_r <= 1'b0;
+                            frame_dmem_pending_r <= 1'b0;
+                            return_phase_r <= 3'd0;
+                            container_dmem_pending_r <= 1'b0;
+                            fetch_skip_r <= 1'b1;
+                            container_phase_r <= CP_DONE;
+                        end else if (frame_active_depth > 0) begin
+                            call_exc_handle_r <= pycore_make_entry(
+                                PY_TAG_OBJECT, container_val_r);
+                            call_exc_pending_r <= 1'b1;
+                            container_call_exc_unwind_r <= 1'b1;
+                            container_call_returning_r <= 1'b0;
                             call_sent_r <= 1'b0;
                             frame_dmem_pending_r <= 1'b0;
                             return_phase_r <= 3'd0;
@@ -326,6 +433,18 @@ CONT_RAISE: begin
                     call_exc_pending_r <= 1'b1;
                     container_call_exc_unwind_r <= 1'b1;
                     container_call_returning_r <= 1'b1;
+                    call_sent_r <= 1'b0;
+                    frame_dmem_pending_r <= 1'b0;
+                    return_phase_r <= 3'd0;
+                    container_dmem_pending_r <= 1'b0;
+                    fetch_skip_r <= 1'b1;
+                    container_phase_r <= CP_DONE;
+                end else if (frame_active_depth > 0) begin
+                    call_exc_handle_r <= pycore_make_entry(
+                        PY_TAG_OBJECT, container_val_r);
+                    call_exc_pending_r <= 1'b1;
+                    container_call_exc_unwind_r <= 1'b1;
+                    container_call_returning_r <= 1'b0;
                     call_sent_r <= 1'b0;
                     frame_dmem_pending_r <= 1'b0;
                     return_phase_r <= 3'd0;

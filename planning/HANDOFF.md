@@ -91,9 +91,14 @@
 Merged `origin/main` (PR #67 argc==0 defaults wipe fix + PR #68
 `CO_VARKEYWORDS` / posonly CALL binder) into this branch. Schema is unified:
 8-field / 256B code objects with field-7 exception tables **and** metadata
-bits for varkw/posonly. Prefer re-verify `pycore-img-for-loop-all` +
-`pycore-img-call-all` then CI green on PR #66. Optional follow-ons: dict comps,
-ROM `iter`/`next`.
+bits for varkw/posonly. Prefer CI green on PR #66. After #66 merges, cut a
+**new branch from `main`** for remaining exception tracks after rebasing
+[`cursor/exceptions-full-t1-match`](exceptions_full_support_plan.md)
+(Track 1 + T5-A already landed there). Type/opcode trackers:
+[`exception_support.md`](../pycore/docs/exception_support.md),
+[`bytecode_support.md`](../pycore/docs/bytecode_support.md),
+`pycore.json` `exceptions.types` / `opcodes`. Optional non-exception
+follow-ons: dict comps, ROM `iter`/`next`.
 
 ## Blockers
 

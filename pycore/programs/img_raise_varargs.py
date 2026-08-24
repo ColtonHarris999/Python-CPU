@@ -1,4 +1,4 @@
-"""RAISE_VARARGS oparg=1 → fatal PY_TRAP_RAISE (17)."""
+"""RAISE_VARARGS oparg=1 of a non-exception int → PY_TRAP_TYPE (1)."""
 
 
 def managed_entry():

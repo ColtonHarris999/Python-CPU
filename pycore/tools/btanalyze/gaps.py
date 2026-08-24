@@ -39,9 +39,28 @@ def _finding_for(info: OpInfo, offset: int, line: int | None, in_loop: bool,
         return None
 
     # 2. Object-protocol opcodes are out of scope: suppressed unless asked.
+    # Partial / bad-oparg rows still surface as warnings when the caller
+    # asked for the expansion view — otherwise "execute" vs "partial" on
+    # OBJ_EXC is invisible.
     if info.fit == "infeasible":
         if not include_out_of_scope:
             return None
+        if info.support == "partial":
+            msg = info.message or f"{info.opname} only partially supported"
+            return Finding(
+                opname=info.opname, offset=offset, line=line, support=info.support,
+                hw_class=info.hw_class, fit=info.fit, severity="warn",
+                remediation="hardware", needs_leaf=info.needs_leaf, in_loop=in_loop,
+                kind="coverage", message=msg, suggestion=info.suggestion, arg=info.arg,
+            )
+        if not info.arg_supported:
+            msg = f"{info.opname} oparg {info.arg} not supported by the target"
+            return Finding(
+                opname=info.opname, offset=offset, line=line, support=info.support,
+                hw_class=info.hw_class, fit=info.fit, severity="warn",
+                remediation="hardware", needs_leaf=info.needs_leaf, in_loop=in_loop,
+                kind="bad-arg", message=msg, suggestion=info.suggestion, arg=info.arg,
+            )
         msg = info.message or (
             f"object-protocol opcode (group {info.obj_group}); "
             "outside the scalar design point"

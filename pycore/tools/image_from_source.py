@@ -36,6 +36,7 @@ from encoding import (
     BI_SET,
     BI_TO_BYTES,
     HEAP_BASE,
+    OB_FLAG_EXC_TYPE,
     STRING_MEM_BYTES,
     TAG_INT,
     VAL_MASK,
@@ -177,15 +178,20 @@ DEFERRED_OPS: dict[str, str] = {
         "dynamic class creation is deferred; module-level classes are "
         "serialized at image-build time"
     ),
-    "LOAD_COMMON_CONSTANT": "LOAD_COMMON_CONSTANT is not part of the image-boot subset",
-    "LOAD_SPECIAL": "LOAD_SPECIAL is not part of the image-boot subset",
+    "LOAD_COMMON_CONSTANT": "assert / LOAD_COMMON_CONSTANT is exceptions plan Track 7; AssertionError is unseeded (see exception_support.md)",
+    "LOAD_SPECIAL": "with / LOAD_SPECIAL is exceptions plan Track 9",
     "LOAD_SUPER_ATTR": "super() attribute lookup is deferred",
     "CALL_INTRINSIC_1": "CALL_INTRINSIC_1 is deferred except INTRINSIC_LIST_TO_TUPLE (arg 6)",
-    "CALL_INTRINSIC_2": "CALL_INTRINSIC_2 is deferred",
+    "CALL_INTRINSIC_2": "CALL_INTRINSIC_2 / except* PREP_RERAISE_STAR is exceptions plan Track 11",
     "IMPORT_NAME": "imports are deferred",
     "IMPORT_FROM": "imports are deferred",
-    "SETUP_FINALLY": "exception handling is deferred",
-    "WITH_EXCEPT_START": "context-manager exception path is deferred",
+    "SETUP_FINALLY": "compiler-only pseudo-op; try/finally uses exception tables + RERAISE, not SETUP_FINALLY",
+    "SETUP_WITH": "compiler-only pseudo-op; with uses LOAD_SPECIAL + WITH_EXCEPT_START, not SETUP_WITH",
+    "SETUP_CLEANUP": "compiler-only pseudo-op; never in co_code",
+    "POP_BLOCK": "compiler-only pseudo-op; never in co_code",
+    "CHECK_EG_MATCH": "except* / CHECK_EG_MATCH is exceptions plan Track 11",
+    "WITH_EXCEPT_START": "with exception path is exceptions plan Track 9",
+    "EXIT_INIT_CHECK": "object.__init__ None-check is not part of the image-boot subset",
     "YIELD_VALUE": "generators are deferred",
     "SEND": "generators/coroutines are deferred",
     "GET_AWAITABLE": "async/await is deferred",
@@ -1173,6 +1179,31 @@ def seed_rom_firmware_builtins(
     return pairs
 
 
+# CPython 3.14 Wave A exception tree: (name, documented parent or None).
+# Parents before children. StopIteration is allocated here (not a second
+# leaf) so FOR_ITER's sidecar handle is the same object with tp_base=Exception.
+WAVE_A_EXCEPTION_TYPES: tuple[tuple[str, str | None], ...] = (
+    ("BaseException", None),
+    ("Exception", "BaseException"),
+    ("StopIteration", "Exception"),
+    ("ArithmeticError", "Exception"),
+    ("ZeroDivisionError", "ArithmeticError"),
+    ("LookupError", "Exception"),
+    ("IndexError", "LookupError"),
+    ("KeyError", "LookupError"),
+    ("NameError", "Exception"),
+    ("UnboundLocalError", "NameError"),
+    ("TypeError", "Exception"),
+    ("ValueError", "Exception"),
+    ("AttributeError", "Exception"),
+    ("RuntimeError", "Exception"),
+    ("AssertionError", "Exception"),
+    # Plan 1 P7 already seeded a leaf SyntaxError on main; keep the name and
+    # parent it to Exception. IndentationError / TabError stay T5-C.
+    ("SyntaxError", "Exception"),
+)
+
+
 def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     """Allocate the module builtins dict for the boot-record pair-2 slot.
 
@@ -1183,8 +1214,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         → OBK_BUILTIN
       _bi_exec_globals → OBK_BUILTIN (Plan 1 P4)
       int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
-      StopIteration → leaf OBK_TYPE (tp_base = None / 0) for RAISE / except
-      SyntaxError / ValueError / TypeError / IndexError → leaf OBK_TYPEs
+      Wave A exception types → OBK_TYPE with documented tp_base + OB_FLAG_EXC_TYPE
+        (includes SyntaxError so Plan 1 P7 tests still LOAD_GLOBAL)
       ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
 
     Also writes the StopIteration handle to the exc-arena boot sidecar so
@@ -1205,16 +1236,16 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         tag_constant("int", string_heap),
         tp_dict=int_tp_dict,
     )
-    stop_iteration = heap.alloc_type(tag_constant("StopIteration", string_heap))
+    exc_handles: dict[str, Tagged] = {}
+    for name, parent in WAVE_A_EXCEPTION_TYPES:
+        tp_base = None if parent is None else exc_handles[parent]
+        exc_handles[name] = heap.alloc_type(
+            tag_constant(name, string_heap),
+            tp_base=tp_base,
+            flags=OB_FLAG_EXC_TYPE,
+        )
+    stop_iteration = exc_handles["StopIteration"]
     heap.write_iter_exhaust_type(stop_iteration)
-    # Leaf exception types (tp_base = None) for firmware error reporting.
-    # CHECK_EXC_MATCH is exact-handle in v1, so a flat set is enough; the
-    # tokenizer and parser need SyntaxError, and the rest unblock error paths
-    # across pycore_firmware (Plan 1 P7).
-    exc_types = [
-        (name, heap.alloc_type(tag_constant(name, string_heap)))
-        for name in ("SyntaxError", "ValueError", "TypeError", "IndexError")
-    ]
     pairs: list[tuple[Tagged, Tagged]] = [
         (tag_constant("bytearray", string_heap), heap.alloc_builtin(BI_BYTEARRAY)),
         (tag_constant("max", string_heap), heap.alloc_builtin(BI_MAX)),
@@ -1248,10 +1279,10 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
             heap.alloc_builtin(BI_EXEC_GLOBALS),
         ),
         (tag_constant("int", string_heap), int_type),
-        (tag_constant("StopIteration", string_heap), stop_iteration),
     ]
     pairs.extend(
-        (tag_constant(name, string_heap), handle) for name, handle in exc_types
+        (tag_constant(name, string_heap), exc_handles[name])
+        for name, _ in WAVE_A_EXCEPTION_TYPES
     )
     pairs.extend(seed_rom_firmware_builtins(serializer))
     return heap.alloc_dict(pairs, slot_count=dict_min_slots(len(pairs)))

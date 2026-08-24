@@ -663,7 +663,7 @@ module pycore_core #(
                 id_tos_delta = -3'sd1;
             end
             PY_OP_RAISE_VARARGS: begin
-                // CONT_RAISE pops TOS; keep WB delta at 0 for the container path.
+                // CONT_RAISE pops TOS only for oparg 1; keep WB delta at 0.
                 id_tos_delta = 3'sd0;
             end
             PY_OP_POP_JUMP_IF_TRUE, PY_OP_POP_JUMP_IF_FALSE,
@@ -879,10 +879,10 @@ module pycore_core #(
                 end
                 ex_entry = rs1_r;
             end
-            // RAISE_VARARGS 1 routes to CONT_RAISE (S_CONTAINER). Other arities
-            // remain outside the supported subset.
+            // RAISE_VARARGS 0/1 route to CONT_RAISE (S_CONTAINER). Oparg 2
+            // remains outside the supported subset.
             PY_OP_RAISE_VARARGS: begin
-                if (cur_arg_r != 32'd1) begin
+                if (cur_arg_r > 32'd1) begin
                     exec_type_trap_pulse = (state_r == S_EXEC);
                 end
                 ex_entry = rs1_r;
@@ -1652,9 +1652,11 @@ module pycore_core #(
                     // reload caller's co_consts / co_names before redirect.
                     // A container-launched outer call resumes its paused
                     // S_CONTAINER arm; nested ordinary calls still fetch.
-                    // Protocol raise unwind (§6.1.1) also resumes S_CONTAINER.
+                    // Protocol and ordinary exception unwinds resume
+                    // S_CONTAINER; the latter re-enters CONT_RAISE at CP_VAL.
                     if (return_phase_r == RET_PHASE_DONE)
-                        state_next = container_call_returning_r
+                        state_next = (container_call_returning_r ||
+                                      call_exc_pending_r)
                                    ? S_CONTAINER : S_FETCH;
                 end
                 S_CONTAINER: begin
@@ -2338,7 +2340,7 @@ module pycore_core #(
                             // Name/global/RF helpers (+ future object attrs)
                             `include "pycore_cont_object.svh"
 
-                            // RAISE_VARARGS 1 (§7.5)
+                            // RAISE_VARARGS 0/1 (§7.5)
                             `include "pycore_cont_raise.svh"
 
                             // Handler opcodes (§7.3 / §7.6)

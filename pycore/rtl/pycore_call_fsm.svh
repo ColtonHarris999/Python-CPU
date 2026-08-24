@@ -11,7 +11,7 @@
 //   6  : metadata; start co_defaults → 14
 //   7  : frame push + init
 //   8-11: BOUND_METHOD unwrap (NULL sentinel required) → join 3
-//   12 : TYPE instantiate + __init__ lookup (call_sub_r) → 3 or DONE
+//   12 : TYPE instantiate / exception construct (call_sub_r) → 3 or DONE
 //   13 : OBK_BUILTIN - max/len/range on-core; else PY_TRAP_BUILTIN_CALL
 //   14 : POS defaults fill, or KW/EX_KW shared binder → 7
 //   15 : CALL_PHASE_DONE
@@ -272,7 +272,24 @@
                                     if ((call_mode_r == CALL_MODE_KW) ||
                                         (call_mode_r == CALL_MODE_EX_KW))
                                         call_filter_trap_r <= 1'b1;
-                                    else begin
+                                    else if ((pycore_ob_flags(container_rd_data_r) &
+                                              PYCORE_OB_FLAG_EXC_TYPE) != 32'd0) begin
+                                        // Seeded exception types construct
+                                        // OBK_EXCEPTION directly.  Track 2
+                                        // supports empty or one-element args.
+                                        if (cur_arg_r[15:0] > 16'd1) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else begin
+                                            if (cur_arg_r[15:0] == 16'd1) begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {2'b0, tos_r} - 9'd1);
+                                                call_sub_r <= 6'd22;
+                                            end else begin
+                                                call_sub_r <= 6'd23;
+                                            end
+                                            call_phase_r <= 4'd12;
+                                        end
+                                    end else begin
                                         call_sub_r   <= 6'd0;
                                         call_phase_r <= 4'd12;
                                     end
@@ -1584,7 +1601,9 @@
                         end
 
                         // --------------------------------------------------
-                        // Phase 12: TYPE instantiation + __init__ (own tp_dict)
+                        // Phase 12: TYPE construction
+                        //   sub0-21: ordinary INSTANCE + __init__ (own tp_dict)
+                        //   sub22-31: exception type → OBK_EXCEPTION
                         // --------------------------------------------------
                         4'd12: begin
                             unique case (call_sub_r)
@@ -1894,6 +1913,139 @@
                                     tos_r         <= call_tos_base_r + RF_AW'(1);
                                     fetch_skip_r  <= 1'b1;
                                     call_phase_r  <= CALL_PHASE_DONE;
+                                end
+                                // 22: latch the sole exception argument.
+                                6'd22: begin
+                                    call_self_tag_r <= cont_rf_rs1_tag;
+                                    call_self_val_r <= cont_rf_rs1_val;
+                                    call_sub_r      <= 6'd23;
+                                end
+                                // 23: allocate exception plus optional tuple buffer.
+                                6'd23: begin
+                                    if ((heap_ptr_r + PYCORE_OBJ_EXCEPTION_BYTES +
+                                         pycore_tuple_alloc_bytes(
+                                             {16'd0, cur_arg_r[15:0]})) >
+                                            PYCORE_HEAP_LIMIT) begin
+                                        container_mem_fault_r <= 1'b1;
+                                    end else begin
+                                        call_inst_addr_r <= heap_ptr_r;
+                                        container_buf_r  <= heap_ptr_r +
+                                            PYCORE_OBJ_EXCEPTION_BYTES;
+                                        heap_ptr_r <= heap_ptr_r +
+                                            PYCORE_OBJ_EXCEPTION_BYTES +
+                                            pycore_tuple_alloc_bytes(
+                                                {16'd0, cur_arg_r[15:0]});
+                                        container_dmem_addr_r  <= heap_ptr_r;
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <= pycore_pack_ob_head(
+                                            PY_OBK_EXCEPTION, 32'd0, 64'd0);
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd24;
+                                    end
+                                end
+                                // 24: exception self-tag.
+                                6'd24: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r <=
+                                            call_inst_addr_r + 32'd16;
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <=
+                                            {124'b0, PY_TAG_OBJECT};
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd25;
+                                    end
+                                end
+                                // 25-26: field0 = exception type handle.
+                                6'd25: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r <=
+                                            pycore_obj_field_val_addr(
+                                                call_inst_addr_r, 32'd0);
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <=
+                                            {{96{1'b0}}, call_obj_addr_r};
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd26;
+                                    end
+                                end
+                                6'd26: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r <=
+                                            pycore_obj_field_tag_addr(
+                                                call_inst_addr_r, 32'd0);
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <=
+                                            {124'b0, PY_TAG_OBJECT};
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd27;
+                                    end
+                                end
+                                // 27-28: field1 = empty or one-element args tuple.
+                                6'd27: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r <=
+                                            pycore_obj_field_val_addr(
+                                                call_inst_addr_r, 32'd1);
+                                        container_dmem_we_r <= 1'b1;
+                                        container_dmem_wdata_r <=
+                                            (cur_arg_r[15:0] == 16'd0)
+                                                ? 128'd0
+                                                : {64'd1,
+                                                   {32'b0, container_buf_r}};
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd28;
+                                    end
+                                end
+                                6'd28: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r <=
+                                            pycore_obj_field_tag_addr(
+                                                call_inst_addr_r, 32'd1);
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <=
+                                            {124'b0, PY_TAG_TUPLE};
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= (cur_arg_r[15:0] == 16'd0)
+                                            ? 6'd31 : 6'd29;
+                                    end
+                                end
+                                // 29-30: sole tuple element value/tag.
+                                6'd29: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r <=
+                                            pycore_tuple_val_addr(
+                                                container_buf_r, 32'd0);
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <= call_self_val_r;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd30;
+                                    end
+                                end
+                                6'd30: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r <=
+                                            pycore_tuple_tag_addr(
+                                                container_buf_r, 32'd0);
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <=
+                                            {124'b0, call_self_tag_r};
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r <= 6'd31;
+                                    end
+                                end
+                                // 31: replace callable stack group with exception.
+                                6'd31: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= call_tos_base_r;
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_OBJECT,
+                                            {{96{1'b0}}, call_inst_addr_r});
+                                        tos_r        <= call_tos_base_r + RF_AW'(1);
+                                        fetch_skip_r <= 1'b1;
+                                        call_sub_r   <= 6'd0;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                    end
                                 end
                                 default: ;
                             endcase
@@ -3571,15 +3723,24 @@
                         3'd2: begin
                             if (!container_dmem_pending_r) begin
                                 names_base_r <= container_rd_data_r;
-                                if (container_call_returning_r) begin
+                                if (call_exc_pending_r) begin
+                                    // Exception-table entries are relative to
+                                    // the caller's code entry.  Normal return
+                                    // only needs the saved return PC, so pay
+                                    // for this extra metadata read on unwind.
+                                    container_dmem_addr_r <=
+                                        pycore_code_field_val_addr(
+                                            cur_code_r,
+                                            PYCORE_CODE_FIELD_ENTRY_SLOT);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    return_phase_r <= 3'd3;
+                                end else if (container_call_returning_r) begin
                                     // Restore the paused container instruction.
                                     // The normal CALL stack algebra below keeps
                                     // the returned value in RF; result_r gives
                                     // the resumed arm a stable copy even though
                                     // rs1_r will be restored to the iterator.
-                                    // Protocol raise unwind (§6.1.1) restores
-                                    // the same context but leaves call_exc_*
-                                    // pending and does not set return_valid.
                                     container_op_r <= container_call_saved_op_r;
                                     container_phase_r <=
                                         container_call_saved_phase_r;
@@ -3593,22 +3754,8 @@
                                         container_call_saved_tos_r;
                                     container_call_active_r <= 1'b0;
                                     container_call_exc_unwind_r <= 1'b0;
-                                    if (call_exc_pending_r) begin
-                                        // Restore iterable/ITER under TOS; no
-                                        // return value from the protocol CALL.
-                                        return_wb_we_r   <= 1'b1;
-                                        return_wb_addr_r <= call_tos_base_r;
-                                        return_wb_data_r <=
-                                            container_call_saved_rs1_r;
-                                        tos_r <= call_tos_base_r + RF_AW'(1);
-                                        redirect_pending_r <= 1'b1;
-                                        redirect_tgt_r <=
-                                            call_entry_slot_r[31:0];
-                                        return_phase_r <= RET_PHASE_DONE;
-                                    end else begin
-                                        container_call_result_r <= rs1_r;
-                                        container_call_return_valid_r <= 1'b1;
-                                    end
+                                    container_call_result_r <= rs1_r;
+                                    container_call_return_valid_r <= 1'b1;
                                 end
                                 if (!call_exc_pending_r) begin
                                     if (frame_ret_mode_r) begin
@@ -3638,6 +3785,76 @@
                                         redirect_tgt_r     <= call_entry_slot_r[31:0];
                                         return_phase_r     <= RET_PHASE_DONE;
                                     end
+                                end
+                            end
+                        end
+
+                        3'd3: begin
+                            if (!container_dmem_pending_r) begin
+                                // frame pop restored the CALL-site successor
+                                // into call_entry_slot_r; replace it with the
+                                // caller code entry after using it as cur_pc.
+                                cur_pc_r <= call_entry_slot_r[31:0];
+                                call_entry_slot_r <= container_rd_data_r[63:0];
+                                container_dmem_addr_r <=
+                                    pycore_code_field_val_addr(
+                                        cur_code_r,
+                                        PYCORE_CODE_FIELD_METADATA);
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_pending_r <= 1'b1;
+                                return_phase_r <= 3'd4;
+                            end
+                        end
+
+                        3'd4: begin
+                            if (!container_dmem_pending_r) begin
+                                // Handler stack placement is based on the
+                                // caller's nlocals, not the raising callee's.
+                                call_nlocals_r <= pycore_code_meta_nlocals(
+                                    container_rd_data_r);
+                                if (container_call_returning_r) begin
+                                    // Protocol CALL: restore the paused
+                                    // container first so FOR_ITER can perform
+                                    // its StopIteration identity check.
+                                    container_op_r <=
+                                        container_call_saved_op_r;
+                                    container_phase_r <=
+                                        container_call_saved_phase_r;
+                                    cur_opcode_r <=
+                                        container_call_saved_opcode_r;
+                                    cur_arg_r <= container_call_saved_arg_r;
+                                    cur_pc_r <= container_call_saved_pc_r;
+                                    rs1_r <= container_call_saved_rs1_r;
+                                    rs2_r <= container_call_saved_rs2_r;
+                                    container_rf_addr_r <=
+                                        container_call_saved_tos_r;
+                                    container_call_active_r <= 1'b0;
+                                    container_call_exc_unwind_r <= 1'b0;
+                                    // Restore iterable/ITER under TOS; there
+                                    // is no normal return value.
+                                    return_wb_we_r   <= 1'b1;
+                                    return_wb_addr_r <= call_tos_base_r;
+                                    return_wb_data_r <=
+                                        container_call_saved_rs1_r;
+                                    tos_r <= call_tos_base_r + RF_AW'(1);
+                                    return_phase_r <= RET_PHASE_DONE;
+                                end else begin
+                                    // Ordinary CALL miss: preserve the same
+                                    // exception object and start the caller's
+                                    // table walk at CP_VAL, skipping alloc.
+                                    container_op_r <= CONT_RAISE;
+                                    container_phase_r <= CP_VAL;
+                                    container_call_exc_unwind_r <= 1'b0;
+                                    container_tag_r <= PY_TAG_OBJECT;
+                                    container_val_r <= pycore_get_val(
+                                        call_exc_handle_r);
+                                    container_dmem_addr_r <=
+                                        pycore_code_field_val_addr(
+                                            cur_code_r,
+                                            PYCORE_CODE_FIELD_CO_EXCEPTIONTABLE);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    return_phase_r <= RET_PHASE_DONE;
                                 end
                             end
                         end

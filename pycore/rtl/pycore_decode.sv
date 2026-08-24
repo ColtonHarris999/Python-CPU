@@ -266,12 +266,13 @@ module pycore_decode (
                 alu_op_o = PY_ALU_PASS;
             end
 
-            // RAISE_VARARGS 1: CONT_RAISE builds OBK_EXCEPTION and walks the
-            // exception table (§7.5). Other arities still type-trap in EX.
+            // RAISE_VARARGS 0/1: CONT_RAISE reuses the active exception or
+            // builds/reuses TOS, then walks the exception table (§7.5).
+            // Oparg 0 has stack effect 0; oparg 1 is popped by CONT_RAISE.
             PY_OP_RAISE_VARARGS: begin
                 rs1_sel_o = tos_index_i - 8'd1;
                 alu_op_o = PY_ALU_PASS;
-                if (arg_i == 32'd1) begin
+                if ((arg_i == 32'd0) || (arg_i == 32'd1)) begin
                     is_container_o = 1'b1;
                 end else begin
                     pop_stack_o = 1'b1;

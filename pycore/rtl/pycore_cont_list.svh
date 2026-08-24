@@ -679,13 +679,22 @@
                                 // Protocol CALL wait/resume (§6.1 / spike).
                                 CP_VAL: begin
                                     if (call_exc_pending_r) begin
-                                        // GET_ITER protocol raise → fatal v1.
+                                        // GET_ITER has no exhaustion exception:
+                                        // propagate the preserved object into
+                                        // this frame's exception table.
                                         call_exc_pending_r <= 1'b0;
-                                        active_exc_r <= call_exc_handle_r;
-                                        active_exc_valid_r <= 1'b1;
-                                        container_raise_trap_r <= 1'b1;
-                                        fetch_skip_r <= 1'b1;
-                                        container_phase_r <= CP_DONE;
+                                        container_call_returning_r <= 1'b0;
+                                        container_op_r <= CONT_RAISE;
+                                        container_tag_r <= PY_TAG_OBJECT;
+                                        container_val_r <= pycore_get_val(
+                                            call_exc_handle_r);
+                                        container_dmem_addr_r <=
+                                            pycore_code_field_val_addr(
+                                                cur_code_r,
+                                                PYCORE_CODE_FIELD_CO_EXCEPTIONTABLE);
+                                        container_dmem_we_r <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r <= CP_VAL;
                                     end else if (container_call_return_valid_r) begin
                                         container_call_return_valid_r <= 1'b0;
                                         container_call_returning_r <= 1'b0;
@@ -1157,11 +1166,20 @@
                                             fetch_skip_r <= 1'b1;
                                             container_phase_r <= CP_DONE;
                                         end else begin
-                                            active_exc_r <= call_exc_handle_r;
-                                            active_exc_valid_r <= 1'b1;
-                                            container_raise_trap_r <= 1'b1;
-                                            fetch_skip_r <= 1'b1;
-                                            container_phase_r <= CP_DONE;
+                                            // A protocol exception other than
+                                            // identity StopIteration follows
+                                            // normal cross-frame propagation.
+                                            container_op_r <= CONT_RAISE;
+                                            container_tag_r <= PY_TAG_OBJECT;
+                                            container_val_r <= pycore_get_val(
+                                                call_exc_handle_r);
+                                            container_dmem_addr_r <=
+                                                pycore_code_field_val_addr(
+                                                    cur_code_r,
+                                                    PYCORE_CODE_FIELD_CO_EXCEPTIONTABLE);
+                                            container_dmem_we_r <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r <= CP_VAL;
                                         end
                                     end else if (container_call_return_valid_r) begin
                                         container_call_return_valid_r <= 1'b0;
