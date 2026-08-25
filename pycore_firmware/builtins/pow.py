@@ -1,7 +1,4 @@
-"""base**exp, or modular exponentiation when mod is given.
-
-Negative exp with mod raises (fatal PY_TRAP_RAISE until handlers exist).
-"""
+"""base**exp, or modular exponentiation when mod is given."""
 
 
 def pow(base, exp, mod=None):
@@ -11,7 +8,7 @@ def pow(base, exp, mod=None):
     b = base % mod
     e = exp
     if e < 0:
-        raise 0
+        raise ValueError
     while e > 0:
         if e % 2 == 1:
             result = (result * b) % mod

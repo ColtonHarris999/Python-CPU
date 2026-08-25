@@ -1,7 +1,7 @@
 """Retrieve the next item from an iterator.
 
 No general iterator protocol. List-queue interim: pop ``iterator[0]``.
-Exhaustion with default returns default; without default raises (fatal).
+Exhaustion with default returns default; without default raises StopIteration.
 """
 
 
@@ -12,7 +12,7 @@ def next(iterator, default=None):
         break
     if n == 0:
         if default is None:
-            raise 1
+            raise StopIteration
         return default
     value = iterator[0]
     del iterator[0]

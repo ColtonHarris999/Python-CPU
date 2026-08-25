@@ -15,5 +15,5 @@ mis-wired builtins dict fails loudly.
 
 
 def chr(i):
-    # Unreachable: BI_CHR owns the dict entry. Fatal PY_TRAP_RAISE.
-    raise 1
+    # Unreachable: BI_CHR owns the dict entry.
+    raise TypeError

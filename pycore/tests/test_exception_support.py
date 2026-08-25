@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import pathlib
+import re
 import sys
 import unittest
 
@@ -17,6 +18,7 @@ from btanalyze.targets import load_target  # noqa: E402
 TARGET = load_target(_REPO_ROOT / "pycore" / "targets" / "pycore.json")
 EXC_DOC = _REPO_ROOT / "pycore" / "docs" / "exception_support.md"
 BC_DOC = _REPO_ROOT / "pycore" / "docs" / "bytecode_support.md"
+FIRMWARE_ROOT = _REPO_ROOT / "pycore_firmware"
 
 
 def _builtin_exception_names() -> set[str]:
@@ -36,6 +38,17 @@ def _builtin_exception_names() -> set[str]:
 
 
 class ExceptionCatalogTest(unittest.TestCase):
+    def test_firmware_does_not_raise_integer_literals(self) -> None:
+        pattern = re.compile(r"\braise\s+[0-9]+\b")
+        offenders: list[str] = []
+        for path in sorted(FIRMWARE_ROOT.rglob("*.py")):
+            for line_no, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if pattern.search(line):
+                    offenders.append(f"{path.relative_to(_REPO_ROOT)}:{line_no}: {line}")
+        self.assertEqual(offenders, [])
+
     def test_wave_a_types_are_seeded(self) -> None:
         import image_from_source as image_src
         seeded = sorted(

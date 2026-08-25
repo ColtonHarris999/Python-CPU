@@ -293,9 +293,18 @@ class RomFirmwareSemanticsTest(unittest.TestCase):
 
     def test_pow_negative_exp_with_mod_raises(self) -> None:
         pow_ = _load_firmware("pow")
-        # Firmware uses ``raise 0`` (fatal on pycore; TypeError on CPython).
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ValueError):
             pow_(2, -1, 5)
+
+    def test_range_zero_step_raises_valueerror(self) -> None:
+        range_ = _load_firmware("range")
+        with self.assertRaises(ValueError):
+            range_(0, 1, 0)
+
+    def test_next_exhausted_raises_stopiteration(self) -> None:
+        next_ = _load_firmware("next")
+        with self.assertRaises(StopIteration):
+            next_([])
 
 
 WAVE3_PROGRAM_GOLDENS = {

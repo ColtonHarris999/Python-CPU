@@ -215,7 +215,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
 	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
 	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
-	pycore-img-firmware-tuple-empty \
+	pycore-img-firmware-tuple-empty pycore-img-fw-range-zero-step \
+	pycore-img-fw-next-exhausted pycore-img-fw-pow-neg-mod \
 	pycore-img-print-empty pycore-img-print-basic pycore-img-print-sep-end \
 	pycore-img-print-end-only pycore-img-print-none-sep \
 	pycore-img-print-many pycore-img-print-star pycore-img-print-star-kw \
@@ -1715,6 +1716,15 @@ pycore-img-firmware-isinstance:
 pycore-img-firmware-tuple-empty:
 	$(call PYCORE_IMAGE_RUN,firmware_tuple_empty,100000)
 
+pycore-img-fw-range-zero-step:
+	$(call PYCORE_IMAGE_RUN,fw_range_zero_step,200000)
+
+pycore-img-fw-next-exhausted:
+	$(call PYCORE_IMAGE_RUN,fw_next_exhausted,200000)
+
+pycore-img-fw-pow-neg-mod:
+	$(call PYCORE_IMAGE_RUN,fw_pow_neg_mod,200000)
+
 pycore-img-print-empty: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE_STDOUT,print_empty,200000)
 
@@ -1862,7 +1872,10 @@ pycore-img-exc-all: \
 	pycore-img-try-except-as \
 	pycore-img-try-exc-cross-frame-fatal \
 	pycore-img-try-callee-unhandled \
-	pycore-img-for-iter-object-raise-catch
+	pycore-img-for-iter-object-raise-catch \
+	pycore-img-fw-range-zero-step \
+	pycore-img-fw-next-exhausted \
+	pycore-img-fw-pow-neg-mod
 
 pycore-img-return-true:
 	$(call PYCORE_IMAGE_RUN,return_true,50000)
