@@ -7,7 +7,7 @@ One-arg form: materialize to a list (re-iterable). Sentinel form
 
 def iter(obj, sentinel=None):
     if sentinel is not None:
-        raise 1
+        raise TypeError
     out = []
     for x in obj:
         out += [x]

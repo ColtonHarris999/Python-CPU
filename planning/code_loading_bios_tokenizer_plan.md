@@ -231,7 +231,7 @@ P6 is the long pole and is independent of P1–P5, so it can run in parallel.
 | P4 | Per-frame globals, `exec(code, globals)` | RTL | **Done** |
 | P5 | BIOS in ROM, boot descriptor, payload dispatch | firmware + RTL + tooling | Open |
 | P6 | `BINARY_SLICE`, list/str methods, string interning | RTL | **P6.1 strings done**; methods / ordering / interning open |
-| P7 | Exception types with messages | RTL + firmware | **Types done**; `args` payload open |
+| P7 | Exception types with messages | RTL + firmware | **Types + construction/unwind via #74**; `e.args` read open (follow-up F4); firmware `raise <int>` → F1 |
 | P8 | Heap / code-RAM mark and release | RTL + firmware | **Done** |
 | P9 | On-device tokenizer | firmware + tooling | Open |
 
@@ -667,6 +667,14 @@ The tokenizer must reject bad input without halting the machine.
    worth doing properly, because "error with no message" is useless for a
    compiler front end.
 
+   **Status after exceptions PR #74:** construction (`raise SyntaxError("msg")`
+   → `OBK_EXCEPTION` with a one-element args tuple) and cross-frame unwind
+   landed. Reading `e.args` via `LOAD_ATTR` is still open — see
+   [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md)
+   **F4**. Firmware sites that still do `raise 1` / `raise 0` are **F1** in
+   that same plan (required before tokenizer helpers raise catchable types).
+   Until F4, `img_try_syntaxerror_msg` keeps the global-stash workaround.
+
 **Tests:** each new type raised and caught by exact match; a message round-trip
 (`except SyntaxError as e: e.args[0]`); raise inside a called function caught by
 the caller; raise inside a loop; unhandled raise → trap 17; wrong `except` type
@@ -806,7 +814,7 @@ loader carries real code).
 - [ ] The BIOS is the first thing that runs, and dispatches both descriptor kinds
 - [ ] `BIOS_EN` default is 1 and the legacy direct-boot path is deleted
 - [ ] Slicing, the chosen method set, string ordering, and content-based long-string equality all work
-- [ ] `SyntaxError` with a message can be raised and caught
+- [ ] `SyntaxError` with a message can be raised and caught (construction in #74; `e.args` read is [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) F4)
 - [ ] Mark/release works for heap and code RAM
 - [ ] The tokenizer tokenizes a non-trivial source file on device, and matches CPython's `tokenize` on the host corpus
 - [ ] Every doc in §4.1 that the work touched is updated, in the same commits
@@ -841,7 +849,7 @@ loader carries real code).
 | P4 globals | pycore RTL (frame) | `img_exec_globals_restore` |
 | P5 BIOS | firmware + RTL + tooling | `img_bios_exec_payload` |
 | P6 slicing/methods/interning | bytecode agent | `img_slice_str` then the method set |
-| P7 exceptions | pycore RTL + firmware | `img_try_syntaxerror_msg` |
+| P7 exceptions | pycore RTL + firmware | `img_try_syntaxerror_msg`; remaining work in [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) |
 | P8 marks | pycore RTL + firmware | `img_heap_mark_release` |
 | P9 tokenizer | firmware compiler agent | `test_rom_lexer.py` green on host |
 
@@ -861,7 +869,7 @@ Plan 1 delivering exactly these, so none of them may be dropped or narrowed:
 | **Mark/release** (§9.2) | Every `compile()` consumes heap and code RAM; without release, repeated compilation dies |
 | **Content-based long-string equality + hashing** (§6.4) | `co_names`, symbol tables, and the intern of arbitrary-length identifiers |
 | **Slicing + list/str methods** (§6.3) | The parser and codegen are ordinary Python; hand-rewriting every `append`/slice across a compiler is not viable |
-| **Exceptions with messages** (§9.1) | `SyntaxError` reporting from the parser |
+| **Exceptions with messages** (§9.1) | `SyntaxError` reporting from the parser; construction landed in #74; `e.args` read is follow-up F4 ([`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md)) |
 | **`exec(code, globals)`** (§8) | Running compiled code in a fresh namespace — the payload of `compile` + `exec` |
 | **BIOS** (§7) | Orchestrates load → compile → exec, and owns marks; becomes the OS entry point |
 | **Tokenizer** (§10) | Stage 1 of the pipeline Plan 2 completes |

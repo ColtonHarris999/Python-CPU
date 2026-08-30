@@ -16,7 +16,8 @@ Current architecture and tag/layout docs live under `pycore/docs/` and
 | `builtins_print_console_plan.md` | **Done:** ROM `print` + `_bi_print` / `CONSOLE_TX` + stdout goldens |
 | `call_kw_support_plan.md` | **Done (v1):** `CALL_KW` / `CALL_FUNCTION_EX` / `DICT_MERGE` on `CODE_OBJECT` |
 | `for_loop_full_support_plan.md` | **Done (PR #66):** GET_ITER/FOR_ITER on OBJECT + StopIteration exception tables + comprehensions |
-| `exceptions_full_support_plan.md` | **Active:** T1+T5-A on `cursor/exceptions-full-t1-match`; **rebase onto `main` (Plan 1 P7) before T2**. Type tracker: `pycore/docs/exception_support.md` + `pycore.json` `exceptions.types` |
+| `exceptions_full_support_plan.md` | **Active:** T1–T5-A (except T4 oparg 2) + T8 on `cursor/exceptions-full-t1-match` / PR #74. Type tracker: `pycore/docs/exception_support.md` + `pycore.json` `exceptions.types` |
+| `exceptions_firmware_followup_plan.md` | **F1 done:** firmware `raise <int>` uses real types; F2/F3 firmware semantics and F4 `e.args` remain queued |
 | `dict_set_bulk_contam_plan.md` | **Done:** `MAP_ADD` / `DICT_UPDATE` / `DICT_MERGE` / `SET_UPDATE` + contamination bit |
 | `optimization_plan.md` | Optional RTL cleanup / optimization backlog |
 | `dead_code_report.md` | Historical dead-code audit notes |

@@ -17,6 +17,7 @@ Related:
 - Image tooling: [`pycore/tools/image_from_source.py`](../pycore/tools/image_from_source.py), [`pycore/tools/heap_image.py`](../pycore/tools/heap_image.py), [`pycore/tools/exception_table.py`](../pycore/tools/exception_table.py)
 - OBJ_EXC group: [`pycore/targets/pycore.json`](../pycore/targets/pycore.json)
 - Plan 1 (merged and absorbed by this branch): [`planning/code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) P7
+- Firmware post-#74 leftovers: [`planning/exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md)
 - Existing regression: `img_try_stopiteration*`, `img_for_iter_*`, `img_list_comp_*`, `pycore-img-call-all`, plus Plan 1 `img_try_exc_*` / `img_try_syntaxerror*`
 
 PR #66 has merged. `cursor/exceptions-full-t1-match` was rebased onto current `main`; Tracks 1–4 (except oparg 2) and Track 8 are now implemented. Do not add further tracks onto `cursor/for-loop-full-impl`.
@@ -510,7 +511,7 @@ Docs: `GeneratorExit` inherits from `BaseException`, not `Exception`. `StopItera
 | **Plan 1 leaf types** | `main` seeded `SyntaxError`/`ValueError`/`TypeError`/`IndexError` as `tp_base=None`. Absorb into Wave A parents on rebase; never two handles for one name. |
 | **Twocore** | Each core owns its exc stack; handler bytecode runs on primary in current tests. |
 | **Shared scratch** | `CONT_RAISE` varint regs vs `CHECK_EXC_MATCH` idx/count — §2.4. |
-| **Firmware `raise 1`** | Track 2 + firmware; grep gate against `raise <int>`. `TypeError` is already a boot name on `main`. |
+| **Firmware `raise 1`** | After #74 Track 2, integer raises are `PY_TRAP_TYPE` — replace in [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) F1. |
 | **CALL binder scratch** | Tracks 2–3 must keep protocol-CALL reset of `call_kw_*` / `call_varkw_*` / `call_posonly_r`. |
 | **Code-object field 3** | Field 7 = table; field 3 = varkw/posonly metadata. Both must survive `serialize_code` / `alloc_code`. |
 | **`pycore.json` rebase** | This branch adds `exceptions.types`; `main` has no such key. Confirm the auto-merge; do not drop the catalog. |
@@ -563,7 +564,7 @@ Wire under `pycore/programs/`; Makefile aggregate `pycore-img-exc-all`.
 - [x] Update [`bytecode_support.md`](../pycore/docs/bytecode_support.md) and opcode rows in [`pycore.json`](../pycore/targets/pycore.json) when an OBJ_EXC ceiling moves
 - [x] Update [`object_model.md`](../pycore/docs/object_model.md) boot-builtins paragraph if `StopIteration` / parents changed
 - [x] Rebase onto `main`: keep Plan 1 builtins; Wave A parents; seed `SyntaxError`; keep `exceptions.types`
-- [ ] Firmware grep gate: no `raise <int>` after Wave A (Track 2 + firmware; not this PR)
+- [x] Firmware grep gate: no `raise <int>` after Wave A — landed in [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) F1
 
 ---
 
@@ -633,6 +634,7 @@ Current host suite: `pycore-python-tests` 269 OK. `CALL` of exception types allo
 | [Built-in Exceptions](https://docs.python.org/3/library/exceptions.html) | **Names, parents, matching rule, trap mapping** — copy the hierarchy; do not invent |
 | [`for_loop_full_support_plan.md`](for_loop_full_support_plan.md) | Track B infra + §15 follow-on → **this plan** |
 | [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) | Plan 1 on `main`: P7 leaf types, deviation 16 (no cross-frame unwind), message workaround |
+| [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) | **After #74:** firmware `raise <int>` → real types; getattr / min-max; NYI stubs; F4 `e.args` catalog |
 | [`HANDOFF.md`](HANDOFF.md) | Design locks + verified counts for #66 |
 | [`exception_support.md`](../pycore/docs/exception_support.md) | **Exception type status** — seeded / absent / alias / skip + seed_track |
 | [`pycore.json`](../pycore/targets/pycore.json) `exceptions.types` | Machine catalog the analyzer validates |
@@ -678,8 +680,8 @@ Current host suite: `pycore-python-tests` 269 OK. `CALL` of exception types allo
 
 ### Later tracks
 
-- [ ] Wave A firmware raises use real types
+- [x] Wave A firmware raises use real types — landed in [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) F1
 - [ ] Selected fatal traps → same raise path
 - [ ] `assert` / `with` / user subclasses as scheduled
 
-**Placement recommendation:** continue on `cursor/exceptions-full-t1-match`; next work is T6 / T7 / T9 / T10. Keep T4 oparg 2 deferred.
+**Placement recommendation:** merge PR #74, then land firmware follow-up F1 from [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md). Hardware next on the exceptions roadmap remains T6 / T7 / T9 / T10. Keep T4 oparg 2 deferred.

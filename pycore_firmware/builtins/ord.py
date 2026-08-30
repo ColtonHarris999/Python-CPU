@@ -14,5 +14,5 @@ a wrong code point.
 
 
 def ord(c):
-    # Unreachable: BI_ORD owns the dict entry. Fatal PY_TRAP_RAISE.
-    raise 1
+    # Unreachable: BI_ORD owns the dict entry.
+    raise TypeError
