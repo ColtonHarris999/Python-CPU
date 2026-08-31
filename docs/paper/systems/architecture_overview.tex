@@ -334,85 +334,101 @@ loop for specialized states.
   font=\small,
   >=Latex,
   thick,
-  state/.style={
-    draw, rounded corners=3pt, align=center,
-    minimum width=2.15cm, minimum height=0.95cm,
-    inner sep=3pt, fill=pyfill, draw=pyborder
+  x=1.85cm,
+  y=1.55cm,
+  st/.style={
+    draw, rounded corners=2.5pt, align=center,
+    minimum width=2.15cm, minimum height=0.85cm,
+    inner sep=2.5pt, fill=pyfill, draw=pyborder, thick
   },
-  bootst/.style={state, fill=toolfill, draw=toolborder},
-  trapst/.style={state, fill=exfill, draw=exborder},
-  haltst/.style={state, fill=memfill, draw=memborder},
-  arr/.style={-{Latex}, thick, color=arrowc},
-  lab/.style={font=\scriptsize, text=black!75, align=center},
-  note/.style={font=\scriptsize\itshape, text=black!60, align=left}
+  bootst/.style={st, fill=toolfill, draw=toolborder},
+  trapst/.style={st, fill=exfill, draw=exborder},
+  haltst/.style={st, fill=memfill, draw=memborder},
+  arr/.style={-{Latex}, thick, color=arrowc, shorten >=0.8pt, shorten <=0.8pt},
+  lab/.style={
+    font=\scriptsize, text=black!65, align=center,
+    fill=white, inner sep=1pt
+  },
+  exitlab/.style={
+    font=\scriptsize\ttfamily, text=pyborder, align=center,
+    fill=white, inner sep=1.5pt, draw=pyborder!40, rounded corners=1pt
+  },
+  note/.style={font=\scriptsize\itshape, text=black!55, align=left}
 ]
-  % --- classic pipeline strip ---
-  \node[bootst] (boot)  at (0, 4.6)   {\texttt{S\_BOOT}\\{\scriptsize(9)}};
-  \node[state]  (fetch) at (0, 3.0)   {\texttt{S\_FETCH}\\{\scriptsize(0)}};
-  \node[state]  (dec)   at (2.6, 3.0) {\texttt{S\_DECODE}\\{\scriptsize(1)}};
-  \node[state]  (exec)  at (5.2, 3.0) {\texttt{S\_EXEC}\\{\scriptsize(2)}};
-  \node[state]  (mem)   at (7.8, 3.0) {\texttt{S\_MEM}\\{\scriptsize(3)}};
-  \node[state]  (wb)    at (10.4, 3.0){\texttt{S\_WB}\\{\scriptsize(4)}};
 
-  % --- language / call arms ---
-  \node[state] (cont)  at (5.2, 1.0) {\texttt{S\_CONTAINER}\\{\scriptsize(8)}};
-  \node[state] (call)  at (8.2, 1.0) {\texttt{S\_CALL}\\{\scriptsize(6)}};
-  \node[state] (ret)   at (10.8, 1.0){\texttt{S\_RETURN}\\{\scriptsize(7)}};
+  % ---- Row 0: boot ----
+  \node[bootst] (boot) at (0, 3.3) {\texttt{S\_BOOT}\\{\scriptsize(9)}};
 
-  % --- trap / halt ---
-  \node[trapst] (tm)   at (5.2, -1.1){\texttt{S\_TRAP\_MARSHAL}\\{\scriptsize(10)}};
-  \node[trapst] (tw)   at (8.4, -1.1){\texttt{S\_TRAP\_WAIT}\\{\scriptsize(11)}};
-  \node[haltst] (hlt)  at (10.8, -1.1){\texttt{S\_HALT}\\{\scriptsize(5)}};
+  % ---- Row 1: typed fast path ----
+  \node[st] (fetch) at (0, 1.9) {\texttt{S\_FETCH}\\{\scriptsize(0)}};
+  \node[st] (dec)   at (2, 1.9) {\texttt{S\_DECODE}\\{\scriptsize(1)}};
+  \node[st] (exec)  at (4, 1.9) {\texttt{S\_EXEC}\\{\scriptsize(2)}};
+  \node[st] (mem)   at (6, 1.9) {\texttt{S\_MEM}\\{\scriptsize(3)}};
+  \node[st] (wb)    at (8, 1.9) {\texttt{S\_WB}\\{\scriptsize(4)}};
 
-  % --- primary path ---
-  \draw[arr] (boot)  -- node[lab,right]{BOOT\_DONE} (fetch);
+  % ---- Row 2: language arms ----
+  \node[st] (cont) at (4, 0.3) {\texttt{S\_CONTAINER}\\{\scriptsize(8)}};
+  \node[st] (call) at (6, 0.3) {\texttt{S\_CALL}\\{\scriptsize(6)}};
+  \node[st] (ret)  at (8, 0.3) {\texttt{S\_RETURN}\\{\scriptsize(7)}};
+
+  % ---- Row 3: trap / halt ----
+  \node[trapst] (tm)  at (4, -1.3) {\texttt{S\_TRAP\_MARSHAL}\\{\scriptsize(10)}};
+  \node[trapst] (tw)  at (6, -1.3) {\texttt{S\_TRAP\_WAIT}\\{\scriptsize(11)}};
+  \node[haltst] (hlt) at (8, -1.3) {\texttt{S\_HALT}\\{\scriptsize(5)}};
+
+  % Boot
+  \draw[arr] (boot) -- node[lab,right]{BOOT\_DONE} (fetch);
+
+  % Fast path
   \draw[arr] (fetch) -- node[lab,above]{instr latched} (dec);
   \draw[arr] (dec)   -- (exec);
   \draw[arr] (exec)  -- node[lab,above]{!container} (mem);
   \draw[arr] (mem)   -- node[lab,above]{!stall} (wb);
-  \draw[arr] (wb.north) -- ++(0,0.55) -| node[lab,pos=0.2,above]
-    {ordinary op} (fetch.north);
 
-  % --- container bypass ---
-  \draw[arr] (exec)  -- node[lab,right]{route\_container} (cont);
-  \draw[arr] (cont.west) -- ++(-1.6,0) |- node[lab,pos=0.25,left]
-    {CP\_DONE} (fetch.west);
+  % Ordinary return (only long wire kept -- one clean top arc)
+  \draw[arr] (wb.north) -- ++(0,0.75) -|
+    node[lab,pos=0.25,above]{ordinary op} (fetch.north);
 
-  % --- call / return from WB ---
-  \draw[arr] (wb) -- node[lab,right]{CALL*} (call);
-  \draw[arr] (wb) -- node[lab,right,pos=0.4]{RETURN (depth$>$0)} (ret);
-  \draw[arr] (call.east) -- ++(0.7,0) |- node[lab,pos=0.2,right]
-    {CALL\_DONE} (fetch.east);
-  \draw[arr] (ret.east)  -- ++(1.05,0) |- node[lab,pos=0.15,right]
-    {RET\_DONE} (fetch.east);
+  % Vertical entries into language / trap rows
+  \draw[arr] (exec) -- node[lab,right]{route\_container} (cont);
+  \draw[arr] (wb.south) -- ++(0,-0.32) -|
+    node[lab,pos=0.18,above]{CALL*} (call.north);
+  \draw[arr] (wb) -- node[lab,right]{RETURN (depth$>$0)} (ret);
 
-  % --- container <-> call (protocol) ---
+  % Language-row locals
   \draw[arr] (cont) -- node[lab,above]{protocol CALL} (call);
-  \draw[arr] (ret)  -- node[lab,above,sloped,pos=0.45]
-    {resume container} (cont);
+  \draw[arr] (ret.west) to[bend right=20]
+    node[lab,below]{resume container} (cont.east);
 
-  % --- recoverable trap path ---
+  % Trap-row locals
   \draw[arr] (cont) -- node[lab,right]{recoverable} (tm);
-  \draw[arr] (call.south) |- node[lab,pos=0.25,below]{BUILTIN\_CALL} (tm);
+  \draw[arr] (call.south) -- ++(0,-0.4) -|
+    node[lab,pos=0.2,above]{BUILTIN\_CALL} (tm.east);
   \draw[arr] (tm) -- node[lab,above]{req ready} (tw);
-  \draw[arr] (tw.south) -- ++(0,-0.55) -| node[lab,pos=0.2,below]
-    {COMPLETED / RETRY} (fetch.south);
   \draw[arr] (tw) -- node[lab,above]{FATAL} (hlt);
-
-  % --- fatal freeze ---
   \draw[arr, densely dashed] (hlt) to[loop below] node[lab]{freeze} (hlt);
-  \node[note, anchor=west] at (-1.8, -1.1)
-    {any \texttt{pycore\_trap}\\$\Rightarrow$ \texttt{S\_HALT}};
+
+  % Exit markers back to FETCH (no wrap-around wires)
+  \node[exitlab, left=0.28cm of cont] (e1) {CP\_DONE $\to$ F};
+  \node[exitlab, above=0.28cm of call] (e2) {CALL\_DONE $\to$ F};
+  \node[exitlab, right=0.28cm of ret] (e3) {RET\_DONE $\to$ F};
+  \node[exitlab, below=0.28cm of tw] (e4) {COMPLETED/RETRY $\to$ F};
+  \draw[arr, densely dashed, color=pyborder!70] (cont.west) -- (e1.east);
+  \draw[arr, densely dashed, color=pyborder!70] (call.north) -- (e2.south);
+  \draw[arr, densely dashed, color=pyborder!70] (ret.east) -- (e3.west);
+  \draw[arr, densely dashed, color=pyborder!70] (tw.south) -- (e4.north);
+
+  \node[note] at (1.0, -1.3)
+    {F $=$ \texttt{S\_FETCH}\\any \texttt{pycore\_trap} $\Rightarrow$ \texttt{S\_HALT}};
 
 \end{tikzpicture}%
 }
 \caption{PyCore top-level control FSM (\texttt{state\_r}).
-The five-stage strip is the typed fast path.
-\texttt{S\_CONTAINER} and \texttt{S\_CALL}/\texttt{S\_RETURN} bypass or follow
-writeback for heap and frame work; recoverable traps exit through
-\texttt{S\_TRAP\_MARSHAL}/\texttt{S\_TRAP\_WAIT} to ExCore.
-Protocol iteration pauses \texttt{S\_CONTAINER}, runs \texttt{S\_CALL}, and
-resumes via \texttt{S\_RETURN}.}
+Solid arrows are local control transfers.
+Dashed exit tags mark returns to \texttt{S\_FETCH} without wrap-around wires.
+The five-stage strip is the typed fast path;
+\texttt{S\_CONTAINER}/\texttt{S\_CALL}/\texttt{S\_RETURN} handle heap and frames;
+recoverable traps exit through \texttt{S\_TRAP\_MARSHAL}/\texttt{S\_TRAP\_WAIT}.}
 \label{fig:core-fsm}
 \end{figure}
 
