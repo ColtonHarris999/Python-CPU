@@ -109,7 +109,8 @@ others should grow into their own notes as they stabilize.
 2 & PyCore microarchitecture &
   Multi-cycle, non-pipelined control
   (\texttt{S\_FETCH}${\to}$\texttt{DECODE}${\to}$\texttt{EXEC}${\to}$\texttt{MEM}${\to}$\texttt{WB})
-  plus specialized FSMs (\texttt{S\_CONTAINER}, \texttt{S\_CALL}, trap marshal). \\
+  plus specialized FSMs (\texttt{S\_CONTAINER}, \texttt{S\_CALL}, trap marshal);
+  see Figure~\ref{fig:core-fsm}. \\
 3 & Tag-routed execute fabric &
   Tag decode, BOOL/INT/FLOAT promotion, INT ALU / mul / div / FPU / complex,
   trap policy for unsafe tags. \\
@@ -316,6 +317,148 @@ Dashed nodes are planned surfaces toward on-device compilation.}
 \end{figure}
 
 % =============================================================================
+\section{Core control FSM}
+% =============================================================================
+
+Figure~\ref{fig:core-fsm} is the top-level \texttt{state\_r} automaton in
+\texttt{pycore\_core.sv} (4-bit encodings in parentheses).
+Exactly one instruction is in flight: there is no forwarding or hazard logic.
+Language-dense opcodes leave the classic
+\texttt{FETCH}${\to}$\texttt{DECODE}${\to}$\texttt{EXEC}${\to}$\texttt{MEM}${\to}$\texttt{WB}
+loop for specialized states.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  >=Latex,
+  thick,
+  state/.style={
+    draw, rounded corners=3pt, align=center,
+    minimum width=2.15cm, minimum height=0.95cm,
+    inner sep=3pt, fill=pyfill, draw=pyborder
+  },
+  bootst/.style={state, fill=toolfill, draw=toolborder},
+  trapst/.style={state, fill=exfill, draw=exborder},
+  haltst/.style={state, fill=memfill, draw=memborder},
+  arr/.style={-{Latex}, thick, color=arrowc},
+  lab/.style={font=\scriptsize, text=black!75, align=center},
+  note/.style={font=\scriptsize\itshape, text=black!60, align=left}
+]
+  % --- classic pipeline strip ---
+  \node[bootst] (boot)  at (0, 4.6)   {\texttt{S\_BOOT}\\{\scriptsize(9)}};
+  \node[state]  (fetch) at (0, 3.0)   {\texttt{S\_FETCH}\\{\scriptsize(0)}};
+  \node[state]  (dec)   at (2.6, 3.0) {\texttt{S\_DECODE}\\{\scriptsize(1)}};
+  \node[state]  (exec)  at (5.2, 3.0) {\texttt{S\_EXEC}\\{\scriptsize(2)}};
+  \node[state]  (mem)   at (7.8, 3.0) {\texttt{S\_MEM}\\{\scriptsize(3)}};
+  \node[state]  (wb)    at (10.4, 3.0){\texttt{S\_WB}\\{\scriptsize(4)}};
+
+  % --- language / call arms ---
+  \node[state] (cont)  at (5.2, 1.0) {\texttt{S\_CONTAINER}\\{\scriptsize(8)}};
+  \node[state] (call)  at (8.2, 1.0) {\texttt{S\_CALL}\\{\scriptsize(6)}};
+  \node[state] (ret)   at (10.8, 1.0){\texttt{S\_RETURN}\\{\scriptsize(7)}};
+
+  % --- trap / halt ---
+  \node[trapst] (tm)   at (5.2, -1.1){\texttt{S\_TRAP\_MARSHAL}\\{\scriptsize(10)}};
+  \node[trapst] (tw)   at (8.4, -1.1){\texttt{S\_TRAP\_WAIT}\\{\scriptsize(11)}};
+  \node[haltst] (hlt)  at (10.8, -1.1){\texttt{S\_HALT}\\{\scriptsize(5)}};
+
+  % --- primary path ---
+  \draw[arr] (boot)  -- node[lab,right]{BOOT\_DONE} (fetch);
+  \draw[arr] (fetch) -- node[lab,above]{instr latched} (dec);
+  \draw[arr] (dec)   -- (exec);
+  \draw[arr] (exec)  -- node[lab,above]{!container} (mem);
+  \draw[arr] (mem)   -- node[lab,above]{!stall} (wb);
+  \draw[arr] (wb.north) -- ++(0,0.55) -| node[lab,pos=0.2,above]
+    {ordinary op} (fetch.north);
+
+  % --- container bypass ---
+  \draw[arr] (exec)  -- node[lab,right]{route\_container} (cont);
+  \draw[arr] (cont.west) -- ++(-1.6,0) |- node[lab,pos=0.25,left]
+    {CP\_DONE} (fetch.west);
+
+  % --- call / return from WB ---
+  \draw[arr] (wb) -- node[lab,right]{CALL*} (call);
+  \draw[arr] (wb) -- node[lab,right,pos=0.4]{RETURN (depth$>$0)} (ret);
+  \draw[arr] (call.east) -- ++(0.7,0) |- node[lab,pos=0.2,right]
+    {CALL\_DONE} (fetch.east);
+  \draw[arr] (ret.east)  -- ++(1.05,0) |- node[lab,pos=0.15,right]
+    {RET\_DONE} (fetch.east);
+
+  % --- container <-> call (protocol) ---
+  \draw[arr] (cont) -- node[lab,above]{protocol CALL} (call);
+  \draw[arr] (ret)  -- node[lab,above,sloped,pos=0.45]
+    {resume container} (cont);
+
+  % --- recoverable trap path ---
+  \draw[arr] (cont) -- node[lab,right]{recoverable} (tm);
+  \draw[arr] (call.south) |- node[lab,pos=0.25,below]{BUILTIN\_CALL} (tm);
+  \draw[arr] (tm) -- node[lab,above]{req ready} (tw);
+  \draw[arr] (tw.south) -- ++(0,-0.55) -| node[lab,pos=0.2,below]
+    {COMPLETED / RETRY} (fetch.south);
+  \draw[arr] (tw) -- node[lab,above]{FATAL} (hlt);
+
+  % --- fatal freeze ---
+  \draw[arr, densely dashed] (hlt) to[loop below] node[lab]{freeze} (hlt);
+  \node[note, anchor=west] at (-1.8, -1.1)
+    {any \texttt{pycore\_trap}\\$\Rightarrow$ \texttt{S\_HALT}};
+
+\end{tikzpicture}%
+}
+\caption{PyCore top-level control FSM (\texttt{state\_r}).
+The five-stage strip is the typed fast path.
+\texttt{S\_CONTAINER} and \texttt{S\_CALL}/\texttt{S\_RETURN} bypass or follow
+writeback for heap and frame work; recoverable traps exit through
+\texttt{S\_TRAP\_MARSHAL}/\texttt{S\_TRAP\_WAIT} to ExCore.
+Protocol iteration pauses \texttt{S\_CONTAINER}, runs \texttt{S\_CALL}, and
+resumes via \texttt{S\_RETURN}.}
+\label{fig:core-fsm}
+\end{figure}
+
+\paragraph{Staging roles.}
+\begin{center}
+\small
+\begin{tabular}{@{}llp{0.55\textwidth}@{}}
+\toprule
+State & Enc & Role \\
+\midrule
+\texttt{S\_BOOT} & 9 & Walk boot record; latch globals/builtins; enter fetch. \\
+\texttt{S\_FETCH} & 0 & \texttt{pycore\_fetch}: fold \texttt{EXTENDED\_ARG}, skip \texttt{CACHE}. \\
+\texttt{S\_DECODE} & 1 & Drive RF read addresses; latch operands. \\
+\texttt{S\_EXEC} & 2 & Tag-routed ALU/FPU/branch; hold on multi-cycle units. \\
+\texttt{S\_MEM} & 3 & PTR load/store via \texttt{pycore\_mem\_stage}. \\
+\texttt{S\_WB} & 4 & RF write + TOS update; redirect on taken branch. \\
+\texttt{S\_CONTAINER} & 8 & Heap ops, names/consts, attr, iter, raise; own TOS. \\
+\texttt{S\_CALL} & 6 & Binder + frame push (phases 0--19). \\
+\texttt{S\_RETURN} & 7 & Frame pop; reload caller \texttt{co\_consts}/\texttt{co\_names}. \\
+\texttt{S\_TRAP\_MARSHAL} & 10 & Assert \texttt{trap\_req}; freeze RF/dmem. \\
+\texttt{S\_TRAP\_WAIT} & 11 & Apply \texttt{trap\_res}; COMPLETED/RETRY$\to$fetch, FATAL$\to$halt. \\
+\texttt{S\_HALT} & 5 & Terminal freeze on any fatal trap. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Routing rules that matter for the paper.}
+\begin{itemize}[leftmargin=1.2em,itemsep=0.2em]
+  \item \textbf{Container bypass.}
+        \texttt{route\_container} (decode \texttt{is\_container}, or list
+        \texttt{NB\_INPLACE\_ADD}) leaves \texttt{S\_EXEC} for
+        \texttt{S\_CONTAINER} and never visits \texttt{S\_MEM}/\texttt{S\_WB}.
+  \item \textbf{Call after writeback.}
+        Plain \texttt{CALL*} / \texttt{RETURN\_VALUE} still take
+        \texttt{S\_WB}, then enter \texttt{S\_CALL} or \texttt{S\_RETURN}.
+  \item \textbf{Recoverable handoff.}
+        A container or builtin arm sets \texttt{trap\_marshal\_pending\_r}
+        before its done phase; exit goes to \texttt{S\_TRAP\_MARSHAL} instead
+        of \texttt{S\_FETCH}.
+  \item \textbf{Protocol pause/resume.}
+        \texttt{GET\_ITER}/\texttt{FOR\_ITER} on \texttt{OBJECT} set
+        \texttt{container\_call\_pending\_r} $\to$ \texttt{S\_CALL}; the outer
+        return restores container context instead of fetching.
+\end{itemize}
+
+% =============================================================================
 \section{Component digests}
 % =============================================================================
 
@@ -333,6 +476,7 @@ This is the ISA claim: Python bytecode is the machine language.
 
 \subsection{PyCore microarchitecture}
 One instruction in flight; no forwarding or hazard logic.
+Figure~\ref{fig:core-fsm} shows the top-level \texttt{state\_r} staging.
 Specialized states absorb language density: \texttt{S\_CONTAINER} for heap ops,
 \texttt{S\_CALL}/\texttt{S\_RETURN} for frames, \texttt{S\_TRAP\_MARSHAL}/
 \texttt{S\_TRAP\_WAIT} for ExCore handoff, \texttt{S\_BOOT} for the boot record.

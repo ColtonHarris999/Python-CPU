@@ -8,7 +8,7 @@ or planning markdown.
 
 | Path | Topic |
 | --- | --- |
-| `systems/architecture_overview.tex` | Full pycore+excore component map, paper section skeleton, system diagram |
+| `systems/architecture_overview.tex` | Full pycore+excore component map, paper section skeleton, system diagram, core staging FSM |
 | `systems/call_fsm.tex` | `S_CALL` FSM, shared argument binder, CPython call shapes |
 
 ## Build
