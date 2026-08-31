@@ -397,8 +397,8 @@ loop for specialized states.
 
   % Language-row locals
   \draw[arr] (cont) -- node[lab,above]{protocol CALL} (call);
-  \draw[arr] (ret.west) to[bend right=20]
-    node[lab,below]{resume container} (cont.east);
+  \draw[arr] (ret.south) -- ++(0,-0.5) -|
+    node[lab,pos=0.25,below]{resume container} (cont.south);
 
   % Trap-row locals
   \draw[arr] (cont) -- node[lab,right]{recoverable} (tm);
