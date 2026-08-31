@@ -171,171 +171,157 @@ The cuts above follow \emph{research seams}:
 \section{System block diagram}
 % =============================================================================
 
-Figure~\ref{fig:block} is the \emph{target} system architecture: a
-self-hosted Python machine built around a bytecode hart (PyCore) and an RV32
-helper hart (ExCore).
-It is not a diagram of the current host-fed development flow---there is no
-external \texttt{compile()} in the steady state.
-On-device BIOS, runtime, and compiler live in code ROM/RAM; PyCore executes
-tagged CPython bytecode; ExCore completes capacity-changing and helper work
-behind an exclusive shared-memory grant.
+Figure~\ref{fig:block} is the \emph{target} physical organization of the machine:
+silicon blocks, private and shared memories, and the buses that tie them together.
+It is not a control-FSM stage chart.
+On-device BIOS, runtime, and compiler are firmware/software that live in the
+code memories; PyCore is the bytecode datapath with language accelerators;
+ExCore is the RV32 helper core.
 
 \clearpage
 \begin{figure}[p]
 \centering
-{\Large\bfseries Ideal PyCore + ExCore system}\\[0.35em]
-{\normalsize Self-hosted bytecode machine with language accelerators}\\[0.9em]
+{\Large\bfseries Ideal PyCore + ExCore --- physical hardware}\\[0.5em]
+{\small Units, SRAMs, and buses (not a control-stage chart)}\\[0.8em]
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
-  font=\small,
+  font=\footnotesize,
   >=Latex,
-  x=1.05cm, y=1.05cm,
-  blk/.style={
-    draw, align=center, inner sep=3.5pt, thick,
-    minimum height=0.72cm, rounded corners=1.5pt
+  x=1cm, y=1cm,
+  box/.style={
+    draw, align=center, inner sep=2.8pt, thick,
+    rounded corners=1pt, minimum height=0.62cm
   },
-  py/.style={blk, fill=pyfill, draw=pyborder},
-  ex/.style={blk, fill=exfill, draw=exborder},
-  mem/.style={blk, fill=memfill, draw=memborder},
-  soft/.style={blk, fill=toolfill, draw=toolborder},
-  acc/.style={blk, fill=white, draw=pyborder},
-  bus/.style={-{Latex}, line width=0.85pt, color=arrowc},
-  dbus/.style={Latex-Latex, line width=0.85pt, color=arrowc},
-  lab/.style={font=\scriptsize, text=black!55, fill=white, inner sep=0.6pt},
-  ttl/.style={font=\footnotesize\bfseries},
-  maprow/.style={
-    draw=memborder!80, fill=memfill, align=left, font=\scriptsize\ttfamily,
-    inner xsep=4pt, inner ysep=2.5pt, minimum height=0.48cm, text width=4.7cm
+  py/.style={box, fill=pyfill, draw=pyborder},
+  ex/.style={box, fill=exfill, draw=exborder},
+  mem/.style={box, fill=memfill, draw=memborder},
+  io/.style={box, fill=toolfill, draw=toolborder},
+  bus/.style={-{Latex}, line width=0.8pt, color=arrowc},
+  dbus/.style={Latex-Latex, line width=0.8pt, color=arrowc},
+  lab/.style={font=\scriptsize, text=black!55, fill=white, inner sep=0.4pt},
+  ttl/.style={font=\small\bfseries},
+  mapcell/.style={
+    draw=memborder, fill=memfill, align=left, font=\scriptsize\ttfamily,
+    inner xsep=2.5pt, inner ysep=1.5pt, minimum height=0.38cm, text width=3.35cm
   },
-  grp/.style={draw, line width=1.05pt, rounded corners=3pt, inner sep=6pt}
+  grp/.style={draw, line width=1pt, rounded corners=2.5pt, inner sep=4pt}
 ]
 
-% ----- On-device software -----
-\node[soft, minimum width=4.5cm, minimum height=1.05cm] (bios) at (-5.1, 12.2)
-  {\textbf{BIOS}\\{\scriptsize boot $\cdot$ load $\cdot$ handoff}};
-\node[soft, minimum width=4.5cm, minimum height=1.05cm] (rt) at (0.2, 12.2)
-  {\textbf{Runtime}\\{\scriptsize builtins $\cdot$ exceptions $\cdot$ GC}};
-\node[soft, minimum width=4.5cm, minimum height=1.05cm] (comp) at (5.5, 12.2)
-  {\textbf{Compiler}\\{\scriptsize tokenize $\cdot$ parse $\cdot$ codegen}};
-\node[grp, draw=toolborder, fit=(bios)(rt)(comp),
-  label={[ttl,text=toolborder]above:On-device software (no host)}] (swg) {};
-\draw[bus] (bios) -- (rt);
-\draw[bus] (rt) -- (comp);
+% ========== PYCORE ==========
+\node[py, minimum width=2.1cm] (ifu) at (-5.5, 9.6) {Instr fetch};
+\node[py, minimum width=2.1cm] (dec) at (-5.5, 8.75) {Decode};
+\node[py, minimum width=2.1cm] (tag) at (-5.5, 7.9) {Tag crossbar};
+\node[py, minimum width=2.1cm] (rfp) at (-5.5, 7.05) {RF ports};
 
-% ----- PyCore -----
-\node[py, minimum width=5.4cm] (ctrl) at (-4.6, 10.15)
-  {Control FSM\\{\scriptsize FETCH$\cdots$WB $\cdot$ CONTAINER $\cdot$ CALL $\cdot$ TRAP}};
-\node[py, minimum width=5.4cm] (fd) at (-4.6, 9.15)
-  {Fetch / Decode\\{\scriptsize EXTENDED\_ARG / CACHE $\cdot$ route}};
+\node[mem, minimum width=2.1cm] (rf) at (-5.5, 5.85)
+  {Regfile SRAM\\{\scriptsize 96$\times$132}};
+\node[mem, minimum width=2.1cm] (crom) at (-5.5, 4.85) {Code ROM};
+\node[mem, minimum width=2.1cm] (cram) at (-5.5, 3.95) {Code RAM};
 
-\node[acc, minimum width=1.6cm] (tagd) at (-6.55, 7.85) {Tag\\decode};
-\node[acc, minimum width=1.6cm] (prom) at (-4.6, 7.85) {Promote};
-\node[acc, minimum width=1.6cm] (alu)  at (-2.65, 7.85) {INT\\ALU};
-\node[acc, minimum width=1.6cm] (fpu)  at (-6.55, 6.95) {FPU};
-\node[acc, minimum width=1.6cm] (mul)  at (-4.6, 6.95) {MUL/\\DIV};
-\node[acc, minimum width=1.6cm] (cplx) at (-2.65, 6.95) {Complex};
-\node[grp, draw=pyborder!65, inner sep=3.5pt, fit=(tagd)(prom)(alu)(fpu)(mul)(cplx),
-  label={[font=\scriptsize\bfseries,text=pyborder]above:Exec fabric}] (exfg) {};
+\node[py, minimum width=1.25cm] (alu) at (-3.2, 9.6) {INT ALU};
+\node[py, minimum width=1.25cm] (fpu) at (-1.75, 9.6) {FPU};
+\node[py, minimum width=1.25cm] (mul) at (-3.2, 8.75) {MUL/DIV};
+\node[py, minimum width=1.25cm] (cpx) at (-1.75, 8.75) {Complex};
+\node[py, minimum width=1.25cm] (prm) at (-3.2, 7.9) {Promote};
+\node[py, minimum width=1.25cm] (br)  at (-1.75, 7.9) {Branch};
+\node[grp, draw=pyborder!65, inner sep=2.5pt, fit=(alu)(fpu)(mul)(cpx)(prm)(br),
+  label={[font=\scriptsize\bfseries,text=pyborder]above:Execute units}] (exu) {};
 
-\node[acc, minimum width=2.5cm] (frame) at (-5.95, 5.55)
-  {\textbf{Frame unit}\\{\scriptsize push/pop $\cdot$ windows}};
-\node[acc, minimum width=2.5cm] (str) at (-3.25, 5.55)
-  {\textbf{String unit}\\{\scriptsize concat $\cdot$ UTF-8}};
-\node[acc, minimum width=2.5cm] (cont) at (-5.95, 4.55)
-  {\textbf{Container eng.}\\{\scriptsize list / dict / set}};
-\node[acc, minimum width=2.5cm] (hash) at (-3.25, 4.55)
-  {\textbf{Hash / rich-eq}\\{\scriptsize probe $\cdot$ tombstones}};
-\node[acc, minimum width=2.5cm] (callu) at (-5.95, 3.55)
-  {\textbf{CALL binder}\\{\scriptsize KW / *args / BI\_*}};
-\node[acc, minimum width=2.5cm] (excu) at (-3.25, 3.55)
-  {\textbf{Exc unit}\\{\scriptsize tables $\cdot$ stack}};
-\node[grp, draw=pyborder!65, inner sep=3.5pt,
-  fit=(frame)(str)(cont)(hash)(callu)(excu),
-  label={[font=\scriptsize\bfseries,text=pyborder]above:Language accelerators}] (accg) {};
+\node[py, minimum width=1.35cm] (fr) at (-3.3, 6.55)
+  {Frame\\mgr};
+\node[py, minimum width=1.35cm] (st) at (-1.75, 6.55)
+  {String\\SRAM};
+\node[py, minimum width=1.35cm] (ct) at (-3.3, 5.55)
+  {Container\\engine};
+\node[py, minimum width=1.35cm] (hs) at (-1.75, 5.55)
+  {Hash/eq\\unit};
+\node[py, minimum width=1.35cm] (cb) at (-3.3, 4.55)
+  {CALL\\binder};
+\node[py, minimum width=1.35cm] (xe) at (-1.75, 4.55)
+  {Exc\\engine};
+\node[py, minimum width=2.9cm] (ha) at (-2.5, 3.6)
+  {Bump / GC heap unit};
+\node[grp, draw=pyborder!65, inner sep=2.5pt,
+  fit=(fr)(st)(ct)(hs)(cb)(xe)(ha),
+  label={[font=\scriptsize\bfseries,text=pyborder]above:Language engines}] (acc) {};
 
-\node[py, minimum width=5.4cm] (rf) at (-4.6, 2.4)
-  {Tagged regfile --- $96\times 132$\\{\scriptsize locals[0:31] $\cdot$ operand stack[32:95]}};
-\node[mem, minimum width=5.4cm] (cimem) at (-4.6, 1.3)
-  {Private code space\\{\scriptsize ROM + relocatable RAM}};
-
-\node[grp, draw=pyborder, fit=(ctrl)(fd)(exfg)(accg)(rf)(cimem),
+\node[grp, draw=pyborder, fit=(ifu)(dec)(tag)(rfp)(rf)(crom)(cram)(exu)(acc),
   label={[ttl,text=pyborder]above:\textbf{PyCore}}] (pyg) {};
 
-\draw[bus] (ctrl) -- (fd);
-\draw[bus] (fd) -- (exfg);
-\draw[bus] (exfg) -- (accg);
-\draw[dbus] (accg) -- (rf);
-\draw[dbus] (fd.west) -- ++(-0.7,0) |- (cimem.west);
-\draw[bus] (comp.south) -- ++(0,-0.2) -| node[lab,pos=0.12,above]{emit}
-  (cimem.north);
-\draw[bus] (bios.south) -- ++(0,-0.2) -| (cimem.north);
+\draw[bus] (ifu) -- (dec);
+\draw[bus] (dec) -- (tag);
+\draw[bus] (tag) -- (rfp);
+\draw[dbus] (rfp) -- (rf);
+\draw[dbus] (ifu.west) -- ++(-0.45,0) |- (crom.west);
+\draw[dbus] (ifu.west) -- ++(-0.45,0) |- (cram.west);
+\draw[dbus] (tag.east) -- (exu.west);
+\draw[dbus] (tag.east) -- ++(0.25,0) |- (acc.west);
+\draw[dbus] (acc.south) -- ++(0,-0.15) -| (rf.east);
 
-% ----- Shared fabric + memory map -----
-\node[mem, minimum width=4.2cm] (mbox) at (1.7, 10.0)
-  {\texttt{trap\_mailbox}\\{\scriptsize COMPLETED / RETRY / FATAL}};
-\node[mem, minimum width=4.2cm] (grant) at (1.7, 8.9)
-  {Memory grant mux\\{\scriptsize exclusive \{PY, EX\}}};
-\node[mem, minimum width=4.2cm] (dmem) at (1.7, 7.8)
-  {Shared DMEM\\{\scriptsize 128-bit tagged slots}};
-\node[soft, minimum width=4.2cm] (con) at (1.7, 6.75)
-  {I/O ports\\{\scriptsize console $\cdot$ devices}};
+% ========== INTERCONNECT ==========
+\node[mem, minimum width=3.5cm] (mbox) at (1.35, 9.4)
+  {Trap mailbox\\{\scriptsize req/res bus}};
+\node[mem, minimum width=3.5cm] (grant) at (1.35, 8.35)
+  {DMEM grant mux\\{\scriptsize single owner}};
+\node[mem, minimum width=3.5cm] (dmem) at (1.35, 7.2)
+  {Shared DMEM SRAM\\{\scriptsize 128-bit slots}};
+\node[io,  minimum width=3.5cm] (uart) at (1.35, 6.15)
+  {Console TX / I/O};
 
-\node[font=\scriptsize\bfseries, text=memborder] at (1.7, 5.85) {DMEM regions};
-\node[maprow] (m0) at (1.7, 5.3)  {Boot / globals / builtins};
-\node[maprow] (m1) at (1.7, 4.7)  {Object heap (+ GC)};
-\node[maprow] (m2) at (1.7, 4.1)  {String arena};
-\node[maprow] (m3) at (1.7, 3.5)  {Exc-info stack};
-\node[maprow] (m4) at (1.7, 2.9)  {Frame stack};
-\node[font=\scriptsize\bfseries, text=memborder] at (1.7, 2.15) {Code regions};
-\node[maprow] (c0) at (1.7, 1.6)  {Code ROM (BIOS/runtime)};
-\node[maprow] (c1) at (1.7, 1.0)  {Code RAM (compiler output)};
+\node[font=\scriptsize\bfseries, text=memborder] at (1.35, 5.25) {DMEM layout};
+\node[mapcell] (a0) at (1.35, 4.8)  {0x03E0 boot/globals};
+\node[mapcell] (a1) at (1.35, 4.3)  {0x0440 object heap};
+\node[mapcell] (a2) at (1.35, 3.8)  {....  string arena};
+\node[mapcell] (a3) at (1.35, 3.3)  {0x1B000 exc stack};
+\node[mapcell] (a4) at (1.35, 2.8)  {0x1C000 frame stack};
+\node[font=\scriptsize\bfseries, text=memborder] at (1.35, 2.15) {Code layout};
+\node[mapcell] (b0) at (1.35, 1.7)  {ROM  BIOS+runtime};
+\node[mapcell] (b1) at (1.35, 1.2)  {RAM  compiled code};
 
-\node[grp, draw=memborder, fit=(mbox)(grant)(dmem)(con)(m0)(m1)(m2)(m3)(m4)(c0)(c1),
-  label={[ttl,text=memborder]above:\textbf{Shared fabric + memory map}}] (midg) {};
+\node[grp, draw=memborder, fit=(mbox)(grant)(dmem)(uart)(a0)(a1)(a2)(a3)(a4)(b0)(b1),
+  label={[ttl,text=memborder]above:\textbf{Interconnect}}] (mid) {};
 
 \draw[bus] (mbox) -- (grant);
 \draw[dbus] (grant) -- (dmem);
-\draw[bus] (dmem) -- (con);
+\draw[bus] (dmem) -- (uart);
 
-% ----- ExCore -----
-\node[ex, minimum width=4.6cm] (rv) at (7.15, 10.0)
-  {RV32 multicycle hart\\{\scriptsize helper / trap engine}};
-\node[ex, minimum width=4.6cm] (mmio) at (7.15, 8.9)
-  {MMIO bridge\\{\scriptsize mailbox $\cdot$ slot $\cdot$ console}};
-\node[ex, minimum width=4.6cm] (fw) at (7.15, 7.55)
-  {Firmware services\\{\scriptsize grow $\cdot$ rehash $\cdot$ bulk}\\
-   {\scriptsize print $\cdot$ slice $\cdot$ GC $\cdot$ emu}};
-\node[mem, minimum width=4.6cm] (fimem) at (7.15, 6.2)
-  {Private FW IMEM};
-\node[mem, minimum width=4.6cm] (scr) at (7.15, 5.15)
-  {Private scratch RAM};
+% ========== EXCORE ==========
+\node[ex, minimum width=3.6cm] (cpu) at (5.85, 9.4)
+  {RV32 multicycle CPU};
+\node[ex, minimum width=3.6cm] (mmio) at (5.85, 8.35)
+  {MMIO\\{\scriptsize mailbox+slot+TX}};
+\node[mem, minimum width=3.6cm] (fimem) at (5.85, 7.2)
+  {FW IMEM SRAM};
+\node[mem, minimum width=3.6cm] (spm) at (5.85, 6.15)
+  {Scratch SRAM};
+\node[ex, minimum width=3.6cm] (fwi) at (5.85, 4.95)
+  {Firmware image\\{\scriptsize grow/rehash/print/...}};
 
-\node[grp, draw=exborder, fit=(rv)(mmio)(fw)(fimem)(scr),
+\node[grp, draw=exborder, fit=(cpu)(mmio)(fimem)(spm)(fwi),
   label={[ttl,text=exborder]above:\textbf{ExCore}}] (exg) {};
 
-\draw[dbus] (rv) -- (mmio);
-\draw[bus] (mmio) -- (fw);
-\draw[dbus] (rv.east) -- ++(0.45,0) |- (fimem.east);
-\draw[dbus] (rv.east) -- ++(0.45,0) |- (scr.east);
-\draw[bus] (rt.south) -- ++(0,-0.15) -| (fw.north);
+\draw[dbus] (cpu) -- (mmio);
+\draw[dbus] (cpu.east) -- ++(0.4,0) |- (fimem.east);
+\draw[dbus] (cpu.east) -- ++(0.4,0) |- (spm.east);
+\draw[bus] (fimem) -- (fwi);
 
-% ----- Minimal cross links -----
-\draw[dbus] (ctrl.east) -- node[lab,above]{trap} (mbox.west);
+% ========== CROSS ==========
+\draw[dbus] (rfp.east) -- ++(0.4,0) |- node[lab,above,pos=0.25]{trap} (mbox.west);
 \draw[dbus] (mbox.east) -- node[lab,above]{MMIO} (mmio.west);
-\draw[dbus] (accg.east) -- node[lab,above]{dmem} (grant.west);
-\draw[dbus] (mmio.west) -- ++(-0.25,0) |- node[lab,above,pos=0.85]{slot}
-  (grant.east);
-\draw[bus] (mmio.south) |- node[lab,pos=0.12,below]{TX} (con.east);
+\draw[dbus] (acc.east) -- node[lab,above]{D-bus} (grant.west);
+\draw[dbus] (mmio.west) -- ++(-0.25,0) |- node[lab,above,pos=0.85]{slot} (grant.east);
+\draw[bus] (mmio.south) |- node[lab,pos=0.12,below]{TX} (uart.east);
 
 \end{tikzpicture}%
 }
 
-\caption{Ideal PyCore + ExCore system.
-On-device BIOS/runtime/compiler own the code spaces (no host in steady state).
-PyCore pairs a bytecode control path with typed execute units and language
-accelerators (frames, strings, containers, hash/eq, CALL binder, exceptions).
-ExCore runs recoverable traps and helpers in firmware.
-Shared DMEM is exclusively granted; the center column is the memory map.}
+\caption{Physical hardware of the ideal machine: SRAMs, execute units, language
+engines, interconnect, and the RV32 helper core.
+PyCore owns a tagged regfile, private code ROM/RAM, typed ALUs, and engines for
+frames, strings, containers, hashing, calls, exceptions, and heap allocation.
+ExCore is an RV32 CPU with private IMEM/scratch and MMIO onto the trap mailbox,
+DMEM slot port, and console.
+Shared DMEM is single-owner through the grant mux; addresses show the memory map.}
 \label{fig:block}
 \end{figure}
 \clearpage
