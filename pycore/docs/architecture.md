@@ -13,8 +13,9 @@ are tracked the same way in `pycore/docs/exception_support.md` and
 `pycore.json` → `exceptions.types`.
 
 Paper-oriented systems notes (LaTeX) for near-complete subsystems live under
-`docs/paper/` — start with `docs/paper/systems/call_fsm.tex` for the CALL FSM
-and shared argument binder.
+`docs/paper/` — start with `docs/paper/systems/architecture_overview.tex` for
+the full component map and system diagram, and
+`docs/paper/systems/call_fsm.tex` for the CALL FSM and shared argument binder.
 
 ## Two-core system: pycore + excore
 
