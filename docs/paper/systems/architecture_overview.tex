@@ -167,154 +167,141 @@ The cuts above follow \emph{research seams}:
 \end{itemize}
 
 % =============================================================================
-\section{System architecture diagram}
+\section{System block diagram}
 % =============================================================================
 
-Figure~\ref{fig:system} is the single overview figure intended for the paper's
-architecture section.
-Solid arrows are data/control paths in the as-built two-core top
-(\texttt{pycore\_excore\_system}).
-Dashed boxes are roadmap surfaces that already have planning contracts
-(\texttt{planning/code\_loading\_bios\_tokenizer\_plan.md},
-\texttt{planning/native\_compiler\_plan.md}).
+Figure~\ref{fig:block} is the hardware block diagram of the as-built two-core
+top (\texttt{pycore\_excore\_system}).
+PyCore is a CPython-bytecode hart; ExCore is an RV32 firmware hart.
+Only data memory is shared, and only under an exclusive grant.
+Instruction memories are private (Harvard per core).
 
 \begin{figure}[H]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
-  font=\footnotesize,
+  font=\small,
   >=Latex,
-  box/.style={
-    draw, rounded corners=2pt, align=center,
-    inner sep=4pt, thick
+  thick,
+  blk/.style={
+    draw, align=center, inner sep=5pt, thick,
+    minimum height=0.72cm
   },
-  py/.style={box, fill=pyfill, draw=pyborder, text=black},
-  ex/.style={box, fill=exfill, draw=exborder, text=black},
-  mem/.style={box, fill=memfill, draw=memborder, text=black},
-  tool/.style={box, fill=toolfill, draw=toolborder, text=black},
-  road/.style={box, fill=roadfill, draw=roadborder, text=black,
-    densely dashed},
-  grp/.style={draw, rounded corners=4pt, inner sep=6pt, thick},
-  arr/.style={-{Latex}, thick, color=arrowc},
-  sarr/.style={-{Latex}, thick, densely dashed, color=arrowc},
-  lab/.style={font=\scriptsize\itshape, text=black!70}
+  py/.style={blk, fill=pyfill, draw=pyborder},
+  ex/.style={blk, fill=exfill, draw=exborder},
+  mem/.style={blk, fill=memfill, draw=memborder},
+  io/.style={blk, fill=toolfill, draw=toolborder},
+  bus/.style={-{Latex}, thick, color=arrowc},
+  dbus/.style={Latex-Latex, thick, color=arrowc},
+  lab/.style={font=\scriptsize, text=black!65, fill=white, inner sep=1pt},
+  glab/.style={font=\footnotesize\bfseries, text=black!75},
+  grp/.style={draw, thick, rounded corners=3pt, inner sep=8pt}
 ]
 
-% ---- Host tooling (top) ----
-\node[tool, minimum width=11.2cm] (host) at (0, 10.4) {%
-  \textbf{Host toolchain (CPython 3.14)}\\[2pt]
-  \texttt{image\_from\_source}: \texttt{compile()} $\to$ imem slots + tagged dmem\\
-  boot record $\cdot$ ROM firmware builtins $\cdot$ class fold $\cdot$ opcode gate};
+  % -------- Host --------
+  \node[io, minimum width=14.6cm] (host) at (0, 7.85) {%
+    \textbf{Host toolchain} --- CPython~3.14 \texttt{image\_from\_source}\\[1pt]
+    {\scriptsize\texttt{compile()} $\to$ tagged imem/dmem + boot record + ROM builtins}};
 
-% ---- PyCore cluster ----
-\node[py, minimum width=3.5cm] (fetch) at (-3.6, 8.2) {%
-  Fetch / Decode\\
-  {\scriptsize EXTENDED\_ARG / CACHE fold}};
-\node[py, minimum width=3.5cm] (exec) at (-3.6, 6.7) {%
-  Tag-routed EXEC\\
-  {\scriptsize promote $\cdot$ ALU $\cdot$ FPU}};
-\node[py, minimum width=3.5cm] (cont) at (-3.6, 5.2) {%
-  \texttt{S\_CONTAINER}\\
-  {\scriptsize list/dict/set/attr/iter}};
-\node[py, minimum width=3.5cm] (call) at (-3.6, 3.7) {%
-  \texttt{S\_CALL} + binder\\
-  {\scriptsize frames $\cdot$ BI\_*}};
-\node[py, minimum width=3.5cm] (trapm) at (-3.6, 2.2) {%
-  Trap marshal / wait\\
-  {\scriptsize recoverable $\to$ mailbox}};
+  % -------- PyCore column --------
+  \node[py, minimum width=2.7cm] (ctrl)  at (-4.85, 5.7) {Control FSM\\{\scriptsize\texttt{state\_r}}};
+  \node[py, minimum width=2.7cm] (fetch) at (-4.85, 4.5) {Fetch / Decode\\{\scriptsize EXT\_ARG / CACHE}};
+  \node[py, minimum width=2.7cm] (exec)  at (-4.85, 3.3) {Exec fabric\\{\scriptsize tag $\cdot$ ALU $\cdot$ FPU}};
+  \node[py, minimum width=2.7cm] (lang)  at (-4.85, 2.1) {Container / CALL\\{\scriptsize binder $\cdot$ BI\_*}};
+  \node[py, minimum width=2.7cm] (rf)    at (-4.85, 0.9) {Regfile\\{\scriptsize 96$\times$132-bit}};
+  \node[mem, minimum width=2.7cm] (pimem) at (-4.85,-0.3) {Code ROM+RAM\\{\scriptsize private IMEM}};
 
-\node[grp, draw=pyborder, fit=(fetch)(exec)(cont)(call)(trapm),
-  label={[lab]above left:\textbf{PyCore} --- CPython bytecode hart}] (pygrp) {};
+  \node[grp, draw=pyborder, fit=(ctrl)(fetch)(exec)(lang)(rf)(pimem),
+    label={[glab]above:\textbf{PyCore} (bytecode hart)}] (pyg) {};
 
-% ---- Shared memory / transport (center) ----
-\node[mem, minimum width=3.4cm] (mailbox) at (0.9, 7.0) {%
-  \texttt{trap\_mailbox}\\
-  {\scriptsize req/res handshake}\\
-  {\scriptsize COMPLETED/RETRY/FATAL}};
-\node[mem, minimum width=3.4cm] (grant) at (0.9, 5.2) {%
-  Memory grant mux\\
-  {\scriptsize owner $\in$ \{PY, EX\}}\\
-  {\scriptsize exclusive dmem}};
-\node[mem, minimum width=3.4cm] (dmem) at (0.9, 3.4) {%
-  Shared DMEM\\
-  {\scriptsize heap $\cdot$ frames}\\
-  {\scriptsize exc-info arena}};
-\node[mem, minimum width=3.4cm] (tags) at (0.9, 1.6) {%
-  Tagged entries\\
-  {\scriptsize 132-bit RF / slots}\\
-  {\scriptsize tag map (16 kinds)}};
+  \draw[bus] (ctrl) -- (fetch);
+  \draw[bus] (fetch) -- (exec);
+  \draw[bus] (exec) -- (lang);
+  \draw[dbus] (lang) -- (rf);
+  \draw[dbus] (fetch.west) -- ++(-0.55,0) |- (pimem.west);
 
-% ---- ExCore cluster ----
-\node[ex, minimum width=3.5cm] (rv) at (5.4, 7.5) {%
-  RV32 multicycle\\
-  {\scriptsize \texttt{riscv\_multicycle}}};
-\node[ex, minimum width=3.5cm] (mmio) at (5.4, 5.8) {%
-  \texttt{excore\_mmio}\\
-  {\scriptsize mailbox + slot port}\\
-  {\scriptsize CONSOLE\_TX}};
-\node[ex, minimum width=3.5cm] (fw) at (5.4, 4.1) {%
-  Trap firmware\\
-  {\scriptsize grow/extend/delete}\\
-  {\scriptsize dict/set update}};
-\node[ex, minimum width=3.5cm] (fimem) at (5.4, 2.4) {%
-  Private FW IMEM\\
-  {\scriptsize Harvard; not shared}};
+  % -------- Shared fabric --------
+  \node[mem, minimum width=3.4cm] (mbox) at (0, 5.4) {%
+    \texttt{trap\_mailbox}\\{\scriptsize\texttt{trap\_req} / \texttt{trap\_res}}\\
+    {\scriptsize COMPLETED / RETRY / FATAL}};
+  \node[mem, minimum width=3.4cm] (grant) at (0, 3.7) {%
+    Memory grant mux\\{\scriptsize owner $\in$ \{PY, EX\}}};
+  \node[mem, minimum width=3.4cm] (dmem) at (0, 2.1) {%
+    Shared DMEM\\{\scriptsize heap $\cdot$ frames $\cdot$ exc}};
+  \node[io, minimum width=3.4cm] (console) at (0, 0.5) {%
+    Console sink\\{\scriptsize\texttt{CONSOLE\_TX}}};
 
-\node[grp, draw=exborder, fit=(rv)(mmio)(fw)(fimem),
-  label={[lab]above right:\textbf{ExCore} --- recoverable-trap hart}] (exgrp) {};
+  \node[grp, draw=memborder, fit=(mbox)(grant)(dmem)(console),
+    label={[glab]above:\textbf{Shared fabric}}] (midg) {};
 
-% ---- Bottom memories / roadmap ----
-\node[mem, minimum width=3.5cm] (imem) at (-3.6, 0.2) {%
-  Code ROM + Code RAM\\
-  {\scriptsize image + relocatable}};
-\node[road, minimum width=3.4cm] (bios) at (0.9, -0.9) {%
-  Roadmap Plan~1\\
-  {\scriptsize BIOS $\cdot$ loader}\\
-  {\scriptsize tokenizer $\cdot$ exec}};
-\node[road, minimum width=3.5cm] (comp) at (5.4, -0.9) {%
-  Roadmap Plan~2\\
-  {\scriptsize parse / AST / codegen}\\
-  {\scriptsize self-hosted compile()}};
+  \draw[bus] (mbox) -- (grant);
+  \draw[dbus] (grant) -- (dmem);
 
-% ---- Arrows: host ----
-\draw[arr] (host.south) -- ++(0,-0.25) -| node[pos=0.15,lab,above]{boot image} (imem.north);
-\draw[arr] (host.south) -- ++(0,-0.25) -| (dmem.north);
+  % -------- ExCore column --------
+  \node[ex, minimum width=2.9cm] (rv)   at (4.9, 5.5) {RV32 multicycle\\{\scriptsize\texttt{riscv\_multicycle}}};
+  \node[ex, minimum width=2.9cm] (mmio) at (4.9, 4.15) {\texttt{excore\_mmio}\\{\scriptsize mailbox + slot port}};
+  \node[ex, minimum width=2.9cm] (fw)   at (4.9, 2.8) {Trap firmware\\{\scriptsize grow / update / print}};
+  \node[mem, minimum width=2.9cm] (fimem) at (4.9, 1.45) {FW IMEM\\{\scriptsize private}};
+  \node[mem, minimum width=2.9cm] (scratch) at (4.9, 0.15) {Scratch RAM\\{\scriptsize private}};
 
-% ---- Arrows: pycore internal ----
-\draw[arr] (fetch) -- (exec);
-\draw[arr] (exec) -- (cont);
-\draw[arr] (exec) -- ++(-2.0,0) |- (call);
-\draw[arr] (cont) -- (trapm);
-\draw[arr] (call) -- (trapm);
-\draw[arr] (fetch) -- (imem);
+  \node[grp, draw=exborder, fit=(rv)(mmio)(fw)(fimem)(scratch),
+    label={[glab]above:\textbf{ExCore} (RV32 trap hart)}] (exg) {};
 
-% ---- Arrows: transport ----
-\draw[arr] (trapm) -- node[lab,above]{trap\_req} (mailbox);
-\draw[arr] (mailbox) -- node[lab,above]{MMIO} (mmio);
-\draw[arr] (mmio) -- (rv);
-\draw[arr] (rv) -- (fw);
-\draw[arr] (fw) -- (fimem);
-\draw[arr] (mailbox.south) -- node[lab,right]{trap\_res} (grant.north);
-\draw[arr] (grant) -- (dmem);
-\draw[arr] (mmio.west) -- node[lab,above]{slot R/W} (grant.east);
-\draw[arr] (cont.east) -- (dmem.west);
-\draw[arr] (call.east) -- ++(0.55,0) |- (dmem.west);
-\draw[arr] (tags.north) -- (dmem.south);
+  \draw[dbus] (rv) -- (mmio);
+  \draw[bus] (mmio) -- (fw);
+  \draw[dbus] (rv.east) -- ++(0.6,0) |- (fimem.east);
+  \draw[dbus] (rv.east) -- ++(0.6,0) |- (scratch.east);
 
-% ---- Roadmap ----
-\draw[sarr] (imem) -- (bios);
-\draw[sarr] (bios) -- (comp);
-\draw[sarr] (fw.south) |- (comp.west);
+  % -------- Cross links --------
+  % Host loads memories only
+  \draw[bus] (host.south) -- ++(0,-0.2) -|
+    node[lab,pos=0.16,above]{boot image} (pimem.north);
+  \draw[bus] (host.south) -- ++(0,-0.2) -| (dmem.north);
+  \draw[bus] (host.south) -- ++(0,-0.2) -| (fimem.north);
+
+  % Trap path: PyCore lang <-> mailbox <-> ExCore mmio
+  \draw[bus] (lang.east) -- node[lab,above]{\texttt{trap\_req}} (mbox.west);
+  \draw[bus] (mbox.west) ++(0,0.35) coordinate (mbxup) --
+    node[lab,below,pos=0.55]{\texttt{trap\_res}} ++(-1.0,0) |- (ctrl.east);
+  \draw[dbus] (mbox.east) -- node[lab,above]{MMIO} (mmio.west);
+
+  % Exclusive dmem: both masters through grant
+  \draw[dbus] (lang.east) -- ++(0.7,0) |-
+    node[lab,pos=0.8,above]{dmem} (grant.west);
+  \draw[dbus] (mmio.west) -- ++(-0.7,0) |-
+    node[lab,pos=0.8,above]{slot R/W} (grant.east);
+
+  % Print path: MMIO console only
+  \draw[bus] (mmio.south) |- node[lab,pos=0.2,below]{\texttt{print}} (console.east);
 
 \end{tikzpicture}%
 }
-\caption{PyCore + ExCore system architecture.
-PyCore executes tagged CPython bytecode; recoverable traps cross the mailbox
-into ExCore firmware while PyCore is frozen and ExCore holds the exclusive
-dmem grant.
-Dashed nodes are planned surfaces toward on-device compilation.}
-\label{fig:system}
+\caption{System block diagram of \texttt{pycore\_excore\_system}.
+PyCore and ExCore keep private instruction memories; the shared DMEM is
+reached only through the exclusive grant mux.
+Recoverable traps cross \texttt{trap\_mailbox} into ExCore MMIO/firmware;
+\texttt{CONSOLE\_TX} is the print sink.}
+\label{fig:block}
 \end{figure}
+
+\begin{center}
+\small
+\begin{tabular}{@{}llp{0.52\textwidth}@{}}
+\toprule
+Block & Owner & Role \\
+\midrule
+Control FSM / Fetch / Exec & PyCore & Multi-cycle bytecode control and typed ALU fabric \\
+Container / CALL & PyCore & Heap ops, binder, on-core \texttt{BI\_*} \\
+Regfile & PyCore & 96 tagged 132-bit entries (locals + stack) \\
+Code ROM+RAM & PyCore & Private imem; image + relocatable code RAM \\
+\texttt{trap\_mailbox} & fabric & Wide \texttt{trap\_req}/\texttt{trap\_res} handshake \\
+Grant mux + DMEM & fabric & Exclusive heap/frame ownership \{PY, EX\} \\
+RV32 + MMIO + FW & ExCore & Completes recoverable traps in firmware \\
+FW IMEM / scratch & ExCore & Private Harvard memories \\
+Console & fabric & \texttt{CONSOLE\_TX} byte sink (sim stdout) \\
+\bottomrule
+\end{tabular}
+\end{center}
 
 % =============================================================================
 \section{Core control FSM}
