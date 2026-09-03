@@ -164,7 +164,7 @@ this milestone:
    `_bi_exec_globals`. There is still no locals-mapping
    step for `LOAD_NAME` inside functions / `exec` / class bodies. Missing in
    both dicts traps `PY_TRAP_MEM_FAULT`. See
-   `planning/builtins_bytecode_support_plan.md`.
+   `planning/implemented/builtins_bytecode_support_plan.md`.
 7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
   the stack and `CALL` treats that handle as the function. Defaults are folded
   at image-build time; annotations, closures, and generic `__call__` objects
@@ -229,7 +229,7 @@ this milestone:
 CPython list/set/dict comprehensions embed exception-table cleanup that uses
 `RERAISE`. **Policy (option B):** image tooling accepts `RERAISE` and serializes
 `co_exceptiontable` on code objects; hardware walks the table on raise/reraise
-(see `planning/for_loop_full_support_plan.md`). List comps from real
+(see `planning/implemented/for_loop_full_support_plan.md`). List comps from real
 `compile()` run on the two-core top when `LIST_APPEND` grow is required
 (`img_list_comp_basic`, `img_list_comp_fast_clear`). Dict comps that need
 `MAP_ADD` + grow remain a follow-on (use `MAP_ADD_SEQ` inject until then).

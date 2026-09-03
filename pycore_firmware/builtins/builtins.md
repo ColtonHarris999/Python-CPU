@@ -7,7 +7,7 @@ test flow). Small helpers may later be inlined instead of a PC jump.
 
 **Architecture:** prefer hardware `OBK_BUILTIN` / `BI_*` CALL fast paths
 for known tags; keep these `.py` bodies as **miss / protocol**
-implementations (see `planning/builtins_bytecode_support_plan.md`).
+implementations (see `planning/implemented/builtins_bytecode_support_plan.md`).
 Example: `BI_LEN` reads container headers; Python `len` should only
 handle `obj.__len__()`, not recount with a for-loop.
 
@@ -25,7 +25,7 @@ These limit every firmware builtin:
 | Constraint | Impact |
 | --- | --- |
 | Firmware raises use Wave A exception types | ROM helpers raise catchable `TypeError`, `ValueError`, or `StopIteration` as appropriate. An unhandled Python raise ends in `PY_TRAP_RAISE` (17). |
-| **`CALL_KW` / `CALL_FUNCTION_EX` unfrozen** | Hardware binder supports keyword / `*args` / `**kwargs` calls on `CODE_OBJECT` (see `planning/call_kw_support_plan.md`). ROM modules may use `sep=` / `key=` / `*args` when implemented as Python `CODE_OBJECT`s. Native `OBK_BUILTIN` / `BI_*` paths remain positional-only (`CALL_FILTER` on kwargs). |
+| **`CALL_KW` / `CALL_FUNCTION_EX` unfrozen** | Hardware binder supports keyword / `*args` / `**kwargs` calls on `CODE_OBJECT` (see `planning/implemented/call_kw_support_plan.md`). ROM modules may use `sep=` / `key=` / `*args` when implemented as Python `CODE_OBJECT`s. Native `OBK_BUILTIN` / `BI_*` paths remain positional-only (`CALL_FILTER` on kwargs). |
 | No `YIELD_VALUE` | `enumerate`/`zip`/`map`/`filter`/`reversed` return lists, not iterators |
 | `TO_BOOL` widened | `None` + LIST/TUPLE/DICT/SET/inline RANGE truthiness work; `OBJECT` `__bool__`/`__len__` protocol still TYPE-traps |
 | `COMPARE_OP` numeric only | `min`/`max`/`sorted` TYPE-trap on str/containers |
@@ -189,7 +189,7 @@ form; `BI_SET` owns dict)
 ## Blocked by bytecode (§3 gaps)
 
 Audit of **blocked** / partially-blocked names against
-`planning/builtins_next_steps_plan.md` §3. Prefer linking deep plans under
+`planning/implemented/builtins_next_steps_plan.md` §3. Prefer linking deep plans under
 `pycore_firmware/builtins/*.md` where they exist.
 
 | Bytecode / protocol gap | Blocked or limited builtins |

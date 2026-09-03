@@ -2,14 +2,14 @@
 
 **Status:** Active — T1–T5-A (except T4 oparg 2) + T8 landed on `cursor/exceptions-full-t1-match` (next: T6 / T7 / T9 / T10)
 **Audience:** bytecode / pycore RTL agent (primary); firmware agent (raise-site follow-up)  
-**Parent:** PR #66 Track B (for-loop exception infrastructure) + [`planning/for_loop_full_support_plan.md`](for_loop_full_support_plan.md) §15  
+**Parent:** PR #66 Track B (for-loop exception infrastructure) + [`planning/implemented/for_loop_full_support_plan.md`](implemented/for_loop_full_support_plan.md) §15  
 **Prerequisites:** Branch is rebased on current `main` (Plan 1 P7 builtins + Wave A types including `SyntaxError`). Do **not** pile more commits onto `cursor/for-loop-full-impl`.
 **Unblocks:** `except Exception:`, `raise TypeError(...)`, cross-frame `try: f() except T:`, trap→raise, `assert`, `with`, user exception subclasses, firmware `raise TypeError` instead of `raise 1`
 
 Related:
 
 - **CPython type tree (source of truth for names/parents):** [Built-in Exceptions](https://docs.python.org/3/library/exceptions.html) (Python 3.14). Copy the hierarchy from that page when seeding; do not invent parents.
-- For-loop / Track B locks: [`planning/for_loop_full_support_plan.md`](for_loop_full_support_plan.md) §5, [`planning/HANDOFF.md`](HANDOFF.md)
+- For-loop / Track B locks: [`planning/implemented/for_loop_full_support_plan.md`](implemented/for_loop_full_support_plan.md) §5, [`planning/implemented/HANDOFF.md`](implemented/HANDOFF.md)
 - **Exception type tracker (source of truth for what is seeded):** [`pycore/docs/exception_support.md`](../pycore/docs/exception_support.md) + `exceptions.types` in [`pycore/targets/pycore.json`](../pycore/targets/pycore.json)
 - Opcode matrix: [`pycore/docs/bytecode_support.md`](../pycore/docs/bytecode_support.md)
 - Object model: [`pycore/docs/object_model.md`](../pycore/docs/object_model.md) D2
@@ -44,7 +44,7 @@ Never state stack effect, emission, or PyCore status from memory. Grep in the sa
 - [`pycore/docs/bytecode_support.md`](../pycore/docs/bytecode_support.md)
 - [`pycore/programs/`](../pycore/programs)
 
-**Must read before coding:** [Built-in Exceptions](https://docs.python.org/3/library/exceptions.html) (hierarchy + matching rule), [`exception_support.md`](../pycore/docs/exception_support.md) (what is seeded today), §2.4 hardware locks, for-loop plan §5 design locks, [`planning/HANDOFF.md`](HANDOFF.md), [`pycore/docs/object_model.md`](../pycore/docs/object_model.md) D2, [`pycore/rtl/pycore_cont_raise.svh`](../pycore/rtl/pycore_cont_raise.svh), [`pycore/rtl/pycore_cont_exc.svh`](../pycore/rtl/pycore_cont_exc.svh), protocol CALL handoff reset in [`pycore/rtl/pycore_core.sv`](../pycore/rtl/pycore_core.sv) (~2211).
+**Must read before coding:** [Built-in Exceptions](https://docs.python.org/3/library/exceptions.html) (hierarchy + matching rule), [`exception_support.md`](../pycore/docs/exception_support.md) (what is seeded today), §2.4 hardware locks, for-loop plan §5 design locks, [`planning/implemented/HANDOFF.md`](implemented/HANDOFF.md), [`pycore/docs/object_model.md`](../pycore/docs/object_model.md) D2, [`pycore/rtl/pycore_cont_raise.svh`](../pycore/rtl/pycore_cont_raise.svh), [`pycore/rtl/pycore_cont_exc.svh`](../pycore/rtl/pycore_cont_exc.svh), protocol CALL handoff reset in [`pycore/rtl/pycore_core.sv`](../pycore/rtl/pycore_core.sv) (~2211).
 
 **Regression that must stay green:**
 
@@ -632,10 +632,10 @@ Current host suite: `pycore-python-tests` 269 OK. `CALL` of exception types allo
 | Document | Relationship |
 | --- | --- |
 | [Built-in Exceptions](https://docs.python.org/3/library/exceptions.html) | **Names, parents, matching rule, trap mapping** — copy the hierarchy; do not invent |
-| [`for_loop_full_support_plan.md`](for_loop_full_support_plan.md) | Track B infra + §15 follow-on → **this plan** |
+| [`for_loop_full_support_plan.md`](implemented/for_loop_full_support_plan.md) | Track B infra + §15 follow-on → **this plan** |
 | [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) | Plan 1 on `main`: P7 leaf types, deviation 16 (no cross-frame unwind), message workaround |
 | [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) | **After #74:** firmware `raise <int>` → real types; getattr / min-max; NYI stubs; F4 `e.args` catalog |
-| [`HANDOFF.md`](HANDOFF.md) | Design locks + verified counts for #66 |
+| [`HANDOFF.md`](implemented/HANDOFF.md) | Design locks + verified counts for #66 |
 | [`exception_support.md`](../pycore/docs/exception_support.md) | **Exception type status** — seeded / absent / alias / skip + seed_track |
 | [`pycore.json`](../pycore/targets/pycore.json) `exceptions.types` | Machine catalog the analyzer validates |
 | [`bytecode_support.md`](../pycore/docs/bytecode_support.md) | Opcode status rows (including OBJ_EXC) |

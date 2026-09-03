@@ -3,7 +3,7 @@
 **Status:** in progress — P1, P3, P4, P6.1 (strings), P7, P8 shipped; P2, P5, P6.2–6.4, P9 open. See §5
 **Audience:** pycore RTL agent, bytecode agent, firmware agent, tooling agent
 **Successor:** [`native_compiler_plan.md`](native_compiler_plan.md) (Plan 2)
-**Supersedes:** the P1–P6 phases of `compile_exec_plan.md`
+**Supersedes:** the P1–P6 phases of `implemented/compile_exec_plan.md`
 
 Plan 1 ends when PyCore can **boot a Python BIOS from ROM, load a code module
 into writable code memory, `exec()` it, and tokenize Python source on-device**.

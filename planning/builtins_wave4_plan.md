@@ -1,7 +1,7 @@
 # Builtins wave 4 — what comes next
 
 **Audience:** next agent (firmware, bytecode, or excore)  
-**Prerequisite:** wave 3 ROM seed landed (`planning/builtins_rom_wave3_plan.md`)  
+**Prerequisite:** wave 3 ROM seed landed (`planning/implemented/builtins_rom_wave3_plan.md`)  
 **Current ROM set:** 28 `CODE_OBJECT` builtins in `ROM_FIRMWARE_BUILTINS`
 
 Wave 3 finished the easy pure-Python seed + `sorted(reverse=)` /
@@ -12,7 +12,7 @@ not just more `.py` stubs.
 
 ## 1. Priority A — `print` console — **DONE**
 
-**Status:** hybrid MVP shipped (see `planning/builtins_print_console_plan.md`).
+**Status:** hybrid MVP shipped (see `planning/implemented/builtins_print_console_plan.md`).
 
 | Layer | Shipped |
 | --- | --- |
@@ -219,7 +219,7 @@ builtins dict. Shipped notes in `ord.md` / `chr.md`.
 
 ## 4. Priority D — bytecode / CALL follow-ups
 
-**Active plan:** [`planning/for_loop_full_support_plan.md`](for_loop_full_support_plan.md)
+**Shipped:** [`planning/implemented/for_loop_full_support_plan.md`](implemented/for_loop_full_support_plan.md)
 (object iterators, StopIteration-only exception tables, comprehensions).
 
 | Item | Unlocks |
