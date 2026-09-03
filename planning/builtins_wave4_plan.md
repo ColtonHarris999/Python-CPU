@@ -224,11 +224,11 @@ builtins dict. Shipped notes in `ord.md` / `chr.md`.
 
 | Item | Unlocks |
 | --- | --- |
-| `CO_VARKEYWORDS` on defs | `def f(**k)`; multi-`**` merge already partial |
-| Exception tables / real exception objects | **→ for-loop plan Track B** (StopIteration only in v1) |
-| `COMPARE_OP` string ordering | `sorted`/`min`/`max` on str |
-| `GET_ITER` / `FOR_ITER` on OBJECT | **→ for-loop plan Track A** |
-| `FORMAT_*` / `BUILD_STRING` | Richer `str`/`format`/`print` |
+| `CO_VARKEYWORDS` on defs | **Done** — `def f(**k)` packing |
+| Exception tables / real exception objects | **→ for-loop plan Track B** (StopIteration only in v1) **Done** |
+| `COMPARE_OP` string ordering | **Done (SHORT_STR)** — `sorted`/`min`/`max` on short strings; LONG_STR ordering still TYPE |
+| `GET_ITER` / `FOR_ITER` on OBJECT | **→ for-loop plan Track A** **Done** |
+| `FORMAT_*` / `BUILD_STRING` | **Done (MVP)** — `FORMAT_SIMPLE` + `CONVERT_VALUE` + `BUILD_STRING` (SHORT_STR ceilings); `FORMAT_WITH_SPEC` still deferred |
 | `LOAD_SUPER_ATTR` + descriptors | `super`, `property`, `classmethod` |
 | `TO_BOOL` OBJECT `__bool__`/`__len__` | Truthiness protocol completion |
 

@@ -28,7 +28,7 @@ These limit every firmware builtin:
 | **`CALL_KW` / `CALL_FUNCTION_EX` unfrozen** | Hardware binder supports keyword / `*args` / `**kwargs` calls on `CODE_OBJECT` (see `planning/implemented/call_kw_support_plan.md`). ROM modules may use `sep=` / `key=` / `*args` when implemented as Python `CODE_OBJECT`s. Native `OBK_BUILTIN` / `BI_*` paths remain positional-only (`CALL_FILTER` on kwargs). |
 | No `YIELD_VALUE` | `enumerate`/`zip`/`map`/`filter`/`reversed` return lists, not iterators |
 | `TO_BOOL` widened | `None` + LIST/TUPLE/DICT/SET/inline RANGE truthiness work; `OBJECT` `__bool__`/`__len__` protocol still TYPE-traps |
-| `COMPARE_OP` numeric only | `min`/`max`/`sorted` TYPE-trap on str/containers |
+| `COMPARE_OP` numeric only | `min`/`max`/`sorted` TYPE-trap on containers; **SHORT_STR ordering works** |
 | No negative indices | `reversed` counts length explicitly |
 | Comprehensions emit `RERAISE` | Policy C: prefer `out += [x]` / `{*iterable}` (see `bytecode_support.md`) |
 | List/set growth | `LIST_EXTEND` / `SET_UPDATE` need excore for non-empty work |

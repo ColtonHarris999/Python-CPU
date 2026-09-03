@@ -231,6 +231,10 @@ module pycore_exec #(
         logic [PYCORE_VAL_WIDTH-1:0] wide_value;
         logic        string_cmp_valid;
         logic        string_cmp_eq;
+        logic        string_ord_valid;
+        logic        string_ord_ok;
+        logic signed [1:0] string_ord_cmp;
+        logic        string_ord_bool;
 
         // Same-tag SHORT_STR / LONG_STR ==/!= : full 128-bit descriptor/
         // payload compare (LONG_STR is interned-descriptor equality).
@@ -240,6 +244,22 @@ module pycore_exec #(
                            pycore_is_string_tag(rs1_tag);
         string_cmp_eq = (rs1_value_wide == rs2_value_wide);
 
+        // SHORT_STR lexicographic ordering (<,<=,>,>=).
+        string_ord_valid = valid_i &&
+                           (rs1_tag == PY_TAG_SHORT_STR) &&
+                           (rs2_tag == PY_TAG_SHORT_STR) &&
+                           ((alu_op_i == PY_ALU_LT) || (alu_op_i == PY_ALU_LE) ||
+                            (alu_op_i == PY_ALU_GT) || (alu_op_i == PY_ALU_GE));
+        pycore_short_str_cmp(rs1_value_wide, rs2_value_wide,
+                             string_ord_ok, string_ord_cmp);
+        unique case (alu_op_i)
+            PY_ALU_LT: string_ord_bool = (string_ord_cmp < 0);
+            PY_ALU_LE: string_ord_bool = (string_ord_cmp <= 0);
+            PY_ALU_GT: string_ord_bool = (string_ord_cmp > 0);
+            PY_ALU_GE: string_ord_bool = (string_ord_cmp >= 0);
+            default:   string_ord_bool = 1'b0;
+        endcase
+
         selected_value = 64'b0;
         wide_value = '0;
         stall_o = mul_stall || div_stall || fpu_stall;
@@ -247,7 +267,19 @@ module pycore_exec #(
         trap_code_o = tag_trap_code;
         result_o = pycore_make_entry(PY_TAG_OBJECT, '0);
 
-        if (string_cmp_valid) begin
+        if (string_ord_valid) begin
+            stall_o = 1'b0;
+            if (!string_ord_ok) begin
+                trap_o = 1'b1;
+                trap_code_o = PY_TRAP_TYPE;
+            end else begin
+                trap_o = 1'b0;
+                trap_code_o = PY_TRAP_NONE;
+                result_o = pycore_make_entry(
+                    PY_TAG_BOOL,
+                    {{(PYCORE_VAL_WIDTH-1){1'b0}}, string_ord_bool});
+            end
+        end else if (string_cmp_valid) begin
             stall_o = 1'b0;
             trap_o = 1'b0;
             trap_code_o = PY_TRAP_NONE;

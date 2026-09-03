@@ -174,6 +174,17 @@ module pycore_decode (
                 is_container_o = 1'b1;
             end
 
+            // FORMAT_SIMPLE / CONVERT_VALUE: rewrite TOS in place via S_CONTAINER.
+            PY_OP_FORMAT_SIMPLE, PY_OP_CONVERT_VALUE: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
+            end
+
+            // BUILD_STRING: pop count strings, push concat (SHORT_STR ceiling).
+            PY_OP_BUILD_STRING: begin
+                is_container_o = 1'b1;
+            end
+
             // UNARY_NOT: invert TOS BOOL in place (net stack 0). CPython 3.14
             // always emits TO_BOOL immediately before; non-BOOL traps in EX.
             PY_OP_UNARY_NOT: begin

@@ -51,7 +51,11 @@
     // BINARY_SLICE on SHORT_STR / LONG_STR. Walks UTF-8 characters to convert
     // the character bounds into byte offsets, then uses the string_mem slice
     // port. Reuses CP_INIT / CP_VAL / CP_TAG / CP_DONE.
-    localparam logic [5:0] CONT_SLICE_STR = 6'd45;// RERAISE 0/1
+    localparam logic [5:0] CONT_SLICE_STR = 6'd45;// BINARY_SLICE strings
+    // f-string path: FORMAT_SIMPLE / CONVERT_VALUE / BUILD_STRING.
+    localparam logic [5:0] CONT_FORMAT_SIMPLE = 6'd46;
+    localparam logic [5:0] CONT_CONVERT_VALUE = 6'd47;
+    localparam logic [5:0] CONT_BUILD_STRING  = 6'd48;
 
     // Container phases (stored in container_phase_r, 6-bit).
     //

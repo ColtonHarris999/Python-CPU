@@ -808,8 +808,23 @@ pycore-img-list-to-tuple: excore-fw
 pycore-img-str-eq:
 	$(call PYCORE_IMAGE_RUN,str_eq,50000)
 
-pycore-img-str-lt-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,str_lt_trap,1,50000)
+pycore-img-str-lt:
+	$(call PYCORE_IMAGE_RUN,str_lt,50000)
+
+pycore-img-format-simple:
+	$(call PYCORE_IMAGE_RUN,format_simple,50000)
+
+pycore-img-convert-value:
+	$(call PYCORE_IMAGE_RUN,convert_value,50000)
+
+pycore-img-convert-repr-str:
+	$(call PYCORE_IMAGE_RUN,convert_repr_str,50000)
+
+pycore-img-build-string:
+	$(call PYCORE_IMAGE_RUN,build_string,50000)
+
+pycore-img-sorted-str: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,sorted_str,100000)
 
 pycore-img-str-subscr:
 	$(call PYCORE_IMAGE_RUN,str_subscr,50000)
@@ -990,7 +1005,12 @@ pycore-img-scalar-all: \
 	pycore-img-unpack-ex \
 	pycore-img-list-to-tuple \
 	pycore-img-str-eq \
-	pycore-img-str-lt-trap \
+	pycore-img-str-lt \
+	pycore-img-format-simple \
+	pycore-img-convert-value \
+	pycore-img-convert-repr-str \
+	pycore-img-build-string \
+	pycore-img-sorted-str \
 	pycore-img-str-subscr \
 	pycore-img-str-subscr-long \
 	pycore-img-str-subscr-unicode \

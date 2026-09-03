@@ -1417,7 +1417,33 @@
         4,
         5
       ],
-      "note": "Numeric + same-tag SHORT_STR/LONG_STR ==/!=; string ordering TYPE-traps; LONG_STR uses descriptor equality"
+      "note": "Numeric + same-tag SHORT_STR/LONG_STR ==/!=; SHORT_STR lexicographic ordering; LONG_STR uses descriptor equality; LONG_STR ordering TYPE-traps"
+    },
+    "FORMAT_SIMPLE": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_STR",
+      "note": "value.__format__(\"\"); STR identity; INT/BOOL/None → SHORT_STR decimal/literal (INT ≤15 chars); else TYPE"
+    },
+    "CONVERT_VALUE": {
+      "support": "partial",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_STR",
+      "supported_opargs": [
+        1,
+        2,
+        3
+      ],
+      "note": "1=str 2=repr 3=ascii; INT/BOOL/None share str formatting; SHORT_STR !r/!a quote-wrap when ≤13 payload bytes; LONG_STR only oparg 1"
+    },
+    "BUILD_STRING": {
+      "support": "partial",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_STR",
+      "note": "Concat oparg SHORT_STR pieces when total ≤15 bytes; LONG_STR pieces or overflow → TYPE"
     },
     "POP_JUMP_IF_TRUE": {
       "support": "execute",
