@@ -29,7 +29,7 @@ Seeded into `ROM_FIRMWARE_BUILTINS`:
 for `__dict__` / `__class__` / `__base__` — see `planning/builtins_wave4_plan.md`.
 
 **Empty `tuple()`:** works — CALL phase-7 ranged UNINIT clear preserves
-`co_defaults` fills when `argc==0` (see `planning/call_kw_support_plan.md`).
+`co_defaults` fills when `argc==0` (see `planning/implemented/call_kw_support_plan.md`).
 
 ### 3B — kwargs
 

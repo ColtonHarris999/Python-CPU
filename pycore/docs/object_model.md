@@ -91,7 +91,7 @@ by `builtin_id` in the CALL FSM — hardware accelerates known tags (e.g.
 instance `__len__` when present). **CALL** on a ROM `CODE_OBJECT` uses the
 normal frame path. Pure-Python bodies under `pycore_firmware/builtins/`
 also cover miss / protocol cases (not for re-deriving header lengths in a
-loop). See `planning/builtins_next_steps_plan.md`.
+loop). See `planning/implemented/builtins_next_steps_plan.md`.
 
 ## D3 — `__dict__` is a real dict
 

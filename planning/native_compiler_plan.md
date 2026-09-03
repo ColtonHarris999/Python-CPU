@@ -3,7 +3,7 @@
 **Status:** proposed
 **Audience:** firmware compiler agent, bytecode agent, pycore RTL agent, tooling agent
 **Prerequisite:** [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) (Plan 1) complete
-**Supersedes:** the P7–P9 phases of `compile_exec_plan.md`
+**Supersedes:** the P7–P9 phases of `implemented/compile_exec_plan.md`
 
 Plan 1 gets PyCore to *boot a BIOS, load code, `exec()` it, and tokenize source*.
 Plan 2 completes the pipeline — **parse, build an AST, resolve scopes, generate
