@@ -1205,33 +1205,32 @@ function automatic void pycore_int_to_short_str(
             end
             if (mag != 64'b0) begin
                 ok = 1'b0;
+            end else if (neg && (ndigits == 4'd15)) begin
+                // '-' + 15 digits needs 16 chars; exceeds SHORT_STR.
+                ok = 1'b0;
             end else begin
                 out_len = neg ? (ndigits + 4'd1) : ndigits;
-                if (out_len > 4'd15) begin
-                    ok = 1'b0;
-                end else begin
-                    payload = '0;
-                    for (i = 0; i < 15; i++) begin
-                        if (i < out_len) begin
-                            if (neg && (i == 0)) begin
-                                payload[119-(i*8)-:8] = 8'h2d; // '-'
-                            end else begin
-                                di = neg ? (i - 1) : i;
-                                payload[119-(i*8)-:8] =
-                                    digs[ndigits - 1 - di];
-                            end
+                payload = '0;
+                for (i = 0; i < 15; i++) begin
+                    if (i < out_len) begin
+                        if (neg && (i == 0)) begin
+                            payload[119-(i*8)-:8] = 8'h2d; // '-'
+                        end else begin
+                            di = neg ? (i - 1) : i;
+                            payload[119-(i*8)-:8] =
+                                digs[ndigits - 1 - di];
                         end
                     end
-                    ok = 1'b1;
-                    entry = pycore_make_short_str_entry(out_len, payload);
                 end
+                ok = 1'b1;
+                entry = pycore_make_short_str_entry(out_len, payload);
             end
         end
     end
 endfunction
 
 // Lexicographic compare of two SHORT_STR values (UTF-8 byte order).
-// Returns -1 / 0 / +1. Corrupt size >15 → ok=0.
+// Returns -1 / 0 / +1. Size field is 4 bits so always within SHORT_STR max.
 function automatic void pycore_short_str_cmp(
     input  logic [PYCORE_VAL_WIDTH-1:0] a,
     input  logic [PYCORE_VAL_WIDTH-1:0] b,
@@ -1249,23 +1248,18 @@ function automatic void pycore_short_str_cmp(
         cmp = 2'sd0;
         la = pycore_short_str_size(a);
         lb = pycore_short_str_size(b);
-        if ((la > PYCORE_SHORT_STR_MAX_BYTES) ||
-            (lb > PYCORE_SHORT_STR_MAX_BYTES)) begin
-            ok = 1'b0;
-        end else begin
-            n = (la < lb) ? la : lb;
-            for (i = 0; i < PYCORE_SHORT_STR_MAX_BYTES; i++) begin
-                if ((i < n) && (cmp == 2'sd0)) begin
-                    ba = pycore_short_str_byte(a, i);
-                    bb = pycore_short_str_byte(b, i);
-                    if (ba < bb) cmp = -2'sd1;
-                    else if (ba > bb) cmp = 2'sd1;
-                end
+        n = (la < lb) ? la : lb;
+        for (i = 0; i < PYCORE_SHORT_STR_MAX_BYTES; i++) begin
+            if ((i < n) && (cmp == 2'sd0)) begin
+                ba = pycore_short_str_byte(a, i);
+                bb = pycore_short_str_byte(b, i);
+                if (ba < bb) cmp = -2'sd1;
+                else if (ba > bb) cmp = 2'sd1;
             end
-            if (cmp == 2'sd0) begin
-                if (la < lb) cmp = -2'sd1;
-                else if (la > lb) cmp = 2'sd1;
-            end
+        end
+        if (cmp == 2'sd0) begin
+            if (la < lb) cmp = -2'sd1;
+            else if (la > lb) cmp = 2'sd1;
         end
     end
 endfunction
