@@ -628,7 +628,8 @@ module pycore_core #(
             PY_OP_STORE_FAST_STORE_FAST,
             PY_OP_SWAP, PY_OP_GET_ITER, PY_OP_FOR_ITER,
             PY_OP_UNPACK_SEQUENCE, PY_OP_UNPACK_EX, PY_OP_TO_BOOL,
-            PY_OP_CALL_INTRINSIC_1: begin
+            PY_OP_CALL_INTRINSIC_1, PY_OP_FORMAT_SIMPLE, PY_OP_CONVERT_VALUE,
+            PY_OP_BUILD_STRING: begin
                 id_rd_we = 1'b0; id_tos_delta = 3'sd0;
             end
             // PUSH_NULL: push sentinel {NULL, 0}, one RF write via WB stage.
@@ -1995,6 +1996,14 @@ module pycore_core #(
                                 container_op_r    <= CONT_BUILD_TUPLE;
                                 container_count_r <= cur_arg_r[6:0];
                                 container_idx_r   <= 7'd0;
+                            end else if (cur_opcode_r == PY_OP_BUILD_STRING) begin
+                                container_op_r    <= CONT_BUILD_STRING;
+                                container_count_r <= cur_arg_r[6:0];
+                                container_idx_r   <= 7'd0;
+                            end else if (cur_opcode_r == PY_OP_FORMAT_SIMPLE) begin
+                                container_op_r <= CONT_FORMAT_SIMPLE;
+                            end else if (cur_opcode_r == PY_OP_CONVERT_VALUE) begin
+                                container_op_r <= CONT_CONVERT_VALUE;
                             end else if (cur_opcode_r == PY_OP_STORE_SUBSCR) begin
                                 // rs2 = container; choose LIST vs DICT path.
                                 // TUPLE (immutable) falls through to CONT_STORE_LIST,
@@ -2339,6 +2348,9 @@ module pycore_core #(
 
                             // Name/global/RF helpers (+ future object attrs)
                             `include "pycore_cont_object.svh"
+
+                            // FORMAT_SIMPLE / CONVERT_VALUE / BUILD_STRING
+                            `include "pycore_cont_str.svh"
 
                             // RAISE_VARARGS 0/1 (§7.5)
                             `include "pycore_cont_raise.svh"

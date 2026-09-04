@@ -154,11 +154,34 @@ module tb_exec;
         check(!trap && result[63:0] == 64'd0,
               "equal SHORT_STR NE should be false");
 
-        // Ordering on strings remains unsupported.
+        // SHORT_STR lexicographic ordering ("a" < "b").
+        rs1 = pycore_make_entry(PY_TAG_SHORT_STR,
+                                128'h16100000000000000000000000000000); // "a"
+        rs2 = pycore_make_entry(PY_TAG_SHORT_STR,
+                                128'h16200000000000000000000000000000); // "b"
+        alu_op = PY_ALU_LT;
+        #1;
+        check(!trap, "SHORT_STR less-than should not trap");
+        check(pycore_get_tag(result) == PY_TAG_BOOL, "SHORT_STR LT should tag BOOL");
+        check(result[63:0] == 64'd1, "SHORT_STR less-than value mismatch");
+
+        alu_op = PY_ALU_GT;
+        #1;
+        check(!trap && result[63:0] == 64'd0,
+              "SHORT_STR greater-than value mismatch");
+
+        alu_op = PY_ALU_LE;
+        #1;
+        check(!trap && result[63:0] == 64'd1,
+              "SHORT_STR less-equal value mismatch");
+
+        // LONG_STR ordering remains unsupported.
+        rs1 = entry(PY_TAG_LONG_STR, 64'd0);
+        rs2 = entry(PY_TAG_LONG_STR, 64'd0);
         alu_op = PY_ALU_LT;
         #1;
         check(trap && trap_code == PY_TRAP_TYPE,
-              "string ordering should type trap");
+              "LONG_STR ordering should type trap");
 
         // COMPLEX arithmetic / compare / unary
         rs1 = pycore_make_entry(PY_TAG_COMPLEX,

@@ -7,7 +7,7 @@ fully unsupported for the current PyCore implementation.
 (`support` / `hw_class` / `fold` / `supported_opargs` / `plan_track`).
 The analyzer (`pycore/tools/btanalyze`) reads that file. This document is
 the human notes — including semantic ceilings that remain even when JSON
-says `execute` (e.g. `COMPARE_OP` numeric-only).
+says `execute` (e.g. `COMPARE_OP` still TYPE-traps `LONG_STR` ordering).
 
 **Exception types** are tracked separately, the same way: machine catalog in
 `pycore.json` → `exceptions.types`, human table in
@@ -21,8 +21,8 @@ as `trap` / `INTERNAL` strip). Recompute after changing `opcodes`:
 
 | `support` | Count | Meaning for the analyzer |
 | --- | --- | --- |
-| `execute` | 64 | hardware runs the documented subset |
-| `partial` | 6 | runs, with a named ceiling (`message` / `supported_opargs`) |
+| `execute` | 65 | hardware runs the documented subset |
+| `partial` | 8 | runs, with a named ceiling (`message` / `supported_opargs`) |
 | `strip` | 1 | `RESUME` (control marker) |
 | `reject` | 3 | image tooling / decode refuse |
 | `trap` | 10 | listed but not implemented (explicit OBJ_EXC / assert / with / except* rows) |
@@ -69,6 +69,8 @@ JSON `plan_track` on an opcode names the exceptions-plan track that lifts it
 | `DICT_UPDATE`                           | `A.update(B)`: merge dict B (TOS) into dict A at `TOS-1-oparg`; pop TOS.                    | Both operands must be `MUT_DICT`. Uncontaminated A/B → `PY_TRAP_DICT_UPDATE` (19) before commit; excore grows A to fit `used(A)+used(B)` then inserts every entry of B, overwriting duplicates, in place (`COMPLETED` pop 1). Contaminated A/B (OBJECT keys) → pycore grow/rehash + insert in `pycore_cont_bulk.svh`. Emitted by `{**a, **b}` dict-unpack displays. Layer D: `img_dict_update`, `img_dict_update_obj`. |
 | `MAP_ADD`                               | `dict[key]=value` inside a dict comprehension; value at TOS, key at TOS-1, dict at `TOS-2-oparg`; pop 2, leave dict. | Single-pair pycore insert reusing the `STORE_DICT` probe/upsert path; new key at load ≥ 2/3 → `DICT_GROW` (11) via excore. An `OBJECT` key sets the dict handle's contamination bit (written back to its RF slot). compile() emits `MAP_ADD` in dict comprehensions (with table/`RERAISE` cleanup — Option B below); `img_map_add` still drives it via the `MAP_ADD_SEQ` inject. |
 | `TO_BOOL`                               | Converts TOS to exact bool for branch helpers.                                              | `CONT_TO_BOOL`: `None` → False; `INT`/`BOOL`/`FLOAT`/`SHORT_STR`/`LONG_STR` as before (corrupt short size >15 → `TYPE`); `TUPLE` / inline `RANGE` by length≠0; `LIST`/`DICT`/`SET` via header length/used. Other tags (incl. `OBJECT` without protocol) → `TYPE`. Layer D: `img_to_bool`, `img_to_bool_str`, `img_to_bool_none`, `img_to_bool_containers` (legacy `img_to_bool_type_trap` / `img_to_bool_list_trap` are positive None/list cases). |
+| `FORMAT_SIMPLE`                         | `value.__format__("")` for f-strings.                                                       | STR identity; INT → decimal SHORT_STR (≤15 chars); BOOL/None → `"True"`/`"False"`/`"None"`. Other tags → `TYPE`. Layer D: `img_format_simple`. |
+| `COMPARE_OP`                            | Compares TOS-2 and TOS-1 using the packed CPython 3.14 `oparg`, replacing both with `BOOL`. | Selectors `0..5`; native `INT`/`BOOL`/`FLOAT` plus same-tag `SHORT_STR` equality **and** lexicographic ordering; same-tag `LONG_STR` equality (descriptor). `LONG_STR` ordering and other tags → `TYPE`. Layer D: `img_compare_op`, `img_str_eq`, `img_str_lt`, `img_sorted_str`. |
 | `UNARY_NOT`                             | Invert TOS bool (`not` after `TO_BOOL`).                                                    | `BOOL` bit invert in place; non-`BOOL` → `PY_TRAP_TYPE`. Layer D: `img_unary_not`.                                                                                                                                                                                                                                                                                                                                                         |
 | `IS_OP`                                 | `is` / `is not` (oparg 0/1).                                                                | Full RF-entry identity → `BOOL`; all tags; no trap. Layer D: `img_is_op`.                                                                                                                                                                                                                                                                                                                                                                  |
 | `NOT_TAKEN`                             | CPython branch prediction/adaptation marker.                                                | Treated as a no-op marker.                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -107,7 +109,8 @@ JSON `plan_track` on an opcode names the exceptions-plan track that lifts it
 | Bytecode               | Description                                                                                                          | Current limitation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BINARY_OP`            | Performs binary arithmetic/bitwise operation selected by `oparg`.                                                    | Arithmetic/bitwise opargs use the existing ALU path; `NB_SUBSCR` (oparg 26) routes to `S_CONTAINER`. `NB_INPLACE_ADD` (13) with a LIST lhs routes to LIST_EXTEND semantics and supports LIST/TUPLE rhs, including the existing excore grow path. Unsupported variants trap or are rejected by preprocess.                                                                                                                                                                                                                                                         |
-| `COMPARE_OP`           | Compares TOS-2 and TOS-1 using the packed CPython 3.14 `oparg`, replacing both with `BOOL`.                          | Selectors `0..5` (`<,<=,==,!=,>,>=`); native `INT`/`BOOL`/`FLOAT` fast path, net stack −1. Non-numeric tags trap `PY_TRAP_TYPE` (1); there is no generic rich-compare protocol. Layer D: `img_compare_op`, `img_compare_op_type_trap`.                                                                                                                                                                                                                                                                                                                            |
+| `CONVERT_VALUE`        | f-string `!s` / `!r` / `!a` conversion (oparg 1/2/3).                                                                | INT/BOOL/None share str formatting; SHORT_STR `!r`/`!a` quote-wrap when payload+quotes ≤15; LONG_STR only oparg 1 (identity). Layer D: `img_convert_value`, `img_convert_repr_str`. |
+| `BUILD_STRING`         | Concatenate `oparg` strings for f-strings.                                                                           | All pieces must be SHORT_STR and total length ≤15; else `TYPE`. Layer D: `img_build_string`, `img_format_simple`. |
 | `GET_ITER`             | Replaces TOS with iterator state.                                                                                    | Native LIST/TUPLE/STR/DICT/SET/`PY_TAG_RANGE` → hybrid `PY_TAG_ITER` (kinds 0–3, 5–6). `OBJECT`/`OBK_INSTANCE`: resolve `__iter__`, protocol `CALL`; return converts native containers / existing `ITER`, else wraps `HEAP_ITER` kind 4. Missing `__iter__` → `TYPE`. Coverage: `img_for_iter_*`, `img_for_iter_object_*`. |
 | `FOR_ITER`             | Advances the iterator at TOS, pushing one value or taking the exhaustion edge.                                       | Native kinds as before. `HEAP_ITER`: resolve `__next__`, protocol `CALL`; `StopIteration` via §6.1.1 `call_exc_*` + `iter_exhaust_type_r` → native exhaust redirect (handle **identity**, not MRO — see [`exception_support.md`](exception_support.md)). Size-changing DICT/SET mutation → `TYPE`. Exhaustion skips `END_FOR` and redirects to `POP_ITER`. |
 | `RAISE_VARARGS`        | Raises an exception (oparg 0/1/2).                                                                                   | JSON `partial`; `supported_opargs: [0,1]`. Oparg `0` reuses live `active_exc_r` with stack effect 0; no active exception is fatal `PY_TRAP_RAISE` (17) until a boot `RuntimeError` sidecar exists. Oparg `1`: read TOS object kind; a TYPE allocates an empty-args `OBK_EXCEPTION`, an existing `OBK_EXCEPTION` is reused, and other kinds → `TYPE`. Both enter the same `co_exceptiontable` walk (code field 7). Hit → redirect (active exc set by `PUSH_EXC_INFO`); miss unwinds ordinary frames and eventually traps 17 at module scope. Oparg `2` (`raise X from Y`) remains unsupported. Layer D: `img_bare_raise*`, `img_raise_varargs`, `img_raise_instance`, `img_try_stopiteration*`, `img_try_exception`. |
@@ -164,7 +167,7 @@ this milestone:
    `_bi_exec_globals`. There is still no locals-mapping
    step for `LOAD_NAME` inside functions / `exec` / class bodies. Missing in
    both dicts traps `PY_TRAP_MEM_FAULT`. See
-   `planning/builtins_bytecode_support_plan.md`.
+   `planning/implemented/builtins_bytecode_support_plan.md`.
 7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
   the stack and `CALL` treats that handle as the function. Defaults are folded
   at image-build time; annotations, closures, and generic `__call__` objects
@@ -216,11 +219,14 @@ this milestone:
    for one-argument exception construction. Coverage: `img_try_exc_types`,
    `img_try_exc_cross_frame_fatal`, `img_try_callee_unhandled`,
    `img_try_syntaxerror_msg`.
-17. `COMPARE_OP` **numeric ceiling.** Native comparison uses the signed 64-bit
+17. `COMPARE_OP` **ceilings.** Native comparison uses the signed 64-bit
   INT fast path and existing INT/BOOL-to-FLOAT promotion. Integers outside
    that range and mixed large-INT/FLOAT precision boundaries do not provide
-   CPython arbitrary-precision comparison semantics. Strings, `None`,
-   containers, and user-defined rich comparison trap `PY_TRAP_TYPE` instead.
+   CPython arbitrary-precision comparison semantics. Same-tag `SHORT_STR`
+   supports equality and lexicographic (UTF-8 byte) ordering. Same-tag
+   `LONG_STR` supports descriptor equality only; `LONG_STR` ordering,
+   cross-tag string compares, `None`, containers, and user-defined rich
+   comparison still trap `PY_TRAP_TYPE`.
 
 
 
@@ -229,7 +235,7 @@ this milestone:
 CPython list/set/dict comprehensions embed exception-table cleanup that uses
 `RERAISE`. **Policy (option B):** image tooling accepts `RERAISE` and serializes
 `co_exceptiontable` on code objects; hardware walks the table on raise/reraise
-(see `planning/for_loop_full_support_plan.md`). List comps from real
+(see `planning/implemented/for_loop_full_support_plan.md`). List comps from real
 `compile()` run on the two-core top when `LIST_APPEND` grow is required
 (`img_list_comp_basic`, `img_list_comp_fast_clear`). Dict comps that need
 `MAP_ADD` + grow remain a follow-on (use `MAP_ADD_SEQ` inject until then).

@@ -1,14 +1,14 @@
 # For-loop full support — implementation plan
 
-**Status:** Done (PR #66 / Track A–C landed; follow-on → [`exceptions_full_support_plan.md`](exceptions_full_support_plan.md))  
+**Status:** Done (PR #66 / Track A–C landed; follow-on → [`exceptions_full_support_plan.md`](../exceptions_full_support_plan.md))  
 **Audience:** bytecode / pycore RTL agent (primary); firmware agent (iter/next follow-up)  
-**Parent:** `planning/builtins_wave4_plan.md` §4 (Priority D) + `planning/builtins_next_steps_plan.md` §3  
-**Prerequisites on `main`:** `CALL` / `CALL_KW` / `CO_VARARGS` ([planning/call_kw_support_plan.md](call_kw_support_plan.md)); LOAD_ATTR dunder specials ([planning/builtins_wave4_plan.md](builtins_wave4_plan.md) §2); native GET_ITER/FOR_ITER for LIST/TUPLE/RANGE/STR/DICT/SET  
+**Parent:** `planning/builtins_wave4_plan.md` §4 (Priority D) + `planning/implemented/builtins_next_steps_plan.md` §3  
+**Prerequisites on `main`:** `CALL` / `CALL_KW` / `CO_VARARGS` ([planning/implemented/call_kw_support_plan.md](call_kw_support_plan.md)); LOAD_ATTR dunder specials ([planning/builtins_wave4_plan.md](../builtins_wave4_plan.md) §2); native GET_ITER/FOR_ITER for LIST/TUPLE/RANGE/STR/DICT/SET  
 **Unblocks:** `for x in obj`, list/dict comprehensions from real `compile()` output, `try/except StopIteration`, ROM `iter`/`next` on real protocol
 
 Related:
 
-- Prior iterator notes: `planning/builtins_bytecode_support_plan.md` §4.4 (historical; implementation detail **here**)
+- Prior iterator notes: `planning/implemented/builtins_bytecode_support_plan.md` §4.4 (historical; implementation detail **here**)
 - Opcode matrix: `pycore/docs/bytecode_support.md`
 - Iteration architecture: `pycore/docs/architecture.md` (LIST/TUPLE/RANGE/STR/DICT/SET iteration)
 - RTL: `pycore/rtl/pycore_cont_list.svh`, `pycore/rtl/pycore_cont_object.svh`, `pycore/rtl/pycore_core.sv`
@@ -84,12 +84,12 @@ The hardest engineering item is **container ↔ CALL re-entrancy** (pause `S_CON
 
 ### 3.1 Already shipped (do not re-derive)
 
-- **`GET_ITER`** on LIST, TUPLE, STR, DICT, SET, `PY_TAG_RANGE` → internal `PY_TAG_ITER` hybrid ([`pycore_cont_list.svh`](../pycore/rtl/pycore_cont_list.svh) `CONT_GET_ITER`).
-- **`FOR_ITER`** advances native kinds 0–3, 5–6; exhaustion redirects over `END_FOR` to `POP_ITER` via `redirect_pending_r` + `PY_CACHE_FOR_ITER` ([`architecture.md`](../pycore/docs/architecture.md) § iteration).
+- **`GET_ITER`** on LIST, TUPLE, STR, DICT, SET, `PY_TAG_RANGE` → internal `PY_TAG_ITER` hybrid ([`pycore_cont_list.svh`](../../pycore/rtl/pycore_cont_list.svh) `CONT_GET_ITER`).
+- **`FOR_ITER`** advances native kinds 0–3, 5–6; exhaustion redirects over `END_FOR` to `POP_ITER` via `redirect_pending_r` + `PY_CACHE_FOR_ITER` ([`architecture.md`](../../pycore/docs/architecture.md) § iteration).
 - **`END_FOR` / `POP_ITER` / `JUMP_BACKWARD`** — implemented.
-- **~35** `img_for_iter_*` programs in [`Makefile`](../Makefile) `pycore-img-attr-all`.
-- **Iterator layout** in [`pycore_defs.svh`](../pycore/rtl/pycore_defs.svh): kinds 0–3, 5–6 live; **`PY_ITER_KIND_HEAP_ITER` (kind 4) reserved** but `pycore_iter_valid` returns false for kind 4.
-- **`GET_ITER` on unknown tags** → `container_type_trap_r` ([`pycore_cont_list.svh`](../pycore/rtl/pycore_cont_list.svh) ~380–381).
+- **~35** `img_for_iter_*` programs in [`Makefile`](../../Makefile) `pycore-img-attr-all`.
+- **Iterator layout** in [`pycore_defs.svh`](../../pycore/rtl/pycore_defs.svh): kinds 0–3, 5–6 live; **`PY_ITER_KIND_HEAP_ITER` (kind 4) reserved** but `pycore_iter_valid` returns false for kind 4.
+- **`GET_ITER` on unknown tags** → `container_type_trap_r` ([`pycore_cont_list.svh`](../../pycore/rtl/pycore_cont_list.svh) ~380–381).
 
 ### 3.2 Gaps
 
@@ -102,7 +102,7 @@ The hardest engineering item is **container ↔ CALL re-entrancy** (pause `S_CON
 | `GET_ITER` on `OBJECT` | TYPE trap | `for x in obj` |
 | Container ↔ CALL re-entrancy | None | `__iter__()` / `__next__()` |
 | `FOR_ITER` on heap iterator | No kind-4 case | Custom iterators |
-| Comprehension policy | Option C ([`bytecode_support.md`](../pycore/docs/bytecode_support.md)) | Real comps |
+| Comprehension policy | Option C ([`bytecode_support.md`](../../pycore/docs/bytecode_support.md)) | Real comps |
 
 ---
 
@@ -244,7 +244,7 @@ flowchart TD
 
 ### 5.3 Code object schema extension
 
-Extend [`encoding.py`](../pycore/tools/encoding.py) / [`heap_image.py`](../pycore/tools/heap_image.py):
+Extend [`encoding.py`](../../pycore/tools/encoding.py) / [`heap_image.py`](../../pycore/tools/heap_image.py):
 
 | Field | Contents |
 | --- | --- |
@@ -252,12 +252,12 @@ Extend [`encoding.py`](../pycore/tools/encoding.py) / [`heap_image.py`](../pycor
 | **7** | `co_exceptiontable` — `TUPLE` of `INT` byte values (length = len(co.co_exceptiontable)); empty tuple if none |
 
 - Bump `CODE_OBJECT_NFIELDS` 7 → **8**; `CODE_OBJECT_BYTES` 224 → **256**.
-- [`image_from_source.py`](../pycore/tools/image_from_source.py) `serialize_code()`: copy `co.co_exceptiontable`.
-- RTL: table lookup reads field 7 from the active frame’s **`cur_code_r`** (already saved in frame slot 1 — [`pycore_frame.sv`](../pycore/rtl/pycore_frame.sv)). No extra frame slot required unless re-entrancy review says otherwise.
+- [`image_from_source.py`](../../pycore/tools/image_from_source.py) `serialize_code()`: copy `co.co_exceptiontable`.
+- RTL: table lookup reads field 7 from the active frame’s **`cur_code_r`** (already saved in frame slot 1 — [`pycore_frame.sv`](../../pycore/rtl/pycore_frame.sv)). No extra frame slot required unless re-entrancy review says otherwise.
 
 ### 5.4 HEAP_ITER (kind 4) layout
 
-Reuse reserved socket in [`pycore_defs.svh`](../pycore/rtl/pycore_defs.svh):
+Reuse reserved socket in [`pycore_defs.svh`](../../pycore/rtl/pycore_defs.svh):
 
 ```text
 magic[127:120], kind=4[119:116], aux[115:96], index[95:64], size[63:32], addr[31:0]
@@ -291,7 +291,7 @@ CPython keeps a **stack of active exception contexts** (LIFO chain with `prev`).
 
 ### 5.6 PC / table addressing (hardware lock)
 
-Image build maps **one `co_code` byte pair → one imem slot** ([`image_from_source.py`](../pycore/tools/image_from_source.py)). CPython’s exception table uses **byte offsets**; RTL should **not** divide/multiply at runtime.
+Image build maps **one `co_code` byte pair → one imem slot** ([`image_from_source.py`](../../pycore/tools/image_from_source.py)). CPython’s exception table uses **byte offsets**; RTL should **not** divide/multiply at runtime.
 
 **Host (`exception_table.py`) converts each entry to slot indices** when validating or when emitting a helper blob:
 
@@ -318,7 +318,7 @@ Use **`redirect_tgt_r`** like existing branch/`FOR_ITER` redirects. No byte-offs
 | **`GET_ITER` after `__iter__()`** | If return is native container → existing GET_ITER paths. Else **one** kind-4 wrap. If return is already `PY_TAG_ITER` → use as-is (no double-wrap). |
 | **`__iter__` missing** | `PY_TRAP_TYPE` in v1 (TypeError follow-on). |
 | **List comp exception region** | Table protects **`LOAD_FAST_AND_CLEAR` … `LIST_APPEND`** region; inner **`FOR_ITER` exhaustion** stays layer-1 redirect — separate mechanisms. |
-| **Twocore comp tests** | Primary core runs module + comp bytecode + exception dispatch; secondary core LIST grow only ([`PYCORE_IMAGE_RUN_TWOCORE`](../Makefile)). |
+| **Twocore comp tests** | Primary core runs module + comp bytecode + exception dispatch; secondary core LIST grow only ([`PYCORE_IMAGE_RUN_TWOCORE`](../../Makefile)). |
 | **Exception type objects (Track B)** | v1 **`StopIteration`**: leaf `OBK_TYPE` (`tp_base = 0`). Seeding details **only in §7.4**. |
 
 **Memory:** exc nodes live in §5.5 arena. Raised exceptions remain **`OBK_EXCEPTION`** on the object heap (96 B) when `raise` occurs.
@@ -331,13 +331,13 @@ Use **`redirect_tgt_r`** like existing branch/`FOR_ITER` redirects. No byte-offs
 
 **Problem:** `GET_ITER` / `FOR_ITER` run in `S_CONTAINER`. Calling `__iter__` / `__next__` requires **`S_CALL`** (frame push, bytecode execution, return).
 
-**Deliverable:** Document and implement pause/resume in [`pycore_core.sv`](../pycore/rtl/pycore_core.sv):
+**Deliverable:** Document and implement pause/resume in [`pycore_core.sv`](../../pycore/rtl/pycore_core.sv):
 
 1. Save container op (`container_op_r`, `container_phase_r`, TOS, iterator state).
 2. Transition to `S_CALL` with bound method or `CODE_OBJECT` + self.
 3. On `return_valid`, restore container FSM and continue with return value on stack.
 
-Reference shared RF wiring: `rs1_addr_eff` for both `S_CONTAINER` and `S_CALL` ([`pycore_core.sv`](../pycore/rtl/pycore_core.sv) ~631).
+Reference shared RF wiring: `rs1_addr_eff` for both `S_CONTAINER` and `S_CALL` ([`pycore_core.sv`](../../pycore/rtl/pycore_core.sv) ~631).
 
 **Acceptance:** Unit/sim test that calls a trivial `def __iter__(self): return [1,2,3]` from synthetic GET_ITER path (may land after 6.2).
 
@@ -385,8 +385,8 @@ redirect_tgt_r <= cur_pc_r + 32'd1 + {24'b0, PY_CACHE_FOR_ITER} + cur_arg_r + 32
 
 ### 6.4 Firmware follow-up (after A green)
 
-- [`pycore_firmware/builtins/iter.py`](../pycore_firmware/builtins/iter.py) — use real protocol instead of list materialize + inner `for`.
-- [`pycore_firmware/builtins/next.py`](../pycore_firmware/builtins/next.py) — call `__next__` protocol instead of list-pop hack.
+- [`pycore_firmware/builtins/iter.py`](../../pycore_firmware/builtins/iter.py) — use real protocol instead of list materialize + inner `for`.
+- [`pycore_firmware/builtins/next.py`](../../pycore_firmware/builtins/next.py) — call `__next__` protocol instead of list-pop hack.
 - Optional ROM seed in `ROM_FIRMWARE_BUILTINS` after image tests pass.
 
 ---
@@ -427,7 +427,7 @@ Unit tests in `pycore/tests/test_exception_table.py`: golden vectors from §0 pr
 
 ### 7.3 Opcodes (general semantics)
 
-Remove from `_DEFERRED_OPCODES` in [`image_from_source.py`](../pycore/tools/image_from_source.py) as each lands:
+Remove from `_DEFERRED_OPCODES` in [`image_from_source.py`](../../pycore/tools/image_from_source.py) as each lands:
 
 | Opcode | Semantics (implement fully) |
 | --- | --- |
@@ -445,7 +445,7 @@ exc_type_matches(handler_type, exc) → bool
   # follow-on: walk OBK_TYPE.tp_base
 ```
 
-Update [`pycore/targets/pycore.json`](../pycore/targets/pycore.json) `OBJ_EXC` members when executing.
+Update [`pycore/targets/pycore.json`](../../pycore/targets/pycore.json) `OBJ_EXC` members when executing.
 
 **Not in v1:** `CHECK_EG_MATCH`, `WITH_EXCEPT_START`, `SETUP_FINALLY`, `SETUP_WITH`, MRO/subclass, additional exception types in tests.
 
@@ -455,7 +455,7 @@ All **type seeding and boot-time latch** for exception matching lives here — n
 
 1. Seed **`StopIteration`** in boot builtins (`OBK_TYPE`, **`tp_base = 0`**) so `LOAD_GLOBAL` / `raise StopIteration` work in bare images.
 2. During **`S_BOOT`**, latch **`iter_exhaust_type_r`** = builtins `StopIteration` handle (used by §6.1.1 + `exc_type_matches` in tests).
-3. Document layout in [`object_model.md`](../pycore/docs/object_model.md).
+3. Document layout in [`object_model.md`](../../pycore/docs/object_model.md).
 4. Follow-on: `BaseException` / `Exception` hierarchy + more builtins names.
 
 `RAISE_VARARGS` 1: TOS = type object → build **`OBK_EXCEPTION`** (`field0 = type`, `field1 = args tuple`) → enter §7.5 raise path.
@@ -523,7 +523,7 @@ These opcodes must work together for §4.5 / nested handlers / comps — not onl
 | `LOAD_FAST_AND_CLEAR` / `LIST_APPEND` / `BUILD_LIST` / `SWAP` | List comp body |
 | `GET_ITER` / `FOR_ITER` / `END_FOR` / `POP_ITER` | Comp loop (layer 1 exhaustion) |
 
-Unlock OBJ_EXC opcodes in [`image_from_source.py`](../pycore/tools/image_from_source.py) when RTL supports the full row for the target test tier.
+Unlock OBJ_EXC opcodes in [`image_from_source.py`](../../pycore/tools/image_from_source.py) when RTL supports the full row for the target test tier.
 
 ### 7.8 Exc-info stack implementation
 
@@ -538,9 +538,9 @@ Unlock OBJ_EXC opcodes in [`image_from_source.py`](../pycore/tools/image_from_so
 **Requires Track B** (exception table + `RERAISE`). **Does not require Track A** for `[x for x in range(n)]` (native `FOR_ITER`). Track A needed only when comps iterate custom objects.
 
 1. Accept **`RERAISE`** in image validation.
-2. **List comp:** `return [x for x in range(n)]` — use [`PYCORE_IMAGE_RUN_TWOCORE`](../Makefile) when LIST grow needed.
+2. **List comp:** `return [x for x in range(n)]` — use [`PYCORE_IMAGE_RUN_TWOCORE`](../../Makefile) when LIST grow needed.
 3. **Dict comp:** follow-on (`MAP_ADD` + table region); lower priority than list comp.
-4. Replace comprehension **Policy C** in [`bytecode_support.md`](../pycore/docs/bytecode_support.md) with **Option B** reference to this plan.
+4. Replace comprehension **Policy C** in [`bytecode_support.md`](../../pycore/docs/bytecode_support.md) with **Option B** reference to this plan.
 
 Opcodes already used by comps (no new decode): `LOAD_FAST_AND_CLEAR`, `BUILD_LIST`, `LIST_APPEND`, `SWAP`, `GET_ITER`, `FOR_ITER`, `JUMP_BACKWARD`.
 
@@ -554,7 +554,7 @@ All existing **`pycore-img-for_iter-*`** / `img_for_iter_*` via `pycore-img-attr
 
 ### 9.2 New image programs
 
-Create under `pycore/programs/`; host golden via [`run_image_test.py`](../pycore/tools/run_image_test.py); wire Makefile targets (suggest aggregate **`pycore-img-for-loop-all`**).
+Create under `pycore/programs/`; host golden via [`run_image_test.py`](../../pycore/tools/run_image_test.py); wire Makefile targets (suggest aggregate **`pycore-img-for-loop-all`**).
 
 | Program | Track | Intent |
 | --- | --- | --- |
@@ -661,7 +661,7 @@ Land as sequential commits; CI: `make docker-all-tests`.
 
 ## 15. Follow-on (after this plan)
 
-- Exception type tree + MRO/tuple `CHECK_EXC_MATCH` — [`exceptions_full_support_plan.md`](exceptions_full_support_plan.md) (Track 1 + T5-A landed on `cursor/exceptions-full-t1-match`; next is T2 construction)
+- Exception type tree + MRO/tuple `CHECK_EXC_MATCH` — [`exceptions_full_support_plan.md`](../exceptions_full_support_plan.md) (Track 1 + T5-A landed on `cursor/exceptions-full-t1-match`; next is T2 construction)
 - Generators (`YIELD_VALUE`) — separate plan  
 - `CO_VARKEYWORDS` — landed via PR #68 / main merge into for-loop branch  
 - `BI_ORD` / `BI_CHR` — wave 4 §3  

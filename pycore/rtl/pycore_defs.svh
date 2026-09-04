@@ -247,6 +247,12 @@ localparam logic [4:0] PY_ALU_ILLEGAL   = 5'd31;
 // -------------------------------------------------------------------------
 localparam logic [7:0] PY_OP_CACHE            = 8'd0;
 localparam logic [7:0] PY_OP_BINARY_SLICE     = 8'd1;
+// FORMAT_SIMPLE / FORMAT_WITH_SPEC / BUILD_STRING / CONVERT_VALUE —
+// CPython 3.14.6 opmap (f-string path).
+localparam logic [7:0] PY_OP_FORMAT_SIMPLE    = 8'd12;
+localparam logic [7:0] PY_OP_FORMAT_WITH_SPEC = 8'd13;
+localparam logic [7:0] PY_OP_BUILD_STRING     = 8'd50;
+localparam logic [7:0] PY_OP_CONVERT_VALUE    = 8'd58;
 localparam logic [7:0] PY_OP_END_FOR          = 8'd9;
 localparam logic [7:0] PY_OP_GET_ITER         = 8'd16;
 localparam logic [7:0] PY_OP_MAKE_FUNCTION    = 8'd23;
@@ -1148,6 +1154,113 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_long_str_entry(
 );
     begin
         pycore_make_long_str_entry = pycore_make_entry(PY_TAG_LONG_STR, {size, addr});
+    end
+endfunction
+
+// Literal SHORT_STR values for FORMAT_SIMPLE / CONVERT_VALUE (size in [127:124]).
+localparam logic [127:0] PY_STR_TRUE  = 128'h45472756500000000000000000000000; // "True"
+localparam logic [127:0] PY_STR_FALSE = 128'h546616c7365000000000000000000000; // "False"
+localparam logic [127:0] PY_STR_NONE  = 128'h44e6f6e6500000000000000000000000; // "None"
+localparam logic [127:0] PY_STR_EMPTY = 128'h00000000000000000000000000000000; // ""
+localparam logic [127:0] PY_STR_ZERO  = 128'h13000000000000000000000000000000; // "0"
+
+// Signed INT → SHORT_STR decimal. Fits when digit count (+ optional '-') ≤ 15.
+// Returns ok=0 for INT_MIN and magnitudes that need more than 15 characters
+// (LONG_STR formatting is deferred).
+function automatic void pycore_int_to_short_str(
+    input  logic [63:0] val,
+    output logic        ok,
+    output logic [PYCORE_ENTRY_WIDTH-1:0] entry
+);
+    logic signed [63:0] sval;
+    logic [63:0] mag;
+    logic [3:0] ndigits;
+    logic [3:0] out_len;
+    logic neg;
+    logic [7:0] digs [0:14];
+    logic [119:0] payload;
+    int i;
+    int di;
+    begin
+        ok = 1'b0;
+        entry = pycore_make_entry(PY_TAG_OBJECT, '0);
+        sval = signed'(val);
+        if (val == 64'b0) begin
+            ok = 1'b1;
+            entry = pycore_make_entry(PY_TAG_SHORT_STR, PY_STR_ZERO);
+        end else if (val == 64'h8000_0000_0000_0000) begin
+            // INT_MIN: 20-char decimal; exceeds SHORT_STR.
+            ok = 1'b0;
+        end else begin
+            neg = sval < 0;
+            mag = neg ? 64'(-sval) : val;
+            ndigits = 4'd0;
+            for (i = 0; i < 15; i++) begin
+                digs[i] = 8'h00;
+            end
+            while ((mag != 64'b0) && (ndigits < 4'd15)) begin
+                digs[ndigits] = 8'h30 + (mag % 64'd10);
+                mag = mag / 64'd10;
+                ndigits = ndigits + 4'd1;
+            end
+            if (mag != 64'b0) begin
+                ok = 1'b0;
+            end else if (neg && (ndigits == 4'd15)) begin
+                // '-' + 15 digits needs 16 chars; exceeds SHORT_STR.
+                ok = 1'b0;
+            end else begin
+                out_len = neg ? (ndigits + 4'd1) : ndigits;
+                payload = '0;
+                for (i = 0; i < 15; i++) begin
+                    if (i < out_len) begin
+                        if (neg && (i == 0)) begin
+                            payload[119-(i*8)-:8] = 8'h2d; // '-'
+                        end else begin
+                            di = neg ? (i - 1) : i;
+                            payload[119-(i*8)-:8] =
+                                digs[ndigits - 1 - di];
+                        end
+                    end
+                end
+                ok = 1'b1;
+                entry = pycore_make_short_str_entry(out_len, payload);
+            end
+        end
+    end
+endfunction
+
+// Lexicographic compare of two SHORT_STR values (UTF-8 byte order).
+// Returns -1 / 0 / +1. Size field is 4 bits so always within SHORT_STR max.
+function automatic void pycore_short_str_cmp(
+    input  logic [PYCORE_VAL_WIDTH-1:0] a,
+    input  logic [PYCORE_VAL_WIDTH-1:0] b,
+    output logic        ok,
+    output logic signed [1:0] cmp
+);
+    logic [3:0] la;
+    logic [3:0] lb;
+    logic [3:0] n;
+    logic [7:0] ba;
+    logic [7:0] bb;
+    int i;
+    begin
+        ok = 1'b1;
+        cmp = 2'sd0;
+        la = pycore_short_str_size(a);
+        lb = pycore_short_str_size(b);
+        n = (la < lb) ? la : lb;
+        for (i = 0; i < PYCORE_SHORT_STR_MAX_BYTES; i++) begin
+            if ((i < n) && (cmp == 2'sd0)) begin
+                ba = pycore_short_str_byte(a, i);
+                bb = pycore_short_str_byte(b, i);
+                if (ba < bb) cmp = -2'sd1;
+                else if (ba > bb) cmp = 2'sd1;
+            end
+        end
+        if (cmp == 2'sd0) begin
+            if (la < lb) cmp = -2'sd1;
+            else if (la > lb) cmp = 2'sd1;
+        end
     end
 endfunction
 

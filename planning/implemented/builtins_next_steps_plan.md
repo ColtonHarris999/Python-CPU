@@ -7,11 +7,11 @@
 
 Related:
 
-- CALL_KW plan (implemented): `planning/call_kw_support_plan.md`
-- Prior bytecode plan: `planning/builtins_bytecode_support_plan.md`
+- CALL_KW plan (implemented): `planning/implemented/call_kw_support_plan.md`
+- Prior bytecode plan: `planning/implemented/builtins_bytecode_support_plan.md`
 - Inventory: `pycore_firmware/builtins/builtins.md`
 - Opcode matrix: `pycore/docs/bytecode_support.md`
-- **Active implementation plan:** [`planning/for_loop_full_support_plan.md`](for_loop_full_support_plan.md)
+- **Active implementation plan:** [`planning/implemented/for_loop_full_support_plan.md`](for_loop_full_support_plan.md)
   (GET_ITER/FOR_ITER on OBJECT, StopIteration-only exception tables, list/dict comps)
 - **Prior ROM firmware work:** **Done** — waves 1–4 (`ROM_FIRMWARE_BUILTINS`, print console, attr specials)
 
@@ -29,7 +29,7 @@ Related:
 | `OBK_BUILTIN` / TYPE kwargs | Still `CALL_FILTER` (use ROM Python) |
 | Non-empty `DICT_MERGE` (multi-`**`) | Still `CALL_FILTER` |
 | `CO_VARARGS` on defs | **Done** — binder packs `*args`; `img_varargs_*` / ROM `print` |
-| `CO_VARKEYWORDS` (`**kwargs` param) | **Done** — binder packs leftovers; `img_varkw_*` / posonly parity (`planning/co_varkeywords_call_parity.md`) |
+| `CO_VARKEYWORDS` (`**kwargs` param) | **Done** — binder packs leftovers; `img_varkw_*` / posonly parity (`planning/implemented/co_varkeywords_call_parity.md`) |
 
 ---
 
@@ -64,7 +64,7 @@ Related:
 
 | Need | Why |
 | --- | --- |
-| `CO_VARKEYWORDS` on user defs | **Done** — `def f(**k)` packing + posonly; see `planning/co_varkeywords_call_parity.md` |
+| `CO_VARKEYWORDS` on user defs | **Done** — `def f(**k)` packing + posonly; see `planning/implemented/co_varkeywords_call_parity.md` |
 | Optional `BI_*` keyword tables | Hardware kwargs without ROM wrapper |
 | Full exception tables / `RERAISE` | **Active:** [`for_loop_full_support_plan.md`](for_loop_full_support_plan.md) Track B (StopIteration only); retires comprehension Policy C when Track C lands |
 | `BI_LEN` tuple-mode RANGE + OBJECT `__bool__` | Complete truthiness / len protocol |
@@ -96,7 +96,7 @@ Related:
 | **4.3** | ROM seed `enumerate`, `zip`, `map` + `img_firmware_iterators` (two-core) | Done |
 | **4.4** | Document blocked builtins vs §3 gaps in `builtins.md` | Done |
 
-### 4.5 — **done** → see `planning/builtins_rom_wave3_plan.md`
+### 4.5 — **done** → see `planning/implemented/builtins_rom_wave3_plan.md`
 
 Wave 3 shipped 13 additional ROM builtins + kwargs tests.
 

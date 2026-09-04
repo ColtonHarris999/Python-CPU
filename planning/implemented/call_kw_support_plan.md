@@ -12,7 +12,7 @@ Related:
 - Freeze note: `pycore_firmware/builtins/builtins.md`
 - Opcode matrix: `pycore/docs/bytecode_support.md`
 - Current CALL FSM: `pycore/rtl/pycore_call_fsm.svh`
-- Prior builtins plan: `planning/builtins_bytecode_support_plan.md`
+- Prior builtins plan: `planning/implemented/builtins_bytecode_support_plan.md`
 
 ---
 
@@ -207,7 +207,7 @@ in ROM Python once binder works.
 - [x] `g(*(1,2,3))` via `CALL_FUNCTION_EX` equals `g(1,2,3)`.  
 - [x] `h(*(1,), **{'b': 2})` (empty-dest `DICT_MERGE` + EX) binds correctly.  
 - [x] Non-empty `DICT_MERGE` / `DICT_UPDATE` / `MAP_ADD` / `SET_UPDATE` (see
-      `planning/dict_set_bulk_contam_plan.md`).  
+      `planning/implemented/dict_set_bulk_contam_plan.md`).  
 - [x] Existing positional CALL / defaults path kept (`img_default_arg`).  
 - [x] All-defaults `argc==0` fills (`img_default_none`, False/0/`()`, multi,
       nested, method default, ROM `tuple()` via `img_firmware_tuple_empty`).  
@@ -221,7 +221,7 @@ in ROM Python once binder works.
 **Follow-up (landed):** `CO_VARARGS` binder + ROM `print(*args, sep=, end=)`.
 
 **Follow-up (landed):** `CO_VARKEYWORDS` + `co_posonlyargcount` binder parity —
-see `planning/co_varkeywords_call_parity.md`.
+see `planning/implemented/co_varkeywords_call_parity.md`.
 
 **Still open:** none for user-def `*args` / `**kwargs` packing on `CODE_OBJECT`
 (builtins kwargs still firmware / `CALL_FILTER` as noted above).
