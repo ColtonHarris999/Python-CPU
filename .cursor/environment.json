@@ -1,0 +1,8 @@
+{
+  "name": "PyCore two-core simulator",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "user": "root",
+  "install": "verilator --version && python3.14 --version && python3 --version"
+}
