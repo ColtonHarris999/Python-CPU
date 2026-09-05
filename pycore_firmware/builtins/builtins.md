@@ -86,7 +86,7 @@ These limit every firmware builtin:
 | `map` | Return an iterator that applies a function to every item of iterables. | in ROM | Single iterable → **list**. Multi-iter `*args` blocked. LIST grow needs excore. |
 | `max` | Return the largest item in an iterable or among arguments. | implemented | `(iterable)` or `(a, b)` only. Empty → `None`. Native `BI_MAX` still on-core for 2-arg. |
 | `memoryview` | Return a memory view object over a bytes-like object. | blocked | No buffer protocol / memoryview kind. |
-| `min` | Return the smallest item in an iterable or among arguments. | in ROM | `(iterable)` or `(a, b)`. Empty → `None`. |
+| `min` | Return the smallest item in an iterable or among arguments. | in ROM | `(iterable)` or `(a, b, *rest)` via `CO_VARARGS`. Empty iterable → `None`. No `key=` / `default=`. |
 | `next` | Retrieve the next item from an iterator. | in progress | List-queue pop of `[0]`; no real iterator protocol. |
 | `object` | Return a new featureless object; base for all classes. | blocked | No `OBK_INSTANCE` alloc without a class body. |
 | `oct` | Convert an integer to an octal string prefixed with '0o'. | in ROM | String concat digit loop. |

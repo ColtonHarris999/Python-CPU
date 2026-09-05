@@ -215,7 +215,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
 	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
 	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
-	pycore-img-firmware-tuple-empty pycore-img-fw-range-zero-step \
+	pycore-img-firmware-tuple-empty pycore-img-firmware-min-varargs \
+	pycore-img-fw-range-zero-step \
 	pycore-img-fw-next-exhausted pycore-img-fw-pow-neg-mod \
 	pycore-img-print-empty pycore-img-print-basic pycore-img-print-sep-end \
 	pycore-img-print-end-only pycore-img-print-none-sep \
@@ -1658,7 +1659,7 @@ pycore-img-attr-all: \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
 	pycore-img-firmware-sorted-kw pycore-img-firmware-filter-pred \
 	pycore-img-firmware-attr-helpers pycore-img-firmware-isinstance \
-	pycore-img-firmware-tuple-empty \
+	pycore-img-firmware-tuple-empty pycore-img-firmware-min-varargs \
 	pycore-img-print-empty pycore-img-print-basic pycore-img-print-sep-end \
 	pycore-img-print-end-only pycore-img-print-none-sep \
 	pycore-img-print-many pycore-img-print-star pycore-img-print-star-kw \
@@ -1735,6 +1736,9 @@ pycore-img-firmware-isinstance:
 
 pycore-img-firmware-tuple-empty:
 	$(call PYCORE_IMAGE_RUN,firmware_tuple_empty,100000)
+
+pycore-img-firmware-min-varargs:
+	$(call PYCORE_IMAGE_RUN,firmware_min_varargs,200000)
 
 pycore-img-fw-range-zero-step:
 	$(call PYCORE_IMAGE_RUN,fw_range_zero_step,200000)
@@ -2077,7 +2081,8 @@ pycore-img-call-all: \
 	pycore-img-method-nested \
 	pycore-img-ctor-noinit \
 	pycore-img-ctor-init \
-	pycore-img-firmware-tuple-empty
+	pycore-img-firmware-tuple-empty \
+	pycore-img-firmware-min-varargs
 
 pycore-img-method-all: \
 	pycore-img-method-call \

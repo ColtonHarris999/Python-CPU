@@ -205,6 +205,7 @@ class RomFirmwareSeedTest(unittest.TestCase):
             "img_firmware_filter_pred.py",
             "img_firmware_attr_helpers.py",
             "img_firmware_isinstance.py",
+            "img_firmware_min_varargs.py",
             "img_print_basic.py",
             "img_print_sep_end.py",
             "img_print_star_kw.py",
@@ -262,6 +263,11 @@ class RomFirmwareSemanticsTest(unittest.TestCase):
         self.assertEqual(round_(5), 5.0)
         self.assertEqual(min_(9, 4), 4)
         self.assertEqual(min_([3, 1, 2]), 1)
+        self.assertEqual(min_(8, 3, 5), 3)
+        self.assertEqual(min_(7, 9, 2, 8), 2)
+        self.assertEqual(min_(1, 1, 4), 1)
+        with self.assertRaises(TypeError):
+            min_()
 
     def test_string_helpers(self) -> None:
         bin_ = _load_firmware("bin")
@@ -315,6 +321,7 @@ WAVE3_PROGRAM_GOLDENS = {
     "img_firmware_sorted_kw.py": 460,
     "img_firmware_filter_pred.py": 9,
     "img_firmware_tuple_empty.py": 101,
+    "img_firmware_min_varargs.py": 10,
 }
 
 
