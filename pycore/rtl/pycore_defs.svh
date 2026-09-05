@@ -93,6 +93,9 @@ localparam logic [31:0] PYCORE_OB_FLAG_EXC_TYPE = 32'd1;
 // OBK_TYPE ob_flags bit 1: seeded `int` type so CALL converts instead of
 // allocating an INSTANCE (INT/BOOL identity, decimal SHORT_STR parse).
 localparam logic [31:0] PYCORE_OB_FLAG_INT_TYPE = 32'd2;
+// OBK_TYPE ob_flags bit 2: seeded `str` type so CALL stringifies instead of
+// allocating an INSTANCE (STR identity, INT decimal, BOOL/None literals).
+localparam logic [31:0] PYCORE_OB_FLAG_STR_TYPE = 32'd4;
 
 localparam int PYCORE_SHORT_STR_MAX_BYTES = 15;
 localparam int PYCORE_SHORT_STR_SIZE_MSB  = 127;

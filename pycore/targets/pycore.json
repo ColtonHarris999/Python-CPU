@@ -1657,7 +1657,7 @@
       "support": "partial",
       "hw_class": "FRAME",
       "fold": "BAR",
-      "note": "Seeded int OBK_TYPE (ob_flags INT_TYPE) converts: argc 0 → 0; argc 1 INT/BOOL identity or decimal SHORT_STR; argc>1 / other tags → TYPE. Exception types still construct OBK_EXCEPTION; other types allocate INSTANCE."
+      "note": "Seeded int OBK_TYPE (ob_flags INT_TYPE) converts: argc 0 → 0; argc 1 INT/BOOL identity or decimal SHORT_STR; argc>1 / other tags → TYPE. Seeded str OBK_TYPE (ob_flags STR_TYPE) stringifies: argc 0 → \"\"; argc 1 STR identity, INT decimal SHORT_STR, BOOL/None literals; argc>1 / other tags → TYPE. Exception types still construct OBK_EXCEPTION; other types allocate INSTANCE."
     },
     "CALL_KW": {
       "support": "execute",

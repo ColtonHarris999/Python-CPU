@@ -215,6 +215,27 @@ class RomFirmwareSeedTest(unittest.TestCase):
                 break
         self.assertTrue(found, "OBK_TYPE with OB_FLAG_INT_TYPE missing from builtins heap")
 
+    def test_str_type_flagged_for_call_convert(self) -> None:
+        from encoding import (
+            OB_FLAG_STR_TYPE,
+            OBK_TYPE,
+            ob_flags,
+            ob_kind,
+        )
+
+        self.assertEqual(OB_FLAG_STR_TYPE, 4)
+        serializer = image_from_source._ImageSerializer()
+        image_from_source.build_builtins_dict(serializer)
+        found = False
+        for addr, head in serializer.heap.words.items():
+            if ob_kind(head) != OBK_TYPE:
+                continue
+            if ob_flags(head) & OB_FLAG_STR_TYPE:
+                found = True
+                self.assertEqual(ob_flags(head) & OB_FLAG_STR_TYPE, OB_FLAG_STR_TYPE)
+                break
+        self.assertTrue(found, "OBK_TYPE with OB_FLAG_STR_TYPE missing from builtins heap")
+
     def test_wave3_image_programs_build(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1] / "programs"
         for name in (
@@ -227,6 +248,7 @@ class RomFirmwareSeedTest(unittest.TestCase):
             "img_firmware_attr_helpers.py",
             "img_firmware_isinstance.py",
             "img_firmware_min_varargs.py",
+            "img_builtin_str.py",
             "img_print_basic.py",
             "img_print_sep_end.py",
             "img_print_star_kw.py",

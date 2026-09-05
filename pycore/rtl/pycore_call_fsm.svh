@@ -11,7 +11,7 @@
 //   6  : metadata; start co_defaults → 14
 //   7  : frame push + init
 //   8-11: BOUND_METHOD unwrap (NULL sentinel required) → join 3
-//   12 : TYPE instantiate / exception construct / int convert (call_sub_r)
+//   12 : TYPE instantiate / exception / int / str convert (call_sub_r)
 //   13 : OBK_BUILTIN - max/len/range on-core; else PY_TRAP_BUILTIN_CALL
 //   14 : POS defaults fill, or KW/EX_KW shared binder → 7
 //   15 : CALL_PHASE_DONE
@@ -311,6 +311,31 @@
                                             container_rf_addr_r <= RF_AW'(
                                                 {2'b0, tos_r} - 9'd1);
                                             call_sub_r   <= 6'd32;
+                                            call_phase_r <= 4'd12;
+                                        end
+                                    end else if ((pycore_ob_flags(container_rd_data_r) &
+                                                  PYCORE_OB_FLAG_STR_TYPE) != 32'd0) begin
+                                        // Seeded `str` stringifies instead of
+                                        // INSTANCE construction. argc>1
+                                        // (encoding= form) remains TYPE.
+                                        if (cur_arg_r[15:0] > 16'd1) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else if (cur_arg_r[15:0] == 16'd0) begin
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= call_tos_base_r;
+                                            container_wb_data_r <=
+                                                pycore_make_entry(
+                                                    PY_TAG_SHORT_STR,
+                                                    PY_STR_EMPTY);
+                                            tos_r        <= call_tos_base_r
+                                                + RF_AW'(1);
+                                            fetch_skip_r <= 1'b1;
+                                            call_phase_r <= CALL_PHASE_DONE;
+                                            call_sub_r   <= 6'd0;
+                                        end else begin
+                                            container_rf_addr_r <= RF_AW'(
+                                                {2'b0, tos_r} - 9'd1);
+                                            call_sub_r   <= 6'd33;
                                             call_phase_r <= 4'd12;
                                         end
                                     end else begin
@@ -1629,6 +1654,7 @@
                         //   sub0-21: ordinary INSTANCE + __init__ (own tp_dict)
                         //   sub22-31: exception type → OBK_EXCEPTION
                         //   sub32: seeded int type → INT conversion
+                        //   sub33: seeded str type → SHORT_STR conversion
                         // --------------------------------------------------
                         4'd12: begin
                             unique case (call_sub_r)
@@ -2121,6 +2147,54 @@
                                             end
                                         end else begin
                                             container_type_trap_r <= 1'b1;
+                                        end
+                                    end
+                                end
+                                // 33: seeded str type — stringify one positional arg.
+                                6'd33: begin
+                                    begin
+                                        logic        str_ok;
+                                        logic [PYCORE_ENTRY_WIDTH-1:0] str_entry;
+                                        str_ok = 1'b0;
+                                        str_entry = pycore_make_entry(
+                                            PY_TAG_OBJECT, '0);
+                                        if (pycore_is_none(
+                                                cont_rf_rs1_tag,
+                                                cont_rf_rs1_val)) begin
+                                            str_ok = 1'b1;
+                                            str_entry = pycore_make_entry(
+                                                PY_TAG_SHORT_STR, PY_STR_NONE);
+                                        end else if (cont_rf_rs1_tag ==
+                                                     PY_TAG_BOOL) begin
+                                            str_ok = 1'b1;
+                                            str_entry = pycore_make_entry(
+                                                PY_TAG_SHORT_STR,
+                                                cont_rf_rs1_val[0] ? PY_STR_TRUE
+                                                                   : PY_STR_FALSE);
+                                        end else if (cont_rf_rs1_tag ==
+                                                     PY_TAG_INT) begin
+                                            pycore_int_to_short_str(
+                                                cont_rf_rs1_val[63:0],
+                                                str_ok, str_entry);
+                                        end else if (pycore_is_string_tag(
+                                                         cont_rf_rs1_tag)) begin
+                                            str_ok = 1'b1;
+                                            str_entry = pycore_make_entry(
+                                                cont_rf_rs1_tag,
+                                                cont_rf_rs1_val);
+                                        end
+                                        if (!str_ok) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else begin
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <=
+                                                call_tos_base_r;
+                                            container_wb_data_r <= str_entry;
+                                            tos_r        <= call_tos_base_r
+                                                + RF_AW'(1);
+                                            fetch_skip_r <= 1'b1;
+                                            call_sub_r   <= 6'd0;
+                                            call_phase_r <= CALL_PHASE_DONE;
                                         end
                                     end
                                 end

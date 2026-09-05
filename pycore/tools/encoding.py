@@ -131,6 +131,8 @@ OBK_EXCEPTION = 6
 OB_FLAG_EXC_TYPE = 1
 # OBK_TYPE ob_flags bit 1: seeded `int` type (CALL converts, not INSTANCE).
 OB_FLAG_INT_TYPE = 2
+# OBK_TYPE ob_flags bit 2: seeded `str` type (CALL stringifies, not INSTANCE).
+OB_FLAG_STR_TYPE = 4
 
 # Builtin ids under OBK_BUILTIN (mirror PY_BI_* in pycore_defs.svh).
 BI_STATICMETHOD = 0

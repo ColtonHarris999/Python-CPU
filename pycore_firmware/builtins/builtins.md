@@ -104,7 +104,7 @@ These limit every firmware builtin:
 | `slice` | Return a slice object representing indices for extended slicing. | blocked | `BINARY_SLICE`/`STORE_SLICE` deferred; no slice object kind. |
 | `sorted` | Return a new sorted list from an iterable. | in ROM | Bubble sort; `reverse=` via CALL_KW; numeric COMPARE_OP only; no `key=`. |
 | `staticmethod` | Transform a method into a static method. | blocked | Image-time `BI_STATICMETHOD` (id 0) unwrap; runtime wrapper blocked. |
-| `str` | Create a new string object from an object or buffer. | in progress | BOOL/None/INT decimal; STR identity needs tag probe. |
+| `str` | Create a new string object from an object or buffer. | native | CALL on the seeded `str` `OBK_TYPE` (`OB_FLAG_STR_TYPE`): argc 0 → `""`; argc 1 `STR` identity, `INT` decimal `SHORT_STR` (≤15 chars), `BOOL`/`None` literals. Other tags / argc>1 → TYPE. |
 | `sum` | Return the sum of a start value and an iterable of numbers. | in ROM | `start=` via CALL_KW. Bad `+` / non-iterable → TYPE trap. |
 | `super` | Return a proxy object that delegates method calls to a parent or sibling class. | blocked | See `super.md`. |
 | `tuple` | Create a new tuple, optionally from an iterable. | in ROM | Empty `tuple()` + iterable via list materialize + `(*out,)`. Empty uses `iterable=None` default fill. |
@@ -133,9 +133,9 @@ pycore_firmware/builtins/builtins.md    # this inventory
 | Python modules | 73 |
 | Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`; `ord` / `chr` now shipped notes) |
 | Status: in ROM | 30 (incl. `print`, `exec`, `eval`) |
-| Status: native | 3 (`ord`, `chr`, `int` CALL convert) |
+| Status: native | 4 (`ord`, `chr`, `int` CALL convert, `str` CALL convert) |
 | Status: implemented | 5 (`len` miss path, `list_append`, `max` notes, `range` list form, `set` Python form) |
-| Status: in progress | 10 |
+| Status: in progress | 9 |
 | Status: blocked | 26 |
 
 ### In ROM (seeded as CODE_OBJECT in boot builtins dict)
@@ -165,12 +165,16 @@ always a `SHORT_STR` and its bytes are inline in the handle.
 `tp_dict`) with `OB_FLAG_INT_TYPE`. `CALL` converts: argc 0 → `0`; argc 1
 `INT`/`BOOL` identity or decimal `SHORT_STR`; other tags / `base=` → TYPE.
 
+`str` is an `OBK_TYPE` with `OB_FLAG_STR_TYPE`. `CALL` stringifies: argc 0
+→ `""`; argc 1 `STR` identity, `INT` decimal `SHORT_STR`, `BOOL`/`None`
+literals; other tags / argc>1 → TYPE.
+
 Coverage: `img_builtin_ord`, `img_builtin_chr`, `img_builtin_ord_unicode`
 (all four UTF-8 widths + `ord(chr(n))` round trip), `img_builtin_ord_scan`
 (`ord(s[i])` classification loop), `img_builtin_ord_len_trap`,
 `img_builtin_ord_type_trap`, `img_builtin_chr_range_trap`,
 `img_builtin_chr_surrogate_trap`, `img_builtin_int`,
-`img_builtin_int_type_trap`.
+`img_builtin_int_type_trap`, `img_builtin_str`, `img_builtin_str_type_trap`.
 
 ### Implemented (not yet seeded / hybrid docs)
 
@@ -181,7 +185,7 @@ form; `BI_SET` owns dict)
 ### In progress (usable subset / hardware gaps)
 
 `callable`, `dir`, `float`, `format`, `iter`, `next`, `repr`,
-`str`, `type`, `vars`
+`type`, `vars`
 
 ### Blocked (stub + notes/plans)
 
