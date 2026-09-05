@@ -199,6 +199,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-builtin-ord-unicode pycore-img-builtin-ord-scan \
 	pycore-img-builtin-ord-len-trap pycore-img-builtin-ord-type-trap \
 	pycore-img-builtin-chr-range-trap pycore-img-builtin-chr-surrogate-trap \
+	pycore-img-builtin-int pycore-img-builtin-int-type-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
@@ -1643,6 +1644,7 @@ pycore-img-attr-all: \
 	pycore-img-builtin-ord-unicode pycore-img-builtin-ord-scan \
 	pycore-img-builtin-ord-len-trap pycore-img-builtin-ord-type-trap \
 	pycore-img-builtin-chr-range-trap pycore-img-builtin-chr-surrogate-trap \
+	pycore-img-builtin-int pycore-img-builtin-int-type-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
@@ -1823,6 +1825,12 @@ pycore-img-builtin-chr-range-trap:
 
 pycore-img-builtin-chr-surrogate-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,builtin_chr_surrogate_trap,1,50000)
+
+pycore-img-builtin-int:
+	$(call PYCORE_IMAGE_RUN,builtin_int,50000)
+
+pycore-img-builtin-int-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,builtin_int_type_trap,1,50000)
 
 pycore-img-to-bool-none:
 	$(call PYCORE_IMAGE_RUN,to_bool_none,50000)

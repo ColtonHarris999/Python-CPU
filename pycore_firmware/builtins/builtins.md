@@ -76,7 +76,7 @@ These limit every firmware builtin:
 | `hex` | Convert an integer to a lowercase hexadecimal string prefixed with '0x'. | in ROM | String concat digit loop. |
 | `id` | Return the identity (unique integer) of an object. | blocked | No address-expose primitive. |
 | `input` | Read a line from stdin (after an optional prompt) and return it. | blocked | No stdin device. |
-| `int` | Convert a number or string to an integer. | in progress | Numeric truncate + `_parse_int_string` when `base` given; `int("5")` without base still needs tag dispatch. |
+| `int` | Convert a number or string to an integer. | native | CALL on the seeded `int` `OBK_TYPE` (`OB_FLAG_INT_TYPE`): argc 0 → `0`; argc 1 `INT`/`BOOL` identity or decimal `SHORT_STR` (`+/-` + ASCII digits). Other tags / `base=` argc → TYPE. `from_bytes`/`to_bytes` stay on `tp_dict`. |
 | `isinstance` | Return True if the object is an instance of a type or tuple of types. | in ROM | Single-class `classinfo`; walks `obj.__class__` → `__base__` (depth ≤ 8). |
 | `issubclass` | Return True if a class is a subclass of a class or tuple of classes. | in ROM | Single-class `classinfo`; walks `cls.__base__` (depth ≤ 8). |
 | `iter` | Return an iterator for an object (or call a sentinel-producing callable). | in progress | One-arg materializes a list; sentinel form `raise`s (fatal). |
@@ -133,9 +133,9 @@ pycore_firmware/builtins/builtins.md    # this inventory
 | Python modules | 73 |
 | Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`; `ord` / `chr` now shipped notes) |
 | Status: in ROM | 30 (incl. `print`, `exec`, `eval`) |
-| Status: native | 2 (`ord`, `chr`) |
+| Status: native | 3 (`ord`, `chr`, `int` CALL convert) |
 | Status: implemented | 5 (`len` miss path, `list_append`, `max` notes, `range` list form, `set` Python form) |
-| Status: in progress | 11 |
+| Status: in progress | 10 |
 | Status: blocked | 26 |
 
 ### In ROM (seeded as CODE_OBJECT in boot builtins dict)
@@ -153,7 +153,7 @@ Coverage: `img_firmware_rom_subset`, `img_firmware_iterators`,
 `img_firmware_filter_pred`, `img_firmware_attr_helpers`,
 `img_firmware_isinstance`. Attr specials: `img_attr_dunder_*`.
 
-### Native (hardware `BI_*` owns the builtins-dict entry)
+### Native (hardware owns the builtins-dict CALL)
 
 `ord` (`BI_ORD`, id 10), `chr` (`BI_CHR`, id 11). No pure-Python body is
 possible: reading UTF-8 payload bytes as an integer and building a string from
@@ -161,11 +161,16 @@ raw bytes are exactly the primitives Python lacks here. Both complete in one
 cycle with no dmem or `string_mem` access, because a one-character string is
 always a `SHORT_STR` and its bytes are inline in the handle.
 
+`int` stays an `OBK_TYPE` (so `int.from_bytes` / `int.to_bytes` remain on
+`tp_dict`) with `OB_FLAG_INT_TYPE`. `CALL` converts: argc 0 → `0`; argc 1
+`INT`/`BOOL` identity or decimal `SHORT_STR`; other tags / `base=` → TYPE.
+
 Coverage: `img_builtin_ord`, `img_builtin_chr`, `img_builtin_ord_unicode`
 (all four UTF-8 widths + `ord(chr(n))` round trip), `img_builtin_ord_scan`
 (`ord(s[i])` classification loop), `img_builtin_ord_len_trap`,
 `img_builtin_ord_type_trap`, `img_builtin_chr_range_trap`,
-`img_builtin_chr_surrogate_trap`.
+`img_builtin_chr_surrogate_trap`, `img_builtin_int`,
+`img_builtin_int_type_trap`.
 
 ### Implemented (not yet seeded / hybrid docs)
 
@@ -175,7 +180,7 @@ form; `BI_SET` owns dict)
 
 ### In progress (usable subset / hardware gaps)
 
-`callable`, `dir`, `float`, `format`, `int`, `iter`, `next`, `repr`,
+`callable`, `dir`, `float`, `format`, `iter`, `next`, `repr`,
 `str`, `type`, `vars`
 
 ### Blocked (stub + notes/plans)

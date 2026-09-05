@@ -72,7 +72,9 @@ module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
 `_bi_exec_globals` as
 `OBK_BUILTIN`
 handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
-`to_bytes`, Wave A exception types as `OBK_TYPE` (`BaseException` →
+`to_bytes` and whose `ob_flags` bit 1 (`OB_FLAG_INT_TYPE`) makes `CALL`
+convert (`int()` → `0`; `INT`/`BOOL` identity; decimal `SHORT_STR`) instead
+of INSTANCE construction, Wave A exception types as `OBK_TYPE` (`BaseException` →
 `Exception` → leaves including `StopIteration` and `SyntaxError`; exception
 `ob_flags` bit set; see `exception_support.md`), and ROM
 firmware names (`print`, `sum`, `abs`, `bool`, `all`, `any`, `enumerate`,
@@ -88,7 +90,8 @@ size is `BOOT_RECORD_BYTES = 96`.
 builtins dict (LEGB **B**). **CALL** on an `OBK_BUILTIN` handle dispatches
 by `builtin_id` in the CALL FSM — hardware accelerates known tags (e.g.
 `BI_LEN` reads list/tuple/dict/set/str/inline-range headers and calls
-instance `__len__` when present). **CALL** on a ROM `CODE_OBJECT` uses the
+instance `__len__` when present). **CALL** on the seeded `int` `OBK_TYPE`
+(`OB_FLAG_INT_TYPE`) converts instead of allocating an instance. **CALL** on a ROM `CODE_OBJECT` uses the
 normal frame path. Pure-Python bodies under `pycore_firmware/builtins/`
 also cover miss / protocol cases (not for re-deriving header lengths in a
 loop). See `planning/implemented/builtins_next_steps_plan.md`.

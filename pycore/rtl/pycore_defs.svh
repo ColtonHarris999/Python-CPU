@@ -90,6 +90,9 @@ localparam logic [31:0] PY_OBK_EXCEPTION    = 32'd6;
 // OBK_TYPE ob_flags bit 0: seeded exception type so CALL can allocate
 // OBK_EXCEPTION without walking tp_base (exceptions plan §2.4 / Track 2).
 localparam logic [31:0] PYCORE_OB_FLAG_EXC_TYPE = 32'd1;
+// OBK_TYPE ob_flags bit 1: seeded `int` type so CALL converts instead of
+// allocating an INSTANCE (INT/BOOL identity, decimal SHORT_STR parse).
+localparam logic [31:0] PYCORE_OB_FLAG_INT_TYPE = 32'd2;
 
 localparam int PYCORE_SHORT_STR_MAX_BYTES = 15;
 localparam int PYCORE_SHORT_STR_SIZE_MSB  = 127;
@@ -1225,6 +1228,62 @@ function automatic void pycore_int_to_short_str(
                 ok = 1'b1;
                 entry = pycore_make_short_str_entry(out_len, payload);
             end
+        end
+    end
+endfunction
+
+// Decimal SHORT_STR → signed INT. Optional leading '+' / '-'; ASCII digits
+// only (no whitespace, underscores, or base prefixes). Empty / invalid → ok=0.
+function automatic void pycore_short_str_to_int(
+    input  logic [PYCORE_VAL_WIDTH-1:0] val,
+    output logic                        ok,
+    output logic [PYCORE_VAL_WIDTH-1:0] result
+);
+    logic [3:0] n;
+    logic [3:0] start;
+    logic       neg;
+    logic       seen;
+    logic [7:0] ch;
+    logic [63:0] acc;
+    int unsigned i;
+    begin
+        ok = 1'b0;
+        result = '0;
+        n = pycore_short_str_size(val);
+        if (n == 4'd0)
+            return;
+        start = 4'd0;
+        neg = 1'b0;
+        ch = pycore_short_str_byte(val, 0);
+        if (ch == 8'h2B) begin
+            start = 4'd1;
+        end else if (ch == 8'h2D) begin
+            start = 4'd1;
+            neg = 1'b1;
+        end
+        if (start >= n)
+            return;
+        acc = 64'b0;
+        seen = 1'b0;
+        ok = 1'b1;
+        for (i = 0; i < PYCORE_SHORT_STR_MAX_BYTES; i++) begin
+            if (ok && (i >= start) && (i < n)) begin
+                ch = pycore_short_str_byte(val, i);
+                if ((ch < 8'h30) || (ch > 8'h39)) begin
+                    ok = 1'b0;
+                end else begin
+                    acc = acc * 64'd10 + {56'b0, (ch - 8'h30)};
+                    seen = 1'b1;
+                end
+            end
+        end
+        if (!ok || !seen) begin
+            ok = 1'b0;
+            result = '0;
+        end else if (neg) begin
+            result = pycore_get_val(pycore_int_entry(-acc));
+        end else begin
+            result = pycore_get_val(pycore_int_entry(acc));
         end
     end
 endfunction
