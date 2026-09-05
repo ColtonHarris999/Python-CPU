@@ -1,0 +1,659 @@
+% =============================================================================
+% PyCore + ExCore — system architecture overview for the research paper
+% =============================================================================
+% Build (from this directory):
+%   pdflatex architecture_overview.tex && pdflatex architecture_overview.tex
+% Requires: article, tikz, booktabs, hyperref, geometry, microtype, xcolor
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=0.9in]{geometry}
+\usepackage[expansion=false]{microtype}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric,shapes.multipart,backgrounds}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue!50!black,
+  citecolor=black
+}
+
+% Palette — cool slate / teal (avoid purple / cream / newspaper defaults)
+\definecolor{pyfill}{RGB}{232,242,248}
+\definecolor{pyborder}{RGB}{36,90,120}
+\definecolor{exfill}{RGB}{236,245,236}
+\definecolor{exborder}{RGB}{45,110,70}
+\definecolor{memfill}{RGB}{248,242,230}
+\definecolor{memborder}{RGB}{140,100,40}
+\definecolor{toolfill}{RGB}{245,240,248}
+\definecolor{toolborder}{RGB}{90,70,110}
+\definecolor{roadfill}{RGB}{250,248,240}
+\definecolor{roadborder}{RGB}{120,90,40}
+\definecolor{arrowc}{RGB}{50,50,50}
+
+\title{PyCore + ExCore: System Architecture\\
+\large Component map for the research paper}
+\author{PyCore systems notes\\
+\texttt{docs/paper/systems/architecture\_overview.tex}}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+PyCore is a research CPU whose native ISA is a filtered CPython~3.14 bytecode
+subset, implemented as a multi-cycle SystemVerilog hart with tagged 132-bit
+architectural values.
+ExCore is a companion RV32 multicycle hart that services \emph{recoverable}
+container and helper traps in firmware under an exclusive shared-dmem ownership
+protocol.
+Together they form an asymmetric two-core machine: a bytecode fast path in
+hardware, and a firmware completion path that finishes the trapped semantic
+effect rather than merely retrying.
+This note decomposes the system into the components we propose as primary
+sections of the upcoming research paper, and provides an architecture diagram
+that places those components in relation to one another and to the roadmap
+(BIOS boot, on-device tokenizer, self-hosted \texttt{compile()}).
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Thesis in one paragraph}
+% =============================================================================
+
+Executing CPython bytecode as a first-class ISA forces microarchitecture to
+absorb language semantics that conventional CPUs push into compilers and runtimes:
+typed values, open-addressed dicts, call binding, exception tables, and
+iterator protocols.
+PyCore keeps the high-frequency typed paths in a multi-cycle bytecode hart;
+ExCore absorbs capacity-changing and $O(n)$ container work (and selected helpers)
+behind a mailbox and memory grant, under a \textbf{complete-the-semantic-effect}
+contract.
+The research claim is that this split---tagged bytecode ISA + asymmetric
+exception core + CPython image fidelity---is a practical way to study and
+accelerate Python-shaped workloads without reimplementing all of CPython's
+object protocol in silicon.
+
+% =============================================================================
+\section{Paper component map}
+% =============================================================================
+
+Table~\ref{tab:sections} is the proposed section skeleton.
+Each row is a \emph{paper-worthy} component: novel enough to stand alone, and
+load-bearing enough that later sections depend on it.
+Sibling systems notes already exist for some rows (e.g.\ the CALL FSM);
+others should grow into their own notes as they stabilize.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}clp{0.58\textwidth}@{}}
+\toprule
+\# & Paper section & Core idea \\
+\midrule
+1 & Tagged bytecode ISA &
+  Native CPython~3.14 units as instructions; 132-bit
+  $\{\mathrm{tag}[3{:}0],\mathrm{value}[127{:}0]\}$ entries co-located in the RF. \\
+2 & PyCore microarchitecture &
+  Multi-cycle, non-pipelined control
+  (\texttt{S\_FETCH}${\to}$\texttt{DECODE}${\to}$\texttt{EXEC}${\to}$\texttt{MEM}${\to}$\texttt{WB})
+  plus specialized FSMs (\texttt{S\_CONTAINER}, \texttt{S\_CALL}, trap marshal);
+  see Figure~\ref{fig:core-fsm}. \\
+3 & Tag-routed execute fabric &
+  Tag decode, BOOL/INT/FLOAT promotion, INT ALU / mul / div / FPU / complex,
+  trap policy for unsafe tags. \\
+4 & Object \& container model &
+  Bump heap; stable LIST/DICT/SET objects with relocatable buffers;
+  \texttt{OBJECT} kinds; contamination bit for bulk ops. \\
+5 & Asymmetric two-core design &
+  Bytecode hart + RV32 ExCore; recoverable vs fatal trap taxonomy;
+  private IMEMs, shared dmem. \\
+6 & Ownership \& completion protocol &
+  Mailbox handshake; exclusive memory grant; COMPLETED / RETRY / FATAL;
+  ``finish the effect, don't just resize.'' \\
+7 & Container co-design &
+  Hash/probe/eq and spare-capacity append on PyCore;
+  grow / extend / mid-delete / bulk merge on ExCore. \\
+8 & CALL FSM \& frames &
+  Shared binder for CALL / CALL\_KW / CALL\_FUNCTION\_EX;
+  dmem frame stack; method / builtin / type arms. \\
+9 & Exceptions \& iteration &
+  Exception-table field on code objects; exc-info stack;
+  GET\_ITER / FOR\_ITER; protocol CALL pause/resume. \\
+10 & Image fidelity \& tooling &
+  \texttt{compile()} graph $\to$ tagged imem/dmem; boot record;
+  fidelity boundary (bytecode-identical, layout not C-struct). \\
+11 & Firmware builtins \& ROM &
+  ROM-seeded pure-Python builtins; LEGB-B;
+  hardware \texttt{BI\_*} fast paths vs CODE\_OBJECT frames. \\
+12 & Roadmap: self-hosting &
+  Code ROM+RAM, BIOS, \texttt{exec}/\texttt{eval}, tokenizer (Plan~1);
+  parser/AST/codegen/\texttt{compile()} (Plan~2). \\
+\bottomrule
+\end{tabular}
+\caption{Proposed research-paper sections derived from the as-built system
+and documented direction.}
+\label{tab:sections}
+\end{table}
+
+\subsection{Why these cuts (not a file tree)}
+
+A paper organized as ``RTL modules we happen to have'' would bury the
+interesting claims.
+The cuts above follow \emph{research seams}:
+
+\begin{itemize}[leftmargin=1.2em,itemsep=0.25em]
+  \item \textbf{ISA vs microarchitecture} --- tags and opcodes are the contract;
+        the FSM is how we implement them.
+  \item \textbf{Language semantics in hardware vs firmware} --- the ExCore
+        boundary is the central systems contribution.
+  \item \textbf{Fidelity vs completeness} --- image tooling locks bytecode
+        fidelity today; Plans~1--2 describe the path to host independence.
+  \item \textbf{Hot path vs protocol path} --- CALL/containers stay native;
+        \texttt{\_\_iter\_\_}/\texttt{\_\_next\_\_} and exception handlers reuse
+        the same CALL machinery via pause/resume.
+\end{itemize}
+
+% =============================================================================
+\section{System block diagram}
+% =============================================================================
+
+Figure~\ref{fig:block} is the \emph{target} physical SoC organization:
+SRAMs, datapath units, language engines, interconnect buses, and the RV32
+helper core.
+It deliberately omits control-pipeline stages; those belong in the FSM figure
+that follows.
+
+\clearpage
+\begin{figure}[p]
+\centering
+{\Large\bfseries Ideal PyCore + ExCore SoC}\\[0.35em]
+{\small Physical blocks and buses}\\[0.75em]
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  >=Latex,
+  x=1cm, y=1cm,
+  blk/.style={
+    draw, align=center, inner sep=4pt, thick,
+    rounded corners=1.5pt, minimum height=0.85cm
+  },
+  py/.style={blk, fill=pyfill, draw=pyborder},
+  ex/.style={blk, fill=exfill, draw=exborder},
+  mem/.style={blk, fill=memfill, draw=memborder},
+  io/.style={blk, fill=toolfill, draw=toolborder},
+  bus/.style={Latex-Latex, line width=1.05pt, color=arrowc},
+  arr/.style={-{Latex}, line width=0.9pt, color=arrowc},
+  lab/.style={font=\scriptsize, text=black!55, fill=white, inner sep=0.6pt},
+  ttl/.style={font=\footnotesize\bfseries},
+  map/.style={
+    draw=memborder, fill=memfill, align=left, font=\scriptsize\ttfamily,
+    inner xsep=3pt, inner ysep=2pt, minimum height=0.4cm, text width=3.7cm
+  },
+  grp/.style={draw, line width=1.15pt, rounded corners=3pt, inner sep=6pt},
+  busbar/.style={line width=2.2pt, color=black!35}
+]
+
+% ===================== SHARED BUSES (horizontal bars) =====================
+% Instruction bus / data bus / trap bus as physical interconnects
+\draw[busbar] (-6.6, 8.55) -- (6.6, 8.55); % I-bus
+\draw[busbar] (-6.6, 5.55) -- (6.6, 5.55); % D-bus
+\draw[busbar] (-6.6, 2.85) -- (6.6, 2.85); % Trap / MMIO bus
+\node[lab] at (-7.35, 8.55) {I-bus};
+\node[lab] at (-7.35, 5.55) {D-bus};
+\node[lab] at (-7.45, 2.85) {Trap bus};
+
+% ===================== MEMORIES (top / bottom anchors) =====================
+\node[mem, minimum width=2.7cm] (crom) at (-5.2, 10.0) {Code ROM\\{\scriptsize BIOS+runtime}};
+\node[mem, minimum width=2.7cm] (cram) at (-2.2, 10.0) {Code RAM\\{\scriptsize compiled code}};
+\node[mem, minimum width=2.7cm] (dmem) at (1.2, 10.0) {Shared DMEM\\{\scriptsize 128-bit SRAM}};
+\node[mem, minimum width=2.7cm] (fimem) at (4.5, 10.0) {FW IMEM\\{\scriptsize private}};
+\node[mem, minimum width=2.0cm] (spm) at (6.55, 10.0) {Scratch\\{\scriptsize SRAM}};
+
+\draw[arr] (crom) -- (crom |- 0,8.55);
+\draw[arr] (cram) -- (cram |- 0,8.55);
+\draw[arr] (dmem) -- (dmem |- 0,8.55);
+\draw[arr] (dmem) -- (dmem |- 0,5.55);
+\draw[arr] (fimem) -- (fimem |- 0,8.55);
+\draw[arr] (spm) -- (spm |- 0,5.55);
+
+% ===================== PYCORE DATAPATH =====================
+\node[py, minimum width=2.55cm] (core) at (-5.2, 7.15)
+  {\textbf{Bytecode core}\\{\scriptsize PC $\cdot$ decode $\cdot$ seq}};
+\node[mem, minimum width=2.55cm] (rf) at (-2.2, 7.15)
+  {\textbf{Regfile}\\{\scriptsize 96$\times$132 tagged}};
+
+\node[py, minimum width=1.35cm] (alu) at (-5.95, 6.2) {INT ALU};
+\node[py, minimum width=1.35cm] (fpu) at (-4.4, 6.2) {FPU};
+\node[py, minimum width=1.35cm] (mul) at (-2.85, 6.2) {MUL/DIV};
+\node[py, minimum width=1.35cm] (cpx) at (-1.3, 6.2) {Complex};
+
+\node[grp, draw=pyborder, inner sep=5pt,
+  fit=(core)(rf)(alu)(fpu)(mul)(cpx),
+  label={[ttl,text=pyborder]above:\textbf{PyCore datapath}}] (pyd) {};
+
+\draw[arr] (core) -- (core |- 0,8.55);
+\draw[arr] (core) -- (core |- 0,5.55);
+\draw[bus] (core) -- (rf);
+\draw[bus] (rf) -- (alu);
+\draw[bus] (rf) -- (fpu);
+\draw[bus] (rf) -- (mul);
+\draw[bus] (rf) -- (cpx);
+
+% ===================== LANGUAGE ENGINES =====================
+\node[py, minimum width=1.85cm] (fr) at (-5.7, 4.45)
+  {Frame mgr\\{\scriptsize stack SRAM}};
+\node[py, minimum width=1.85cm] (st) at (-3.55, 4.45)
+  {String unit\\{\scriptsize str SRAM}};
+\node[py, minimum width=1.85cm] (ct) at (-1.4, 4.45)
+  {Container\\{\scriptsize eng.}};
+\node[py, minimum width=1.85cm] (hs) at (-5.7, 3.5)
+  {Hash / eq\\{\scriptsize unit}};
+\node[py, minimum width=1.85cm] (cb) at (-3.55, 3.5)
+  {CALL binder\\{\scriptsize HW}};
+\node[py, minimum width=1.85cm] (xe) at (-1.4, 3.5)
+  {Exc engine\\{\scriptsize HW}};
+\node[py, minimum width=4.0cm] (ha) at (-3.55, 2.55)
+  {Heap unit (bump + GC)};
+
+\node[grp, draw=pyborder, inner sep=5pt,
+  fit=(fr)(st)(ct)(hs)(cb)(xe)(ha),
+  label={[ttl,text=pyborder]above:\textbf{Language engines}}] (pya) {};
+
+\foreach \n in {fr,st,ct,hs,cb,xe,ha} {
+  \draw[arr] (\n) -- (\n |- 0,5.55);
+}
+
+% ===================== INTERCONNECT BLOCKS =====================
+\node[mem, minimum width=2.9cm] (grant) at (1.35, 7.15)
+  {DMEM grant mux\\{\scriptsize 1 owner}};
+\node[mem, minimum width=2.9cm] (mbox) at (1.35, 4.0)
+  {Trap mailbox\\{\scriptsize HW FIFO}};
+\node[io, minimum width=2.9cm] (uart) at (1.35, 1.7)
+  {Console / I/O\\{\scriptsize TX port}};
+
+\draw[arr] (grant) -- (grant |- 0,5.55);
+\draw[arr] (grant) -- (dmem);
+\draw[arr] (mbox) -- (mbox |- 0,2.85);
+\draw[arr] (mbox) -- (mbox |- 0,5.55);
+\draw[arr] (uart) -- (uart |- 0,2.85);
+
+% Memory map panel
+\node[font=\scriptsize\bfseries, text=memborder] at (1.35, -0.05) {DMEM map};
+\node[map] (m0) at (1.35, -0.55) {0x03E0 boot / globals};
+\node[map] (m1) at (1.35, -1.05) {0x0440 object heap};
+\node[map] (m2) at (1.35, -1.55) {....  string arena};
+\node[map] (m3) at (1.35, -2.05) {0x1B000 exc stack};
+\node[map] (m4) at (1.35, -2.55) {0x1C000 frame stack};
+
+\node[grp, draw=memborder, inner sep=5pt,
+  fit=(grant)(mbox)(uart)(m0)(m1)(m2)(m3)(m4),
+  label={[ttl,text=memborder]above:\textbf{Interconnect}}] (mid) {};
+
+% ===================== EXCORE =====================
+\node[ex, minimum width=3.2cm] (cpu) at (5.4, 7.15)
+  {\textbf{RV32 CPU}\\{\scriptsize multicycle}};
+\node[ex, minimum width=3.2cm] (mmio) at (5.4, 4.0)
+  {MMIO bridge\\{\scriptsize mb $\cdot$ slot $\cdot$ TX}};
+\node[ex, minimum width=3.2cm] (fw) at (5.4, 1.7)
+  {Firmware\\{\scriptsize grow/rehash/print}};
+
+\node[grp, draw=exborder, inner sep=5pt,
+  fit=(cpu)(mmio)(fw),
+  label={[ttl,text=exborder]above:\textbf{ExCore}}] (exg) {};
+
+\draw[arr] (cpu) -- (cpu |- 0,8.55);
+\draw[arr] (cpu) -- (cpu |- 0,5.55);
+\draw[arr] (cpu) -- (fimem);
+\draw[bus] (cpu) -- (mmio);
+\draw[arr] (mmio) -- (mmio |- 0,2.85);
+\draw[arr] (mmio) -- (mmio |- 0,5.55);
+\draw[arr] (fw) -- (fimem);
+
+\end{tikzpicture}%
+}
+
+\caption{Physical SoC view: memories on the I-bus and D-bus, PyCore datapath and
+language engines as peer hardware blocks, ExCore as an RV32 CPU behind an MMIO
+bridge, and a trap mailbox on a dedicated bus.
+The DMEM map lists the principal shared address regions.
+No control-pipeline stages are shown.}
+\label{fig:block}
+\end{figure}
+\clearpage
+\clearpage
+
+% =============================================================================
+\section{Core control FSM}
+% =============================================================================
+
+Figure~\ref{fig:core-fsm} is the top-level \texttt{state\_r} automaton in
+\texttt{pycore\_core.sv} (4-bit encodings in parentheses).
+Exactly one instruction is in flight: there is no forwarding or hazard logic.
+Language-dense opcodes leave the classic
+\texttt{FETCH}${\to}$\texttt{DECODE}${\to}$\texttt{EXEC}${\to}$\texttt{MEM}${\to}$\texttt{WB}
+loop for specialized states.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  >=Latex,
+  thick,
+  x=1.85cm,
+  y=1.55cm,
+  st/.style={
+    draw, rounded corners=2.5pt, align=center,
+    minimum width=2.15cm, minimum height=0.85cm,
+    inner sep=2.5pt, fill=pyfill, draw=pyborder, thick
+  },
+  bootst/.style={st, fill=toolfill, draw=toolborder},
+  trapst/.style={st, fill=exfill, draw=exborder},
+  haltst/.style={st, fill=memfill, draw=memborder},
+  bifork/.style={
+    draw, rounded corners=2pt, align=left,
+    fill=exfill!45, draw=exborder, thick,
+    font=\scriptsize, inner sep=4pt, text width=4.4cm
+  },
+  arr/.style={-{Latex}, thick, color=arrowc, shorten >=0.8pt, shorten <=0.8pt},
+  lab/.style={
+    font=\scriptsize, text=black!65, align=center,
+    fill=white, inner sep=1pt
+  },
+  exitlab/.style={
+    font=\scriptsize\ttfamily, text=pyborder, align=center,
+    fill=white, inner sep=1.5pt, draw=pyborder!40, rounded corners=1pt
+  },
+  note/.style={font=\scriptsize\itshape, text=black!55, align=left}
+]
+
+  % ---- Row 0: boot ----
+  \node[bootst] (boot) at (0, 3.5) {\texttt{S\_BOOT}\\{\scriptsize(9)}};
+
+  % ---- Row 1: typed fast path ----
+  \node[st] (fetch) at (0, 2.1) {\texttt{S\_FETCH}\\{\scriptsize(0)}};
+  \node[st] (dec)   at (2, 2.1) {\texttt{S\_DECODE}\\{\scriptsize(1)}};
+  \node[st] (exec)  at (4, 2.1) {\texttt{S\_EXEC}\\{\scriptsize(2)}};
+  \node[st] (mem)   at (6, 2.1) {\texttt{S\_MEM}\\{\scriptsize(3)}};
+  \node[st] (wb)    at (8, 2.1) {\texttt{S\_WB}\\{\scriptsize(4)}};
+
+  % ---- Row 2: language arms ----
+  \node[st] (cont) at (3.2, 0.55) {\texttt{S\_CONTAINER}\\{\scriptsize(8)}};
+  \node[st] (call) at (5.6, 0.55) {\texttt{S\_CALL}\\{\scriptsize(6)}};
+  \node[st] (ret)  at (8.0, 0.55) {\texttt{S\_RETURN}\\{\scriptsize(7)}};
+
+  % Builtin dispatch callout under S_CALL (phase 13)
+  \node[bifork] (bifork) at (5.6, -0.75) {%
+    \textbf{callable fork inside \texttt{S\_CALL}}\\[2pt]
+    \texttt{CODE\_OBJECT} $\to$ frame push\\
+    \texttt{OBK\_BUILTIN} + known id $\to$ on-core \texttt{BI\_*}\\
+    \quad(\texttt{LEN}/\texttt{ORD}/\texttt{CHR}/\texttt{RANGE}/\texttt{SET}/\ldots)\\
+    \texttt{OBK\_BUILTIN} otherwise $\to$ \texttt{PY\_TRAP\_BUILTIN\_CALL}\\
+    \quad(e.g.\ \texttt{print} / \texttt{CONSOLE\_TX})};
+
+  % ---- Row 3: trap / halt ----
+  \node[trapst] (tm)  at (3.2, -2.35) {\texttt{S\_TRAP\_MARSHAL}\\{\scriptsize(10)}};
+  \node[trapst] (tw)  at (5.6, -2.35) {\texttt{S\_TRAP\_WAIT}\\{\scriptsize(11)}};
+  \node[haltst] (hlt) at (8.0, -2.35) {\texttt{S\_HALT}\\{\scriptsize(5)}};
+
+  % Boot + strip
+  \draw[arr] (boot) -- node[lab,right]{BOOT\_DONE} (fetch);
+  \draw[arr] (fetch) -- node[lab,above]{instr latched} (dec);
+  \draw[arr] (dec)   -- (exec);
+  \draw[arr] (exec)  -- node[lab,above]{!container} (mem);
+  \draw[arr] (mem)   -- node[lab,above]{!stall} (wb);
+  \draw[arr] (wb.north) -- ++(0,0.75) -|
+    node[lab,pos=0.25,above]{ordinary op} (fetch.north);
+
+  % Enter language row
+  \draw[arr] (exec) -- node[lab,left]{route\_container} (cont);
+  \draw[arr] (wb.south) -- ++(0,-0.35) -|
+    node[lab,pos=0.2,above]{CALL*} (call.north);
+  \draw[arr] (wb) -- node[lab,right]{RETURN (depth$>$0)} (ret);
+
+  % Language locals
+  \draw[arr] (cont) -- node[lab,above]{protocol CALL} (call);
+  \draw[arr] (ret.south) -- ++(0,-0.45) -|
+    node[lab,pos=0.22,below]{resume container} (cont.south);
+
+  % CALL opens the builtin/code fork
+  \draw[arr] (call) -- (bifork);
+
+  % On-core BI_* completes inside CALL then exits to FETCH
+  \node[exitlab] (e2) at (8.0, -0.75) {BI\_* / CODE done $\to$ F};
+  \draw[arr] (bifork.east) -- node[lab,above]{on-core / frame} (e2);
+
+  % Trap entries
+  \draw[arr] (cont) -- node[lab,left]{container grow} (tm);
+  \draw[arr] (bifork.south) --
+    node[lab,right,align=left]{\texttt{PY\_TRAP\_BUILTIN\_CALL}} (tm.east);
+  \draw[arr] (tm) -- node[lab,above]{req ready} (tw);
+  \draw[arr] (tw) -- node[lab,above]{FATAL} (hlt);
+  \draw[arr, densely dashed] (hlt) to[loop below] node[lab]{freeze} (hlt);
+
+  % Other exit tags
+  \node[exitlab, left=0.25cm of cont] (e1) {CP\_DONE $\to$ F};
+  \node[exitlab, right=0.25cm of ret] (e3) {RET\_DONE $\to$ F};
+  \node[exitlab, below=0.28cm of tw] (e4) {COMPLETED/RETRY $\to$ F};
+  \draw[arr, densely dashed, color=pyborder!70] (cont.west) -- (e1.east);
+  \draw[arr, densely dashed, color=pyborder!70] (ret.east) -- (e3.west);
+  \draw[arr, densely dashed, color=pyborder!70] (tw.south) -- (e4.north);
+
+  \node[note] at (0.9, -2.35)
+    {F $=$ \texttt{S\_FETCH}\\any \texttt{pycore\_trap} $\Rightarrow$ \texttt{S\_HALT}};
+
+\end{tikzpicture}%
+}
+\caption{PyCore top-level control FSM (\texttt{state\_r}).
+Solid arrows are local control transfers; dashed tags return to \texttt{S\_FETCH}.
+Inside \texttt{S\_CALL}, \texttt{CODE\_OBJECT} takes the frame path and
+\texttt{OBK\_BUILTIN} either completes on-core (\texttt{BI\_*}) or raises
+\texttt{PY\_TRAP\_BUILTIN\_CALL} into the ExCore marshal/wait path
+(e.g.\ \texttt{print}).}
+\label{fig:core-fsm}
+\end{figure}
+
+\paragraph{Staging roles.}
+\begin{center}
+\small
+\begin{tabular}{@{}llp{0.55\textwidth}@{}}
+\toprule
+State & Enc & Role \\
+\midrule
+\texttt{S\_BOOT} & 9 & Walk boot record; latch globals/builtins; enter fetch. \\
+\texttt{S\_FETCH} & 0 & \texttt{pycore\_fetch}: fold \texttt{EXTENDED\_ARG}, skip \texttt{CACHE}. \\
+\texttt{S\_DECODE} & 1 & Drive RF read addresses; latch operands. \\
+\texttt{S\_EXEC} & 2 & Tag-routed ALU/FPU/branch; hold on multi-cycle units. \\
+\texttt{S\_MEM} & 3 & PTR load/store via \texttt{pycore\_mem\_stage}. \\
+\texttt{S\_WB} & 4 & RF write + TOS update; redirect on taken branch. \\
+\texttt{S\_CONTAINER} & 8 & Heap ops, names/consts, attr, iter, raise; own TOS. \\
+\texttt{S\_CALL} & 6 & Binder + frame push; phase~13 builtin fork (\texttt{BI\_*} or trap). \\
+\texttt{S\_RETURN} & 7 & Frame pop; reload caller \texttt{co\_consts}/\texttt{co\_names}. \\
+\texttt{S\_TRAP\_MARSHAL} & 10 & Assert \texttt{trap\_req}; freeze RF/dmem. \\
+\texttt{S\_TRAP\_WAIT} & 11 & Apply \texttt{trap\_res}; COMPLETED/RETRY$\to$fetch, FATAL$\to$halt. \\
+\texttt{S\_HALT} & 5 & Terminal freeze on any fatal trap. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Routing rules that matter for the paper.}
+\begin{itemize}[leftmargin=1.2em,itemsep=0.2em]
+  \item \textbf{Container bypass.}
+        \texttt{route\_container} (decode \texttt{is\_container}, or list
+        \texttt{NB\_INPLACE\_ADD}) leaves \texttt{S\_EXEC} for
+        \texttt{S\_CONTAINER} and never visits \texttt{S\_MEM}/\texttt{S\_WB}.
+  \item \textbf{Call after writeback.}
+        Plain \texttt{CALL*} / \texttt{RETURN\_VALUE} still take
+        \texttt{S\_WB}, then enter \texttt{S\_CALL} or \texttt{S\_RETURN}.
+  \item \textbf{Builtin fork (phase 13).}
+        In \texttt{S\_CALL}, an \texttt{OBK\_BUILTIN} handle either runs an
+        on-core \texttt{BI\_*} fast path (\texttt{LEN}, \texttt{ORD},
+        \texttt{CHR}, \texttt{RANGE}, \texttt{SET}, \ldots) and exits
+        \texttt{CALL\_DONE}$\to$\texttt{S\_FETCH}, or raises
+        \texttt{PY\_TRAP\_BUILTIN\_CALL} (e.g.\ \texttt{print}) into
+        \texttt{S\_TRAP\_MARSHAL}$\to$ExCore.
+        ROM \texttt{CODE\_OBJECT} builtins take the normal frame path instead.
+  \item \textbf{Recoverable handoff.}
+        A container or builtin arm sets \texttt{trap\_marshal\_pending\_r}
+        before its done phase; exit goes to \texttt{S\_TRAP\_MARSHAL} instead
+        of \texttt{S\_FETCH}.
+  \item \textbf{Protocol pause/resume.}
+        \texttt{GET\_ITER}/\texttt{FOR\_ITER} on \texttt{OBJECT} set
+        \texttt{container\_call\_pending\_r} $\to$ \texttt{S\_CALL}; the outer
+        return restores container context instead of fetching.
+\end{itemize}
+
+% =============================================================================
+\section{Component digests}
+% =============================================================================
+
+The digests below are intentionally short: enough for a paper outline, not a
+replacement for \texttt{pycore/docs/architecture.md} or sibling systems notes.
+
+\subsection{Tagged bytecode ISA}
+Every architectural value is $\{\mathrm{tag}[3{:}0],\mathrm{value}[127{:}0]\}$.
+Tags cover CONTROL, INT (i64 fast path), FLOAT, COMPLEX, BOOL, ITER, TUPLE,
+SHORT/LONG\_STR, MUT\_COLLEC, OBJECT, RANGE, CODE\_OBJECT, TOMBSTONE, and
+reserved slots.
+Instruction memory stores CPython code units one-for-one (including CACHE and
+EXTENDED\_ARG); fetch folds them at runtime.
+This is the ISA claim: Python bytecode is the machine language.
+
+\subsection{PyCore microarchitecture}
+One instruction in flight; no forwarding or hazard logic.
+Figure~\ref{fig:core-fsm} shows the top-level \texttt{state\_r} staging.
+Specialized states absorb language density: \texttt{S\_CONTAINER} for heap ops,
+\texttt{S\_CALL}/\texttt{S\_RETURN} for frames, \texttt{S\_TRAP\_MARSHAL}/
+\texttt{S\_TRAP\_WAIT} for ExCore handoff, \texttt{S\_BOOT} for the boot record.
+Harvard: private imem (ROM+RAM), shared dmem bank tiled for retargeting.
+
+\subsection{Tag-routed execute fabric}
+\texttt{pycore\_tag\_decode} selects promotion and unit; unsafe tags trap rather
+than inventing a full object protocol in the ALU.
+Largest intentional semantic deviation: INT overflow wraps at 64~bits.
+
+\subsection{Object \& container model}
+Bump-pointer heap; LIST/DICT/SET use stable object headers and relocatable
+tables/buffers (CPython-shaped split).
+\texttt{OBJECT} kinds carry \texttt{ob\_head} (INSTANCE, TYPE, BOUND\_METHOD,
+BUILTIN, EXCEPTION, \ldots).
+Bulk ops honor a contamination bit: uncontaminated paths may trap to ExCore;
+contaminated (OBJECT-key) paths stay on PyCore.
+
+\subsection{Asymmetric two-core design}
+ExCore is not a second Python hart: it is an RV32 firmware engine for
+recoverable traps (list grow/extend/delete, dict/set grow and update, builtins
+such as print via console, slice helpers, \ldots).
+Fatal traps still halt via \texttt{pycore\_trap}.
+Private instruction memories; only the data heap is shared.
+
+\subsection{Ownership \& completion protocol}
+On \texttt{trap\_req} complete, grant flips to ExCore; on \texttt{trap\_res}
+complete, grant returns to PyCore.
+PyCore is frozen (no dmem/RF activity) while ExCore owns memory.
+Handlers answer \textbf{COMPLETED} after finishing the semantic effect
+(e.g.\ grow \emph{and} append), avoiding a second ownership round-trip.
+RETRY exists for future ``emulate from scratch'' handlers; live handlers
+complete.
+
+\subsection{Container co-design}
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+On PyCore & On ExCore \\
+\midrule
+Hash + rich equality & List grow / extend / mid-delete \\
+Open-addressed probe / contains & Dict grow + rehash + store \\
+Spare-capacity append; last-el delete & Set grow / update \\
+Empty LIST\_EXTEND no-op & Dict update / merge (uncontaminated) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{CALL FSM \& frames}
+Documented in \texttt{docs/paper/systems/call\_fsm.tex}.
+Shared binder unifies positional, keyword, and starred shapes against
+\texttt{co\_varnames} / defaults / \texttt{*args} / \texttt{**kwargs}.
+Frames are simple dmem push/pop descriptors (ring-buffer spill remains attic).
+
+\subsection{Exceptions \& iteration}
+Code objects carry a raw \texttt{co\_exceptiontable} field; host tooling parses
+CPython varints to slot ranges.
+\texttt{GET\_ITER}/\texttt{FOR\_ITER} cover native containers and OBJECT
+protocol via pause, \texttt{S\_CALL}, then resume; \texttt{StopIteration}
+exhausts without a user \texttt{try}.
+
+\subsection{Image fidelity \& tooling}
+``Identical to \texttt{compile()}'' means same bytecode units, consts, names,
+and nested code objects in tagged encoding---not byte-exact CPython C structs.
+Deprecated \texttt{preprocess.py} is fixture-only; production is image-boot.
+
+\subsection{Firmware builtins \& ROM}
+Boot builtins dict mixes \texttt{OBK\_BUILTIN} hardware ids and ROM
+\texttt{CODE\_OBJECT}s under \texttt{pycore\_firmware/builtins}.
+LEGB ends at builtins; public \texttt{print} is ROM wrapping
+\texttt{\_bi\_print} / console MMIO.
+
+\subsection{Roadmap: toward self-hosting}
+Plan~1: relocatable code RAM, Python BIOS, \texttt{exec}/\texttt{eval} on
+precompiled code, on-device tokenizer (PyPy DFA port).
+Plan~2: LL(1) parser, AST, symbol table, codegen, assembler, bootstrap fixpoint.
+Paper discussion should separate \emph{host independence} from
+\emph{language completeness}.
+
+% =============================================================================
+\section{Suggested paper narrative flow}
+% =============================================================================
+
+\begin{enumerate}[leftmargin=1.4em,itemsep=0.3em]
+  \item Motivate bytecode-as-ISA and the cost of full object-protocol silicon.
+  \item Present the tagged ISA and image-fidelity contract (sections 1, 10).
+  \item Walk the PyCore microarchitecture and execute fabric (sections 2, 3).
+  \item Introduce the object/container model as the workload that forces
+        asymmetry (section 4).
+  \item Reveal ExCore, ownership, and the completion contract (sections 5--7) as
+        the systems contribution.
+  \item Deep-dive CALL and exceptions/iteration as language-faithfulness
+        case studies (sections 8, 9).
+  \item Close with builtins/ROM and the self-hosting roadmap (sections 11, 12),
+        then evaluation (CPO, trap rates, two-core differentials).
+\end{enumerate}
+
+% =============================================================================
+\section{Reference map}
+% =============================================================================
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{0.55\textwidth}@{}}
+\toprule
+Artifact & Role \\
+\midrule
+\texttt{pycore/docs/architecture.md} & Living two-core architecture \\
+\texttt{pycore/docs/tags.md} & Tag payloads \\
+\texttt{pycore/docs/object\_model.md} & OBJECT / builtins decisions \\
+\texttt{pycore/docs/dict\_excore.md}, \texttt{set\_excore.md} & Container split \\
+\texttt{excore/docs/mmio\_map.md} & Mailbox / slot / console \\
+\texttt{docs/paper/systems/call\_fsm.tex} & CALL subsystem note \\
+\texttt{planning/code\_loading\_bios\_tokenizer\_plan.md} & Plan~1 \\
+\texttt{planning/native\_compiler\_plan.md} & Plan~2 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}
