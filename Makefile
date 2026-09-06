@@ -94,6 +94,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-unary-invert-float-trap \
 	pycore-img-unpack-tuple pycore-img-unpack-list pycore-img-unpack-len-trap \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
+	pycore-img-list-repeat pycore-img-list-repeat-jaro \
+	pycore-img-list-repeat-type-trap \
 	pycore-img-str-eq pycore-img-str-lt-trap \
 	pycore-img-str-subscr pycore-img-str-subscr-long \
 	pycore-img-exec-all \
@@ -212,6 +214,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-try-finally pycore-img-try-except-as pycore-img-exc-all \
 	pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
+	pycore-img-list-repeat pycore-img-list-repeat-jaro \
+	pycore-img-list-repeat-type-trap \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
@@ -808,6 +812,15 @@ pycore-img-unpack-ex:
 pycore-img-list-to-tuple: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,list_to_tuple,100000)
 
+pycore-img-list-repeat:
+	$(call PYCORE_IMAGE_RUN,list_repeat,100000)
+
+pycore-img-list-repeat-jaro:
+	$(call PYCORE_IMAGE_RUN,list_repeat_jaro,100000)
+
+pycore-img-list-repeat-type-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,list_repeat_type_trap,1,50000)
+
 pycore-img-str-eq:
 	$(call PYCORE_IMAGE_RUN,str_eq,50000)
 
@@ -1007,6 +1020,9 @@ pycore-img-scalar-all: \
 	pycore-img-unpack-len-trap \
 	pycore-img-unpack-ex \
 	pycore-img-list-to-tuple \
+	pycore-img-list-repeat \
+	pycore-img-list-repeat-jaro \
+	pycore-img-list-repeat-type-trap \
 	pycore-img-str-eq \
 	pycore-img-str-lt \
 	pycore-img-format-simple \
@@ -1658,6 +1674,8 @@ pycore-img-attr-all: \
 	pycore-img-try-finally pycore-img-try-except-as pycore-img-exc-all \
 	pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
+	pycore-img-list-repeat pycore-img-list-repeat-jaro \
+	pycore-img-list-repeat-type-trap \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \

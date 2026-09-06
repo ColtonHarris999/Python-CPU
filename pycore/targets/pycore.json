@@ -1392,7 +1392,7 @@
           ]
         }
       },
-      "note": "3.14 routes subscript and matmul THROUGH BINARY_OP: oparg 26 (NB_SUBSCR, x[i]) and 4/17 (NB_MATRIX_MULTIPLY @) resolve to hw_class OBJECT (suppressed, not a missing-ALU gap); opargs in class_by_arg.ALUN -> ALUN; all other supported opargs -> ALU1."
+      "note": "3.14 routes subscript and matmul THROUGH BINARY_OP: oparg 26 (NB_SUBSCR, x[i]) and 4/17 (NB_MATRIX_MULTIPLY @) resolve to hw_class OBJECT (suppressed, not a missing-ALU gap); opargs in class_by_arg.ALUN -> ALUN; all other supported opargs -> ALU1. LIST/TUPLE * INT/BOOL (opargs 5/18, either side) is CONT_SEQ_REPEAT on-core (new sequence; count<=0 empty)."
     },
     "UNARY_NOT": {
       "support": "execute",
