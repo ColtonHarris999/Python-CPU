@@ -1,6 +1,8 @@
-"""Stringify INT/BOOL/None; STR identity is a tag-probe blocker.
+"""Host/reference stringify for INT/BOOL/None.
 
-``_str_int`` implements signed decimal formatting with string concat.
+Hardware CALL on the seeded ``str`` ``OBK_TYPE`` (``OB_FLAG_STR_TYPE``)
+owns the builtins-dict entry: STR identity, INT decimal SHORT_STR, and
+BOOL/None literals. This body is not ROM-seeded (no tag probe).
 """
 
 

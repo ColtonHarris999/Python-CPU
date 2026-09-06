@@ -194,6 +194,48 @@ class RomFirmwareSeedTest(unittest.TestCase):
         )
         self.assertTrue(any(h[0] == TAG_CODE_OBJECT for _, h in rom_pairs))
 
+    def test_int_type_flagged_for_call_convert(self) -> None:
+        from encoding import (
+            OB_FLAG_INT_TYPE,
+            OBK_TYPE,
+            ob_flags,
+            ob_kind,
+        )
+
+        self.assertEqual(OB_FLAG_INT_TYPE, 2)
+        serializer = image_from_source._ImageSerializer()
+        image_from_source.build_builtins_dict(serializer)
+        found = False
+        for addr, head in serializer.heap.words.items():
+            if ob_kind(head) != OBK_TYPE:
+                continue
+            if ob_flags(head) & OB_FLAG_INT_TYPE:
+                found = True
+                self.assertEqual(ob_flags(head) & OB_FLAG_INT_TYPE, OB_FLAG_INT_TYPE)
+                break
+        self.assertTrue(found, "OBK_TYPE with OB_FLAG_INT_TYPE missing from builtins heap")
+
+    def test_str_type_flagged_for_call_convert(self) -> None:
+        from encoding import (
+            OB_FLAG_STR_TYPE,
+            OBK_TYPE,
+            ob_flags,
+            ob_kind,
+        )
+
+        self.assertEqual(OB_FLAG_STR_TYPE, 4)
+        serializer = image_from_source._ImageSerializer()
+        image_from_source.build_builtins_dict(serializer)
+        found = False
+        for addr, head in serializer.heap.words.items():
+            if ob_kind(head) != OBK_TYPE:
+                continue
+            if ob_flags(head) & OB_FLAG_STR_TYPE:
+                found = True
+                self.assertEqual(ob_flags(head) & OB_FLAG_STR_TYPE, OB_FLAG_STR_TYPE)
+                break
+        self.assertTrue(found, "OBK_TYPE with OB_FLAG_STR_TYPE missing from builtins heap")
+
     def test_wave3_image_programs_build(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1] / "programs"
         for name in (
@@ -205,6 +247,8 @@ class RomFirmwareSeedTest(unittest.TestCase):
             "img_firmware_filter_pred.py",
             "img_firmware_attr_helpers.py",
             "img_firmware_isinstance.py",
+            "img_firmware_min_varargs.py",
+            "img_builtin_str.py",
             "img_print_basic.py",
             "img_print_sep_end.py",
             "img_print_star_kw.py",
@@ -262,6 +306,11 @@ class RomFirmwareSemanticsTest(unittest.TestCase):
         self.assertEqual(round_(5), 5.0)
         self.assertEqual(min_(9, 4), 4)
         self.assertEqual(min_([3, 1, 2]), 1)
+        self.assertEqual(min_(8, 3, 5), 3)
+        self.assertEqual(min_(7, 9, 2, 8), 2)
+        self.assertEqual(min_(1, 1, 4), 1)
+        with self.assertRaises(TypeError):
+            min_()
 
     def test_string_helpers(self) -> None:
         bin_ = _load_firmware("bin")
@@ -315,6 +364,7 @@ WAVE3_PROGRAM_GOLDENS = {
     "img_firmware_sorted_kw.py": 460,
     "img_firmware_filter_pred.py": 9,
     "img_firmware_tuple_empty.py": 101,
+    "img_firmware_min_varargs.py": 10,
 }
 
 

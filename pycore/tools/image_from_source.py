@@ -37,6 +37,8 @@ from encoding import (
     BI_TO_BYTES,
     HEAP_BASE,
     OB_FLAG_EXC_TYPE,
+    OB_FLAG_INT_TYPE,
+    OB_FLAG_STR_TYPE,
     STRING_MEM_BYTES,
     TAG_INT,
     VAL_MASK,
@@ -1216,7 +1218,9 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
       _bi_heap_mark / _bi_heap_release / _bi_code_mark / _bi_code_release
         → OBK_BUILTIN
       _bi_exec_globals → OBK_BUILTIN (Plan 1 P4)
-      int → OBK_TYPE whose tp_dict holds from_bytes / to_bytes builtins
+      int → OBK_TYPE (OB_FLAG_INT_TYPE) whose tp_dict holds from_bytes / to_bytes;
+        CALL converts INT/BOOL/decimal SHORT_STR instead of INSTANCE construction
+      str → OBK_TYPE (OB_FLAG_STR_TYPE); CALL stringifies STR/INT/BOOL/None
       Wave A exception types → OBK_TYPE with documented tp_base + OB_FLAG_EXC_TYPE
         (includes SyntaxError so Plan 1 P7 tests still LOAD_GLOBAL)
       ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
@@ -1238,6 +1242,11 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     int_type = heap.alloc_type(
         tag_constant("int", string_heap),
         tp_dict=int_tp_dict,
+        flags=OB_FLAG_INT_TYPE,
+    )
+    str_type = heap.alloc_type(
+        tag_constant("str", string_heap),
+        flags=OB_FLAG_STR_TYPE,
     )
     exc_handles: dict[str, Tagged] = {}
     for name, parent in WAVE_A_EXCEPTION_TYPES:
@@ -1282,6 +1291,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
             heap.alloc_builtin(BI_EXEC_GLOBALS),
         ),
         (tag_constant("int", string_heap), int_type),
+        (tag_constant("str", string_heap), str_type),
     ]
     pairs.extend(
         (tag_constant(name, string_heap), exc_handles[name])

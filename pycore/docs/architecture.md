@@ -516,6 +516,12 @@ Builtin **CALL** uses the same LEGB load to obtain a callable, then:
   known tags). `BI_LEN` covers LIST/TUPLE/DICT/SET/SHORT_STR/LONG_STR/inline
   RANGE; on `OBK_INSTANCE` it probes the type's own `tp_dict` for `__len__`
   and runs that `CODE_OBJECT` as a method (miss → `PY_TRAP_ATTR_ERROR`).
+- `OBJECT`/`OBK_TYPE` with `OB_FLAG_INT_TYPE` → `int()` conversion (`INT`/`BOOL`
+  identity, decimal `SHORT_STR`; argc 0 → `0`; else `TYPE`). `from_bytes` /
+  `to_bytes` remain on that type's `tp_dict`.
+- `OBJECT`/`OBK_TYPE` with `OB_FLAG_STR_TYPE` → `str()` conversion (`STR`
+  identity, `INT` decimal `SHORT_STR`, `BOOL`/`None` literals; argc 0 → `""`;
+  else `TYPE`).
 
 Firmware pure-Python under `pycore_firmware/builtins/` is the slow / miss
 path companion to those `BI_*` entries, not a replacement for header reads.
