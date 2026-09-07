@@ -56,6 +56,9 @@
     localparam logic [5:0] CONT_FORMAT_SIMPLE = 6'd46;
     localparam logic [5:0] CONT_CONVERT_VALUE = 6'd47;
     localparam logic [5:0] CONT_BUILD_STRING  = 6'd48;
+    // BINARY_OP multiply: LIST/TUPLE * INT/BOOL (or commuted). Allocates a
+    // new sequence; negative/zero count → empty result.
+    localparam logic [5:0] CONT_SEQ_REPEAT    = 6'd49;
 
     // Container phases (stored in container_phase_r, 6-bit).
     //

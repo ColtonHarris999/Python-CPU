@@ -559,6 +559,7 @@ module pycore_core #(
     logic        dec_is_return;
     logic        dec_is_container;
     logic        binary_list_iadd;
+    logic        binary_seq_mul;
     logic        route_container;
     logic [2:0]  dec_mem_op;
     logic        dec_illegal;
@@ -713,7 +714,15 @@ module pycore_core #(
                               (cur_arg_r[7:0] == 8'd13) &&
                               pycore_is_list(
                                   pycore_get_tag(rs1_r), pycore_get_val(rs1_r));
-    assign route_container = dec_is_container || binary_list_iadd;
+    // LIST/TUPLE * INT/BOOL (or commuted) — sequence repeat, not ALU mul.
+    assign binary_seq_mul = (cur_opcode_r == PY_OP_BINARY_OP) &&
+                            ((cur_arg_r[7:0] == PY_NBARG_MULTIPLY) ||
+                             (cur_arg_r[7:0] == PY_NBARG_INPLACE_MULTIPLY)) &&
+                            pycore_is_seq_repeat(
+                                pycore_get_tag(rs1_r), pycore_get_val(rs1_r),
+                                pycore_get_tag(rs2_r), pycore_get_val(rs2_r));
+    assign route_container = dec_is_container || binary_list_iadd ||
+                             binary_seq_mul;
     assign is_alu = ((cur_opcode_r == PY_OP_BINARY_OP) && !route_container) ||
                     (cur_opcode_r == PY_OP_COMPARE_OP) ||
                     (cur_opcode_r == PY_OP_UNARY_INVERT) ||
@@ -1399,6 +1408,35 @@ module pycore_core #(
     assign cont_tuple_size_rs2 = pycore_tuple_size(cont_rs2_val);
     assign cont_tuple_addr_rs2 = cont_rs2_val[31:0];
     assign cont_ext_hdr_len    = pycore_list_length(container_list_hdr_r);
+    // CONT_SEQ_REPEAT: identify the sequence operand vs the INT/BOOL count.
+    logic        cont_repeat_seq_is_rs1;
+    logic [3:0]  cont_repeat_src_tag;
+    logic [127:0] cont_repeat_src_val;
+    logic [31:0] cont_repeat_src_addr;
+    logic signed [63:0] cont_repeat_count;
+    logic [63:0] cont_repeat_tuple_size;
+    logic [31:0] cont_repeat_alloc;
+    assign cont_repeat_seq_is_rs1 = pycore_is_seq(cont_rs1_tag, cont_rs1_val);
+    assign cont_repeat_src_tag  = cont_repeat_seq_is_rs1 ? cont_rs1_tag
+                                                        : cont_rs2_tag;
+    assign cont_repeat_src_val  = cont_repeat_seq_is_rs1 ? cont_rs1_val
+                                                        : cont_rs2_val;
+    assign cont_repeat_src_addr = cont_repeat_seq_is_rs1 ? cont_rs1_addr
+                                                        : cont_rs2_addr;
+    assign cont_repeat_count =
+        cont_repeat_seq_is_rs1
+            ? ((cont_rs2_tag == PY_TAG_BOOL)
+                   ? $signed({63'b0, cont_rs2_val[0]})
+                   : $signed(cont_rs2_val[63:0]))
+            : ((cont_rs1_tag == PY_TAG_BOOL)
+                   ? $signed({63'b0, cont_rs1_val[0]})
+                   : $signed(cont_rs1_val[63:0]));
+    assign cont_repeat_tuple_size = pycore_tuple_size(cont_repeat_src_val);
+    assign cont_repeat_alloc = container_src_is_tuple_r
+        ? pycore_tuple_alloc_bytes(container_src_slots_r)
+        : (pycore_list_obj_bytes() +
+           ((container_src_slots_r == 32'd0) ? 32'd0
+            : pycore_list_buf_bytes(container_src_slots_r)));
     assign cont_rs1_tag   = pycore_get_tag(rs1_r);
     assign cont_rs2_tag   = pycore_get_tag(rs2_r);
     assign cont_rf_rs1_val = pycore_get_val(rf_rs1);
@@ -2102,6 +2140,8 @@ module pycore_core #(
                                 container_op_r <= CONT_TO_BOOL;
                             end else if (cur_opcode_r == PY_OP_CALL_INTRINSIC_1) begin
                                 container_op_r <= CONT_LIST_TO_TUPLE;
+                            end else if (binary_seq_mul) begin
+                                container_op_r <= CONT_SEQ_REPEAT;
                             end else if (cur_opcode_r == PY_OP_BINARY_OP) begin
                                 // BINARY_OP/NB_SUBSCR: rs1 = container.
                                 if (pycore_is_dict(cont_rs1_tag, cont_rs1_val))

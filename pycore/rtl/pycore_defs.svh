@@ -473,6 +473,10 @@ localparam logic [7:0] PY_OP_DELETE_ATTR      = 8'd61;
 // BINARY_OP oparg for subscript read (x[k]); not a standalone opcode.
 //   python3.14 -c "import opcode; print([(i,e) for i,e in enumerate(opcode._nb_ops) if 'SUBSCR' in e[0]])"
 localparam logic [7:0] PY_NBARG_SUBSCR         = 8'd26;
+// BINARY_OP multiply / inplace multiply (list/tuple * int sequence repeat).
+//   python3.14 -c "import opcode; print(opcode._nb_ops[5], opcode._nb_ops[18])"
+localparam logic [7:0] PY_NBARG_MULTIPLY          = 8'd5;
+localparam logic [7:0] PY_NBARG_INPLACE_MULTIPLY  = 8'd18;
 
 // Inline-cache unit counts for relative-jump target computation (3.14.6).
 localparam logic [7:0] PY_CACHE_JUMP_FORWARD         = 8'd0;
@@ -655,6 +659,32 @@ function automatic logic pycore_is_list(
 );
     begin
         pycore_is_list = pycore_is_mut_kind(tag, value, PY_MUT_LIST);
+    end
+endfunction
+
+function automatic logic pycore_is_seq(
+    input logic [3:0] tag, input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_is_seq = pycore_is_list(tag, value) || (tag == PY_TAG_TUPLE);
+    end
+endfunction
+
+function automatic logic pycore_is_repeat_count(input logic [3:0] tag);
+    begin
+        pycore_is_repeat_count = (tag == PY_TAG_INT) || (tag == PY_TAG_BOOL);
+    end
+endfunction
+
+// LIST/TUPLE * INT/BOOL or INT/BOOL * LIST/TUPLE — CPython sequence repeat.
+function automatic logic pycore_is_seq_repeat(
+    input logic [3:0] tag_a, input logic [PYCORE_VAL_WIDTH-1:0] val_a,
+    input logic [3:0] tag_b, input logic [PYCORE_VAL_WIDTH-1:0] val_b
+);
+    begin
+        pycore_is_seq_repeat =
+            (pycore_is_seq(tag_a, val_a) && pycore_is_repeat_count(tag_b)) ||
+            (pycore_is_repeat_count(tag_a) && pycore_is_seq(tag_b, val_b));
     end
 endfunction
 

@@ -624,6 +624,17 @@ memory-ownership handoff plus `O(length)` element copy in firmware,
 amortized `O(1)` across appends because the excore doubles capacity on
 every grow.
 
+#### Sequence repeat (`LIST`/`TUPLE` * `INT`)
+
+`BINARY_OP` multiply (oparg 5) and inplace multiply (oparg 18) with a
+`LIST`/`TUPLE` and an `INT`/`BOOL` (either side) route to `CONT_SEQ_REPEAT`
+instead of the ALU. The core allocates a new sequence of length
+`len(src) * count` and copies the source elements that many times. Count
+`<= 0` yields an empty result (CPython: `[1] * -1 == []`). Result length
+that does not fit in 31 bits, or an allocation past `PYCORE_HEAP_LIMIT`,
+raises `PY_TRAP_MEM_FAULT`. `STR * INT` still type-traps. Inplace
+`lst *= n` also allocates a new list (aliases of `lst` are not mutated).
+
 #### LIST/TUPLE/RANGE/STR/DICT/SET + object iteration
 
 `GET_ITER` accepts LIST, TUPLE, STR, DICT, SET, and `PY_TAG_RANGE` handles and
