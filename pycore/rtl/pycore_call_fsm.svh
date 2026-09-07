@@ -293,7 +293,8 @@
                                                   PYCORE_OB_FLAG_INT_TYPE) != 32'd0) begin
                                         // Seeded `int` converts instead of
                                         // INSTANCE construction. argc>1
-                                        // (base= form) remains TYPE.
+                                        // (base= form) remains TYPE. FLOAT
+                                        // truncates toward zero.
                                         if (cur_arg_r[15:0] > 16'd1) begin
                                             container_type_trap_r <= 1'b1;
                                         end else if (cur_arg_r[15:0] == 16'd0) begin
@@ -630,12 +631,52 @@
                                     call_sub_r          <= 6'd5;
                                 end
                                 6'd5: begin
-                                    // arg0 in return_wb_data_r, arg1 in rf_rs1
-                                    if ((pycore_get_tag(return_wb_data_r) != PY_TAG_INT &&
-                                         pycore_get_tag(return_wb_data_r) != PY_TAG_BOOL) ||
-                                        (cont_rf_rs1_tag != PY_TAG_INT &&
-                                         cont_rf_rs1_tag != PY_TAG_BOOL)) begin
+                                    // arg0 in return_wb_data_r, arg1 in rf_rs1.
+                                    // INT/BOOL keep the integer path. Mixed /
+                                    // FLOAT uses CPython compare and returns
+                                    // the original winning entry (first on tie).
+                                    if (!pycore_is_real_numeric_tag(
+                                            pycore_get_tag(return_wb_data_r)) ||
+                                        !pycore_is_real_numeric_tag(
+                                            cont_rf_rs1_tag)) begin
                                         container_type_trap_r <= 1'b1;
+                                    end else if (
+                                        (pycore_get_tag(return_wb_data_r) ==
+                                         PY_TAG_FLOAT) ||
+                                        (cont_rf_rs1_tag == PY_TAG_FLOAT)
+                                    ) begin
+                                        begin
+                                            real ra, rb;
+                                            logic [3:0] tag_a;
+                                            tag_a = pycore_get_tag(return_wb_data_r);
+                                            if (tag_a == PY_TAG_FLOAT)
+                                                ra = $bitstoreal(
+                                                    pycore_get_val(return_wb_data_r)[63:0]);
+                                            else if (tag_a == PY_TAG_BOOL)
+                                                ra = pycore_get_val(return_wb_data_r)[0]
+                                                    ? 1.0 : 0.0;
+                                            else
+                                                ra = $itor($signed(
+                                                    pycore_get_val(return_wb_data_r)[63:0]));
+                                            if (cont_rf_rs1_tag == PY_TAG_FLOAT)
+                                                rb = $bitstoreal(cont_rf_rs1_val[63:0]);
+                                            else if (cont_rf_rs1_tag == PY_TAG_BOOL)
+                                                rb = cont_rf_rs1_val[0] ? 1.0 : 0.0;
+                                            else
+                                                rb = $itor($signed(cont_rf_rs1_val[63:0]));
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                {2'b0, tos_r} - 9'd4);
+                                            container_wb_data_r <= (rb > ra)
+                                                ? pycore_make_entry(
+                                                    cont_rf_rs1_tag,
+                                                    cont_rf_rs1_val)
+                                                : return_wb_data_r;
+                                            tos_r <= RF_AW'({2'b0, tos_r} - 9'd3);
+                                            fetch_skip_r <= 1'b1;
+                                            call_phase_r <= CALL_PHASE_DONE;
+                                            call_sub_r   <= 6'd0;
+                                        end
                                     end else begin
                                         begin
                                             logic signed [127:0] a, b, m;
@@ -2144,6 +2185,28 @@
                                                 fetch_skip_r <= 1'b1;
                                                 call_sub_r   <= 6'd0;
                                                 call_phase_r <= CALL_PHASE_DONE;
+                                            end
+                                        end else if (cont_rf_rs1_tag ==
+                                                     PY_TAG_FLOAT) begin
+                                            begin
+                                                logic        f_ok;
+                                                logic [63:0] f_int;
+                                                f_ok = pycore_float_trunc_int64(
+                                                    cont_rf_rs1_val, f_int);
+                                                if (!f_ok) begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end else begin
+                                                    container_wb_we_r   <= 1'b1;
+                                                    container_wb_addr_r <=
+                                                        call_tos_base_r;
+                                                    container_wb_data_r <=
+                                                        pycore_int_entry(f_int);
+                                                    tos_r        <= call_tos_base_r
+                                                        + RF_AW'(1);
+                                                    fetch_skip_r <= 1'b1;
+                                                    call_sub_r   <= 6'd0;
+                                                    call_phase_r <= CALL_PHASE_DONE;
+                                                end
                                             end
                                         end else begin
                                             container_type_trap_r <= 1'b1;
