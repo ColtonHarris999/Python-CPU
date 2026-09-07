@@ -1268,7 +1268,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         → OBK_BUILTIN
       _bi_exec_globals → OBK_BUILTIN (Plan 1 P4)
       int → OBK_TYPE (OB_FLAG_INT_TYPE) whose tp_dict holds from_bytes / to_bytes;
-        CALL converts INT/BOOL/decimal SHORT_STR instead of INSTANCE construction
+        CALL converts INT/BOOL/FLOAT (trunc toward 0)/decimal SHORT_STR
+        instead of INSTANCE construction
       str → OBK_TYPE (OB_FLAG_STR_TYPE); CALL stringifies STR/INT/BOOL/None
       Wave A exception types → OBK_TYPE with documented tp_base + OB_FLAG_EXC_TYPE
         (includes SyntaxError so Plan 1 P7 tests still LOAD_GLOBAL)

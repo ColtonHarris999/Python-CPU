@@ -91,7 +91,8 @@ localparam logic [31:0] PY_OBK_EXCEPTION    = 32'd6;
 // OBK_EXCEPTION without walking tp_base (exceptions plan §2.4 / Track 2).
 localparam logic [31:0] PYCORE_OB_FLAG_EXC_TYPE = 32'd1;
 // OBK_TYPE ob_flags bit 1: seeded `int` type so CALL converts instead of
-// allocating an INSTANCE (INT/BOOL identity, decimal SHORT_STR parse).
+// allocating an INSTANCE (INT/BOOL identity, FLOAT truncate-toward-zero,
+// decimal SHORT_STR parse).
 localparam logic [31:0] PYCORE_OB_FLAG_INT_TYPE = 32'd2;
 // OBK_TYPE ob_flags bit 2: seeded `str` type so CALL stringifies instead of
 // allocating an INSTANCE (STR identity, INT decimal, BOOL/None literals).
@@ -1657,6 +1658,47 @@ function automatic logic pycore_float_as_int64(
                 out_int = f_sign ? (~f_mag + 64'd1) : f_mag;
                 pycore_float_as_int64 = 1'b1;
             end
+        end
+    end
+endfunction
+
+// Truncate FLOAT toward zero into signed 64-bit (CPython ``int(float)``).
+// ok=1 for finite values that fit; NaN / Inf / |x| >= 2^63 → ok=0 (TYPE).
+function automatic logic pycore_float_trunc_int64(
+    input  logic [PYCORE_VAL_WIDTH-1:0] value,
+    output logic [63:0]                 out_int
+);
+    logic        f_sign;
+    logic [10:0] f_exp;
+    logic [51:0] f_frac;
+    logic [10:0] f_uexp;
+    logic [52:0] f_sig;
+    logic [63:0] f_mag;
+    begin
+        f_sign  = value[63];
+        f_exp   = value[62:52];
+        f_frac  = value[51:0];
+        f_uexp  = f_exp - 11'd1023;
+        f_sig   = {1'b1, f_frac};
+        f_mag   = 64'd0;
+        out_int = 64'd0;
+        pycore_float_trunc_int64 = 1'b0;
+
+        if (f_exp == 11'h7FF) begin
+            // NaN / Inf
+        end else if (f_exp < 11'd1023) begin
+            // |x| < 1, including ±0 and subnormals
+            out_int = 64'd0;
+            pycore_float_trunc_int64 = 1'b1;
+        end else if (f_uexp >= 11'd63) begin
+            // Does not fit in signed 64-bit int
+        end else begin
+            if (f_uexp < 11'd52)
+                f_mag = {11'b0, f_sig} >> (11'd52 - f_uexp);
+            else
+                f_mag = {11'b0, f_sig} << (f_uexp - 11'd52);
+            out_int = f_sign ? (~f_mag + 64'd1) : f_mag;
+            pycore_float_trunc_int64 = 1'b1;
         end
     end
 endfunction
