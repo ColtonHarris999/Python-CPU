@@ -1,9 +1,10 @@
 # Plan 2 — native `compile()`: parser, AST, codegen, assembler, self-hosting
 
-**Status:** proposed
+**Status:** superseded by [`native_compiler_full_plan.md`](native_compiler_full_plan.md) (Plan 3)
 **Audience:** firmware compiler agent, bytecode agent, pycore RTL agent, tooling agent
 **Prerequisite:** [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) (Plan 1) complete
 **Supersedes:** the P7–P9 phases of `implemented/compile_exec_plan.md`
+**Working plan:** Plan 3 restates this document in full and adds the PyCPython (`vendor/pycpython`) audit, the host-oracle / firmware-port / device-runtime split, and a file-by-file disposition of the transcribed CPython compiler. Continue work from Plan 3; keep this file as the original write-up.
 
 Plan 1 gets PyCore to *boot a BIOS, load code, `exec()` it, and tokenize source*.
 Plan 2 completes the pipeline — **parse, build an AST, resolve scopes, generate

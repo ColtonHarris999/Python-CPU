@@ -2,16 +2,17 @@
 
 **Status:** in progress — P1, P3, P4, P6.1 (strings), P7, P8 shipped; P2, P5, P6.2–6.4, P9 open. See §5
 **Audience:** pycore RTL agent, bytecode agent, firmware agent, tooling agent
-**Successor:** [`native_compiler_plan.md`](native_compiler_plan.md) (Plan 2)
+**Successor:** [`native_compiler_full_plan.md`](native_compiler_full_plan.md) (Plan 3; Plan 2 is background)
 **Supersedes:** the P1–P6 phases of `implemented/compile_exec_plan.md`
 
 Plan 1 ends when PyCore can **boot a Python BIOS from ROM, load a code module
 into writable code memory, `exec()` it, and tokenize Python source on-device**.
-It deliberately stops short of parsing and code generation — those are Plan 2.
+It deliberately stops short of parsing and code generation — those are
+Plan 3 (`native_compiler_full_plan.md`).
 
-Everything Plan 1 builds is chosen so that Plan 2 (a self-hosted Python
-compiler) can be dropped on top without redesign. §14 is the explicit contract
-between the two plans.
+Everything Plan 1 builds is chosen so that Plan 3 (a self-hosted Python
+compiler derived from PyCPython) can be dropped on top without redesign.
+§14 is the explicit contract.
 
 ---
 
@@ -30,7 +31,7 @@ between the two plans.
    derived from an actual audit of PyPy's tokenizer (§3), not from guesswork.
 5. **An on-device tokenizer** that turns Python source into a token list.
 
-### 1.1 Non-goals (Plan 2 owns these)
+### 1.1 Non-goals (Plan 3 owns these)
 
 Parsing, AST construction, symbol tables, code generation, assembly,
 `compile()`, and string-form `exec` / `eval`.
@@ -48,7 +49,7 @@ Parsing, AST construction, symbol tables, code generation, assembly,
 
 The brief was: use pure-Python implementations where they exist, and reject
 anything that bottoms out in C (or any other non-Python language) at any point.
-Here is what an actual audit found. This section is shared with Plan 2.
+Here is what an actual audit found. This section is shared with Plan 3.
 
 ### 2.1 Verdict table
 
@@ -126,7 +127,7 @@ extend it whenever more is ported.
 
 ## 4. Standing requirements for every phase
 
-These are not a phase; they apply to **all** work in this plan and in Plan 2.
+These are not a phase; they apply to **all** work in this plan and in Plan 3.
 
 ### 4.1 Documentation is part of the change, not a follow-up
 
@@ -251,7 +252,7 @@ P6 is the long pole and is independent of P1–P5, so it can run in parallel.
 ## 6. P1 / P2 / P6 — the code memory revamp
 
 This is the architectural heart of Plan 1 and the part that most needs to be
-right, because Plan 2's compiler is far larger than today's whole instruction
+right, because Plan 3's compiler is far larger than today's whole instruction
 memory.
 
 ### 6.0 Sizing: why "a writable arena" is not enough
@@ -855,13 +856,14 @@ loader carries real code).
 
 ---
 
-## 14. Contract with Plan 2
+## 14. Contract with Plan 3
 
-Plan 2 builds a parser, AST, symbol table, code generator, and assembler, and
-must reach a self-hosted `compile()` with **no host involvement**. It depends on
-Plan 1 delivering exactly these, so none of them may be dropped or narrowed:
+Plan 3 builds a parser, AST, symbol table, code generator, and assembler
+from PyCPython algorithms, and must reach a self-hosted `compile()` with
+**no host involvement**. It depends on Plan 1 delivering exactly these, so
+none of them may be dropped or narrowed:
 
-| Plan 1 deliverable | Why Plan 2 needs it |
+| Plan 1 deliverable | Why Plan 3 needs it |
 | --- | --- |
 | **Code RAM ≥ 32 768 slots** (§6.0) | The compiler is 10 000–30 000 slots; it cannot live in the 8 192-slot ROM alongside the boot image |
 | **Module format + relocation** (§6.2) | The compiler ships as loadable modules, can be overlaid, and its *output* uses the same load path |
@@ -872,8 +874,8 @@ Plan 1 delivering exactly these, so none of them may be dropped or narrowed:
 | **Exceptions with messages** (§9.1) | `SyntaxError` reporting from the parser; construction landed in #74; `e.args` read is follow-up F4 ([`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md)) |
 | **`exec(code, globals)`** (§8) | Running compiled code in a fresh namespace — the payload of `compile` + `exec` |
 | **BIOS** (§7) | Orchestrates load → compile → exec, and owns marks; becomes the OS entry point |
-| **Tokenizer** (§10) | Stage 1 of the pipeline Plan 2 completes |
+| **Tokenizer** (§10) | Stage 1 of the pipeline Plan 3 completes |
 | **`_bi_code_kind`** (§8.1) | `compile` / `exec` / `eval` dispatch on string vs code object |
 
 If a Plan 1 phase must be cut, the cut has to be reflected here first, because
-each row is load-bearing for Plan 2.
+each row is load-bearing for Plan 3.

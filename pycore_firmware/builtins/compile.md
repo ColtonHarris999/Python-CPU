@@ -3,16 +3,20 @@
 Status: **blocked** (stub in `compile.py`)
 
 **Full step-by-step plan:**
-[`planning/native_compiler_plan.md`](../../planning/native_compiler_plan.md)
-(Plan 2), which depends on
+[`planning/native_compiler_full_plan.md`](../../planning/native_compiler_full_plan.md)
+(Plan 3). That plan depends on
 [`planning/code_loading_bios_tokenizer_plan.md`](../../planning/code_loading_bios_tokenizer_plan.md)
-(Plan 1) for code loading and the tokenizer. Both supersede the "Next steps" /
-"Recommendation" sections below.
+(Plan 1) for code loading and the tokenizer, and uses the vendored
+PyCPython tree (`vendor/pycpython`) as the host `compile()` oracle. Plan 2
+(`native_compiler_plan.md`) is background only. The "Next steps" /
+"Recommendation" sections below are historical.
 
 The blockers listed here remain accurate; the recommendation has changed. A
 self-hosted ROM Python compiler is now the planned route rather than host-only
 `compile()`, with the tokenizer ported from PyPy's regex-free DFA tokenizer and
-codegen written against PyCore's opcode subset.
+codegen written against PyCore's opcode subset. The host-side algorithm
+source and `compile()` oracle is now PyCPython (`vendor/pycpython`), not a
+from-scratch rewrite of PyPy's compiler.
 
 ## Goal
 

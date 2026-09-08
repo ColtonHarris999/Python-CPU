@@ -8,8 +8,8 @@ and restores the caller's globals on return (Plan 1 P4).
 A distinct ``locals=`` mapping is deferred (Plan 2); a third positional
 argument is a CALL_FILTER trap because this body only takes two formals.
 
-The string form (``exec("x = 1")``) needs runtime ``compile()`` and is Plan 2;
-see ``planning/native_compiler_plan.md`` §8.1.
+The string form (``exec("x = 1")``) needs runtime ``compile()`` and is Plan 3;
+see ``planning/native_compiler_full_plan.md`` §3.
 
 Host note: CPython code objects are not callable, so ``run_image_test.py``
 overrides this body with a stand-in bound to the test program's globals. The

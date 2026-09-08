@@ -5,8 +5,8 @@ Status: **blocked** (stub in `exec.py`)
 **Full step-by-step plan:** the code-object form is
 [`planning/code_loading_bios_tokenizer_plan.md`](../../planning/code_loading_bios_tokenizer_plan.md)
 §8 (Plan 1); the string form is
-[`planning/native_compiler_plan.md`](../../planning/native_compiler_plan.md)
-§8.1 (Plan 2).
+[`planning/native_compiler_full_plan.md`](../../planning/native_compiler_full_plan.md)
+§3 / §6.7 (Plan 3).
 
 Note that `exec(code_object)` needs **no hardware change**: `CALL` on a
 `CODE_OBJECT` in a variable already works, and `STORE_NAME` / `LOAD_NAME`

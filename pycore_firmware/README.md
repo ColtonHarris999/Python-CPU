@@ -24,6 +24,11 @@ fast paths. Bytecode and CALL work needed to finish this split is in
 | Path | Role |
 | --- | --- |
 | `builtins/` | Pure-Python miss-path / ROM builtins + `builtins.md` inventory |
+| `compiler/` | On-device compiler (Plan 3). **Not present yet.** Derived from `vendor/pycpython`; see `planning/native_compiler_full_plan.md` |
+| `THIRD_PARTY.md` | Provenance for vendored / ported compiler sources |
+
+The CPython-faithful compiler lives in the `vendor/pycpython` submodule and
+runs on the **host** only. Do not seed it into the boot image.
 
 Image tests compile these modules via `ROM_FIRMWARE_BUILTINS` in
 `pycore/tools/image_from_source.py` and seed them into the boot-record

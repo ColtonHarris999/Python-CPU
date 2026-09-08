@@ -91,7 +91,8 @@ the serialized `co_consts` tuple. Do not use the old inline three-slot
 | Image / preprocessing flow | `pycore/docs/preprocessing_breakdown.md` |
 | Dict + excore split | `pycore/docs/dict_excore.md` |
 | Sets + hash-container split | `pycore/docs/set_excore.md` |
-| Planning / historical notes | `planning/` |
+| Planning / historical notes | `planning/` (native `compile()`: `planning/native_compiler_full_plan.md`) |
+| Vendored PyCPython compiler | `vendor/pycpython` (host oracle; not executed on the hart) |
 | excore MMIO map | `excore/docs/mmio_map.md` |
 | excore RV32I subset | `excore/docs/rv32i_subset.md` |
 | Firmware build | `excore/docs/firmware_build.md` |

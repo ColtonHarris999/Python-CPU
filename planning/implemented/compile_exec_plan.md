@@ -10,7 +10,8 @@ architecture the first half has to build:
 | Plan | Scope |
 | --- | --- |
 | **[Plan 1 — code loading, BIOS, tokenizer](../code_loading_bios_tokenizer_plan.md)** | Writable/relocatable code memory, a module format and loader, a Python **BIOS** that boots first and `exec()`s a payload, `exec` / `eval` on precompiled code objects, per-frame globals, slicing and string/sequence methods, string interning, exceptions with messages, heap/code marks, and an on-device **tokenizer** |
-| **[Plan 2 — native compiler](../native_compiler_plan.md)** | Parser, AST, symbol table, code generator, assembler, code-object fabrication, `compile()` and string `exec` / `eval`, an on-device source store, and a **self-hosting bootstrap** with no host in the loop |
+| **[Plan 2 — native compiler](../native_compiler_plan.md)** | **Superseded by Plan 3.** Original parser/AST/codegen/self-hosting write-up |
+| **[Plan 3 — native compiler + PyCPython](../native_compiler_full_plan.md)** | Full remaining plan: vendored CPython-3.14 compiler as host oracle, derived firmware port, Plan 1 leftovers, code-object fabrication, `compile()` / string `exec`/`eval`, self-hosting bootstrap |
 
 Plan 1 §14 is the explicit dependency contract between them. Plan 2 §11 tracks
 what remains between "no host needed" and "all of Python runs".
