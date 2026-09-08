@@ -82,8 +82,8 @@ Three layers. Only H is possible on the current hart. F and D are the rest of th
 | `list.append` calls | **218** | `LOAD_ATTR` on `LIST` still traps; Plan 1 P6.3.2 is open |
 | `try` | 63 | Device `try/except` exists for seeded types; `finally` / `with` do not |
 | Stdlib imports | `sys`, `marshal`, `struct`, `weakref`, `unicodedata`, `warnings`, `collections`, `os` | No `import`, and several are C-backed |
-| Compiling the compiler itself | **649** deferred opcodes + **84** unsupported; **17 / 20 files fail** `validate_code_tree` | Closures (`LOAD_DEREF` 26, `MAKE_CELL` 8), `LOAD_BUILD_CLASS` 174, `IMPORT_*` 224, generators, `LOAD_SUPER_ATTR`, `with` |
-| Dynamic bytecode of those 20 files | **~115 000** code units | Code RAM is **32 768 slots**. The unmodified compiler does not fit even before the BIOS and ROM firmware |
+| Compiling the compiler itself | See [`bytecode_compile_progress.md`](bytecode_compile_progress.md): **92** opcodes; **17 / 20 files fail** `validate_code_tree` | Closures (`MAKE_CELL`, `LOAD_DEREF`, `STORE_DEREF`, `LOAD_LOCALS`), `LOAD_BUILD_CLASS`, `IMPORT_*`, generators, `assert`, `super()`, `with` |
+| Dynamic bytecode of those 20 files | **~116 000** logical units; **~309 000** raw `co_code` units including `CACHE` | Code RAM is **32 768 slots**. The unmodified compiler does not fit even before the BIOS and ROM firmware |
 
 Plan 2 §2.2 rejected PEG for frame depth, memo tuple keys, and class/decorator shape. The audit **confirms** that call. PyCPython's parser is a faithful CPython PEG: `PToken.memo` is a dict keyed by `rule_type` (an int — that part is fine), but every `_r_*` method is a Python call, `GeneratedParser(Parser)` is inheritance, and `compile.py` raises the recursion limit to **12 000**. That is the opposite of a 128-frame machine.
 
@@ -273,7 +273,7 @@ These are not required to *parse* a tiny grammar on the host. They become requir
 | Resource | Limit | Compiler pressure |
 | --- | --- | --- |
 | Code ROM | 8 192 slots / 64 KB | BIOS + ROM builtins. Compiler does **not** live here |
-| Code RAM | 32 768 slots / 256 KB | Firmware compiler + emitted code. Unmodified PyCPython ≈ 115k units → **does not fit**. Target a subset compiler of **≤ ~12 000 slots**, leaving room for output and a payload |
+| Code RAM | 32 768 slots / 256 KB | Firmware compiler + emitted code. Unmodified PyCPython is **~116k logical units / ~309k raw imem units including CACHE** → **does not fit** ([`bytecode_compile_progress.md`](bytecode_compile_progress.md)). Target a subset compiler of **≤ ~12 000 slots**, leaving room for output and a payload |
 | Heap | ~106 KB (`0x0440`–`0x1B000`) | AST node ≈ 192 B; token ≈ 128 B. Compile per statement; mark/release; "source too large" error, not OOM trap |
 | Static strings | 16 KB (`STRING_RUNTIME_BASE = 16384`) | DFA + grammar tables as strings (`ord(s[i])`). Overflow → fail the **host** image build. P2 data section can hold tables if needed |
 | Frames | `MAX_CALL_DEPTH_CORE = 128`, `RF_DEPTH = 256` | LL(1) explicit stack. PEG is banned for this reason, not taste |
@@ -289,6 +289,8 @@ These are not required to *parse* a tiny grammar on the host. They become requir
 | `.github/workflows/all-tests.yml` `submodules: true` | `actions/checkout@v4` otherwise leaves an empty directory; Docker bind-mounts the workspace |
 | `pycore/tools/pycpython_vendor.py` | Single path helper so tests and later oracles agree |
 | `pycore/tests/test_pycpython_oracle.py` | Tier-1 smoke: `compile_source` vs `compile` on a T1 snippet |
+| `pycore/tools/measure_pycpython_opcodes.py` | Regenerates [`bytecode_compile_progress.md`](bytecode_compile_progress.md): opcode mix vs `pycore.json` |
+| `pycore/tests/test_measure_pycpython_opcodes.py` | Pins full / partial / unsupported classification of that mix |
 | Optional later: `image_from_source.py --compiler pycpython` | Build images with the vendor compiler instead of builtin `compile()`; must remain 3.14.7-equivalent for supported ops |
 | `load_rom_firmware_callables()` stand-ins for `_bi_code_*` | C1–C5 host development |
 | `validate_code_tree` on every `pycore_firmware/compiler/*.py` | Firmware cannot emit deferred opcodes |
@@ -306,6 +308,7 @@ These are not required to *parse* a tiny grammar on the host. They become requir
 | `pycore_firmware/builtins/compile.md` / `exec.md` / `eval.md` | From blockers to shipped notes |
 | `pycore_firmware/README.md` | `compiler/` tree |
 | `planning/README.md` | This file is the active compiler plan |
+| `planning/bytecode_compile_progress.md` | Measured opcode mix of vendor PyCPython vs PyCore; regenerate with `measure_pycpython_opcodes.py` |
 | `vendor/README.md` | Submodule map |
 
 ---

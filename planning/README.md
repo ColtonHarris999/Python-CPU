@@ -13,6 +13,7 @@ Implemented / superseded plans live under [`implemented/`](implemented/).
 | `builtins_wave4_plan.md` | §1–§3 **done**; §4: string COMPARE_OP + FORMAT/BUILD MVP **done**; `LOAD_SUPER_ATTR` / `TO_BOOL` OBJECT remain |
 | `code_loading_bios_tokenizer_plan.md` | **In progress (Plan 1):** ROM + relocatable code RAM, BIOS, `exec`/`eval` on precompiled code objects, tokenizer |
 | `native_compiler_full_plan.md` | **Active (Plan 3):** full native `compile()` plan — PyCPython integration, Plan 1 leftovers, firmware port, C6 fabrication, bootstrap |
+| `bytecode_compile_progress.md` | **Measured:** opcode mix of vendored PyCPython vs PyCore (full / partial / unsupported) |
 | `native_compiler_plan.md` | **Superseded by Plan 3:** original parser/AST/codegen/self-hosting write-up; kept as background |
 | `exceptions_full_support_plan.md` | **Active:** T1–T5-A (except T4 oparg 2) + T8 landed; T6 / T7 / T9 / T10 remain. Tracker: `pycore/docs/exception_support.md` |
 | `exceptions_firmware_followup_plan.md` | **F1 done;** F2/F3 firmware semantics and F4 `e.args` remain queued |
