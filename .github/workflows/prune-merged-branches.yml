@@ -29,7 +29,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          KEEP_BRANCHES: main ui
+          # ui: parked sim debugger. excore: All Tests Pass ruleset still
+          # forbids deleting this merged leftover.
+          KEEP_BRANCHES: main ui excore
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run || 'false' }}
         run: |
           set -euo pipefail

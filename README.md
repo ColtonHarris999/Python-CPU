@@ -160,10 +160,12 @@ head branch.
 | --- | --- |
 | `main` | default |
 | `ui` | parked simulator/debugger UI (do not merge unless asked) |
+| `excore` | already on `main`; the All Tests Pass ruleset still lists this ref and blocks deletion |
 
 Cursor / feature branches are short-lived. The prune-merged-branches workflow
 deletes a head after its PR merges, and sweeps already-merged leftovers weekly.
 Enable **Settings → General → Automatically delete head branches** as well.
+To drop `excore`, remove `refs/heads/excore` from that ruleset, then delete the branch.
 
 ## Setup
 

@@ -10,7 +10,13 @@ from prune_merged_branches import classify
 class ClassifyTests(unittest.TestCase):
     def test_protected_wins_over_merged(self):
         self.assertEqual(
-            classify("ui", {"main", "ui"}, set(), 62, 18, "diverged"),
+            classify("excore", {"main", "ui", "excore"}, set(), 40, 10, "diverged"),
+            "keep-protected",
+        )
+
+    def test_parked_ui_wins_over_closed_pr(self):
+        self.assertEqual(
+            classify("ui", {"main", "ui", "excore"}, set(), 62, 18, "diverged"),
             "keep-protected",
         )
 

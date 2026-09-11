@@ -2,7 +2,7 @@
 """Remove remote branches that already landed on the default branch.
 
 Keeps:
-  * the default branch and any names in KEEP_BRANCHES (default: main ui)
+  * the default branch and any names in KEEP_BRANCHES (default: main ui excore)
   * heads of open pull requests
   * unmerged branches with no merged PR (parked or in-progress work)
 
@@ -12,7 +12,7 @@ Deletes:
 
 Usage:
   DRY_RUN=1 scripts/prune_merged_branches.py
-  KEEP_BRANCHES="main ui" scripts/prune_merged_branches.py
+  KEEP_BRANCHES="main ui excore" scripts/prune_merged_branches.py
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def main() -> int:
     default = gh_json(["repo", "view", "--json", "defaultBranchRef"])[
         "defaultBranchRef"
     ]["name"]
-    keep = set(os.environ.get("KEEP_BRANCHES", f"main ui {default}").split())
+    keep = set(os.environ.get("KEEP_BRANCHES", f"main ui excore {default}").split())
     keep.add(default)
 
     proc = run(
