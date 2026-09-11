@@ -1,6 +1,7 @@
 # PyCore easy long-term optimizations
 
-Post dead-code cleanup plan. Each item is intentionally small-to-medium, low-risk relative to a full microarchitecture rewrite, and valuable as the collection/excore surface grows.
+Optional RTL cleanup. Not a feature gate. Each item is small-to-medium and
+valuable as the collection/excore surface grows.
 
 ---
 

@@ -17,6 +17,9 @@ is future work.
 
 ## 1) Active image flow (`pycore/tools/image_from_source.py`)
 
+User-facing entry: `pycore/tools/pycore_cli.py` (`make lint-file` / `make run-file`).
+It calls this builder, then (for `run`) Verilator on the two-core top.
+
 Input: Python source module.
 
 Outputs:
