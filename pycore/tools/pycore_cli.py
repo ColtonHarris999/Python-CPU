@@ -78,6 +78,8 @@ Types that work
     (≤15 UTF-8 bytes inline) and longer strings, ``list``, ``tuple``, ``dict``,
     ``set``, ``range``.
   - Dict/set keys: int, bool, float, str. Negative list/tuple/str indices trap.
+  - List+list and tuple+tuple concatenation (``[1,2] + [3]``) allocate a new
+    sequence. Inplace ``lst += x`` still uses LIST_EXTEND.
 
 Builtins in the boot image
   - Native: ``len``, ``range``, ``set``, ``ord``, ``chr``, ``int()`` (int/bool
@@ -101,7 +103,8 @@ Not supported yet
   - Slice assignment; list/tuple slicing. String slicing works when the bounds
     are variables (``s[a:b]``). All-literal slices like ``s[1:]`` are folded by
     CPython to a ``slice`` constant and are rejected — bind the bounds first.
-  - Format-spec f-strings (``f"{x:.2f}"``), ``STR * INT``, negative indices.
+  - Format-spec f-strings (``f"{x:.2f}"``), ``STR * INT``, ``list + tuple``,
+    negative indices.
 
 Semantic ceilings (not lint-detectable)
   - Missing dict keys, unbound locals, and some type errors still halt with a

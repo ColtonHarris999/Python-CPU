@@ -59,6 +59,9 @@
     // BINARY_OP multiply: LIST/TUPLE * INT/BOOL (or commuted). Allocates a
     // new sequence; negative/zero count → empty result.
     localparam logic [5:0] CONT_SEQ_REPEAT    = 6'd49;
+    // BINARY_OP add: LIST+LIST or TUPLE+TUPLE. Allocates a new sequence.
+    // Mixed kinds (list+tuple) stay on the ALU and TYPE-trap.
+    localparam logic [5:0] CONT_SEQ_CONCAT    = 6'd50;
 
     // Container phases (stored in container_phase_r, 6-bit).
     //

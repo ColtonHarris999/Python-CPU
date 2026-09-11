@@ -414,6 +414,10 @@ module pycore_core #(
     logic [31:0]                   container_src_buf_r;
     logic [31:0]                   container_src_len_r;
     logic                          container_src_is_tuple_r;
+    // CONT_SEQ_CONCAT: rhs buffer/length held while the copy loop walks lhs
+    // (container_src_*), then swapped in when lhs is exhausted.
+    logic [31:0]                   container_rhs_buf_r;
+    logic [31:0]                   container_rhs_len_r;
     // UNPACK_EX: oparg = before | (after << 8).  The mode register selects
     // after-element pushes, starred-list copy, then before-element pushes.
     logic [7:0]                    container_unpack_before_r;
@@ -576,6 +580,7 @@ module pycore_core #(
     logic        dec_is_container;
     logic        binary_list_iadd;
     logic        binary_seq_mul;
+    logic        binary_seq_add;
     logic        route_container;
     logic [2:0]  dec_mem_op;
     logic        dec_illegal;
@@ -737,8 +742,15 @@ module pycore_core #(
                             pycore_is_seq_repeat(
                                 pycore_get_tag(rs1_r), pycore_get_val(rs1_r),
                                 pycore_get_tag(rs2_r), pycore_get_val(rs2_r));
+    // LIST+LIST / TUPLE+TUPLE — sequence concat, not ALU add.
+    // NB_INPLACE_ADD with a LIST lhs already uses LIST_EXTEND.
+    assign binary_seq_add = (cur_opcode_r == PY_OP_BINARY_OP) &&
+                            (cur_arg_r[7:0] == PY_NBARG_ADD) &&
+                            pycore_is_seq_concat(
+                                pycore_get_tag(rs1_r), pycore_get_val(rs1_r),
+                                pycore_get_tag(rs2_r), pycore_get_val(rs2_r));
     assign route_container = dec_is_container || binary_list_iadd ||
-                             binary_seq_mul;
+                             binary_seq_mul || binary_seq_add;
     assign is_alu = ((cur_opcode_r == PY_OP_BINARY_OP) && !route_container) ||
                     (cur_opcode_r == PY_OP_COMPARE_OP) ||
                     (cur_opcode_r == PY_OP_UNARY_INVERT) ||
@@ -1919,6 +1931,8 @@ module pycore_core #(
             container_list_grow_trap_r   <= 1'b0;
             container_src_buf_r          <= '0;
             container_src_len_r          <= '0;
+            container_rhs_buf_r          <= '0;
+            container_rhs_len_r          <= '0;
             container_slice_stop_r       <= '0;
             container_slice_armed_r      <= 1'b0;
             container_src_is_tuple_r     <= 1'b0;
@@ -2158,6 +2172,8 @@ module pycore_core #(
                                 container_op_r <= CONT_LIST_TO_TUPLE;
                             end else if (binary_seq_mul) begin
                                 container_op_r <= CONT_SEQ_REPEAT;
+                            end else if (binary_seq_add) begin
+                                container_op_r <= CONT_SEQ_CONCAT;
                             end else if (cur_opcode_r == PY_OP_BINARY_OP) begin
                                 // BINARY_OP/NB_SUBSCR: rs1 = container.
                                 if (pycore_is_dict(cont_rs1_tag, cont_rs1_val))

@@ -25,7 +25,7 @@ Shipped and regression-tested:
   MRO matching, cross-frame unwind. Firmware raises are catchable (F1); `e.args`
   is readable (F4).
 - ROM builtins (`print`, `min`/`sorted`/`map`/`zip`/…), native `ord`/`chr`/`int`/`str`/`len`.
-- List/tuple sequence repeat (`[1,2] * 3`). Writable code RAM + `exec`/`eval` on
+- List/tuple sequence repeat (`[1,2] * 3`) and concat (`[1,2] + [3]`). Writable code RAM + `exec`/`eval` on
   precompiled code objects.
 
 Still open (see `planning/master_plan.md`):

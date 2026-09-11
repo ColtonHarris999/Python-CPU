@@ -637,6 +637,14 @@ that does not fit in 31 bits, or an allocation past `PYCORE_HEAP_LIMIT`,
 raises `PY_TRAP_MEM_FAULT`. `STR * INT` still type-traps. Inplace
 `lst *= n` also allocates a new list (aliases of `lst` are not mutated).
 
+#### Sequence concat (`LIST`+`LIST` / `TUPLE`+`TUPLE`)
+
+`BINARY_OP` add (oparg 0) with two lists or two tuples routes to
+`CONT_SEQ_CONCAT` instead of the ALU. The core allocates a new sequence of
+length `len(lhs) + len(rhs)` and copies lhs then rhs. Mixed `list + tuple`
+stays on the ALU and type-traps. Inplace `lst += x` is still `LIST_EXTEND`
+(not this arm). Overflow / OOM raises `PY_TRAP_MEM_FAULT`.
+
 #### LIST/TUPLE/RANGE/STR/DICT/SET + object iteration
 
 `GET_ITER` accepts LIST, TUPLE, STR, DICT, SET, and `PY_TAG_RANGE` handles and
