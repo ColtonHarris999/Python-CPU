@@ -17,13 +17,19 @@ from encoding import (
     CODE_FIELD_CO_VARNAMES,
     CODE_FIELD_METADATA,
     MUT_DICT,
+    OB_FLAG_EXC_TYPE,
     TAG_CODE_OBJECT,
     TAG_INT,
     TAG_MUT_COLLEC,
+    TAG_OBJECT,
     TAG_RANGE,
     TAG_TUPLE,
+    VAL_MASK,
     mut_addr,
     mut_kind,
+    ob_flags,
+    obj_field_tag_addr,
+    obj_field_val_addr,
     pack_code_metadata,
     unpack_code_metadata,
 )
@@ -1053,6 +1059,96 @@ class ClassImageBuilderTest(unittest.TestCase):
             )
         msg = str(ctx.exception)
         self.assertIn("bases", msg.lower())
+
+    def test_reject_class_baseexception(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            image_from_source.build_image_from_source_text(
+                "class C(BaseException):\n"
+                "    pass\n"
+                "\n"
+                "def managed_entry():\n"
+                "    return 0\n"
+                "\n"
+                "managed_entry()\n",
+                "<class-baseexception>",
+            )
+        self.assertIn("bases", str(ctx.exception).lower())
+
+    def test_reject_multiple_bases(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            image_from_source.build_image_from_source_text(
+                "class C(Exception, ValueError):\n"
+                "    pass\n"
+                "\n"
+                "def managed_entry():\n"
+                "    return 0\n"
+                "\n"
+                "managed_entry()\n",
+                "<class-multi-bases>",
+            )
+        self.assertIn("bases", str(ctx.exception).lower())
+
+    def test_fold_exception_subclass(self) -> None:
+        src = (
+            "class MyError(Exception):\n"
+            "    pass\n"
+            "\n"
+            "def managed_entry():\n"
+            "    try:\n"
+            "        raise MyError\n"
+            "    except Exception:\n"
+            "        return 10\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        module_co = compile(src, "<class-myerror>", "exec")
+        folded, specs = image_from_source.fold_module_classes(module_co, src)
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].name, "MyError")
+        self.assertEqual(specs[0].base_name, "Exception")
+        opnames = [
+            ins.opname
+            for ins in image_from_source.iter_raw_instructions(folded)
+            if ins.opname != "CACHE"
+        ]
+        self.assertNotIn("LOAD_BUILD_CLASS", opnames)
+        result = image_from_source.build_image_from_source_text(src, "<class-myerror>")
+        self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
+        self.assertIn("MyError", result.type_refs)
+        handle = result.type_refs["MyError"]
+        addr = handle[1] & VAL_MASK
+        self.assertEqual(
+            ob_flags(result.heap.words[addr]) & OB_FLAG_EXC_TYPE, OB_FLAG_EXC_TYPE
+        )
+        base_tag = result.heap.words[obj_field_tag_addr(addr, 1)] & 0xF
+        base_val = result.heap.words[obj_field_val_addr(addr, 1)] & VAL_MASK
+        exc_handle = result.exc_handles["Exception"]
+        self.assertEqual(base_tag, TAG_OBJECT)
+        self.assertEqual(base_val, exc_handle[1] & VAL_MASK)
+
+    def test_fold_valueerror_subclass(self) -> None:
+        src = (
+            "class LevenDistError(ValueError):\n"
+            "    \"\"\"Raised on invalid input.\"\"\"\n"
+            "\n"
+            "def managed_entry():\n"
+            "    try:\n"
+            "        raise LevenDistError\n"
+            "    except ValueError:\n"
+            "        return 12\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        module_co = compile(src, "<class-leven>", "exec")
+        _folded, specs = image_from_source.fold_module_classes(module_co, src)
+        self.assertEqual(specs[0].base_name, "ValueError")
+        result = image_from_source.build_image_from_source_text(src, "<class-leven>")
+        self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
+        handle = result.type_refs["LevenDistError"]
+        addr = handle[1] & VAL_MASK
+        self.assertEqual(
+            ob_flags(result.heap.words[addr]) & OB_FLAG_EXC_TYPE, OB_FLAG_EXC_TYPE
+        )
 
     def test_reject_nested_class(self) -> None:
         with self.assertRaises(ValueError) as ctx:

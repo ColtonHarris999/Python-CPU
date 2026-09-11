@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins
 import dis
 import inspect
 import opcode as _opcode_module
@@ -228,6 +229,8 @@ class ImageBuildResult:
     string_heap: StringHeapBuilder
     code_handles: dict[int, Tagged] = field(default_factory=dict)
     entry_slots: dict[int, int] = field(default_factory=dict)
+    type_refs: dict[str, Tagged] = field(default_factory=dict)
+    exc_handles: dict[str, Tagged] = field(default_factory=dict)
     global_store_count: int = 0
     globals_slot_count: int = 0
 
@@ -416,6 +419,7 @@ class _ImageSerializer:
         self.defaults_map: dict[int, tuple] = defaults_map or {}
         self.kwdefaults_map: dict[int, dict] = kwdefaults_map or {}
         self.type_refs: dict[str, Tagged] = type_refs if type_refs is not None else {}
+        self.exc_handles: dict[str, Tagged] = {}
 
     def serialize_code(self, co: types.CodeType) -> Tagged:
         co_id = id(co)
@@ -522,7 +526,8 @@ class _ImageSerializer:
 
         Staticmethods are stored as ``OBK_BUILTIN`` with ``builtin_id=0`` and
         ``bound_self`` holding the ``CODE_OBJECT`` handle (LOAD_ATTR unwraps
-        without binding ``self``).
+        without binding ``self``). A Wave A exception ``base_name`` copies
+        that seeded handle into ``tp_base`` and sets ``OB_FLAG_EXC_TYPE``.
         """
         for spec in class_specs:
             attr_pairs: list[tuple[Tagged, Tagged]] = []
@@ -556,7 +561,19 @@ class _ImageSerializer:
                 attr_pairs, slot_count=dict_min_slots(n_keys)
             )
             tp_name = tag_constant(spec.name, self.string_heap)
-            handle = self.heap.alloc_type(tp_name, tp_dict=tp_dict)
+            flags = 0
+            tp_base = None
+            if spec.base_name is not None:
+                tp_base = self.exc_handles.get(spec.base_name)
+                if tp_base is None:
+                    raise ValueError(
+                        f"class {spec.name!r}: base {spec.base_name!r} is not "
+                        "a seeded Wave A exception type"
+                    )
+                flags = OB_FLAG_EXC_TYPE
+            handle = self.heap.alloc_type(
+                tp_name, tp_dict=tp_dict, tp_base=tp_base, flags=flags
+            )
             self.type_refs[spec.name] = handle
 
 
@@ -640,6 +657,7 @@ _OP_LOAD_CONST = _OM["LOAD_CONST"]
 _OP_PUSH_NULL = _OM["PUSH_NULL"]
 _OP_CALL = _OM["CALL"]
 _OP_STORE_NAME = _OM["STORE_NAME"]
+_OP_LOAD_NAME = _OM["LOAD_NAME"]
 _OP_LOAD_BUILD_CLASS = _OM["LOAD_BUILD_CLASS"]
 _OP_BUILD_MAP = _OM["BUILD_MAP"]
 _OP_BINARY_SLICE = _OM["BINARY_SLICE"]
@@ -668,6 +686,8 @@ class ClassBuildSpec:
     method_defaults: dict[int, tuple] = field(default_factory=dict)
     # id(code) → kwdefaults dict captured from host function.__kwdefaults__
     method_kwdefaults: dict[int, dict] = field(default_factory=dict)
+    # Single Wave A exception base (`Exception`, `ValueError`, …), or None.
+    base_name: str | None = None
 
 
 def _parse_seed_kv_tokens(tokens: list[str]) -> tuple[dict[str, str], list[tuple[str, int]]]:
@@ -1474,6 +1494,36 @@ WAVE_A_EXCEPTION_TYPES: tuple[tuple[str, str | None], ...] = (
 )
 
 
+def user_exception_base_names() -> frozenset[str]:
+    """Wave A bases allowed on folded ``class MyError(Base)`` (T10).
+
+    ``BaseException`` is excluded: user types derive from ``Exception`` or a
+    seeded child. Multiple bases stay rejected.
+    """
+    return frozenset(
+        name for name, _ in WAVE_A_EXCEPTION_TYPES if name != "BaseException"
+    )
+
+
+def alloc_wave_a_exception_types(serializer: _ImageSerializer) -> dict[str, Tagged]:
+    """Allocate Wave A ``OBK_TYPE``s once so user subclasses share the handles."""
+    if serializer.exc_handles:
+        return serializer.exc_handles
+    heap = serializer.heap
+    string_heap = serializer.string_heap
+    exc_handles: dict[str, Tagged] = {}
+    for name, parent in WAVE_A_EXCEPTION_TYPES:
+        tp_base = None if parent is None else exc_handles[parent]
+        exc_handles[name] = heap.alloc_type(
+            tag_constant(name, string_heap),
+            tp_base=tp_base,
+            flags=OB_FLAG_EXC_TYPE,
+        )
+    serializer.exc_handles = exc_handles
+    heap.write_iter_exhaust_type(exc_handles["StopIteration"])
+    return exc_handles
+
+
 def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     """Allocate the module builtins dict for the boot-record pair-2 slot.
 
@@ -1514,16 +1564,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         tag_constant("str", string_heap),
         flags=OB_FLAG_STR_TYPE,
     )
-    exc_handles: dict[str, Tagged] = {}
-    for name, parent in WAVE_A_EXCEPTION_TYPES:
-        tp_base = None if parent is None else exc_handles[parent]
-        exc_handles[name] = heap.alloc_type(
-            tag_constant(name, string_heap),
-            tp_base=tp_base,
-            flags=OB_FLAG_EXC_TYPE,
-        )
-    stop_iteration = exc_handles["StopIteration"]
-    heap.write_iter_exhaust_type(stop_iteration)
+    exc_handles = alloc_wave_a_exception_types(serializer)
     heap.write_native_method_table(seed_rom_native_methods(serializer))
     pairs: list[tuple[Tagged, Tagged]] = [
         (tag_constant("bytearray", string_heap), heap.alloc_builtin(BI_BYTEARRAY)),
@@ -1592,6 +1633,9 @@ def build_image_from_code(
         kwdefaults_map=kwdefaults_map,
         slot_base=slot_base,
     )
+    # Wave A exception types first so T10 subclasses share the same tp_base
+    # handles that land in the boot builtins dict.
+    alloc_wave_a_exception_types(serializer)
     # Method codes + OBK_TYPE must exist before module consts resolve type refs.
     serializer.alloc_class_types(class_specs)
     # Serialize module so SEED_TYPE_METHOD can resolve CODE_OBJECT handles.
@@ -1632,6 +1676,8 @@ def build_image_from_code(
         string_heap=serializer.string_heap,
         code_handles=serializer.code_handles,
         entry_slots=serializer.entry_slots,
+        type_refs=serializer.type_refs,
+        exc_handles=serializer.exc_handles,
         global_store_count=len(stored_names),
         globals_slot_count=globals_slot_count,
     )
@@ -2015,11 +2061,19 @@ def _module_level_class_nodes(source_text: str) -> dict[str, ast.ClassDef]:
 
 
 def _validate_class_ast(node: ast.ClassDef) -> None:
-    if node.bases:
+    if len(node.bases) > 1:
         raise ValueError(
-            f"class {node.name!r}: bases are not supported (only implicit object); "
-            "got bases in source"
+            f"class {node.name!r}: multiple bases are not supported"
         )
+    if node.bases:
+        base = node.bases[0]
+        allowed = user_exception_base_names()
+        if not isinstance(base, ast.Name) or base.id not in allowed:
+            raise ValueError(
+                f"class {node.name!r}: bases are not supported "
+                "(only a single Wave A exception base such as Exception "
+                "or ValueError); got bases in source"
+            )
     if node.keywords:
         raise ValueError(
             f"class {node.name!r}: metaclass/keywords are not supported"
@@ -2087,10 +2141,20 @@ _SKIP_TYPE_ATTRS = frozenset({
 
 def _class_build_spec_from_type(typ: type) -> ClassBuildSpec:
     name = typ.__name__
-    if typ.__bases__ != (object,):
+    bases = typ.__bases__
+    base_name: str | None = None
+    if bases == (object,):
+        pass
+    elif (
+        len(bases) == 1
+        and bases[0].__name__ in user_exception_base_names()
+        and bases[0] is getattr(builtins, bases[0].__name__, None)
+    ):
+        base_name = bases[0].__name__
+    else:
         raise ValueError(
-            f"class {name!r}: bases other than implicit object are not "
-            f"supported (bases={typ.__bases__!r})"
+            f"class {name!r}: bases other than implicit object or a single "
+            f"Wave A exception type are not supported (bases={typ.__bases__!r})"
         )
     if typ.__dict__.get("__slots__") is not None or "__slots__" in typ.__dict__:
         raise ValueError(f"class {name!r}: __slots__ is not supported")
@@ -2146,6 +2210,7 @@ def _class_build_spec_from_type(typ: type) -> ClassBuildSpec:
         constants=constants,
         method_defaults=method_defaults,
         method_kwdefaults=method_kwdefaults,
+        base_name=base_name,
     )
 
 
@@ -2155,6 +2220,8 @@ def _host_exec_class(node: ast.ClassDef, source_text: str) -> type:
         # Fallback: unparse the ClassDef.
         segment = ast.unparse(node)
     ns: dict[str, object] = {"__name__": "__pycore_class__"}
+    for exc_name, _ in WAVE_A_EXCEPTION_TYPES:
+        ns[exc_name] = getattr(builtins, exc_name)
     exec(compile(segment, f"<class:{node.name}>", "exec"), ns)
     typ = ns.get(node.name)
     if not isinstance(typ, type):
@@ -2196,7 +2263,8 @@ def _match_class_creation_span(
         LOAD_CONST <body code>
         MAKE_FUNCTION
         LOAD_CONST <'Name'>
-        CALL 2
+        [LOAD_NAME <Wave A exception>]   # T10: one base → CALL 3
+        CALL 2|3
         CACHE*
         STORE_NAME Name
     """
@@ -2207,7 +2275,6 @@ def _match_class_creation_span(
         if code[i] != _OP_LOAD_BUILD_CLASS:
             i += 2
             continue
-        # Fixed prefix through CALL (6 units = 12 bytes) before caches.
         if i + 12 > n:
             raise ValueError(
                 "truncated LOAD_BUILD_CLASS class-creation sequence at "
@@ -2232,18 +2299,46 @@ def _match_class_creation_span(
                 f"LOAD_BUILD_CLASS at offset {i}: expected LOAD_CONST name"
             )
         name_idx = code[i + 9]
-        if code[i + 10] != _OP_CALL:
-            # Bases/keywords insert LOAD_NAME / KW_NAMES before CALL.
+        call_off = i + 10
+        if call_off + 1 >= n:
+            raise ValueError(
+                "truncated LOAD_BUILD_CLASS class-creation sequence at "
+                f"bytecode offset {i}"
+            )
+        if code[call_off] == _OP_LOAD_NAME:
+            # Single base: LOAD_NAME then CALL 3 (T10 exception subclass).
+            if call_off + 3 >= n:
+                raise ValueError(
+                    "truncated LOAD_BUILD_CLASS class-creation sequence at "
+                    f"bytecode offset {i}"
+                )
+            if code[call_off + 2] != _OP_CALL:
+                raise ValueError(
+                    f"class creation at offset {i}: bases or keywords present "
+                    "(expected CALL 3 after LOAD_NAME base); only implicit "
+                    "object or a single Wave A exception base is supported"
+                )
+            argc = code[call_off + 3]
+            if argc != 3:
+                raise ValueError(
+                    f"class creation at offset {i}: CALL argc={argc} after "
+                    "LOAD_NAME (multiple bases or keywords); only a single "
+                    "Wave A exception base is supported"
+                )
+            call_off = call_off + 2
+        elif code[call_off] == _OP_CALL:
+            argc = code[call_off + 1]
+            if argc != 2:
+                raise ValueError(
+                    f"class creation at offset {i}: CALL argc={argc} (bases or "
+                    "keywords present); only no-base classes (CALL 2) or a "
+                    "single LOAD_NAME base (CALL 3) are supported"
+                )
+        else:
+            # Keywords / starred bases / attributes insert KW_NAMES or LOAD_ATTR.
             raise ValueError(
                 f"class creation at offset {i}: bases or keywords present "
-                "(expected CALL 2 immediately after class name); only "
-                "no-base classes are supported"
-            )
-        argc = code[i + 11]
-        if argc != 2:
-            raise ValueError(
-                f"class creation at offset {i}: CALL argc={argc} (bases or "
-                "keywords present); only no-base classes (CALL 2) are supported"
+                "(expected CALL 2 or LOAD_NAME + CALL 3 after class name)"
             )
         body = consts[body_idx] if body_idx < len(consts) else None
         name_const = consts[name_idx] if name_idx < len(consts) else None
@@ -2256,7 +2351,7 @@ def _match_class_creation_span(
                 f"class creation at offset {i}: name const is not a string"
             )
         # Skip CALL inline caches.
-        j = i + 12
+        j = call_off + 2
         while j < n and code[j] == OP_CACHE:
             j += 2
         if j + 1 >= n or code[j] != _OP_STORE_NAME:
@@ -2284,6 +2379,10 @@ def fold_module_classes(
     Rewrites each matched span in place with NOP padding (never compact) so
     branch offsets stay valid. Class body code consts are replaced with
     ``None`` so unsupported body opcodes are not validated/serialized.
+
+    A single Wave A exception base (``Exception``, ``ValueError``, …) is
+    recorded on the spec so ``alloc_class_types`` can copy ``tp_base`` and
+    ``OB_FLAG_EXC_TYPE``.
     """
     _reject_nested_load_build_class(module_code)
 

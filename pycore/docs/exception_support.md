@@ -178,7 +178,7 @@ names (Track 10 adds **user** types).
 | T7 `assert` | `AssertionError` (T5-A) | `LOAD_COMMON_CONSTANT` 0 is a register write of that handle |
 | T8 try/finally/else/as | whatever the test raises | tests only; no new types |
 | T9 `with` | whatever `__exit__` sees | no new builtin types |
-| T10 user subclasses | Wave A bases (`Exception` and seeded children) | host copies `tp_base` **and** the exception bit onto `MyError` |
+| T10 user subclasses | Wave A bases (`Exception` and seeded children) | landed: `fold_module_classes` accepts one Wave A exception base; host copies `tp_base` **and** `OB_FLAG_EXC_TYPE` onto `MyError`. Layer D: `img_class_myerror`, `img_class_myerror_exact`, `img_class_levendist_error`, `img_class_myerror_miss` |
 
 ## Update checklist (every exception PR)
 

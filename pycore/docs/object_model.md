@@ -127,8 +127,11 @@ with `None` so unsupported body plumbing (`LOAD_LOCALS`, `MAKE_CELL`, …) is
 not serialized.
 
 **Supported body:** plain methods, `@staticmethod`, and constant assignments
-(`int`/`bool`/`str`/`None`). Rejected: bases, metaclasses, `__slots__`,
-`@classmethod`, nested/dynamic `class`.
+(`int`/`bool`/`str`/`None`). One Wave A exception base is allowed
+(`class MyError(Exception)` / `class E(ValueError)`): host copies `tp_base`
+and `OB_FLAG_EXC_TYPE` so `raise MyError(...)` takes the `OBK_EXCEPTION`
+CALL path (Track 10). Rejected: `object` / `BaseException` / multiple bases,
+metaclasses, `__slots__`, `@classmethod`, nested/dynamic `class`.
 
 **staticmethod representation:** `tp_dict` entry is `OBK_BUILTIN` with
 `builtin_id=0` and `bound_self` = the method `CODE_OBJECT` handle. `LOAD_ATTR`
