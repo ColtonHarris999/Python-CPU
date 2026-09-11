@@ -8,7 +8,8 @@ module pycore_dmem #(
     parameter int    DATA_WIDTH  = PYCORE_DMEM_DATA_WIDTH,
     parameter int    BLOCK_SHIFT = PYCORE_BLOCK_SHIFT,
     parameter int    BLOCK_COUNT = PYCORE_DMEM_BLOCK_COUNT,
-    parameter string INIT_HEX    = ""
+    parameter string INIT_HEX    = "",
+    parameter string PLUSARG     = "DMEM_HEX"
 ) (
     input  logic                  clk_i,
     input  logic                  rst_n_i,
@@ -27,7 +28,8 @@ module pycore_dmem #(
         .BLOCK_SHIFT(BLOCK_SHIFT),
         .BLOCK_COUNT(BLOCK_COUNT),
         .READ_ONLY(0),
-        .INIT_HEX(INIT_HEX)
+        .INIT_HEX(INIT_HEX),
+        .PLUSARG(PLUSARG)
     ) bank (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),

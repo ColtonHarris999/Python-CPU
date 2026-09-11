@@ -12,7 +12,8 @@ module pycore_code_ram #(
     parameter int    DATA_WIDTH  = PYCORE_IMEM_DATA_WIDTH,
     parameter int    BLOCK_SHIFT = PYCORE_BLOCK_SHIFT,
     parameter int    BLOCK_COUNT = PYCORE_CODE_RAM_BLOCK_COUNT,
-    parameter string INIT_HEX    = ""
+    parameter string INIT_HEX    = "",
+    parameter string PLUSARG     = "CODE_RAM_HEX"
 ) (
     input  logic                  clk_i,
     input  logic                  rst_n_i,
@@ -31,7 +32,8 @@ module pycore_code_ram #(
         .BLOCK_SHIFT(BLOCK_SHIFT),
         .BLOCK_COUNT(BLOCK_COUNT),
         .READ_ONLY(0),
-        .INIT_HEX(INIT_HEX)
+        .INIT_HEX(INIT_HEX),
+        .PLUSARG(PLUSARG)
     ) bank (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
