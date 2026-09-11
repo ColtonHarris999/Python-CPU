@@ -139,8 +139,14 @@ creation until frame-local namespaces exist.
 ## LOAD_ATTR algorithm (M2)
 
 1. Resolve `co_names[namei]` (`namei = oparg >> 1`).
-2. Receiver must be `PY_TAG_OBJECT`; else `PY_TRAP_TYPE`.
-3. Read `ob_head`. Before any dict probe, SHORT_STR **special names**:
+2. Native receivers (`LIST` / `SET` / `DICT` / `SHORT_STR` / `LONG_STR`):
+   look up the name in the 16-entry sidecar table at
+   `PYCORE_NATIVE_METHOD_TABLE_ADDR` (`0x1BDE0`). A hit is a pre-seeded
+   `CODE_OBJECT`; writeback is the ordinary method form (`method_flag=1`
+   pushes `[func, self]` with no allocation; `method_flag=0` allocates
+   `OBK_BOUND_METHOD`). Miss → `PY_TRAP_ATTR_ERROR` (15).
+3. Else the receiver must be `PY_TAG_OBJECT`; else `PY_TRAP_TYPE`.
+4. Read `ob_head`. Before any dict probe, SHORT_STR **special names**:
 
    | Name | Receiver | Result |
    | --- | --- | --- |
@@ -149,18 +155,19 @@ creation until frame-local namespaces exist.
    | `__class__` | `OBK_TYPE` | the type itself (identity; not host `type`) |
    | `__base__` | `OBK_TYPE` | field1 `tp_base`, or `None` if unset/zero |
    | `__base__` | `OBK_INSTANCE` | fall through to normal probe (usually ATTR_ERROR) |
+   | `args` | `OBK_EXCEPTION` | field1 args tuple |
 
    Specials write back as **data** (replace TOS only; ignore `method_flag`).
-4. Else `OBK_INSTANCE`: probe field0 dict. `OBK_TYPE`: start the MRO at the
+5. Else `OBK_INSTANCE`: probe field0 dict. `OBK_TYPE`: start the MRO at the
    type itself. Other kinds → `PY_TRAP_TYPE`.
-5. On instance miss, walk `ob_type` → `tp_base` (depth guard 8), probing each
+6. On instance miss, walk `ob_type` → `tp_base` (depth guard 8), probing each
    `tp_dict`. Miss → `PY_TRAP_ATTR_ERROR` (15).
-6. Writeback:
+7. Writeback:
    - If the hit value is `OBJECT`/`OBK_BUILTIN` with `builtin_id=0`, unwrap
      `field1` as `CODE_OBJECT` and mark static (no `self` bind).
-   - `method_flag = 0`: replace TOS; if source is TYPE and value is
-     `CODE_OBJECT` (non-static), allocate `OBK_BOUND_METHOD`. Static → push
-     the unwrapped `CODE_OBJECT`.
+   - `method_flag = 0`: replace TOS; if source is TYPE (or a native-method
+     hit) and value is `CODE_OBJECT` (non-static), allocate `OBK_BOUND_METHOD`.
+     Static → push the unwrapped `CODE_OBJECT`.
    - `method_flag = 1`: replace TOS with attr/func and push `self` or `NULL`
      (no allocation on this path). Static → `[func, NULL]`.
 
@@ -168,6 +175,34 @@ creation until frame-local namespaces exist.
 dict only (type mutation is build-time). The special names `__dict__` /
 `__class__` / `__base__` are rejected with `PY_TRAP_TYPE` (no header mutation
 via Python).
+
+### Native method table
+
+Sidecar entries are `CODE_OBJECT` handles, not per-lookup `OBK_BUILTIN`s
+(D4). Firmware bodies live under `pycore_firmware/builtins/` and are *not*
+public builtins-dict names.
+
+| Index | Receiver | Name | Device body |
+| --- | --- | --- | --- |
+| 0 | list | `append` | `self += [value]` (`LIST_EXTEND`) |
+| 1 | list | `pop` | last-element `DELETE_SUBSCR`; indexed pop; empty/`IndexError` |
+| 2 | list | `extend` | per-element `+= [x]` |
+| 3 | list | `clear` | delete from the end |
+| 4 | set | `add` | hand-assembled `SET_ADD` |
+| 5 | set | `update` | `self.add(x)` per element |
+| 6 | str | `join` | concat loop |
+| 7 | str | `startswith` | `BINARY_SLICE` prefix compare |
+| 8 | str | `endswith` | slice from `len-n` (no negative indices) |
+| 9 | str | `find` | slice scan; miss → `-1` |
+| 10 | dict | `get` | `in` then subscript; default `None` |
+| 11 | dict | `keys` | materialize a list |
+| 12 | dict | `items` | materialize `(k, v)` tuples |
+| 13 | dict | `update` | mapping form `self[k] = other[k]` |
+| 14 | dict | `pop` | `del`; optional default; miss → `KeyError` |
+| 15 | dict | `values` | materialize a list |
+
+Negative list indices on `pop` raise `IndexError` (deviation 3). `set.discard`
+is not in the table (`DELETE_SUBSCR` on SET is still TYPE).
 
 ## Tooling
 

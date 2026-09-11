@@ -16,7 +16,7 @@ Implemented / superseded plans live under [`implemented/`](implemented/).
 | `bytecode_compile_progress.md` | **Measured:** opcode mix of vendored PyCPython vs PyCore (full / partial / unsupported) |
 | `native_compiler_plan.md` | **Superseded by Plan 3:** original parser/AST/codegen/self-hosting write-up; kept as background |
 | `exceptions_full_support_plan.md` | **Active:** T1–T5-A (except T4 oparg 2) + T8 landed; T6 / T7 / T9 / T10 remain. Tracker: `pycore/docs/exception_support.md` |
-| `exceptions_firmware_followup_plan.md` | **F1 done;** F2/F3 firmware semantics and F4 `e.args` remain queued |
+| `exceptions_firmware_followup_plan.md` | **F1 + F4 done;** F2/F3 firmware semantics remain queued |
 | `optimization_plan.md` | Optional RTL cleanup / optimization backlog |
 
 ## Implemented / historical (`implemented/`)

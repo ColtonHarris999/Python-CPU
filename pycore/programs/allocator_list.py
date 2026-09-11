@@ -18,7 +18,9 @@ CAPACITY = 32  # placeholder; overwritten when HEAP_LIST_CAPACITY inject runs
 WSIZE = 1
 DSIZE = 2
 MIN_BLOCK = 4  # header + footer + pred + succ (words)
-CHUNKSIZE = 64
+# Small so CAPACITY can shrink with HEAP_INIT_PTR (native-method firmware).
+# 64 no longer fits when the inject yields 48 words.
+CHUNKSIZE = 16
 NULL = 0
 
 

@@ -27,6 +27,8 @@ from encoding import (
     HEAP_BASE,
     HEAP_LIMIT,
     ITER_EXHAUST_TYPE_ADDR,
+    NATIVE_METHOD_COUNT,
+    NATIVE_METHOD_TABLE_ADDR,
     OBK_BOUND_METHOD,
     OBK_BUILTIN,
     OBK_BYTEARRAY,
@@ -640,6 +642,24 @@ class HeapImageBuilder:
         self._write_tagged(
             ITER_EXHAUST_TYPE_ADDR, stop_iteration[0], stop_iteration[1]
         )
+
+    def write_native_method_table(self, handles: list[Tagged]) -> None:
+        """Write tagged CODE_OBJECT handles into the native-method sidecar."""
+        if len(handles) != NATIVE_METHOD_COUNT:
+            raise ValueError(
+                f"native method table needs {NATIVE_METHOD_COUNT} handles, "
+                f"got {len(handles)}"
+            )
+        if NATIVE_METHOD_TABLE_ADDR % 16 != 0:
+            raise ValueError("NATIVE_METHOD_TABLE_ADDR must be 16-byte aligned")
+        addr = NATIVE_METHOD_TABLE_ADDR
+        for handle in handles:
+            if handle[0] != TAG_CODE_OBJECT:
+                raise ValueError(
+                    "native method table entries must be CODE_OBJECT handles"
+                )
+            self._write_tagged(addr, handle[0], handle[1])
+            addr += 32
 
     def alloc_empty_globals(self, n_store_names: int) -> Tagged:
         """Empty dict pre-sized for runtime STORE_NAME / STORE_GLOBAL inserts."""

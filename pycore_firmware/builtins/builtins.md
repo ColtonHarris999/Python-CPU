@@ -32,6 +32,7 @@ These limit every firmware builtin:
 | No negative indices | `reversed` counts length explicitly |
 | Comprehensions emit `RERAISE` | Policy C: prefer `out += [x]` / `{*iterable}` (see `bytecode_support.md`) |
 | List/set growth | `LIST_EXTEND` / `SET_UPDATE` need excore for non-empty work |
+| Native type methods | `lst.append` / `s.add` / `d.get` / `str.join` etc. are `LOAD_ATTR` table hits (firmware `CODE_OBJECT`s in the boot sidecar). They are not public builtins-dict names. |
 | `UNPACK_EX` + `CALL_INTRINSIC_1` (LIST_TO_TUPLE) | Starred unpack and `(*lst,)` / list→tuple materialization are available |
 | Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`. `ord.md` / `chr.md` are shipped notes. |
 | Next plan | `planning/builtins_wave4_plan.md` — §1 print, §2 attr specials, §3 ORD/CHR all **done**; §4 bytecode follow-ups remain |

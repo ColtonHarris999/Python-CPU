@@ -746,8 +746,8 @@ protocol described above):
   returns `COMPLETED` with pop 1.
 
 `compile()` emits `LIST_EXTEND` for list-display unpack (`[1, 2, *x]`,
-`[*a, *b]`). Method-style `a.extend(b)` still lowers via `LOAD_ATTR`+`CALL`
-and is unsupported.
+`[*a, *b]`). Method-style `a.extend(b)` is a native `LOAD_ATTR` hit
+(table index 2) whose firmware body uses `LIST_EXTEND`.
 
 #### `DELETE_SUBSCR` (list / dict)
 
