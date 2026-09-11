@@ -639,6 +639,7 @@ _OP_LOAD_BUILD_CLASS = _OM["LOAD_BUILD_CLASS"]
 _OP_BUILD_MAP = _OM["BUILD_MAP"]
 _SFA_FLAG_DEFAULTS = 1
 _SFA_FLAG_KWDEFAULTS = 2
+_SFA_FLAG_ANNOTATE = 16  # PEP 649 __annotate__; stripped, no runtime effect
 
 
 @dataclass(frozen=True)
@@ -802,6 +803,11 @@ def fold_function_defaults(
     producer sits lower on the stack and CPython typically emits
     ``SET_FUNCTION_ATTRIBUTE 2`` followed by ``SET_FUNCTION_ATTRIBUTE 1``.
 
+    Return annotations (PEP 649) emit ``SET_FUNCTION_ATTRIBUTE 16`` whose
+    producer is ``LOAD_CONST <__annotate__>; MAKE_FUNCTION``. That producer
+    and the SFA are NOP-padded and the annotate code object is dropped from
+    ``co_consts`` so it is not validated (it contains ``LOAD_COMMON_CONSTANT``).
+
     Becomes::
 
         NOP
@@ -839,6 +845,25 @@ def fold_function_defaults(
                 return end - 2, consts[arg]
             if op == _OP_LOAD_SMALL_INT:
                 return end - 2, arg
+            if op == _OP_MAKE_FUNCTION:
+                if end < 4:
+                    raise ValueError(
+                        f"truncated SET_FUNCTION_ATTRIBUTE MAKE_FUNCTION "
+                        f"producer in {co.co_name!r}"
+                    )
+                prev_op = code[end - 4]
+                prev_arg = code[end - 3]
+                if prev_op != _OP_LOAD_CONST:
+                    raise ValueError(
+                        f"SET_FUNCTION_ATTRIBUTE MAKE_FUNCTION producer in "
+                        f"{co.co_name!r} is not LOAD_CONST + MAKE_FUNCTION"
+                    )
+                if prev_arg >= len(consts):
+                    raise ValueError(
+                        f"annotate LOAD_CONST index {prev_arg} out of range "
+                        f"in {co.co_name!r}"
+                    )
+                return end - 4, consts[prev_arg]
             if op == _OP_BUILD_MAP:
                 cursor = end - 2
                 pairs: list[tuple[object, object]] = []
@@ -874,11 +899,15 @@ def fold_function_defaults(
                 cursor = i + 4
                 while cursor + 1 < n and code[cursor] == _OP_SET_FUNCTION_ATTRIBUTE:
                     flag = code[cursor + 1]
-                    if flag not in (_SFA_FLAG_DEFAULTS, _SFA_FLAG_KWDEFAULTS):
+                    if flag not in (
+                        _SFA_FLAG_DEFAULTS,
+                        _SFA_FLAG_KWDEFAULTS,
+                        _SFA_FLAG_ANNOTATE,
+                    ):
                         raise ValueError(
                             f"SET_FUNCTION_ATTRIBUTE flag {flag} in {co.co_name!r} "
-                            f"at offset {cursor}: only defaults (1) and "
-                            "kwdefaults (2) supported"
+                            f"at offset {cursor}: only defaults (1), "
+                            "kwdefaults (2), and annotate (16) supported"
                         )
                     sfa_ops.append((cursor, flag))
                     cursor += 2
@@ -919,6 +948,12 @@ def fold_function_defaults(
                                 f"non-string keys: {bad_keys!r}"
                             )
                         kwdefaults_map[id(func_co)] = value
+                    elif flag == _SFA_FLAG_ANNOTATE:
+                        if isinstance(value, types.CodeType):
+                            for idx, const in enumerate(consts):
+                                if const is value:
+                                    consts[idx] = None
+                                    changed_consts = True
                     nop_span(start, end)
                     code[sfa_off] = _OP_NOP
                     code[sfa_off + 1] = 0
