@@ -909,6 +909,12 @@ pycore-img-slice-str-neg-trap:
 pycore-img-slice-list-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,slice_list_trap,1,50000)
 
+pycore-img-slice-str-const:
+	$(call PYCORE_IMAGE_RUN,slice_str_const,50000)
+
+pycore-img-slice-damerau:
+	$(call PYCORE_IMAGE_RUN,slice_damerau,50000)
+
 pycore-img-try-syntaxerror:
 	$(call PYCORE_IMAGE_RUN,try_syntaxerror,50000)
 
@@ -983,7 +989,9 @@ pycore-img-slice-all: \
 	pycore-img-slice-str-empty \
 	pycore-img-slice-str-scan \
 	pycore-img-slice-str-neg-trap \
-	pycore-img-slice-list-trap
+	pycore-img-slice-list-trap \
+	pycore-img-slice-str-const \
+	pycore-img-slice-damerau
 
 pycore-img-exec-all: \
 	pycore-img-exec-code-basic \

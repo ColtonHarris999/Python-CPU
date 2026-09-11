@@ -1776,7 +1776,7 @@
       "hw_class": "OBJECT",
       "fold": "BAR"
     },
-    "BINARY_SLICE": {"support": "execute", "hw_class": "OBJECT", "fold": "BAR", "note": "strings only; CHARACTER-indexed bounds that clamp like CPython; negative bounds and LIST/TUPLE subjects \u2192 TYPE"},
+    "BINARY_SLICE": {"support": "execute", "hw_class": "OBJECT", "fold": "BAR", "note": "strings only; CHARACTER-indexed bounds that clamp like CPython; negative bounds and LIST/TUPLE subjects \u2192 TYPE; all-literal unit-step slices rewritten from slice-const + NB_SUBSCR at image build"},
     "STORE_SUBSCR": {
       "support": "execute",
       "hw_class": "OBJECT",

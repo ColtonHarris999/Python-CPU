@@ -1,8 +1,7 @@
 """Open-ended slices: CPython passes None for the omitted bound.
 
-`s[:]` is not covered here because CPython folds it to a constant
-`slice(None, None, None)` plus NB_SUBSCR, which needs slice objects rather than
-BINARY_SLICE.
+Variable omitted bounds emit BINARY_SLICE with None. All-literal `s[:]` is
+covered by img_slice_str_const (slice-const rewrite).
 """
 
 

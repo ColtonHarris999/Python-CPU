@@ -1156,5 +1156,55 @@ class CPython314ConventionProbeTest(unittest.TestCase):
         self.assertTrue(all((arg & 16) != 0 for arg in conditional_args))
 
 
+class SliceConstFoldTest(unittest.TestCase):
+    def test_fold_rewrites_literal_suffix_slice(self) -> None:
+        module_code = _compile_module(
+            "def f(x):\n"
+            "    return x[1:]\n"
+        )
+        f_co = next(
+            co for co in image_from_source.iter_code_objects(module_code)
+            if co.co_name == "f"
+        )
+        self.assertTrue(
+            any(type(c) is slice for c in f_co.co_consts),
+            "CPython should fold x[1:] to a slice constant",
+        )
+        folded = image_from_source.fold_slice_constants(f_co)
+        opnames = [
+            ins.opname
+            for ins in image_from_source.iter_raw_instructions(folded)
+            if ins.opname not in {"CACHE", "NOP", "RESUME"}
+        ]
+        self.assertIn("BINARY_SLICE", opnames)
+        self.assertNotIn("BINARY_OP", opnames)
+        self.assertFalse(any(type(c) is slice for c in folded.co_consts))
+        self.assertGreaterEqual(folded.co_stacksize, f_co.co_stacksize + 1)
+
+    def test_build_accepts_literal_slices(self) -> None:
+        result = image_from_source.build_image_from_source_text(
+            "def managed_entry():\n"
+            "    s = \"abcdef\"\n"
+            "    return s[1:] == \"bcdef\"\n"
+            "\n"
+            "managed_entry()\n",
+            "<slice-const>",
+        )
+        self.assertEqual(result.module_code[0], TAG_CODE_OBJECT)
+        self.assertGreater(len(result.program_slots), 0)
+
+    def test_stepped_slice_still_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            image_from_source.build_image_from_source_text(
+                "def managed_entry():\n"
+                "    s = \"abcdef\"\n"
+                "    return s[1:5:2]\n"
+                "\n"
+                "managed_entry()\n",
+                "<slice-step>",
+            )
+        self.assertIn("slice step", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
