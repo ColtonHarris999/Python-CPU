@@ -456,13 +456,14 @@
         "tp_base_actual": "Exception",
         "seed_track": "T5-A",
         "uses_tracks": [
-          "T5-A"
+          "T5-A",
+          "T10"
         ],
         "match": "mro",
         "construct": "call",
         "trap_map": [],
         "wave": "A",
-        "note": "firmware raise ValueError after Wave A; wrong value not wrong type"
+        "note": "firmware raise ValueError after Wave A; wrong value not wrong type; T10 user subclass base"
       },
       "AttributeError": {
         "status": "seeded",
