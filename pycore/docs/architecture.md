@@ -6,11 +6,11 @@ functional vehicle; FPGA-specific inference hints and resource pragmas are
 intentionally absent.
 
 Bytecode support status (fully supported / partially supported / unsupported) is
-tracked separately in `pycore/docs/bytecode_support.md` so decode and
-preprocessing changes can be reviewed against one explicit matrix. The machine
-catalog is `pycore/targets/pycore.json` (`opcodes`). Built-in exception **types**
-are tracked the same way in `pycore/docs/exception_support.md` and
-`pycore.json` → `exceptions.types`.
+tracked in `pycore/docs/bytecode_support.md`. The machine catalog is
+`pycore/targets/pycore.json` (`opcodes`). To check a user program against that
+subset: `make lint-file RUN_SOURCE=...` (`pycore/tools/pycore_cli.py`). Built-in
+exception **types** are tracked the same way in `pycore/docs/exception_support.md`
+and `pycore.json` → `exceptions.types`.
 
 Paper-oriented systems notes (LaTeX) for near-complete subsystems live under
 `docs/paper/` — start with `docs/paper/systems/call_fsm.tex` for the CALL FSM

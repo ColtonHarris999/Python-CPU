@@ -334,6 +334,35 @@ class ImageTranscodingTest(unittest.TestCase):
             msg,
         )
 
+    def test_return_annotation_is_stripped(self) -> None:
+        src = (
+            "def managed_entry() -> int:\n"
+            "    return 12\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        result = image_from_source.build_image_from_source_text(
+            src, "<annot>"
+        )
+        names = [
+            co.co_name
+            for co in image_from_source.iter_code_objects(
+                compile(src, "<annot>", "exec")
+            )
+        ]
+        self.assertIn("__annotate__", names)
+        # After the fold, the image must not serialize the annotate helper.
+        serialized_names = [
+            co.co_name
+            for co in image_from_source.iter_code_objects(
+                image_from_source.fold_function_defaults(
+                    compile(src, "<annot>", "exec")
+                )[0]
+            )
+        ]
+        self.assertNotIn("__annotate__", serialized_names)
+        self.assertGreater(result.heap_init_ptr, 0)
+
     def test_nop_opcode_now_supported(self) -> None:
         src = (
             "def managed_entry():\n"

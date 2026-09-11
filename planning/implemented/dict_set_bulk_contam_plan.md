@@ -1,6 +1,6 @@
 # DICT_MERGE / DICT_UPDATE / MAP_ADD / SET_UPDATE + contamination bit
 
-**Status:** implementing on `cursor/dict-set-bulk-9270`  
+**Status:** done (on `main`)  
 **Base:** `bytecode_support`
 
 ## 1. Contamination bit

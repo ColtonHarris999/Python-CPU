@@ -25,7 +25,8 @@ RUN_PROGRAM_HEX ?= pycore/programs/run_program.hex
 RUN_STRING_HEX ?= pycore/programs/run_string_mem.hex
 RUN_TYPES ?= pycore/programs/run_program.types
 RUN_CACHE_MAP ?= pycore/programs/run_cache_map.hex
-RUN_MAX_CYCLES ?= 2000
+RUN_MAX_CYCLES ?= 200000
+RUN_BUILD_DIR ?= build/pycore_run
 
 PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_tag_decode.sv \
@@ -76,7 +77,7 @@ EXCORE_RTL_SRCS := \
 	excore/rtl/excore_cpu.sv \
 	excore/rtl/excore_mmio.sv
 
-.PHONY: pycore-preprocess run-file pycore-run-file all-tests pycore-test \
+.PHONY: help lint-file pycore-preprocess run-file pycore-run-file all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs \
 	pycore-python-tests pycore-mem pycore-frame pycore-frame-fib \
 	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
@@ -265,7 +266,7 @@ EXCORE_RTL_SRCS := \
 	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	pycore-sim-img pycore-sim-img-twocore pycore-rtl-unit \
-	docker-build docker-run-file docker-pycore-test docker-all-tests \
+	docker-build docker-lint-file docker-run-file docker-pycore-test docker-all-tests \
 	docker-python-tests docker-rtl-unit docker-container docker-img \
 	docker-two-core docker-excore
 
@@ -278,31 +279,22 @@ pycore-preprocess:
 		--types "$(PYCORE_TYPES)" \
 		--cache-map "$(PYCORE_CACHE_MAP)"
 
+help:
+	$(PYTHON) pycore/tools/pycore_cli.py help
+
+lint-file:
+	$(PYTHON) pycore/tools/pycore_cli.py lint "$(RUN_SOURCE)" --entry "$(RUN_FUNCTION)"
+
 run-file: pycore-run-file
 
+# Image-boot a user Python file on the two-core hart and check the return
+# against host CPython 3.14. Uses the shared plusarg tb_container binary
+# (`tools/ensure_sim.py twocore`). Lint first with `make lint-file`.
 pycore-run-file:
-	$(PYTHON) pycore/tools/preprocess.py \
-		--source "$(RUN_SOURCE)" \
-		--function "$(RUN_FUNCTION)" \
-		--program-hex "$(RUN_PROGRAM_HEX)" \
-		--string-hex "$(RUN_STRING_HEX)" \
-		--types "$(RUN_TYPES)" \
-		--cache-map "$(RUN_CACHE_MAP)"
-	mkdir -p $(BUILD_DIR)
-	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
-		--top-module tb_pycore_runfile \
-		-GPROG_HEX=\"$(RUN_PROGRAM_HEX)\" \
-		-GSTRING_HEX=\"$(RUN_STRING_HEX)\" \
-		-GMAX_CYCLES=$(RUN_MAX_CYCLES) \
-		--Mdir $(BUILD_DIR)/pycore_runfile \
-		-Wall -Wno-fatal \
-		$(PYCORE_RTL_SRCS) pycore/tb/tb_pycore_runfile.sv
-	./$(BUILD_DIR)/pycore_runfile/Vtb_pycore_runfile
-	$(PYTHON) tools/dump_hex.py --path "$(RUN_PROGRAM_HEX)" --label "Program memory image"
-	$(PYTHON) tools/dump_hex.py --path "$(RUN_STRING_HEX)" --label "String memory image"
-	@echo "Type sketch file: $(RUN_TYPES)"
-	@echo "Cache map file: $(RUN_CACHE_MAP)"
+	$(PYTHON) pycore/tools/pycore_cli.py run "$(RUN_SOURCE)" \
+		--entry "$(RUN_FUNCTION)" \
+		--max-cycles $(RUN_MAX_CYCLES) \
+		--build-dir "$(RUN_BUILD_DIR)"
 
 # Shared tb_container binaries: hex paths and goldens are plusargs, not -G.
 PYCORE_SIM_IMG_BIN := $(BUILD_DIR)/sim_img/Vtb_container
@@ -2582,15 +2574,18 @@ DOCKER_MAKE = docker run --rm $(DOCKER_RUN_FLAGS) \
 docker-build:
 	docker build $(DOCKER_BUILD_FLAGS) -t $(DOCKER_IMAGE) .
 
+docker-lint-file: docker-build
+	docker run --rm $(DOCKER_RUN_FLAGS) -v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" -w "$(DOCKER_CONTAINER_WORKDIR)" \
+		$(DOCKER_IMAGE) make lint-file \
+		RUN_SOURCE="$(RUN_SOURCE)" \
+		RUN_FUNCTION="$(RUN_FUNCTION)"
+
 docker-run-file: docker-build
 	$(DOCKER_MAKE) make run-file \
 		RUN_SOURCE="$(RUN_SOURCE)" \
 		RUN_FUNCTION="$(RUN_FUNCTION)" \
-		RUN_PROGRAM_HEX="$(RUN_PROGRAM_HEX)" \
-		RUN_STRING_HEX="$(RUN_STRING_HEX)" \
-		RUN_TYPES="$(RUN_TYPES)" \
-		RUN_CACHE_MAP="$(RUN_CACHE_MAP)" \
-		RUN_MAX_CYCLES="$(RUN_MAX_CYCLES)"
+		RUN_MAX_CYCLES="$(RUN_MAX_CYCLES)" \
+		RUN_BUILD_DIR="$(RUN_BUILD_DIR)"
 
 docker-python-tests: docker-build
 	$(DOCKER_MAKE) make pycore-python-tests excore-asm-tests pycore-allocator-host
