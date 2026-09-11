@@ -28,15 +28,14 @@ Shipped and regression-tested:
 - List/tuple sequence repeat (`[1,2] * 3`). Writable code RAM + `exec`/`eval` on
   precompiled code objects.
 
-Still open (see `planning/`):
+Still open (see `planning/master_plan.md`):
 
-- BIOS / module loader / on-device tokenizer (Plan 1 P2, P5, P9).
-- Native `compile()` (Plan 2).
+- Runtime code-RAM writers and on-device `compile()` via PyCPython
+  (`planning/compile_plan.md`). The hart does **not** run unmodified
+  `vendor/pycpython`.
+- BIOS / module loader (after first `compile()`).
 - `assert`, `with`, `import`, generators, `except*`, trap→Python-exception (T6),
   list/tuple slicing, literal `s[1:]` slice constants, negative indices.
-
-In review (not on `main` yet): slice-const folding and `int(float)` /
-`max(float)` (PRs #84 / #88); compiler plans (PRs #85 / #87).
 
 ## Try a Python file
 
@@ -84,6 +83,10 @@ Methods: `list.append/pop/extend/clear`, `set.add/update`,
 runtime `class`, `super()`, `compile()`, string-form `exec`/`eval`, files,
 slice assignment, list/tuple slicing, all-literal `s[1:]` (bind bounds to
 variables), format-spec f-strings, `STR * INT`, negative indices.
+
+Host `compile()` for images is still CPython. [PyCPython](https://github.com/ColtonHarris999/PyCPython)
+is vendored at `vendor/pycpython` as the oracle / algorithm source for the
+future ROM compiler (`git submodule update --init`).
 
 **Ceilings:** missing dict keys and unbound locals still halt with a hardware
 trap rather than a catchable Python exception. `int` is 64-bit, not
@@ -147,7 +150,9 @@ update/merge. See `pycore/docs/architecture.md`.
 | Image / preprocessing flow | `pycore/docs/preprocessing_breakdown.md` |
 | Dict / set + excore | `pycore/docs/dict_excore.md`, `pycore/docs/set_excore.md` |
 | ROM builtins inventory | `pycore_firmware/builtins/builtins.md` |
-| Active plans | `planning/` |
+| Active plans | `planning/master_plan.md` |
+| On-device compile | `planning/compile_plan.md` |
+| PyCPython vendor | `vendor/pycpython` (`git submodule update --init`) |
 | excore MMIO / ISA / firmware | `excore/docs/` |
 
 ## Setup
@@ -155,6 +160,7 @@ update/merge. See `pycore/docs/architecture.md`.
 **Linux (Ubuntu/Debian):**
 
 ```bash
+git submodule update --init --recursive
 sudo apt-get update
 sudo apt-get install -y make g++ verilator python3.14 python3.14-venv docker.io
 ```

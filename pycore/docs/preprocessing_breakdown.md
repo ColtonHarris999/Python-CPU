@@ -36,6 +36,9 @@ Steps:
 
 1. **Version gate**: hard-fails unless running Python 3.14.
 2. **Compile**: calls CPython `compile(source, filename, "exec")`.
+   [PyCPython](https://github.com/ColtonHarris999/PyCPython) at
+   `vendor/pycpython` is the host oracle for the future ROM compiler; it is
+   not used to build images yet (`planning/compile_plan.md`).
 3. **Validate**: walks the module and nested code objects, rejecting unsupported
    opcodes and unsupported sub-op variants.
 4. **1:1 transcode**: writes every raw `co_code` unit to one imem slot in the

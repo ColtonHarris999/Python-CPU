@@ -227,7 +227,7 @@
     "OBJ_EXC": {
       "distance": 5,
       "needs_subsystem": "exception state + stack unwinder",
-      "note": "v1 execute/partial: RAISE_VARARGS (oparg 0/1) / PUSH_EXC_INFO / CHECK_EXC_MATCH (identity+MRO+tuples) / POP_EXCEPT / RERAISE (0/1) + dmem exc stack + co_exceptiontable. Remaining members are trap. Types: exceptions.types + pycore/docs/exception_support.md. SETUP_* / POP_BLOCK are compiler pseudo-ops (never in co_code). Plan tracks in planning/exceptions_full_support_plan.md.",
+      "note": "v1 execute/partial: RAISE_VARARGS (oparg 0/1) / PUSH_EXC_INFO / CHECK_EXC_MATCH (identity+MRO+tuples) / POP_EXCEPT / RERAISE (0/1) + dmem exc stack + co_exceptiontable. Remaining members are trap. Types: exceptions.types + pycore/docs/exception_support.md. SETUP_* / POP_BLOCK are compiler pseudo-ops (never in co_code). Plan tracks in planning/exceptions_plan.md.",
       "members": [
         "PUSH_EXC_INFO",
         "POP_EXCEPT",
@@ -995,7 +995,7 @@
         "construct": "call",
         "trap_map": [],
         "wave": "C",
-        "note": "Pulled onto T1 rebase: Plan 1 P7 already had a leaf SyntaxError and exact-match tests. IndentationError/TabError stay absent."
+        "note": "Seeded so compiler / SyntaxError tests can resolve the name. IndentationError/TabError stay absent."
       },
       "IndentationError": {
         "status": "absent",

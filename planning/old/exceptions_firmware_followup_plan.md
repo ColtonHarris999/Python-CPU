@@ -5,8 +5,8 @@
 
 Related:
 
-- Exception type tracker: [`pycore/docs/exception_support.md`](../pycore/docs/exception_support.md) + `pycore.json` `exceptions.types`
-- Firmware index: [`pycore_firmware/builtins/builtins.md`](../pycore_firmware/builtins/builtins.md)
+- Exception type tracker: [`pycore/docs/exception_support.md`](../../pycore/docs/exception_support.md) + `pycore.json` `exceptions.types`
+- Firmware index: [`pycore_firmware/builtins/builtins.md`](../../pycore_firmware/builtins/builtins.md)
 - Plan 1 P7 / tokenizer: [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) §9.1
 - Wave-4 attr helpers: [`builtins_wave4_plan.md`](builtins_wave4_plan.md)
 
@@ -86,9 +86,9 @@ Hardware traps (`PY_TRAP_TYPE`, `PY_TRAP_DIV_ZERO`, …) stay fatal until except
 
 Docs that are **stale** until F1 lands:
 
-- [`builtins.md`](../pycore_firmware/builtins/builtins.md) row: “`RAISE_VARARGS` oparg 1 is fatal-only … Prefer `raise` over `% 0`”
+- [`builtins.md`](../../pycore_firmware/builtins/builtins.md) row: “`RAISE_VARARGS` oparg 1 is fatal-only … Prefer `raise` over `% 0`”
 - Comments in `range.py` / `pow.py` / `ord.py` / `chr.py` that say “fatal until exception objects exist”
-- [`test_rom_firmware_seed.py`](../pycore/tests/test_rom_firmware_seed.py) `test_pow_negative_exp_with_mod_raises` expects `TypeError` only because `raise 0` is a TypeError on **host** CPython
+- [`test_rom_firmware_seed.py`](../../pycore/tests/test_rom_firmware_seed.py) `test_pow_negative_exp_with_mod_raises` expects `TypeError` only because `raise 0` is a TypeError on **host** CPython
 
 ---
 
@@ -100,14 +100,14 @@ Prefer bare `raise ValueError` / `raise TypeError` / `raise StopIteration`. Opti
 
 | File | Site | Replace with | Notes |
 | --- | --- | --- | --- |
-| [`range.py`](../pycore_firmware/builtins/range.py) | `step == 0` | `ValueError` | CPython: `range() arg 3 must not be zero` |
-| [`pow.py`](../pycore_firmware/builtins/pow.py) | negative `exp` with `mod` | `ValueError` | CPython; host test must flip from `TypeError` |
-| [`iter.py`](../pycore_firmware/builtins/iter.py) | sentinel form unsupported | `TypeError` | Unsupported arity / form |
-| [`next.py`](../pycore_firmware/builtins/next.py) | exhausted, no default | `StopIteration` | **Not** TypeError; matches CPython `next` |
-| [`int.py`](../pycore_firmware/builtins/int.py) | parse failures | `ValueError` | Bad digit / empty / sign |
-| [`float.py`](../pycore_firmware/builtins/float.py) | parse failures | `ValueError` | Same family as `int` |
-| [`ord.py`](../pycore_firmware/builtins/ord.py) | dead tail (`BI_ORD` owns entry) | `TypeError` | Unreachable on device; needed so the grep gate is total |
-| [`chr.py`](../pycore_firmware/builtins/chr.py) | dead tail (`BI_CHR` owns entry) | `TypeError` | Same |
+| [`range.py`](../../pycore_firmware/builtins/range.py) | `step == 0` | `ValueError` | CPython: `range() arg 3 must not be zero` |
+| [`pow.py`](../../pycore_firmware/builtins/pow.py) | negative `exp` with `mod` | `ValueError` | CPython; host test must flip from `TypeError` |
+| [`iter.py`](../../pycore_firmware/builtins/iter.py) | sentinel form unsupported | `TypeError` | Unsupported arity / form |
+| [`next.py`](../../pycore_firmware/builtins/next.py) | exhausted, no default | `StopIteration` | **Not** TypeError; matches CPython `next` |
+| [`int.py`](../../pycore_firmware/builtins/int.py) | parse failures | `ValueError` | Bad digit / empty / sign |
+| [`float.py`](../../pycore_firmware/builtins/float.py) | parse failures | `ValueError` | Same family as `int` |
+| [`ord.py`](../../pycore_firmware/builtins/ord.py) | dead tail (`BI_ORD` owns entry) | `TypeError` | Unreachable on device; needed so the grep gate is total |
+| [`chr.py`](../../pycore_firmware/builtins/chr.py) | dead tail (`BI_CHR` owns entry) | `TypeError` | Same |
 
 Inventory command after the edit:
 
@@ -117,8 +117,8 @@ rg -n 'raise [0-9]+' pycore_firmware/   # must be empty
 
 ### 3.2 Docs and host tests (same PR as F1)
 
-1. Update [`builtins.md`](../pycore_firmware/builtins/builtins.md) cross-cutting table: remove the “fatal-only RAISE / no TypeError objects” row; note that firmware raises real Wave A types and unhandled raise → trap 17.
-2. Fix [`test_rom_firmware_seed.py`](../pycore/tests/test_rom_firmware_seed.py) `test_pow_negative_exp_with_mod_raises` → `assertRaises(ValueError)`.
+1. Update [`builtins.md`](../../pycore_firmware/builtins/builtins.md) cross-cutting table: remove the “fatal-only RAISE / no TypeError objects” row; note that firmware raises real Wave A types and unhandled raise → trap 17.
+2. Fix [`test_rom_firmware_seed.py`](../../pycore/tests/test_rom_firmware_seed.py) `test_pow_negative_exp_with_mod_raises` → `assertRaises(ValueError)`.
 3. Add a **grep gate** host test (prefer `test_exception_support.py` or a small method on `test_rom_firmware_seed.py`): walk `pycore_firmware/**/*.py` and fail if any line matches `raise` of an integer literal (`raise 0`, `raise 1`, …). Do not ban `1 % 0` here — that is F3.
 4. Tick the open checkboxes in [`exceptions_full_support_plan.md`](exceptions_full_support_plan.md) §6.3 (“Firmware grep gate”) and §11 (“Wave A firmware raises use real types”) when F1 merges.
 
@@ -160,7 +160,7 @@ Same class of workaround as F1, but the source never used `raise 1` — it retur
 
 ### 4.1 `getattr` missing attribute
 
-[`getattr.py`](../pycore_firmware/builtins/getattr.py) returns `default` (always the formal default `None`) when the name is absent, with a comment that this “avoids AttributeError (RAISE deferred)”.
+[`getattr.py`](../../pycore_firmware/builtins/getattr.py) returns `default` (always the formal default `None`) when the name is absent, with a comment that this “avoids AttributeError (RAISE deferred)”.
 
 After #74:
 
@@ -171,11 +171,11 @@ After #74:
 
 ### 4.2 Empty `min` / `max`
 
-[`min.py`](../pycore_firmware/builtins/min.py) and [`max.py`](../pycore_firmware/builtins/max.py) return `None` on an empty iterable; CPython raises `ValueError`. After F1, raise `ValueError` when `seen == 0` at the end of the one-arg path. Two-arg `min(a, b)` / `max(a, b)` unchanged.
+[`min.py`](../../pycore_firmware/builtins/min.py) and [`max.py`](../../pycore_firmware/builtins/max.py) return `None` on an empty iterable; CPython raises `ValueError`. After F1, raise `ValueError` when `seen == 0` at the end of the one-arg path. Two-arg `min(a, b)` / `max(a, b)` unchanged.
 
 ### 4.3 Out of F2
 
-- [`hasattr.py`](../pycore_firmware/builtins/hasattr.py) — must stay non-raising; instance-dict-only probe is a wave-4 completeness gap, not an exceptions leftover.
+- [`hasattr.py`](../../pycore_firmware/builtins/hasattr.py) — must stay non-raising; instance-dict-only probe is a wave-4 completeness gap, not an exceptions leftover.
 - Native `BI_*` paths that type-trap in hardware — T6, not firmware.
 
 ### 4.4 F2 definition of done
@@ -212,7 +212,7 @@ Many stubs halt with **`PY_TRAP_DIV_ZERO` (3)** via `return 1 % 0`. After #74 th
 ## 6. F4 — Plan 1 P7 messages (`e.args`) — **done**
 
 `LOAD_ATTR` name `"args"` on `OBK_EXCEPTION` returns field1. 
-[`img_try_syntaxerror_msg.py`](../pycore/programs/img_try_syntaxerror_msg.py)
+[`img_try_syntaxerror_msg.py`](../../pycore/programs/img_try_syntaxerror_msg.py)
 reads `e.args[0]`. Coverage also `img_exc_args`.
 
 ---
@@ -259,8 +259,8 @@ reads `e.args[0]`. Coverage also `img_exc_args`.
 | [`exceptions_full_support_plan.md`](exceptions_full_support_plan.md) | Language-level exceptions (#74); open firmware grep-gate / “Wave A firmware raises” checkboxes → **this plan** |
 | [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) | Plan 1 P7 messages / P9 tokenizer error reporting; F4 is the remaining `e.args` read |
 | [`builtins_wave4_plan.md`](builtins_wave4_plan.md) | Attr helpers already shipped; F2 tightens `getattr` semantics |
-| [`exception_support.md`](../pycore/docs/exception_support.md) | Which types are seeded for firmware to raise |
-| [`builtins.md`](../pycore_firmware/builtins/builtins.md) | Cross-cutting firmware constraints (update in F1) |
+| [`exception_support.md`](../../pycore/docs/exception_support.md) | Which types are seeded for firmware to raise |
+| [`builtins.md`](../../pycore_firmware/builtins/builtins.md) | Cross-cutting firmware constraints (update in F1) |
 
 ---
 

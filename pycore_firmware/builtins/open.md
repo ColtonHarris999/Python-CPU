@@ -2,6 +2,9 @@
 
 Status: **blocked** (stub in `open.py`)
 
+**Plan:** [`planning/builtin_support.md`](../../planning/builtin_support.md)
+(leave blocked until there is a device).
+
 ## Goal
 
 `open(file, mode='r', ...)` returns a file object.

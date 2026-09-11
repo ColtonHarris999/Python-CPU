@@ -3,9 +3,11 @@
 How bytecode gets into memory and becomes executable. Companion to
 `architecture.md` (memory map) and `object_model.md` (code objects).
 
-Status: **Plan 1 P1 shipped** (the two code regions and the fetch mux). The
-module image format and loader are P2 and are not implemented yet; §4 records
-the intended design so the region layout is not re-litigated when it lands.
+Status: **code ROM + code RAM + fetch mux shipped.** Runtime writers
+(`_bi_code_alloc` / `_bi_code_emit` / `_bi_code_new`) are the next slice
+([`planning/compile_plan.md`](../../planning/compile_plan.md)). The module
+image format and loader are not implemented yet; §4 records the intended
+design so the region layout is not re-litigated when it lands.
 
 ## 1. The code address space
 
@@ -48,11 +50,11 @@ The cost is one address compare and a 2:1 mux.
 
 ### 1.2 Sizing rationale
 
-PyPy's compiler — the closest existing reference for the self-hosted compiler in
-Plan 2 — is about 315 KB of Python across six modules. At roughly 5–10 bytecode
-units per source line, even a heavily reduced PyCore-subset compiler wants
-10 000–30 000 code slots. Today's entire ROM is 8192 slots and already holds the
-boot image and ROM firmware, so code RAM is sized at 32 768 slots (256 KB).
+Unmodified [PyCPython](https://github.com/ColtonHarris999/PyCPython) (the host
+`compile()` oracle at `vendor/pycpython`) is about 1 MB of Python and does
+not fit. A PyCore-subset firmware compiler still wants on the order of
+10 000–30 000 code slots. Today's entire ROM is 8192 slots and already holds
+the boot image and ROM firmware, so code RAM is sized at 32 768 slots (256 KB).
 
 `PYCORE_CODE_RAM_BLOCK_COUNT` is a parameter. If that is too much area for a
 real target, the answer is not a smaller compiler but **overlays**: the loader
@@ -61,14 +63,14 @@ resident at once.
 
 ## 2. What can write code RAM
 
-Nothing yet, at runtime. P1 delivers the region and the fetch path; the writers
-arrive later:
+Nothing yet, at runtime. The banks and fetch path are in; the writers
+are [`planning/compile_plan.md`](../../planning/compile_plan.md) F1:
 
-| Writer | Phase | Mechanism |
+| Writer | Status | Mechanism |
 | --- | --- | --- |
-| Image preload (`CODE_RAM_HEX`) | **P1, shipped** | `$readmemh` at elaboration; test-only |
-| `_bi_load_module` | P2 | Copies a module image's text section into RAM |
-| `_bi_code_emit` | Plan 2 C6 | Writes one code word, for a code generator |
+| Image preload (`CODE_RAM_HEX`) | **shipped** | `$readmemh` at elaboration; test-only |
+| `_bi_code_alloc` / `_bi_code_emit` / `_bi_code_new` | **next** | bump-reserve, write one word, fabricate `CODE_OBJECT` |
+| `_bi_load_module` | later | copies a module image's text section into RAM |
 
 The code-RAM bump cursor `code_ram_ptr_r` exists and starts at
 `CODE_RAM_INIT_SLOT` (default `PYCORE_CODE_RAM_SLOT_BASE`); only mark/release
@@ -99,9 +101,11 @@ straight-line fetch only.
 image shifts every entry slot by exactly the base and changes nothing else
 about the emitted slots.
 
-## 4. Planned: module images and relocation (P2)
+## 4. Planned: module images and relocation
 
 Not implemented. Recorded here because §1's layout was chosen for it.
+This is **after** first `compile()` — see
+[`planning/architecture_plan.md`](../../planning/architecture_plan.md).
 
 A module is **not** just code: it is code slots plus a dmem object graph
 (`co_consts`, `co_names`, nested code objects, strings). Loading one means
@@ -135,7 +139,7 @@ section, must fault rather than corrupt.
 Intended phasing: fixed-base copy first, then text relocation, then data
 relocation, then two modules where the second base depends on the first.
 
-## 5. Region marks (P8, shipped)
+## 5. Region marks (shipped)
 
 Both the heap and code RAM are bump allocators with no collector, so a program
 that loads modules or compiles repeatedly would leak until reset. Four

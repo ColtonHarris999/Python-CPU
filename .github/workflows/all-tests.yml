@@ -95,6 +95,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - run: docker --version
       - run: make docker-python-tests
 
