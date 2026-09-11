@@ -15,14 +15,14 @@ the same class of bug-farm that `lst.append` → `lst += [x]` was — dozens of
 sites, host CPython no longer running the same source.
 
 Native `LOAD_ATTR` methods (list/set/str/dict) and `e.args` are the model for
-(b). They are in [PR #86](https://github.com/ColtonHarris999/Python-CPU/pull/86).
+(b). They are on `main`.
 
 ---
 
 ## 1. What is already enough
 
 Do **not** wait for Plan 1 to be "complete". First `compile()` needs this, and
-most of it is already on `main` (methods: PR #86):
+most of it is already on `main`:
 
 | Need | Status |
 | --- | --- |
@@ -162,7 +162,7 @@ Each step has a done-when that is a test, not a doc.
 
 | Step | Work | Done when |
 | --- | --- | --- |
-| **0** | Land native methods (PR #86) if not on `main` | `make pycore-img-native-methods-all` |
+| **0** | Native methods (list/set/str/dict `LOAD_ATTR` table) | **Done** on `main` |
 | **A** | `compat.py` + `test_compiler_subset.py` (banned constructs) | Host test red on `xs[-1]` / `xs[1:]` / `class` / nested close / f-string in `compiler/` |
 | **B** | **F1** emit trio + host stand-ins | `img_code_new_call`: emit `RESUME; LOAD_SMALL_INT 7; RETURN_VALUE`, call, get 7 |
 | **C** | Tokenizer port under the subset (Plan 1 P9, no list-slice wait) | Host `test_rom_lexer.py` vs CPython `tokenize` on a tiny corpus; one device `img_lexer_count` |
@@ -209,6 +209,22 @@ not an illegal-opcode trap.
 
 ## 6. Tests (minimum set for H)
 
+Follow the current image-test contract (`README.md` Testing workflows, #90):
+
+- **Host tests** live under `pycore/tests/` and must pass in
+  `make pycore-python-tests` (CI job `python`).
+- **Device images** use `PYCORE_IMAGE_RUN` / `PYCORE_IMAGE_RUN_TWOCORE` (or the
+  trap variants). Those macros call `tools/ensure_sim.py` and pass hex/goldens
+  as **plusargs** into one shared `tb_container` binary. Do **not** add a
+  per-fixture Verilator `-G` rebuild.
+- Wire new targets into `pycore-img` (single-core) and/or `pycore-img-two-core`
+  (LIST_EXTEND / SET_GROW / grow). That is what CI jobs `img` and `two-core`
+  run. `make pycore-img-compile-min` is a convenience aggregate, not a third
+  simulator.
+- This planning document is markdown-only. GitHub CI **skips hardware** for
+  docs/`planning/` PRs; the first RTL/program/Makefile commit on this path
+  will run the split hardware jobs.
+
 Host (breadth):
 
 - `test_compiler_subset.py` — compiler source is in the subset
@@ -227,9 +243,6 @@ Device:
 | `img_parser_tiny_expr` | node-count / checksum |
 | `img_compile_eval_expr` | 3 |
 | `img_compile_mode_trap` | `SyntaxError` or `ValueError` for `"single"` / bad flags |
-
-Wire `pycore-img-compile-min` into `all-tests` at H, not the full Plan 2
-bootstrap.
 
 ---
 
