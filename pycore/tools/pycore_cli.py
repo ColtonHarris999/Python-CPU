@@ -81,6 +81,7 @@ Types that work
   - Dict/set keys: int, bool, float, str. Negative list/tuple/str indices trap.
   - List+list and tuple+tuple concatenation (``[1,2] + [3]``) allocate a new
     sequence. Inplace ``lst += x`` still uses LIST_EXTEND.
+  - List/tuple slicing (``xs[a:b]``, ``xs[1:]``) allocates a new sequence.
 
 Builtins in the boot image
   - Native: ``len``, ``range``, ``set``, ``ord``, ``chr``, ``int()`` (int/bool
@@ -101,9 +102,9 @@ Not supported yet
   - ``import``, generators / ``async``, ``match``, ``assert``, ``with``,
     ``except*``, closures / nested ``def`` cells, runtime class creation,
     ``super()``, ``compile()``, string-form ``exec`` / ``eval``, files / stdin.
-  - Slice assignment; list/tuple slicing. String slicing works for variable
-    bounds (``s[a:b]``) and for unit-step literals (``s[1:]``, ``s[:]``);
-    a step other than ``None``/1 is still rejected.
+  - Slice assignment. String / list / tuple slicing works for variable
+    bounds (``s[a:b]``, ``xs[a:b]``) and for unit-step literals (``s[1:]``,
+    ``xs[:]``); a step other than ``None``/1 is still rejected.
   - Format-spec f-strings (``f"{x:.2f}"``), ``STR * INT``, ``list + tuple``,
     negative indices.
 

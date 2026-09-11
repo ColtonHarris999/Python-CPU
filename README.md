@@ -36,7 +36,7 @@ Still open (see `planning/master_plan.md`):
   `vendor/pycpython`.
 - BIOS / module loader (after first `compile()`).
 - `assert`, `with`, `import`, generators, `except*`, trap→Python-exception (T6),
-  list/tuple slicing, negative indices.
+  negative indices.
 
 ## Try a Python file
 
@@ -71,7 +71,7 @@ are stripped.
 without format specs, `try`/`except`/`finally`, `raise` of seeded exception
 types, module-level `class C:` (no bases), keyword/`*args`/`**kwargs` calls.
 Types: 64-bit `int`, `bool`, `float`, `None`, `str`, `list`, `tuple`, `dict`,
-`set`, `range`. String slicing (`s[a:b]`, including unit-step literals like `s[1:]`).
+`set`, `range`. String / list / tuple slicing (`s[a:b]`, `xs[a:b]`, including unit-step literals).
 
 **Boot builtins:** `len`, `range`, `ord`, `chr`, `int`, `str`, `print`, `min`/`max`,
 `sum`, `sorted`, `map`/`zip`/`enumerate`/`filter`/`reversed` (these return
@@ -82,8 +82,8 @@ Methods: `list.append/pop/extend/clear`, `set.add/update`,
 
 **No:** `import`, generators/`async`, `match`, `assert`, `with`, closures,
 runtime `class`, `super()`, `compile()`, string-form `exec`/`eval`, files,
-slice assignment, list/tuple slicing, format-spec f-strings, `STR * INT`,
-negative indices. String slice step other than `None`/1 is still rejected.
+slice assignment, format-spec f-strings, `STR * INT`,
+negative indices. String / list / tuple slice step other than `None`/1 is still rejected.
 
 Host `compile()` for images is still CPython. [PyCPython](https://github.com/ColtonHarris999/PyCPython)
 is vendored at `vendor/pycpython` as the oracle / algorithm source for the

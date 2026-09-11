@@ -647,6 +647,15 @@ length `len(lhs) + len(rhs)` and copies lhs then rhs. Mixed `list + tuple`
 stays on the ALU and type-traps. Inplace `lst += x` is still `LIST_EXTEND`
 (not this arm). Overflow / OOM raises `PY_TRAP_MEM_FAULT`.
 
+#### Sequence slice (`LIST`/`TUPLE` `[start:stop]`)
+
+`BINARY_SLICE` with a LIST or TUPLE subject routes to `CONT_SLICE_SEQ`.
+The core clamps unsigned `start`/`stop` (`None` → 0 / `len`), allocates a
+new sequence of length `max(0, stop-start)`, and copies that window.
+Negative bounds trap `PY_TRAP_TYPE` (same deviation as string slices).
+Other subjects stay on `CONT_SLICE_STR` and type-trap. `STORE_SLICE` is
+still deferred.
+
 #### LIST/TUPLE/RANGE/STR/DICT/SET + object iteration
 
 `GET_ITER` accepts LIST, TUPLE, STR, DICT, SET, and `PY_TAG_RANGE` handles and
