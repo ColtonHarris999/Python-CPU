@@ -33,6 +33,7 @@ from image_from_source import (  # noqa: E402
     build_image_from_code,
     fold_function_defaults,
     fold_module_classes,
+    fold_slice_constants,
     iter_code_objects,
     iter_raw_instructions,
     parse_seed_pragmas,
@@ -100,9 +101,9 @@ Not supported yet
   - ``import``, generators / ``async``, ``match``, ``assert``, ``with``,
     ``except*``, closures / nested ``def`` cells, runtime class creation,
     ``super()``, ``compile()``, string-form ``exec`` / ``eval``, files / stdin.
-  - Slice assignment; list/tuple slicing. String slicing works when the bounds
-    are variables (``s[a:b]``). All-literal slices like ``s[1:]`` are folded by
-    CPython to a ``slice`` constant and are rejected — bind the bounds first.
+  - Slice assignment; list/tuple slicing. String slicing works for variable
+    bounds (``s[a:b]``) and for unit-step literals (``s[1:]``, ``s[:]``);
+    a step other than ``None``/1 is still rejected.
   - Format-spec f-strings (``f"{x:.2f}"``), ``STR * INT``, ``list + tuple``,
     negative indices.
 
@@ -236,6 +237,7 @@ def prepare_module_code(source_text: str, filename: str):
     module_code = apply_set_add_seq_injects(module_code, source_text)
     module_code = apply_map_add_seq_injects(module_code, source_text)
     module_code, class_specs = fold_module_classes(module_code, source_text)
+    module_code = fold_slice_constants(module_code)
     module_code, defaults_map, kwdefaults_map = fold_function_defaults(module_code)
     for spec in class_specs:
         for co_id, defaults in spec.method_defaults.items():

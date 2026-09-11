@@ -68,6 +68,14 @@ class LintGoodProgramsTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("Lint OK", buf.getvalue())
 
+    def test_literal_slice_constant_lints_clean(self) -> None:
+        errors = pycore_cli.lint_source_text(
+            'def managed_entry():\n    s = "abcde"\n    return len(s[1:3])\n',
+            "snippet.py",
+            entry="managed_entry",
+        )
+        self.assertEqual(errors, [])
+
 
 class LintRejectedProgramsTest(unittest.TestCase):
     def _lint_snippet(self, source: str) -> list[str]:
@@ -102,17 +110,6 @@ class LintRejectedProgramsTest(unittest.TestCase):
         )
         self.assertTrue(
             any("LOAD_COMMON_CONSTANT" in e or "assert" in e.lower() for e in errors),
-            errors,
-        )
-
-    def test_literal_slice_constant_is_rejected(self) -> None:
-        errors = self._lint_snippet(
-            'def managed_entry():\n    s = "abcde"\n    return len(s[1:3])\n'
-        )
-        self.assertTrue(errors, "expected literal slice to fail lint")
-        blob = " ".join(errors).lower()
-        self.assertTrue(
-            "slice" in blob or "unsupported constant" in blob,
             errors,
         )
 

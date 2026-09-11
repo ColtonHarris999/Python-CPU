@@ -423,18 +423,23 @@ class _ImageSerializer:
         if existing is not None:
             return existing
 
+        # CPython folds `s[1:]` / `s[:]` to a slice constant + NB_SUBSCR.
+        # Rewrite to BINARY_SLICE before consts are serialized (slice objects
+        # cannot be tagged). Identity stays `co_id` so defaults_map keys hold.
+        folded = fold_slice_constants_one(co)
+
         # A parent co_consts tuple can point at nested code-object handles only
         # after those code objects have been serialized into dmem.
-        for const in co.co_consts:
+        for const in folded.co_consts:
             if isinstance(const, types.CodeType):
                 self.serialize_code(const)
 
         entry_slot = self.slot_base + len(self.program_slots)
-        self.program_slots.extend(transcode_code_units(co))
+        self.program_slots.extend(transcode_code_units(folded))
         self.entry_slots[co_id] = entry_slot
 
         co_consts = self.heap.alloc_tuple(
-            [self.serialize_constant(const, co) for const in co.co_consts]
+            [self.serialize_constant(const, folded) for const in folded.co_consts]
         )
         co_names = self.heap.alloc_tuple(
             [tag_constant(name, self.string_heap) for name in co.co_names]
@@ -465,7 +470,7 @@ class _ImageSerializer:
             co_consts,
             co_names,
             co_varnames,
-            stacksize=co.co_stacksize,
+            stacksize=folded.co_stacksize,
             nlocals=co.co_nlocals,
             argcount=co.co_argcount,
             kwonlyargcount=co.co_kwonlyargcount,
@@ -637,9 +642,11 @@ _OP_CALL = _OM["CALL"]
 _OP_STORE_NAME = _OM["STORE_NAME"]
 _OP_LOAD_BUILD_CLASS = _OM["LOAD_BUILD_CLASS"]
 _OP_BUILD_MAP = _OM["BUILD_MAP"]
+_OP_BINARY_SLICE = _OM["BINARY_SLICE"]
 _SFA_FLAG_DEFAULTS = 1
 _SFA_FLAG_KWDEFAULTS = 2
 _SFA_FLAG_ANNOTATE = 16  # PEP 649 __annotate__; stripped, no runtime effect
+_BINARY_OP_CACHE_UNITS = int(_opcode_module._inline_cache_entries["BINARY_OP"])
 
 
 @dataclass(frozen=True)
@@ -778,6 +785,180 @@ def parse_seed_pragmas(source_text: str) -> SeedSpecs:
     return SeedSpecs(
         tuple(types), tuple(type_methods), tuple(instances), tuple(codes)
     )
+
+
+def _ensure_const(consts: list, value: object) -> int:
+    """Return index of ``value`` in ``consts``, appending if missing."""
+    if value is None:
+        for i, const in enumerate(consts):
+            if const is None:
+                return i
+        consts.append(None)
+        return len(consts) - 1
+    for i, const in enumerate(consts):
+        if type(const) is type(value) and const == value:
+            return i
+    consts.append(value)
+    return len(consts) - 1
+
+
+def _parse_load_const_at(code: bytes, offset: int) -> tuple[int, int] | None:
+    """If ``offset`` starts ``(EXTENDED_ARG)* LOAD_CONST``, return (end, index)."""
+    extended = 0
+    pos = offset
+    n = len(code)
+    while pos + 1 < n and code[pos] == OP_EXTENDED_ARG:
+        extended = (extended << 8) | code[pos + 1]
+        pos += 2
+    if pos + 1 >= n or code[pos] != _OP_LOAD_CONST:
+        return None
+    index = (extended << 8) | code[pos + 1]
+    return pos + 2, index
+
+
+def _bound_load_units(value: object, consts: list) -> list[tuple[int, int]]:
+    """Encode a BINARY_SLICE start/stop bound as LOAD_SMALL_INT or LOAD_CONST."""
+    if value is None:
+        return _encode_const_index(_ensure_const(consts, None))
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 255:
+        return [(_OM["LOAD_SMALL_INT"], value)]
+    if isinstance(value, int) and not isinstance(value, bool):
+        return _encode_const_index(_ensure_const(consts, value))
+    raise ValueError(
+        f"unsupported slice bound {value!r} of type {type(value).__name__}"
+    )
+
+
+def _const_indices_still_loaded(code: bytes) -> set[int]:
+    """LOAD_CONST indices that remain live in ``code`` (EXTENDED_ARG folded)."""
+    loaded: set[int] = set()
+    pos = 0
+    n = len(code)
+    while pos + 1 < n:
+        parsed = _parse_load_const_at(code, pos)
+        if parsed is not None:
+            end, index = parsed
+            loaded.add(index)
+            pos = end
+            continue
+        pos += 2
+    return loaded
+
+
+def _slice_nb_subscr_span(
+    code: bytes, offset: int, consts: list
+) -> tuple[int, int, slice] | None:
+    """Match ``LOAD_CONST slice + BINARY_OP NB_SUBSCR + CACHE*`` at ``offset``."""
+    parsed = _parse_load_const_at(code, offset)
+    if parsed is None:
+        return None
+    after_load, index = parsed
+    if index >= len(consts) or type(consts[index]) is not slice:
+        return None
+    sl = consts[index]
+    cache_bytes = 2 * _BINARY_OP_CACHE_UNITS
+    if after_load + 2 + cache_bytes > len(code):
+        return None
+    if code[after_load] != _OM["BINARY_OP"]:
+        return None
+    if ((code[after_load + 1]) & 0xFF) != NBARG_SUBSCR:
+        return None
+    cache_start = after_load + 2
+    for k in range(_BINARY_OP_CACHE_UNITS):
+        if code[cache_start + 2 * k] != OP_CACHE:
+            return None
+    return offset, cache_start + cache_bytes, sl
+
+
+def fold_slice_constants_one(co: types.CodeType) -> types.CodeType:
+    """Rewrite this code object's slice-const + NB_SUBSCR into BINARY_SLICE.
+
+    CPython 3.14 folds all-literal slices (``s[1:]``, ``s[:]``, ``s[1:3]``) to
+    ``LOAD_CONST slice(...)`` + ``BINARY_OP NB_SUBSCR`` plus BINARY_OP's five
+    inline caches. Hardware already executes ``BINARY_SLICE`` (subject, start,
+    stop) and skips ``CACHE``/``NOP``, so the image compiler expands the slice
+    into two bound loads + ``BINARY_SLICE`` and NOP-pads the leftover cache
+    units. Length is unchanged so jump offsets and exception tables stay valid.
+
+    ``step`` must be ``None`` or ``1`` (BINARY_SLICE has no step operand).
+    Peak stack grows by one versus the slice-object form, so ``co_stacksize``
+    is bumped when any site is rewritten. Nested code objects are not walked.
+    """
+    code = bytearray(co.co_code)
+    consts = list(co.co_consts)
+    rewritten = False
+    pos = 0
+    n = len(code)
+    while pos + 1 < n:
+        span = _slice_nb_subscr_span(bytes(code), pos, consts)
+        if span is None:
+            pos += 2
+            continue
+        start, end, sl = span
+        if sl.step not in (None, 1):
+            raise ValueError(
+                f"Unsupported slice step {sl.step!r} in code object "
+                f"{co.co_name!r} at bytecode offset {start}: BINARY_SLICE "
+                "has no step (only None/1)"
+            )
+        units = (
+            _bound_load_units(sl.start, consts)
+            + _bound_load_units(sl.stop, consts)
+            + [(_OP_BINARY_SLICE, 0)]
+        )
+        span_units = (end - start) // 2
+        if len(units) > span_units:
+            raise ValueError(
+                f"slice-const rewrite overflow in {co.co_name!r} at offset "
+                f"{start}: need {len(units)} units, have {span_units}"
+            )
+        while len(units) < span_units:
+            units.append((_OP_NOP, 0))
+        cursor = start
+        for op, arg8 in units:
+            code[cursor] = op
+            code[cursor + 1] = arg8
+            cursor += 2
+        rewritten = True
+        pos = end
+
+    live = _const_indices_still_loaded(bytes(code))
+    for i, const in enumerate(consts):
+        if type(const) is not slice:
+            continue
+        if i in live:
+            raise ValueError(
+                f"Unsupported constant {const!r} of type slice in code object "
+                f"{co.co_name!r}"
+            )
+        consts[i] = None
+
+    if not rewritten and consts == list(co.co_consts) and bytes(code) == co.co_code:
+        return co
+    stacksize = co.co_stacksize + 1 if rewritten else co.co_stacksize
+    return co.replace(
+        co_code=bytes(code),
+        co_consts=tuple(consts),
+        co_stacksize=stacksize,
+    )
+
+
+def fold_slice_constants(module_code: types.CodeType) -> types.CodeType:
+    """Recursively rewrite slice-const + NB_SUBSCR to BINARY_SLICE."""
+
+    def fold_tree(co: types.CodeType) -> types.CodeType:
+        consts = list(co.co_consts)
+        changed = False
+        for i, const in enumerate(consts):
+            if isinstance(const, types.CodeType):
+                new_c = fold_tree(const)
+                if new_c is not const:
+                    consts[i] = new_c
+                    changed = True
+        base = co.replace(co_consts=tuple(consts)) if changed else co
+        return fold_slice_constants_one(base)
+
+    return fold_tree(module_code)
 
 
 def fold_function_defaults(
@@ -1303,7 +1484,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         → OBK_BUILTIN
       _bi_exec_globals → OBK_BUILTIN (Plan 1 P4)
       int → OBK_TYPE (OB_FLAG_INT_TYPE) whose tp_dict holds from_bytes / to_bytes;
-        CALL converts INT/BOOL/decimal SHORT_STR instead of INSTANCE construction
+        CALL converts INT/BOOL/FLOAT (trunc toward 0)/decimal SHORT_STR
+        instead of INSTANCE construction
       str → OBK_TYPE (OB_FLAG_STR_TYPE); CALL stringifies STR/INT/BOOL/None
       Wave A exception types → OBK_TYPE with documented tp_base + OB_FLAG_EXC_TYPE
         (includes SyntaxError so Plan 1 P7 tests still LOAD_GLOBAL)
@@ -2189,6 +2371,7 @@ def build_image_from_source_text(
     module_code = apply_set_add_seq_injects(module_code, source_text)
     module_code = apply_map_add_seq_injects(module_code, source_text)
     module_code, class_specs = fold_module_classes(module_code, source_text)
+    module_code = fold_slice_constants(module_code)
     module_code, defaults_map, kwdefaults_map = fold_function_defaults(module_code)
     for spec in class_specs:
         for co_id, defaults in spec.method_defaults.items():

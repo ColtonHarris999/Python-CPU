@@ -208,6 +208,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-builtin-ord-len-trap pycore-img-builtin-ord-type-trap \
 	pycore-img-builtin-chr-range-trap pycore-img-builtin-chr-surrogate-trap \
 	pycore-img-builtin-int pycore-img-builtin-int-type-trap \
+	pycore-img-builtin-int-float pycore-img-builtin-max-float \
+	pycore-img-jaro-window \
 	pycore-img-builtin-str pycore-img-builtin-str-type-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
@@ -917,6 +919,12 @@ pycore-img-slice-str-neg-trap:
 pycore-img-slice-list-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,slice_list_trap,1,50000)
 
+pycore-img-slice-str-const:
+	$(call PYCORE_IMAGE_RUN,slice_str_const,50000)
+
+pycore-img-slice-damerau:
+	$(call PYCORE_IMAGE_RUN,slice_damerau,50000)
+
 pycore-img-try-syntaxerror:
 	$(call PYCORE_IMAGE_RUN,try_syntaxerror,50000)
 
@@ -991,7 +999,9 @@ pycore-img-slice-all: \
 	pycore-img-slice-str-empty \
 	pycore-img-slice-str-scan \
 	pycore-img-slice-str-neg-trap \
-	pycore-img-slice-list-trap
+	pycore-img-slice-list-trap \
+	pycore-img-slice-str-const \
+	pycore-img-slice-damerau
 
 pycore-img-exec-all: \
 	pycore-img-exec-code-basic \
@@ -1675,6 +1685,8 @@ pycore-img-attr-all: \
 	pycore-img-builtin-ord-len-trap pycore-img-builtin-ord-type-trap \
 	pycore-img-builtin-chr-range-trap pycore-img-builtin-chr-surrogate-trap \
 	pycore-img-builtin-int pycore-img-builtin-int-type-trap \
+	pycore-img-builtin-int-float pycore-img-builtin-max-float \
+	pycore-img-jaro-window \
 	pycore-img-builtin-str pycore-img-builtin-str-type-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
@@ -1906,6 +1918,15 @@ pycore-img-builtin-int:
 
 pycore-img-builtin-int-type-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,builtin_int_type_trap,1,50000)
+
+pycore-img-builtin-int-float:
+	$(call PYCORE_IMAGE_RUN,builtin_int_float,50000)
+
+pycore-img-builtin-max-float:
+	$(call PYCORE_IMAGE_RUN,builtin_max_float,50000)
+
+pycore-img-jaro-window:
+	$(call PYCORE_IMAGE_RUN,jaro_window,100000)
 
 pycore-img-builtin-str:
 	$(call PYCORE_IMAGE_RUN,builtin_str,50000)

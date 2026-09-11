@@ -1,7 +1,8 @@
 """BINARY_SLICE on SHORT_STR: interior, prefix, suffix, full and empty ranges.
 
-Bounds must be non-literal: CPython folds `s[1:3]` into a `slice` constant plus
-NB_SUBSCR, and only emits BINARY_SLICE when a bound is not a literal.
+Variable bounds emit BINARY_SLICE directly. All-literal slices (`s[1:3]`) are
+folded by CPython to a slice constant + NB_SUBSCR and rewritten by the image
+compiler; see img_slice_str_const.
 """
 
 

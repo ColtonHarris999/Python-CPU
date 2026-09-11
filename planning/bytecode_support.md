@@ -12,14 +12,12 @@ This file is the **order** of remaining lifts, not a second table.
 `execute` / documented `partial` rows already on main: ALU, jumps, CALL /
 CALL_KW / CALL_FUNCTION_EX, containers, GET_ITER / FOR_ITER, exception
 table ops (RAISE 0/1, PUSH_EXC_INFO, CHECK_EXC_MATCH MRO+tuples,
-POP_EXCEPT, RERAISE 0/1), string `BINARY_SLICE` with variable bounds,
+POP_EXCEPT, RERAISE 0/1), string `BINARY_SLICE` (variable bounds and
+host fold of unit-step literals `s[1:]` / `s[:]` → `BINARY_SLICE`),
 native `LOAD_ATTR` methods, `UNPACK_EX`, `LIST_TO_TUPLE`.
 
-Host images still use CPython `compile()`. CPython 3.14 folds
-all-literal slices (`s[1:]`) to a `slice` constant + `NB_SUBSCR`. Hardware
-already runs `BINARY_SLICE`; image tooling on main still rejects `slice`
-objects unless a bound is a variable. Folding that on the host is a
-tooling ceiling, not a new opcode.
+Host images still use CPython `compile()`. A step other than `None`/1
+on a literal slice is still rejected (`BINARY_SLICE` has no step).
 
 ## Remaining, grouped
 
@@ -27,7 +25,6 @@ tooling ceiling, not a new opcode.
 
 | Opcode / ceiling | Why it still matters | Owner |
 | --- | --- | --- |
-| Host fold of unit-step slice-const → `BINARY_SLICE` | literal `s[1:]` / `s[:]` in OSS | image tooling |
 | List/tuple `BINARY_SLICE` | tokenizer/compiler can rewrite with `copy_range`; pull if the helper dominates size | pycore |
 | `TO_BOOL` on `OBJECT` (`__bool__` / `__len__`) | remaining wave-4 bytecode | pycore |
 | `LOAD_SUPER_ATTR` | `super()` in methods | pycore |
