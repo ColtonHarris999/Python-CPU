@@ -1368,6 +1368,38 @@ localparam logic [127:0] PY_ATTR_NAME_ITER  =
     128'h85f5f697465725f5f000000000000000; // "__iter__"  size=8
 localparam logic [127:0] PY_ATTR_NAME_NEXT  =
     128'h85f5f6e6578745f5f000000000000000; // "__next__"  size=8
+localparam logic [127:0] PY_ATTR_NAME_ARGS  =
+    128'h46172677300000000000000000000000; // "args" size=4
+
+// Native built-in method names for LOAD_ATTR on MUT_COLLEC / STR receivers.
+localparam logic [127:0] PY_NMETH_NAME_APPEND     =
+    128'h6617070656e640000000000000000000; // "append" size=6
+localparam logic [127:0] PY_NMETH_NAME_POP        =
+    128'h3706f700000000000000000000000000; // "pop" size=3
+localparam logic [127:0] PY_NMETH_NAME_EXTEND     =
+    128'h6657874656e640000000000000000000; // "extend" size=6
+localparam logic [127:0] PY_NMETH_NAME_CLEAR      =
+    128'h5636c656172000000000000000000000; // "clear" size=5
+localparam logic [127:0] PY_NMETH_NAME_ADD        =
+    128'h36164640000000000000000000000000; // "add" size=3
+localparam logic [127:0] PY_NMETH_NAME_UPDATE     =
+    128'h67570646174650000000000000000000; // "update" size=6
+localparam logic [127:0] PY_NMETH_NAME_JOIN       =
+    128'h46a6f696e00000000000000000000000; // "join" size=4
+localparam logic [127:0] PY_NMETH_NAME_STARTSWITH =
+    128'ha7374617274737769746800000000000; // "startswith" size=10
+localparam logic [127:0] PY_NMETH_NAME_ENDSWITH   =
+    128'h8656e647377697468000000000000000; // "endswith" size=8
+localparam logic [127:0] PY_NMETH_NAME_FIND       =
+    128'h466696e6400000000000000000000000; // "find" size=4
+localparam logic [127:0] PY_NMETH_NAME_GET        =
+    128'h36765740000000000000000000000000; // "get" size=3
+localparam logic [127:0] PY_NMETH_NAME_KEYS       =
+    128'h46b65797300000000000000000000000; // "keys" size=4
+localparam logic [127:0] PY_NMETH_NAME_ITEMS      =
+    128'h56974656d73000000000000000000000; // "items" size=5
+localparam logic [127:0] PY_NMETH_NAME_VALUES     =
+    128'h676616c7565730000000000000000000; // "values" size=6
 
 function automatic logic pycore_attr_name_is_dict(
     input logic [3:0] tag,
@@ -1396,6 +1428,16 @@ function automatic logic pycore_attr_name_is_base(
     begin
         pycore_attr_name_is_base =
             (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_BASE);
+    end
+endfunction
+
+function automatic logic pycore_attr_name_is_args(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_args =
+            (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_ARGS);
     end
 endfunction
 
@@ -2008,6 +2050,93 @@ localparam logic [31:0] PYCORE_EXC_STACK_MAX   = 32'd128;
 // latched into iter_exhaust_type_r during S_BOOT (same type seeded in builtins).
 localparam logic [31:0] PYCORE_ITER_EXHAUST_TYPE_ADDR =
     PYCORE_EXC_STACK_BASE + PYCORE_EXC_STACK_BYTES - 32'd32;
+// Native method CODE_OBJECT sidecar (16 tagged entries × 32 B) immediately
+// below the StopIteration latch. LOAD_ATTR reads these handles; it never
+// allocates a new callable on the method_flag=1 hot path.
+localparam logic [31:0] PYCORE_NATIVE_METHOD_COUNT = 32'd16;
+localparam logic [31:0] PYCORE_NATIVE_METHOD_ENTRY_BYTES = 32'd32;
+localparam logic [31:0] PYCORE_NATIVE_METHOD_TABLE_BYTES =
+    PYCORE_NATIVE_METHOD_COUNT * PYCORE_NATIVE_METHOD_ENTRY_BYTES;
+localparam logic [31:0] PYCORE_NATIVE_METHOD_TABLE_ADDR =
+    PYCORE_ITER_EXHAUST_TYPE_ADDR - PYCORE_NATIVE_METHOD_TABLE_BYTES;
+localparam logic [31:0] PYCORE_EXC_SIDECAR_RESERVE_BYTES =
+    PYCORE_NATIVE_METHOD_TABLE_BYTES + 32'd32;
+
+function automatic logic pycore_is_native_method_receiver(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_is_native_method_receiver =
+            pycore_is_list(tag, value) ||
+            pycore_is_set(tag, value) ||
+            pycore_is_dict(tag, value) ||
+            pycore_is_string_tag(tag);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_native_method_entry_addr(
+    input logic [3:0] index
+);
+    begin
+        pycore_native_method_entry_addr =
+            PYCORE_NATIVE_METHOD_TABLE_ADDR + ({28'b0, index} << 5);
+    end
+endfunction
+
+// Returns {hit, index[3:0]}. Index matches ROM_NATIVE_METHODS in
+// image_from_source.py. Miss is 5'd0 (hit=0).
+function automatic logic [4:0] pycore_native_method_id(
+    input logic [3:0] recv_tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] recv_val,
+    input logic [3:0] name_tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] name_val
+);
+    logic [4:0] result;
+    begin
+        result = 5'd0;
+        if (name_tag == PY_TAG_SHORT_STR) begin
+            if (pycore_is_list(recv_tag, recv_val)) begin
+                if (name_val == PY_NMETH_NAME_APPEND)
+                    result = {1'b1, 4'd0};
+                else if (name_val == PY_NMETH_NAME_POP)
+                    result = {1'b1, 4'd1};
+                else if (name_val == PY_NMETH_NAME_EXTEND)
+                    result = {1'b1, 4'd2};
+                else if (name_val == PY_NMETH_NAME_CLEAR)
+                    result = {1'b1, 4'd3};
+            end else if (pycore_is_set(recv_tag, recv_val)) begin
+                if (name_val == PY_NMETH_NAME_ADD)
+                    result = {1'b1, 4'd4};
+                else if (name_val == PY_NMETH_NAME_UPDATE)
+                    result = {1'b1, 4'd5};
+            end else if (pycore_is_string_tag(recv_tag)) begin
+                if (name_val == PY_NMETH_NAME_JOIN)
+                    result = {1'b1, 4'd6};
+                else if (name_val == PY_NMETH_NAME_STARTSWITH)
+                    result = {1'b1, 4'd7};
+                else if (name_val == PY_NMETH_NAME_ENDSWITH)
+                    result = {1'b1, 4'd8};
+                else if (name_val == PY_NMETH_NAME_FIND)
+                    result = {1'b1, 4'd9};
+            end else if (pycore_is_dict(recv_tag, recv_val)) begin
+                if (name_val == PY_NMETH_NAME_GET)
+                    result = {1'b1, 4'd10};
+                else if (name_val == PY_NMETH_NAME_KEYS)
+                    result = {1'b1, 4'd11};
+                else if (name_val == PY_NMETH_NAME_ITEMS)
+                    result = {1'b1, 4'd12};
+                else if (name_val == PY_NMETH_NAME_UPDATE)
+                    result = {1'b1, 4'd13};
+                else if (name_val == PY_NMETH_NAME_POP)
+                    result = {1'b1, 4'd14};
+                else if (name_val == PY_NMETH_NAME_VALUES)
+                    result = {1'b1, 4'd15};
+            end
+        end
+        pycore_native_method_id = result;
+    end
+endfunction
 
 // -------------------------------------------------------------------------
 // LIST in-dmem layout v2 — growable split object/buffer (Phase A).

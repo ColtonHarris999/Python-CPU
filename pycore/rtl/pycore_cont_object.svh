@@ -1002,9 +1002,11 @@
                         end // CONT_LFAC
 
                         // =====================================================
-                        // LOAD_ATTR — instance __dict__ then MRO tp_dict walk.
+                        // LOAD_ATTR — native method table, then instance __dict__
+                        // then MRO tp_dict walk.
                         // Overlay: push_null=method_flag, src_len=type addr,
-                        // count=MRO depth, lfb_hi=source (0=INSTANCE,1=TYPE),
+                        // count=MRO depth, lfb_hi=source (0=INSTANCE,1=TYPE,
+                        //   2=EXCEPTION args / native-method bind uses bit0),
                         // lfb_lo[0]=in_type_walk, lfb_lo[1]=dunder field return
                         //   (__dict__ via IDICT, __base__ via CP_VAL/CP_TAG),
                         // lfb_lo[2]=staticmethod unwrap / skip OBJECT unwrap,
@@ -1014,6 +1016,9 @@
                         //   __dict__  → field0 MUT_DICT handle (INSTANCE/TYPE)
                         //   __class__ → ob_type (INSTANCE) or self (TYPE)
                         //   __base__  → field1 tp_base or None (TYPE only)
+                        //   args      → field1 TUPLE (OBK_EXCEPTION)
+                        // Native MUT_COLLEC / STR methods (R7: before OBJECT):
+                        //   table lookup → CODE_OBJECT + method bind.
                         // =====================================================
                         CONT_LOAD_ATTR: begin
                             unique case (container_phase_r)
@@ -1051,15 +1056,61 @@
                                         container_tag_r <= container_rd_data_r[3:0];
                                         if (!pycore_dict_key_tag_ok(container_rd_data_r[3:0])) begin
                                             container_type_trap_r <= 1'b1;
-                                        end else if (cont_rs1_tag != PY_TAG_OBJECT) begin
+                                        end else begin
+                                            begin
+                                                logic [4:0] nmeth;
+                                                nmeth = pycore_native_method_id(
+                                                    cont_rs1_tag, cont_rs1_val,
+                                                    container_rd_data_r[3:0],
+                                                    container_val_r);
+                                                if (nmeth[4]) begin
+                                                    // R7: native table before OBJECT path.
+                                                    container_lfb_hi_r      <= 4'd1;
+                                                    container_lfb_lo_r      <= 4'd0;
+                                                    container_dmem_addr_r    <=
+                                                        pycore_native_method_entry_addr(
+                                                            nmeth[3:0]);
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    container_phase_r        <= CP_HDR;
+                                                end else if (pycore_is_native_method_receiver(
+                                                        cont_rs1_tag, cont_rs1_val)) begin
+                                                    container_attr_error_r <= 1'b1;
+                                                end else if (cont_rs1_tag != PY_TAG_OBJECT) begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end else begin
+                                                    container_src_buf_r      <= cont_rs1_addr;
+                                                    container_finishing_r    <= 1'b0;
+                                                    container_dmem_addr_r    <= cont_rs1_addr;
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    container_phase_r        <= CP_ATTR_HEAD;
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+
+                                // Native-method sidecar: val then tag.
+                                CP_HDR: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_val_r <= container_rd_data_r;
+                                        container_dmem_addr_r    <=
+                                            container_dmem_addr_r + 32'd16;
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_LIST_BUF;
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_rd_data_r[3:0] !=
+                                                PY_TAG_CODE_OBJECT) begin
                                             container_type_trap_r <= 1'b1;
                                         end else begin
-                                            container_src_buf_r      <= cont_rs1_addr;
-                                            container_finishing_r    <= 1'b0;
-                                            container_dmem_addr_r    <= cont_rs1_addr;
-                                            container_dmem_we_r      <= 1'b0;
-                                            container_dmem_pending_r <= 1'b1;
-                                            container_phase_r        <= CP_ATTR_HEAD;
+                                            container_tag_r  <= PY_TAG_CODE_OBJECT;
+                                            container_phase_r <= CP_ATTR_WB;
                                         end
                                     end
                                 end
@@ -1072,6 +1123,7 @@
                                             logic        name_is_dict;
                                             logic        name_is_class;
                                             logic        name_is_base;
+                                            logic        name_is_args;
                                             attr_ob_type = pycore_ob_type(container_rd_data_r);
                                             attr_ob_kind = pycore_ob_kind(container_rd_data_r);
                                             name_is_dict = pycore_attr_name_is_dict(
@@ -1079,6 +1131,8 @@
                                             name_is_class = pycore_attr_name_is_class(
                                                 container_tag_r, container_val_r);
                                             name_is_base = pycore_attr_name_is_base(
+                                                container_tag_r, container_val_r);
+                                            name_is_args = pycore_attr_name_is_args(
                                                 container_tag_r, container_val_r);
                                             if (attr_ob_kind == PY_OBK_INSTANCE) begin
                                                 if (name_is_dict) begin
@@ -1161,6 +1215,19 @@
                                                     container_lfb_lo_r    <= 4'd1; // type-walk
                                                     container_phase_r     <= CP_ATTR_TYPE;
                                                 end
+                                            end else if ((attr_ob_kind == PY_OBK_EXCEPTION) &&
+                                                         name_is_args) begin
+                                                // F4: e.args → field1 tuple (data, ignore method_flag).
+                                                container_src_len_r     <= container_src_buf_r;
+                                                container_count_r       <= 7'd0;
+                                                container_lfb_hi_r      <= 4'd2;
+                                                container_lfb_lo_r      <= 4'b0010; // [1]
+                                                container_dmem_addr_r <=
+                                                    pycore_obj_field_val_addr(
+                                                        container_src_buf_r, 32'd1);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r        <= CP_VAL;
                                             end else begin
                                                 container_type_trap_r <= 1'b1;
                                             end
@@ -1426,7 +1493,13 @@
 
                                 CP_TAG: begin
                                     if (!container_dmem_pending_r) begin
-                                        if (container_lfb_lo_r[1]) begin
+                                        if (container_lfb_hi_r[1]) begin
+                                            // F4: exception args field — push as data.
+                                            container_tag_r       <= container_rd_data_r[3:0];
+                                            container_push_null_r <= 1'b0;
+                                            container_lfb_lo_r    <= 4'b0100; // [2]
+                                            container_phase_r     <= CP_ATTR_WB;
+                                        end else if (container_lfb_lo_r[1]) begin
                                             // Dunder __base__: push tp_base or None.
                                             if (pycore_is_none(
                                                     container_rd_data_r[3:0],

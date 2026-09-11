@@ -78,6 +78,13 @@ HEAP_LIMIT = 0x1B000
 EXC_STACK_BASE = 0x1B000
 EXC_STACK_BYTES = 0x1000
 ITER_EXHAUST_TYPE_ADDR = EXC_STACK_BASE + EXC_STACK_BYTES - 32  # 0x1BFE0
+# Native method CODE_OBJECT table (16 × 32 B tagged entries) immediately
+# below the StopIteration sidecar. LOAD_ATTR indexes this instead of
+# allocating a bound builtin per lookup (object_model.md D4).
+NATIVE_METHOD_COUNT = 16
+NATIVE_METHOD_ENTRY_BYTES = 32
+NATIVE_METHOD_TABLE_BYTES = NATIVE_METHOD_COUNT * NATIVE_METHOD_ENTRY_BYTES
+NATIVE_METHOD_TABLE_ADDR = ITER_EXHAUST_TYPE_ADDR - NATIVE_METHOD_TABLE_BYTES  # 0x1BDE0
 
 # LIST element buffer stride (bytes); mirror pycore list layout (32B/element).
 LIST_ELEMENT_BYTES = 32

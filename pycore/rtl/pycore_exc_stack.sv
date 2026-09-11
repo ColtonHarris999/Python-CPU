@@ -141,8 +141,8 @@ module pycore_exc_stack #(
                         if (full_o ||
                             (sp_r + NODE_BYTES[ADDR_WIDTH-1:0]) >
                             (STACK_BASE_ADDR + STACK_SIZE_BYTES[ADDR_WIDTH-1:0]
-                             - 32'd32)) begin
-                            // Reserve top 32 B for PYCORE_ITER_EXHAUST_TYPE_ADDR.
+                             - PYCORE_EXC_SIDECAR_RESERVE_BYTES[ADDR_WIDTH-1:0])) begin
+                            // Reserve native-method table + StopIteration sidecar.
                             push_fault_r <= 1'b1;
                             push_done_r  <= 1'b1;
                         end else begin

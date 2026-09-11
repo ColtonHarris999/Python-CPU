@@ -437,6 +437,11 @@ list slice at heap OOM → trap 7.
 
 #### 6.3.2 Methods on built-in types
 
+**Status: implemented.** `LOAD_ATTR` on `LIST` / `SET` / `DICT` / `STR` looks
+up a 16-entry sidecar of firmware `CODE_OBJECT`s (no per-call allocation).
+See `pycore/docs/object_model.md` (native method table). `set.discard` is still
+open (`DELETE_SUBSCR` on SET remains TYPE).
+
 `LOAD_ATTR` currently demands `PY_TAG_OBJECT`, so `lst.append(x)` traps. Two
 options:
 
@@ -667,13 +672,9 @@ The tokenizer must reject bad input without halting the machine.
    worth doing properly, because "error with no message" is useless for a
    compiler front end.
 
-   **Status after exceptions PR #74:** construction (`raise SyntaxError("msg")`
-   → `OBK_EXCEPTION` with a one-element args tuple) and cross-frame unwind
-   landed. Reading `e.args` via `LOAD_ATTR` is still open — see
-   [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md)
-   **F4**. Firmware sites that still do `raise 1` / `raise 0` are **F1** in
-   that same plan (required before tokenizer helpers raise catchable types).
-   Until F4, `img_try_syntaxerror_msg` keeps the global-stash workaround.
+   **Status after native-method PR:** construction (`raise SyntaxError("msg")`
+   → `OBK_EXCEPTION` with a one-element args tuple) and `LOAD_ATTR e.args`
+   both land. `img_try_syntaxerror_msg` reads `e.args[0]`.
 
 **Tests:** each new type raised and caught by exact match; a message round-trip
 (`except SyntaxError as e: e.args[0]`); raise inside a called function caught by

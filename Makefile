@@ -229,6 +229,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-print-many pycore-img-print-star pycore-img-print-star-kw \
 	pycore-img-print-neg pycore-img-print-bools pycore-img-print-type-trap \
 	pycore-img-attr-all \
+	pycore-img-native-methods-all \
 	pycore-img-method-call pycore-img-method-nested \
 	pycore-img-ctor-noinit pycore-img-ctor-init \
 	pycore-img-default-arg pycore-img-default-arg-argc-trap \
@@ -1504,7 +1505,11 @@ pycore-img-two-core: \
 	pycore-img-dict-update \
 	pycore-img-dict-update-obj \
 	pycore-img-dict-merge \
-	pycore-img-attr-many
+	pycore-img-attr-many \
+	pycore-img-list-methods \
+	pycore-img-list-method-unbound \
+	pycore-img-dict-methods \
+	pycore-img-set-methods
 
 pycore-img: \
 	pycore-img-exec-all \
@@ -1582,6 +1587,7 @@ pycore-img: \
 	pycore-img-set-grow-fatal \
 	pycore-img-attr-all \
 	pycore-img-method-all \
+	pycore-img-native-methods-all \
 	pycore-img-call-all \
 	pycore-img-varargs-basic \
 	pycore-img-varargs-empty \
@@ -1687,7 +1693,47 @@ pycore-img-attr-all: \
 	pycore-img-print-many pycore-img-print-star pycore-img-print-star-kw \
 	pycore-img-print-neg pycore-img-print-bools pycore-img-print-type-trap \
 	pycore-img-builtin-max \
-	pycore-img-builtin-len-list
+	pycore-img-builtin-len-list \
+	pycore-img-native-methods-all
+
+# Native LOAD_ATTR methods on list/set/str/dict + exception.args.
+pycore-img-list-pop:
+	$(call PYCORE_IMAGE_RUN,list_pop,100000)
+
+pycore-img-list-pop-empty:
+	$(call PYCORE_IMAGE_RUN,list_pop_empty,100000)
+
+pycore-img-str-methods:
+	$(call PYCORE_IMAGE_RUN,str_methods,150000)
+
+pycore-img-exc-args:
+	$(call PYCORE_IMAGE_RUN,exc_args,100000)
+
+pycore-img-list-method-missing:
+	$(call PYCORE_IMAGE_TRAP_RUN,list_method_missing,15,50000)
+
+pycore-img-list-methods: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_methods,300000)
+
+pycore-img-list-method-unbound: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,list_method_unbound,200000)
+
+pycore-img-dict-methods: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_methods,400000)
+
+pycore-img-set-methods: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,set_methods,300000)
+
+pycore-img-native-methods-all: \
+	pycore-img-list-pop \
+	pycore-img-list-pop-empty \
+	pycore-img-str-methods \
+	pycore-img-exc-args \
+	pycore-img-list-method-missing \
+	pycore-img-list-methods \
+	pycore-img-list-method-unbound \
+	pycore-img-dict-methods \
+	pycore-img-set-methods
 
 # Generalized CALL (M3): method form, type ctor, defaults, bound-method obj.
 pycore-img-method-call:
@@ -1933,7 +1979,8 @@ pycore-img-exc-all: \
 	pycore-img-for-iter-object-raise-catch \
 	pycore-img-fw-range-zero-step \
 	pycore-img-fw-next-exhausted \
-	pycore-img-fw-pow-neg-mod
+	pycore-img-fw-pow-neg-mod \
+	pycore-img-exc-args
 
 pycore-img-return-true:
 	$(call PYCORE_IMAGE_RUN,return_true,50000)

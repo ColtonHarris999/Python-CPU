@@ -1,11 +1,10 @@
-"""list.append helper (BI_LIST_APPEND).
+"""list.append — native method table entry 0.
 
-Hardware LIST_APPEND opcode already implements spare-capacity append and
-LIST_GROW trap. This firmware entry is a semantic mirror for ROM dispatch
-experiments — prefer the opcode path.
+Uses LIST_EXTEND (`self += [value]`) so grow goes through the existing
+excore trap. Do not call `self.append` here (that would recurse).
 """
 
 
-def list_append(lst, value):
-    lst += [value]
+def list_append(self, value):
+    self += [value]
     return None

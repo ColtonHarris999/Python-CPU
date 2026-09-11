@@ -212,22 +212,11 @@ Many stubs halt with **`PY_TRAP_DIV_ZERO` (3)** via `return 1 % 0`. After #74 th
 
 ---
 
-## 6. F4 — Plan 1 P7 messages (`e.args`) — catalog only
+## 6. F4 — Plan 1 P7 messages (`e.args`) — **done**
 
-Construction already stores args when `CALL` builds `OBK_EXCEPTION` (`raise SyntaxError("msg")`). **Reading** `e.args` via `LOAD_ATTR` was an explicit non-goal of #74.
-
-[`img_try_syntaxerror_msg.py`](../pycore/programs/img_try_syntaxerror_msg.py) still stashes `_err_pos` in a global. Tokenizer / Plan 1 P9 wants a real message round-trip:
-
-```python
-try:
-    raise SyntaxError("msg")
-except SyntaxError as e:
-    return e.args[0]   # needs LOAD_ATTR on OBK_EXCEPTION
-```
-
-**This is a separate RTL track** (exception object attribute), not a firmware one-liner. Blocked only in the weak sense that F1 makes firmware raises honest; construction already exists. Track here so Plan 1 §9.1 / “args payload open” has a single follow-up pointer. Do not implement F4 in the F1 PR.
-
-When F4 lands: flip `img_try_syntaxerror_msg` off the global-stash workaround; tick Plan 1 “SyntaxError with a message can be raised and caught.”
+`LOAD_ATTR` name `"args"` on `OBK_EXCEPTION` returns field1. 
+[`img_try_syntaxerror_msg.py`](../pycore/programs/img_try_syntaxerror_msg.py)
+reads `e.args[0]`. Coverage also `img_exc_args`.
 
 ---
 
@@ -300,7 +289,7 @@ When F4 lands: flip `img_try_syntaxerror_msg` off the global-stash workaround; t
 
 ### F4
 
-- [ ] `LOAD_ATTR` (or dedicated path) returns `args` for `OBK_EXCEPTION`
-- [ ] `img_try_syntaxerror_msg` uses `e.args[0]`; Plan 1 P7 message checkbox ticked
+- [x] `LOAD_ATTR` (or dedicated path) returns `args` for `OBK_EXCEPTION`
+- [x] `img_try_syntaxerror_msg` uses `e.args[0]`; Plan 1 P7 message checkbox ticked
 
 **Placement recommendation:** new branch from post-#74 `main` (e.g. `cursor/exceptions-firmware-followup`). Land F1 alone first; F2 next; F3 when convenient; F4 as its own RTL PR before Plan 1 P9 relies on messages.

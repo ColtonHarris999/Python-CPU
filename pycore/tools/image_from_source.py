@@ -36,6 +36,7 @@ from encoding import (
     BI_SET,
     BI_TO_BYTES,
     HEAP_BASE,
+    NATIVE_METHOD_COUNT,
     OB_FLAG_EXC_TYPE,
     OB_FLAG_INT_TYPE,
     OB_FLAG_STR_TYPE,
@@ -1077,6 +1078,28 @@ ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
     ("eval", "eval", "eval"),
 )
 
+# Native LOAD_ATTR methods. Seeded into the exc-arena sidecar, not the public
+# builtins dict. Index must match pycore_native_method_id in pycore_defs.svh.
+# (index, source_stem, func_name)
+ROM_NATIVE_METHODS: tuple[tuple[int, str, str], ...] = (
+    (0, "list_append", "list_append"),
+    (1, "list_pop", "list_pop"),
+    (2, "list_extend", "list_extend"),
+    (3, "list_clear", "list_clear"),
+    (4, "set_add", "set_add"),
+    (5, "set_update", "set_update"),
+    (6, "str_join", "str_join"),
+    (7, "str_startswith", "str_startswith"),
+    (8, "str_endswith", "str_endswith"),
+    (9, "str_find", "str_find"),
+    (10, "dict_get", "dict_get"),
+    (11, "dict_keys", "dict_keys"),
+    (12, "dict_items", "dict_items"),
+    (13, "dict_update", "dict_update"),
+    (14, "dict_pop", "dict_pop"),
+    (15, "dict_values", "dict_values"),
+)
+
 # ROM bodies whose device semantics cannot be reproduced by running the same
 # source under CPython. ``run_image_test.py`` binds host stand-ins for these
 # after the test program's namespace exists; see ``exec.py``'s host note.
@@ -1158,6 +1181,8 @@ def seed_firmware_function(
             f"got {type(func).__name__}"
         )
     co = func.__code__
+    if func_name == "set_add":
+        co = _build_set_add_method_code(co)
     validate_code_tree(co)
     defaults = func.__defaults__
     if defaults:
@@ -1182,6 +1207,30 @@ def seed_rom_firmware_builtins(
             (tag_constant(dict_key, serializer.string_heap), handle)
         )
     return pairs
+
+
+def seed_rom_native_methods(
+    serializer: _ImageSerializer,
+) -> list[Tagged]:
+    """Return CODE_OBJECT handles in native-method table order."""
+    by_index: dict[int, tuple[str, str]] = {}
+    for index, stem, func_name in ROM_NATIVE_METHODS:
+        if index in by_index:
+            raise ValueError(f"duplicate native method index {index}")
+        by_index[index] = (stem, func_name)
+    if sorted(by_index) != list(range(NATIVE_METHOD_COUNT)):
+        raise ValueError(
+            f"ROM_NATIVE_METHODS must cover 0..{NATIVE_METHOD_COUNT - 1}, "
+            f"got {sorted(by_index)}"
+        )
+    handles: list[Tagged] = []
+    for index in range(NATIVE_METHOD_COUNT):
+        stem, func_name = by_index[index]
+        path = FIRMWARE_BUILTINS_DIR / f"{stem}.py"
+        if not path.is_file():
+            raise FileNotFoundError(f"native method firmware missing: {path}")
+        handles.append(seed_firmware_function(serializer, path, func_name))
+    return handles
 
 
 # CPython 3.14 Wave A exception tree: (name, documented parent or None).
@@ -1258,6 +1307,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         )
     stop_iteration = exc_handles["StopIteration"]
     heap.write_iter_exhaust_type(stop_iteration)
+    heap.write_native_method_table(seed_rom_native_methods(serializer))
     pairs: list[tuple[Tagged, Tagged]] = [
         (tag_constant("bytearray", string_heap), heap.alloc_builtin(BI_BYTEARRAY)),
         (tag_constant("max", string_heap), heap.alloc_builtin(BI_MAX)),
@@ -1475,6 +1525,39 @@ _OP_LOAD_FAST = _OM["LOAD_FAST"]
 _OP_CONTAINS_OP = _OM["CONTAINS_OP"]
 _OP_BINARY_OP = _OM["BINARY_OP"]
 _OP_RETURN_VALUE = _OM["RETURN_VALUE"]
+_OP_POP_TOP = _OM["POP_TOP"]
+_OP_LOAD_CONST = _OM["LOAD_CONST"]
+
+
+def _build_set_add_method_code(template: types.CodeType) -> types.CodeType:
+    """Hand-assemble ``self`` / ``value`` / SET_ADD / POP / return None.
+
+    compile() cannot emit SET_ADD outside a set comprehension, so the
+    firmware Python body is a host-only stand-in.
+    """
+    code = bytearray()
+
+    def emit(op: int, arg: int = 0) -> None:
+        if arg > 255:
+            raise ValueError("set_add method oparg exceeds 8 bits")
+        code.append(op)
+        code.append(arg & 0xFF)
+
+    emit(_OP_RESUME, 0)
+    emit(_OP_LOAD_FAST, 0)
+    emit(_OP_LOAD_FAST, 1)
+    emit(_OP_SET_ADD, 1)
+    emit(_OP_POP_TOP, 0)
+    emit(_OP_LOAD_CONST, 0)
+    emit(_OP_RETURN_VALUE, 0)
+    return template.replace(
+        co_code=bytes(code),
+        co_varnames=("self", "value"),
+        co_nlocals=2,
+        co_stacksize=max(4, template.co_stacksize),
+        co_names=(),
+        co_consts=(None,),
+    )
 
 
 def parse_set_add_seq_pragmas(
