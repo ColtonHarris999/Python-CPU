@@ -1561,7 +1561,7 @@
                                     if ((cont_rf_rs1_tag != PY_TAG_INT) ||
                                         (cont_rf_rs1_val[127:32] != 96'b0) ||
                                         (cont_rf_rs1_val[31:0] <
-                                         HEAP_INIT_PTR) ||
+                                         heap_init_ptr_sim) ||
                                         (cont_rf_rs1_val[31:0] >
                                          heap_ptr_r)) begin
                                         container_mem_fault_r <= 1'b1;

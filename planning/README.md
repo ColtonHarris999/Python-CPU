@@ -7,6 +7,11 @@ under `pycore/docs/` and `excore/docs/`. Shipped plans are in
 Try a program against the shipped subset: `make help` / `make lint-file` /
 `make run-file` (see the root `README.md`).
 
+GitHub CI skips the hardware suite when a PR/push only touches markdown,
+`planning/`, licenses, or similar non-build paths (including `pycore/docs/`
+and `excore/docs/`). Mix in RTL, programs, tools, `Makefile`, Docker, or
+workflow files and the split jobs run as usual.
+
 ## Active
 
 | File | Status |

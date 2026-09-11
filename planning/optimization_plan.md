@@ -47,7 +47,9 @@ valuable as the collection/excore surface grows.
 
 ## Opt-5 — Default image tests on the two-core top
 
-**Today:** Parallel `PYCORE_IMAGE_RUN` vs `_TWOCORE` Makefile macros; many single-core image tests never exercise marshal/resume.
+**Today:** Image tests share compiled `tb_container` binaries (`pycore-sim-img` /
+`pycore-sim-img-twocore`) and select fixtures with plusargs. Single-core vs
+two-core is still a compile-time `EXCORE_EN` generate.
 
 **Change:** Prefer `pycore_excore_system` with `EXCORE_EN` as a parameter for image-boot tests; keep intentional single-core-only cases for fatal-path coverage.
 

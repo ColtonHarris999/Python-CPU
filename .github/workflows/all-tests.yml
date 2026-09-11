@@ -8,26 +8,167 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_hw:
+        description: Run hardware jobs even if the diff looks docs-only
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: all-tests-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  all-tests:
-    name: all-tests
+  changes:
+    name: classify
     runs-on: ubuntu-latest
-    timeout-minutes: 210
-
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+      hw: ${{ steps.filter.outputs.hw }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Show Docker version
-        run: docker --version
+      - name: Classify changed paths
+        id: filter
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.force_hw }}" != "false" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "hw=true" >> "$GITHUB_OUTPUT"
+            echo "workflow_dispatch: running hardware jobs"
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            BASE="${{ github.event.before }}"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "hw=true" >> "$GITHUB_OUTPUT"
+            echo "no base SHA; running hardware jobs"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE" 2>/dev/null || true
+          FILES=$(git diff --name-only "$BASE"...HEAD || git diff --name-only "$BASE" HEAD)
+          echo "Changed files:"
+          echo "$FILES"
+          # Markdown, planning notes, and license/ignore files skip hardware.
+          # RTL, programs, tools, Makefile, Docker, and .github still run it.
+          HW_FILES=""
+          if [ -n "$FILES" ]; then
+            HW_FILES=$(echo "$FILES" | grep -Ev '\.(md|txt|rst)$|^planning/|^LICENSE$|^\.gitignore$|^\.gitattributes$' || true)
+          fi
+          if [ -z "$FILES" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "hw=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "$HW_FILES" ]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+            echo "hw=false" >> "$GITHUB_OUTPUT"
+            echo "docs/planning-only change; skipping hardware jobs"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "hw=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Run repository all-tests suite
-        run: make docker-all-tests
+  docs:
+    name: docs
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Docs / planning only
+        run: |
+          echo "No RTL, programs, tools, Makefile, or workflow files changed."
+          echo "Hardware regression is skipped for this update."
+
+  python:
+    name: python
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker --version
+      - run: make docker-python-tests
+
+  rtl-unit:
+    name: rtl-unit
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-rtl-unit
+
+  container:
+    name: container
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-container TEST_JOBS=2
+
+  img:
+    name: img
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-img TEST_JOBS=2
+
+  two-core:
+    name: two-core
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-two-core TEST_JOBS=2
+
+  excore:
+    name: excore
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-excore
+
+  # Keep this job id/name so existing branch protection on "all-tests" still
+  # matches. It is a gate over the path-filtered jobs, not a 3h monolith.
+  all-tests:
+    name: all-tests
+    needs: [changes, docs, python, rtl-unit, container, img, two-core, excore]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the jobs that ran
+        run: |
+          set -euo pipefail
+          echo "docs_only=${{ needs.changes.outputs.docs_only }}"
+          echo "hw=${{ needs.changes.outputs.hw }}"
+          test "${{ needs.changes.result }}" = "success"
+          if [ "${{ needs.changes.outputs.docs_only }}" = "true" ]; then
+            test "${{ needs.docs.result }}" = "success"
+          else
+            test "${{ needs.python.result }}" = "success"
+            test "${{ needs.rtl-unit.result }}" = "success"
+            test "${{ needs.container.result }}" = "success"
+            test "${{ needs.img.result }}" = "success"
+            test "${{ needs.two-core.result }}" = "success"
+            test "${{ needs.excore.result }}" = "success"
+          fi

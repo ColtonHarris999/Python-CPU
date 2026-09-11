@@ -168,14 +168,92 @@ make docker-lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
 make docker-run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py
 ```
 
-## Regression
+## Testing workflows
+
+CI compiles **two** shared `tb_container` simulators (single-core and two-core)
+and then runs image/container fixtures against those binaries via plusargs.
+`make run-file` uses the same two-core binary (compile once, then plusargs).
+Planning-doc and markdown-only PRs (including `pycore/docs/` and
+`excore/docs/`) skip the hardware jobs.
+
+### Fast checks (no full-chip sim)
 
 ```bash
-make all-tests            # pycore + excore
-make pycore-python-tests  # host unit tests (includes the linter)
-make pycore-img           # image-boot differentials
-make pycore-img-two-core  # same on the two-core top
+make pycore-python-tests   # host unit tests (includes the linter)
+make pycore-rtl-unit
+make excore-asm-tests
+```
+
+### Shared simulators (compile once, reuse)
+
+```bash
+make pycore-sim-img            # EXCORE_EN=0
+make pycore-sim-img-twocore    # EXCORE_EN=1
+```
+
+### Grouped hardware suites
+
+```bash
+make all-tests TEST_JOBS=4     # pycore + excore; TEST_JOBS default 2
+make pycore-container          # legacy hex fixtures
+make pycore-img                # single-core image-boot
+make pycore-excore-system      # two-core trap round-trips
+make pycore-img-two-core       # image-boot on the two-core top
+make excore-cpu-test
 ```
 
 Image-boot tests (`make pycore-img-*`) are the production path. Do not use the
 old inline three-slot `LOAD_CONST` / `preprocess.py` flow for new work.
+
+### Docker equivalents
+
+```bash
+make docker-python-tests
+make docker-rtl-unit
+make docker-container
+make docker-img
+make docker-two-core
+make docker-excore
+make docker-pycore-test
+make docker-all-tests
+make docker-lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
+make docker-run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py
+```
+
+If needed, you can pass host-network flags:
+
+```bash
+make docker-all-tests DOCKER_BUILD_FLAGS=--network=host DOCKER_RUN_FLAGS=--network=host
+```
+
+---
+
+## PyCore quick reference
+
+```bash
+make pycore-test
+```
+
+## excore quick reference
+
+With `EXCORE_EN=1`, recoverable traps are handed to excore over
+`trap_mailbox.sv` instead of halting:
+
+| Code | Trap |
+| --- | --- |
+| 9 | `PY_TRAP_LIST_GROW` |
+| 10 | `PY_TRAP_LIST_EXTEND` |
+| 11 | `PY_TRAP_DICT_GROW` |
+| 12 | `PY_TRAP_LIST_DELETE` |
+| 13 | `PY_TRAP_SET_GROW` |
+| 14 | `PY_TRAP_SET_UPDATE` |
+
+See `pycore/docs/architecture.md` (“Two-core transport and integration”) for
+mailbox format, memory-ownership protocol, and full trap taxonomy.
+`excore/` also has a standalone regression against a mocked mailbox:
+
+```bash
+make excore-test                 # standalone excore (mocked mailbox)
+make pycore-excore-system         # pycore <-> excore integration (real traps)
+make pycore-img-two-core          # img_* differentials on the two-core top
+```

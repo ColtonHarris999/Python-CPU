@@ -521,7 +521,7 @@
                                     // the existing CALL FSM and proves that its
                                     // list return resumes this exact arm.  The
                                     // production OBJECT path lands in step 6.
-                                    if (CONTAINER_CALL_SPIKE_EN &&
+                                    if (container_call_spike_en_sim &&
                                         pycore_is_null(
                                             cont_rs1_tag, cont_rs1_val)) begin
                                         container_call_pending_r <= 1'b1;
@@ -698,7 +698,7 @@
                                     end else if (container_call_return_valid_r) begin
                                         container_call_return_valid_r <= 1'b0;
                                         container_call_returning_r <= 1'b0;
-                                        if (CONTAINER_CALL_SPIKE_EN &&
+                                        if (container_call_spike_en_sim &&
                                             pycore_is_null(
                                                 cont_rs1_tag, cont_rs1_val)) begin
                                             // Spike: prove pause/resume only.
