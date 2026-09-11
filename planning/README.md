@@ -6,6 +6,11 @@ Current architecture and tag/layout docs live under `pycore/docs/` and
 
 Implemented / superseded plans live under [`implemented/`](implemented/).
 
+GitHub CI skips the hardware suite when a PR/push only touches markdown,
+`planning/`, licenses, or similar non-build paths (including `pycore/docs/`
+and `excore/docs/`). Mix in RTL, programs, tools, `Makefile`, Docker, or
+workflow files and the split jobs run as usual.
+
 ## Active / open
 
 | File | Contents |
@@ -15,7 +20,7 @@ Implemented / superseded plans live under [`implemented/`](implemented/).
 | `native_compiler_plan.md` | **Proposed (Plan 2):** parser, AST, codegen, assembler, self-hosting bootstrap |
 | `compile_fast_path.md` | **Proposed:** shortest path to builtin `compile()` — compiler subset first, only small pycore (code-RAM emit) that cannot be rewritten |
 | `exceptions_full_support_plan.md` | **Active:** T1–T5-A (except T4 oparg 2) + T8 landed; T6 / T7 / T9 / T10 remain. Tracker: `pycore/docs/exception_support.md` |
-| `exceptions_firmware_followup_plan.md` | **F1 done;** F2/F3 firmware semantics and F4 `e.args` remain queued |
+| `exceptions_firmware_followup_plan.md` | **F1 + F4 done;** F2/F3 firmware semantics remain queued |
 | `optimization_plan.md` | Optional RTL cleanup / optimization backlog |
 
 ## Implemented / historical (`implemented/`)

@@ -1,6 +1,6 @@
 # Plan 1 — code loading, BIOS boot, and the tokenizer
 
-**Status:** in progress — P1, P3, P4, P6.1 (strings), P7, P8 shipped; P2, P5, P6.2–6.4, P9 open. See §5
+**Status:** in progress — P1, P3, P4, P6.1 (strings), P6.3.2 (native methods), P7 (incl. `e.args`), P8 shipped; P2, P5, P6.2, P6.3.1 (list/tuple slice), P6.4, P9 open. See §5
 **Audience:** pycore RTL agent, bytecode agent, firmware agent, tooling agent
 **Successor:** [`native_compiler_plan.md`](native_compiler_plan.md) (Plan 2)
 **Supersedes:** the P1–P6 phases of `implemented/compile_exec_plan.md`
@@ -117,8 +117,8 @@ extend it whenever more is ported.
 | **No loader, no module format.** A module is code slots *and* a dmem graph (`co_consts` / `co_names` / strings). There is no container that carries both, and no relocation concept. | §6.2 |
 | **Boot jumps straight into the module.** Boot record pair 0 is the module code object; `S_BOOT` latches it and redirects fetch to its entry slot. There is no interposed program. | §7 |
 | **One global namespace.** `globals_base_r` is latched once at boot; frames do not carry it, so a payload cannot get its own namespace. | §8 |
-| **No slicing.** `BINARY_SLICE` / `STORE_SLICE` are in `DEFERRED_OPS`. | §6.3 |
-| **No container/str methods.** `LOAD_ATTR` requires `PY_TAG_OBJECT`, so `lst.append(x)` type-traps. | §6.3 |
+| **List/tuple slicing still traps.** `BINARY_SLICE` works on strings; LIST/TUPLE subjects are `PY_TRAP_TYPE`. `STORE_SLICE` is still deferred. | §6.3.1 |
+| **Native methods shipped.** `LOAD_ATTR` on LIST/SET/DICT/STR resolves a 16-entry sidecar. Remaining: `set.discard` (`DELETE_SUBSCR` on SET is TYPE). | §6.3.2 |
 | **Long runtime strings are not interned.** `LONG_STR` dict-key equality is descriptor equality, so two separately built >15-byte names never match as globals/dict keys (deviation 4). | §6.4 |
 | **No reclamation.** Heap and (once added) code RAM are bump allocators with no GC, so repeated work leaks. | §9 |
 
@@ -230,8 +230,8 @@ P6 is the long pole and is independent of P1–P5, so it can run in parallel.
 | P3 | `exec(code)` / `eval(code)` | firmware + tooling | **Done** |
 | P4 | Per-frame globals, `exec(code, globals)` | RTL | **Done** |
 | P5 | BIOS in ROM, boot descriptor, payload dispatch | firmware + RTL + tooling | Open |
-| P6 | `BINARY_SLICE`, list/str methods, string interning | RTL | **P6.1 strings done**; methods / ordering / interning open |
-| P7 | Exception types with messages | RTL + firmware | **Types + construction/unwind via #74**; `e.args` read open (follow-up F4); firmware `raise <int>` → F1 |
+| P6 | `BINARY_SLICE`, list/str methods, string interning | RTL | **P6.1 strings + P6.3.2 methods done**; list/tuple slice / ordering / interning open |
+| P7 | Exception types with messages | RTL + firmware | **Types + construction/unwind via #74**; `e.args` read done (F4); firmware `raise <int>` → F1 done |
 | P8 | Heap / code-RAM mark and release | RTL + firmware | **Done** |
 | P9 | On-device tokenizer | firmware + tooling | Open |
 
@@ -242,6 +242,7 @@ P6 is the long pole and is independent of P1–P5, so it can run in parallel.
 | **P1** | `pycore_code_ram.sv` + `pycore_code_mem.sv` region mux; `--code-ram` build mode. `img_code_ram_call` runs the same program from ROM and from RAM (empty ROM in the second case) with identical results *and* identical cycle counts. Details in `pycore/docs/code_loading.md`. |
 | **P3** | ROM `exec`/`eval` bodies plus the `SEED_CODE` pragma. Confirmed the plan's claim: no hardware change was needed. `exec`/`eval` do need **host stand-ins** (recorded in `HOST_STANDIN_BUILTINS`) because CPython code objects are not callable, so `run_image_test.py` binds them to the test namespace. |
 | **P6.1** | `BINARY_SLICE` on strings via a new `string_mem` slice port. Two surprises about what CPython emits: all-literal slices (`s[1:3]`, `s[:]`) are folded to a `slice` **constant** + `NB_SUBSCR` and never reach `BINARY_SLICE`, and omitted bounds arrive as `None`. List/tuple slicing is still open. |
+| **P6.3.2** | Native `LOAD_ATTR` methods on LIST/SET/DICT/STR via a 16-entry sidecar of firmware `CODE_OBJECT`s. Hot path (`method_flag=1`) allocates nothing. Also landed F4 `e.args`. `set.discard` still open. |
 | **P7** | Four leaf exception types seeded. Testing exposed that **exceptions do not propagate across frames** (`RAISE_VARARGS` walks only the raising code object's table), now deviation 16 and pinned by `img_try_exc_cross_frame_fatal`. |
 | **P8** | `code_ram_ptr_r` plus `_bi_heap_mark`/`_bi_heap_release`/`_bi_code_mark`/`_bi_code_release`. Releases validate the mark against its region and the current cursor, so a stale mark faults. `img_heap_mark_release` pins the property that matters: reallocating after a release lands at the same address. |
 | **P4** | Frame slot 1 bits `[127:97]` save the caller's `globals_base_r[30:0]`. `_bi_exec_globals(code, dict)` rewrites a builtin CALL as a 0-arg code-object CALL with that dict as the callee's globals. `exec(code, globals=None)` / `eval(code, globals=None)` are ROM wrappers. Functions remain code objects with no `__globals__`: a helper called from an exec'd payload sees the exec dict, not the module where it was defined. |
@@ -437,8 +438,13 @@ list slice at heap OOM → trap 7.
 
 #### 6.3.2 Methods on built-in types
 
-`LOAD_ATTR` currently demands `PY_TAG_OBJECT`, so `lst.append(x)` traps. Two
-options:
+**Status: implemented.** `LOAD_ATTR` on `LIST` / `SET` / `DICT` / `STR` looks
+up a 16-entry sidecar of firmware `CODE_OBJECT`s (no per-call allocation).
+See `pycore/docs/object_model.md` (native method table). `set.discard` is still
+open (`DELETE_SUBSCR` on SET remains TYPE).
+
+`LOAD_ATTR` used to demand `PY_TAG_OBJECT`, so `lst.append(x)` trapped. Two
+options were considered; **B shipped**:
 
 | Option | Cost | Verdict |
 | --- | --- | --- |
@@ -667,13 +673,9 @@ The tokenizer must reject bad input without halting the machine.
    worth doing properly, because "error with no message" is useless for a
    compiler front end.
 
-   **Status after exceptions PR #74:** construction (`raise SyntaxError("msg")`
-   → `OBK_EXCEPTION` with a one-element args tuple) and cross-frame unwind
-   landed. Reading `e.args` via `LOAD_ATTR` is still open — see
-   [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md)
-   **F4**. Firmware sites that still do `raise 1` / `raise 0` are **F1** in
-   that same plan (required before tokenizer helpers raise catchable types).
-   Until F4, `img_try_syntaxerror_msg` keeps the global-stash workaround.
+   **Status after native-method PR:** construction (`raise SyntaxError("msg")`
+   → `OBK_EXCEPTION` with a one-element args tuple) and `LOAD_ATTR e.args`
+   both land. `img_try_syntaxerror_msg` reads `e.args[0]`.
 
 **Tests:** each new type raised and caught by exact match; a message round-trip
 (`except SyntaxError as e: e.args[0]`); raise inside a called function caught by
@@ -814,7 +816,7 @@ loader carries real code).
 - [ ] The BIOS is the first thing that runs, and dispatches both descriptor kinds
 - [ ] `BIOS_EN` default is 1 and the legacy direct-boot path is deleted
 - [ ] Slicing, the chosen method set, string ordering, and content-based long-string equality all work
-- [ ] `SyntaxError` with a message can be raised and caught (construction in #74; `e.args` read is [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) F4)
+- [x] `SyntaxError` with a message can be raised and caught (construction in #74; `e.args` via F4 / native-method PR)
 - [ ] Mark/release works for heap and code RAM
 - [ ] The tokenizer tokenizes a non-trivial source file on device, and matches CPython's `tokenize` on the host corpus
 - [ ] Every doc in §4.1 that the work touched is updated, in the same commits
@@ -869,7 +871,7 @@ Plan 1 delivering exactly these, so none of them may be dropped or narrowed:
 | **Mark/release** (§9.2) | Every `compile()` consumes heap and code RAM; without release, repeated compilation dies |
 | **Content-based long-string equality + hashing** (§6.4) | `co_names`, symbol tables, and the intern of arbitrary-length identifiers |
 | **Slicing + list/str methods** (§6.3) | The parser and codegen are ordinary Python; hand-rewriting every `append`/slice across a compiler is not viable |
-| **Exceptions with messages** (§9.1) | `SyntaxError` reporting from the parser; construction landed in #74; `e.args` read is follow-up F4 ([`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md)) |
+| **Exceptions with messages** (§9.1) | `SyntaxError` reporting from the parser; construction landed in #74; `e.args` read landed with native methods (F4) |
 | **`exec(code, globals)`** (§8) | Running compiled code in a fresh namespace — the payload of `compile` + `exec` |
 | **BIOS** (§7) | Orchestrates load → compile → exec, and owns marks; becomes the OS entry point |
 | **Tokenizer** (§10) | Stage 1 of the pipeline Plan 2 completes |

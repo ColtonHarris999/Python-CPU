@@ -124,8 +124,9 @@
     localparam logic [5:0] CP_ITER_WB = 6'd23;
     localparam logic [5:0] CP_ITEM_WB = 6'd24;
     // Attribute protocol (LOAD/STORE/DELETE_ATTR):
-    //   CP_ATTR_HEAD     : ob_head ack — INSTANCE vs TYPE vs trap; dunder
-    //                      specials (__dict__/__class__/__base__) branch here
+    //   CP_ATTR_HEAD     : ob_head ack — INSTANCE vs TYPE vs EXCEPTION args;
+    //                      dunder specials (__dict__/__class__/__base__)
+    //                      and native-method sidecar hits branch before this
     //   CP_ATTR_IDICT    : instance/type field0 (__dict__/tp_dict) val+tag;
     //                      lfb_lo[1] → return handle (no dict probe)
     //   CP_ATTR_TYPE     : MRO step — guard depth, issue type ob_head read

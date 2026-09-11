@@ -293,6 +293,22 @@ module pycore_core #(
     // OOM is detected before each allocation; traps PY_TRAP_MEM_FAULT.
     logic [31:0]                   heap_ptr_r;
 
+    // Simulation plusarg overrides so one compiled binary can run many
+    // image fixtures.  Defaults match the module parameters; plusargs win
+    // when present (`+BOOT_EN=1`, `+HEAP_INIT_PTR=1234`, …).
+    bit          boot_en_sim;
+    bit          container_call_spike_en_sim;
+    logic [31:0] heap_init_ptr_sim;
+    initial begin
+        boot_en_sim = BOOT_EN;
+        container_call_spike_en_sim = CONTAINER_CALL_SPIKE_EN;
+        heap_init_ptr_sim = HEAP_INIT_PTR;
+        void'($value$plusargs("BOOT_EN=%d", boot_en_sim));
+        void'($value$plusargs("CONTAINER_CALL_SPIKE_EN=%d",
+                             container_call_spike_en_sim));
+        void'($value$plusargs("HEAP_INIT_PTR=%d", heap_init_ptr_sim));
+    end
+
     // Which container operation is in flight (CONT_* constants above).
     logic [5:0]                    container_op_r;
     // Which phase within the current operation (CP_* constants above).
@@ -1737,7 +1753,7 @@ module pycore_core #(
     // ---------------------------------------------------------------------
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
-            state_r                <= BOOT_EN ? S_BOOT : S_FETCH;
+            state_r                <= boot_en_sim ? S_BOOT : S_FETCH;
             cur_opcode_r           <= 8'b0;
             cur_arg_r              <= 32'b0;
             cur_pc_r               <= 32'b0;
@@ -1826,7 +1842,7 @@ module pycore_core #(
             return_type_trap_r   <= 1'b0;
             return_wb_data_r     <= '0;
             // Container / heap allocator reset.
-            heap_ptr_r               <= HEAP_INIT_PTR;
+            heap_ptr_r               <= heap_init_ptr_sim;
             code_ram_ptr_r           <= CODE_RAM_INIT_SLOT;
             container_op_r           <= '0;
             container_phase_r        <= '0;

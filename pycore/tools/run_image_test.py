@@ -10,6 +10,7 @@ import re
 import types
 
 from encoding import (
+    ALLOCATOR_LIST_CAPACITY_MIN,
     HEAP_LIMIT,
     TAG_BOOL,
     TAG_INT,
@@ -94,6 +95,12 @@ def apply_heap_list_capacity_inject(
     probe = build_image_from_source_text(probe_text, filename)
     available = HEAP_LIMIT - probe.heap_init_ptr
     capacity = allocator_list_capacity(available)
+    if capacity < ALLOCATOR_LIST_CAPACITY_MIN:
+        raise ValueError(
+            f"allocator_list: {available} bytes of bump heap only fit "
+            f"{capacity} list words (HEAP_INIT_PTR=0x{probe.heap_init_ptr:x}); "
+            f"need >= {ALLOCATOR_LIST_CAPACITY_MIN}"
+        )
     return rewrite_capacity_assignment(source_text, name, capacity)
 
 

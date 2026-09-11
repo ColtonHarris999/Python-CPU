@@ -55,7 +55,9 @@ Today Wave A is **seeded** with documented `tp_base` links and `match = mro`.
 resolve the name. All seeded exception types have `construct = call`: `CALL`
 allocates an `OBK_EXCEPTION` with zero or one positional argument, and
 `RAISE_VARARGS` 1 accepts either a type or an existing exception instance;
-oparg 0 reuses the active exception. Bare raise without an active exception
+oparg 0 reuses the active exception. `LOAD_ATTR` name `"args"` on an
+`OBK_EXCEPTION` returns the args tuple (`img_exc_args`,
+`img_try_syntaxerror_msg`). Bare raise without an active exception
 remains fatal `PY_TRAP_RAISE` until a boot `RuntimeError` sidecar exists.
 FOR_ITER exhaustion still uses handle **identity** vs `iter_exhaust_type_r`,
 not MRO.
