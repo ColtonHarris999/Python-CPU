@@ -6,7 +6,8 @@ def managed_entry():
     s.add(1)
     s.add(2)
     s.add(1)
-    s.update([3])
+    extra = 3
+    s.update([extra])
     n = 0
     if 1 in s:
         n = n + 1

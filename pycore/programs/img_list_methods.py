@@ -8,7 +8,8 @@ def managed_entry():
     xs = []
     xs.append(10)
     xs.append(20)
-    xs.extend([5])
+    extra = 5
+    xs.extend([extra])
     a = xs.pop()
     xs.clear()
     xs.append(4)

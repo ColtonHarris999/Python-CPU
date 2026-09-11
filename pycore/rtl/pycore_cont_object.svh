@@ -1072,7 +1072,7 @@
                                                             nmeth[3:0]);
                                                     container_dmem_we_r      <= 1'b0;
                                                     container_dmem_pending_r <= 1'b1;
-                                                    container_phase_r        <= CP_HDR;
+                                                    container_phase_r        <= CP_SRC_HDR;
                                                 end else if (pycore_is_native_method_receiver(
                                                         cont_rs1_tag, cont_rs1_val)) begin
                                                     container_attr_error_r <= 1'b1;
@@ -1092,18 +1092,20 @@
                                 end
 
                                 // Native-method sidecar: val then tag.
-                                CP_HDR: begin
+                                // Reuse CP_SRC_HDR / CP_LIST_WB so we do not
+                                // overlap the dict-probe CP_HDR / CP_LIST_BUF.
+                                CP_SRC_HDR: begin
                                     if (!container_dmem_pending_r) begin
                                         container_val_r <= container_rd_data_r;
                                         container_dmem_addr_r    <=
                                             container_dmem_addr_r + 32'd16;
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
-                                        container_phase_r        <= CP_LIST_BUF;
+                                        container_phase_r        <= CP_LIST_WB;
                                     end
                                 end
 
-                                CP_LIST_BUF: begin
+                                CP_LIST_WB: begin
                                     if (!container_dmem_pending_r) begin
                                         if (container_rd_data_r[3:0] !=
                                                 PY_TAG_CODE_OBJECT) begin
