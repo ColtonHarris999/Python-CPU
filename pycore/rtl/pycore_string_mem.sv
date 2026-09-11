@@ -69,10 +69,15 @@ module pycore_string_mem #(
 
     initial begin
         int i;
+        string hex_path;
+        hex_path = STRING_HEX;
+        void'($value$plusargs("STRING_HEX=%s", hex_path));
         for (i = 0; i < STRING_MEM_BYTES; i++) begin
             string_mem[i] = 8'h00;
         end
-        $readmemh(STRING_HEX, string_mem);
+        if (hex_path.len() > 0) begin
+            $readmemh(hex_path, string_mem);
+        end
     end
 
     function automatic logic [7:0] string_operand_byte(

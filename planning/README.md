@@ -6,6 +6,11 @@ Current architecture and tag/layout docs live under `pycore/docs/` and
 
 Implemented / superseded plans live under [`implemented/`](implemented/).
 
+GitHub CI skips the hardware suite when a PR/push only touches markdown,
+`planning/`, licenses, or similar non-build paths (including `pycore/docs/`
+and `excore/docs/`). Mix in RTL, programs, tools, `Makefile`, Docker, or
+workflow files and the split jobs run as usual.
+
 ## Active / open
 
 | File | Contents |

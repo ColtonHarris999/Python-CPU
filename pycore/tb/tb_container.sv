@@ -1,8 +1,17 @@
 `include "pycore_defs.svh"
 
-// Testbench for container (LIST/DICT/TUPLE) operations.
-// Parameterized over PROG_HEX and the expected return tag+value.
-// Runs until RETURN_VALUE (or EXPECT_TRAP) like other container/image TBs.
+// Testbench for container (LIST/DICT/TUPLE) operations and image-boot
+// programs. Compile-time parameters remain for unit/legacy flows; image
+// CI uses one Verilator binary plus runtime plusargs:
+//
+//   +PROG_HEX= +STRING_HEX= +DMEM_HEX= +CODE_RAM_HEX= +FW_HEX=
+//   +HEAP_INIT_PTR= +BOOT_EN= +CHECK_ENTRY_RETURN=
+//   +EXPECTED_TAG= +EXPECTED_VALUE= +MAX_CYCLES=
+//   +EXPECT_TRAP= +EXPECTED_TRAP_CODE= +EXPECTED_TRAP_REQ_COUNT=
+//   +CONTAINER_CALL_SPIKE_EN= +STDOUT_PATH=
+//
+// EXCORE_EN still selects the generate (single-core vs two-core top), so
+// those two topologies are compiled once each.
 //
 // When EXPECT_TRAP is set, the test PASSES iff trap_out fires with
 // trap_code == EXPECTED_TRAP_CODE before MAX_CYCLES, and FAILS on a clean
@@ -99,11 +108,14 @@ module tb_container #(
             // Console capture: spy MMIO writes to CONSOLE_TX @ 0xF0.
             int stdout_fd;
             initial begin
+                string stdout_path;
                 stdout_fd = 0;
-                if (STDOUT_PATH.len() > 0) begin
-                    stdout_fd = $fopen(STDOUT_PATH, "w");
+                stdout_path = STDOUT_PATH;
+                void'($value$plusargs("STDOUT_PATH=%s", stdout_path));
+                if (stdout_path.len() > 0) begin
+                    stdout_fd = $fopen(stdout_path, "w");
                     if (stdout_fd == 0) begin
-                        $error("[FAIL] could not open STDOUT_PATH=%s", STDOUT_PATH);
+                        $error("[FAIL] could not open STDOUT_PATH=%s", stdout_path);
                         $finish;
                     end
                 end
@@ -166,6 +178,44 @@ module tb_container #(
         logic [3:0]                    got_tag;
         logic [PYCORE_VAL_WIDTH-1:0]   got_val;
         logic [4:0]                    got_trap;
+        int                            max_cycles;
+        logic [3:0]                    expected_tag;
+        logic [PYCORE_VAL_WIDTH-1:0]   expected_value;
+        bit                            expect_trap;
+        logic [4:0]                    expected_trap_code;
+        bit                            check_entry_return;
+        int                            expected_trap_req_count;
+        string                         prog_hex_disp;
+        string                         expected_value_s;
+        int                            k;
+
+        max_cycles = MAX_CYCLES;
+        expected_tag = EXPECTED_TAG;
+        expected_value = EXPECTED_VALUE;
+        expect_trap = EXPECT_TRAP;
+        expected_trap_code = EXPECTED_TRAP_CODE;
+        check_entry_return = CHECK_ENTRY_RETURN;
+        expected_trap_req_count = EXPECTED_TRAP_REQ_COUNT;
+        prog_hex_disp = PROG_HEX;
+
+        void'($value$plusargs("MAX_CYCLES=%d", max_cycles));
+        void'($value$plusargs("EXPECTED_TAG=%d", expected_tag));
+        // 128-bit goldens (e.g. UNARY_INVERT) do not fit in a 64-bit %d.
+        if ($value$plusargs("EXPECTED_VALUE=%s", expected_value_s)) begin
+            expected_value = '0;
+            for (k = 0; k < expected_value_s.len(); k++) begin
+                if (expected_value_s[k] >= "0" && expected_value_s[k] <= "9") begin
+                    expected_value = expected_value * 128'd10
+                        + 128'(expected_value_s[k] - "0");
+                end
+            end
+        end
+        void'($value$plusargs("EXPECT_TRAP=%d", expect_trap));
+        void'($value$plusargs("EXPECTED_TRAP_CODE=%d", expected_trap_code));
+        void'($value$plusargs("CHECK_ENTRY_RETURN=%d", check_entry_return));
+        void'($value$plusargs("EXPECTED_TRAP_REQ_COUNT=%d",
+                             expected_trap_req_count));
+        void'($value$plusargs("PROG_HEX=%s", prog_hex_disp));
 
         clk = 1'b0;
         rst_n = 1'b0;
@@ -176,7 +226,7 @@ module tb_container #(
         #20;
         rst_n = 1'b1;
 
-        for (i = 0; i < MAX_CYCLES; i++) begin
+        for (i = 0; i < max_cycles; i++) begin
             @(posedge clk);
 
             if (trap_out) begin
@@ -188,12 +238,12 @@ module tb_container #(
             if ((g_dut.dut.core.state_r == CORE_S_WB) &&
                 (g_dut.dut.core.cur_opcode_r == PY_OP_RETURN_VALUE) &&
                 (g_dut.dut.core.frame_active_depth ==
-                    (CHECK_ENTRY_RETURN ? 8'd1 : 8'd0))) begin
+                    (check_entry_return ? 8'd1 : 8'd0))) begin
                 // Under image boot the module frame's terminal return is
                 // typically `return None` (RETURN_VALUE with a NONE-tagged
                 // TOS).  Filter those out so the check locks onto the
                 // entry function's real return value.
-                if (CHECK_ENTRY_RETURN &&
+                if (check_entry_return &&
                     pycore_is_none(pycore_get_tag(g_dut.dut.core.rs1_r),
                                    pycore_get_val(g_dut.dut.core.rs1_r))) begin
                     // Skip and keep waiting for the entry return.
@@ -205,52 +255,52 @@ module tb_container #(
             end
         end
 
-        if (i >= MAX_CYCLES) begin
+        if (i >= max_cycles) begin
             $error("[FAIL] still running at MAX_CYCLES=%0d (possible probe hang) — %s",
-                   MAX_CYCLES, PROG_HEX);
+                   max_cycles, prog_hex_disp);
             $finish;
         end
 
-        if (EXPECT_TRAP) begin
+        if (expect_trap) begin
             check(trap_seen,
                   $sformatf("expected trap code %0d but program returned cleanly (%s)",
-                            EXPECTED_TRAP_CODE, PROG_HEX));
+                            expected_trap_code, prog_hex_disp));
             check(!return_seen,
-                  $sformatf("expected trap but saw clean return (%s)", PROG_HEX));
-            check(got_trap == EXPECTED_TRAP_CODE,
+                  $sformatf("expected trap but saw clean return (%s)", prog_hex_disp));
+            check(got_trap == expected_trap_code,
                   $sformatf("trap code mismatch: expected %0d got %0d (%s)",
-                            EXPECTED_TRAP_CODE, got_trap, PROG_HEX));
+                            expected_trap_code, got_trap, prog_hex_disp));
             $display("PASS: %s — trapped code=%0d cycles=%0d",
-                     PROG_HEX, got_trap, cycle_count);
+                     prog_hex_disp, got_trap, cycle_count);
         end else begin
             if (trap_seen) begin
                 $error("[FAIL] program trapped (code=%0d) at cycle %0d — %s",
-                       got_trap, cycle_count, PROG_HEX);
+                       got_trap, cycle_count, prog_hex_disp);
                 $finish;
             end
 
             check(return_seen,
                   $sformatf("program did not complete within MAX_CYCLES=%0d (%s)",
-                            MAX_CYCLES, PROG_HEX));
+                            max_cycles, prog_hex_disp));
 
             got_tag = pycore_get_tag(return_entry);
             got_val = pycore_get_val(return_entry);
 
-            check(got_tag == EXPECTED_TAG,
+            check(got_tag == expected_tag,
                   $sformatf("tag mismatch: expected %0d got %0d (%s)",
-                            EXPECTED_TAG, got_tag, PROG_HEX));
-            check(got_val == EXPECTED_VALUE,
+                            expected_tag, got_tag, prog_hex_disp));
+            check(got_val == expected_value,
                   $sformatf("value mismatch: expected 0x%0h got 0x%0h (%s)",
-                            EXPECTED_VALUE, got_val, PROG_HEX));
+                            expected_value, got_val, prog_hex_disp));
 
             $display("PASS: %s — tag=%0d value=0x%0h cycles=%0d",
-                     PROG_HEX, got_tag, got_val[63:0], cycle_count);
+                     prog_hex_disp, got_tag, got_val[63:0], cycle_count);
         end
 
-        if (EXPECTED_TRAP_REQ_COUNT >= 0) begin
-            check(trap_req_count == EXPECTED_TRAP_REQ_COUNT,
+        if (expected_trap_req_count >= 0) begin
+            check(trap_req_count == expected_trap_req_count,
                   $sformatf("trap_req_count mismatch: expected %0d got %0d (%s)",
-                            EXPECTED_TRAP_REQ_COUNT, trap_req_count, PROG_HEX));
+                            expected_trap_req_count, trap_req_count, prog_hex_disp));
         end
         $finish;
     end
