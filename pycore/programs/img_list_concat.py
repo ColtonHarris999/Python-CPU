@@ -17,7 +17,10 @@ def managed_entry():
     if len([] + []) == 0:
         total += 10000
 
-    t = (4, 5) + (6,)
+    x = 4
+    y = 5
+    z = 6
+    t = (x, y) + (z,)
     total += t[0] + 10 * t[1] + 100 * t[2]
 
     take = 1
