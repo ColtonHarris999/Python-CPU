@@ -634,7 +634,7 @@ Current host suite: `pycore-python-tests` 269 OK. `CALL` of exception types allo
 | [Built-in Exceptions](https://docs.python.org/3/library/exceptions.html) | **Names, parents, matching rule, trap mapping** — copy the hierarchy; do not invent |
 | [`for_loop_full_support_plan.md`](implemented/for_loop_full_support_plan.md) | Track B infra + §15 follow-on → **this plan** |
 | [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) | Plan 1 on `main`: P7 leaf types, deviation 16 (no cross-frame unwind), message workaround |
-| [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) | **After #74:** firmware `raise <int>` → real types; getattr / min-max; NYI stubs; F4 `e.args` catalog |
+| [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) | **After #74:** F1 firmware `raise <int>` → real types; F4 `e.args` landed; F2 getattr / min-max and F3 NYI stubs remain |
 | [`HANDOFF.md`](implemented/HANDOFF.md) | Design locks + verified counts for #66 |
 | [`exception_support.md`](../pycore/docs/exception_support.md) | **Exception type status** — seeded / absent / alias / skip + seed_track |
 | [`pycore.json`](../pycore/targets/pycore.json) `exceptions.types` | Machine catalog the analyzer validates |

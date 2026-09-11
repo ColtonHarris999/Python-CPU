@@ -1,6 +1,6 @@
 # Exceptions post-merge follow-up — firmware raises and related leftovers
 
-**Status:** F1 implemented and verified; F2–F4 pending  
+**Status:** F1 and F4 implemented and verified; F2–F3 pending  
 **Audience:** firmware agent (primary); host-test / Makefile agent; RTL only for F4  
 **Parent:** [`exceptions_full_support_plan.md`](exceptions_full_support_plan.md) (language-level exceptions landed)  
 **Prerequisite:** PR #74 on `main` (`raise TypeError` / construction / cross-frame unwind / bare raise). Branch from post-merge `main`; do **not** pile this onto `cursor/for-loop-full-impl`.  
