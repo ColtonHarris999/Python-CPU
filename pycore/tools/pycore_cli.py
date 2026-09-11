@@ -375,11 +375,16 @@ def _assemble_excore_fw(build_dir: pathlib.Path) -> pathlib.Path:
     src = REPO_ROOT / "excore" / "fw" / "list_grow.s"
     asm = REPO_ROOT / "excore" / "tools" / "asm_rv32.py"
     python3 = os.environ.get("PYTHON3", "python3")
-    subprocess.run(
+    proc = subprocess.run(
         [python3, str(asm), str(src), "-o", str(hex_path)],
         check=True,
         cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
     )
+    if proc.stdout:
+        sys.stdout.write(proc.stdout)
+        sys.stdout.flush()
     return hex_path
 
 
@@ -613,6 +618,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, OSError, ValueError):
+        pass
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
