@@ -57,9 +57,9 @@ python3.14 pycore/tools/pycore_cli.py run  pycore/programs/example_sum_loop.py
 ```
 
 `run` compiles the module to a boot image, executes `managed_entry()` on host
-CPython 3.14 for a golden `int`/`bool`, then runs the two-core hart in Verilator
-and checks that the retired return matches. `help` prints the supported-program
-summary below in full.
+CPython 3.14 for a golden `int`/`bool`, then runs the shared two-core
+`tb_container` (plusargs, same binary as image CI) and checks that the retired
+return matches. `help` prints the supported-program summary below in full.
 
 A program should define a no-arg `managed_entry()` that returns `int` or `bool`.
 If you do not call it at module level, `run` appends a call. Type annotations

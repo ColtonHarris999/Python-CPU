@@ -33,6 +33,7 @@ class HelpTest(unittest.TestCase):
         self.assertIn("Not supported yet", text)
         self.assertIn("pycore_cli.py lint", text)
         self.assertIn("make run-file", text)
+        self.assertIn("ensure_sim.py", text)
 
     def test_no_args_prints_help(self) -> None:
         buf = io.StringIO()
@@ -175,7 +176,7 @@ class RunHostGoldenGateTest(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    def test_run_does_not_invoke_verilator_when_host_entry_is_wrong_type(self) -> None:
+    def test_run_does_not_invoke_sim_when_host_entry_is_wrong_type(self) -> None:
         with tempfile.NamedTemporaryFile(
             "w", suffix=".py", delete=False, encoding="utf-8"
         ) as handle:
@@ -184,16 +185,52 @@ class RunHostGoldenGateTest(unittest.TestCase):
         try:
             buf = io.StringIO()
             with redirect_stdout(buf), mock.patch.object(
-                pycore_cli, "_run_verilator"
-            ) as verilator:
+                pycore_cli, "_run_shared_sim"
+            ) as sim:
                 rc = pycore_cli.main(
                     ["run", path, "--build-dir", "build/pycore_cli_test_bad_ret"]
                 )
             self.assertEqual(rc, 1)
-            verilator.assert_not_called()
+            sim.assert_not_called()
             self.assertIn("Host golden FAIL", buf.getvalue())
         finally:
             os.unlink(path)
+
+
+class SharedSimPlusargsTest(unittest.TestCase):
+    def test_two_core_uses_plusargs_not_generate(self) -> None:
+        fake_sim = pathlib.Path("/tmp/fake-Vtb_container")
+        completed = mock.Mock(returncode=0, stdout="PASS:\n", stderr="")
+        with mock.patch.object(
+            pycore_cli, "_ensure_shared_sim", return_value=fake_sim
+        ), mock.patch.object(
+            pycore_cli.subprocess, "run", return_value=completed
+        ) as run:
+            pycore_cli._run_shared_sim(
+                program_hex=pathlib.Path("/tmp/p.hex"),
+                dmem_hex=pathlib.Path("/tmp/d.hex"),
+                string_hex=pathlib.Path("/tmp/s.hex"),
+                meta={
+                    "HEAP_INIT_PTR": "4096",
+                    "EXPECTED_TAG": "1",
+                    "EXPECTED_VALUE": "15",
+                },
+                max_cycles=200000,
+                two_core=True,
+                stdout_path=pathlib.Path("/tmp/console.txt"),
+            )
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[0], str(fake_sim))
+        blob = " ".join(cmd)
+        self.assertIn("+PROG_HEX=", blob)
+        self.assertIn("+STRING_HEX=", blob)
+        self.assertIn("+DMEM_HEX=", blob)
+        self.assertIn("+FW_HEX=", blob)
+        self.assertIn("+BOOT_EN=1", blob)
+        self.assertIn("+CHECK_ENTRY_RETURN=1", blob)
+        self.assertIn("+EXPECTED_VALUE=15", blob)
+        self.assertNotIn("-GPROG_HEX", blob)
+        self.assertNotIn("verilator", blob.lower())
 
 
 if __name__ == "__main__":

@@ -60,9 +60,10 @@ two-core is still a compile-time `EXCORE_EN` generate.
 ## Opt-6 — Finish migration off `preprocess.py` sidecars
 
 **Today:** `preprocess.py` is deprecated but still emits `.types` / `_cache.hex`
-(uncommitted) and backs `run-file` / some container hex regeneration.
+(uncommitted) and regenerates some container hex. `run-file` already image-boots
+via `pycore_cli.py` against the shared plusarg `tb_container` binaries.
 
-**Change:** Point remaining container hex regeneration and `run-file` at
+**Change:** Point remaining container hex regeneration at
 `image_from_source` / `run_image_test`; stop writing unused sidecars.
 
 **Why / result:** One image toolchain; smaller `programs/` surface; less

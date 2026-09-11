@@ -288,7 +288,8 @@ lint-file:
 run-file: pycore-run-file
 
 # Image-boot a user Python file on the two-core hart and check the return
-# against host CPython 3.14. Lint first with `make lint-file`.
+# against host CPython 3.14. Uses the shared plusarg tb_container binary
+# (`tools/ensure_sim.py twocore`). Lint first with `make lint-file`.
 pycore-run-file:
 	$(PYTHON) pycore/tools/pycore_cli.py run "$(RUN_SOURCE)" \
 		--entry "$(RUN_FUNCTION)" \

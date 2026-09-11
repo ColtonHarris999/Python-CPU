@@ -1,10 +1,10 @@
 #!/usr/bin/env python3.14
-"""Lint and simulate Python programs on PyCore (Verilator).
+"""Lint and simulate Python programs on PyCore.
 
 Commands:
   help   Executive summary of the supported Python subset, plus usage
   lint   Check that a .py file meets the current image-boot requirements
-  run    Lint, then simulate on the two-core hart and compare against CPython
+  run    Lint, then simulate on the shared two-core hart and compare against CPython
 """
 
 from __future__ import annotations
@@ -50,39 +50,10 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 DEFAULT_ENTRY = "managed_entry"
 DEFAULT_MAX_CYCLES = 200_000
-
-# Keep in sync with Makefile PYCORE_RTL_SRCS.
-PYCORE_RTL_SRCS = (
-    "pycore/rtl/pycore_tag_decode.sv",
-    "pycore/rtl/pycore_promote.sv",
-    "pycore/rtl/pycore_int_alu.sv",
-    "pycore/rtl/pycore_mul.sv",
-    "pycore/rtl/pycore_div.sv",
-    "pycore/rtl/pycore_fpu.sv",
-    "pycore/rtl/pycore_complex_alu.sv",
-    "pycore/rtl/pycore_string_mem.sv",
-    "pycore/rtl/pycore_exec.sv",
-    "pycore/rtl/pycore_regfile.sv",
-    "pycore/rtl/pycore_fetch.sv",
-    "pycore/rtl/pycore_decode.sv",
-    "pycore/rtl/pycore_branch.sv",
-    "pycore/rtl/pycore_trap.sv",
-    "pycore/rtl/pycore_frame.sv",
-    "pycore/rtl/pycore_mem_block.sv",
-    "pycore/rtl/pycore_mem_bank.sv",
-    "pycore/rtl/pycore_imem.sv",
-    "pycore/rtl/pycore_code_ram.sv",
-    "pycore/rtl/pycore_code_mem.sv",
-    "pycore/rtl/pycore_dmem.sv",
-    "pycore/rtl/pycore_mem_stage.sv",
-    "pycore/rtl/pycore_exc_stack.sv",
-    "pycore/rtl/pycore_core.sv",
-    "pycore/rtl/pycore_system.sv",
-    "excore/rtl/excore_cpu.sv",
-    "excore/rtl/excore_mmio.sv",
-    "excore/rtl/trap_mailbox.sv",
-    "pycore/rtl/pycore_excore_system.sv",
-)
+ENSURE_SIM = REPO_ROOT / "tools" / "ensure_sim.py"
+SIM_IMG_BIN = REPO_ROOT / "build" / "sim_img" / "Vtb_container"
+SIM_TWOCORE_BIN = REPO_ROOT / "build" / "sim_img_twocore" / "Vtb_container"
+EXCORE_FW_HEX = REPO_ROOT / "build" / "excore_fw" / "list_grow.hex"
 
 EXECUTIVE_SUMMARY = """\
 PyCore runs a CPython 3.14 bytecode subset on a SystemVerilog hart, with an
@@ -154,8 +125,9 @@ Makefile
   make run-file  RUN_SOURCE=path/to/program.py
 
 ``run`` builds a CPython 3.14 image, executes ``managed_entry`` on the host
-for a golden int/bool, then simulates the two-core design in Verilator and
-checks that the hart returns the same tagged value.
+for a golden int/bool, then runs the shared two-core ``tb_container``
+simulator (``tools/ensure_sim.py twocore``) with plusargs and checks that
+the hart returns the same tagged value.
 
 Examples
   make lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
@@ -369,96 +341,67 @@ def _parse_meta(path: pathlib.Path) -> dict[str, str]:
     return out
 
 
-def _assemble_excore_fw(build_dir: pathlib.Path) -> pathlib.Path:
-    hex_path = build_dir / "excore_fw" / "list_grow.hex"
-    hex_path.parent.mkdir(parents=True, exist_ok=True)
-    src = REPO_ROOT / "excore" / "fw" / "list_grow.s"
-    asm = REPO_ROOT / "excore" / "tools" / "asm_rv32.py"
-    python3 = os.environ.get("PYTHON3", "python3")
-    proc = subprocess.run(
-        [python3, str(asm), str(src), "-o", str(hex_path)],
-        check=True,
-        cwd=REPO_ROOT,
-        text=True,
-        capture_output=True,
+def _sim_bin(two_core: bool) -> pathlib.Path:
+    return SIM_TWOCORE_BIN if two_core else SIM_IMG_BIN
+
+
+def _ensure_shared_sim(two_core: bool) -> pathlib.Path:
+    """Compile-once via ``tools/ensure_sim.py``; reuse ``build/sim_img*``."""
+    kind = "twocore" if two_core else "img"
+    python = os.environ.get("PYTHON", sys.executable)
+    print(
+        f"Ensuring shared {kind} tb_container "
+        "(compiles once, then reused via plusargs)..."
     )
-    if proc.stdout:
-        sys.stdout.write(proc.stdout)
-        sys.stdout.flush()
-    return hex_path
+    sys.stdout.flush()
+    proc = subprocess.run(
+        [python, str(ENSURE_SIM), kind],
+        cwd=REPO_ROOT,
+        check=False,
+    )
+    sim = _sim_bin(two_core)
+    if proc.returncode != 0 or not sim.is_file():
+        raise RuntimeError(
+            f"ensure_sim.py {kind} failed (exit {proc.returncode}); missing {sim}"
+        )
+    return sim
 
 
-def _verilator() -> str:
-    return os.environ.get("VERILATOR", "verilator")
-
-
-def _sv_str(path: pathlib.Path) -> str:
-    return f'"{path.resolve()}"'
-
-
-def _run_verilator(
+def _run_shared_sim(
     *,
-    work: pathlib.Path,
     program_hex: pathlib.Path,
     dmem_hex: pathlib.Path,
     string_hex: pathlib.Path,
     meta: dict[str, str],
     max_cycles: int,
     two_core: bool,
-    fw_hex: pathlib.Path | None,
     stdout_path: pathlib.Path,
-) -> tuple[subprocess.CompletedProcess[str], pathlib.Path]:
-    mdir = work / ("verilator_twocore" if two_core else "verilator")
-    heap = meta["HEAP_INIT_PTR"]
-    tag = meta["EXPECTED_TAG"]
-    value = meta["EXPECTED_VALUE"]
+) -> subprocess.CompletedProcess[str]:
+    sim = _ensure_shared_sim(two_core)
     cmd = [
-        _verilator(),
-        "-sv",
-        "--binary",
-        "--timing",
-        "+incdir+pycore/rtl",
-        "+incdir+excore/rtl/singlecore",
-        "--top-module",
-        "tb_container",
-        f"-GPROG_HEX={_sv_str(program_hex)}",
-        f"-GSTRING_HEX={_sv_str(string_hex)}",
-        f"-GDMEM_HEX={_sv_str(dmem_hex)}",
-        "-GBOOT_EN=1",
-        "-GCHECK_ENTRY_RETURN=1",
-        f"-GHEAP_INIT_PTR={heap}",
-        f"-GEXPECTED_TAG=4'd{tag}",
-        f"-GEXPECTED_VALUE=128'd{value}",
-        f"-GMAX_CYCLES={max_cycles}",
+        str(sim),
+        f"+PROG_HEX={program_hex.resolve()}",
+        f"+STRING_HEX={string_hex.resolve()}",
+        f"+DMEM_HEX={dmem_hex.resolve()}",
+        "+BOOT_EN=1",
+        "+CHECK_ENTRY_RETURN=1",
+        f"+HEAP_INIT_PTR={meta['HEAP_INIT_PTR']}",
+        f"+EXPECTED_TAG={meta['EXPECTED_TAG']}",
+        f"+EXPECTED_VALUE={meta['EXPECTED_VALUE']}",
+        f"+MAX_CYCLES={max_cycles}",
     ]
     if two_core:
-        if fw_hex is None:
-            raise ValueError("two-core run requires assembled excore firmware")
-        cmd.extend(
-            [
-                "-GEXCORE_EN=1",
-                f"-GFW_HEX={_sv_str(fw_hex)}",
-                f"-GSTDOUT_PATH={_sv_str(stdout_path)}",
-            ]
-        )
-    cmd.extend(
-        [
-            "--Mdir",
-            str(mdir),
-            "-Wall",
-            "-Wno-fatal",
-            *PYCORE_RTL_SRCS,
-            "pycore/tb/tb_container.sv",
-        ]
-    )
-    proc = subprocess.run(
+        cmd.append(f"+FW_HEX={EXCORE_FW_HEX.resolve()}")
+        cmd.append(f"+STDOUT_PATH={stdout_path.resolve()}")
+    print("Running PyCore simulation...")
+    sys.stdout.flush()
+    return subprocess.run(
         cmd,
         cwd=REPO_ROOT,
         text=True,
         capture_output=True,
         check=False,
     )
-    return proc, mdir
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -523,44 +466,20 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"run FAIL: image.meta missing {key}")
             return 1
 
-    fw_hex = None
     two_core = not args.single_core
-    if two_core:
-        print("Assembling excore firmware...")
-        fw_hex = _assemble_excore_fw(work)
-
-    print("Compiling with Verilator (first run is slow)...")
-    proc, mdir = _run_verilator(
-        work=work,
-        program_hex=program_hex,
-        dmem_hex=dmem_hex,
-        string_hex=string_hex,
-        meta=meta,
-        max_cycles=args.max_cycles,
-        two_core=two_core,
-        fw_hex=fw_hex,
-        stdout_path=stdout_path,
-    )
-    combined = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode != 0:
-        print(combined)
-        print(f"run FAIL: verilator compile exited {proc.returncode}")
+    try:
+        sim_proc = _run_shared_sim(
+            program_hex=program_hex,
+            dmem_hex=dmem_hex,
+            string_hex=string_hex,
+            meta=meta,
+            max_cycles=args.max_cycles,
+            two_core=two_core,
+            stdout_path=stdout_path,
+        )
+    except RuntimeError as exc:
+        print(f"run FAIL: {exc}")
         return 1
-
-    sim = mdir / "Vtb_container"
-    if not sim.is_file():
-        print(combined)
-        print(f"run FAIL: missing simulator binary {sim}")
-        return 1
-
-    print("Running PyCore simulation...")
-    sim_proc = subprocess.run(
-        [str(sim)],
-        cwd=REPO_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
     sim_out = (sim_proc.stdout or "") + (sim_proc.stderr or "")
     print(sim_out.rstrip())
 
@@ -599,14 +518,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_lint.add_argument("--entry", default=DEFAULT_ENTRY)
     p_lint.set_defaults(func=cmd_lint)
 
-    p_run = sub.add_parser("run", help="Lint, simulate with Verilator, check return")
+    p_run = sub.add_parser(
+        "run",
+        help="Lint, simulate with the shared tb_container, check return",
+    )
     p_run.add_argument("source", help="Python source file")
     p_run.add_argument("--entry", default=DEFAULT_ENTRY)
     p_run.add_argument("--max-cycles", type=int, default=DEFAULT_MAX_CYCLES)
     p_run.add_argument(
         "--build-dir",
         default="build/pycore_run",
-        help="Directory for hex images and the Verilator object dir",
+        help="Directory for hex images and console capture",
     )
     p_run.add_argument(
         "--single-core",
