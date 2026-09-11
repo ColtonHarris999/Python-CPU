@@ -1,14 +1,14 @@
 # Exceptions full support — implementation plan
 
 **Status:** On `main` — T1–T5-A (except T4 oparg 2) + T8. Remaining: T6 trap→raise, T7 `assert`, T9 `with`, T10 user subclasses, T5-B/C extra types, T11 `except*`, T12 generators.
-**Tracker:** [`pycore/docs/exception_support.md`](../pycore/docs/exception_support.md) + `pycore.json` → `exceptions.types`
+**Tracker:** [`pycore/docs/exception_support.md`](../../pycore/docs/exception_support.md) + `pycore.json` → `exceptions.types`
 **Firmware leftovers:** [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) (F1/F4 done; F2/F3 open)
 
 Shipped: `except Exception:`, `raise TypeError` / `raise TypeError("msg")`, MRO + tuple match, cross-frame unwind, `try`/`except`/`else`/`finally`, `e.args`. Unhandled raise is still fatal `PY_TRAP_RAISE` (17). Hardware type/mem traps are **not** yet Python exceptions (T6).
 
 Locks that still apply: do not bake type names into `CHECK_EXC_MATCH`; do not implement `SETUP_*` / `POP_BLOCK` (3.14 pseudo-ops); protocol `StopIteration` stays identity vs `iter_exhaust_type_r`; keep Wave A `tp_base` links.
 
-Related: [Built-in Exceptions](https://docs.python.org/3/library/exceptions.html) (Python 3.14), [`bytecode_support.md`](../pycore/docs/bytecode_support.md), [`object_model.md`](../pycore/docs/object_model.md) D2, for-loop plan [`implemented/for_loop_full_support_plan.md`](implemented/for_loop_full_support_plan.md) §5.
+Related: [Built-in Exceptions](https://docs.python.org/3/library/exceptions.html) (Python 3.14), [`bytecode_support.md`](../../pycore/docs/bytecode_support.md), [`object_model.md`](../../pycore/docs/object_model.md) D2, for-loop plan [`implemented/for_loop_full_support_plan.md`](implemented/for_loop_full_support_plan.md) §5.
 
 ---
 
@@ -24,7 +24,7 @@ The true roots (order matters):
 
 Everything else (bare raise, trap→raise, assert, finally/else tests, with, subclasses, except*, generators) hangs off those roots.
 
-**Which types belong to which track** is locked in [`exception_support.md`](../pycore/docs/exception_support.md) and `pycore.json` `exceptions.types`. Update both in the same PR that seeds or relinks a type.
+**Which types belong to which track** is locked in [`exception_support.md`](../../pycore/docs/exception_support.md) and `pycore.json` `exceptions.types`. Update both in the same PR that seeds or relinks a type.
 
 | Track | Seeds (builtin `OBK_TYPE`s) | Uses (must already exist) |
 | --- | --- | --- |
@@ -54,15 +54,15 @@ From PR #66 Track B (verified in RTL + docs):
 
 | Piece | Location / lock |
 | --- | --- |
-| 8-field / 256 B code objects; field 7 = raw `co_exceptiontable` as `TUPLE` of `INT` bytes | [`heap_image.py`](../pycore/tools/heap_image.py), [`exception_table.py`](../pycore/tools/exception_table.py) |
+| 8-field / 256 B code objects; field 7 = raw `co_exceptiontable` as `TUPLE` of `INT` bytes | [`heap_image.py`](../../pycore/tools/heap_image.py), [`exception_table.py`](../../pycore/tools/exception_table.py) |
 | Field 3 metadata | `{posonlyargcount, CO_VARKEYWORDS, CO_VARARGS, kwonlyargcount, stacksize, nlocals, argcount}` — #68; must survive |
-| Host byte→slot conversion (`start>>1`); RTL compares `cur_pc_r` in slots only | [`pycore_cont_raise.svh`](../pycore/rtl/pycore_cont_raise.svh) |
-| dmem exc-info arena `0x1B000–0x1BFFF` | [`pycore_exc_stack.sv`](../pycore/rtl/pycore_exc_stack.sv) |
+| Host byte→slot conversion (`start>>1`); RTL compares `cur_pc_r` in slots only | [`pycore_cont_raise.svh`](../../pycore/rtl/pycore_cont_raise.svh) |
+| dmem exc-info arena `0x1B000–0x1BFFF` | [`pycore_exc_stack.sv`](../../pycore/rtl/pycore_exc_stack.sv) |
 | Heap limit `PYCORE_HEAP_LIMIT = 0x1B000` | frames `0x1C000–0x1FFFF` |
 | Live opcodes | `RAISE_VARARGS` **oparg 0/1**, `PUSH_EXC_INFO`, `CHECK_EXC_MATCH` (identity + MRO + tuples), `POP_EXCEPT`, `RERAISE` 0/1 |
 | Boot | Wave A exception `OBK_TYPE`s with documented parents; `StopIteration` remains latched at `ITER_EXHAUST_TYPE_ADDR` (`0x1BFE0`). |
 | Protocol CALL stitch (#66) | handoff zeros `call_kw_*`, `call_varkw_*`, `call_posonly_r` |
-| Tests | [`img_try_stopiteration.py`](../pycore/programs/img_try_stopiteration.py), nested, fatal unhandled, list comps, Plan 1 `img_try_exc_*` / `img_try_syntaxerror*`. Cross-frame catch: `img_try_callee_raise`. |
+| Tests | [`img_try_stopiteration.py`](../../pycore/programs/img_try_stopiteration.py), nested, fatal unhandled, list comps, Plan 1 `img_try_exc_*` / `img_try_syntaxerror*`. Cross-frame catch: `img_try_callee_raise`. |
 
 ### 2.1 Three orthogonal layers (locked)
 
@@ -174,9 +174,9 @@ PyCore is one-instruction-in-flight, one outstanding dmem beat, shared `containe
 
 | Lock | Why |
 | --- | --- |
-| **Stay in the existing op’s FSM** | `CHECK_EXC_MATCH` extends [`pycore_cont_exc.svh`](../pycore/rtl/pycore_cont_exc.svh) phases. Do **not** jump to `CONT_LOAD_ATTR` to “reuse MRO.” Copy the depth-8 `tp_base` loop pattern (`container_count_r >= 8` in [`pycore_cont_object.svh`](../pycore/rtl/pycore_cont_object.svh) ~1211). |
+| **Stay in the existing op’s FSM** | `CHECK_EXC_MATCH` extends [`pycore_cont_exc.svh`](../../pycore/rtl/pycore_cont_exc.svh) phases. Do **not** jump to `CONT_LOAD_ATTR` to “reuse MRO.” Copy the depth-8 `tp_base` loop pattern (`container_count_r >= 8` in [`pycore_cont_object.svh`](../../pycore/rtl/pycore_cont_object.svh) ~1211). |
 | **One dmem beat** | Each MRO step is: read field1 val, then tag (or packed compare). Same `container_dmem_pending_r` handshake as today. |
-| **Exact compare is combinational; subclass is a loop** | First check handle identity (today’s `CP_TAG` compare). Only on miss, walk `tp_base`. FOR_ITER exhaust stays **identity only** vs `iter_exhaust_type_r` ([`pycore_cont_list.svh`](../pycore/rtl/pycore_cont_list.svh) ~884) — never MRO on that path. |
+| **Exact compare is combinational; subclass is a loop** | First check handle identity (today’s `CP_TAG` compare). Only on miss, walk `tp_base`. FOR_ITER exhaust stays **identity only** vs `iter_exhaust_type_r` ([`pycore_cont_list.svh`](../../pycore/rtl/pycore_cont_list.svh) ~884) — never MRO on that path. |
 | **Tuple handlers are one-level, length-capped** | `except (A, B):` TOS is `TUPLE`. Iterate `container_idx_r` over elements, run identity-or-MRO per element. Cap length at 8 (same as MRO depth). Nested tuples (`except (A, (B, C))`) → `TYPE` in v1. |
 | **Exception-type bit, not a CALL-time MRO** | `ob_flags` bit on `OBK_TYPE`, set by host when seeding §2.3 types (and Track 10 subclasses). `CALL` phase 12 reads `ob_head` once; if the bit is set, allocate `PYCORE_OBJ_EXCEPTION_BYTES` (96), **not** INSTANCE+dict (`CALL_TYPE_ALLOC_BYTES`). Walking `tp_base` to `BaseException` on every `Point()` construction is illegal. |
 | **RAISE type vs instance = one `ob_kind` read** | TOS `OBJECT` → read head. `PY_OBK_EXCEPTION` → use handle, skip alloc. `PY_OBK_TYPE` → existing `CONT_RAISE` alloc. Anything else → `TYPE`. Do not allocate-then-discard. |
@@ -223,7 +223,7 @@ Verified against CPython 3.14 `dis` / `stack_effect` and current RTL. **On `main
 | `try: f() except T:` | Table miss → `PY_TRAP_RAISE` unless protocol-launched container CALL; no callee→caller unwind. **Pinned on `main`** by `img_try_exc_cross_frame_fatal` (Plan 1 deviation 16). |
 | Firmware `raise 1` | `TypeError` **is** seeded (leaf on `main`, Wave A on this branch). Firmware still raises ints; that becomes a latent bug once Track 2 treats TOS as a type handle. |
 | Plan 1 `SyntaxError("msg")` | Same as `raise TypeError("x")` — CALL still allocates `OBK_INSTANCE`. `img_try_syntaxerror_msg` stashes the message in a global until T2. |
-| `class MyError(Exception):` | [`fold_module_classes`](../pycore/tools/image_from_source.py) rejects bases |
+| `class MyError(Exception):` | [`fold_module_classes`](../../pycore/tools/image_from_source.py) rejects bases |
 | Real `try/finally` / `with` | Use exception table + `RERAISE`, **not** `SETUP_FINALLY` / `SETUP_WITH` |
 | `assert` | Emits `LOAD_COMMON_CONSTANT 0` (`AssertionError`) — still in `DEFERRED_OPS` |
 | `with` | Emits `LOAD_SPECIAL` + `WITH_EXCEPT_START` + `RERAISE 2` |
@@ -242,11 +242,11 @@ Each track is independently PR-able once its blockers are green.
 **Seeds:** `BaseException`, `Exception`. **Relinked:** `StopIteration.tp_base = Exception`. **Also seeded in this PR:** T5-A. **Opcodes:** `CHECK_EXC_MATCH` is `execute` (identity + MRO + one-level tuples).
 
 - Seed `BaseException` then `Exception` as `OBK_TYPE` with `tp_base` links **exactly as in §2.3**. Relink existing `StopIteration` so `tp_base = Exception` (**keep the same handle**; `iter_exhaust_type_r` is identity, not MRO). Set the exception-type `ob_flags` bit on every seeded type (§2.4).
-- `CHECK_EXC_MATCH` in [`pycore_cont_exc.svh`](../pycore/rtl/pycore_cont_exc.svh): keep the field0 dmem reads. On identity miss, loop `tp_base` (field1) with `container_count_r`, cap 8, one beat at a time. If TOS tag is `TUPLE`, iterate elements (cap 8, one level). Push BOOL as today (`[exc, type] → [exc, bool]`).
+- `CHECK_EXC_MATCH` in [`pycore_cont_exc.svh`](../../pycore/rtl/pycore_cont_exc.svh): keep the field0 dmem reads. On identity miss, loop `tp_base` (field1) with `container_count_r`, cap 8, one beat at a time. If TOS tag is `TUPLE`, iterate elements (cap 8, one level). Push BOOL as today (`[exc, type] → [exc, bool]`).
 - Do **not** call into `CONT_LOAD_ATTR`. Do **not** bake the name `Exception` into the matcher — the handler type is whatever bytecode left on TOS.
 - Bare `except:` is already `PUSH_EXC_INFO; POP_TOP; …` — no matcher; equivalent to `except BaseException:`.
 - **Correctness risk:** `risky-partial` if the walk is wrong or a leaf skips a documented parent. Prefer trap-until-walk-complete; do not ship exact-match-only for `Exception`.
-- Files: [`image_from_source.py`](../pycore/tools/image_from_source.py) `build_builtins_dict`, [`pycore_cont_exc.svh`](../pycore/rtl/pycore_cont_exc.svh), [`object_model.md`](../pycore/docs/object_model.md).
+- Files: [`image_from_source.py`](../../pycore/tools/image_from_source.py) `build_builtins_dict`, [`pycore_cont_exc.svh`](../../pycore/rtl/pycore_cont_exc.svh), [`object_model.md`](../../pycore/docs/object_model.md).
 - **Rebase (done):** absorbed Plan 1 `build_builtins_dict` entries (§2.0) and seeded `SyntaxError` under `Exception`.
 
 ### Track 2 — Construction (root of `raise T(...)` and `raise e`)
@@ -270,7 +270,7 @@ Do **not** merge with FOR_ITER protocol StopIteration (for-loop §6.1.1 / identi
 
 No new `S_EXC` state. Spike with a two-function image before touching firmware. Preserve the #66 binder-scratch reset.
 
-**Plan 1 contract change:** [`img_try_exc_cross_frame_fatal.py`](../pycore/programs/img_try_exc_cross_frame_fatal.py) currently **expects** trap 17. When T3 lands, flip it to a catch (or replace with `img_try_callee_raise`). That is intentional, not a regression.
+**Plan 1 contract change:** [`img_try_exc_cross_frame_fatal.py`](../../pycore/programs/img_try_exc_cross_frame_fatal.py) currently **expects** trap 17. When T3 lands, flip it to a catch (or replace with `img_try_callee_raise`). That is intentional, not a regression.
 
 ### Track 4 — Remaining `RAISE_VARARGS` arities — **oparg 0 landed**
 
@@ -281,7 +281,7 @@ No new `S_EXC` state. Spike with a two-function image before touching firmware. 
 
 ### Track 5 — Exception type tree (seed order)
 
-**Seeds:** the Wave A/B/C tables below (and in [`exception_support.md`](../pycore/docs/exception_support.md)). **Uses:** T1 parents must exist before children. **Opcodes:** none required; this is boot/`build_builtins_dict` + JSON `status: seeded`. Flip each type’s row when it lands.
+**Seeds:** the Wave A/B/C tables below (and in [`exception_support.md`](../../pycore/docs/exception_support.md)). **Uses:** T1 parents must exist before children. **Opcodes:** none required; this is boot/`build_builtins_dict` + JSON `status: seeded`. Flip each type’s row when it lands.
 
 Do not seed all of CPython at once. Boot dict size and 128 B per `OBK_TYPE` matter. Stay under `PYCORE_HEAP_LIMIT` (`0x1B000`); `allocator_list` already adapted after the exc arena steal.
 
@@ -350,7 +350,7 @@ Recoverable traps (LIST_GROW, DICT_GROW, …) stay mailbox/excore.
 
 **Seeds:** none. **Uses:** `AssertionError` (T5-A). **Opcodes:** `LOAD_COMMON_CONSTANT` (`trap` → `execute`; remove from `DEFERRED_OPS`).
 
-CPython 3.14 `_common_constants[0]` is `AssertionError`. Opcode 81 is a **register write** of a boot-latched handle (sidecar or tiny ROM of handles), not a builtins-dict probe. Decode like `LOAD_CONST`. Unlock in [`image_from_source.py`](../pycore/tools/image_from_source.py) `DEFERRED_OPS`. Needs Track 5 `AssertionError`.
+CPython 3.14 `_common_constants[0]` is `AssertionError`. Opcode 81 is a **register write** of a boot-latched handle (sidecar or tiny ROM of handles), not a builtins-dict probe. Decode like `LOAD_CONST`. Unlock in [`image_from_source.py`](../../pycore/tools/image_from_source.py) `DEFERRED_OPS`. Needs Track 5 `AssertionError`.
 
 ### Track 8 — Language forms that are mostly tests — **landed**
 
@@ -459,9 +459,9 @@ Wire under `pycore/programs/`; Makefile aggregate `pycore-img-exc-all`.
 
 - [x] Boot Wave A types round-trip; `StopIteration` handle identity preserved for `iter_exhaust_type_r`
 - [x] `CHECK_EXC_MATCH` tuple + MRO cases in RTL or host-visible goldens
-- [x] Update [`exception_support.md`](../pycore/docs/exception_support.md) **and** `pycore.json` `exceptions.types` (status / `tp_base_actual` / match / construct / trap_map)
-- [x] Update [`bytecode_support.md`](../pycore/docs/bytecode_support.md) and opcode rows in [`pycore.json`](../pycore/targets/pycore.json) when an OBJ_EXC ceiling moves
-- [x] Update [`object_model.md`](../pycore/docs/object_model.md) boot-builtins paragraph if `StopIteration` / parents changed
+- [x] Update [`exception_support.md`](../../pycore/docs/exception_support.md) **and** `pycore.json` `exceptions.types` (status / `tp_base_actual` / match / construct / trap_map)
+- [x] Update [`bytecode_support.md`](../../pycore/docs/bytecode_support.md) and opcode rows in [`pycore.json`](../../pycore/targets/pycore.json) when an OBJ_EXC ceiling moves
+- [x] Update [`object_model.md`](../../pycore/docs/object_model.md) boot-builtins paragraph if `StopIteration` / parents changed
 - [x] Rebase onto `main`: keep Plan 1 builtins; Wave A parents; seed `SyntaxError`; keep `exceptions.types`
 - [x] Firmware grep gate: no `raise <int>` after Wave A — landed in [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) F1
 
@@ -535,10 +535,10 @@ Current host suite: `pycore-python-tests` 269 OK. `CALL` of exception types allo
 | [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) | Plan 1 on `main`: P7 leaf types, deviation 16 (no cross-frame unwind), message workaround |
 | [`exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md) | **After #74:** F1 firmware `raise <int>` → real types; F4 `e.args` landed; F2 getattr / min-max and F3 NYI stubs remain |
 | [`HANDOFF.md`](implemented/HANDOFF.md) | Design locks + verified counts for #66 |
-| [`exception_support.md`](../pycore/docs/exception_support.md) | **Exception type status** — seeded / absent / alias / skip + seed_track |
-| [`pycore.json`](../pycore/targets/pycore.json) `exceptions.types` | Machine catalog the analyzer validates |
-| [`bytecode_support.md`](../pycore/docs/bytecode_support.md) | Opcode status rows (including OBJ_EXC) |
-| [`object_model.md`](../pycore/docs/object_model.md) | `OBK_EXCEPTION` / `OBK_TYPE` layout |
+| [`exception_support.md`](../../pycore/docs/exception_support.md) | **Exception type status** — seeded / absent / alias / skip + seed_track |
+| [`pycore.json`](../../pycore/targets/pycore.json) `exceptions.types` | Machine catalog the analyzer validates |
+| [`bytecode_support.md`](../../pycore/docs/bytecode_support.md) | Opcode status rows (including OBJ_EXC) |
+| [`object_model.md`](../../pycore/docs/object_model.md) | `OBK_EXCEPTION` / `OBK_TYPE` layout |
 | [`builtins_wave4_plan.md`](builtins_wave4_plan.md) | Broader builtins backlog |
 
 ---

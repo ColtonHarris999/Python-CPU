@@ -12,7 +12,7 @@ unless the JSON `status` is `seeded` and boot (`build_builtins_dict`) agrees.
 [Built-in Exceptions](https://docs.python.org/3/library/exceptions.html)
 (Python 3.14). Copy `tp_base` from that page; do not invent parents.
 
-**Roadmap:** [`planning/exceptions_full_support_plan.md`](../../planning/exceptions_full_support_plan.md).
+**Roadmap:** [`planning/exceptions_plan.md`](../../planning/exceptions_plan.md).
 Opcode rows live in [`bytecode_support.md`](bytecode_support.md) and the
 `OBJ_EXC` group in `pycore.json`.
 
@@ -51,8 +51,8 @@ Counts are derived from `exceptions.types`. Recompute after every seed PR:
 | `skip` | 14 | warnings family + `FloatingPointError` + `_IncompleteInputError` |
 
 Today Wave A is **seeded** with documented `tp_base` links and `match = mro`.
-`SyntaxError` is also seeded (`tp_base=Exception`) so Plan 1 P7 tests still
-resolve the name. All seeded exception types have `construct = call`: `CALL`
+`SyntaxError` is also seeded (`tp_base=Exception`) so tokenizer / compiler
+tests can resolve the name. All seeded exception types have `construct = call`: `CALL`
 allocates an `OBK_EXCEPTION` with zero or one positional argument, and
 `RAISE_VARARGS` 1 accepts either a type or an existing exception instance;
 oparg 0 reuses the active exception. `LOAD_ATTR` name `"args"` on an
@@ -88,7 +88,7 @@ itself).
 | `AttributeError` | seeded | T5-A | T6 | trap map not converted yet |
 | `RuntimeError` | seeded | T5-A | T4 | seeded, but bare `raise` with no active exception remains fatal until its handle has a boot sidecar |
 | `AssertionError` | seeded | T5-A | T7 | `LOAD_COMMON_CONSTANT` still trap |
-| `SyntaxError` | seeded | T1 rebase | — | Plan 1 P7 leaf pulled under `Exception`; `IndentationError`/`TabError` stay absent |
+| `SyntaxError` | seeded | T1 rebase | — | leaf pulled under `Exception`; `IndentationError`/`TabError` stay absent |
 
 T1 shipped MRO + tuple `CHECK_EXC_MATCH` in the same PR as Wave A seeds. Rebase onto `main` also seeds `SyntaxError`.
 
@@ -137,7 +137,7 @@ T1 shipped MRO + tuple `CHECK_EXC_MATCH` in the same PR as Wave A seeds. Rebase 
 | `StopAsyncIteration` | absent | T12 | T1 `Exception` | async iterators; generator/async plan |
 | `BaseExceptionGroup` | absent | T11 | T1 `BaseException` | sibling of `Exception`; `except Exception` must **not** catch it |
 | `ExceptionGroup` | absent | T11 | T1 `Exception` | v1 `tp_base=Exception` only (single-inheritance ceiling) |
-| `SyntaxError` | seeded | T1 rebase | T1 `Exception` | Plan 1 P7 exact-match tests required the name; parented to `Exception` on rebase |
+| `SyntaxError` | seeded | T1 rebase | T1 `Exception` | exact-match tests required the name; parented to `Exception` on rebase |
 | `IndentationError` | absent | T5-C | T5-C `SyntaxError` | |
 | `TabError` | absent | T5-C | T5-C `IndentationError` | |
 | `UnicodeError` | absent | T5-C | T5-A `ValueError` | codecs |

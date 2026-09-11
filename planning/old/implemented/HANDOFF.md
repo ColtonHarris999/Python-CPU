@@ -95,8 +95,8 @@ bits for varkw/posonly. Prefer CI green on PR #66. After #66 merges, cut a
 **new branch from `main`** for remaining exception tracks after rebasing
 [`cursor/exceptions-full-t1-match`](../exceptions_full_support_plan.md)
 (Track 1 + T5-A already landed there). Type/opcode trackers:
-[`exception_support.md`](../../pycore/docs/exception_support.md),
-[`bytecode_support.md`](../../pycore/docs/bytecode_support.md),
+[`exception_support.md`](../../../pycore/docs/exception_support.md),
+[`bytecode_support.md`](../../../pycore/docs/bytecode_support.md),
 `pycore.json` `exceptions.types` / `opcodes`. Optional non-exception
 follow-ons: dict comps, ROM `iter`/`next`.
 

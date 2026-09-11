@@ -10,7 +10,9 @@ tracked in `pycore/docs/bytecode_support.md`. The machine catalog is
 `pycore/targets/pycore.json` (`opcodes`). To check a user program against that
 subset: `make lint-file RUN_SOURCE=...` (`pycore/tools/pycore_cli.py`). Built-in
 exception **types** are tracked the same way in `pycore/docs/exception_support.md`
-and `pycore.json` → `exceptions.types`.
+and `pycore.json` → `exceptions.types`. Remaining architecture work is
+[`planning/architecture_plan.md`](../../planning/architecture_plan.md);
+the timeline is [`planning/master_plan.md`](../../planning/master_plan.md).
 
 Paper-oriented systems notes (LaTeX) for near-complete subsystems live under
 `docs/paper/` — start with `docs/paper/systems/call_fsm.tex` for the CALL FSM

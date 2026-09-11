@@ -7,7 +7,7 @@ test flow). Small helpers may later be inlined instead of a PC jump.
 
 **Architecture:** prefer hardware `OBK_BUILTIN` / `BI_*` CALL fast paths
 for known tags; keep these `.py` bodies as **miss / protocol**
-implementations (see `planning/implemented/builtins_bytecode_support_plan.md`).
+implementations (see `planning/old/implemented/builtins_bytecode_support_plan.md`).
 Example: `BI_LEN` reads container headers; Python `len` should only
 handle `obj.__len__()`, not recount with a for-loop.
 
@@ -25,7 +25,7 @@ These limit every firmware builtin:
 | Constraint | Impact |
 | --- | --- |
 | Firmware raises use Wave A exception types | ROM helpers raise catchable `TypeError`, `ValueError`, or `StopIteration` as appropriate. An unhandled Python raise ends in `PY_TRAP_RAISE` (17). |
-| **`CALL_KW` / `CALL_FUNCTION_EX` unfrozen** | Hardware binder supports keyword / `*args` / `**kwargs` calls on `CODE_OBJECT` (see `planning/implemented/call_kw_support_plan.md`). ROM modules may use `sep=` / `key=` / `*args` when implemented as Python `CODE_OBJECT`s. Native `OBK_BUILTIN` / `BI_*` paths remain positional-only (`CALL_FILTER` on kwargs). |
+| **`CALL_KW` / `CALL_FUNCTION_EX` unfrozen** | Hardware binder supports keyword / `*args` / `**kwargs` calls on `CODE_OBJECT`. ROM modules may use `sep=` / `key=` / `*args` when implemented as Python `CODE_OBJECT`s. Native `OBK_BUILTIN` / `BI_*` paths remain positional-only (`CALL_FILTER` on kwargs). |
 | No `YIELD_VALUE` | `enumerate`/`zip`/`map`/`filter`/`reversed` return lists, not iterators |
 | `TO_BOOL` widened | `None` + LIST/TUPLE/DICT/SET/inline RANGE truthiness work; `OBJECT` `__bool__`/`__len__` protocol still TYPE-traps |
 | `COMPARE_OP` numeric only | `min`/`max`/`sorted` TYPE-trap on containers; **SHORT_STR ordering works** |
@@ -35,8 +35,8 @@ These limit every firmware builtin:
 | Native type methods | `lst.append` / `s.add` / `d.get` / `str.join` etc. are `LOAD_ATTR` table hits (firmware `CODE_OBJECT`s in the boot sidecar). They are not public builtins-dict names. |
 | `UNPACK_EX` + `CALL_INTRINSIC_1` (LIST_TO_TUPLE) | Starred unpack and `(*lst,)` / list→tuple materialization are available |
 | Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`. `ord.md` / `chr.md` are shipped notes. |
-| Next plan | `planning/builtins_wave4_plan.md` — print / attr specials / ORD/CHR **done**; `LOAD_SUPER_ATTR` / OBJECT `TO_BOOL` remain |
-| `compile`/`exec`/`eval` plan | `planning/code_loading_bios_tokenizer_plan.md` (Plan 1: code loading, BIOS, tokenizer) then `planning/native_compiler_plan.md` (Plan 2: parser → codegen → self-hosting) |
+| Next plan | `planning/builtin_support.md` — `LOAD_SUPER_ATTR` / OBJECT `TO_BOOL`; F2 `getattr` / empty min/max |
+| `compile`/`exec`/`eval` plan | `planning/compile_plan.md` (PyCPython host oracle → ROM subset compiler). Code-object `exec`/`eval` already in ROM. |
 
 ## Builtin functions
 
@@ -63,8 +63,8 @@ These limit every firmware builtin:
 | `dir` | Return a list of valid attribute names for an object or the local scope. | in progress | Instance `__dict__` keys only; no-arg / MRO names blocked. |
 | `divmod` | Return the pair (quotient, remainder) of integer division. | in ROM | `(a // b, a % b)`. |
 | `enumerate` | Return an enumerate object yielding (index, item) pairs. | in ROM | Returns a **list** of pairs (no YIELD). LIST grow needs excore. |
-| `eval` | Evaluate a Python expression from a string or code object. | in ROM | Code-object form only (`"eval"` mode returns the expression value). String form needs runtime `compile` (Plan 2). |
-| `exec` | Execute Python statements from a string or code object. | in ROM | Code-object form only: `code()` then `None`. Module-mode `STORE_NAME`/`LOAD_NAME` hit the boot globals dict, so this is module-scope `exec`. String form needs runtime `compile` (Plan 2). Non-code arg → `CALL_FILTER`. |
+| `eval` | Evaluate a Python expression from a string or code object. | in ROM | Code-object form only (`"eval"` mode returns the expression value). String form needs ROM `compile`. |
+| `exec` | Execute Python statements from a string or code object. | in ROM | Code-object form only: `code()` then `None`. Module-mode `STORE_NAME`/`LOAD_NAME` hit the boot globals dict, so this is module-scope `exec`. String form needs ROM `compile`. Non-code arg → `CALL_FILTER`. |
 | `filter` | Construct an iterator of items for which a function returns true. | in ROM | Returns a **list**; `function is None` uses TO_BOOL. LIST grow → excore. |
 | `float` | Convert a string or number to floating point. | in progress | `x * 1.0` for numerics; `_parse_float_string` helper; no auto str dispatch. |
 | `format` | Convert a value to a formatted representation ("format_spec"). | in progress | Empty spec → INT/BOOL/None stringify; non-empty specs blocked (`FORMAT_WITH_SPEC`). |
@@ -146,7 +146,7 @@ Wave 3: `bin`, `dict`, `divmod`, `filter`, `hex`, `list`, `min`, `oct`,
 `pow`, `reversed`, `round`, `sorted`, `tuple`  
 Wave 4B: `delattr`, `getattr`, `hasattr`, `isinstance`, `issubclass`,
 `setattr`  
-Plan 1 P3: `exec`, `eval` (precompiled `CODE_OBJECT` forms)  
+`exec`, `eval` (precompiled `CODE_OBJECT` forms)  
 
 Coverage: `img_firmware_rom_subset`, `img_firmware_iterators`,
 `img_firmware_wave3a`, `img_firmware_wave3_strings`, `img_firmware_wave3_pow`,
@@ -199,7 +199,7 @@ form; `BI_SET` owns dict)
 ## Blocked by bytecode (§3 gaps)
 
 Audit of **blocked** / partially-blocked names against
-`planning/implemented/builtins_next_steps_plan.md` §3. Prefer linking deep plans under
+`planning/builtin_support.md`. Prefer linking deep plans under
 `pycore_firmware/builtins/*.md` where they exist.
 
 | Bytecode / protocol gap | Blocked or limited builtins |
