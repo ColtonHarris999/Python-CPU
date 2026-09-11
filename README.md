@@ -149,6 +149,21 @@ update/merge. See `pycore/docs/architecture.md`.
 | ROM builtins inventory | `pycore_firmware/builtins/builtins.md` |
 | Active plans | `planning/` |
 | excore MMIO / ISA / firmware | `excore/docs/` |
+| Branch hygiene | `.github/workflows/prune-merged-branches.yml` |
+
+## Working branches
+
+`main` is the only integration branch. Land work through a PR, then delete the
+head branch.
+
+| Branch | Why it still exists |
+| --- | --- |
+| `main` | default |
+| `ui` | parked simulator/debugger UI (do not merge unless asked) |
+
+Cursor / feature branches are short-lived. The prune-merged-branches workflow
+deletes a head after its PR merges, and sweeps already-merged leftovers weekly.
+Enable **Settings → General → Automatically delete head branches** as well.
 
 ## Setup
 

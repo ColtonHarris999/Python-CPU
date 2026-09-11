@@ -1,0 +1,43 @@
+name: Prune merged branches
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List deletions without deleting
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  prune:
+    name: prune
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
+    steps:
+      - name: Checkout prune script
+        uses: actions/checkout@v4
+
+      - name: Delete merged leftovers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          KEEP_BRANCHES: main ui
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            HEAD_REPO="${{ github.event.pull_request.head.repo.full_name }}"
+            if [ "$HEAD_REPO" != "$REPO" ]; then
+              echo "Skipping prune for fork head $HEAD_REPO"
+              exit 0
+            fi
+          fi
+          python3 scripts/prune_merged_branches.py
