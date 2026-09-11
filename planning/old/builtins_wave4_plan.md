@@ -1,12 +1,9 @@
-# Builtins wave 4 — what comes next
+# Builtins wave 4 — remaining bytecode follow-ups
 
-**Audience:** next agent (firmware, bytecode, or excore)  
-**Prerequisite:** wave 3 ROM seed landed (`planning/implemented/builtins_rom_wave3_plan.md`)  
+**Prerequisite:** wave 3 ROM seed (`planning/implemented/builtins_rom_wave3_plan.md`)  
 **Current ROM set:** 28 `CODE_OBJECT` builtins in `ROM_FIRMWARE_BUILTINS`
 
-Wave 3 finished the easy pure-Python seed + `sorted(reverse=)` /
-`sum(start=)`. Remaining work needs **new hardware / excore / bytecode**,
-not just more `.py` stubs.
+§1 print, §2 attr specials, and §3 `ord`/`chr` are **done**. Wave-4 ROM seeds in §5 (`hasattr` / `getattr` / `isinstance` / …) are also in ROM. Remaining work is Priority D bytecode: `LOAD_SUPER_ATTR` and `TO_BOOL` on OBJECT.
 
 ---
 
@@ -234,16 +231,11 @@ builtins dict. Shipped notes in `ord.md` / `chr.md`.
 
 ---
 
-## 5. Priority E — more ROM seeds (after B/C)
+## 5. Priority E — more ROM seeds — **DONE**
 
-Once primitives land, seed without new invention:
-
-- `hasattr`, `getattr`, `setattr`, `delattr`, `isinstance`, `issubclass`
-- `ord`, `chr`, then `ascii`
-- Optional ROM `max`/`min` kwargs wrappers **without** removing `BI_MAX`
-  (document shadowing policy)
-
-Still hybrid: keep `BI_LEN` / `BI_RANGE` / `BI_SET` / `BI_MAX` positional.
+Seeded after B/C: `hasattr`, `getattr`, `setattr`, `delattr`, `isinstance`,
+`issubclass`, `ord`, `chr`. `ascii` still needs `repr` for str. Native
+`BI_MAX` remains the 2-arg INT/BOOL fast path; ROM `min` covers 3+ args.
 
 ---
 
@@ -265,8 +257,8 @@ Still hybrid: keep `BI_LEN` / `BI_RANGE` / `BI_SET` / `BI_MAX` positional.
 | A print console | excore + TB | **Done** — ROM print + stdout goldens |
 | B attr specials | pycore RTL (LOAD_ATTR) | **Done** — specials + ROM seed |
 | C ORD/CHR | pycore CALL FSM | **Done** — `BI_ORD` / `BI_CHR` + `img_builtin_ord*` / `img_builtin_chr*` |
-| D bytecode | bytecode agent | `CO_VARKEYWORDS` or str `COMPARE_OP` |
-| E ROM seed | firmware agent | seed attr + ord/chr after B/C |
+| D bytecode | bytecode | `LOAD_SUPER_ATTR` / OBJECT `TO_BOOL` remain |
+| E ROM seed | firmware | **Done** — attr helpers + ord/chr in ROM |
 
 ---
 

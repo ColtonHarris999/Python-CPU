@@ -1,39 +1,107 @@
 # PyCore
 
-SystemVerilog multi-cycle Python-bytecode core using tagged 132-bit entries:
-
-```text
-{ tag[3:0], value[127:0] }
-```
+A research CPU whose native ISA is a **CPython 3.14 bytecode subset**. The
+prototype is portable SystemVerilog, simulated with Verilator.
 
 This repository is a **two-core** system:
 
-- **`pycore/`** — primary CPython 3.14 bytecode hart (image-boot from
-  `compile()` object graphs; `LOAD_CONST` indexes `co_consts` in dmem).
-- **`excore/`** — RV32 “exception core” (vendored multicycle hart under
-  `excore/rtl/singlecore/` + trap firmware) that services *recoverable*
-  container traps in firmware instead of halting.
+- **`pycore/`** — the bytecode hart. Programs boot from a CPython `compile()`
+  object graph (`image_from_source.py`): instruction memory is 1:1 with CPython
+  code units; constants live in the serialized `co_consts` tuple in dmem.
+- **`excore/`** — an RV32 companion hart that finishes *recoverable* container
+  work (list/dict/set grow, extend, mid-list delete) in firmware instead of
+  halting. Fatal traps (type, mem fault, illegal opcode, …) still halt.
 
-Recoverable traps today: list grow / extend / mid-list delete, dict grow,
-and set grow / update. Fatal traps (type, mem fault, illegal opcode, …)
-still halt via `pycore_trap`. Future milestones include GC and
-unimplemented-opcode emulation. See `pycore/docs/architecture.md` and
-`excore/docs/`.
+## Current status (main)
 
-## Register layout and tag system
+Shipped and regression-tested:
 
-### Register layout
+- Int / bool / float ALU, strings (index, iterate, slice with variable or
+  unit-step literal bounds),
+  lists / tuples / dicts / sets, `range`, `for` / comprehensions, functions with
+  defaults / `*args` / `**kwargs` / keyword calls.
+- Module-level classes, instance attributes, native methods
+  (`list.append`, `dict.get`, `str.join`, …).
+- `try` / `except` / `else` / `finally`, `raise TypeError` / `raise TypeError("msg")`,
+  MRO matching, cross-frame unwind. Firmware raises are catchable (F1); `e.args`
+  is readable (F4).
+- ROM builtins (`print`, `min`/`sorted`/`map`/`zip`/…), native `ord`/`chr`/`int`/`str`/`len`.
+- List/tuple sequence repeat (`[1,2] * 3`) and concat (`[1,2] + [3]`). Writable code RAM + `exec`/`eval` on
+  precompiled code objects.
 
-PyCore uses a 96-entry architectural register file:
+Still open (see `planning/master_plan.md`):
 
-- `RF[0..31]`: frame-local window
-- `RF[32..95]`: operand-stack / runtime-allocation window
+- Runtime code-RAM writers and on-device `compile()` via PyCPython
+  (`planning/compile_plan.md`). The hart does **not** run unmodified
+  `vendor/pycpython`.
+- BIOS / module loader (after first `compile()`).
+- `assert`, `with`, `import`, generators, `except*`, trap→Python-exception (T6),
+  list/tuple slicing, negative indices.
 
-Function-call frames are managed by `pycore/rtl/pycore_frame.sv` as a
-**simple dmem push/pop** call stack. A ring-buffer / spill design study
-lives in `pycore/rtl/attic/pycore_frame_buffer.sv` (not in the build).
+## Try a Python file
 
-### Tag map
+Requires **Python 3.14** and Verilator. Lint first, then simulate:
+
+```bash
+make help
+make lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
+make run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py
+```
+
+Equivalent:
+
+```bash
+python3.14 pycore/tools/pycore_cli.py help
+python3.14 pycore/tools/pycore_cli.py lint pycore/programs/example_sum_loop.py
+python3.14 pycore/tools/pycore_cli.py run  pycore/programs/example_sum_loop.py
+```
+
+`run` compiles the module to a boot image, executes `managed_entry()` on host
+CPython 3.14 for a golden `int`/`bool`, then runs the shared two-core
+`tb_container` (plusargs, same binary as image CI) and checks that the retired
+return matches. `help` prints the supported-program summary below in full.
+
+A program should define a no-arg `managed_entry()` that returns `int` or `bool`.
+If you do not call it at module level, `run` appends a call. Type annotations
+are stripped.
+
+## What programs are allowed
+
+**Yes:** functions, `if`/`while`/`for`, list/dict/set/tuple displays, f-strings
+without format specs, `try`/`except`/`finally`, `raise` of seeded exception
+types, module-level `class C:` (no bases), keyword/`*args`/`**kwargs` calls.
+Types: 64-bit `int`, `bool`, `float`, `None`, `str`, `list`, `tuple`, `dict`,
+`set`, `range`. String slicing (`s[a:b]`, including unit-step literals like `s[1:]`).
+
+**Boot builtins:** `len`, `range`, `ord`, `chr`, `int`, `str`, `print`, `min`/`max`,
+`sum`, `sorted`, `map`/`zip`/`enumerate`/`filter`/`reversed` (these return
+**lists**), `list`/`dict`/`tuple`/`set`, `abs`/`all`/`any`, `bin`/`hex`/`oct`,
+`hasattr`/`getattr`/`isinstance`, `exec`/`eval` on a code object.
+Methods: `list.append/pop/extend/clear`, `set.add/update`,
+`str.join/startswith/endswith/find`, `dict.get/keys/items/values/update/pop`.
+
+**No:** `import`, generators/`async`, `match`, `assert`, `with`, closures,
+runtime `class`, `super()`, `compile()`, string-form `exec`/`eval`, files,
+slice assignment, list/tuple slicing, format-spec f-strings, `STR * INT`,
+negative indices. String slice step other than `None`/1 is still rejected.
+
+Host `compile()` for images is still CPython. [PyCPython](https://github.com/ColtonHarris999/PyCPython)
+is vendored at `vendor/pycpython` as the oracle / algorithm source for the
+future ROM compiler (`git submodule update --init`).
+
+**Ceilings:** missing dict keys and unbound locals still halt with a hardware
+trap rather than a catchable Python exception. `int` is 64-bit, not
+arbitrary-precision.
+
+The linter is the gate: if `lint` is OK, image-boot will accept the file. Hardware
+may still trap on a semantic ceiling the linter cannot see. Details:
+`pycore/docs/bytecode_support.md` and `pycore_firmware/builtins/builtins.md`.
+
+## Register layout and tags
+
+96-entry RF: `RF[0..31]` frame locals, `RF[32..95]` operand stack. Entries are
+`{ tag[3:0], value[127:0] }`. Call frames are a dmem push/pop stack
+(`pycore/rtl/pycore_frame.sv`).
 
 | Tag | Name | Notes |
 | --- | --- | --- |
@@ -54,7 +122,7 @@ lives in `pycore/rtl/attic/pycore_frame_buffer.sv` (not in the build).
 | `1110` | TOMBSTONE | deleted dict/set key sentinel |
 | `1111` | FROZENSET | reserved |
 
-Full payload details: `pycore/docs/tags.md` and `pycore/docs/architecture.md`.
+Payload details: `pycore/docs/tags.md`.
 
 ## Ownership split (containers ↔ excore)
 
@@ -66,18 +134,9 @@ Full payload details: `pycore/docs/tags.md` and `pycore/docs/architecture.md`.
 | Empty `LIST_EXTEND` (no-op pop) | **pycore** |
 | List/dict/set resize; non-empty `LIST_EXTEND`; mid-list delete; `SET_UPDATE` | **excore** |
 
-Design notes: `pycore/docs/dict_excore.md`, `pycore/docs/set_excore.md`.
-
-## Python version
-
-Image tools (`pycore/tools/image_from_source.py`, differential tests) require
-**Python 3.14**. The deprecated `preprocess.py` path is the same. Excore
-assembler tools are plain Python 3 (not CPython-version-coupled).
-
-Production regression uses **image-boot** (`image_from_source` /
-`run_image_test`): imem is 1:1 with CPython code units; constants live in
-the serialized `co_consts` tuple. Do not use the old inline three-slot
-`LOAD_CONST` / const-ROM flow.
+Recoverable excore traps (`EXCORE_EN=1`): list grow (9), list extend (10),
+dict grow (11), list delete (12), set grow (13), set update (14), plus dict
+update/merge. See `pycore/docs/architecture.md`.
 
 ## Docs
 
@@ -86,100 +145,86 @@ the serialized `co_consts` tuple. Do not use the old inline three-slot
 | Two-core architecture | `pycore/docs/architecture.md` |
 | Tag map | `pycore/docs/tags.md` |
 | Bytecode support matrix | `pycore/docs/bytecode_support.md` |
+| Exception types | `pycore/docs/exception_support.md` |
 | Object model | `pycore/docs/object_model.md` |
-| Code loading / code regions | `pycore/docs/code_loading.md` |
+| Code loading | `pycore/docs/code_loading.md` |
 | Image / preprocessing flow | `pycore/docs/preprocessing_breakdown.md` |
-| Dict + excore split | `pycore/docs/dict_excore.md` |
-| Sets + hash-container split | `pycore/docs/set_excore.md` |
-| Planning / historical notes | `planning/` |
-| excore MMIO map | `excore/docs/mmio_map.md` |
-| excore RV32I subset | `excore/docs/rv32i_subset.md` |
-| Firmware build | `excore/docs/firmware_build.md` |
-| Adding a trap handler | `excore/docs/adding_a_trap_handler.md` |
+| Dict / set + excore | `pycore/docs/dict_excore.md`, `pycore/docs/set_excore.md` |
+| ROM builtins inventory | `pycore_firmware/builtins/builtins.md` |
+| Active plans | `planning/master_plan.md` |
+| On-device compile | `planning/compile_plan.md` |
+| PyCPython vendor | `vendor/pycpython` (`git submodule update --init`) |
+| excore MMIO / ISA / firmware | `excore/docs/` |
 
-## Quick setup after clone
+## Setup
 
-### Local Linux (Ubuntu/Debian)
+**Linux (Ubuntu/Debian):**
 
 ```bash
+git submodule update --init --recursive
 sudo apt-get update
 sudo apt-get install -y make g++ verilator python3.14 python3.14-venv docker.io
 ```
 
-If your distro does not package `python3.14`, install Python 3.14 via pyenv (or
-equivalent) and run make with `PYTHON=python3.14`.
-
-### Local Windows
-
-Use WSL2 Ubuntu and run the same Linux setup commands inside WSL.
-
-### Docker
+If the distro has no `python3.14`, install it via pyenv (or equivalent) and
+pass `PYTHON=python3.14` to make. Windows: WSL2 Ubuntu, same commands.
 
 ```bash
 make docker-build
+make docker-lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
+make docker-run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py
 ```
 
 ## Testing workflows
 
-### Run an individual test target (local)
+CI compiles **two** shared `tb_container` simulators (single-core and two-core)
+and then runs image/container fixtures against those binaries via plusargs.
+`make run-file` uses the same two-core binary (compile once, then plusargs).
+Planning-doc and markdown-only PRs (including `pycore/docs/` and
+`excore/docs/`) skip the hardware jobs.
+
+### Fast checks (no full-chip sim)
 
 ```bash
-make pycore-tag-decode
-make pycore-exec
-make pycore-string-exec
-make pycore-type-pairs
-make pycore-mem
-make pycore-frame
-make pycore-frame-fib
-make pycore-container
-make pycore-img-smoke
-make pycore-python-tests
+make pycore-python-tests   # host unit tests (includes the linter)
+make pycore-rtl-unit
 make excore-asm-tests
+```
+
+### Shared simulators (compile once, reuse)
+
+```bash
+make pycore-sim-img            # EXCORE_EN=0
+make pycore-sim-img-twocore    # EXCORE_EN=1
+```
+
+### Grouped hardware suites
+
+```bash
+make all-tests TEST_JOBS=4     # pycore + excore; TEST_JOBS default 2
+make pycore-container          # legacy hex fixtures
+make pycore-img                # single-core image-boot
+make pycore-excore-system      # two-core trap round-trips
+make pycore-img-two-core       # image-boot on the two-core top
 make excore-cpu-test
-make pycore-excore-system
-make pycore-img-two-core
 ```
 
-### Run all tests (local)
+Image-boot tests (`make pycore-img-*`) are the production path. Do not use the
+old inline three-slot `LOAD_CONST` / `preprocess.py` flow for new work.
+
+### Docker equivalents
 
 ```bash
-make all-tests
-```
-
-### Run any provided Python file (local)
-
-```bash
-make run-file \
-  RUN_SOURCE=pycore/programs/smoke_return.py \
-  RUN_FUNCTION=managed_entry
-```
-
-This flow:
-
-1. preprocesses the requested function into program/string memory images;
-2. runs PyCore simulation with those generated images;
-3. prints return entry information from the retired `RETURN_VALUE`;
-4. dumps memory image files (`program`, `string`) for inspection.
-
-For new differential / image-boot coverage prefer `make pycore-img-*` (uses
-`image_from_source.py`).
-
-Optional output-path overrides:
-
-```bash
-make run-file \
-  RUN_SOURCE=pycore/programs/smoke_return.py \
-  RUN_FUNCTION=managed_entry \
-  RUN_PROGRAM_HEX=pycore/programs/my_program.hex \
-  RUN_STRING_HEX=pycore/programs/my_string_mem.hex
-```
-
-## Docker equivalents
-
-```bash
+make docker-python-tests
+make docker-rtl-unit
+make docker-container
+make docker-img
+make docker-two-core
+make docker-excore
 make docker-pycore-test
 make docker-all-tests
-make docker-run-file RUN_SOURCE=pycore/programs/smoke_return.py RUN_FUNCTION=managed_entry
+make docker-lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
+make docker-run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py
 ```
 
 If needed, you can pass host-network flags:

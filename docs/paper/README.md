@@ -28,3 +28,4 @@ Needs a TeX distribution with `tikz`, `booktabs`, `hyperref`, `listings`,
   stays a faithful companion to the code.
 - Link the living opcode matrix (`pycore/docs/bytecode_support.md`) rather than
   duplicating support status that churns weekly.
+- Remaining work lives in `planning/master_plan.md`, not in these notes.

@@ -101,7 +101,7 @@ the seeded `str` `OBK_TYPE` (`OB_FLAG_STR_TYPE`) stringifies instead of
 allocating an instance. **CALL** on a ROM `CODE_OBJECT` uses the
 normal frame path. Pure-Python bodies under `pycore_firmware/builtins/`
 also cover miss / protocol cases (not for re-deriving header lengths in a
-loop). See `planning/implemented/builtins_next_steps_plan.md`.
+loop). See `planning/old/implemented/builtins_next_steps_plan.md`.
 
 ## D3 — `__dict__` is a real dict
 

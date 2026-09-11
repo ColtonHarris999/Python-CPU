@@ -17,7 +17,9 @@ paths for known tags (e.g. `len(list)` reads the list header).
 Pure-Python modules under `builtins/` implement **miss / protocol**
 paths (e.g. `len(obj)` → `obj.__len__()`), not slower rewrites of the
 fast paths. Bytecode and CALL work needed to finish this split is in
-`planning/implemented/builtins_bytecode_support_plan.md`.
+`planning/old/implemented/builtins_bytecode_support_plan.md`.
+On-device `compile()`: `planning/compile_plan.md` and `vendor/pycpython`
+(host oracle only).
 
 ## Layout
 

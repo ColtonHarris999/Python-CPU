@@ -57,8 +57,11 @@ module excore_cpu #(
     logic [31:0] imem [0:IMEM_WORDS-1];
     initial begin
         int i;
+        string hex_path;
+        hex_path = FW_HEX;
+        void'($value$plusargs("FW_HEX=%s", hex_path));
         for (i = 0; i < IMEM_WORDS; i++) imem[i] = 32'h0000_0013; // NOP
-        if (FW_HEX != "") $readmemh(FW_HEX, imem);
+        if (hex_path.len() > 0) $readmemh(hex_path, imem);
     end
 
     // Private scratch RAM (1 KB @ data address 0x0).

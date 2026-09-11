@@ -6,11 +6,13 @@ functional vehicle; FPGA-specific inference hints and resource pragmas are
 intentionally absent.
 
 Bytecode support status (fully supported / partially supported / unsupported) is
-tracked separately in `pycore/docs/bytecode_support.md` so decode and
-preprocessing changes can be reviewed against one explicit matrix. The machine
-catalog is `pycore/targets/pycore.json` (`opcodes`). Built-in exception **types**
-are tracked the same way in `pycore/docs/exception_support.md` and
-`pycore.json` → `exceptions.types`.
+tracked in `pycore/docs/bytecode_support.md`. The machine catalog is
+`pycore/targets/pycore.json` (`opcodes`). To check a user program against that
+subset: `make lint-file RUN_SOURCE=...` (`pycore/tools/pycore_cli.py`). Built-in
+exception **types** are tracked the same way in `pycore/docs/exception_support.md`
+and `pycore.json` → `exceptions.types`. Remaining architecture work is
+[`planning/architecture_plan.md`](../../planning/architecture_plan.md);
+the timeline is [`planning/master_plan.md`](../../planning/master_plan.md).
 
 Paper-oriented systems notes (LaTeX) for near-complete subsystems live under
 `docs/paper/` — start with `docs/paper/systems/call_fsm.tex` for the CALL FSM
@@ -636,6 +638,14 @@ instead of the ALU. The core allocates a new sequence of length
 that does not fit in 31 bits, or an allocation past `PYCORE_HEAP_LIMIT`,
 raises `PY_TRAP_MEM_FAULT`. `STR * INT` still type-traps. Inplace
 `lst *= n` also allocates a new list (aliases of `lst` are not mutated).
+
+#### Sequence concat (`LIST`+`LIST` / `TUPLE`+`TUPLE`)
+
+`BINARY_OP` add (oparg 0) with two lists or two tuples routes to
+`CONT_SEQ_CONCAT` instead of the ALU. The core allocates a new sequence of
+length `len(lhs) + len(rhs)` and copies lhs then rhs. Mixed `list + tuple`
+stays on the ALU and type-traps. Inplace `lst += x` is still `LIST_EXTEND`
+(not this arm). Overflow / OOM raises `PY_TRAP_MEM_FAULT`.
 
 #### LIST/TUPLE/RANGE/STR/DICT/SET + object iteration
 

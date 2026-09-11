@@ -1,0 +1,4 @@
+[submodule "vendor/pycpython"]
+	path = vendor/pycpython
+	url = https://github.com/ColtonHarris999/PyCPython.git
+	branch = claude/cpython-3-14-compile-frontend-4o4fcz

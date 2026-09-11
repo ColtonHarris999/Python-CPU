@@ -1,8 +1,8 @@
 # `print` — console output
 
 **Status:** in ROM (MVP)  
-**Plan:** `planning/implemented/builtins_print_console_plan.md`  
-**Parent:** `planning/builtins_wave4_plan.md` §1
+**Plan:** `planning/builtin_support.md` (print phase 2: LONG_STR / `__str__`)  
+**Shipped notes:** `planning/old/implemented/builtins_print_console_plan.md`
 
 ## Architecture
 

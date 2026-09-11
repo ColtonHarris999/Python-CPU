@@ -1,6 +1,7 @@
 # PyCore easy long-term optimizations
 
-Post dead-code cleanup plan. Each item is intentionally small-to-medium, low-risk relative to a full microarchitecture rewrite, and valuable as the collection/excore surface grows.
+Optional RTL cleanup. Not a feature gate. Each item is small-to-medium and
+valuable as the collection/excore surface grows.
 
 ---
 
@@ -46,7 +47,9 @@ Post dead-code cleanup plan. Each item is intentionally small-to-medium, low-ris
 
 ## Opt-5 — Default image tests on the two-core top
 
-**Today:** Parallel `PYCORE_IMAGE_RUN` vs `_TWOCORE` Makefile macros; many single-core image tests never exercise marshal/resume.
+**Today:** Image tests share compiled `tb_container` binaries (`pycore-sim-img` /
+`pycore-sim-img-twocore`) and select fixtures with plusargs. Single-core vs
+two-core is still a compile-time `EXCORE_EN` generate.
 
 **Change:** Prefer `pycore_excore_system` with `EXCORE_EN` as a parameter for image-boot tests; keep intentional single-core-only cases for fatal-path coverage.
 
@@ -57,9 +60,10 @@ Post dead-code cleanup plan. Each item is intentionally small-to-medium, low-ris
 ## Opt-6 — Finish migration off `preprocess.py` sidecars
 
 **Today:** `preprocess.py` is deprecated but still emits `.types` / `_cache.hex`
-(uncommitted) and backs `run-file` / some container hex regeneration.
+(uncommitted) and regenerates some container hex. `run-file` already image-boots
+via `pycore_cli.py` against the shared plusarg `tb_container` binaries.
 
-**Change:** Point remaining container hex regeneration and `run-file` at
+**Change:** Point remaining container hex regeneration at
 `image_from_source` / `run_image_test`; stop writing unused sidecars.
 
 **Why / result:** One image toolchain; smaller `programs/` surface; less

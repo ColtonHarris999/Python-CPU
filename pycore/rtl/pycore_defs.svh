@@ -474,6 +474,9 @@ localparam logic [7:0] PY_OP_DELETE_ATTR      = 8'd61;
 // BINARY_OP oparg for subscript read (x[k]); not a standalone opcode.
 //   python3.14 -c "import opcode; print([(i,e) for i,e in enumerate(opcode._nb_ops) if 'SUBSCR' in e[0]])"
 localparam logic [7:0] PY_NBARG_SUBSCR         = 8'd26;
+// BINARY_OP add (list+list / tuple+tuple concatenation).
+//   python3.14 -c "import opcode; print(opcode._nb_ops[0])"
+localparam logic [7:0] PY_NBARG_ADD               = 8'd0;
 // BINARY_OP multiply / inplace multiply (list/tuple * int sequence repeat).
 //   python3.14 -c "import opcode; print(opcode._nb_ops[5], opcode._nb_ops[18])"
 localparam logic [7:0] PY_NBARG_MULTIPLY          = 8'd5;
@@ -686,6 +689,18 @@ function automatic logic pycore_is_seq_repeat(
         pycore_is_seq_repeat =
             (pycore_is_seq(tag_a, val_a) && pycore_is_repeat_count(tag_b)) ||
             (pycore_is_repeat_count(tag_a) && pycore_is_seq(tag_b, val_b));
+    end
+endfunction
+
+// LIST+LIST or TUPLE+TUPLE — CPython sequence concat (same kind only).
+function automatic logic pycore_is_seq_concat(
+    input logic [3:0] tag_a, input logic [PYCORE_VAL_WIDTH-1:0] val_a,
+    input logic [3:0] tag_b, input logic [PYCORE_VAL_WIDTH-1:0] val_b
+);
+    begin
+        pycore_is_seq_concat =
+            (pycore_is_list(tag_a, val_a) && pycore_is_list(tag_b, val_b)) ||
+            ((tag_a == PY_TAG_TUPLE) && (tag_b == PY_TAG_TUPLE));
     end
 endfunction
 

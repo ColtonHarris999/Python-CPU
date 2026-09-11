@@ -521,7 +521,7 @@
                                     // the existing CALL FSM and proves that its
                                     // list return resumes this exact arm.  The
                                     // production OBJECT path lands in step 6.
-                                    if (CONTAINER_CALL_SPIKE_EN &&
+                                    if (container_call_spike_en_sim &&
                                         pycore_is_null(
                                             cont_rs1_tag, cont_rs1_val)) begin
                                         container_call_pending_r <= 1'b1;
@@ -698,7 +698,7 @@
                                     end else if (container_call_return_valid_r) begin
                                         container_call_return_valid_r <= 1'b0;
                                         container_call_returning_r <= 1'b0;
-                                        if (CONTAINER_CALL_SPIKE_EN &&
+                                        if (container_call_spike_en_sim &&
                                             pycore_is_null(
                                                 cont_rs1_tag, cont_rs1_val)) begin
                                             // Spike: prove pause/resume only.
@@ -2344,6 +2344,394 @@
 
                             endcase
                         end // CONT_SEQ_REPEAT
+
+                        CONT_SEQ_CONCAT: begin
+                            // BINARY_OP add: LIST+LIST or TUPLE+TUPLE.
+                            // Allocates a new sequence (lhs then rhs). Mixed
+                            // kinds never reach this arm (ALU TYPE-traps).
+                            unique case (container_phase_r)
+
+                                CP_INIT: begin
+                                    if (!pycore_is_seq_concat(
+                                            cont_rs1_tag, cont_rs1_val,
+                                            cont_rs2_tag, cont_rs2_val)) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        container_src_is_tuple_r <=
+                                            (cont_rs1_tag == PY_TAG_TUPLE);
+                                        container_src_base_r     <= 32'd0;
+                                        container_tomb_idx_r     <= 32'd0;
+                                        if (cont_rs1_tag == PY_TAG_TUPLE) begin
+                                            if ((cont_tuple_size[63:32] !=
+                                                    32'b0) ||
+                                                (cont_tuple_size_rs2[63:32] !=
+                                                    32'b0)) begin
+                                                container_mem_fault_r <= 1'b1;
+                                            end else begin
+                                                container_src_len_r  <=
+                                                    cont_tuple_size[31:0];
+                                                container_src_buf_r  <=
+                                                    cont_rs1_addr;
+                                                container_rhs_len_r  <=
+                                                    cont_tuple_size_rs2[31:0];
+                                                container_rhs_buf_r  <=
+                                                    cont_tuple_addr_rs2;
+                                                container_phase_r    <=
+                                                    CP_SRC_HDR;
+                                            end
+                                        end else begin
+                                            container_base_r         <=
+                                                cont_rs1_addr;
+                                            container_dmem_addr_r    <=
+                                                cont_rs1_addr;
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_HDR;
+                                        end
+                                    end
+                                end
+
+                                CP_HDR: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (cont_hdr_len[63:32] != 32'b0) begin
+                                            container_mem_fault_r <= 1'b1;
+                                        end else if (cont_hdr_len == 64'd0) begin
+                                            container_src_len_r <= 32'd0;
+                                            container_src_buf_r <= 32'd0;
+                                            container_base_r    <=
+                                                cont_rs2_addr;
+                                            container_dmem_addr_r    <=
+                                                cont_rs2_addr;
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <=
+                                                CP_DICT_HASH;
+                                        end else begin
+                                            container_src_len_r <=
+                                                cont_hdr_len[31:0];
+                                            container_dmem_addr_r <=
+                                                pycore_list_obitem_addr(
+                                                    container_base_r);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <=
+                                                CP_LIST_BUF;
+                                        end
+                                    end
+                                end
+
+                                CP_LIST_BUF: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_src_buf_r      <=
+                                            cont_obitem_buf;
+                                        container_base_r         <=
+                                            cont_rs2_addr;
+                                        container_dmem_addr_r    <=
+                                            cont_rs2_addr;
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <=
+                                            CP_DICT_HASH;
+                                    end
+                                end
+
+                                CP_DICT_HASH: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (cont_hdr_len[63:32] != 32'b0) begin
+                                            container_mem_fault_r <= 1'b1;
+                                        end else if (cont_hdr_len == 64'd0) begin
+                                            container_rhs_len_r <= 32'd0;
+                                            container_rhs_buf_r <= 32'd0;
+                                            container_phase_r   <= CP_SRC_HDR;
+                                        end else begin
+                                            container_rhs_len_r <=
+                                                cont_hdr_len[31:0];
+                                            container_dmem_addr_r <=
+                                                pycore_list_obitem_addr(
+                                                    container_base_r);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <=
+                                                CP_DICT_PROBE;
+                                        end
+                                    end
+                                end
+
+                                CP_DICT_PROBE: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_rhs_buf_r <= cont_obitem_buf;
+                                        container_phase_r   <= CP_SRC_HDR;
+                                    end
+                                end
+
+                                CP_SRC_HDR: begin
+                                    if ((container_src_len_r >
+                                            (32'hFFFF_FFFF -
+                                             container_rhs_len_r))) begin
+                                        container_mem_fault_r <= 1'b1;
+                                    end else begin
+                                        container_src_slots_r <=
+                                            container_src_len_r +
+                                            container_rhs_len_r;
+                                        if ((container_src_len_r == 32'd0) &&
+                                            (container_rhs_len_r != 32'd0))
+                                        begin
+                                            container_src_buf_r <=
+                                                container_rhs_buf_r;
+                                            container_src_len_r <=
+                                                container_rhs_len_r;
+                                            container_rhs_len_r <= 32'd0;
+                                        end
+                                        container_phase_r <= CP_DICT_META;
+                                    end
+                                end
+
+                                CP_DICT_META: begin
+                                    if ((container_src_slots_r == 32'd0) &&
+                                        container_src_is_tuple_r) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <=
+                                            RF_AW'(tos_r - RF_AW'(2));
+                                        container_wb_data_r <=
+                                            pycore_make_entry(
+                                                PY_TAG_TUPLE, 128'b0);
+                                        tos_r             <=
+                                            tos_r - RF_AW'(1);
+                                        fetch_skip_r      <= 1'b1;
+                                        container_phase_r <= CP_DONE;
+                                    end else if ((heap_ptr_r +
+                                            cont_repeat_alloc) >
+                                            PYCORE_HEAP_LIMIT) begin
+                                        container_mem_fault_r <= 1'b1;
+                                    end else if (container_src_is_tuple_r)
+                                    begin
+                                        container_base_r <= heap_ptr_r;
+                                        heap_ptr_r       <= heap_ptr_r +
+                                            cont_repeat_alloc;
+                                        container_src_base_r <= 32'd0;
+                                        container_tomb_idx_r <= 32'd0;
+                                        container_dmem_addr_r <=
+                                            pycore_tuple_val_addr(
+                                                container_src_buf_r, 32'd0);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_VAL;
+                                    end else begin
+                                        container_base_r <= heap_ptr_r;
+                                        container_buf_r  <= heap_ptr_r +
+                                            pycore_list_obj_bytes();
+                                        heap_ptr_r       <= heap_ptr_r +
+                                            cont_repeat_alloc;
+                                        container_dmem_addr_r  <= heap_ptr_r;
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <=
+                                            pycore_list_header(
+                                                {32'b0, container_src_slots_r},
+                                                {32'b0, container_src_slots_r});
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_LIST_WB;
+                                    end
+                                end
+
+                                CP_LIST_WB: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_addr_r  <=
+                                            pycore_list_obitem_addr(
+                                                container_base_r);
+                                        container_dmem_we_r    <= 1'b1;
+                                        container_dmem_wdata_r <= {96'b0,
+                                            (container_src_slots_r == 32'd0)
+                                                ? 32'd0 : container_buf_r};
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <=
+                                            CP_DICT_META_FINAL;
+                                    end
+                                end
+
+                                CP_DICT_META_FINAL: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_src_slots_r == 32'd0)
+                                        begin
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <=
+                                                RF_AW'(tos_r - RF_AW'(2));
+                                            container_wb_data_r <=
+                                                pycore_make_mut(
+                                                    PY_MUT_LIST,
+                                                    {32'b0, container_base_r},
+                                                    1'b0);
+                                            tos_r             <=
+                                                tos_r - RF_AW'(1);
+                                            fetch_skip_r      <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            container_src_base_r <= 32'd0;
+                                            container_tomb_idx_r <= 32'd0;
+                                            container_dmem_addr_r <=
+                                                pycore_list_val_addr(
+                                                    container_src_buf_r,
+                                                    32'd0);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_VAL;
+                                        end
+                                    end
+                                end
+
+                                CP_VAL: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_val_r <= container_rd_data_r;
+                                        if (container_src_is_tuple_r) begin
+                                            container_dmem_addr_r <=
+                                                pycore_tuple_tag_addr(
+                                                    container_src_buf_r,
+                                                    container_tomb_idx_r);
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_list_tag_addr(
+                                                    container_src_buf_r,
+                                                    container_tomb_idx_r);
+                                        end
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <= CP_TAG;
+                                    end
+                                end
+
+                                CP_TAG: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_tag_r <=
+                                            container_rd_data_r[3:0];
+                                        if (container_src_is_tuple_r) begin
+                                            container_dmem_addr_r <=
+                                                pycore_tuple_val_addr(
+                                                    container_base_r,
+                                                    container_src_base_r);
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_list_val_addr(
+                                                    container_buf_r,
+                                                    container_src_base_r);
+                                        end
+                                        container_dmem_we_r      <= 1'b1;
+                                        container_dmem_wdata_r   <=
+                                            container_val_r;
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <=
+                                            CP_COPY_VAL_WB;
+                                    end
+                                end
+
+                                CP_COPY_VAL_WB: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_src_is_tuple_r) begin
+                                            container_dmem_addr_r <=
+                                                pycore_tuple_tag_addr(
+                                                    container_base_r,
+                                                    container_src_base_r);
+                                        end else begin
+                                            container_dmem_addr_r <=
+                                                pycore_list_tag_addr(
+                                                    container_buf_r,
+                                                    container_src_base_r);
+                                        end
+                                        container_dmem_we_r      <= 1'b1;
+                                        container_dmem_wdata_r   <=
+                                            {124'b0, container_tag_r};
+                                        container_dmem_pending_r <= 1'b1;
+                                        container_phase_r        <=
+                                            CP_COPY_TAG_WB;
+                                    end
+                                end
+
+                                CP_COPY_TAG_WB: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (container_src_base_r + 32'd1 <
+                                                container_src_slots_r) begin
+                                            if (container_tomb_idx_r + 32'd1 ==
+                                                    container_src_len_r) begin
+                                                container_src_buf_r  <=
+                                                    container_rhs_buf_r;
+                                                container_src_len_r  <=
+                                                    container_rhs_len_r;
+                                                container_tomb_idx_r <= 32'd0;
+                                                container_src_base_r <=
+                                                    container_src_base_r +
+                                                    32'd1;
+                                                if (container_src_is_tuple_r)
+                                                begin
+                                                    container_dmem_addr_r <=
+                                                        pycore_tuple_val_addr(
+                                                            container_rhs_buf_r,
+                                                            32'd0);
+                                                end else begin
+                                                    container_dmem_addr_r <=
+                                                        pycore_list_val_addr(
+                                                            container_rhs_buf_r,
+                                                            32'd0);
+                                                end
+                                            end else begin
+                                                container_tomb_idx_r <=
+                                                    container_tomb_idx_r +
+                                                    32'd1;
+                                                container_src_base_r <=
+                                                    container_src_base_r +
+                                                    32'd1;
+                                                if (container_src_is_tuple_r)
+                                                begin
+                                                    container_dmem_addr_r <=
+                                                        pycore_tuple_val_addr(
+                                                            container_src_buf_r,
+                                                            container_tomb_idx_r
+                                                            + 32'd1);
+                                                end else begin
+                                                    container_dmem_addr_r <=
+                                                        pycore_list_val_addr(
+                                                            container_src_buf_r,
+                                                            container_tomb_idx_r
+                                                            + 32'd1);
+                                                end
+                                            end
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_VAL;
+                                        end else if (container_src_is_tuple_r)
+                                        begin
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <=
+                                                RF_AW'(tos_r - RF_AW'(2));
+                                            container_wb_data_r <=
+                                                pycore_make_entry(
+                                                    PY_TAG_TUPLE,
+                                                    {{32'b0,
+                                                      container_src_slots_r},
+                                                     {32'b0, container_base_r}});
+                                            tos_r             <=
+                                                tos_r - RF_AW'(1);
+                                            fetch_skip_r      <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end else begin
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <=
+                                                RF_AW'(tos_r - RF_AW'(2));
+                                            container_wb_data_r <=
+                                                pycore_make_mut(
+                                                    PY_MUT_LIST,
+                                                    {32'b0, container_base_r},
+                                                    1'b0);
+                                            tos_r             <=
+                                                tos_r - RF_AW'(1);
+                                            fetch_skip_r      <= 1'b1;
+                                            container_phase_r <= CP_DONE;
+                                        end
+                                    end
+                                end
+
+                                CP_DONE: ;
+                                default: ;
+
+                            endcase
+                        end // CONT_SEQ_CONCAT
 
                         CONT_SUBSCR_TUPLE: begin
                             unique case (container_phase_r)

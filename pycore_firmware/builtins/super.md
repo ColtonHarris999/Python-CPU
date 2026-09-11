@@ -2,6 +2,9 @@
 
 Status: **blocked** (stub in `super.py`)
 
+**Plan:** [`planning/bytecode_support.md`](../../planning/bytecode_support.md)
+(`LOAD_SUPER_ATTR`).
+
 ## Goal
 
 `super()` / `super(typ, obj)` returns a proxy that delegates attribute

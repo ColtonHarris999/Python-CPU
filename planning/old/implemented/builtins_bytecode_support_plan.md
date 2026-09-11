@@ -1,7 +1,6 @@
 # Builtins → bytecode support plan
 
-**Status:** implemented on `cursor/builtins-bytecode-impl-9270` (see
-`planning/implemented/builtins_next_steps_plan.md` for the builtins agent follow-up).
+**Status:** done (on `main`)
 
 **Audience:** agent working on pycore bytecode / CALL / name-lookup support  
 **Consumers:** `pycore_firmware/builtins/` (ROM pure-Python builtins)  

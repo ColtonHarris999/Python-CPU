@@ -1,7 +1,6 @@
 # Plan 2 — native `compile()`: parser, AST, codegen, assembler, self-hosting
 
-**Status:** proposed
-**Audience:** firmware compiler agent, bytecode agent, pycore RTL agent, tooling agent
+**Status:** proposed (Plan 1 tokenizer / BIOS still open). Related in-review write-ups: PR #85 (PyCPython inventory), PR #87 (fast-path `compile()`).
 **Prerequisite:** [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) (Plan 1) complete
 **Supersedes:** the P7–P9 phases of `implemented/compile_exec_plan.md`
 
