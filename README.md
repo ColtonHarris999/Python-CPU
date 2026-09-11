@@ -121,6 +121,43 @@ make docker-build
 
 ## Testing workflows
 
+CI compiles **two** shared `tb_container` simulators (single-core and two-core)
+and then runs image/container fixtures against those binaries via plusargs.
+Planning-doc and markdown-only PRs (including `pycore/docs/` and
+`excore/docs/`) skip the hardware jobs.
+
+### Fast checks (no full-chip sim)
+
+```bash
+make pycore-python-tests
+make pycore-rtl-unit
+make excore-asm-tests
+```
+
+### Shared simulators (compile once, reuse)
+
+```bash
+make pycore-sim-img            # EXCORE_EN=0
+make pycore-sim-img-twocore    # EXCORE_EN=1
+```
+
+### Grouped hardware suites
+
+```bash
+make pycore-container          # legacy hex fixtures
+make pycore-img                # single-core image-boot
+make pycore-excore-system      # two-core trap round-trips
+make pycore-img-two-core       # image-boot on the two-core top
+make excore-cpu-test
+```
+
+`TEST_JOBS` (default 2) parallelizes image/container runs after the shared
+binaries exist:
+
+```bash
+make all-tests TEST_JOBS=4
+```
+
 ### Run an individual test target (local)
 
 ```bash
@@ -177,6 +214,12 @@ make run-file \
 ## Docker equivalents
 
 ```bash
+make docker-python-tests
+make docker-rtl-unit
+make docker-container
+make docker-img
+make docker-two-core
+make docker-excore
 make docker-pycore-test
 make docker-all-tests
 make docker-run-file RUN_SOURCE=pycore/programs/smoke_return.py RUN_FUNCTION=managed_entry
