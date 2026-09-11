@@ -2,7 +2,7 @@
 
 **Status:** proposed
 **Audience:** firmware compiler agent, bytecode agent, pycore RTL agent, tooling agent
-**Prerequisite:** [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) (Plan 1) complete
+**Prerequisite:** [`code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) (Plan 1) **for bootstrap / OS completeness**. First `compile()` does **not** wait for Plan 1 to finish — see [`compile_fast_path.md`](compile_fast_path.md).
 **Supersedes:** the P7–P9 phases of `implemented/compile_exec_plan.md`
 
 Plan 1 gets PyCore to *boot a BIOS, load code, `exec()` it, and tokenize source*.
@@ -10,8 +10,9 @@ Plan 2 completes the pipeline — **parse, build an AST, resolve scopes, generat
 bytecode, and assemble a code object, entirely on PyCore** — and ends with a
 bootstrap in which PyCore compiles its own compiler with no host involvement.
 
-Plan 1 §14 is the dependency contract. Everything in this document assumes those
-rows are delivered.
+Plan 1 §14 is the **completeness** contract. [`compile_fast_path.md`](compile_fast_path.md)
+narrows it so BIOS, the module loader, LONG_STR dict equality, and list
+`BINARY_SLICE` are not gates on the first `eval(compile("1+2", …))`.
 
 ---
 

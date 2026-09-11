@@ -2,11 +2,15 @@
 
 Status: **blocked** (stub in `compile.py`)
 
-**Full step-by-step plan:**
+**Fast path to first `compile()`:**
+[`planning/compile_fast_path.md`](../../planning/compile_fast_path.md)
+(compiler subset + code-RAM emit builtins; do not wait for BIOS/loader).
+
+**Full completeness plan:**
 [`planning/native_compiler_plan.md`](../../planning/native_compiler_plan.md)
 (Plan 2), which depends on
 [`planning/code_loading_bios_tokenizer_plan.md`](../../planning/code_loading_bios_tokenizer_plan.md)
-(Plan 1) for code loading and the tokenizer. Both supersede the "Next steps" /
+(Plan 1) for bootstrap / OS. Both supersede the "Next steps" /
 "Recommendation" sections below.
 
 The blockers listed here remain accurate; the recommendation has changed. A

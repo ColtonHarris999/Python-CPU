@@ -877,3 +877,9 @@ Plan 1 delivering exactly these, so none of them may be dropped or narrowed:
 
 If a Plan 1 phase must be cut, the cut has to be reflected here first, because
 each row is load-bearing for Plan 2.
+
+**First `compile()` is narrower.** [`compile_fast_path.md`](compile_fast_path.md)
+keeps code RAM, emit primitives, marks, methods + string slice, exceptions with
+messages, `exec(code)`, and a firmware tokenizer. It **defers** BIOS, the module
+loader, LONG_STR dict equality, list `BINARY_SLICE`, and `_bi_code_kind`.
+Self-host still needs this full table.
