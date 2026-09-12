@@ -64,9 +64,12 @@ module tb_cache;
         .flush_busy_o(),
         .inv_done_o(inv_done),
         .flush_done_o(flush_done),
+        .idle_o(),
         .hit_count_o(hits),
         .miss_count_o(misses),
-        .writeback_count_o(wbs)
+        .writeback_count_o(wbs),
+        .region_hit_count_o(),
+        .region_miss_count_o()
     );
 
     pycore_ram #(
@@ -139,9 +142,12 @@ module tb_cache;
         .flush_busy_o(),
         .inv_done_o(),
         .flush_done_o(),
+        .idle_o(),
         .hit_count_o(),
         .miss_count_o(),
-        .writeback_count_o()
+        .writeback_count_o(),
+        .region_hit_count_o(),
+        .region_miss_count_o()
     );
 
     always #5 clk = ~clk;
