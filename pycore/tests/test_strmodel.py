@@ -40,6 +40,28 @@ from pycore.tools.encoding import (
     SA_STARTSWITH,
     SA_ENDSWITH,
     SA_PAD_BOTH,
+    SA_JOIN,
+    SA_TRIM,
+    SA_TRIM_LEFT,
+    SA_TRIM_RIGHT,
+    SA_TRIM_BOTH,
+    SA_CLASSIFY,
+    SA_MAP,
+    SA_AFFIX,
+    SA_ZFILL,
+    SA_IS_DIGIT,
+    SA_IS_ASCII,
+    SA_IS_LOWER,
+    SA_IS_TITLE,
+    SA_IS_ALPHA,
+    SA_MAP_UPPER,
+    SA_MAP_LOWER,
+    SA_MAP_SWAPCASE,
+    SA_MAP_CAPITALIZE,
+    SA_MAP_TITLE,
+    SA_MAP_CASEFOLD,
+    SA_AFFIX_PREFIX,
+    SA_AFFIX_SUFFIX,
 )
 from pycore.tools.strmodel import (
     StrAccel,
@@ -324,6 +346,93 @@ class StrModelTest(unittest.TestCase):
         )
         r = self.accel.exec(SA_CMP, 0, a, b, _none(), self.heap)
         self.assertEqual(r.signed_int(), 0)
+
+    def test_trim_strip(self) -> None:
+        r = self.run_op(SA_TRIM, SA_TRIM_BOTH, _short("  hi  "), _none())
+        self.assertEqual(self.text_of(r.entry), "hi")
+        r = self.run_op(SA_TRIM, SA_TRIM_LEFT, _short("  hi  "), _none())
+        self.assertEqual(self.text_of(r.entry), "hi  ")
+        r = self.run_op(SA_TRIM, SA_TRIM_RIGHT, _short("  hi  "), _none())
+        self.assertEqual(self.text_of(r.entry), "  hi")
+        r = self.run_op(SA_TRIM, SA_TRIM_BOTH, _short("xxhiyy"), _short("xy"))
+        self.assertEqual(self.text_of(r.entry), "hi")
+        r = self.run_op(SA_TRIM, SA_TRIM_BOTH, _short("already"), _none())
+        self.assertEqual(self.text_of(r.entry), "already")
+
+    def test_classify_latin1(self) -> None:
+        r = self.run_op(SA_CLASSIFY, SA_IS_DIGIT, _short("12"), _none())
+        self.assertEqual(r.tag, TAG_BOOL)
+        self.assertEqual(r.value, 1)
+        r = self.run_op(SA_CLASSIFY, SA_IS_DIGIT, _short("12a"), _none())
+        self.assertEqual(r.value, 0)
+        r = self.run_op(SA_CLASSIFY, SA_IS_ASCII, _short(""), _none())
+        self.assertEqual(r.value, 1)
+        r = self.run_op(SA_CLASSIFY, SA_IS_LOWER, _short("abc"), _none())
+        self.assertEqual(r.value, 1)
+        r = self.run_op(SA_CLASSIFY, SA_IS_LOWER, _short("123"), _none())
+        self.assertEqual(r.value, 0)
+        r = self.run_op(SA_CLASSIFY, SA_IS_TITLE, _short("Hello World"), _none())
+        self.assertEqual(r.value, 1)
+        greek = self.put("α")
+        r = self.run_op(SA_CLASSIFY, SA_IS_ASCII, greek)
+        self.assertEqual(r.value, 0)
+        r = self.run_op(SA_CLASSIFY, SA_IS_ALPHA, greek)
+        self.assertTrue(r.trap)
+
+    def test_map_latin1(self) -> None:
+        r = self.run_op(SA_MAP, SA_MAP_UPPER, _short("AbC"), _none())
+        self.assertEqual(self.text_of(r.entry), "ABC")
+        r = self.run_op(SA_MAP, SA_MAP_LOWER, _short("AbC"), _none())
+        self.assertEqual(self.text_of(r.entry), "abc")
+        r = self.run_op(SA_MAP, SA_MAP_SWAPCASE, _short("AbC"), _none())
+        self.assertEqual(self.text_of(r.entry), "aBc")
+        r = self.run_op(SA_MAP, SA_MAP_CAPITALIZE, _short("hELLO"), _none())
+        self.assertEqual(self.text_of(r.entry), "Hello")
+        r = self.run_op(SA_MAP, SA_MAP_TITLE, _short("hello world"), _none())
+        self.assertEqual(self.text_of(r.entry), "Hello World")
+        ss = self.put("ß")
+        r = self.run_op(SA_MAP, SA_MAP_UPPER, ss)
+        self.assertEqual(self.text_of(r.entry), "SS")
+        r = self.run_op(SA_MAP, SA_MAP_TITLE, ss)
+        self.assertEqual(self.text_of(r.entry), "Ss")
+        r = self.run_op(SA_MAP, SA_MAP_CASEFOLD, ss)
+        self.assertEqual(self.text_of(r.entry), "ss")
+        mu = self.put("µ")
+        r = self.run_op(SA_MAP, SA_MAP_UPPER, mu)
+        self.assertEqual(self.text_of(r.entry), "µ".upper())
+        greek = self.put("α")
+        r = self.run_op(SA_MAP, SA_MAP_UPPER, greek)
+        self.assertTrue(r.trap)
+
+    def test_join_list(self) -> None:
+        a = _short("a")
+        b = _short("b")
+        lst, self.heap = self.accel.plant_list([a, b], self.heap)
+        r = self.accel.exec(SA_JOIN, 0, _short("-"), lst, _none(), self.heap)
+        self.assertFalse(r.trap)
+        self.assertEqual(self.text_of(r.entry), "a-b")
+        empty, self.heap = self.accel.plant_list([], self.heap)
+        r = self.accel.exec(SA_JOIN, 0, _short("-"), empty, _none(), self.heap)
+        self.assertEqual(self.text_of(r.entry), "")
+        one, self.heap = self.accel.plant_list([_short("only")], self.heap)
+        r = self.accel.exec(SA_JOIN, 0, _short("-"), one, _none(), self.heap)
+        self.assertEqual(self.text_of(r.entry), "only")
+
+    def test_join_str(self) -> None:
+        r = self.run_op(SA_JOIN, 0, _short("-"), _short("ab"))
+        self.assertEqual(self.text_of(r.entry), "a-b")
+
+    def test_affix_and_zfill(self) -> None:
+        r = self.run_op(SA_AFFIX, SA_AFFIX_PREFIX, _short("foobar"), _short("foo"))
+        self.assertEqual(self.text_of(r.entry), "bar")
+        r = self.run_op(SA_AFFIX, SA_AFFIX_SUFFIX, _short("foobar"), _short("bar"))
+        self.assertEqual(self.text_of(r.entry), "foo")
+        r = self.run_op(SA_AFFIX, SA_AFFIX_PREFIX, _short("foobar"), _short("x"))
+        self.assertEqual(self.text_of(r.entry), "foobar")
+        r = self.run_op(SA_ZFILL, 0, _short("42"), _int(5))
+        self.assertEqual(self.text_of(r.entry), "00042")
+        r = self.run_op(SA_ZFILL, 0, _short("-42"), _int(5))
+        self.assertEqual(self.text_of(r.entry), "-0042")
 
 
 class TestImageAllocStr(unittest.TestCase):

@@ -44,6 +44,32 @@ from encoding import (
     SA_SEARCH,
     SA_SLICE,
     SA_STARTSWITH,
+    SA_JOIN,
+    SA_TRIM,
+    SA_CLASSIFY,
+    SA_MAP,
+    SA_AFFIX,
+    SA_ZFILL,
+    SA_TRIM_LEFT,
+    SA_TRIM_RIGHT,
+    SA_TRIM_BOTH,
+    SA_IS_ALNUM,
+    SA_IS_ALPHA,
+    SA_IS_ASCII,
+    SA_IS_DIGIT,
+    SA_IS_LOWER,
+    SA_IS_SPACE,
+    SA_IS_UPPER,
+    SA_IS_PRINTABLE,
+    SA_IS_TITLE,
+    SA_MAP_UPPER,
+    SA_MAP_LOWER,
+    SA_MAP_SWAPCASE,
+    SA_MAP_CAPITALIZE,
+    SA_MAP_TITLE,
+    SA_MAP_CASEFOLD,
+    SA_AFFIX_PREFIX,
+    SA_AFFIX_SUFFIX,
 )
 from strmodel import StrAccel
 
@@ -142,6 +168,11 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
             SA_HASH,
             SA_CHAR_AT,
             SA_ITER_NEXT,
+            SA_TRIM,
+            SA_CLASSIFY,
+            SA_MAP,
+            SA_ZFILL,
+            SA_AFFIX,
         ]
     )
     a_ent, heap = accel.put(a_s, heap)
@@ -231,6 +262,96 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
             r = accel.exec(SA_ITER_NEXT, 0, a_ent, _int(0), _none(), heap)
             assert model_text(accel, r.entry) == a_s[0]
             heap = r.heap_ptr
+    elif op == SA_TRIM:
+        var = rng.choice([SA_TRIM_LEFT, SA_TRIM_RIGHT, SA_TRIM_BOTH])
+        use_cs = rng.choice([False, True])
+        cs = b_s if use_cs else None
+        r = accel.exec(
+            SA_TRIM, var, a_ent, b_ent if use_cs else _none(), _none(), heap
+        )
+        assert not r.trap, (a_s, cs, var)
+        got = model_text(accel, r.entry)
+        if var == SA_TRIM_LEFT:
+            exp = a_s.lstrip(cs)
+        elif var == SA_TRIM_RIGHT:
+            exp = a_s.rstrip(cs)
+        else:
+            exp = a_s.strip(cs)
+        assert got == exp, (a_s, cs, var, got, exp)
+        heap = r.heap_ptr
+    elif op == SA_CLASSIFY:
+        var = rng.choice(
+            [
+                SA_IS_ALNUM,
+                SA_IS_ALPHA,
+                SA_IS_ASCII,
+                SA_IS_DIGIT,
+                SA_IS_LOWER,
+                SA_IS_SPACE,
+                SA_IS_UPPER,
+                SA_IS_PRINTABLE,
+                SA_IS_TITLE,
+            ]
+        )
+        r = accel.exec(SA_CLASSIFY, var, a_ent, _none(), _none(), heap)
+        if any(ord(c) > 255 for c in a_s) and var != SA_IS_ASCII:
+            assert r.trap
+        else:
+            assert not r.trap
+            meth = {
+                SA_IS_ALNUM: str.isalnum,
+                SA_IS_ALPHA: str.isalpha,
+                SA_IS_ASCII: str.isascii,
+                SA_IS_DIGIT: str.isdigit,
+                SA_IS_LOWER: str.islower,
+                SA_IS_SPACE: str.isspace,
+                SA_IS_UPPER: str.isupper,
+                SA_IS_PRINTABLE: str.isprintable,
+                SA_IS_TITLE: str.istitle,
+            }[var]
+            assert bool(r.value) == meth(a_s), (a_s, var, r.value)
+    elif op == SA_MAP:
+        var = rng.choice(
+            [
+                SA_MAP_UPPER,
+                SA_MAP_LOWER,
+                SA_MAP_SWAPCASE,
+                SA_MAP_CAPITALIZE,
+                SA_MAP_TITLE,
+                SA_MAP_CASEFOLD,
+            ]
+        )
+        r = accel.exec(SA_MAP, var, a_ent, _none(), _none(), heap)
+        if any(ord(c) > 255 for c in a_s):
+            assert r.trap, a_s
+        else:
+            assert not r.trap
+            meth = {
+                SA_MAP_UPPER: str.upper,
+                SA_MAP_LOWER: str.lower,
+                SA_MAP_SWAPCASE: str.swapcase,
+                SA_MAP_CAPITALIZE: str.capitalize,
+                SA_MAP_TITLE: str.title,
+                SA_MAP_CASEFOLD: str.casefold,
+            }[var]
+            got = model_text(accel, r.entry)
+            assert got == meth(a_s), (a_s, var, got, meth(a_s))
+            heap = r.heap_ptr
+    elif op == SA_ZFILL:
+        width = rng.choice([0, 1, 4, 8, 20, len(a_s)])
+        r = accel.exec(SA_ZFILL, 0, a_ent, _int(width), _none(), heap)
+        assert not r.trap
+        got = model_text(accel, r.entry)
+        assert got == a_s.zfill(width), (a_s, width, got)
+        heap = r.heap_ptr
+    elif op == SA_AFFIX:
+        var = rng.choice([SA_AFFIX_PREFIX, SA_AFFIX_SUFFIX])
+        r = accel.exec(SA_AFFIX, var, a_ent, b_ent, _none(), heap)
+        assert not r.trap
+        got = model_text(accel, r.entry)
+        exp = a_s.removeprefix(b_s) if var == SA_AFFIX_PREFIX else a_s.removesuffix(b_s)
+        assert got == exp, (a_s, b_s, var, got, exp)
+        heap = r.heap_ptr
     return heap
 
 

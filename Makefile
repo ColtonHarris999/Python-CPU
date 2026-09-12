@@ -1820,6 +1820,9 @@ pycore-img-str-methods:
 pycore-img-str-search-methods:
 	$(call PYCORE_IMAGE_RUN,str_search_methods,200000)
 
+pycore-img-str-p5e-batch2:
+	$(call PYCORE_IMAGE_RUN,str_p5e_batch2,300000)
+
 pycore-img-exc-args:
 	$(call PYCORE_IMAGE_RUN,exc_args,100000)
 
@@ -1843,6 +1846,7 @@ pycore-img-native-methods-all: \
 	pycore-img-list-pop-empty \
 	pycore-img-str-methods \
 	pycore-img-str-search-methods \
+	pycore-img-str-p5e-batch2 \
 	pycore-img-exc-args \
 	pycore-img-list-method-missing \
 	pycore-img-list-methods \

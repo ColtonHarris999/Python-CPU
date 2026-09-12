@@ -185,6 +185,39 @@ localparam logic [5:0] PY_SA_HASH      = 6'd6;
 localparam logic [5:0] PY_SA_CHAR_AT   = 6'd7;
 localparam logic [5:0] PY_SA_ITER_NEXT = 6'd8;
 localparam logic [5:0] PY_SA_REPLACE   = 6'd9;
+localparam logic [5:0] PY_SA_JOIN      = 6'd10;
+localparam logic [5:0] PY_SA_TRIM      = 6'd11;
+localparam logic [5:0] PY_SA_CLASSIFY  = 6'd12;
+localparam logic [5:0] PY_SA_MAP       = 6'd13;
+localparam logic [5:0] PY_SA_SPLIT     = 6'd14;
+localparam logic [5:0] PY_SA_AFFIX     = 6'd15;
+localparam logic [5:0] PY_SA_ZFILL     = 6'd16;
+
+localparam logic [3:0] PY_SA_TRIM_LEFT  = 4'd0;
+localparam logic [3:0] PY_SA_TRIM_RIGHT = 4'd1;
+localparam logic [3:0] PY_SA_TRIM_BOTH  = 4'd2;
+
+localparam logic [3:0] PY_SA_IS_ALNUM     = 4'd0;
+localparam logic [3:0] PY_SA_IS_ALPHA     = 4'd1;
+localparam logic [3:0] PY_SA_IS_ASCII     = 4'd2;
+localparam logic [3:0] PY_SA_IS_DIGIT     = 4'd3;
+localparam logic [3:0] PY_SA_IS_LOWER     = 4'd4;
+localparam logic [3:0] PY_SA_IS_SPACE     = 4'd5;
+localparam logic [3:0] PY_SA_IS_UPPER     = 4'd6;
+localparam logic [3:0] PY_SA_IS_PRINTABLE = 4'd7;
+localparam logic [3:0] PY_SA_IS_TITLE     = 4'd8;
+localparam logic [3:0] PY_SA_IS_DECIMAL   = 4'd9;
+localparam logic [3:0] PY_SA_IS_NUMERIC   = 4'd10;
+
+localparam logic [3:0] PY_SA_MAP_UPPER      = 4'd0;
+localparam logic [3:0] PY_SA_MAP_LOWER      = 4'd1;
+localparam logic [3:0] PY_SA_MAP_SWAPCASE   = 4'd2;
+localparam logic [3:0] PY_SA_MAP_CAPITALIZE = 4'd3;
+localparam logic [3:0] PY_SA_MAP_TITLE      = 4'd4;
+localparam logic [3:0] PY_SA_MAP_CASEFOLD   = 4'd5;
+
+localparam logic [3:0] PY_SA_AFFIX_PREFIX = 4'd0;
+localparam logic [3:0] PY_SA_AFFIX_SUFFIX = 4'd1;
 
 localparam logic [3:0] PY_SA_FIND       = 4'd0;
 localparam logic [3:0] PY_SA_RFIND      = 4'd1;
@@ -342,6 +375,111 @@ function automatic logic [5:0] pycore_stracc_case_flags_step(
             f = f & ~PYCORE_STRACC_FLAG_ALL_UPPER;
     end
     pycore_stracc_case_flags_step = f;
+endfunction
+
+// Latin-1 (U+0000–U+00FF) classify/map LUTs. Kind 2/4 MAP/CLASSIFY traps to
+// firmware (planning/string_accelerator_plan.md §6). Bit i of each mask is
+// CPython 3.14 `chr(i).<pred>()`.
+localparam logic [255:0] PYCORE_LATIN1_ALNUM =
+    256'hff7fffffff7fffff762c04000000000007fffffe07fffffe03ff000000000000;
+localparam logic [255:0] PYCORE_LATIN1_ALPHA =
+    256'hff7fffffff7fffff042004000000000007fffffe07fffffe0000000000000000;
+localparam logic [255:0] PYCORE_LATIN1_DIGIT =
+    256'h0000000000000000020c000000000000000000000000000003ff000000000000;
+localparam logic [255:0] PYCORE_LATIN1_DECIMAL =
+    256'h00000000000000000000000000000000000000000000000003ff000000000000;
+localparam logic [255:0] PYCORE_LATIN1_NUMERIC =
+    256'h0000000000000000720c000000000000000000000000000003ff000000000000;
+localparam logic [255:0] PYCORE_LATIN1_LOWER =
+    256'hff7fffff80000000042004000000000007fffffe000000000000000000000000;
+localparam logic [255:0] PYCORE_LATIN1_UPPER =
+    256'h000000007f7fffff00000000000000000000000007fffffe0000000000000000;
+localparam logic [255:0] PYCORE_LATIN1_SPACE =
+    256'h00000000000000000000000100000020000000000000000000000001f0003e00;
+localparam logic [255:0] PYCORE_LATIN1_PRINTABLE =
+    256'hffffffffffffffffffffdffe000000007fffffffffffffffffffffff00000000;
+
+function automatic logic pycore_latin1_pred(
+    input logic [255:0] mask,
+    input logic [31:0] unit
+);
+    pycore_latin1_pred = (unit <= 32'h0000_00FF) && mask[unit[7:0]];
+endfunction
+
+function automatic logic pycore_is_unicode_space(input logic [31:0] u);
+    pycore_is_unicode_space =
+        ((u >= 32'h09) && (u <= 32'h0D)) ||
+        ((u >= 32'h1C) && (u <= 32'h1F)) ||
+        (u == 32'h20) || (u == 32'h85) || (u == 32'hA0) ||
+        (u == 32'h1680) ||
+        ((u >= 32'h2000) && (u <= 32'h200A)) ||
+        (u == 32'h2028) || (u == 32'h2029) || (u == 32'h202F) ||
+        (u == 32'h205F) || (u == 32'h3000);
+endfunction
+
+function automatic logic pycore_latin1_is_alnum(input logic [31:0] u);
+    pycore_latin1_is_alnum = pycore_latin1_pred(PYCORE_LATIN1_ALNUM, u);
+endfunction
+function automatic logic pycore_latin1_is_alpha(input logic [31:0] u);
+    pycore_latin1_is_alpha = pycore_latin1_pred(PYCORE_LATIN1_ALPHA, u);
+endfunction
+function automatic logic pycore_latin1_is_digit(input logic [31:0] u);
+    pycore_latin1_is_digit = pycore_latin1_pred(PYCORE_LATIN1_DIGIT, u);
+endfunction
+function automatic logic pycore_latin1_is_decimal(input logic [31:0] u);
+    pycore_latin1_is_decimal = pycore_latin1_pred(PYCORE_LATIN1_DECIMAL, u);
+endfunction
+function automatic logic pycore_latin1_is_numeric(input logic [31:0] u);
+    pycore_latin1_is_numeric = pycore_latin1_pred(PYCORE_LATIN1_NUMERIC, u);
+endfunction
+function automatic logic pycore_latin1_is_lower(input logic [31:0] u);
+    pycore_latin1_is_lower = pycore_latin1_pred(PYCORE_LATIN1_LOWER, u);
+endfunction
+function automatic logic pycore_latin1_is_upper(input logic [31:0] u);
+    pycore_latin1_is_upper = pycore_latin1_pred(PYCORE_LATIN1_UPPER, u);
+endfunction
+function automatic logic pycore_latin1_is_printable(input logic [31:0] u);
+    pycore_latin1_is_printable = pycore_latin1_pred(PYCORE_LATIN1_PRINTABLE, u);
+endfunction
+function automatic logic pycore_latin1_is_cased(input logic [31:0] u);
+    pycore_latin1_is_cased = pycore_latin1_is_lower(u) || pycore_latin1_is_upper(u);
+endfunction
+
+function automatic logic pycore_map_expands_ss(input logic [31:0] u);
+    pycore_map_expands_ss = (u == 32'h0000_00DF);
+endfunction
+
+function automatic logic [31:0] pycore_latin1_toupper(input logic [31:0] u);
+    if ((u >= 32'h61) && (u <= 32'h7A))
+        pycore_latin1_toupper = u - 32'h20;
+    else if ((u >= 32'hE0) && (u <= 32'hFE) && (u != 32'hF7))
+        pycore_latin1_toupper = u - 32'h20;
+    else if (u == 32'hB5)
+        pycore_latin1_toupper = 32'h039C;
+    else if (u == 32'hFF)
+        pycore_latin1_toupper = 32'h0178;
+    else if (u == 32'hDF)
+        pycore_latin1_toupper = 32'h53;
+    else
+        pycore_latin1_toupper = u;
+endfunction
+
+function automatic logic [31:0] pycore_latin1_tolower(input logic [31:0] u);
+    if ((u >= 32'h41) && (u <= 32'h5A))
+        pycore_latin1_tolower = u + 32'h20;
+    else if ((u >= 32'hC0) && (u <= 32'hDE) && (u != 32'hD7))
+        pycore_latin1_tolower = u + 32'h20;
+    else
+        pycore_latin1_tolower = u;
+endfunction
+
+function automatic logic [31:0] pycore_latin1_tocasefold(input logic [31:0] u);
+    if (u == 32'hDF)
+        pycore_latin1_tocasefold = 32'h73;
+    else if (u == 32'hB5)
+        pycore_latin1_tocasefold = 32'h03BC;
+    else
+        pycore_latin1_tocasefold = pycore_latin1_tolower(u);
 endfunction
 
 function automatic logic signed [63:0] pycore_stracc_int64(
@@ -1806,10 +1944,74 @@ localparam logic [127:0] PY_NMETH_NAME_COUNT      =
     128'h5636f756e74000000000000000000000; // "count" size=5
 localparam logic [127:0] PY_NMETH_NAME_REPLACE    =
     128'h77265706c61636500000000000000000; // "replace" size=7
+localparam logic [127:0] PY_NMETH_NAME_STRIP      =
+    128'h57374726970000000000000000000000; // "strip" size=5
+localparam logic [127:0] PY_NMETH_NAME_LSTRIP     =
+    128'h66c73747269700000000000000000000; // "lstrip" size=6
+localparam logic [127:0] PY_NMETH_NAME_RSTRIP     =
+    128'h67273747269700000000000000000000; // "rstrip" size=6
+localparam logic [127:0] PY_NMETH_NAME_UPPER      =
+    128'h57570706572000000000000000000000; // "upper" size=5
+localparam logic [127:0] PY_NMETH_NAME_LOWER      =
+    128'h56c6f776572000000000000000000000; // "lower" size=5
+localparam logic [127:0] PY_NMETH_NAME_SWAPCASE   =
+    128'h87377617063617365000000000000000; // "swapcase" size=8
+localparam logic [127:0] PY_NMETH_NAME_ISDIGIT    =
+    128'h76973646967697400000000000000000; // "isdigit" size=7
+localparam logic [127:0] PY_NMETH_NAME_ISASCII    =
+    128'h76973617363696900000000000000000; // "isascii" size=7
+localparam logic [127:0] PY_NMETH_NAME_ISALNUM    =
+    128'h76973616c6e756d00000000000000000; // "isalnum" size=7
+localparam logic [127:0] PY_NMETH_NAME_ISALPHA    =
+    128'h76973616c70686100000000000000000; // "isalpha" size=7
+localparam logic [127:0] PY_NMETH_NAME_ISLOWER    =
+    128'h769736c6f77657200000000000000000; // "islower" size=7
+localparam logic [127:0] PY_NMETH_NAME_ISUPPER    =
+    128'h76973757070657200000000000000000; // "isupper" size=7
+localparam logic [127:0] PY_NMETH_NAME_ISSPACE    =
+    128'h76973737061636500000000000000000; // "isspace" size=7
+localparam logic [127:0] PY_NMETH_NAME_CENTER     =
+    128'h663656e7465720000000000000000000; // "center" size=6
+localparam logic [127:0] PY_NMETH_NAME_LJUST      =
+    128'h56c6a757374000000000000000000000; // "ljust" size=5
+localparam logic [127:0] PY_NMETH_NAME_RJUST      =
+    128'h5726a757374000000000000000000000; // "rjust" size=5
+localparam logic [127:0] PY_NMETH_NAME_REMOVEPREFIX =
+    128'hc72656d6f76657072656669780000000; // "removeprefix" size=12
+localparam logic [127:0] PY_NMETH_NAME_REMOVESUFFIX =
+    128'hc72656d6f76657375666669780000000; // "removesuffix" size=12
+localparam logic [127:0] PY_NMETH_NAME_CAPITALIZE =
+    128'ha6361706974616c697a6500000000000; // "capitalize" size=10
+localparam logic [127:0] PY_NMETH_NAME_TITLE =
+    128'h57469746c65000000000000000000000; // "title" size=5
+localparam logic [127:0] PY_NMETH_NAME_ZFILL =
+    128'h57a66696c6c000000000000000000000; // "zfill" size=5
+localparam logic [127:0] PY_NMETH_NAME_EXPANDTABS =
+    128'ha657870616e647461627300000000000; // "expandtabs" size=10
+localparam logic [127:0] PY_NMETH_NAME_SPLIT =
+    128'h573706c6974000000000000000000000; // "split" size=5
+localparam logic [127:0] PY_NMETH_NAME_RSPLIT =
+    128'h67273706c69740000000000000000000; // "rsplit" size=6
+localparam logic [127:0] PY_NMETH_NAME_SPLITLINES =
+    128'ha73706c69746c696e657300000000000; // "splitlines" size=10
+localparam logic [127:0] PY_NMETH_NAME_PARTITION =
+    128'h9706172746974696f6e0000000000000; // "partition" size=9
+localparam logic [127:0] PY_NMETH_NAME_RPARTITION =
+    128'ha72706172746974696f6e00000000000; // "rpartition" size=10
+localparam logic [127:0] PY_NMETH_NAME_ISPRINTABLE =
+    128'hb69737072696e7461626c65000000000; // "isprintable" size=11
+localparam logic [127:0] PY_NMETH_NAME_ISTITLE =
+    128'h769737469746c6500000000000000000; // "istitle" size=7
+localparam logic [127:0] PY_NMETH_NAME_ISDECIMAL =
+    128'h96973646563696d616c0000000000000; // "isdecimal" size=9
+localparam logic [127:0] PY_NMETH_NAME_ISNUMERIC =
+    128'h969736e756d657269630000000000000; // "isnumeric" size=9
+localparam logic [127:0] PY_NMETH_NAME_CASEFOLD =
+    128'h863617365666f6c64000000000000000; // "casefold" size=8
 
 // Native-method table indices. List/set/dict keep 0–5 and 10–15 so the
-// 16-entry firmware sidecar stays put. String SEARCH methods 7–9 plus
-// 16–20 are STRACC sentinels (P5e); join (6) stays firmware until P5e.4.
+// 16-entry firmware sidecar stays put. String methods 6–9 and 16+ are
+// STRACC sentinels; firmware str_* ROM slots remain until P5f.
 localparam logic [5:0] PY_NMETH_LIST_APPEND     = 6'd0;
 localparam logic [5:0] PY_NMETH_LIST_POP        = 6'd1;
 localparam logic [5:0] PY_NMETH_LIST_EXTEND     = 6'd2;
@@ -1831,6 +2033,32 @@ localparam logic [5:0] PY_NMETH_STR_INDEX       = 6'd17;
 localparam logic [5:0] PY_NMETH_STR_RINDEX      = 6'd18;
 localparam logic [5:0] PY_NMETH_STR_COUNT       = 6'd19;
 localparam logic [5:0] PY_NMETH_STR_REPLACE     = 6'd20;
+localparam logic [5:0] PY_NMETH_STR_STRIP       = 6'd21;
+localparam logic [5:0] PY_NMETH_STR_LSTRIP      = 6'd22;
+localparam logic [5:0] PY_NMETH_STR_RSTRIP      = 6'd23;
+localparam logic [5:0] PY_NMETH_STR_UPPER       = 6'd24;
+localparam logic [5:0] PY_NMETH_STR_LOWER       = 6'd25;
+localparam logic [5:0] PY_NMETH_STR_SWAPCASE    = 6'd26;
+localparam logic [5:0] PY_NMETH_STR_ISDIGIT     = 6'd27;
+localparam logic [5:0] PY_NMETH_STR_ISASCII     = 6'd28;
+localparam logic [5:0] PY_NMETH_STR_ISALNUM     = 6'd29;
+localparam logic [5:0] PY_NMETH_STR_ISALPHA     = 6'd30;
+localparam logic [5:0] PY_NMETH_STR_ISLOWER     = 6'd31;
+localparam logic [5:0] PY_NMETH_STR_ISUPPER     = 6'd32;
+localparam logic [5:0] PY_NMETH_STR_ISSPACE     = 6'd33;
+localparam logic [5:0] PY_NMETH_STR_CENTER      = 6'd34;
+localparam logic [5:0] PY_NMETH_STR_LJUST       = 6'd35;
+localparam logic [5:0] PY_NMETH_STR_RJUST       = 6'd36;
+localparam logic [5:0] PY_NMETH_STR_REMOVEPREFIX = 6'd37;
+localparam logic [5:0] PY_NMETH_STR_REMOVESUFFIX = 6'd38;
+localparam logic [5:0] PY_NMETH_STR_CAPITALIZE   = 6'd39;
+localparam logic [5:0] PY_NMETH_STR_TITLE        = 6'd40;
+localparam logic [5:0] PY_NMETH_STR_ZFILL        = 6'd41;
+localparam logic [5:0] PY_NMETH_STR_CASEFOLD     = 6'd42;
+localparam logic [5:0] PY_NMETH_STR_ISPRINTABLE  = 6'd43;
+localparam logic [5:0] PY_NMETH_STR_ISTITLE      = 6'd44;
+localparam logic [5:0] PY_NMETH_STR_ISDECIMAL    = 6'd45;
+localparam logic [5:0] PY_NMETH_STR_ISNUMERIC    = 6'd46;
 
 // Sentinel CODE_OBJECT address for STRACC native methods. High half is
 // outside the data map, so CALL never mistakes it for a heap object.
@@ -1861,6 +2089,7 @@ endfunction
 function automatic logic pycore_native_method_is_stracc(input logic [5:0] index);
     begin
         pycore_native_method_is_stracc =
+            (index == PY_NMETH_STR_JOIN) ||
             (index == PY_NMETH_STR_STARTSWITH) ||
             (index == PY_NMETH_STR_ENDSWITH) ||
             (index == PY_NMETH_STR_FIND) ||
@@ -1868,7 +2097,8 @@ function automatic logic pycore_native_method_is_stracc(input logic [5:0] index)
             (index == PY_NMETH_STR_INDEX) ||
             (index == PY_NMETH_STR_RINDEX) ||
             (index == PY_NMETH_STR_COUNT) ||
-            (index == PY_NMETH_STR_REPLACE);
+            (index == PY_NMETH_STR_REPLACE) ||
+            ((index >= PY_NMETH_STR_STRIP) && (index <= PY_NMETH_STR_ISNUMERIC));
     end
 endfunction
 
@@ -1918,6 +2148,114 @@ function automatic void pycore_stracc_method_decode(
             PY_NMETH_STR_REPLACE: begin
                 op = PY_SA_REPLACE; svar = 4'd0;
                 argc_min = 3'd2; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_JOIN: begin
+                op = PY_SA_JOIN; svar = 4'd0;
+                argc_min = 3'd1; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_STRIP: begin
+                op = PY_SA_TRIM; svar = PY_SA_TRIM_BOTH;
+                argc_min = 3'd0; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_LSTRIP: begin
+                op = PY_SA_TRIM; svar = PY_SA_TRIM_LEFT;
+                argc_min = 3'd0; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_RSTRIP: begin
+                op = PY_SA_TRIM; svar = PY_SA_TRIM_RIGHT;
+                argc_min = 3'd0; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_UPPER: begin
+                op = PY_SA_MAP; svar = PY_SA_MAP_UPPER;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_LOWER: begin
+                op = PY_SA_MAP; svar = PY_SA_MAP_LOWER;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_SWAPCASE: begin
+                op = PY_SA_MAP; svar = PY_SA_MAP_SWAPCASE;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISDIGIT: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_DIGIT;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISASCII: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_ASCII;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISALNUM: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_ALNUM;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISALPHA: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_ALPHA;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISLOWER: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_LOWER;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISUPPER: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_UPPER;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISSPACE: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_SPACE;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_CENTER: begin
+                op = PY_SA_PAD; svar = PY_SA_PAD_BOTH;
+                argc_min = 3'd1; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_LJUST: begin
+                op = PY_SA_PAD; svar = PY_SA_PAD_RIGHT;
+                argc_min = 3'd1; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_RJUST: begin
+                op = PY_SA_PAD; svar = PY_SA_PAD_LEFT;
+                argc_min = 3'd1; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_REMOVEPREFIX: begin
+                op = PY_SA_AFFIX; svar = PY_SA_AFFIX_PREFIX;
+                argc_min = 3'd1; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_REMOVESUFFIX: begin
+                op = PY_SA_AFFIX; svar = PY_SA_AFFIX_SUFFIX;
+                argc_min = 3'd1; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_CAPITALIZE: begin
+                op = PY_SA_MAP; svar = PY_SA_MAP_CAPITALIZE;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_TITLE: begin
+                op = PY_SA_MAP; svar = PY_SA_MAP_TITLE;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ZFILL: begin
+                op = PY_SA_ZFILL; svar = 4'd0;
+                argc_min = 3'd1; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_CASEFOLD: begin
+                op = PY_SA_MAP; svar = PY_SA_MAP_CASEFOLD;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISPRINTABLE: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_PRINTABLE;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISTITLE: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_TITLE;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISDECIMAL: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_DECIMAL;
+                argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_ISNUMERIC: begin
+                op = PY_SA_CLASSIFY; svar = PY_SA_IS_NUMERIC;
+                argc_min = 3'd0; argc_max = 3'd0;
             end
             default: begin
                 op = PY_SA_SEARCH; svar = PY_SA_FIND;
@@ -2792,6 +3130,58 @@ function automatic logic [6:0] pycore_native_method_id(
                     result = {1'b1, PY_NMETH_STR_COUNT};
                 else if (name_val == PY_NMETH_NAME_REPLACE)
                     result = {1'b1, PY_NMETH_STR_REPLACE};
+                else if (name_val == PY_NMETH_NAME_STRIP)
+                    result = {1'b1, PY_NMETH_STR_STRIP};
+                else if (name_val == PY_NMETH_NAME_LSTRIP)
+                    result = {1'b1, PY_NMETH_STR_LSTRIP};
+                else if (name_val == PY_NMETH_NAME_RSTRIP)
+                    result = {1'b1, PY_NMETH_STR_RSTRIP};
+                else if (name_val == PY_NMETH_NAME_UPPER)
+                    result = {1'b1, PY_NMETH_STR_UPPER};
+                else if (name_val == PY_NMETH_NAME_LOWER)
+                    result = {1'b1, PY_NMETH_STR_LOWER};
+                else if (name_val == PY_NMETH_NAME_SWAPCASE)
+                    result = {1'b1, PY_NMETH_STR_SWAPCASE};
+                else if (name_val == PY_NMETH_NAME_ISDIGIT)
+                    result = {1'b1, PY_NMETH_STR_ISDIGIT};
+                else if (name_val == PY_NMETH_NAME_ISASCII)
+                    result = {1'b1, PY_NMETH_STR_ISASCII};
+                else if (name_val == PY_NMETH_NAME_ISALNUM)
+                    result = {1'b1, PY_NMETH_STR_ISALNUM};
+                else if (name_val == PY_NMETH_NAME_ISALPHA)
+                    result = {1'b1, PY_NMETH_STR_ISALPHA};
+                else if (name_val == PY_NMETH_NAME_ISLOWER)
+                    result = {1'b1, PY_NMETH_STR_ISLOWER};
+                else if (name_val == PY_NMETH_NAME_ISUPPER)
+                    result = {1'b1, PY_NMETH_STR_ISUPPER};
+                else if (name_val == PY_NMETH_NAME_ISSPACE)
+                    result = {1'b1, PY_NMETH_STR_ISSPACE};
+                else if (name_val == PY_NMETH_NAME_CENTER)
+                    result = {1'b1, PY_NMETH_STR_CENTER};
+                else if (name_val == PY_NMETH_NAME_LJUST)
+                    result = {1'b1, PY_NMETH_STR_LJUST};
+                else if (name_val == PY_NMETH_NAME_RJUST)
+                    result = {1'b1, PY_NMETH_STR_RJUST};
+                else if (name_val == PY_NMETH_NAME_REMOVEPREFIX)
+                    result = {1'b1, PY_NMETH_STR_REMOVEPREFIX};
+                else if (name_val == PY_NMETH_NAME_REMOVESUFFIX)
+                    result = {1'b1, PY_NMETH_STR_REMOVESUFFIX};
+                else if (name_val == PY_NMETH_NAME_CAPITALIZE)
+                    result = {1'b1, PY_NMETH_STR_CAPITALIZE};
+                else if (name_val == PY_NMETH_NAME_TITLE)
+                    result = {1'b1, PY_NMETH_STR_TITLE};
+                else if (name_val == PY_NMETH_NAME_ZFILL)
+                    result = {1'b1, PY_NMETH_STR_ZFILL};
+                else if (name_val == PY_NMETH_NAME_CASEFOLD)
+                    result = {1'b1, PY_NMETH_STR_CASEFOLD};
+                else if (name_val == PY_NMETH_NAME_ISPRINTABLE)
+                    result = {1'b1, PY_NMETH_STR_ISPRINTABLE};
+                else if (name_val == PY_NMETH_NAME_ISTITLE)
+                    result = {1'b1, PY_NMETH_STR_ISTITLE};
+                else if (name_val == PY_NMETH_NAME_ISDECIMAL)
+                    result = {1'b1, PY_NMETH_STR_ISDECIMAL};
+                else if (name_val == PY_NMETH_NAME_ISNUMERIC)
+                    result = {1'b1, PY_NMETH_STR_ISNUMERIC};
             end else if (pycore_is_dict(recv_tag, recv_val)) begin
                 if (name_val == PY_NMETH_NAME_GET)
                     result = {1'b1, PY_NMETH_DICT_GET};

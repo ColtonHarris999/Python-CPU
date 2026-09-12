@@ -385,6 +385,51 @@ module tb_str_accel;
                   "replace tag");
         end
 
+        issue(PY_SA_TRIM, PY_SA_TRIM_BOTH, mk_short("  hi  "), mk_none(),
+              mk_none(), PYCORE_HEAP_BASE);
+        expect_short("hi", "strip");
+
+        issue(PY_SA_MAP, PY_SA_MAP_UPPER, mk_short("Ab"), mk_none(),
+              mk_none(), PYCORE_HEAP_BASE);
+        expect_short("AB", "upper");
+
+        issue(PY_SA_CLASSIFY, PY_SA_IS_DIGIT, mk_short("12"), mk_none(),
+              mk_none(), PYCORE_HEAP_BASE);
+        check(!res_trap, "isdigit trap");
+        check(res_entry[PYCORE_TAG_MSB:PYCORE_TAG_LSB] == PY_TAG_BOOL, "isdigit tag");
+        check(res_entry[0] == 1'b1, "isdigit 12");
+
+        issue(PY_SA_ZFILL, 0, mk_short("42"), mk_int(5), mk_none(),
+              PYCORE_HEAP_BASE);
+        expect_short("00042", "zfill");
+
+        issue(PY_SA_AFFIX, PY_SA_AFFIX_PREFIX, mk_short("foobar"), mk_short("foo"),
+              mk_none(), PYCORE_HEAP_BASE);
+        expect_short("bar", "removeprefix");
+
+        begin
+            logic [31:0] obj, buf;
+            logic [PYCORE_ENTRY_WIDTH-1:0] lst, s0, s1;
+            obj = 32'h0000_2000;
+            buf = 32'h0000_2040;
+            s0 = mk_short("a");
+            s1 = mk_short("b");
+            ram_write(obj, {64'd2, 64'd2});
+            ram_write(obj + 32'd16, {64'd0, 64'(buf)});
+            ram_write(buf, s0[PYCORE_VAL_MSB:PYCORE_VAL_LSB]);
+            ram_write(buf + 32'd16, {124'b0, PY_TAG_SHORT_STR});
+            ram_write(buf + 32'd32, s1[PYCORE_VAL_MSB:PYCORE_VAL_LSB]);
+            ram_write(buf + 32'd48, {124'b0, PY_TAG_SHORT_STR});
+            lst = pycore_make_mut(PY_MUT_LIST, {32'd0, obj}, 1'b0);
+            issue(PY_SA_JOIN, 0, mk_short("-"), lst, mk_none(),
+                  PYCORE_HEAP_BASE);
+            expect_short("a-b", "join list");
+        end
+
+        issue(PY_SA_JOIN, 0, mk_short("-"), mk_short("ab"), mk_none(),
+              PYCORE_HEAP_BASE);
+        expect_short("a-b", "join str");
+
         $display("tb_str_accel PASS");
         $finish;
     end

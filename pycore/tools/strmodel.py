@@ -34,6 +34,34 @@ from encoding import (
     SA_SEARCH,
     SA_SLICE,
     SA_STARTSWITH,
+    SA_JOIN,
+    SA_TRIM,
+    SA_CLASSIFY,
+    SA_MAP,
+    SA_AFFIX,
+    SA_ZFILL,
+    SA_TRIM_LEFT,
+    SA_TRIM_RIGHT,
+    SA_TRIM_BOTH,
+    SA_IS_ALNUM,
+    SA_IS_ALPHA,
+    SA_IS_ASCII,
+    SA_IS_DIGIT,
+    SA_IS_LOWER,
+    SA_IS_SPACE,
+    SA_IS_UPPER,
+    SA_IS_PRINTABLE,
+    SA_IS_TITLE,
+    SA_IS_DECIMAL,
+    SA_IS_NUMERIC,
+    SA_MAP_UPPER,
+    SA_MAP_LOWER,
+    SA_MAP_SWAPCASE,
+    SA_MAP_CAPITALIZE,
+    SA_MAP_TITLE,
+    SA_MAP_CASEFOLD,
+    SA_AFFIX_PREFIX,
+    SA_AFFIX_SUFFIX,
     SHORT_STR_MAX_BYTES,
     STRACC_FLAG_INTERNED,
     TAG_BOOL,
@@ -41,10 +69,16 @@ from encoding import (
     TAG_INT,
     TAG_LONG_STR,
     TAG_SHORT_STR,
+    TAG_TUPLE,
+    TAG_MUT_COLLEC,
+    MUT_LIST,
     VAL_MASK,
     decode_short_string,
     encode_short_string,
     heap_place,
+    make_list,
+    mut_addr,
+    mut_kind,
     stracc_case_flags,
     stracc_content_hash,
     stracc_decode_units,
@@ -297,6 +331,18 @@ class StrAccel:
             return self._search(a, b, c, var, heap_ptr)
         if op == SA_REPLACE:
             return self._replace(a, b, c, heap_ptr)
+        if op == SA_JOIN:
+            return self._join(a, b, heap_ptr)
+        if op == SA_TRIM:
+            return self._trim(a, b, var, heap_ptr)
+        if op == SA_CLASSIFY:
+            return self._classify(a, var, heap_ptr)
+        if op == SA_MAP:
+            return self._map(a, var, heap_ptr)
+        if op == SA_AFFIX:
+            return self._affix(a, b, var, heap_ptr)
+        if op == SA_ZFILL:
+            return self._zfill(a, b, heap_ptr)
         if op == SA_HASH:
             return self._hash(a, heap_ptr)
         if op in (SA_CHAR_AT, SA_ITER_NEXT):
@@ -583,6 +629,213 @@ class StrAccel:
         # A 1-char result uses the kind of that code point (CPython compact).
         return pack_result_from_units(
             [unit], kind_of_unit(unit), self.mem, heap_ptr, self.heap_limit
+        )
+
+    def _seq_entries(self, b: tuple[int, int]) -> list[tuple[int, int]] | None:
+        tag, value = b
+        if tag == TAG_TUPLE:
+            n = (value >> 64) & ((1 << 64) - 1)
+            addr = value & ((1 << 64) - 1)
+            out = []
+            for i in range(int(n)):
+                val = self.mem.read_word(addr + i * 32)
+                tword = self.mem.read_word(addr + i * 32 + 16)
+                out.append((tword & 0xF, val))
+            return out
+        if tag == TAG_MUT_COLLEC and mut_kind(value) == MUT_LIST:
+            obj = mut_addr(value)
+            header = self.mem.read_word(obj)
+            n = header & ((1 << 64) - 1)
+            buf = self.mem.read_word(obj + 16) & ((1 << 64) - 1)
+            out = []
+            for i in range(int(n)):
+                val = self.mem.read_word(buf + i * 32)
+                tword = self.mem.read_word(buf + i * 32 + 16)
+                out.append((tword & 0xF, val))
+            return out
+        return None
+
+    def plant_list(
+        self, elems: list[tuple[int, int]], heap_ptr: int
+    ) -> tuple[tuple[int, int], int]:
+        n = len(elems)
+        obj_bytes = 32
+        obj = heap_place(heap_ptr, obj_bytes)
+        ptr = obj + obj_bytes
+        if n:
+            buf_bytes = n * 32
+            buf = heap_place(ptr, buf_bytes)
+            end = buf + buf_bytes
+            for i, (tag, val) in enumerate(elems):
+                self.mem.write_bytes(buf + i * 32, int(val).to_bytes(16, "little"))
+                self.mem.write_bytes(
+                    buf + i * 32 + 16, (tag & 0xF).to_bytes(16, "little")
+                )
+            header = ((n & ((1 << 64) - 1)) << 64) | (n & ((1 << 64) - 1))
+            self.mem.write_bytes(obj, header.to_bytes(16, "little"))
+            self.mem.write_bytes(obj + 16, buf.to_bytes(16, "little"))
+            return make_list(obj), end
+        self.mem.write_bytes(obj, (0).to_bytes(16, "little"))
+        self.mem.write_bytes(obj + 16, (0).to_bytes(16, "little"))
+        return make_list(obj), obj + obj_bytes
+
+    def _join(self, a, b, heap_ptr: int) -> AccelResult:
+        sa = self._need_str(a, heap_ptr)
+        if isinstance(sa, AccelResult):
+            return sa
+        sep = sa.text(self.mem)
+        if _is_string(b[0]):
+            parts = list(decode_str(b[0], b[1], self.mem).text(self.mem))
+            if not parts:
+                return AccelResult(*empty_short(), heap_ptr)
+            if len(parts) == 1 or sa.nchars == 0:
+                return AccelResult(b[0], b[1], heap_ptr)
+            out = sep.join(parts)
+            kind = max(sa.kind, decode_str(b[0], b[1], self.mem).kind)
+            return pack_result_from_units(
+                [ord(c) for c in out],
+                max(kind, stracc_kind_of_text(out)),
+                self.mem,
+                heap_ptr,
+                self.heap_limit,
+            )
+        elems = self._seq_entries(b)
+        if elems is None:
+            return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        if not elems:
+            return AccelResult(*empty_short(), heap_ptr)
+        texts: list[str] = []
+        kmax = sa.kind
+        for tag, val in elems:
+            if not _is_string(tag):
+                return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+            view = decode_str(tag, val, self.mem)
+            texts.append(view.text(self.mem))
+            kmax = max(kmax, view.kind)
+        if len(texts) == 1:
+            return AccelResult(elems[0][0], elems[0][1], heap_ptr)
+        out = sep.join(texts)
+        return pack_result_from_units(
+            [ord(c) for c in out],
+            max(kmax, stracc_kind_of_text(out)),
+            self.mem,
+            heap_ptr,
+            self.heap_limit,
+        )
+
+    def _trim(self, a, b, var: int, heap_ptr: int) -> AccelResult:
+        sa = self._need_str(a, heap_ptr)
+        if isinstance(sa, AccelResult):
+            return sa
+        text = sa.text(self.mem)
+        chars = None
+        if not _is_none(*b):
+            sb = self._need_str(b, heap_ptr)
+            if isinstance(sb, AccelResult):
+                return sb
+            chars = sb.text(self.mem)
+        if var == SA_TRIM_LEFT:
+            out = text.lstrip(chars)
+        elif var == SA_TRIM_RIGHT:
+            out = text.rstrip(chars)
+        else:
+            out = text.strip(chars)
+        if out == text:
+            return AccelResult(sa.tag, a[1], heap_ptr)
+        if not out:
+            return AccelResult(*empty_short(), heap_ptr)
+        return pack_result_from_units(
+            [ord(c) for c in out], sa.kind, self.mem, heap_ptr, self.heap_limit
+        )
+
+    def _classify(self, a, var: int, heap_ptr: int) -> AccelResult:
+        sa = self._need_str(a, heap_ptr)
+        if isinstance(sa, AccelResult):
+            return sa
+        if sa.kind > 1:
+            if var == SA_IS_ASCII:
+                return AccelResult(TAG_BOOL, 0, heap_ptr)
+            return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        text = sa.text(self.mem)
+        pred = {
+            SA_IS_ALNUM: str.isalnum,
+            SA_IS_ALPHA: str.isalpha,
+            SA_IS_ASCII: str.isascii,
+            SA_IS_DIGIT: str.isdigit,
+            SA_IS_LOWER: str.islower,
+            SA_IS_SPACE: str.isspace,
+            SA_IS_UPPER: str.isupper,
+            SA_IS_PRINTABLE: str.isprintable,
+            SA_IS_TITLE: str.istitle,
+            SA_IS_DECIMAL: str.isdecimal,
+            SA_IS_NUMERIC: str.isnumeric,
+        }.get(var)
+        if pred is None:
+            return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        return AccelResult(TAG_BOOL, int(pred(text)), heap_ptr)
+
+    def _map(self, a, var: int, heap_ptr: int) -> AccelResult:
+        sa = self._need_str(a, heap_ptr)
+        if isinstance(sa, AccelResult):
+            return sa
+        if sa.kind > 1:
+            return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        text = sa.text(self.mem)
+        if var == SA_MAP_UPPER:
+            out = text.upper()
+        elif var == SA_MAP_LOWER:
+            out = text.lower()
+        elif var == SA_MAP_SWAPCASE:
+            out = text.swapcase()
+        elif var == SA_MAP_CAPITALIZE:
+            out = text.capitalize()
+        elif var == SA_MAP_TITLE:
+            out = text.title()
+        elif var == SA_MAP_CASEFOLD:
+            out = text.casefold()
+        else:
+            return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        if out == text:
+            return AccelResult(sa.tag, a[1], heap_ptr)
+        kind = stracc_kind_of_text(out)
+        return pack_result_from_units(
+            [ord(c) for c in out], kind, self.mem, heap_ptr, self.heap_limit
+        )
+
+    def _affix(self, a, b, var: int, heap_ptr: int) -> AccelResult:
+        sa = self._need_str(a, heap_ptr)
+        if isinstance(sa, AccelResult):
+            return sa
+        sb = self._need_str(b, heap_ptr)
+        if isinstance(sb, AccelResult):
+            return sb
+        text = sa.text(self.mem)
+        aff = sb.text(self.mem)
+        if var == SA_AFFIX_PREFIX:
+            out = text.removeprefix(aff)
+        else:
+            out = text.removesuffix(aff)
+        if out == text:
+            return AccelResult(sa.tag, a[1], heap_ptr)
+        if not out:
+            return AccelResult(*empty_short(), heap_ptr)
+        return pack_result_from_units(
+            [ord(c) for c in out], sa.kind, self.mem, heap_ptr, self.heap_limit
+        )
+
+    def _zfill(self, a, b, heap_ptr: int) -> AccelResult:
+        sa = self._need_str(a, heap_ptr)
+        if isinstance(sa, AccelResult):
+            return sa
+        width = _int_val(*b)
+        if width is None:
+            return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        text = sa.text(self.mem)
+        out = text.zfill(width)
+        if out == text:
+            return AccelResult(sa.tag, a[1], heap_ptr)
+        return pack_result_from_units(
+            [ord(c) for c in out], sa.kind, self.mem, heap_ptr, self.heap_limit
         )
 
     def read_str(self, entry: tuple[int, int]) -> str:

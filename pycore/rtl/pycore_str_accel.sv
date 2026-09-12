@@ -48,22 +48,39 @@ module pycore_str_accel #(
         ST_DONE
     } state_e;
 
-    typedef enum logic [2:0] {
+    typedef enum logic [3:0] {
         ENG_NONE,
         ENG_COPY,
         ENG_CMP,
         ENG_SEARCH,
         ENG_HASH,
         ENG_CHAR,
-        ENG_REPLACE
+        ENG_REPLACE,
+        ENG_JOIN,
+        ENG_TRIM,
+        ENG_CLASSIFY,
+        ENG_MAP,
+        ENG_AFFIX
     } eng_e;
 
-    typedef enum logic [1:0] {
+    typedef enum logic [2:0] {
         SRC_A,
         SRC_B,
         SRC_FILL,
-        SRC_C
+        SRC_C,
+        SRC_EL
     } src_e;
+
+    localparam logic [3:0] JP_HDR           = 4'd0;
+    localparam logic [3:0] JP_OBITEM        = 4'd1;
+    localparam logic [3:0] JP_NEED_TAG      = 4'd2;
+    localparam logic [3:0] JP_GOT_TAG       = 4'd3;
+    localparam logic [3:0] JP_GOT_VAL       = 4'd4;
+    localparam logic [3:0] JP_FILL_NEED_TAG = 4'd5;
+    localparam logic [3:0] JP_FILL_GOT_TAG  = 4'd6;
+    localparam logic [3:0] JP_FILL_GOT_VAL  = 4'd7;
+    localparam logic [3:0] JP_FILL_COPY     = 4'd8;
+    localparam logic [3:0] JP_STR_FILL      = 4'd9;
 
     typedef enum logic [1:0] {
         MEM_RD,
@@ -113,6 +130,42 @@ module pycore_str_accel #(
     logic [31:0] hay_pos_r;
     logic [31:0] new_idx_r;
 
+    // JOIN / TRIM / MAP / CLASSIFY / AFFIX
+    logic [3:0]  join_phase_r;
+    logic [31:0] join_n_r;
+    logic [31:0] join_i_r;
+    logic [31:0] join_obj_r;
+    logic [31:0] join_buf_r;
+    logic        join_is_list_r;
+    logic        join_is_str_r;
+    logic [31:0] join_sum_r;
+    logic [2:0]  join_kmax_r;
+    logic [3:0]  join_el_tag_r;
+    logic [127:0] join_el_val_r;
+    logic [31:0] join_el_nchars_r;
+    logic [2:0]  join_el_kind_r;
+    logic [31:0] join_el_addr_r;
+    logic        join_el_short_r;
+    logic        join_fill_sep_r;
+    logic [31:0] join_base_r;
+    logic        trim_has_cs_r;
+    logic        trim_in_cs_r;
+    logic        trim_cs_done_r;
+    logic [31:0] trim_lo_r;
+    logic [31:0] trim_hi_r;
+    logic        trim_left_done_r;
+    logic        map_changed_r;
+    logic        map_measuring_r;
+    logic        map_expand_r;
+    logic        map_prev_cased_r;
+    logic [31:0] map_extra_r;
+    logic [2:0]  map_kmax_r;
+    logic        cls_ok_r;
+    logic        cls_saw_cased_r;
+    logic        cls_prev_cased_r;
+    logic        cls_title_ok_r;
+    logic [5:0]  a_flags_r;
+
     logic [31:0] dst_nchars_r;
     logic [2:0]  dst_kind_r;
     logic        dst_short_r;
@@ -151,6 +204,8 @@ module pycore_str_accel #(
     wire b_is_none = (b_tag_r == PY_TAG_CONTROL) &&
                      (pycore_ctl_id(b_val_r) == PY_CTL_NONE);
     wire c_is_str = (c_tag_r == PY_TAG_SHORT_STR) || (c_tag_r == PY_TAG_LONG_STR);
+    wire b_is_list = pycore_is_list(b_tag_r, b_val_r);
+    wire b_is_tuple = (b_tag_r == PY_TAG_TUPLE);
 
     assign cmd_ready_o = (state_r == ST_IDLE);
     assign res_valid_o = (state_r == ST_DONE);
@@ -331,6 +386,8 @@ module pycore_str_accel #(
                               ? view_kind(c_tag_r, c_val_r) : 3'd1;
                     c_addr_r <= pycore_stracc_addr(c_val_r);
                     c_short_r <= (c_tag_r == PY_TAG_SHORT_STR);
+                    a_flags_r <= (a_tag_r == PY_TAG_LONG_STR)
+                               ? pycore_stracc_flags(a_val_r) : 6'd0;
                     replace_empty_r <= 1'b0;
                     replace_fill_r <= 1'b0;
                     replace_emit_new_r <= 1'b0;
@@ -553,6 +610,196 @@ module pycore_str_accel #(
                                 state_r <= ST_STEP;
                             end
                         end
+                        PY_SA_JOIN: begin
+                            if (!a_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if (b_is_tuple) begin
+                                join_is_list_r <= 1'b0;
+                                join_is_str_r <= 1'b0;
+                                join_n_r <= pycore_tuple_size(b_val_r)[31:0];
+                                join_buf_r <= b_val_r[31:0];
+                                join_obj_r <= b_val_r[31:0];
+                                join_i_r <= 32'd0;
+                                join_sum_r <= 32'd0;
+                                join_kmax_r <= view_kind(a_tag_r, a_val_r);
+                                if (pycore_tuple_size(b_val_r)[31:0] == 32'd0)
+                                    set_res(pycore_make_short_str_entry(4'd0, 120'd0),
+                                            heap_ptr_r);
+                                else begin
+                                    join_phase_r <= JP_NEED_TAG;
+                                    eng_r <= ENG_JOIN;
+                                    state_r <= ST_STEP;
+                                end
+                            end else if (b_is_list) begin
+                                join_is_list_r <= 1'b1;
+                                join_is_str_r <= 1'b0;
+                                join_obj_r <= pycore_mut_addr(b_val_r)[31:0];
+                                join_i_r <= 32'd0;
+                                join_sum_r <= 32'd0;
+                                join_kmax_r <= view_kind(a_tag_r, a_val_r);
+                                join_phase_r <= JP_HDR;
+                                eng_r <= ENG_JOIN;
+                                issue_read(pycore_mut_addr(b_val_r)[31:0]);
+                            end else if (b_is_str) begin
+                                nch = view_nchars(b_tag_r, b_val_r);
+                                join_is_list_r <= 1'b0;
+                                join_is_str_r <= 1'b1;
+                                join_n_r <= nch;
+                                join_i_r <= 32'd0;
+                                join_sum_r <= nch;
+                                kmax = (view_kind(a_tag_r, a_val_r) >
+                                        view_kind(b_tag_r, b_val_r))
+                                     ? view_kind(a_tag_r, a_val_r)
+                                     : view_kind(b_tag_r, b_val_r);
+                                join_kmax_r <= kmax;
+                                if (nch == 32'd0)
+                                    set_res(pycore_make_short_str_entry(4'd0, 120'd0),
+                                            heap_ptr_r);
+                                else if (nch == 32'd1)
+                                    set_res(cmd_entry(b_tag_r, b_val_r), heap_ptr_r);
+                                else if (view_nchars(a_tag_r, a_val_r) == 32'd0)
+                                    set_res(cmd_entry(b_tag_r, b_val_r), heap_ptr_r);
+                                else begin
+                                    nout = nch + (nch - 32'd1) *
+                                           view_nchars(a_tag_r, a_val_r);
+                                    join_fill_sep_r <= 1'b0;
+                                    join_base_r <= 32'd0;
+                                    join_phase_r <= JP_STR_FILL;
+                                    setup_copy(nout, kmax);
+                                    eng_r <= ENG_JOIN;
+                                end
+                            end else
+                                set_trap(PY_TRAP_TYPE);
+                        end
+                        PY_SA_TRIM: begin
+                            if (!a_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if (!b_is_none && !b_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if (view_nchars(a_tag_r, a_val_r) == 32'd0)
+                                set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                            else begin
+                                trim_has_cs_r <= b_is_str;
+                                trim_left_done_r <= (var_r == PY_SA_TRIM_RIGHT);
+                                pos_r <= 32'd0;
+                                match_i_r <= 32'd0;
+                                have_hay_r <= 1'b0;
+                                trim_lo_r <= 32'd0;
+                                trim_hi_r <= view_nchars(a_tag_r, a_val_r);
+                                nlen_r <= b_is_str ? view_nchars(b_tag_r, b_val_r)
+                                                   : 32'd0;
+                                eng_r <= ENG_TRIM;
+                                state_r <= ST_STEP;
+                            end
+                        end
+                        PY_SA_CLASSIFY: begin
+                            if (!a_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if (view_nchars(a_tag_r, a_val_r) == 32'd0) begin
+                                if ((var_r == PY_SA_IS_ASCII) ||
+                                    (var_r == PY_SA_IS_PRINTABLE))
+                                    set_res(pycore_make_entry(PY_TAG_BOOL, 128'd1),
+                                            heap_ptr_r);
+                                else
+                                    set_res(pycore_make_entry(PY_TAG_BOOL, 128'd0),
+                                            heap_ptr_r);
+                            end else if ((view_kind(a_tag_r, a_val_r) > 3'd1) &&
+                                         (var_r == PY_SA_IS_ASCII))
+                                set_res(pycore_make_entry(PY_TAG_BOOL, 128'd0),
+                                        heap_ptr_r);
+                            else if (view_kind(a_tag_r, a_val_r) > 3'd1)
+                                set_trap(PY_TRAP_TYPE);
+                            else begin
+                                pos_r <= 32'd0;
+                                cls_ok_r <= 1'b1;
+                                cls_saw_cased_r <= 1'b0;
+                                cls_prev_cased_r <= 1'b0;
+                                cls_title_ok_r <= 1'b1;
+                                eng_r <= ENG_CLASSIFY;
+                                state_r <= ST_STEP;
+                            end
+                        end
+                        PY_SA_MAP: begin
+                            if (!a_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if (view_kind(a_tag_r, a_val_r) > 3'd1)
+                                set_trap(PY_TRAP_TYPE);
+                            else if (view_nchars(a_tag_r, a_val_r) == 32'd0)
+                                set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                            else if ((a_tag_r == PY_TAG_LONG_STR) &&
+                                     (var_r == PY_SA_MAP_UPPER) &&
+                                     ((pycore_stracc_flags(a_val_r) &
+                                       PYCORE_STRACC_FLAG_ALL_UPPER) != 6'd0))
+                                set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                            else if ((a_tag_r == PY_TAG_LONG_STR) &&
+                                     (var_r == PY_SA_MAP_LOWER) &&
+                                     ((pycore_stracc_flags(a_val_r) &
+                                       PYCORE_STRACC_FLAG_ALL_LOWER) != 6'd0))
+                                set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                            else begin
+                                pos_r <= 32'd0;
+                                map_changed_r <= 1'b0;
+                                map_measuring_r <= 1'b1;
+                                map_expand_r <= 1'b0;
+                                map_prev_cased_r <= 1'b0;
+                                map_extra_r <= 32'd0;
+                                map_kmax_r <= view_kind(a_tag_r, a_val_r);
+                                have_hay_r <= 1'b0;
+                                eng_r <= ENG_MAP;
+                                state_r <= ST_STEP;
+                            end
+                        end
+                        PY_SA_AFFIX: begin
+                            if (!a_is_str || !b_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if (view_nchars(b_tag_r, b_val_r) == 32'd0)
+                                set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                            else if ((view_nchars(b_tag_r, b_val_r) >
+                                      view_nchars(a_tag_r, a_val_r)) ||
+                                     (view_kind(b_tag_r, b_val_r) >
+                                      view_kind(a_tag_r, a_val_r)))
+                                set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                            else begin
+                                pos_r <= 32'd0;
+                                match_i_r <= 32'd0;
+                                have_hay_r <= 1'b0;
+                                nlen_r <= view_nchars(b_tag_r, b_val_r);
+                                if (var_r == PY_SA_AFFIX_SUFFIX)
+                                    pos_r <= view_nchars(a_tag_r, a_val_r) -
+                                             view_nchars(b_tag_r, b_val_r);
+                                eng_r <= ENG_AFFIX;
+                                state_r <= ST_STEP;
+                            end
+                        end
+                        PY_SA_ZFILL: begin
+                            if (!a_is_str || !b_is_int)
+                                set_trap(PY_TRAP_TYPE);
+                            else begin
+                                s64 = pycore_stracc_int64(b_val_r);
+                                nch = view_nchars(a_tag_r, a_val_r);
+                                if (s64 <= signed'({32'b0, nch}))
+                                    set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                                else if (nch == 32'd0) begin
+                                    pad = s64[31:0];
+                                    fill_unit_r <= 32'h30;
+                                    left_pad_r <= pad;
+                                    right_start_r <= pad;
+                                    split_r <= pad;
+                                    setup_copy(s64[31:0], 3'd1);
+                                    op_r <= PY_SA_PAD;
+                                end else begin
+                                    pad = s64[31:0] - nch;
+                                    fill_unit_r <= 32'h30;
+                                    split_r <= pad;
+                                    dst_nchars_r <= s64[31:0];
+                                    map_measuring_r <= 1'b1;
+                                    map_expand_r <= 1'b0;
+                                    eng_r <= ENG_MAP;
+                                    op_r <= PY_SA_ZFILL;
+                                    state_r <= ST_STEP;
+                                end
+                            end
+                        end
                         default: set_trap(PY_TRAP_TYPE);
                     endcase
                 end
@@ -590,6 +837,16 @@ module pycore_str_accel #(
                         ENG_SEARCH: step_search();
                         ENG_CHAR: step_char();
                         ENG_REPLACE: step_replace();
+                        ENG_JOIN: step_join();
+                        ENG_TRIM: step_trim();
+                        ENG_CLASSIFY: step_classify();
+                        ENG_MAP: begin
+                            if (op_r == PY_SA_ZFILL)
+                                step_zfill();
+                            else
+                                step_map();
+                        end
+                        ENG_AFFIX: step_affix();
                         default: set_trap(PY_TRAP_TYPE);
                     endcase
                 end
@@ -792,6 +1049,25 @@ module pycore_str_accel #(
                     sel = SRC_FILL;
                     fetch_idx = 32'd0;
                 end
+            end else if (op_r == PY_SA_ZFILL) begin
+                if (map_expand_r) begin
+                    if (out_idx_r == 32'd0) begin
+                        sel = SRC_A;
+                        fetch_idx = 32'd0;
+                    end else if (out_idx_r <= split_r) begin
+                        sel = SRC_FILL;
+                        fetch_idx = 32'd0;
+                    end else begin
+                        sel = SRC_A;
+                        fetch_idx = out_idx_r - split_r;
+                    end
+                end else if (out_idx_r < split_r) begin
+                    sel = SRC_FILL;
+                    fetch_idx = 32'd0;
+                end else begin
+                    sel = SRC_A;
+                    fetch_idx = out_idx_r - split_r;
+                end
             end else begin
                 sel = SRC_A;
                 fetch_idx = out_idx_r;
@@ -911,6 +1187,11 @@ module pycore_str_accel #(
             sval = c_val_r;
             skind = c_kind_r;
             saddr = c_addr_r;
+        end else if (sel == SRC_EL) begin
+            sshort = join_el_short_r;
+            sval = join_el_val_r;
+            skind = join_el_kind_r;
+            saddr = join_el_addr_r;
         end else begin
             sshort = b_short_r;
             sval = b_val_r;
@@ -1189,6 +1470,494 @@ module pycore_str_accel #(
                     end
                 end
             end
+        end
+    endtask
+
+    function automatic logic dest_can_take();
+        logic [31:0] byte_addr, word_addr;
+        if (dst_short_r)
+            dest_can_take = 1'b1;
+        else begin
+            byte_addr = dst_place_r + 32'd16 + (out_idx_r * {29'b0, dst_kind_r});
+            word_addr = {byte_addr[31:4], 4'b0};
+            dest_can_take = !(dst_word_dirty_r && (dst_word_addr_r != word_addr));
+        end
+    endfunction
+
+    function automatic logic [31:0] map_second_unit();
+        unique case (var_r)
+            PY_SA_MAP_UPPER, PY_SA_MAP_SWAPCASE: map_second_unit = 32'h53;
+            default: map_second_unit = 32'h73;
+        endcase
+    endfunction
+
+    task automatic map_apply(
+        input logic [31:0] u,
+        input logic [31:0] idx,
+        input logic prev_cased,
+        output logic [31:0] mu,
+        output logic expands,
+        output logic next_cased
+    );
+        logic cased;
+        cased = pycore_latin1_is_cased(u);
+        expands = 1'b0;
+        mu = u;
+        next_cased = cased;
+        unique case (var_r)
+            PY_SA_MAP_UPPER: begin
+                mu = pycore_latin1_toupper(u);
+                expands = pycore_map_expands_ss(u);
+                next_cased = prev_cased;
+            end
+            PY_SA_MAP_LOWER: begin
+                mu = pycore_latin1_tolower(u);
+                next_cased = prev_cased;
+            end
+            PY_SA_MAP_SWAPCASE: begin
+                if (pycore_latin1_is_upper(u))
+                    mu = pycore_latin1_tolower(u);
+                else if (pycore_latin1_is_lower(u)) begin
+                    mu = pycore_latin1_toupper(u);
+                    expands = pycore_map_expands_ss(u);
+                end
+                next_cased = prev_cased;
+            end
+            PY_SA_MAP_CAPITALIZE: begin
+                if (idx == 32'd0) begin
+                    mu = pycore_latin1_toupper(u);
+                    expands = pycore_map_expands_ss(u);
+                end else
+                    mu = pycore_latin1_tolower(u);
+                next_cased = prev_cased;
+            end
+            PY_SA_MAP_TITLE: begin
+                if (cased && !prev_cased) begin
+                    mu = pycore_latin1_toupper(u);
+                    expands = pycore_map_expands_ss(u);
+                end else if (cased && prev_cased)
+                    mu = pycore_latin1_tolower(u);
+                else
+                    mu = u;
+                next_cased = cased;
+            end
+            PY_SA_MAP_CASEFOLD: begin
+                mu = pycore_latin1_tocasefold(u);
+                expands = pycore_map_expands_ss(u);
+                next_cased = prev_cased;
+            end
+            default: begin
+                mu = u;
+                next_cased = prev_cased;
+            end
+        endcase
+    endtask
+
+    task automatic charset_has(
+        input logic [31:0] unit,
+        output logic done,
+        output logic hit
+    );
+        logic got;
+        logic [31:0] cu;
+        done = 1'b0;
+        hit = 1'b0;
+        if (!trim_has_cs_r) begin
+            done = 1'b1;
+            hit = pycore_is_unicode_space(unit);
+        end else if (nlen_r == 32'd0) begin
+            done = 1'b1;
+            hit = 1'b0;
+        end else begin
+            fetch_unit_ab(SRC_B, match_i_r, got, cu);
+            if (got) begin
+                if (cu == unit) begin
+                    done = 1'b1;
+                    hit = 1'b1;
+                    match_i_r <= 32'd0;
+                end else if (match_i_r + 32'd1 >= nlen_r) begin
+                    done = 1'b1;
+                    hit = 1'b0;
+                    match_i_r <= 32'd0;
+                end else
+                    match_i_r <= match_i_r + 32'd1;
+            end
+        end
+    endtask
+
+    task automatic join_latch_el(input logic [3:0] tag, input logic [127:0] val);
+        join_el_tag_r <= tag;
+        join_el_val_r <= val;
+        join_el_nchars_r <= view_nchars(tag, val);
+        join_el_kind_r <= view_kind(tag, val);
+        join_el_addr_r <= pycore_stracc_addr(val);
+        join_el_short_r <= (tag == PY_TAG_SHORT_STR);
+    endtask
+
+    task automatic step_join();
+        logic [31:0] n, nout, taddr, vaddr, fetch_idx, el_len, period, group, off;
+        logic [2:0] kmax;
+        logic [3:0] etag;
+        logic got;
+        logic [31:0] unit;
+        n = join_n_r;
+        unique case (join_phase_r)
+            JP_HDR: begin
+                n = pycore_list_length(src_word_r)[31:0];
+                join_n_r <= n;
+                if (n == 32'd0)
+                    set_res(pycore_make_short_str_entry(4'd0, 120'd0), heap_ptr_r);
+                else begin
+                    join_phase_r <= JP_OBITEM;
+                    issue_read(pycore_list_obitem_addr(join_obj_r));
+                end
+            end
+            JP_OBITEM: begin
+                join_buf_r <= pycore_list_obitem(src_word_r)[31:0];
+                join_i_r <= 32'd0;
+                join_sum_r <= 32'd0;
+                join_kmax_r <= a_kind_r;
+                join_phase_r <= JP_NEED_TAG;
+            end
+            JP_NEED_TAG: begin
+                if (join_is_list_r)
+                    taddr = pycore_list_tag_addr(join_buf_r, join_i_r);
+                else
+                    taddr = pycore_tuple_tag_addr(join_buf_r, join_i_r);
+                join_phase_r <= JP_GOT_TAG;
+                issue_read(taddr);
+            end
+            JP_GOT_TAG: begin
+                join_el_tag_r <= src_word_r[3:0];
+                if (join_is_list_r)
+                    vaddr = pycore_list_val_addr(join_buf_r, join_i_r);
+                else
+                    vaddr = pycore_tuple_val_addr(join_buf_r, join_i_r);
+                join_phase_r <= JP_GOT_VAL;
+                issue_read(vaddr);
+            end
+            JP_GOT_VAL: begin
+                etag = join_el_tag_r;
+                join_latch_el(etag, src_word_r);
+                if ((etag != PY_TAG_SHORT_STR) && (etag != PY_TAG_LONG_STR))
+                    set_trap(PY_TRAP_TYPE);
+                else if ((join_n_r == 32'd1) && (join_i_r == 32'd0))
+                    set_res(cmd_entry(etag, src_word_r), heap_ptr_r);
+                else begin
+                    join_sum_r <= join_sum_r + view_nchars(etag, src_word_r);
+                    kmax = (join_kmax_r > view_kind(etag, src_word_r))
+                         ? join_kmax_r : view_kind(etag, src_word_r);
+                    join_kmax_r <= kmax;
+                    if (join_i_r + 32'd1 == join_n_r) begin
+                        nout = join_sum_r + view_nchars(etag, src_word_r)
+                             + (join_n_r - 32'd1) * a_nchars_r;
+                        join_i_r <= 32'd0;
+                        join_fill_sep_r <= 1'b0;
+                        join_base_r <= 32'd0;
+                        join_phase_r <= JP_FILL_NEED_TAG;
+                        setup_copy(nout, kmax);
+                        eng_r <= ENG_JOIN;
+                    end else begin
+                        join_i_r <= join_i_r + 32'd1;
+                        join_phase_r <= JP_NEED_TAG;
+                    end
+                end
+            end
+            JP_FILL_NEED_TAG: begin
+                if (join_is_list_r)
+                    taddr = pycore_list_tag_addr(join_buf_r, join_i_r);
+                else
+                    taddr = pycore_tuple_tag_addr(join_buf_r, join_i_r);
+                join_phase_r <= JP_FILL_GOT_TAG;
+                issue_read(taddr);
+            end
+            JP_FILL_GOT_TAG: begin
+                join_el_tag_r <= src_word_r[3:0];
+                if (join_is_list_r)
+                    vaddr = pycore_list_val_addr(join_buf_r, join_i_r);
+                else
+                    vaddr = pycore_tuple_val_addr(join_buf_r, join_i_r);
+                join_phase_r <= JP_FILL_GOT_VAL;
+                issue_read(vaddr);
+            end
+            JP_FILL_GOT_VAL: begin
+                join_latch_el(join_el_tag_r, src_word_r);
+                join_fill_sep_r <= 1'b0;
+                join_base_r <= out_idx_r;
+                join_phase_r <= JP_FILL_COPY;
+            end
+            JP_FILL_COPY: begin
+                if (out_idx_r >= dst_nchars_r)
+                    finish_copy();
+                else begin
+                    el_len = join_fill_sep_r ? a_nchars_r : join_el_nchars_r;
+                    fetch_idx = out_idx_r - join_base_r;
+                    if (fetch_idx >= el_len) begin
+                        if (join_fill_sep_r) begin
+                            join_fill_sep_r <= 1'b0;
+                            join_i_r <= join_i_r + 32'd1;
+                            join_base_r <= out_idx_r;
+                            join_phase_r <= JP_FILL_NEED_TAG;
+                        end else if (join_i_r + 32'd1 == join_n_r)
+                            finish_copy();
+                        else begin
+                            join_fill_sep_r <= 1'b1;
+                            join_base_r <= out_idx_r;
+                        end
+                    end else begin
+                        if (join_fill_sep_r)
+                            fetch_unit_ab(SRC_A, fetch_idx, got, unit);
+                        else
+                            fetch_unit_ab(SRC_EL, fetch_idx, got, unit);
+                        if (got)
+                            consume_unit(unit);
+                    end
+                end
+            end
+            JP_STR_FILL: begin
+                if (out_idx_r >= dst_nchars_r)
+                    finish_copy();
+                else begin
+                    if (a_nchars_r == 32'd0)
+                        fetch_unit_ab(SRC_B, out_idx_r, got, unit);
+                    else begin
+                        period = 32'd1 + a_nchars_r;
+                        group = out_idx_r / period;
+                        off = out_idx_r % period;
+                        if (off == 32'd0)
+                            fetch_unit_ab(SRC_B, group, got, unit);
+                        else
+                            fetch_unit_ab(SRC_A, off - 32'd1, got, unit);
+                    end
+                    if (got)
+                        consume_unit(unit);
+                end
+            end
+            default: set_trap(PY_TRAP_TYPE);
+        endcase
+    endtask
+
+    task automatic finish_trim_range(input logic [31:0] lo, input logic [31:0] hi);
+        logic [31:0] nout;
+        if ((lo == 32'd0) && (hi == a_nchars_r))
+            set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+        else if (lo >= hi)
+            set_res(pycore_make_short_str_entry(4'd0, 120'd0), heap_ptr_r);
+        else begin
+            nout = hi - lo;
+            src_idx_r <= lo;
+            op_r <= PY_SA_SLICE;
+            setup_copy(nout, a_kind_r);
+        end
+    endtask
+
+    task automatic step_trim();
+        logic got, done, hit;
+        logic [31:0] unit;
+        if (!trim_left_done_r) begin
+            if (pos_r >= a_nchars_r)
+                finish_trim_range(a_nchars_r, a_nchars_r);
+            else begin
+                fetch_unit_ab(SRC_A, pos_r, got, unit);
+                if (got) begin
+                    charset_has(unit, done, hit);
+                    if (done) begin
+                        if (hit)
+                            pos_r <= pos_r + 32'd1;
+                        else if (var_r == PY_SA_TRIM_LEFT)
+                            finish_trim_range(pos_r, a_nchars_r);
+                        else begin
+                            trim_lo_r <= pos_r;
+                            trim_left_done_r <= 1'b1;
+                            match_i_r <= 32'd0;
+                        end
+                    end
+                end
+            end
+        end else if (trim_hi_r <= trim_lo_r)
+            finish_trim_range(trim_lo_r, trim_hi_r);
+        else begin
+            fetch_unit_ab(SRC_A, trim_hi_r - 32'd1, got, unit);
+            if (got) begin
+                charset_has(unit, done, hit);
+                if (done) begin
+                    if (hit)
+                        trim_hi_r <= trim_hi_r - 32'd1;
+                    else
+                        finish_trim_range(trim_lo_r, trim_hi_r);
+                end
+            end
+        end
+    endtask
+
+    task automatic step_classify();
+        logic got, pred, cased;
+        logic [31:0] unit;
+        if (pos_r >= a_nchars_r) begin
+            unique case (var_r)
+                PY_SA_IS_LOWER, PY_SA_IS_UPPER:
+                    set_res(pycore_make_entry(PY_TAG_BOOL,
+                        {127'b0, (cls_ok_r && cls_saw_cased_r)}), heap_ptr_r);
+                PY_SA_IS_TITLE:
+                    set_res(pycore_make_entry(PY_TAG_BOOL,
+                        {127'b0, (cls_title_ok_r && cls_saw_cased_r)}),
+                        heap_ptr_r);
+                default:
+                    set_res(pycore_make_entry(PY_TAG_BOOL, {127'b0, cls_ok_r}),
+                            heap_ptr_r);
+            endcase
+        end else begin
+            fetch_unit_ab(SRC_A, pos_r, got, unit);
+            if (got) begin
+                cased = pycore_latin1_is_cased(unit);
+                pred = 1'b1;
+                unique case (var_r)
+                    PY_SA_IS_ALNUM: pred = pycore_latin1_is_alnum(unit);
+                    PY_SA_IS_ALPHA: pred = pycore_latin1_is_alpha(unit);
+                    PY_SA_IS_ASCII: pred = (unit <= 32'h7F);
+                    PY_SA_IS_DIGIT: pred = pycore_latin1_is_digit(unit);
+                    PY_SA_IS_SPACE: pred = pycore_is_unicode_space(unit);
+                    PY_SA_IS_PRINTABLE: pred = pycore_latin1_is_printable(unit);
+                    PY_SA_IS_DECIMAL: pred = pycore_latin1_is_decimal(unit);
+                    PY_SA_IS_NUMERIC: pred = pycore_latin1_is_numeric(unit);
+                    PY_SA_IS_LOWER: begin
+                        if (pycore_latin1_is_upper(unit))
+                            pred = 1'b0;
+                        if (pycore_latin1_is_lower(unit))
+                            cls_saw_cased_r <= 1'b1;
+                    end
+                    PY_SA_IS_UPPER: begin
+                        if (pycore_latin1_is_lower(unit))
+                            pred = 1'b0;
+                        if (pycore_latin1_is_upper(unit))
+                            cls_saw_cased_r <= 1'b1;
+                    end
+                    PY_SA_IS_TITLE: begin
+                        if (pycore_latin1_is_upper(unit)) begin
+                            if (cls_prev_cased_r)
+                                cls_title_ok_r <= 1'b0;
+                            cls_saw_cased_r <= 1'b1;
+                            cls_prev_cased_r <= 1'b1;
+                        end else if (pycore_latin1_is_lower(unit)) begin
+                            if (!cls_prev_cased_r)
+                                cls_title_ok_r <= 1'b0;
+                            cls_saw_cased_r <= 1'b1;
+                            cls_prev_cased_r <= 1'b1;
+                        end else
+                            cls_prev_cased_r <= 1'b0;
+                    end
+                    default: pred = 1'b1;
+                endcase
+                if (!pred)
+                    cls_ok_r <= 1'b0;
+                pos_r <= pos_r + 32'd1;
+            end
+        end
+    endtask
+
+    task automatic step_map();
+        logic got, expands, next_cased;
+        logic [31:0] unit, mu;
+        logic [2:0] k;
+        logic [31:0] nout;
+        if (map_measuring_r) begin
+            if (pos_r >= a_nchars_r) begin
+                if (!map_changed_r && (map_extra_r == 32'd0) &&
+                    (map_kmax_r == a_kind_r))
+                    set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                else begin
+                    nout = a_nchars_r + map_extra_r;
+                    map_measuring_r <= 1'b0;
+                    map_expand_r <= 1'b0;
+                    map_prev_cased_r <= 1'b0;
+                    pos_r <= 32'd0;
+                    setup_copy(nout, map_kmax_r);
+                    eng_r <= ENG_MAP;
+                end
+            end else begin
+                fetch_unit_ab(SRC_A, pos_r, got, unit);
+                if (got) begin
+                    map_apply(unit, pos_r, map_prev_cased_r, mu, expands, next_cased);
+                    if ((mu != unit) || expands)
+                        map_changed_r <= 1'b1;
+                    k = pycore_stracc_kind_of_unit(mu);
+                    if (k > map_kmax_r)
+                        map_kmax_r <= k;
+                    if (expands)
+                        map_extra_r <= map_extra_r + 32'd1;
+                    map_prev_cased_r <= next_cased;
+                    pos_r <= pos_r + 32'd1;
+                end
+            end
+        end else if (out_idx_r >= dst_nchars_r)
+            finish_copy();
+        else if (!dest_can_take())
+            issue_write(dst_word_addr_r, dst_word_r, MEM_WR_DST);
+        else if (map_expand_r) begin
+            consume_unit(map_second_unit());
+            map_expand_r <= 1'b0;
+            pos_r <= pos_r + 32'd1;
+        end else begin
+            fetch_unit_ab(SRC_A, pos_r, got, unit);
+            if (got) begin
+                map_apply(unit, pos_r, map_prev_cased_r, mu, expands, next_cased);
+                consume_unit(mu);
+                map_prev_cased_r <= next_cased;
+                if (expands)
+                    map_expand_r <= 1'b1;
+                else
+                    pos_r <= pos_r + 32'd1;
+            end
+        end
+    endtask
+
+    task automatic step_affix();
+        logic got;
+        logic [31:0] unit;
+        logic [31:0] nout, start_u;
+        if (match_i_r >= nlen_r) begin
+            if (var_r == PY_SA_AFFIX_PREFIX)
+                start_u = nlen_r;
+            else
+                start_u = 32'd0;
+            nout = a_nchars_r - nlen_r;
+            if (nout == 32'd0)
+                set_res(pycore_make_short_str_entry(4'd0, 120'd0), heap_ptr_r);
+            else begin
+                src_idx_r <= start_u;
+                op_r <= PY_SA_SLICE;
+                setup_copy(nout, a_kind_r);
+            end
+        end else if (!have_hay_r) begin
+            fetch_unit_ab(SRC_A, pos_r + match_i_r, got, unit);
+            if (got) begin
+                hay_unit_r <= unit;
+                have_hay_r <= 1'b1;
+            end
+        end else begin
+            fetch_unit_ab(SRC_B, match_i_r, got, unit);
+            if (got) begin
+                if (hay_unit_r != unit)
+                    set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                else begin
+                    have_hay_r <= 1'b0;
+                    match_i_r <= match_i_r + 32'd1;
+                end
+            end
+        end
+    endtask
+
+    task automatic step_zfill();
+        logic got;
+        logic [31:0] unit, nout;
+        fetch_unit_ab(SRC_A, 32'd0, got, unit);
+        if (got) begin
+            map_expand_r <= (unit == 32'h2B) || (unit == 32'h2D);
+            nout = dst_nchars_r;
+            fill_unit_r <= 32'h30;
+            setup_copy(nout, a_kind_r);
+            op_r <= PY_SA_ZFILL;
+            eng_r <= ENG_COPY;
         end
     endtask
 endmodule
