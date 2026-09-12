@@ -42,6 +42,11 @@ module pycore_ram #(
     input  logic [DATA_WIDTH/8-1:0] wstrb_i,
     input  logic [ADDR_WIDTH-1:0] addr_i,
     input  logic [DATA_WIDTH-1:0] wdata_i,
+    // Whole line for `line_i` writes. Captured on req; indexed with this
+    // module's beat_r. Do not sample live `wdata_i` across a line burst —
+    // the producer advances its beat on `ack_o`, which is one cycle after
+    // this module has already performed the next beat's write.
+    input  logic [LINE_BYTES*8-1:0] wline_i,
     output logic                  ack_o,
     output logic                  last_o,
     output logic [DATA_WIDTH-1:0] rdata_o,
@@ -69,6 +74,7 @@ module pycore_ram #(
     logic [DATA_WIDTH/8-1:0] cap_wstrb_r;
     logic [ADDR_WIDTH-1:0]  cap_addr_r;
     logic [DATA_WIDTH-1:0]  cap_wdata_r;
+    logic [LINE_BYTES*8-1:0] cap_wline_r;
     logic [BEAT_W-1:0]      beat_r;
     int                     wait_r;
     logic                   ack_r;
@@ -90,6 +96,13 @@ module pycore_ram #(
     );
         beat_addr = {base[ADDR_WIDTH-1:$clog2(LINE_BYTES)], {$clog2(LINE_BYTES){1'b0}}}
                   + (ADDR_WIDTH'(beat) << BYTE_SHIFT);
+    endfunction
+
+    function automatic logic [DATA_WIDTH-1:0] line_word(
+        input logic [LINE_BYTES*8-1:0] line,
+        input logic [BEAT_W-1:0] beat
+    );
+        line_word = line[beat*DATA_WIDTH +: DATA_WIDTH];
     endfunction
 
     // Index/fault/rdata are module wires, not function-local NBA RHS.
@@ -123,8 +136,13 @@ module pycore_ram #(
     wire [DATA_WIDTH-1:0] cap_rdata = cap_is_code
         ? ((cap_code_idx < CODE_WORDS) ? code_arr[cap_code_idx] : '0)
         : ((cap_data_idx < DATA_WORDS) ? data_mem[cap_data_idx] : '0);
-    // Line bursts change wdata each beat; word writes use the captured data.
-    wire [DATA_WIDTH-1:0] cap_write_data = cap_line_r ? wdata_i : cap_wdata_r;
+    // Line bursts use the captured whole line indexed by this module's
+    // beat_r. Word writes use the captured word.
+    wire [DATA_WIDTH-1:0] idle_write_data = line_i ? line_word(wline_i, '0)
+                                                   : wdata_i;
+    wire [DATA_WIDTH-1:0] cap_write_data = cap_line_r
+        ? line_word(cap_wline_r, beat_r)
+        : cap_wdata_r;
 
     function automatic logic [DATA_WIDTH-1:0] merge_strb(
         input logic [DATA_WIDTH-1:0] old_w,
@@ -205,6 +223,7 @@ module pycore_ram #(
             cap_wstrb_r <= '0;
             cap_addr_r  <= '0;
             cap_wdata_r <= '0;
+            cap_wline_r <= '0;
             beat_r      <= '0;
             wait_r      <= 0;
             ack_r       <= 1'b0;
@@ -223,6 +242,7 @@ module pycore_ram #(
                         cap_wstrb_r <= wstrb_i;
                         cap_addr_r  <= addr_i;
                         cap_wdata_r <= wdata_i;
+                        cap_wline_r <= wline_i;
                         beat_r      <= '0;
                         if (t_first_eff() <= 1) begin
                             last_beat = !line_i;
@@ -232,11 +252,11 @@ module pycore_ram #(
                             if (!idle_fault && we_i) begin
                                 if (idle_is_code)
                                     code_arr[idle_code_idx] <=
-                                        merge_strb(code_arr[idle_code_idx], wdata_i,
+                                        merge_strb(code_arr[idle_code_idx], idle_write_data,
                                                    line_i ? {DATA_WIDTH/8{1'b1}} : wstrb_i);
                                 else
                                     data_mem[idle_data_idx] <=
-                                        merge_strb(data_mem[idle_data_idx], wdata_i,
+                                        merge_strb(data_mem[idle_data_idx], idle_write_data,
                                                    line_i ? {DATA_WIDTH/8{1'b1}} : wstrb_i);
                             end
                             rdata_r <= idle_fault ? '0 : idle_rdata;

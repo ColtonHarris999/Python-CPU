@@ -82,6 +82,8 @@ module pycore_core #(
     input  logic                          imem_ack_i,
     input  logic [IMEM_DATA_W-1:0]        imem_rdata_i,
     input  logic                          imem_fault_i,
+    input  logic [PYCORE_LINE_BYTES*8-1:0] imem_line_i,
+    input  logic                          imem_line_valid_i,
     // dmem master
     output logic                          dmem_req_o,
     output logic                          dmem_we_o,
@@ -200,6 +202,11 @@ module pycore_core #(
     logic [RF_AW-1:0] return_wb_addr_r;
 
     // Fetch handshake bookkeeping.
+    // S_WB (and CALL/RETURN) pulse fetch_skip_r so the instruction still
+    // sitting on fetch's outputs is not re-latched when we re-enter S_FETCH.
+    // That skip lasts one unstalled S_FETCH cycle. It must drop even if
+    // instr_valid stays high: the P4 line buffer can replace the slot on
+    // that same cycle, and waiting for valid to go low would skip it.
     logic                          fetch_skip_r;
     logic                          redirect_pending_r;
     logic [31:0]                   redirect_tgt_r;
@@ -563,10 +570,14 @@ module pycore_core #(
         .imem_wdata_o(imem_wdata_o),
         .imem_ack_i(imem_ack_i),
         .imem_rdata_i(imem_rdata_i),
+        .imem_line_i(imem_line_i),
+        .imem_line_valid_i(imem_line_valid_i),
         .instr_valid_o(if_instr_valid),
         .opcode_o(if_opcode),
         .arg_o(if_arg),
-        .pc_o(if_pc)
+        .pc_o(if_pc),
+        .mem_req_count_o(),
+        .buf_hit_count_o()
     );
 
     // ---------------------------------------------------------------------
@@ -2021,7 +2032,7 @@ module pycore_core #(
                         cur_arg_r          <= if_arg;
                         cur_pc_r           <= if_pc;
                         // state_next = S_DECODE (from always_comb)
-                    end else if (!if_instr_valid) begin
+                    end else begin
                         fetch_skip_r <= 1'b0;
                     end
                 end

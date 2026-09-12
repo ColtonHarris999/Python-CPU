@@ -7,6 +7,14 @@
 //   * `fault_o` accompanies `ack_o`.
 //   * At most one outstanding request per master port.
 //
+// The two faces speak different protocols on purpose: the CPU port is the
+// §0 word req/ack used by every master; the down port adds `down_line_o` /
+// `down_last_i` / `down_wline_o` for L2→RAM line bursts. L1 instantiations
+// set DOWN_LINE=0 and issue one word at a time into the L2 CPU port (no
+// `line_i` there). `rdata_line_o` is a sideband on the CPU port: the full
+// line of the responding way, valid with `ack_o`. Fetch captures it into
+// the P4b line register. L1D/L2 leave it unconnected.
+//
 // `cache_en_i=0` is a combinational pass-through to `down_*` (no extra
 // cycle from this module). That is the bisect switch and the transparency
 // test's control arm — keep it working.
@@ -18,7 +26,12 @@ module pycore_cache #(
     parameter int    WAYS        = PYCORE_L2_WAYS,
     parameter bit    READ_ONLY   = 1'b0,
     parameter bit    WRITE_BACK  = 1'b1,
-    parameter int    HIT_CYCLES  = 1
+    parameter int    HIT_CYCLES  = 1,
+    // 1: down port is a 4-beat line burst (L2 → RAM). 0: each beat is a
+    // separate word request (L1D → L2, whose CPU port has no line_i).
+    parameter bit    DOWN_LINE   = 1'b1,
+    parameter logic [31:0] REGION_BASE  = 32'd0,
+    parameter logic [31:0] REGION_LIMIT = 32'd0
 ) (
     input  logic                  clk_i,
     input  logic                  rst_n_i,
@@ -32,6 +45,10 @@ module pycore_cache #(
     output logic                  ack_o,
     output logic [DATA_WIDTH-1:0] rdata_o,
     output logic                  fault_o,
+    // Full line of the responding way, valid with ack_o when cache_en_i.
+    // CACHE_EN=0 pass-through has no line; drives 0 so fetch will not fill
+    // its buffer from a single-word bypass response.
+    output logic [LINE_BYTES*8-1:0] rdata_line_o,
 
     output logic                  down_req_o,
     output logic                  down_we_o,
@@ -39,6 +56,10 @@ module pycore_cache #(
     output logic [DATA_WIDTH/8-1:0] down_wstrb_o,
     output logic [ADDR_WIDTH-1:0] down_addr_o,
     output logic [DATA_WIDTH-1:0] down_wdata_o,
+    // Whole dirty line for DOWN_LINE writeback. RAM indexes it with its
+    // own beat counter so the two FSMs cannot drift (word 0 twice / word
+    // 3 never). Master need not hold this after the captured req cycle.
+    output logic [LINE_BYTES*8-1:0] down_wline_o,
     input  logic                  down_ack_i,
     input  logic                  down_last_i,
     input  logic [DATA_WIDTH-1:0] down_rdata_i,
@@ -50,10 +71,13 @@ module pycore_cache #(
     output logic                  flush_busy_o,
     output logic                  inv_done_o,
     output logic                  flush_done_o,
+    output logic                  idle_o,
 
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] hit_count_o,
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] miss_count_o,
-    output logic [PYCORE_PERF_CNT_WIDTH-1:0] writeback_count_o
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] writeback_count_o,
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] region_hit_count_o,
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] region_miss_count_o
 );
     localparam int OFFSET_W        = $clog2(LINE_BYTES);
     localparam int SETS            = SIZE_BYTES / (LINE_BYTES * WAYS);
@@ -112,6 +136,7 @@ module pycore_cache #(
     logic                   ack_r;
     logic                   fault_r;
     logic [DATA_WIDTH-1:0]  rdata_r;
+    logic [LINE_W-1:0]      rline_r;
     logic                   down_req_r;
     logic                   down_we_r;
     logic                   down_line_r;
@@ -121,6 +146,8 @@ module pycore_cache #(
     logic [PYCORE_PERF_CNT_WIDTH-1:0] hit_count_r;
     logic [PYCORE_PERF_CNT_WIDTH-1:0] miss_count_r;
     logic [PYCORE_PERF_CNT_WIDTH-1:0] writeback_count_r;
+    logic [PYCORE_PERF_CNT_WIDTH-1:0] region_hit_count_r;
+    logic [PYCORE_PERF_CNT_WIDTH-1:0] region_miss_count_r;
     logic                   inv_done_r;
     logic                   flush_done_r;
 
@@ -234,6 +261,7 @@ module pycore_cache #(
     assign ack_o   = cache_en_i ? ack_r   : down_ack_i;
     assign rdata_o = cache_en_i ? rdata_r : down_rdata_i;
     assign fault_o = cache_en_i ? fault_r : down_fault_i;
+    assign rdata_line_o = cache_en_i ? rline_r : '0;
 
     assign down_req_o   = cache_en_i ? down_req_r : req_i;
     assign down_we_o    = cache_en_i ? down_we_r  : we_i;
@@ -247,16 +275,40 @@ module pycore_cache #(
                                ? line_word(wb_line_r, beat_r)
                                : cap_wdata_r)
                         : wdata_i;
+    assign down_wline_o = cache_en_i ? wb_line_r : '0;
 
     assign hit_count_o       = hit_count_r;
     assign miss_count_o      = miss_count_r;
     assign writeback_count_o = writeback_count_r;
+    assign region_hit_count_o  = region_hit_count_r;
+    assign region_miss_count_o = region_miss_count_r;
+    assign idle_o            = (state_r == ST_IDLE);
     assign inv_busy_o        = (state_r == ST_INV);
     assign flush_busy_o      = (state_r == ST_FLUSH_SCAN) ||
                                (state_r == ST_FLUSH_WB_ISSUE) ||
                                (state_r == ST_FLUSH_WB_WAIT);
     assign inv_done_o        = inv_done_r;
     assign flush_done_o      = flush_done_r;
+
+    // Flush/inv take priority over req in ST_IDLE, so a same-cycle request
+    // is dropped (no ack). The handoff sequencer waits for idle_o before
+    // pulsing flush/inv; this is the backstop if that gate ever slips.
+    always_ff @(posedge clk_i) begin
+        if (rst_n_i && cache_en_i && req_i &&
+            (flush_all_i || inv_all_i || flush_busy_o || inv_busy_o))
+            $error("%m: req_i while flush/inv (request would be dropped)");
+    end
+
+    wire req_in_region = (REGION_LIMIT != 32'd0) &&
+                         (addr_i >= ADDR_WIDTH'(REGION_BASE)) &&
+                         (addr_i <  ADDR_WIDTH'(REGION_LIMIT));
+    wire down_beat_last = DOWN_LINE ? down_last_i
+                                    : (beat_r == BEAT_W'(BEATS - 1));
+    wire [ADDR_WIDTH-1:0] down_fill_addr =
+        line_align(cap_addr_r) + (DOWN_LINE ? '0
+                                            : (ADDR_WIDTH'(beat_r) << WORD_SHIFT));
+    wire [ADDR_WIDTH-1:0] down_wb_addr =
+        wb_addr_r + (DOWN_LINE ? '0 : (ADDR_WIDTH'(beat_r) << WORD_SHIFT));
 
     int hit_cycles_eff;
     always_comb begin
@@ -281,6 +333,7 @@ module pycore_cache #(
             ack_r       <= 1'b0;
             fault_r     <= 1'b0;
             rdata_r     <= '0;
+            rline_r     <= '0;
             down_req_r  <= 1'b0;
             down_we_r   <= 1'b0;
             down_line_r <= 1'b0;
@@ -289,6 +342,8 @@ module pycore_cache #(
             hit_count_r <= '0;
             miss_count_r <= '0;
             writeback_count_r <= '0;
+            region_hit_count_r  <= '0;
+            region_miss_count_r <= '0;
             inv_done_r  <= 1'b0;
             flush_done_r <= 1'b0;
             for (int s = 0; s < SETS; s++) begin
@@ -310,6 +365,10 @@ module pycore_cache #(
 
             if (!cache_en_i) begin
                 state_r <= ST_IDLE;
+                if (flush_all_i)
+                    flush_done_r <= 1'b1;
+                if (inv_all_i)
+                    inv_done_r <= 1'b1;
             end else unique case (state_r)
                 ST_IDLE: begin
                     if (inv_all_i) begin
@@ -331,6 +390,8 @@ module pycore_cache #(
                             cap_way_r          <= comb_hit_way;
                             ages_q[req_set]    <= lru_ages_next;
                             hit_count_r        <= hit_count_r + 1'b1;
+                            if (req_in_region)
+                                region_hit_count_r <= region_hit_count_r + 1'b1;
                             if (we_i) begin
                                 data_q[req_set][comb_hit_way] <=
                                     merge_word(data_q[req_set][comb_hit_way],
@@ -341,12 +402,15 @@ module pycore_cache #(
                                 ack_r   <= 1'b1;
                                 rdata_r <= line_word(data_q[req_set][comb_hit_way],
                                                      req_word);
+                                rline_r <= data_q[req_set][comb_hit_way];
                             end else begin
                                 hit_wait_r <= hit_cycles_eff - 1;
                                 state_r    <= ST_HIT_WAIT;
                             end
                         end else begin
                             miss_count_r <= miss_count_r + 1'b1;
+                            if (req_in_region)
+                                region_miss_count_r <= region_miss_count_r + 1'b1;
                             cap_way_r    <= victim_way;
                             if (we_i && !WRITE_BACK) begin
                                 state_r <= ST_WT_ISSUE;
@@ -376,6 +440,7 @@ module pycore_cache #(
                     ack_r   <= 1'b1;
                     fault_r <= 1'b0;
                     rdata_r <= line_word(data_q[cap_set][cap_way_r], cap_word);
+                    rline_r <= data_q[cap_set][cap_way_r];
                     state_r <= ST_IDLE;
                 end
                 ST_FAULT: begin
@@ -387,33 +452,34 @@ module pycore_cache #(
                 ST_WB_ISSUE: begin
                     down_req_r   <= 1'b1;
                     down_we_r    <= 1'b1;
-                    down_line_r  <= 1'b1;
+                    down_line_r  <= DOWN_LINE;
                     down_wstrb_r <= {DATA_WIDTH/8{1'b1}};
-                    down_addr_r  <= wb_addr_r;
-                    beat_r       <= '0;
-                    writeback_count_r <= writeback_count_r + 1'b1;
+                    down_addr_r  <= down_wb_addr;
+                    if (beat_r == '0)
+                        writeback_count_r <= writeback_count_r + 1'b1;
                     state_r      <= ST_WB_WAIT;
                 end
                 ST_WB_WAIT: begin
                     if (down_ack_i) begin
                         if (down_fault_i) begin
                             state_r <= ST_FAULT;
-                        end else if (down_last_i) begin
+                        end else if (down_beat_last) begin
                             beat_r     <= '0;
                             cap_line_r <= '0;
                             state_r    <= ST_FILL_ISSUE;
-                        end else
+                        end else begin
                             beat_r <= beat_r + BEAT_W'(1);
+                            if (!DOWN_LINE)
+                                state_r <= ST_WB_ISSUE;
+                        end
                     end
                 end
                 ST_FILL_ISSUE: begin
                     down_req_r   <= 1'b1;
                     down_we_r    <= 1'b0;
-                    down_line_r  <= 1'b1;
+                    down_line_r  <= DOWN_LINE;
                     down_wstrb_r <= '0;
-                    down_addr_r  <= line_align(cap_addr_r);
-                    beat_r       <= '0;
-                    cap_line_r   <= '0;
+                    down_addr_r  <= down_fill_addr;
                     state_r      <= ST_FILL_WAIT;
                 end
                 ST_FILL_WAIT: begin
@@ -422,7 +488,7 @@ module pycore_cache #(
                             state_r <= ST_FAULT;
                         end else begin
                             cap_line_r[beat_r*DATA_WIDTH +: DATA_WIDTH] <= down_rdata_i;
-                            if (down_last_i) begin
+                            if (down_beat_last) begin
                                 logic [LINE_W-1:0] installed;
                                 installed = cap_line_r;
                                 installed[beat_r*DATA_WIDTH +: DATA_WIDTH] = down_rdata_i;
@@ -437,9 +503,13 @@ module pycore_cache #(
                                 cap_line_r                  <= installed;
                                 ack_r                       <= 1'b1;
                                 rdata_r <= line_word(installed, cap_word);
+                                rline_r <= installed;
                                 state_r                     <= ST_IDLE;
-                            end else
+                            end else begin
                                 beat_r <= beat_r + BEAT_W'(1);
+                                if (!DOWN_LINE)
+                                    state_r <= ST_FILL_ISSUE;
+                            end
                         end
                     end
                 end
@@ -488,16 +558,20 @@ module pycore_cache #(
                 ST_FLUSH_WB_ISSUE: begin
                     down_req_r   <= 1'b1;
                     down_we_r    <= 1'b1;
-                    down_line_r  <= 1'b1;
+                    down_line_r  <= DOWN_LINE;
                     down_wstrb_r <= {DATA_WIDTH/8{1'b1}};
-                    down_addr_r  <= wb_addr_r;
-                    beat_r       <= '0;
-                    writeback_count_r <= writeback_count_r + 1'b1;
+                    down_addr_r  <= down_wb_addr;
+                    if (beat_r == '0)
+                        writeback_count_r <= writeback_count_r + 1'b1;
                     state_r      <= ST_FLUSH_WB_WAIT;
                 end
                 ST_FLUSH_WB_WAIT: begin
                     if (down_ack_i) begin
-                        if (down_last_i || down_fault_i) begin
+                        if (down_fault_i) begin
+                            valid_q[flush_set_r][flush_way_r] <= 1'b0;
+                            dirty_q[flush_set_r][flush_way_r] <= 1'b0;
+                            state_r <= ST_FLUSH_SCAN;
+                        end else if (down_beat_last) begin
                             valid_q[flush_set_r][flush_way_r] <= 1'b0;
                             dirty_q[flush_set_r][flush_way_r] <= 1'b0;
                             state_r <= ST_FLUSH_SCAN;
@@ -513,11 +587,19 @@ module pycore_cache #(
                                 end
                             end else
                                 flush_way_r <= flush_way_r + WAY_W'(1);
-                        end else
+                        end else begin
                             beat_r <= beat_r + BEAT_W'(1);
+                            if (!DOWN_LINE)
+                                state_r <= ST_FLUSH_WB_ISSUE;
+                        end
                     end
                 end
                 ST_INV: begin
+                    // Deliberate area/timing trade for a research core:
+                    // clear every valid/dirty flop in one cycle (L2: 256
+                    // sets × 8 ways = 2048). Do not turn this into a
+                    // multi-cycle walk without re-checking the handoff
+                    // sequencer's inv_done pulse.
                     for (int s = 0; s < SETS; s++) begin
                         for (int w = 0; w < WAYS; w++) begin
                             valid_q[s][w] <= 1'b0;

@@ -3,15 +3,16 @@
 // Two-core system top level (Phase C). pycore_system.sv remains the
 // single-core top for legacy testbenches; this module additionally
 // instantiates the excore, the trap mailbox, and the memory-ownership
-// grant mux described in pycore/docs/architecture.md.
+// grant described in pycore/docs/architecture.md.
 //
-// Memory ownership: pycore and the excore share one dmem bank
-// (pycore_mem_bank) through a registered grant mux (`mem_owner_r`),
-// never through cycle-level arbitration — pycore is frozen in
-// S_TRAP_MARSHAL/S_TRAP_WAIT while EXCORE owns memory, and the excore's
-// firmware is parked (polling MB_STATUS) while PYCORE owns it, so the two
-// masters are never both active. A $fatal check below still verifies the
-// non-owner never raises req, as a simulation-time correctness backstop.
+// Memory ownership: pycore's dmem master goes through L1D; the excore
+// slot port attaches at L2 (memory_system_plan.md §4), never at L1D.
+// `mem_owner_r` is still a registered grant, never cycle-level
+// arbitration — pycore is frozen in S_TRAP_MARSHAL/S_TRAP_WAIT while
+// EXCORE owns memory. On trap_req the L1D is writeback-invalidated
+// before the mailbox handshake (and the owner flip); on trap_res the
+// L1D is invalidated before the result is presented to pycore. A
+// $fatal check below still verifies the non-owner never raises req.
 //
 // Instruction memories are NOT shared: pycore's imem and the excore's
 // private firmware imem are each their own array (Harvard per core).
@@ -51,20 +52,24 @@ module pycore_excore_system #(
     logic                   imem_req, imem_we, imem_ack, imem_fault;
     logic [ADDR_WIDTH-1:0]  imem_addr;
     logic [IMEM_DATA_W-1:0] imem_wdata, imem_rdata;
+    logic [PYCORE_LINE_BYTES*8-1:0] imem_line;
+    logic                   imem_line_valid;
 
-    // ---- pycore's raw dmem master port (pre-grant-mux) --------------------
+    // ---- pycore's dmem master (into L1D) ----------------------------------
     logic                   core_dmem_req, core_dmem_we, core_dmem_ack, core_dmem_fault;
     logic [DMEM_DATA_W/8-1:0] core_dmem_wstrb;
     logic [ADDR_WIDTH-1:0]  core_dmem_addr;
     logic [DMEM_DATA_W-1:0] core_dmem_wdata, core_dmem_rdata;
 
-    // ---- excore's raw slot-port master (pre-grant-mux) --------------------
+    // ---- excore's slot-port master (into L2, not L1D) --------------------
     logic          sp_req, sp_we, sp_ack, sp_fault;
     logic [31:0]   sp_addr;
     logic [127:0]  sp_wdata, sp_rdata;
 
     // ---- trap_req / trap_res between pycore_core and trap_mailbox --------
-    logic          trap_req_valid, trap_req_ready;
+    logic          trap_req_valid;
+    logic          mb_trap_req_ready;
+    logic          trap_req_ready;
     logic [4:0]    trap_req_code;
     logic [31:0]   trap_req_pc;
     logic [39:0]   trap_req_instr;
@@ -72,13 +77,22 @@ module pycore_excore_system #(
     logic [2:0]    trap_req_entry_count;
     logic [PYCORE_ENTRY_WIDTH-1:0] trap_req_entries [0:MAX_TRAP_ENTRIES-1];
 
-    logic          trap_res_valid, trap_res_ready;
+    logic          mb_trap_res_valid;
+    logic          trap_res_valid;
+    logic          trap_res_ready;
     logic [3:0]    trap_res_code;
     logic [4:0]    trap_res_fatal_code;
     logic [2:0]    trap_res_pop_count;
     logic [1:0]    trap_res_push_count;
     logic [31:0]   trap_res_heap_ptr;
     logic [PYCORE_ENTRY_WIDTH-1:0] trap_res_entries [0:MAX_RES_ENTRIES-1];
+
+    // L1D handoff: mailbox does not see trap_req until flush_ok, and
+    // pycore does not see trap_res until inv_ok (memory_system_plan.md §4).
+    logic          l1d_flush_ok_r, l1d_flush_issued_r;
+    logic          l1d_inv_ok_r,   l1d_inv_issued_r;
+    logic          l1d_flush_req,  l1d_inv_req;
+    logic          l1d_flush_done, l1d_inv_done;
 
     // ---- mailbox <-> excore_mmio -------------------------------------------
     logic          mb_trap_pending;
@@ -128,6 +142,8 @@ module pycore_excore_system #(
         .imem_ack_i(imem_ack),
         .imem_rdata_i(imem_rdata),
         .imem_fault_i(imem_fault),
+        .imem_line_i(imem_line),
+        .imem_line_valid_i(imem_line_valid),
         .dmem_req_o(core_dmem_req),
         .dmem_we_o(core_dmem_we),
         .dmem_wstrb_o(core_dmem_wstrb),
@@ -220,15 +236,15 @@ module pycore_excore_system #(
     ) trap_mbox (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
-        .trap_req_valid_i(trap_req_valid),
-        .trap_req_ready_o(trap_req_ready),
+        .trap_req_valid_i(trap_req_valid && l1d_flush_ok_r),
+        .trap_req_ready_o(mb_trap_req_ready),
         .trap_req_code_i(trap_req_code),
         .trap_req_pc_i(trap_req_pc),
         .trap_req_instr_i(trap_req_instr),
         .trap_req_heap_ptr_i(trap_req_heap_ptr),
         .trap_req_entry_count_i(trap_req_entry_count),
         .trap_req_entries_i(trap_req_entries),
-        .trap_res_valid_o(trap_res_valid),
+        .trap_res_valid_o(mb_trap_res_valid),
         .trap_res_ready_i(trap_res_ready),
         .trap_res_code_o(trap_res_code),
         .trap_res_fatal_code_o(trap_res_fatal_code),
@@ -254,37 +270,70 @@ module pycore_excore_system #(
     );
 
     // =========================================================================
-    // Memory-ownership grant mux (dmem is the only shared memory).
+    // Memory ownership + L1D flush/invalidate gate
     // =========================================================================
     localparam logic OWNER_PYCORE = 1'b0;
     localparam logic OWNER_EXCORE = 1'b1;
     logic mem_owner_r;
 
-    // Owner flips to EXCORE exactly when the trap_req handshake completes
-    // (mailbox accepts the request); back to PYCORE exactly when the
-    // trap_res handshake completes (pycore acks the result).
+    // Hide mailbox ready until L1D writeback-invalidate finishes; hide
+    // mailbox trap_res until L1D invalidate finishes. Owner still flips
+    // on the (now delayed) handshakes, so the mux never grants the other
+    // master a stale L1D view.
+    assign trap_req_ready = mb_trap_req_ready && l1d_flush_ok_r;
+    assign trap_res_valid = mb_trap_res_valid && l1d_inv_ok_r;
+
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
-            mem_owner_r <= OWNER_PYCORE;
-        end else if ((mem_owner_r == OWNER_PYCORE) && trap_req_valid && trap_req_ready) begin
-            mem_owner_r <= OWNER_EXCORE;
-        end else if ((mem_owner_r == OWNER_EXCORE) && trap_res_valid && trap_res_ready) begin
-            mem_owner_r <= OWNER_PYCORE;
+            mem_owner_r         <= OWNER_PYCORE;
+            l1d_flush_ok_r      <= 1'b0;
+            l1d_flush_issued_r  <= 1'b0;
+            l1d_inv_ok_r        <= 1'b0;
+            l1d_inv_issued_r    <= 1'b0;
+            l1d_flush_req       <= 1'b0;
+            l1d_inv_req         <= 1'b0;
+        end else begin
+            l1d_flush_req <= 1'b0;
+            l1d_inv_req   <= 1'b0;
+
+            if ((mem_owner_r == OWNER_PYCORE) && trap_req_valid && trap_req_ready) begin
+                mem_owner_r    <= OWNER_EXCORE;
+                l1d_flush_ok_r <= 1'b0;
+            end else if ((mem_owner_r == OWNER_EXCORE) && trap_res_valid && trap_res_ready) begin
+                mem_owner_r  <= OWNER_PYCORE;
+                l1d_inv_ok_r <= 1'b0;
+            end
+
+            if ((mem_owner_r == OWNER_PYCORE) && trap_req_valid &&
+                !l1d_flush_ok_r && !l1d_flush_issued_r) begin
+                l1d_flush_req      <= 1'b1;
+                l1d_flush_issued_r <= 1'b1;
+            end
+            if (l1d_flush_done) begin
+                l1d_flush_ok_r     <= 1'b1;
+                l1d_flush_issued_r <= 1'b0;
+            end
+
+            if ((mem_owner_r == OWNER_EXCORE) && mb_trap_res_valid &&
+                !l1d_inv_ok_r && !l1d_inv_issued_r) begin
+                l1d_inv_req      <= 1'b1;
+                l1d_inv_issued_r <= 1'b1;
+            end
+            if (l1d_inv_done) begin
+                l1d_inv_ok_r     <= 1'b1;
+                l1d_inv_issued_r <= 1'b0;
+            end
         end
     end
 
-    logic                   dmem_req, dmem_we, dmem_ack, dmem_fault;
-    logic [DMEM_DATA_W/8-1:0] dmem_wstrb;
-    logic [ADDR_WIDTH-1:0]  dmem_addr;
-    logic [DMEM_DATA_W-1:0] dmem_wdata, dmem_rdata;
-
-    // +CACHE_EN= overrides PYCORE_CACHE_EN at sim time. Wired to L2
-    // (and later L1s) as the combinational pass-through switch.
+    // +CACHE_EN= overrides PYCORE_CACHE_EN at sim time. Wired to L1D/L2
+    // as the combinational pass-through switch.
     bit cache_en_sim /* verilator public */;
     int mem_latency_sim /* verilator public */;
     /* verilator lint_off UNUSEDSIGNAL */
     logic [PYCORE_PERF_CNT_WIDTH-1:0] l1i_hit_count, l1i_miss_count, l1i_writeback_count;
     logic [PYCORE_PERF_CNT_WIDTH-1:0] l1d_hit_count, l1d_miss_count, l1d_writeback_count;
+    logic [PYCORE_PERF_CNT_WIDTH-1:0] l1d_frame_hit_count, l1d_frame_miss_count;
     logic [PYCORE_PERF_CNT_WIDTH-1:0] l2_hit_count, l2_miss_count, l2_writeback_count;
     /* verilator lint_on UNUSEDSIGNAL */
 
@@ -296,35 +345,12 @@ module pycore_excore_system #(
         cache_en_sim = (cache_en_i != 0);
     end
 
-    assign l1i_hit_count = '0;
-    assign l1i_miss_count = '0;
     assign l1i_writeback_count = '0;
-    assign l1d_hit_count = '0;
-    assign l1d_miss_count = '0;
-    assign l1d_writeback_count = '0;
 
     initial begin
         mem_latency_sim = PYCORE_RAM_T_FIRST_CI;
         void'($value$plusargs("MEM_LATENCY=%d", mem_latency_sim));
     end
-
-    // sp_wdata_o/sp_rdata_i are fixed at 128 bits (one pycore dmem slot);
-    // DMEM_DATA_W matches PYCORE_DMEM_DATA_WIDTH (128) by default and must
-    // not be changed independently of the slot-port width.
-    assign dmem_req   = (mem_owner_r == OWNER_PYCORE) ? core_dmem_req   : sp_req;
-    assign dmem_we    = (mem_owner_r == OWNER_PYCORE) ? core_dmem_we    : sp_we;
-    assign dmem_wstrb = (mem_owner_r == OWNER_PYCORE) ? core_dmem_wstrb
-                                                      : {DMEM_DATA_W/8{1'b1}};
-    assign dmem_addr  = (mem_owner_r == OWNER_PYCORE) ? core_dmem_addr  : sp_addr;
-    assign dmem_wdata = (mem_owner_r == OWNER_PYCORE) ? core_dmem_wdata : sp_wdata;
-
-    assign core_dmem_ack   = (mem_owner_r == OWNER_PYCORE) ? dmem_ack   : 1'b0;
-    assign core_dmem_rdata = dmem_rdata;
-    assign core_dmem_fault = (mem_owner_r == OWNER_PYCORE) ? dmem_fault : 1'b0;
-
-    assign sp_ack   = (mem_owner_r == OWNER_EXCORE) ? dmem_ack   : 1'b0;
-    assign sp_rdata = dmem_rdata;
-    assign sp_fault = (mem_owner_r == OWNER_EXCORE) ? dmem_fault : 1'b0;
 
     // Simulation-time correctness backstop: the non-owner must never raise
     // req while it does not hold the grant (see the module header comment
@@ -366,14 +392,36 @@ module pycore_excore_system #(
         .imem_ack_o(imem_ack),
         .imem_rdata_o(imem_rdata),
         .imem_fault_o(imem_fault),
-        .dmem_req_i(dmem_req),
-        .dmem_we_i(dmem_we),
-        .dmem_wstrb_i(dmem_wstrb),
-        .dmem_addr_i(dmem_addr),
-        .dmem_wdata_i(dmem_wdata),
-        .dmem_ack_o(dmem_ack),
-        .dmem_rdata_o(dmem_rdata),
-        .dmem_fault_o(dmem_fault),
+        .imem_line_o(imem_line),
+        .imem_line_valid_o(imem_line_valid),
+        .dmem_req_i(core_dmem_req && (mem_owner_r == OWNER_PYCORE)),
+        .dmem_we_i(core_dmem_we),
+        .dmem_wstrb_i(core_dmem_wstrb),
+        .dmem_addr_i(core_dmem_addr),
+        .dmem_wdata_i(core_dmem_wdata),
+        .dmem_ack_o(core_dmem_ack),
+        .dmem_rdata_o(core_dmem_rdata),
+        .dmem_fault_o(core_dmem_fault),
+        .excore_req_i(sp_req && (mem_owner_r == OWNER_EXCORE)),
+        .excore_we_i(sp_we),
+        .excore_wstrb_i({DMEM_DATA_W/8{1'b1}}),
+        .excore_addr_i(sp_addr),
+        .excore_wdata_i(sp_wdata),
+        .excore_ack_o(sp_ack),
+        .excore_rdata_o(sp_rdata),
+        .excore_fault_o(sp_fault),
+        .flush_req_i(l1d_flush_req),
+        .inv_req_i(l1d_inv_req),
+        .flush_done_o(l1d_flush_done),
+        .inv_done_o(l1d_inv_done),
+        .l1d_idle_o(),
+        .l1i_hit_count_o(l1i_hit_count),
+        .l1i_miss_count_o(l1i_miss_count),
+        .l1d_hit_count_o(l1d_hit_count),
+        .l1d_miss_count_o(l1d_miss_count),
+        .l1d_writeback_count_o(l1d_writeback_count),
+        .l1d_frame_hit_count_o(l1d_frame_hit_count),
+        .l1d_frame_miss_count_o(l1d_frame_miss_count),
         .l2_hit_count_o(l2_hit_count),
         .l2_miss_count_o(l2_miss_count),
         .l2_writeback_count_o(l2_writeback_count)
