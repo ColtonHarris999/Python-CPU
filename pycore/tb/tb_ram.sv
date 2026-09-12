@@ -14,6 +14,7 @@ module tb_ram;
     logic [DATA_WIDTH/8-1:0] wstrb;
     logic [ADDR_WIDTH-1:0]   addr;
     logic [DATA_WIDTH-1:0]   wdata, rdata;
+    logic [LINE_BYTES*8-1:0] wline;
 
     pycore_ram #(
         .DATA_WIDTH(DATA_WIDTH),
@@ -38,6 +39,7 @@ module tb_ram;
         .wstrb_i(wstrb),
         .addr_i(addr),
         .wdata_i(wdata),
+        .wline_i(wline),
         .ack_o(ack),
         .last_o(last),
         .rdata_o(rdata),
@@ -74,6 +76,7 @@ module tb_ram;
         wstrb = '1;
         addr = '0;
         wdata = '0;
+        wline = '0;
         #12;
         rst_n = 1'b1;
         @(negedge clk);
@@ -124,21 +127,27 @@ module tb_ram;
         check(rdata == 128'hA1A2A3A4A5A6A7A8A9AAABACADAEAFB0, "T_FIRST=30 preserved");
 
         // Line burst write then read-back. T_FIRST=1, T_BEAT=2.
+        // Capture the whole line on req, then poison live wdata/wline so a
+        // producer that lags its beat on ack cannot "help" later beats.
         t_first = 1;
         begin
             logic [127:0] beats [0:3];
+            logic [LINE_BYTES*8-1:0] packed;
             int b;
-            beats[0] = 128'h00000000000000000000000000000000;
+            beats[0] = 128'hA0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0;
             beats[1] = 128'h01010101010101010101010101010101;
             beats[2] = 128'h02020202020202020202020202020202;
             beats[3] = 128'h03030303030303030303030303030303;
+            packed = {beats[3], beats[2], beats[1], beats[0]};
             @(negedge clk);
             req = 1'b1; we = 1'b1; line = 1'b1; addr = 32'h80;
             wdata = beats[0];
+            wline = packed;
             @(negedge clk);
             req = 1'b0;
+            wdata = '1;
+            wline = '1;
             for (b = 0; b < 4; b++) begin
-                wdata = beats[b];
                 wait_ack(lat);
                 if (b == 0)
                     check(lat == 1, $sformatf("burst first beat lat %0d", lat));
@@ -146,11 +155,12 @@ module tb_ram;
                     check(lat == 2, $sformatf("burst beat %0d lat %0d", b, lat));
                 check(last == (b == 3), $sformatf("last_o mismatch beat %0d", b));
                 if (b != 3) begin
-                    wdata = beats[b+1];
                     while (ack) @(negedge clk);
                 end
             end
             line = 1'b0; we = 1'b0;
+            wdata = '0;
+            wline = '0;
 
             @(negedge clk);
             req = 1'b1; we = 1'b0; line = 1'b1; addr = 32'h80; wdata = '0;

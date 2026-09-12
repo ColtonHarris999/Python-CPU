@@ -2046,6 +2046,9 @@ function automatic logic [31:0] pycore_dict_alloc_bytes(
     begin
         // Bytes consumed from a line-aligned heap pointer (includes the
         // 16 B pad between the 48-byte object and the order buffer).
+        // RTL grow paths use place_end(heap_ptr, n) directly; this helper
+        // is the place_end(0, n) form. pycore/tests/test_placement_mirror.py
+        // is the consumer that keeps it honest against HeapImageBuilder.
         pycore_dict_alloc_bytes = pycore_dict_place_end(32'd0, slot_count);
     end
 endfunction

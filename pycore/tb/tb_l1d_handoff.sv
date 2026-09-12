@@ -8,7 +8,9 @@ module tb_l1d_handoff;
     localparam int DATA_WIDTH = PYCORE_DMEM_DATA_WIDTH;
     localparam int ADDR_WIDTH = PYCORE_ADDR_WIDTH;
     localparam logic [ADDR_WIDTH-1:0] ADDR = 32'h0000_1000;
+    localparam logic [ADDR_WIDTH-1:0] ADDR1 = ADDR + 32'h10;
     localparam logic [DATA_WIDTH-1:0] PATTERN = 128'hA1B2_C3D4_E5F6_7788_99AA_BBCC_DDEE_FF01;
+    localparam logic [DATA_WIDTH-1:0] PATTERN1 = 128'hC0C0_C0C0_C0C0_C0C0_C0C0_C0C0_C0C0_C0C0;
 
     logic clk, rst_n, cache_en;
     int   t_first;
@@ -170,8 +172,11 @@ module tb_l1d_handoff;
         cache_en = 1'b1;
         reset_dut();
         dmem_xact(1'b1, ADDR, PATTERN);
+        dmem_xact(1'b1, ADDR1, PATTERN1);
         dmem_xact(1'b0, ADDR, '0);
         check(dmem_rdata == PATTERN, "L1D hit did not return the stored pattern");
+        dmem_xact(1'b0, ADDR1, '0);
+        check(dmem_rdata == PATTERN1, "L1D hit lost the second word of the line");
 
         ex_xact(1'b0, ADDR, '0);
         check(ex_rdata != PATTERN,
@@ -180,11 +185,15 @@ module tb_l1d_handoff;
         do_flush();
         ex_xact(1'b0, ADDR, '0);
         check(ex_rdata == PATTERN, "excore did not observe L1D writeback after flush");
+        ex_xact(1'b0, ADDR1, '0);
+        check(ex_rdata == PATTERN1, "excore lost the second flushed word");
 
         // Invalidate drops the L1D copy; a subsequent dmem read refills from L2.
         do_inv();
         dmem_xact(1'b0, ADDR, '0);
         check(dmem_rdata == PATTERN, "dmem refill after inv lost the flushed line");
+        dmem_xact(1'b0, ADDR1, '0);
+        check(dmem_rdata == PATTERN1, "dmem refill after inv lost word1");
 
         // --- CACHE_EN=0: pass-through still completes flush_done, data visible
         cache_en = 1'b0;
