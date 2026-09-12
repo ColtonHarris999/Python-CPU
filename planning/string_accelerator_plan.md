@@ -62,7 +62,7 @@ The split is **by result size and operand kind, not by operation**.
 | --- | --- |
 | `SHORT + SHORT` where the result is ≤ 15 bytes | already inline-combinational; no memory touched |
 | `SHORT` vs `SHORT` compare (`==`, `!=`, `<`, `≤`, `>`, `≥`) | both payloads are in the handles |
-| `len(s)` for any string | `nchars` is in the handle (§3) |
+| `len(s)` for any string | `nchars` is in the handle (§3.2) |
 | `hash(s)` for any string | SHORT: inline XOR; LONG: cached in the handle |
 | `bool(s)` | `nchars != 0`, from the handle |
 | identity (`is`) | address compare |
@@ -79,66 +79,95 @@ makes cross-tag comparison trivially false and keeps hashing consistent.
 
 ## 3. New STR object and handle
 
-### 3.1 Handle (register file / stack entry)
+### 3.1 Representation: fixed-width code units, as CPython does
 
-The current handle is `{ nbytes[127:64], addr[63:0] }`. Report finding F4 says
-the interpreter's cost is *chain length*, not miss latency — so put every hot
-field in the handle and never read the header for metadata:
+**Decision (open question 1, resolved for maximum program coverage).** Payloads
+are **fixed-width code units**, not UTF-8, selected by the string's maximum
+code point exactly as CPython's `PyUnicodeObject` does:
+
+| kind | width | covers | example |
+| ---: | ---: | --- | --- |
+| 1 | 1 byte | U+0000–U+00FF (Latin-1) | ASCII, Western European |
+| 2 | 2 bytes | U+0100–U+FFFF (BMP) | Greek, Cyrillic, CJK, Hebrew |
+| 4 | 4 bytes | U+10000+ | emoji, rare scripts |
+
+An earlier draft stored UTF-8 with an ASCII flag and a stride map for
+indexing. Fixed width is better on every axis that matters here:
+
+* **Indexing is O(1) for every string**, not just ASCII. No stride map, no
+  threshold to guess, no O(n) cliff for non-ASCII programs. That is the direct
+  answer to "support the largest number of Python programs".
+* **Every code unit is word-aligned.** 1, 2 and 4 all divide 16, so a
+  character can never straddle a 128-bit word or a 64-byte line. This deletes
+  an entire class of hardware (the UTF-8 decoder in the datapath) and an
+  entire class of bugs.
+* **It is usually smaller.** Measured on representative samples: ASCII 31 B
+  either way; Latin-1 accented text 23 B fixed vs 29 UTF-8; CJK 20 B fixed vs
+  30 UTF-8. It loses only when one high code point widens an otherwise narrow
+  string (mixed-script Greek, an emoji in ASCII prose) — the same trade CPython
+  accepts, for the same reason.
+* **Semantics match CPython exactly**, including `ord()`, indexing and
+  iteration, because it is the same model.
+
+The cost is a transcode from the UTF-8 source bytes, paid once at image build
+(§11) or at construction, and a widening step when concatenating mixed kinds
+(§4.2).
+
+### 3.2 Handle (register file / stack entry)
+
+Report finding F4 says the interpreter's cost is *chain length*, not miss
+latency — so every hot field lives in the handle and the header is never read
+for metadata:
 
 ```
 LONG_STR value[127:0]:
   [31:0]    addr        object base address in dmem
-  [63:32]   nchars      character count        → len(), bounds checks
+  [63:32]   nchars      character count        → len(), bounds checks, O(1) index
   [95:64]   hash        32-bit content hash    → dict/set probe, fast reject
-  [119:96]  nbytes      payload byte count     → fast reject, slicing
-  [127:120] flags       bit0 ASCII, bit1 INTERNED, bit2 HAS_STRIDE, rest reserved
+  [119:96]  nbytes      payload bytes = nchars * kind
+  [121:120] kind        1 / 2 / 4 encoded as 0 / 1 / 2
+  [127:122] flags       bit0 INTERNED, bit1 ALL_LOWER, bit2 ALL_UPPER, rest reserved
 ```
 
-`len()`, `hash()`, `bool()`, the ASCII test, and the equality fast reject all
-become zero-memory operations on the handle. Only the payload needs dmem.
+`len()`, `hash()`, `bool()`, bounds checks, the kind test and the equality fast
+reject are all zero-memory operations on the handle. Only the payload needs
+dmem. `nbytes` at 24 bits caps one string at 16 MB, above the whole data map.
 
-`nbytes` at 24 bits caps a single string at 16 MB, which is above the whole
-data map. SHORT_STR is unchanged: `size` in `value[127:124]`, 15 bytes in
-`value[123:4]`.
+The `ALL_LOWER` / `ALL_UPPER` hints are set at construction and drive the
+no-op fast paths in §7.
 
-### 3.2 Object in dmem
+SHORT_STR is unchanged in shape: `size` in `value[127:124]`, 15 bytes in
+`value[123:4]` — and is **kind-1 only**.
+
+> **Canonical-representation invariant (load-bearing).** A string is SHORT_STR
+> iff `kind == 1 and nchars <= 15`. Every other string is a heap object. Two
+> equal strings therefore always get the same representation, cross-tag
+> comparison is always false, and hashing stays consistent. STRACC must return
+> SHORT_STR for every qualifying result and must never emit a short LONG_STR.
+
+### 3.3 Object in dmem
 
 Strings are immutable, so unlike a list there is no relocatable buffer and no
 indirection — header and payload are contiguous:
 
 ```
-obj + 0    header  { flags[127:120], nbytes[119:96], hash[95:64],
-                     nchars[63:32], stride_ptr[31:0] }
-obj + 16   payload bytes   0..15
-obj + 32   payload bytes  16..31
+obj + 0    header  { flags[127:122], kind[121:120], nbytes[119:96],
+                     hash[95:64], nchars[63:32], reserved[31:0] }
+obj + 16   payload code units  0..(16/kind - 1)
+obj + 32   next 16 bytes of payload
    ...                              (padded to a 16-byte multiple)
 ```
 
-The header duplicates the handle's metadata so the object is self-describing
-for the accelerator, the image builder, and anything that walks the heap. The
-handle is the fast path; the header is the source of truth.
+The header mirrors the handle so the object is self-describing for the
+accelerator, the image builder, and anything walking the heap. The handle is
+the fast path; the header is the source of truth.
 
-Allocation is `pycore_heap_place` (P1 line alignment), so a string ≥ 64 bytes
-starts on a cache line and streams at one line per fill.
+Allocation uses `pycore_heap_place` (P1 line alignment), so a string ≥ 64 bytes
+starts on a cache line and streams one line per fill.
 
-**`hash` and `nchars` are computed eagerly at construction**, by the image
-builder for constants and by STRACC for runtime results. There is no lazy-hash
-state machine and no "hash not yet valid" case. `flags.bit1 HASH_VALID` is
-reserved for a future lazy path but is always 1 in v1.
-
-### 3.3 The ASCII flag and the stride map
-
-`flags.ASCII` is set when `nbytes == nchars`. For an ASCII string, character
-index *i* is byte *i* — `s[i]` and `s[a:b]` are O(1) with no UTF-8 decode.
-This is the overwhelmingly common case and it is worth the one flag bit.
-
-For non-ASCII strings longer than `PYCORE_STR_STRIDE_MIN` (default 256 bytes),
-the builder also allocates a **stride map**: a `uint32` byte-offset for every
-16th character, at `stride_ptr`. Character index *i* then starts from
-`stride[i >> 4]` and decodes at most 15 characters forward, so indexing is
-O(1) amortised instead of O(n). Below the threshold, and when `HAS_STRIDE` is
-clear, STRACC decodes from the start. Bounded worst case, no cost in the
-common case.
+`hash`, `nchars`, `kind` and the case flags are computed **eagerly at
+construction** — by the image builder for constants, by STRACC for runtime
+results. There is no lazy-hash state machine and no "not yet valid" case.
 
 ### 3.4 Equality and interning
 
@@ -158,7 +187,7 @@ traffic. Tier 3 is what makes `d[a + b]` correct, which it is not today.
 
 `pycore/rtl/pycore_str_accel.sv` — a standalone module, not an include. It has
 its own dmem master port so it can be verified against memory on its own,
-which is what §9 does.
+which is what §10 does.
 
 ### 4.1 Ports
 
@@ -187,26 +216,34 @@ instruction is in flight, so there is no coherence question.
 ```
    dmem rdata (128b) ──► src window (2 × 128b)
                               │
-                        byte funnel shifter (32B → 16B, byte-granular)
+             widening funnel shifter (32B → 16B, unit-granular,
+                      kind-1→2, kind-1→4, kind-2→4 widen in flight)
                               │
         ┌────────────┬────────┴────────┬──────────────┐
         ▼            ▼                 ▼              ▼
    compare lane   map lane        classify lane   hash accumulator
-   (16 × byte)    (16 × LUT)      (16 × predicate) (rolling, 32b)
+   (16/8/4 units) (Latin-1 LUT)   (Latin-1 LUT)   (rolling, 32b)
         │            │                 │              │
         └────────────┴────────┬────────┴──────────────┘
                               ▼
                     dst window ──► dmem wdata + wstrb
 ```
 
-The **byte funnel shifter** is the one substantial new datapath block:
-concatenating strings whose lengths are not multiples of 16 needs the source
-realigned to the destination's byte offset. One 32-byte-in / 16-byte-out
-funnel handles every op.
+The **widening funnel shifter** is the one substantial new datapath block. It
+does two jobs at once: realign the source to the destination's byte phase
+(concatenating strings whose lengths are not multiples of 16), and widen
+code units when the operands' kinds differ (`kind-1 + kind-2 → kind-2`). Both
+are unit-granular selects, not the byte-serial UTF-8 decoder the earlier draft
+needed — fixed-width units are always word-aligned, so there is no
+variable-length decode anywhere in the pipeline.
 
-Target throughput is **16 bytes per cycle on an L1D hit** for copy, compare,
-search, hash and classify — one 128-bit word per cycle, limited by the single
-dmem port.
+Throughput per cycle, limited by the single 128-bit dmem port:
+
+| kind | units/cycle |
+| ---: | ---: |
+| 1 | 16 |
+| 2 | 8 |
+| 4 | 4 |
 
 > **L1D interaction.** Building a result writes whole lines. A write-allocate
 > L1D would fill each line from memory immediately before overwriting all of
@@ -221,7 +258,7 @@ dmem port.
 | Engine | Op | Variants |
 | --- | --- | --- |
 | **COPY** | `SA_CONCAT`, `SA_REPEAT`, `SA_JOIN`, `SA_SLICE`, `SA_PAD` | gather N ranges → one new string |
-| **COMPARE** | `SA_CMP` | `EQ NE LT LE GT GE` |
+| **COMPARE** | `SA_CMP` | **three-way**: returns `-1 / 0 / +1`. All six operators and `sorted`/`min`/`max` derive from one command (open question 3, resolved yes) |
 | **SEARCH** | `SA_SEARCH` | `FIND RFIND COUNT CONTAINS STARTSWITH ENDSWITH` (+ start/end) |
 | **MAP** | `SA_MAP` | `UPPER LOWER SWAPCASE CAPITALIZE TITLE TRANSLATE` |
 | **CLASSIFY** | `SA_CLASSIFY` | `ALNUM ALPHA ASCII DIGIT LOWER SPACE TITLE UPPER` |
@@ -229,8 +266,23 @@ dmem port.
 | **SPLIT** | `SA_SPLIT` | `SPLIT RSPLIT SPLITLINES PARTITION RPARTITION` → LIST/TUPLE |
 | **HASH** | `SA_HASH` | internal; runs on every construction |
 
-Plus two element ops the container FSM hands over: `SA_CHAR_AT` (subscript,
-ASCII or decoded) and `SA_ITER_NEXT` (one character for `for c in s`).
+Plus two element ops the container FSM hands over: `SA_CHAR_AT` (subscript —
+now a single indexed read at `addr + 16 + i*kind`, O(1) for every kind) and
+`SA_ITER_NEXT` (one character for `for c in s`).
+
+**Two-pass sizing is the standard protocol** for every op whose output size is
+not known from the operands (open question 2, resolved for maximum coverage).
+Pass 1 measures — counts matches, sums element lengths, determines the result
+kind — and validates operand types. Pass 2 allocates exactly once and fills.
+This is what lets `replace` handle a length-changing needle, `join` handle any
+iterable, and `split` size its list, all without reallocation, and it means a
+type error or an out-of-heap condition is detected **before** the heap pointer
+moves. Ops on this protocol: `replace`, `join`, `split` / `rsplit` /
+`splitlines`, `expandtabs`, `translate` (which can delete), and any op whose
+operands differ in kind (pass 1 determines the widened result kind).
+
+Ops with a computable output size — `concat`, `repeat`, `slice`, `pad`, `trim`,
+`upper`/`lower`/`swapcase` — allocate directly and run single-pass.
 
 ## 5. Coverage: every operator, builtin and method
 
@@ -259,25 +311,101 @@ ASCII or decoded) and `SA_ITER_NEXT` (one character for `for c in s`).
 byte predicate; see §6. `partition`/`rpartition` are SEARCH followed by three
 COPYs and return a TUPLE.
 
-## 6. Unicode ceiling — stated, not hidden
+## 6. Unicode coverage and the one remaining ceiling
 
-v1 is **byte-exact for all UTF-8** and **semantically complete for ASCII**:
+Fixed-width code units (§3.1) mean **every structural operation is exact for
+all of Unicode**, with no ceiling at all: `len`, indexing, slicing, iteration,
+concat, repeat, compare, search, hash, split, partition, trim, pad and `ord`
+operate on code points and are correct for any input CPython accepts.
 
-* `len`, indexing, slicing, iteration, concat, compare, search, hash, split and
-  trim are correct for any valid UTF-8 input, because they are byte or
-  code-point operations.
-* MAP (case conversion) and CLASSIFY use **ASCII tables**. A non-ASCII code
-  point passes through MAP unchanged and returns `False` from alphabetic and
-  case predicates.
-* `isdecimal` / `isnumeric` / `isidentifier` / `isprintable` / `casefold` are
-  ASCII-subset only.
+The only remaining ceiling is **case mapping and character classification**,
+which need Unicode property tables:
 
-This is the same class of documented deviation as 64-bit `int`, and belongs in
-`pycore/docs/bytecode_support.md` next to it. A `STRACC_UNICODE_STRICT`
-parameter (default 0) raises `PY_TRAP_TYPE` on a non-ASCII input to MAP or
-CLASSIFY instead of approximating, for programs that would rather fail loudly.
+* **Hardware covers Latin-1** (U+0000–U+00FF) with a 256-entry LUT in the map
+  and classify lanes. That is ASCII plus Western European, at full throughput.
+* **Code points above U+00FF raise a recoverable trap** handled in firmware,
+  which does the table lookup. Slower, but **correct** — no program is ever
+  silently wrong, which is the difference from the earlier ASCII-only draft.
+* The firmware table can grow toward full Unicode over time without any RTL
+  change, because the trap boundary is already there.
 
-## 7. Container interaction
+Affected methods: the MAP family (`upper` `lower` `swapcase` `capitalize`
+`title` `casefold`) and the CLASSIFY family (the eleven `is*` methods).
+`isidentifier` additionally needs the XID_Start/XID_Continue properties and is
+firmware-only in v1.
+
+Record this in `pycore/docs/bytecode_support.md` next to the 64-bit `int`
+ceiling — but note it is a *performance* boundary for non-Latin-1 text, not a
+correctness one.
+
+## 7. Fast paths
+
+Open question 4 was "should there be a small-result bypass" — yes, and the same
+reasoning turns up a family of them. Every one of these produces the answer
+with **zero allocations**, and most with **zero memory accesses**, so they are
+checked in the command-decode cycle before the engine starts.
+
+### 7.1 Answered from the handle alone — no memory at all
+
+| Fast path | Applies to | Result |
+| --- | --- | --- |
+| **Identity** — `addr_a == addr_b` | `==` `!=` `<=` `>=` `in` `find` `startswith` `endswith` `count` | equal / found at 0 / 1 occurrence |
+| **Fast reject** — `(hash, nbytes, nchars, kind)` differ | `==` `!=`, dict/set probe, list `in` | unequal |
+| **Length reject** — `len(needle) > len(haystack)` | `find` `rfind` `index` `count` `in` `startswith` `endswith` `replace` | miss (−1 / False / 0 / receiver) |
+| **Kind reject** — needle kind > haystack kind | all SEARCH variants | miss: a code point that cannot occur in the haystack's kind cannot be in it |
+| **Empty operand** — `len == 0` | `"" + s`, `s + ""`, `s * n≤0`, `s[i:i]`, `"".join`, empty needle | receiver handle or `""`, no work |
+| **`len`, `hash`, `bool`, `ord` of a 1-char string** | — | straight from the handle (§2) |
+| **Already-normalised** — `ALL_LOWER` / `ALL_UPPER` flags | `lower()` on lowercase, `upper()` on uppercase | **return the receiver handle** |
+
+The kind reject is worth calling out: searching for a CJK needle in an ASCII
+haystack is answered in one cycle with no memory traffic, purely from the kind
+fields. Fixed-width representation is what makes that test exist.
+
+### 7.2 Answered without allocating — return the receiver
+
+Python strings are immutable, so an operation that would produce an identical
+string may return the *same object*. The map, trim and search lanes detect this
+during their measuring pass and skip pass 2 entirely:
+
+| Fast path | Example that hits it |
+| --- | --- |
+| MAP produced no change | `s.upper()` on already-uppercase text, `s.translate(t)` with no mapped character |
+| TRIM found nothing to strip | `line.strip()` on already-clean input |
+| SEARCH found no match | `s.replace(a, b)` where `a` does not occur |
+| PAD width ≤ current width | `s.ljust(4)` on a 10-character string |
+| SPLIT with no separator present | `s.split(",")` on a comma-free string (one-element list, receiver reused as the element) |
+
+This matters for real programs: normalisation loops that call `.strip()`,
+`.lower()` or `.replace()` on already-clean data do **no allocation at all**,
+where the naive implementation allocates a copy per call and churns the bump
+heap toward OOM.
+
+### 7.3 Answered without touching the heap — build in registers
+
+| Fast path | Condition | Behaviour |
+| --- | --- | --- |
+| **Small result** | result is kind-1 and ≤ 15 characters | assemble in the destination register, return SHORT_STR, no allocation — the §3.2 canonical invariant *requires* this, and it is now universal across `concat` `slice` `repeat` `strip` `pad` `upper` `lower` `replace` `join` `partition`, not just concat |
+| **Single-word operands** | both payloads ≤ 16 bytes | one read each; compare, search and hash complete in the first engine cycle |
+| **Medium result** | result ≤ 64 bytes (≤ 4 words) | allocate, then one burst write — no loop, no line straddle |
+
+### 7.4 Early-out inside the engines
+
+| Fast path | Engine |
+| --- | --- |
+| First differing word ends the comparison | COMPARE — a 1 MB string pair that differs in byte 3 answers in one cycle |
+| First non-matching classify unit ends the pass | CLASSIFY — `isdigit()` on `"a..."` is one cycle |
+| Match at position 0 ends the scan | SEARCH `find` / `startswith` |
+| Scan from the correct end | SEARCH `rfind` / `rindex` / `rstrip` / `rsplit` walk backwards rather than scanning forward and keeping the last hit |
+| Stop at `end`, start at `start` | SEARCH with explicit bounds never reads outside them |
+
+### 7.5 What is deliberately *not* fast-pathed
+
+Interning of runtime results. It would need a hash table and a probe on every
+construction to save an allocation that tier-1 equality (§3.4) already makes
+cheap to compare. Revisit only if measurement shows duplicate runtime strings
+dominating the heap.
+
+## 8. Container interaction
 
 This is where the design has to fit the machine that already exists.
 
@@ -315,7 +443,7 @@ Two passes mean no reallocation and no partial allocation on a type error.
 list/dict/set grow moves handles, never payloads. No interaction, no new trap
 codes, no change to the mailbox.
 
-## 8. Allocation and traps
+## 9. Allocation and traps
 
 STRACC receives `heap_ptr` with the command and returns the updated pointer —
 the same contract excore already uses (`trap_res_heap_ptr`), so there stays
@@ -330,12 +458,12 @@ miss sentinel (-1) to the core, which raises `ValueError` through the existing
 firmware raise path (`PY_TRAP_RAISE` / `OBK_EXCEPTION`), exactly as the
 firmware `str.find` wrapper does today.
 
-## 9. Verification — standalone first
+## 10. Verification — standalone first
 
 The unit is verified **as its own design against real memory**, before a single
 line of the core changes. This is the phase that de-risks the cutover.
 
-### 9.1 `tb_str_accel.sv`
+### 10.1 `tb_str_accel.sv`
 
 `pycore_str_accel` + `pycore_ram` (and optionally an L1D, to measure the
 write-full-line path). Commands are driven directly; no core.
@@ -347,15 +475,24 @@ Directed cases, per engine:
   SHORT); exactly one line (64 B); one byte over a line.
 * **Alignment:** every source/destination byte phase 0..15 through the funnel
   shifter; a copy whose source and destination overlap in the same line.
-* **UTF-8:** a multi-byte code point straddling a 16-byte word boundary and a
-  64-byte line boundary; a 4-byte code point; indexing with and without a
-  stride map; a string that is ASCII except for its last character.
+* **Kinds:** every operand-kind pair (1×1, 1×2, 1×4, 2×2, 2×4, 4×4) through
+  concat and compare, checking the widened result kind; a string that is
+  Latin-1 except for its last character (kind 2 with a single wide unit); a
+  kind-4 string; `ord()` at the top of each kind's range (U+00FF, U+FFFF,
+  U+10FFFF). Because every unit is word-aligned there is no straddle case —
+  assert that instead: no engine ever issues an unaligned unit read.
 * **Allocation:** OOM exactly at `PYCORE_HEAP_LIMIT`; OOM mid-`join` (heap
   pointer must not move); line alignment of every result.
 * **Search:** needle longer than haystack; empty needle; needle at position 0,
-  at the end, spanning a word boundary; overlapping matches for `count`.
+  at the end, spanning a word boundary; overlapping matches for `count`;
+  needle of a wider kind than the haystack (§7.1 kind reject).
+* **Fast paths (§7):** each one exercised *and* verified not to fire when it
+  must not — an identity compare on distinct-but-equal strings must reach the
+  content compare, `s.upper()` on mixed case must allocate, `s.strip()` on
+  padded input must allocate. A fast path that fires wrongly returns a wrong
+  answer; a fast path that never fires is only slow. Both are tested.
 
-### 9.2 The differential harness — the real test
+### 10.2 The differential harness — the real test
 
 47 methods cannot be covered by hand-written directed tests. CPython 3.14 *is*
 the oracle:
@@ -378,7 +515,7 @@ A Python model of the accelerator (`pycore/tools/strmodel.py`) sits alongside,
 so the same generator can diff *model vs CPython* quickly and *RTL vs model*
 under Verilator, and a failure localises immediately to spec or implementation.
 
-### 9.3 Integration verification
+### 10.3 Integration verification
 
 * Every existing string fixture (`img_str_*`, `img_build_string`,
   `img_sorted_str`, `img_for_iter_str_*`, `img_slice_str_clamp`,
@@ -390,7 +527,7 @@ under Verilator, and a failure localises immediately to spec or implementation.
 * The transparency and latency gates from P0/P2 keep applying — STRACC must
   produce identical results at `CACHE_EN` 0 and 1 and at every `MEM_LATENCY`.
 
-## 10. Memory map
+## 11. Memory map
 
 Strings become ordinary heap objects, so the old plan's dedicated string
 regions are **not needed** — that part of P5 disappears. But ~64 KB of string
@@ -410,13 +547,18 @@ made the move risky. The one hand-written literal to fix is
 `excore/tb/tb_excore.sv`'s `BLOCK_SHIFT(17)`, which sizes its bank to span
 `PYCORE_HEAP_LIMIT`.
 
-## 11. Compile-time strings
+## 12. Compile-time strings
 
 `encoding.py::StringHeapBuilder` is replaced by
-`HeapImageBuilder.alloc_str(bytes)`, which emits a §3.2 object into the object
-heap with `hash`, `nchars`, `nbytes` and `flags` filled in, plus a stride map
-when the thresholds are met. Interning stays (dedupe by content) and now sets
+`HeapImageBuilder.alloc_str(text)`, which takes a Python `str`, picks the kind
+from `max(ord(c))`, **transcodes to fixed-width code units**, and emits a §3.3
+object into the object heap with `hash`, `nchars`, `nbytes`, `kind` and the
+case flags filled in. Interning stays (dedupe by content) and sets
 `flags.INTERNED`.
+
+The transcode is the one new cost, and it is paid once at build time. The host
+model and the RTL must agree bit-for-bit on the resulting payload, which the
+§10.2 differential checks directly.
 
 `--string-hex`, the `STRING_HEX` plusarg, `pycore/programs/string_mem.hex` and
 the `string_heap` parameter threaded through `tag_constant` all disappear. One
@@ -427,15 +569,16 @@ string constants with the same routine, so a compiled-on-device module and an
 image-built module produce byte-identical string objects. Note that in
 `planning/compile_plan.md`.
 
-## 12. Phases
+## 13. Phases
 
 Each ends with the full regression green.
 
 **P5a — the unit, standalone.** `pycore_str_accel.sv`, `tb_str_accel.sv`,
 `strmodel.py`, `strgen.py`. Not wired into the core; the core still uses
 `pycore_string_mem.sv`, so the regression is green by construction. Gate: the
-§9.2 differential passes over the full corpus for COPY, COMPARE, SEARCH,
-CHAR_AT, ITER_NEXT, HASH.
+§10.2 differential passes over the full corpus for COPY, COMPARE, SEARCH,
+CHAR_AT, ITER_NEXT and HASH, across **every operand-kind pair**, with every §7
+fast path both exercised and proven not to fire when it must not.
 
 **P5b — layout and tooling.** §3 handle and object in `encoding.py`,
 `heap_image.py`, `image_from_source.py` and the RTL helpers; §10 memory map;
@@ -469,7 +612,7 @@ to a 6-bit id — no dict probe. Widen the id field from 4 to 6 bits.
 `str_join.py`, `str_startswith.py`, `str_endswith.py` once the hardware paths
 are green, and reclaim their ROM slots.
 
-## 13. Downstream effects
+## 14. Downstream effects
 
 | Phase / artefact | Effect |
 | --- | --- |
@@ -479,19 +622,44 @@ are green, and reclaim their ROM slots.
 | **P7 GIC** | Global names are interned constants, so lookups stay tier 1 — the GIC still never enters STRACC. Confirm in the P7 tests. |
 | **P9 re-measure** | New traffic class. Extend `memsim` with string workloads and a STRACC access model; re-run E1/E3/E7 with strings in dmem, which is what the L1D was sized for. |
 | **`compile_plan.md`** | On-device `compile()` allocates string constants through `alloc_str`; add the cross-reference. |
-| **`bytecode_support.md`** | Record the §6 Unicode ceiling next to the 64-bit `int` ceiling. |
-| **`tags.md`** | Rewrite the LONG_STR row for the §3.1 handle. |
-| **`object_model.md`** | Add the §3.2 STR object; remove the string-memory section. |
+| **`bytecode_support.md`** | Record the §6 case/classification boundary next to the 64-bit `int` ceiling — note it is a performance boundary, not a correctness one. |
+| **`tags.md`** | Rewrite the LONG_STR row for the §3.2 handle (kind field, cached hash). |
+| **`object_model.md`** | Add the §3.3 STR object; remove the string-memory section. |
 
-## 14. Open questions
+## 15. Decisions taken, and what is still open
 
-* **Stride-map threshold.** 256 bytes is a guess. Measure once real non-ASCII
-  workloads exist; until then the flag makes it free to change.
-* **`replace` with a length-changing needle** needs either two passes (count,
-  then build) or a growable output. Two passes is consistent with `join` and
-  avoids reallocation — confirm the cost is acceptable on long strings.
-* **Should `SA_CMP` return a three-way result** (`<`, `=`, `>`) so `sorted`
-  needs one command instead of two? Cheap in hardware; decide in P5a.
-* **Small-result bypass.** A concat of two SHORT strings whose result is 16–31
-  bytes still needs an allocation. Worth a fast path that builds the result in
-  registers and writes one or two words without entering the full engine?
+### Resolved
+
+1. **Representation — fixed-width code units, not UTF-8 with a stride map.**
+   The original question was where to set a stride-map threshold; the answer
+   "support the largest number of Python programs" makes the threshold question
+   go away entirely. Fixed width gives O(1) indexing for every string, matches
+   CPython's model exactly, is usually smaller, and word-aligns every code unit
+   so the UTF-8 decoder disappears from the datapath (§3.1).
+2. **Two-pass sizing is the standard protocol** for every op whose output size
+   is not computable from its operands — `replace` with a length-changing
+   needle, `join`, `split`, `expandtabs`, `translate`, and any mixed-kind
+   operation. Exact, never reallocates, and detects type errors and OOM before
+   the heap pointer moves (§4.3).
+3. **`SA_CMP` is three-way**, returning `−1 / 0 / +1`. All six comparison
+   operators and `sorted` / `min` / `max` derive from one command (§4.3).
+4. **Fast paths everywhere**, not just the small-result bypass: a full family
+   in §7 — handle-only answers, receiver reuse when an operation would produce
+   an identical string, register-built small results, and early-outs inside
+   every engine.
+
+### Still open
+
+* **Firmware Unicode tables.** §6 traps to firmware above U+00FF for case and
+  classification. How much of the Unicode property database goes into ROM, and
+  whether it ships in P5e or later, is a size question for the ROM budget —
+  not a design question for this unit.
+* **`isidentifier`** needs XID_Start / XID_Continue and is firmware-only in
+  v1. If it turns out to be hot, it earns a hardware table.
+* **`SA_SPLIT` result shape.** `split` returns a LIST, `partition` a TUPLE.
+  Whether the accelerator allocates both directly or hands the core a run
+  vector to materialise is a P5a implementation call; the differential does
+  not care which.
+* **Whether `SA_HASH` should be exposed as a standalone command.** It runs
+  implicitly on every construction; a separate command is only needed if
+  something outside STRACC wants to hash a byte range.

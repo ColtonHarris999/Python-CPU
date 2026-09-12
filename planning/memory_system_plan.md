@@ -334,8 +334,25 @@ container FSM, that owns every non-trivial string operation — and strings
 become ordinary dmem heap objects with a self-describing header.
 
 Full design, including the 47-method coverage matrix, the new object and
-handle layout, the standalone verification plan and the phase gates:
-**[`string_accelerator_plan.md`](string_accelerator_plan.md)**.
+handle layout, the fast-path family, the standalone verification plan and the
+phase gates: **[`string_accelerator_plan.md`](string_accelerator_plan.md)**.
+
+Four design decisions that shape the rest of P5:
+
+* **Fixed-width code units, as CPython does** (kind 1 / 2 / 4 by maximum code
+  point) rather than UTF-8. Indexing is O(1) for *every* string, every code
+  unit is word-aligned so no character can straddle a word or line boundary,
+  the UTF-8 decoder leaves the datapath entirely, and it is usually smaller.
+* **Three-way `SA_CMP`** (`−1 / 0 / +1`) — all six operators plus
+  `sorted`/`min`/`max` from one command.
+* **Two-pass sizing** for every op whose output size is not computable from its
+  operands, so nothing ever reallocates and OOM is caught before the heap
+  pointer moves.
+* **A family of fast paths**, not just the small-result bypass: answers from
+  the handle alone (identity, hash/length/kind reject, empty operand),
+  receiver reuse when an operation would produce an identical string
+  (`.strip()` on clean input allocates nothing), register-built results ≤ 15
+  characters, and early-outs inside every engine.
 
 Why the change: `pycore_string_mem.sv` is a 64 KB private byte array with
 combinational whole-string concat and slice, and everything past
