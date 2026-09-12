@@ -2,7 +2,7 @@
 
 // Instruction fetch as an imem master. Each instruction is a 64-bit slot; the
 // fetch unit drives a byte address (pc_o << 3) and consumes the registered read
-// data one cycle later via the req/ack handshake.
+// data via the req/ack handshake (ack may arrive any number of cycles later).
 //
 // EXTENDED_ARG folding and CACHE skipping are preserved. CACHE slots are
 // skipped by opcode value 0 in the slot stream (independent of any cache-count
@@ -37,10 +37,16 @@ module pycore_fetch #(
     logic [31:0] pc_r;
     logic [31:0] arg_prefix_r;
     logic        have_prefix_r;
-    logic        awaiting_r;    // a request is outstanding, ack expected next cycle
+    logic        awaiting_r;    // a request is outstanding; held until imem_ack_i
 
-    // Issue a fetch only when not stalled and not already waiting on an ack.
-    assign imem_req_o   = !stall_i && !awaiting_r && rst_n_i;
+    // Hold req until ack so a busy xbar cannot drop a one-cycle pulse.
+    // Gate on redirect/flush: pc_r (and therefore imem_addr_o) updates NBA
+    // on that cycle, so a combo request would fetch the *old* PC. With
+    // ack latency > 1 that stale reply is still in flight when awaiting
+    // is cleared, and is then retired as the first instruction of the
+    // branch/CALL target (wrong opcode, CALL_FILTER / TYPE on image tests).
+    assign imem_req_o   = rst_n_i && !stall_i && !flush_i && !branch_taken_i &&
+                          (!awaiting_r || !imem_ack_i);
     assign imem_we_o    = 1'b0;
     assign imem_wdata_o = '0;
     assign imem_addr_o  = {pc_r[ADDR_WIDTH-4:0], 3'b000};  // pc_r << 3 (8-byte slots)
@@ -76,7 +82,8 @@ module pycore_fetch #(
                     arg_prefix_r  <= 32'b0;
                     awaiting_r    <= 1'b0;
                 end else if (!awaiting_r) begin
-                    // imem_req_o asserted combinationally this cycle; ack arrives next.
+                    // imem_req_o is held while awaiting_r; ack may arrive
+                    // any number of cycles later (xbar + RAM_T_FIRST).
                     awaiting_r <= 1'b1;
                 end else if (imem_ack_i) begin
                     awaiting_r <= 1'b0;

@@ -92,27 +92,24 @@ class ImageLayout:
 
 
 def set_heap_alignment(align: int | None) -> None:
-    """Round every bump allocation up to `align` bytes (None = as-built 16 B).
+    """Select the bump-allocator start alignment for a memsim run.
 
-    The production allocator in heap_image.py / pycore_core.sv only guarantees
-    16-byte alignment, so a 64-byte dict slot straddles two cache lines three
-    times out of four.  This hook lets the study measure what line-aligning
-    the allocator would be worth.
+    ``None`` restores the pre-P1 16-byte bump (E8 control arm).
+    An integer wraps every `_alloc` start up to that size (E8's 64 B row).
+    Restore production (start-align only when nbytes >= LINE_BYTES) with
+    ``HeapImageBuilder._alloc = HeapImageBuilder._alloc_line``.
     """
     import heap_image
 
-    if getattr(heap_image.HeapImageBuilder, "_memsim_orig_alloc", None) is None:
-        heap_image.HeapImageBuilder._memsim_orig_alloc = \
-            heap_image.HeapImageBuilder._alloc
+    unaligned = heap_image.HeapImageBuilder._alloc_unaligned
 
-    orig = heap_image.HeapImageBuilder._memsim_orig_alloc
     if align is None:
-        heap_image.HeapImageBuilder._alloc = orig
+        heap_image.HeapImageBuilder._alloc = unaligned
         return
 
-    def aligned(self, nbytes, _orig=orig, _a=align):
-        self.ptr = (self.ptr + _a - 1) // _a * _a
-        return _orig(self, nbytes)
+    def aligned(self, nbytes, _u=unaligned, _a=align):
+        self.ptr = (self.ptr + _a - 1) & ~(_a - 1)
+        return _u(self, nbytes)
 
     heap_image.HeapImageBuilder._alloc = aligned
 

@@ -77,6 +77,45 @@ HEAP_LIMIT = 0x1B000
 # Exc-info stack arena (§5.5); last tagged entry holds the boot StopIteration latch.
 EXC_STACK_BASE = 0x1B000
 EXC_STACK_BYTES = 0x1000
+# Call-frame stack (mirror PYCORE_FRAME_STACK_* in pycore_defs.svh).
+FRAME_STACK_BASE = 0x1C000
+FRAME_STACK_BYTES = 0x4000
+# Cache / RAM hierarchy (mirror pycore_defs.svh; RTL-only until P2 instantiates).
+CACHE_EN = 1
+LINE_BYTES = 64
+
+
+def align_line(addr: int, line: int = LINE_BYTES) -> int:
+    """Round ``addr`` up to a multiple of ``line`` (default ``LINE_BYTES``).
+
+    Mirrors ``pycore_align_line`` in ``pycore_defs.svh``. HeapImageBuilder
+    start-aligns every bump so 64-byte dict slots never straddle two lines.
+    """
+    if line <= 0 or (line & (line - 1)) != 0:
+        raise ValueError(f"line size must be a positive power of two, got {line}")
+    return (addr + line - 1) & ~(line - 1)
+L1I_SIZE_BYTES = 8192
+L1I_WAYS = 4
+L1D_SIZE_BYTES = 8192
+L1D_WAYS = 4
+L2_SIZE_BYTES = 131072
+L2_WAYS = 8
+RAM_BYTES = 16 * 1024 * 1024
+RAM_T_FIRST = 30
+RAM_T_BEAT = 2
+RAM_T_FIRST_CI = 4
+# Unified L2/RAM code namespace (memory_system_plan.md §2). Fetch still
+# uses Harvard slot addresses; the xbar adds this base so code and data
+# never alias in the unified cache.
+CODE_ADDR_BASE = 0x01000000
+# P2: L2 hit latency is 1 until L1s exist. See PYCORE_L2_HIT_CYCLES.
+L2_HIT_CYCLES = 1
+DMEM_BYTES = 32 * 4096  # PYCORE_DMEM_BLOCK_COUNT << BLOCK_SHIFT
+CODC_ENTRIES = 4
+CODC_WAYS = 2
+GIC_ENTRIES = 16
+GIC_WAYS = 2
+FTB_FRAMES = 4
 ITER_EXHAUST_TYPE_ADDR = EXC_STACK_BASE + EXC_STACK_BYTES - 32  # 0x1BFE0
 # Native method CODE_OBJECT table (16 × 32 B tagged entries) immediately
 # below the StopIteration sidecar. LOAD_ATTR indexes this instead of
@@ -89,10 +128,11 @@ NATIVE_METHOD_TABLE_ADDR = ITER_EXHAUST_TYPE_ADDR - NATIVE_METHOD_TABLE_BYTES  #
 # LIST element buffer stride (bytes); mirror pycore list layout (32B/element).
 LIST_ELEMENT_BYTES = 32
 # Minimum / maximum word capacities for allocator_list (_zeros needs % 16 == 0).
-# Min must cover prologue + managed_entry (alloc 3/12/3/20) when CHUNKSIZE is 16.
+# Min must cover prologue + managed_entry (alloc 2/4/2/8) when CHUNKSIZE is 4.
 # Do not floor the *computed* capacity at MIN: that OOM'd after native-method
-# firmware raised HEAP_INIT_PTR (~7 KB left; 128 words need 16 KB at 4× slack).
-ALLOCATOR_LIST_CAPACITY_MIN = 48
+# firmware raised HEAP_INIT_PTR. P1 alignment of ≥64 B payloads leaves ~2.7 KB
+# of bump heap, which at 4× slack yields 16 words.
+ALLOCATOR_LIST_CAPACITY_MIN = 16
 ALLOCATOR_LIST_CAPACITY_MAX = 4096
 
 

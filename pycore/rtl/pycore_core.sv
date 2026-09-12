@@ -85,6 +85,7 @@ module pycore_core #(
     // dmem master
     output logic                          dmem_req_o,
     output logic                          dmem_we_o,
+    output logic [DMEM_DATA_W/8-1:0]      dmem_wstrb_o,
     output logic [ADDR_WIDTH-1:0]         dmem_addr_o,
     output logic [DMEM_DATA_W-1:0]        dmem_wdata_o,
     input  logic                          dmem_ack_i,
@@ -498,6 +499,7 @@ module pycore_core #(
     logic                          container_dmem_pending_r;
     logic [31:0]                   container_dmem_addr_r;
     logic                          container_dmem_we_r;
+    logic [DMEM_DATA_W/8-1:0]      container_dmem_wstrb_r;
     logic [127:0]                  container_dmem_wdata_r;
 
     // One-cycle RF write pulse from S_CONTAINER (mirrors return_wb_*).
@@ -942,6 +944,7 @@ module pycore_core #(
     // Intermediate wires: mem_stage drives these; mux below selects.
     logic                   ms_dmem_req;
     logic                   ms_dmem_we;
+    logic [DMEM_DATA_W/8-1:0] ms_dmem_wstrb;
     logic [ADDR_WIDTH-1:0]  ms_dmem_addr;
     logic [DMEM_DATA_W-1:0] ms_dmem_wdata;
 
@@ -958,6 +961,7 @@ module pycore_core #(
         .addr_entry_i(ex_addr_entry_r),
         .dmem_req_o(ms_dmem_req),
         .dmem_we_o(ms_dmem_we),
+        .dmem_wstrb_o(ms_dmem_wstrb),
         .dmem_addr_o(ms_dmem_addr),
         .dmem_wdata_o(ms_dmem_wdata),
         .dmem_ack_i(dmem_ack_i),
@@ -985,8 +989,8 @@ module pycore_core #(
     // ---------------------------------------------------------------------
     localparam int    RF_BASE_CORE          = STACK_BASE;
     localparam int    MAX_CALL_DEPTH_CORE   = 128;
-    localparam logic [ADDR_WIDTH-1:0] FRAME_STACK_BASE = 32'h0001_C000;
-    localparam int    FRAME_STACK_BYTES     = 32'h0000_4000;  // 16 KB, 512 frames
+    localparam logic [ADDR_WIDTH-1:0] FRAME_STACK_BASE = PYCORE_FRAME_STACK_BASE;
+    localparam int    FRAME_STACK_BYTES     = PYCORE_FRAME_STACK_BYTES;
 
     logic [RF_AW-1:0]      frame_next_locals_base;
     logic                  frame_init_new_frame;
@@ -1144,6 +1148,7 @@ module pycore_core #(
     logic [63:0]           exc_pop_exc_addr;
     logic                  exc_dmem_req;
     logic                  exc_dmem_we;
+    logic [15:0]           exc_dmem_wstrb;
     logic [ADDR_WIDTH-1:0] exc_dmem_addr;
     logic [127:0]          exc_dmem_wdata;
     logic [ADDR_WIDTH-1:0] exc_sp;
@@ -1191,6 +1196,7 @@ module pycore_core #(
         .pop_exc_addr_o(exc_pop_exc_addr),
         .dmem_req_o(exc_dmem_req),
         .dmem_we_o(exc_dmem_we),
+        .dmem_wstrb_o(exc_dmem_wstrb),
         .dmem_addr_o(exc_dmem_addr),
         .dmem_wdata_o(exc_dmem_wdata),
         .dmem_ack_i(dmem_ack_i),
@@ -1213,6 +1219,9 @@ module pycore_core #(
     assign dmem_we_o    = frame_dmem_active     ? (state_r == S_CALL) :
                           container_dmem_active ? container_dmem_we_r  :
                           exc_dmem_active       ? exc_dmem_we         : ms_dmem_we;
+    assign dmem_wstrb_o = frame_dmem_active     ? {DMEM_DATA_W/8{1'b1}} :
+                          container_dmem_active ? container_dmem_wstrb_r :
+                          exc_dmem_active       ? exc_dmem_wstrb      : ms_dmem_wstrb;
     assign dmem_addr_o  = frame_dmem_active     ?
                               ((state_r == S_CALL) ? frame_push_addr : frame_pop_addr) :
                           container_dmem_active ? container_dmem_addr_r :
@@ -1558,17 +1567,18 @@ module pycore_core #(
         container_probe_tag_r, container_rd_data_r);
 
     // **kwargs dict being packed by the CALL binder (subs 52-55).  The object,
-    // its order sidecar and its hash table are allocated contiguously, exactly
-    // like BUILD_MAP, so only base + slot count need to be carried around.
+    // order sidecar and hash table are placed with the same line-aligned
+    // layout as BUILD_MAP, so order/table pointers are derived from base +
+    // slot count via pycore_dict_place_*.
     logic [31:0] cont_varkw_base;
     logic [31:0] cont_varkw_slots;
     logic [31:0] cont_varkw_order_ptr;
     logic [31:0] cont_varkw_table_ptr;
     assign cont_varkw_base      = call_varkw_dict_r[31:0];
     assign cont_varkw_slots     = call_varkw_dict_r[63:32];
-    assign cont_varkw_order_ptr = cont_varkw_base + 32'd48;
-    assign cont_varkw_table_ptr = cont_varkw_base + 32'd48 +
-                                  (cont_varkw_slots << 5);
+    assign cont_varkw_order_ptr = pycore_dict_place_order(cont_varkw_base);
+    assign cont_varkw_table_ptr = pycore_dict_place_table(
+                                      cont_varkw_base, cont_varkw_slots);
 
     // Probe advance inside the **kwargs table: (probe + 1) & (slots - 1).
     logic [31:0] cont_varkw_probe_next;
@@ -1666,9 +1676,6 @@ module pycore_core #(
         128'h75f5f6c656e5f5f00000000000000000;
     // Empty dict for new instances: 4 slots (BUILD_MAP min for 0 pairs).
     localparam logic [31:0] CALL_EMPTY_DICT_SLOTS = 32'd4;
-    localparam logic [31:0] CALL_TYPE_ALLOC_BYTES =
-        32'd48 + (CALL_EMPTY_DICT_SLOTS << 5) +
-        (CALL_EMPTY_DICT_SLOTS << 6) + PYCORE_OBJ_INSTANCE_BYTES;
 
     always_comb begin
         state_next = state_r;  // default: hold current state
@@ -1909,6 +1916,7 @@ module pycore_core #(
             container_dmem_pending_r <= 1'b0;
             container_dmem_addr_r    <= '0;
             container_dmem_we_r      <= 1'b0;
+            container_dmem_wstrb_r   <= {DMEM_DATA_W/8{1'b1}};
             container_dmem_wdata_r   <= '0;
             container_wb_we_r        <= 1'b0;
             container_wb_addr_r      <= '0;

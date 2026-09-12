@@ -11,10 +11,13 @@ module pycore_mem_block #(
 ) (
     input  logic                       clk_i,
     input  logic                       we_i,
+    input  logic [DATA_WIDTH/8-1:0]    wstrb_i,
     input  logic [$clog2(DEPTH)-1:0]   addr_i,
     input  logic [DATA_WIDTH-1:0]      wdata_i,
     output logic [DATA_WIDTH-1:0]      rdata_o
 );
+
+    localparam int BYTES_PER_WORD = DATA_WIDTH / 8;
 
     logic [DATA_WIDTH-1:0] mem [0:DEPTH-1];
 
@@ -32,7 +35,11 @@ module pycore_mem_block #(
 
     always_ff @(posedge clk_i) begin
         if (we_i) begin
-            mem[addr_i] <= wdata_i;
+            for (int b = 0; b < BYTES_PER_WORD; b++) begin
+                if (wstrb_i[b]) begin
+                    mem[addr_i][8*b +: 8] <= wdata_i[8*b +: 8];
+                end
+            end
         end
         rdata_o <= mem[addr_i];
     end

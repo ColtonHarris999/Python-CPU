@@ -6,19 +6,28 @@
                                 // Phase 0 (CP_INIT): check OOM (object + buffer
                                 // together) and issue the object's header write.
                                 CP_INIT: begin
-                                    // OOM check: object (32B) + buffer (count*32B,
-                                    // 0 for the empty-list case).
-                                    if ((heap_ptr_r + cont_bl_alloc) > PYCORE_HEAP_LIMIT) begin
+                                    // OOM check: line-aligned object (32B) +
+                                    // line-aligned buffer (count*32B; skipped
+                                    // for the empty-list case).
+                                    if (pycore_list_place_end(
+                                            heap_ptr_r,
+                                            {25'b0, container_count_r})
+                                            > PYCORE_HEAP_LIMIT) begin
                                         container_mem_fault_r <= 1'b1;
                                     end else begin
                                         // Object base (stable handle target).
-                                        container_base_r       <= heap_ptr_r;
-                                        // Buffer base immediately follows the 32B
-                                        // object; irrelevant (never read) when
-                                        // count==0, where ob_item is written 0.
-                                        container_buf_r         <= heap_ptr_r + 32'd32;
+                                        container_base_r       <=
+                                            pycore_list_place_obj(heap_ptr_r);
+                                        // Buffer start-aligns to LINE_BYTES;
+                                        // unused (ob_item written 0) when
+                                        // count==0.
+                                        container_buf_r         <=
+                                            pycore_list_place_buf(
+                                                heap_ptr_r,
+                                                {25'b0, container_count_r});
                                         // Issue header write: {capacity, length}.
-                                        container_dmem_addr_r  <= heap_ptr_r;
+                                        container_dmem_addr_r  <=
+                                            pycore_list_place_obj(heap_ptr_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <= pycore_list_header(
                                             {57'b0, container_count_r},
@@ -28,7 +37,10 @@
                                         // now — capacity == count exactly (no
                                         // over-allocation), matching CPython
                                         // list-literal semantics.
-                                        heap_ptr_r             <= heap_ptr_r + cont_bl_alloc;
+                                        heap_ptr_r             <=
+                                            pycore_list_place_end(
+                                                heap_ptr_r,
+                                                {25'b0, container_count_r});
                                         // Pre-load RF address for element 0.
                                         container_rf_addr_r <= RF_AW'(
                                             {2'b0, tos_r} - {2'b0, container_count_r});
@@ -122,8 +134,8 @@
                                         end else begin
                                             // All elements written — commit list.
                                             // Push the list handle to RF[tos-count].
-                                            // heap_ptr already advanced by exactly
-                                            // cont_bl_alloc back in CP_INIT.
+                                            // heap_ptr already advanced by the
+                                            // line-aligned placement in CP_INIT.
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
                                                 {2'b0, tos_r} - {2'b0, container_count_r});
@@ -1809,10 +1821,10 @@
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
-                                    if ((heap_ptr_r + cont_bt_alloc) > PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
-                                    end else if (container_count_r == 7'd0) begin
-                                        // Empty tuple: no dmem writes; commit handle.
+                                    if (container_count_r == 7'd0) begin
+                                        // Empty tuple: no dmem writes; commit
+                                        // handle at the current bump pointer
+                                        // (no `_alloc`, so no line pad).
                                         container_base_r       <= heap_ptr_r;
                                         container_wb_we_r      <= 1'b1;
                                         container_wb_addr_r    <= RF_AW'({2'b0, tos_r});
@@ -1822,8 +1834,20 @@
                                         tos_r             <= tos_r + RF_AW'(1);
                                         fetch_skip_r      <= 1'b1;
                                         container_phase_r <= CP_DONE;
+                                    end else if (pycore_heap_end(
+                                            heap_ptr_r, cont_bt_alloc)
+                                            > PYCORE_HEAP_LIMIT) begin
+                                        container_mem_fault_r <= 1'b1;
                                     end else begin
-                                        container_base_r  <= heap_ptr_r;
+                                        container_base_r  <=
+                                            pycore_heap_place(
+                                                heap_ptr_r, cont_bt_alloc);
+                                        // Snap the bump pointer to the placed
+                                        // base so the per-slot +16 advances
+                                        // consume the payload, not any pad.
+                                        heap_ptr_r        <=
+                                            pycore_heap_place(
+                                                heap_ptr_r, cont_bt_alloc);
                                         container_rf_addr_r <= RF_AW'(
                                             {2'b0, tos_r} - {2'b0, container_count_r});
                                         container_idx_r   <= 7'd0;
@@ -1916,15 +1940,24 @@
                                                 {64'd0, {32'b0, heap_ptr_r}});
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
-                                        end else if ((heap_ptr_r +
-                                                pycore_tuple_alloc_bytes(cont_hdr_len[31:0]))
+                                        end else if (pycore_heap_end(
+                                                heap_ptr_r,
+                                                pycore_tuple_alloc_bytes(
+                                                    cont_hdr_len[31:0]))
                                                 > PYCORE_HEAP_LIMIT) begin
                                             container_mem_fault_r <= 1'b1;
                                         end else begin
                                             container_count_r <= cont_hdr_len[6:0];
-                                            container_base_r  <= heap_ptr_r;
-                                            heap_ptr_r        <= heap_ptr_r +
-                                                pycore_tuple_alloc_bytes(cont_hdr_len[31:0]);
+                                            container_base_r  <=
+                                                pycore_heap_place(
+                                                    heap_ptr_r,
+                                                    pycore_tuple_alloc_bytes(
+                                                        cont_hdr_len[31:0]));
+                                            heap_ptr_r        <=
+                                                pycore_heap_end(
+                                                    heap_ptr_r,
+                                                    pycore_tuple_alloc_bytes(
+                                                        cont_hdr_len[31:0]));
                                             container_dmem_addr_r <=
                                                 pycore_list_obitem_addr(cont_rs1_addr);
                                             container_dmem_we_r      <= 1'b0;
@@ -2096,16 +2129,19 @@
                                                 tos_r - RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
-                                        end else if ((heap_ptr_r +
+                                        end else if (pycore_heap_end(
+                                                heap_ptr_r,
                                                 pycore_list_obj_bytes())
                                                 > PYCORE_HEAP_LIMIT) begin
                                             container_mem_fault_r <= 1'b1;
                                         end else begin
-                                            container_base_r <= heap_ptr_r;
-                                            heap_ptr_r       <= heap_ptr_r +
-                                                pycore_list_obj_bytes();
+                                            container_base_r <=
+                                                pycore_list_place_obj(heap_ptr_r);
+                                            heap_ptr_r       <=
+                                                pycore_list_place_end(
+                                                    heap_ptr_r, 32'd0);
                                             container_dmem_addr_r  <=
-                                                heap_ptr_r;
+                                                pycore_list_place_obj(heap_ptr_r);
                                             container_dmem_we_r    <= 1'b1;
                                             container_dmem_wdata_r <=
                                                 pycore_list_header(64'd0, 64'd0);
@@ -2127,30 +2163,48 @@
                                 end
 
                                 // Allocation uses dest_len latched last cycle
-                                // so cont_repeat_alloc sees container_src_slots_r.
+                                // so container_src_slots_r is the dest length.
                                 CP_DICT_META: begin
-                                    if ((heap_ptr_r + cont_repeat_alloc) >
-                                            PYCORE_HEAP_LIMIT) begin
+                                    if (container_src_is_tuple_r) begin
+                                        if (pycore_heap_end(
+                                                heap_ptr_r, cont_repeat_alloc)
+                                                > PYCORE_HEAP_LIMIT) begin
+                                            container_mem_fault_r <= 1'b1;
+                                        end else begin
+                                            container_base_r <=
+                                                pycore_heap_place(
+                                                    heap_ptr_r,
+                                                    cont_repeat_alloc);
+                                            heap_ptr_r       <=
+                                                pycore_heap_end(
+                                                    heap_ptr_r,
+                                                    cont_repeat_alloc);
+                                            container_src_base_r <= 32'd0;
+                                            container_tomb_idx_r <= 32'd0;
+                                            container_dmem_addr_r <=
+                                                pycore_tuple_val_addr(
+                                                    container_src_buf_r, 32'd0);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_VAL;
+                                        end
+                                    end else if (pycore_list_place_end(
+                                            heap_ptr_r, container_src_slots_r)
+                                            > PYCORE_HEAP_LIMIT) begin
                                         container_mem_fault_r <= 1'b1;
-                                    end else if (container_src_is_tuple_r) begin
-                                        container_base_r <= heap_ptr_r;
-                                        heap_ptr_r       <= heap_ptr_r +
-                                            cont_repeat_alloc;
-                                        container_src_base_r <= 32'd0;
-                                        container_tomb_idx_r <= 32'd0;
-                                        container_dmem_addr_r <=
-                                            pycore_tuple_val_addr(
-                                                container_src_buf_r, 32'd0);
-                                        container_dmem_we_r      <= 1'b0;
-                                        container_dmem_pending_r <= 1'b1;
-                                        container_phase_r        <= CP_VAL;
                                     end else begin
-                                        container_base_r <= heap_ptr_r;
-                                        container_buf_r  <= heap_ptr_r +
-                                            pycore_list_obj_bytes();
-                                        heap_ptr_r       <= heap_ptr_r +
-                                            cont_repeat_alloc;
-                                        container_dmem_addr_r  <= heap_ptr_r;
+                                        container_base_r <=
+                                            pycore_list_place_obj(heap_ptr_r);
+                                        container_buf_r  <=
+                                            pycore_list_place_buf(
+                                                heap_ptr_r,
+                                                container_src_slots_r);
+                                        heap_ptr_r       <=
+                                            pycore_list_place_end(
+                                                heap_ptr_r,
+                                                container_src_slots_r);
+                                        container_dmem_addr_r  <=
+                                            pycore_list_place_obj(heap_ptr_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <=
                                             pycore_list_header(
@@ -2499,30 +2553,47 @@
                                             tos_r - RF_AW'(1);
                                         fetch_skip_r      <= 1'b1;
                                         container_phase_r <= CP_DONE;
-                                    end else if ((heap_ptr_r +
-                                            cont_repeat_alloc) >
-                                            PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
                                     end else if (container_src_is_tuple_r)
                                     begin
-                                        container_base_r <= heap_ptr_r;
-                                        heap_ptr_r       <= heap_ptr_r +
-                                            cont_repeat_alloc;
-                                        container_src_base_r <= 32'd0;
-                                        container_tomb_idx_r <= 32'd0;
-                                        container_dmem_addr_r <=
-                                            pycore_tuple_val_addr(
-                                                container_src_buf_r, 32'd0);
-                                        container_dmem_we_r      <= 1'b0;
-                                        container_dmem_pending_r <= 1'b1;
-                                        container_phase_r        <= CP_VAL;
+                                        if (pycore_heap_end(
+                                                heap_ptr_r, cont_repeat_alloc)
+                                                > PYCORE_HEAP_LIMIT) begin
+                                            container_mem_fault_r <= 1'b1;
+                                        end else begin
+                                            container_base_r <=
+                                                pycore_heap_place(
+                                                    heap_ptr_r,
+                                                    cont_repeat_alloc);
+                                            heap_ptr_r       <=
+                                                pycore_heap_end(
+                                                    heap_ptr_r,
+                                                    cont_repeat_alloc);
+                                            container_src_base_r <= 32'd0;
+                                            container_tomb_idx_r <= 32'd0;
+                                            container_dmem_addr_r <=
+                                                pycore_tuple_val_addr(
+                                                    container_src_buf_r, 32'd0);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            container_phase_r        <= CP_VAL;
+                                        end
+                                    end else if (pycore_list_place_end(
+                                            heap_ptr_r, container_src_slots_r)
+                                            > PYCORE_HEAP_LIMIT) begin
+                                        container_mem_fault_r <= 1'b1;
                                     end else begin
-                                        container_base_r <= heap_ptr_r;
-                                        container_buf_r  <= heap_ptr_r +
-                                            pycore_list_obj_bytes();
-                                        heap_ptr_r       <= heap_ptr_r +
-                                            cont_repeat_alloc;
-                                        container_dmem_addr_r  <= heap_ptr_r;
+                                        container_base_r <=
+                                            pycore_list_place_obj(heap_ptr_r);
+                                        container_buf_r  <=
+                                            pycore_list_place_buf(
+                                                heap_ptr_r,
+                                                container_src_slots_r);
+                                        heap_ptr_r       <=
+                                            pycore_list_place_end(
+                                                heap_ptr_r,
+                                                container_src_slots_r);
+                                        container_dmem_addr_r  <=
+                                            pycore_list_place_obj(heap_ptr_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <=
                                             pycore_list_header(
@@ -3143,8 +3214,9 @@
                                     if ({1'b0, container_src_len_r} <
                                             {1'b0, cont_unpack_fixed_len}) begin
                                         container_type_trap_r <= 1'b1;
-                                    end else if ((heap_ptr_r + cont_unpack_middle_alloc) >
-                                                 PYCORE_HEAP_LIMIT) begin
+                                    end else if (pycore_list_place_end(
+                                            heap_ptr_r, cont_unpack_rest_len)
+                                            > PYCORE_HEAP_LIMIT) begin
                                         container_mem_fault_r <= 1'b1;
                                     end else begin
                                         tos_r <= tos_r - RF_AW'(1);
@@ -3171,11 +3243,17 @@
 
                                 // Allocate the starred middle list object.
                                 CP_NAME_VAL: begin
-                                    container_base_r  <= heap_ptr_r;
-                                    container_buf_r   <= heap_ptr_r + 32'd32;
+                                    container_base_r  <=
+                                        pycore_list_place_obj(heap_ptr_r);
+                                    container_buf_r   <=
+                                        pycore_list_place_buf(
+                                            heap_ptr_r, cont_unpack_rest_len);
                                     container_count_r <= cont_unpack_rest_len[6:0];
-                                    heap_ptr_r        <= heap_ptr_r + cont_unpack_middle_alloc;
-                                    container_dmem_addr_r  <= heap_ptr_r;
+                                    heap_ptr_r        <=
+                                        pycore_list_place_end(
+                                            heap_ptr_r, cont_unpack_rest_len);
+                                    container_dmem_addr_r  <=
+                                        pycore_list_place_obj(heap_ptr_r);
                                     container_dmem_we_r    <= 1'b1;
                                     container_dmem_wdata_r <= pycore_list_header(
                                         {32'd0, cont_unpack_rest_len},

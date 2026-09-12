@@ -903,13 +903,17 @@
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r <= 6'd0;
-                                    end else if ((heap_ptr_r + 32'd96) >
+                                    end else if (pycore_heap_end(
+                                                 heap_ptr_r, 32'd96) >
                                                  PYCORE_HEAP_LIMIT) begin
                                         container_mem_fault_r <= 1'b1;
                                     end else begin
-                                        container_base_r <= heap_ptr_r;
-                                        heap_ptr_r <= heap_ptr_r + 32'd96;
-                                        container_dmem_addr_r <= heap_ptr_r;
+                                        container_base_r <=
+                                            pycore_heap_place(heap_ptr_r, 32'd96);
+                                        heap_ptr_r <=
+                                            pycore_heap_end(heap_ptr_r, 32'd96);
+                                        container_dmem_addr_r <=
+                                            pycore_heap_place(heap_ptr_r, 32'd96);
                                         container_dmem_we_r <= 1'b1;
                                         container_dmem_wdata_r <= call_range_start_r;
                                         container_dmem_pending_r <= 1'b1;
@@ -1044,19 +1048,24 @@
                                     logic [31:0] set_slots;
                                     set_slots = pycore_set_min_slots(
                                         container_count_r);
-                                    if ((heap_ptr_r +
-                                         pycore_set_alloc_bytes(set_slots)) >
+                                    if (pycore_set_place_end(
+                                         heap_ptr_r, set_slots) >
                                         PYCORE_HEAP_LIMIT) begin
                                         container_mem_fault_r <= 1'b1;
                                     end else begin
-                                        container_base_r <= heap_ptr_r;
-                                        container_buf_r <= heap_ptr_r + 32'd32;
+                                        container_base_r <=
+                                            pycore_set_place_obj(heap_ptr_r);
+                                        container_buf_r <=
+                                            pycore_set_place_table(
+                                                heap_ptr_r, set_slots);
                                         container_slot_count_r <= set_slots;
                                         container_used_r <= 64'd0;
                                         container_idx_r <= 7'd0;
-                                        heap_ptr_r <= heap_ptr_r +
-                                            pycore_set_alloc_bytes(set_slots);
-                                        container_dmem_addr_r <= heap_ptr_r;
+                                        heap_ptr_r <=
+                                            pycore_set_place_end(
+                                                heap_ptr_r, set_slots);
+                                        container_dmem_addr_r <=
+                                            pycore_set_place_obj(heap_ptr_r);
                                         container_dmem_we_r <= 1'b1;
                                         container_dmem_wdata_r <=
                                             pycore_set_header(
@@ -1701,25 +1710,41 @@
                             unique case (call_sub_r)
                                 // 0: OOM + allocate dict (4 slots) + INSTANCE.
                                 6'd0: begin
-                                    if ((heap_ptr_r + CALL_TYPE_ALLOC_BYTES) >
-                                            PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
-                                    end else begin
-                                        container_base_r   <= heap_ptr_r;
-                                        container_order_ptr_r <= heap_ptr_r + 32'd48;
-                                        container_buf_r    <= heap_ptr_r + 32'd48 +
-                                            (CALL_EMPTY_DICT_SLOTS << 5);
-                                        call_inst_addr_r   <= heap_ptr_r
-                                            + pycore_dict_alloc_bytes(
-                                                CALL_EMPTY_DICT_SLOTS);
-                                        container_slot_count_r <= CALL_EMPTY_DICT_SLOTS;
-                                        heap_ptr_r <= heap_ptr_r + CALL_TYPE_ALLOC_BYTES;
-                                        container_dmem_addr_r  <= heap_ptr_r;
-                                        container_dmem_we_r    <= 1'b1;
-                                        container_dmem_wdata_r <= pycore_dict_header(
-                                            {32'b0, CALL_EMPTY_DICT_SLOTS}, 64'd0);
-                                        container_dmem_pending_r <= 1'b1;
-                                        call_sub_r <= 6'd1;
+                                    begin
+                                        logic [31:0] dict_obj;
+                                        logic [31:0] inst_addr;
+                                        logic [31:0] alloc_end;
+                                        dict_obj = pycore_dict_place_obj(heap_ptr_r);
+                                        inst_addr = pycore_heap_place(
+                                            pycore_dict_place_end(
+                                                heap_ptr_r,
+                                                CALL_EMPTY_DICT_SLOTS),
+                                            PYCORE_OBJ_INSTANCE_BYTES);
+                                        alloc_end = inst_addr +
+                                            PYCORE_OBJ_INSTANCE_BYTES;
+                                        if (alloc_end > PYCORE_HEAP_LIMIT) begin
+                                            container_mem_fault_r <= 1'b1;
+                                        end else begin
+                                            container_base_r   <= dict_obj;
+                                            container_order_ptr_r <=
+                                                pycore_dict_place_order(heap_ptr_r);
+                                            container_buf_r    <=
+                                                pycore_dict_place_table(
+                                                    heap_ptr_r,
+                                                    CALL_EMPTY_DICT_SLOTS);
+                                            call_inst_addr_r   <= inst_addr;
+                                            container_slot_count_r <=
+                                                CALL_EMPTY_DICT_SLOTS;
+                                            heap_ptr_r <= alloc_end;
+                                            container_dmem_addr_r  <= dict_obj;
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                pycore_dict_header(
+                                                    {32'b0, CALL_EMPTY_DICT_SLOTS},
+                                                    64'd0);
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_sub_r <= 6'd1;
+                                        end
                                     end
                                 end
                                 // 1: dict metadata
@@ -2014,25 +2039,42 @@
                                 end
                                 // 23: allocate exception plus optional tuple buffer.
                                 6'd23: begin
-                                    if ((heap_ptr_r + PYCORE_OBJ_EXCEPTION_BYTES +
-                                         pycore_tuple_alloc_bytes(
-                                             {16'd0, cur_arg_r[15:0]})) >
-                                            PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
-                                    end else begin
-                                        call_inst_addr_r <= heap_ptr_r;
-                                        container_buf_r  <= heap_ptr_r +
-                                            PYCORE_OBJ_EXCEPTION_BYTES;
-                                        heap_ptr_r <= heap_ptr_r +
-                                            PYCORE_OBJ_EXCEPTION_BYTES +
-                                            pycore_tuple_alloc_bytes(
-                                                {16'd0, cur_arg_r[15:0]});
-                                        container_dmem_addr_r  <= heap_ptr_r;
-                                        container_dmem_we_r    <= 1'b1;
-                                        container_dmem_wdata_r <= pycore_pack_ob_head(
-                                            PY_OBK_EXCEPTION, 32'd0, 64'd0);
-                                        container_dmem_pending_r <= 1'b1;
-                                        call_sub_r <= 6'd24;
+                                    begin
+                                        logic [31:0] exc_obj;
+                                        logic [31:0] tup_addr;
+                                        logic [31:0] tup_bytes;
+                                        logic [31:0] alloc_end;
+                                        exc_obj = pycore_heap_place(
+                                            heap_ptr_r,
+                                            PYCORE_OBJ_EXCEPTION_BYTES);
+                                        tup_bytes = pycore_tuple_alloc_bytes(
+                                            {16'd0, cur_arg_r[15:0]});
+                                        if (tup_bytes == 32'd0) begin
+                                            tup_addr = exc_obj +
+                                                PYCORE_OBJ_EXCEPTION_BYTES;
+                                            alloc_end = tup_addr;
+                                        end else begin
+                                            tup_addr = pycore_heap_place(
+                                                exc_obj +
+                                                PYCORE_OBJ_EXCEPTION_BYTES,
+                                                tup_bytes);
+                                            alloc_end = tup_addr + tup_bytes;
+                                        end
+                                        if (alloc_end > PYCORE_HEAP_LIMIT) begin
+                                            container_mem_fault_r <= 1'b1;
+                                        end else begin
+                                            call_inst_addr_r <= exc_obj;
+                                            container_buf_r  <= tup_addr;
+                                            heap_ptr_r <= alloc_end;
+                                            container_dmem_addr_r  <= exc_obj;
+                                            container_dmem_we_r    <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                pycore_pack_ob_head(
+                                                    PY_OBK_EXCEPTION, 32'd0,
+                                                    64'd0);
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_sub_r <= 6'd24;
+                                        end
                                     end
                                 end
                                 // 24: exception self-tag.
@@ -2398,39 +2440,47 @@
                                                             call_meta_argc_r;
                                                 if (extra[15:7] != 9'b0) begin
                                                     call_filter_trap_r <= 1'b1;
-                                                end else if ((heap_ptr_r +
+                                                end else if (extra == 16'd0) begin
+                                                    container_count_r <= extra[6:0];
+                                                    container_base_r  <= heap_ptr_r;
+                                                    container_wb_we_r <= 1'b1;
+                                                    container_wb_addr_r <= RF_AW'(
+                                                        call_new_locals_r +
+                                                        call_total_params_r[
+                                                            RF_AW-1:0]);
+                                                    container_wb_data_r <=
+                                                        pycore_make_entry(
+                                                            PY_TAG_TUPLE,
+                                                            {64'd0,
+                                                             {32'b0,
+                                                              heap_ptr_r}});
+                                                    call_argcount_r <=
+                                                        call_total_params_r + 16'd1;
+                                                    call_sub_r <= 6'd24;
+                                                end else if (pycore_heap_end(
+                                                        heap_ptr_r,
                                                         pycore_tuple_alloc_bytes(
                                                             {16'b0, extra})) >
                                                         PYCORE_HEAP_LIMIT) begin
                                                     container_mem_fault_r <= 1'b1;
                                                 end else begin
                                                     container_count_r <= extra[6:0];
-                                                    container_base_r  <= heap_ptr_r;
-                                                    if (extra == 16'd0) begin
-                                                        container_wb_we_r <= 1'b1;
-                                                        container_wb_addr_r <= RF_AW'(
-                                                            call_new_locals_r +
-                                                            call_total_params_r[
-                                                                RF_AW-1:0]);
-                                                        container_wb_data_r <=
-                                                            pycore_make_entry(
-                                                                PY_TAG_TUPLE,
-                                                                {64'd0,
-                                                                 {32'b0, heap_ptr_r}});
-                                                        call_argcount_r <=
-                                                            call_total_params_r + 16'd1;
-                                                        call_sub_r <= 6'd24;
-                                                    end else begin
-                                                        heap_ptr_r <= heap_ptr_r +
+                                                    container_base_r  <=
+                                                        pycore_heap_place(
+                                                            heap_ptr_r,
                                                             pycore_tuple_alloc_bytes(
-                                                                {16'b0, extra});
-                                                        container_idx_r <= 7'd0;
-                                                        container_rf_addr_r <= RF_AW'(
-                                                            call_new_locals_r +
-                                                            call_meta_argc_r[
-                                                                RF_AW-1:0]);
-                                                        call_sub_r <= 6'd21;
-                                                    end
+                                                                {16'b0, extra}));
+                                                    heap_ptr_r <=
+                                                        pycore_heap_end(
+                                                            heap_ptr_r,
+                                                            pycore_tuple_alloc_bytes(
+                                                                {16'b0, extra}));
+                                                    container_idx_r <= 7'd0;
+                                                    container_rf_addr_r <= RF_AW'(
+                                                        call_new_locals_r +
+                                                        call_meta_argc_r[
+                                                            RF_AW-1:0]);
+                                                    call_sub_r <= 6'd21;
                                                 end
                                             end
                                         end
@@ -3212,18 +3262,23 @@
                                             else
                                                 n_kw = call_n_kwargs_r[6:0];
                                             slots = pycore_dict_min_slots(n_kw);
-                                            if ((heap_ptr_r +
-                                                    pycore_dict_alloc_bytes(slots)) >
+                                            if (pycore_dict_place_end(
+                                                    heap_ptr_r, slots) >
                                                     PYCORE_HEAP_LIMIT) begin
                                                 container_mem_fault_r <= 1'b1;
                                             end else begin
-                                                heap_ptr_r <= heap_ptr_r +
-                                                    pycore_dict_alloc_bytes(slots);
+                                                heap_ptr_r <=
+                                                    pycore_dict_place_end(
+                                                        heap_ptr_r, slots);
                                                 call_varkw_dict_r <=
-                                                    {64'b0, slots, heap_ptr_r};
+                                                    {64'b0, slots,
+                                                     pycore_dict_place_obj(
+                                                         heap_ptr_r)};
                                                 call_varkw_alloced_r <= 1'b1;
                                                 container_used_r <= 64'd0;
-                                                container_dmem_addr_r  <= heap_ptr_r;
+                                                container_dmem_addr_r  <=
+                                                    pycore_dict_place_obj(
+                                                        heap_ptr_r);
                                                 container_dmem_we_r    <= 1'b1;
                                                 container_dmem_wdata_r <=
                                                     pycore_dict_header(

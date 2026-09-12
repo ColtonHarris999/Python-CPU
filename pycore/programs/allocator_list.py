@@ -18,9 +18,9 @@ CAPACITY = 32  # placeholder; overwritten when HEAP_LIST_CAPACITY inject runs
 WSIZE = 1
 DSIZE = 2
 MIN_BLOCK = 4  # header + footer + pred + succ (words)
-# Small so CAPACITY can shrink with HEAP_INIT_PTR (native-method firmware).
-# 64 no longer fits when the inject yields 48 words.
-CHUNKSIZE = 16
+# Small so CAPACITY can shrink with HEAP_INIT_PTR (P1 line-alignment
+# of ≥64 B payloads leaves ~2.7 KB; 4× slack yields 16 words).
+CHUNKSIZE = 4
 NULL = 0
 
 
@@ -34,8 +34,12 @@ def _zeros(n):
     CPython 3.14 lowers ``[0] * n`` to BINARY_OP NB_MULTIPLY.  PyCore only
     multiplies numeric tags, so M6 builds via inplace LIST_EXTEND of a
     16-zero chunk (excore path).  Callers must pass a multiple of 16.
+    A single 16-word chunk is returned as-is so CAPACITY=16 does not
+    LIST_EXTEND-grow (P1 alignment leaves ~2.7 KB of bump heap).
     """
     z16 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    if n == 16:
+        return z16
     out = []
     filled = 0
     while filled < n:
@@ -226,13 +230,13 @@ class Allocator:
 
 def managed_entry():
     a = Allocator(CAPACITY)
-    p1 = a.alloc(3)
-    p2 = a.alloc(12)
-    p3 = a.alloc(3)
+    p1 = a.alloc(2)
+    p2 = a.alloc(4)
+    p3 = a.alloc(2)
     a.free(p1)
     a.free(p3)
     a.free(p2)  # triple coalesce
-    big = a.alloc(20)  # must reuse the coalesced run
+    big = a.alloc(8)  # must reuse the coalesced run
     return big
 
 

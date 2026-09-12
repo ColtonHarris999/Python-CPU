@@ -5,7 +5,8 @@
 
                                 // Phase 0: allocate v3 object + order + table.
                                 CP_INIT: begin
-                                    if ((heap_ptr_r + pycore_dict_alloc_bytes(cont_dict_min_slots))
+                                    if (pycore_dict_place_end(
+                                            heap_ptr_r, cont_dict_min_slots)
                                             > PYCORE_HEAP_LIMIT) begin
                                         container_mem_fault_r <= 1'b1;
                                     end else begin
@@ -14,16 +15,20 @@
                                         container_probe_n_r    <= 32'd0;
                                         container_insert_new_r <= 1'b0;
                                         container_finishing_r  <= 1'b0;
-                                        container_base_r       <= heap_ptr_r;
-                                        container_order_ptr_r  <= heap_ptr_r + 32'd48;
+                                        container_base_r       <=
+                                            pycore_dict_place_obj(heap_ptr_r);
+                                        container_order_ptr_r  <=
+                                            pycore_dict_place_order(heap_ptr_r);
                                         container_order_len_r  <= 64'd0;
                                         container_dict_version_r <= 64'd0;
-                                        // Order buffer precedes the hash table.
-                                        container_buf_r        <= heap_ptr_r + 32'd48 +
-                                            (cont_dict_min_slots << 5);
-                                        heap_ptr_r             <= heap_ptr_r +
-                                            pycore_dict_alloc_bytes(cont_dict_min_slots);
-                                        container_dmem_addr_r  <= heap_ptr_r;
+                                        container_buf_r        <=
+                                            pycore_dict_place_table(
+                                                heap_ptr_r, cont_dict_min_slots);
+                                        heap_ptr_r             <=
+                                            pycore_dict_place_end(
+                                                heap_ptr_r, cont_dict_min_slots);
+                                        container_dmem_addr_r  <=
+                                            pycore_dict_place_obj(heap_ptr_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <= pycore_dict_header(
                                             {32'b0, cont_dict_min_slots}, 64'd0);
@@ -1364,7 +1369,8 @@
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
-                                    if ((heap_ptr_r + pycore_set_alloc_bytes(cont_set_min_slots))
+                                    if (pycore_set_place_end(
+                                            heap_ptr_r, cont_set_min_slots)
                                             > PYCORE_HEAP_LIMIT) begin
                                         container_mem_fault_r <= 1'b1;
                                     end else begin
@@ -1373,11 +1379,16 @@
                                         container_probe_n_r    <= 32'd0;
                                         container_insert_new_r <= 1'b0;
                                         container_finishing_r  <= 1'b0;
-                                        container_base_r       <= heap_ptr_r;
-                                        container_buf_r        <= heap_ptr_r + 32'd32;
-                                        heap_ptr_r             <= heap_ptr_r +
-                                            pycore_set_alloc_bytes(cont_set_min_slots);
-                                        container_dmem_addr_r  <= heap_ptr_r;
+                                        container_base_r       <=
+                                            pycore_set_place_obj(heap_ptr_r);
+                                        container_buf_r        <=
+                                            pycore_set_place_table(
+                                                heap_ptr_r, cont_set_min_slots);
+                                        heap_ptr_r             <=
+                                            pycore_set_place_end(
+                                                heap_ptr_r, cont_set_min_slots);
+                                        container_dmem_addr_r  <=
+                                            pycore_set_place_obj(heap_ptr_r);
                                         container_dmem_we_r    <= 1'b1;
                                         container_dmem_wdata_r <= pycore_set_header(
                                             {32'b0, cont_set_min_slots}, 64'd0);

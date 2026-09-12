@@ -394,6 +394,8 @@ def _run_shared_sim(
         f"+EXPECTED_TAG={meta['EXPECTED_TAG']}",
         f"+EXPECTED_VALUE={meta['EXPECTED_VALUE']}",
         f"+MAX_CYCLES={max_cycles}",
+        f"+CACHE_EN={os.environ.get('PYCORE_CACHE_EN', '1')}",
+        f"+MEM_LATENCY={os.environ.get('PYCORE_MEM_LATENCY', '4')}",
     ]
     if two_core:
         cmd.append(f"+FW_HEX={EXCORE_FW_HEX.resolve()}")

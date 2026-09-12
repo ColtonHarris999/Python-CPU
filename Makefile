@@ -12,6 +12,11 @@ DOCKER_CONTAINER_WORKDIR ?= /work
 DOCKER_BUILD_FLAGS ?=
 DOCKER_RUN_FLAGS ?=
 
+PYCORE_CACHE_EN ?= 1
+# CI default is 4 once the RAM model exists (P2); 1-cycle banks ignore it.
+PYCORE_MEM_LATENCY ?= 4
+PYCORE_MEM_PLUSARGS ?= +CACHE_EN=$(PYCORE_CACHE_EN) +MEM_LATENCY=$(PYCORE_MEM_LATENCY)
+
 PYCORE_SOURCE ?= pycore/programs/smoke_return.py
 PYCORE_FUNCTION ?= managed_entry
 PYCORE_PROGRAM_HEX ?= pycore/programs/program.hex
@@ -50,6 +55,11 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_code_ram.sv \
 	pycore/rtl/pycore_code_mem.sv \
 	pycore/rtl/pycore_dmem.sv \
+	pycore/rtl/pycore_cache_lru.sv \
+	pycore/rtl/pycore_cache.sv \
+	pycore/rtl/pycore_ram.sv \
+	pycore/rtl/pycore_mem_xbar.sv \
+	pycore/rtl/pycore_mem_hier.sv \
 	pycore/rtl/pycore_mem_stage.sv \
 	pycore/rtl/pycore_exc_stack.sv \
 	pycore/rtl/pycore_core.sv \
@@ -61,7 +71,11 @@ PYCORE_RTL_SRCS := \
 
 PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
-	pycore/rtl/pycore_mem_bank.sv
+	pycore/rtl/pycore_mem_bank.sv \
+	pycore/rtl/pycore_cache_lru.sv \
+	pycore/rtl/pycore_cache.sv \
+	pycore/rtl/pycore_ram.sv \
+	pycore/rtl/pycore_mem_xbar.sv
 
 # ---- excore (Phase B: standalone excore, no pycore integration yet) -------
 EXCORE_FW_SRC ?= excore/fw/list_grow.s
@@ -272,6 +286,7 @@ EXCORE_RTL_SRCS := \
 	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	pycore-sim-img pycore-sim-img-twocore pycore-rtl-unit \
+	pycore-cache-transparency pycore-mem-latency-sweep \
 	docker-build docker-lint-file docker-run-file docker-pycore-test docker-all-tests \
 	docker-python-tests docker-rtl-unit docker-container docker-img \
 	docker-two-core docker-excore
@@ -341,11 +356,31 @@ $(PYCORE_SIM_TWOCORE_BIN): $(PYCORE_SIM_DEPS) $(EXCORE_FW_HEX)
 pycore-sim-img-twocore: $(PYCORE_SIM_TWOCORE_BIN)
 
 # Compile shared sims, then run the suite. TEST_JOBS parallelizes image runs.
+# Transparency (CACHE_EN=0 vs 1) and the MEM_LATENCY sweep are architectural
+# gates: a cache that changes a retired result, or a master that assumed
+# 1-cycle memory, fails them.
 all-tests:
 	$(MAKE) pycore-python-tests pycore-rtl-unit excore-asm-tests
 	$(MAKE) pycore-sim-img pycore-sim-img-twocore excore-cpu-test
 	$(MAKE) -j$(TEST_JOBS) pycore-container pycore-img \
 		pycore-excore-system pycore-img-two-core
+	$(MAKE) pycore-cache-transparency pycore-mem-latency-sweep
+
+# Architectural gates (memory_system_plan.md §6). Both reuse the shared
+# tb_container binaries. Retired results must match the host golden at every
+# CACHE_EN / MEM_LATENCY setting; a cache that changes an architectural
+# result, or a master that assumed 1-cycle memory, fails here.
+pycore-cache-transparency:
+	$(MAKE) pycore-img PYCORE_CACHE_EN=0
+	$(MAKE) pycore-img PYCORE_CACHE_EN=1
+
+# CACHE_EN=0 so RAM_T_FIRST is on the critical path. With L2 enabled the
+# 128 KB cache covers the present dmem and HIT_CYCLES=1 hides MEM_LATENCY
+# after warmup (img_recursion is ~52k at LAT=30 with L2 vs ~297k bypassed).
+pycore-mem-latency-sweep:
+	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=1
+	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=4
+	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=30
 
 pycore-tag-decode:
 	mkdir -p $(BUILD_DIR)
@@ -422,6 +457,37 @@ pycore-mem:
 		$(PYCORE_MEM_SRCS) pycore/tb/tb_mem_bank.sv
 	./$(BUILD_DIR)/pycore_mem/Vtb_mem_bank
 
+pycore-cache-lru:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_cache_lru \
+		--Mdir $(BUILD_DIR)/pycore_cache_lru \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_cache_lru.sv pycore/tb/tb_cache_lru.sv
+	./$(BUILD_DIR)/pycore_cache_lru/Vtb_cache_lru
+
+pycore-cache:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_cache \
+		--Mdir $(BUILD_DIR)/pycore_cache \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_cache_lru.sv pycore/rtl/pycore_cache.sv \
+		pycore/rtl/pycore_ram.sv pycore/tb/tb_cache.sv
+	./$(BUILD_DIR)/pycore_cache/Vtb_cache
+
+pycore-ram:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_ram \
+		--Mdir $(BUILD_DIR)/pycore_ram \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_ram.sv pycore/tb/tb_ram.sv
+	./$(BUILD_DIR)/pycore_ram/Vtb_ram
+
 pycore-frame:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
@@ -474,7 +540,8 @@ define PYCORE_IMAGE_RUN_SRC
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
-		+MAX_CYCLES=$(3)
+		+MAX_CYCLES=$(3) \
+		$(PYCORE_MEM_PLUSARGS)
 endef
 
 # Same as PYCORE_IMAGE_RUN_SRC but on the two-core top (LIST_EXTEND / grow).
@@ -502,7 +569,8 @@ define PYCORE_IMAGE_RUN_SRC_TWOCORE
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
-		+MAX_CYCLES=$(3)
+		+MAX_CYCLES=$(3) \
+		$(PYCORE_MEM_PLUSARGS)
 endef
 
 # M6 target: allocator_list needs LIST_EXTEND (excore) for _zeros().
@@ -545,7 +613,8 @@ define PYCORE_IMAGE_RUN
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
-		+MAX_CYCLES=$(2)
+		+MAX_CYCLES=$(2) \
+		$(PYCORE_MEM_PLUSARGS)
 endef
 
 # Plan 1 P1: same differential flow as PYCORE_IMAGE_RUN, but the program is
@@ -577,7 +646,8 @@ define PYCORE_IMAGE_RUN_CODERAM
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
-		+MAX_CYCLES=$(2)
+		+MAX_CYCLES=$(2) \
+		$(PYCORE_MEM_PLUSARGS)
 endef
 
 # Synthetic §6.1 spike: the generator rewrites the inner zero-arg CALL to
@@ -606,7 +676,8 @@ define PYCORE_CONTAINER_CALL_SPIKE_RUN
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
-		+MAX_CYCLES=100000
+		+MAX_CYCLES=100000 \
+		$(PYCORE_MEM_PLUSARGS)
 endef
 
 # Phase C full-regression companion to PYCORE_IMAGE_RUN: same image, run on
@@ -637,7 +708,8 @@ define PYCORE_IMAGE_RUN_TWOCORE
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
-		+MAX_CYCLES=$(2)
+		+MAX_CYCLES=$(2) \
+		$(PYCORE_MEM_PLUSARGS)
 endef
 
 # Two-core image run with console stdout golden (print / BI_PRINT).
@@ -666,7 +738,7 @@ define PYCORE_IMAGE_RUN_TWOCORE_STDOUT
 		+EXPECTED_TAG=1 \
 		+EXPECTED_VALUE=0 \
 		+STDOUT_PATH=$(BUILD_DIR)/img_$(1)/sim.stdout \
-		+MAX_CYCLES=$(2) && \
+		+MAX_CYCLES=$(2) $(PYCORE_MEM_PLUSARGS) && \
 	diff -u pycore/programs/img_$(1).stdout $(BUILD_DIR)/img_$(1)/sim.stdout
 endef
 
@@ -690,7 +762,8 @@ define PYCORE_IMAGE_TRAP_RUN
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=$(2) \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		+MAX_CYCLES=$(3)
+		+MAX_CYCLES=$(3) \
+		$(PYCORE_MEM_PLUSARGS)
 endef
 
 pycore-img-smoke:
@@ -705,8 +778,10 @@ pycore-img-str-consts:
 pycore-img-containers:
 	$(call PYCORE_IMAGE_RUN,containers,50000)
 
+# LAT=1 ≈ 51k, LAT=4 ≈ 76k, LAT=30 ≈ 297k (xbar + RAM_T_FIRST). Cap
+# covers the MEM_LATENCY=30 sweep; a hang still dies well below this.
 pycore-img-recursion:
-	$(call PYCORE_IMAGE_RUN,recursion,100000)
+	$(call PYCORE_IMAGE_RUN,recursion,500000)
 
 pycore-img-extended-arg:
 	$(call PYCORE_IMAGE_RUN,extended_arg,200000)
@@ -1431,7 +1506,8 @@ define PYCORE_IMAGE_TRAP_RUN_TWOCORE
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=$(2) \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		+MAX_CYCLES=$(3)
+		+MAX_CYCLES=$(3) \
+		$(PYCORE_MEM_PLUSARGS)
 endef
 
 pycore-img-smoke-two-core: excore-fw
@@ -1447,7 +1523,7 @@ pycore-img-containers-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,containers,50000)
 
 pycore-img-recursion-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,recursion,100000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,recursion,500000)
 
 pycore-img-extended-arg-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,extended_arg,200000)
@@ -2257,7 +2333,7 @@ define PYCORE_CONTAINER_RUN
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=$(1) \
 		+BOOT_EN=0 \
-		$(2)
+		$(2) $(PYCORE_MEM_PLUSARGS)
 endef
 
 # Image-boot container fixtures (BOOT_EN=1) with a .meta HEAP_INIT_PTR.
@@ -2272,7 +2348,7 @@ define PYCORE_CONTAINER_BOOT_RUN
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		$(2)
+		$(2) $(PYCORE_MEM_PLUSARGS)
 endef
 
 pycore-container-build-index:
@@ -2417,7 +2493,7 @@ define PYCORE_EXCORE_RUN
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
-		$(2)
+		$(2) $(PYCORE_MEM_PLUSARGS)
 endef
 
 pycore-excore-grow-from-zero: excore-fw pycore-excore-integration-fixtures
@@ -2439,7 +2515,8 @@ pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		+CHECK_ENTRY_RETURN=0 \
 		+HEAP_INIT_PTR=110464 \
 		+EXPECT_TRAP=1 \
-		+EXPECTED_TRAP_CODE=7
+		+EXPECTED_TRAP_CODE=7 \
+		$(PYCORE_MEM_PLUSARGS)
 
 pycore-excore-alias-stability: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,alias_stability,+EXPECTED_TAG=1 +EXPECTED_VALUE=30 +EXPECTED_TRAP_REQ_COUNT=1)
@@ -2468,7 +2545,8 @@ pycore-excore-disabled: pycore-excore-integration-fixtures
 		+CHECK_ENTRY_RETURN=0 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
 		+EXPECT_TRAP=1 \
-		+EXPECTED_TRAP_CODE=9
+		+EXPECTED_TRAP_CODE=9 \
+		$(PYCORE_MEM_PLUSARGS)
 
 pycore-excore-extend-grow-list: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,extend_grow_list,+EXPECTED_TAG=1 +EXPECTED_VALUE=6 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=50000)
@@ -2503,7 +2581,8 @@ pycore-excore-extend-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		+CHECK_ENTRY_RETURN=0 \
 		+HEAP_INIT_PTR=110464 \
 		+EXPECT_TRAP=1 \
-		+EXPECTED_TRAP_CODE=7
+		+EXPECTED_TRAP_CODE=7 \
+		$(PYCORE_MEM_PLUSARGS)
 
 pycore-excore-extend-across-call: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,extend_across_call,+EXPECTED_TAG=1 +EXPECTED_VALUE=88 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=50000)
@@ -2521,7 +2600,8 @@ pycore-excore-extend-disabled: pycore-excore-integration-fixtures
 		+CHECK_ENTRY_RETURN=0 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
 		+EXPECT_TRAP=1 \
-		+EXPECTED_TRAP_CODE=10
+		+EXPECTED_TRAP_CODE=10 \
+		$(PYCORE_MEM_PLUSARGS)
 
 pycore-excore-system: \
 	pycore-excore-grow-from-zero \
@@ -2601,7 +2681,8 @@ excore-cpu-test: excore-fw
 excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec pycore-string-exec \
-	pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib
+	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
+	pycore-frame pycore-frame-fib
 
 pycore-test: pycore-python-tests pycore-rtl-unit pycore-container \
 	pycore-img pycore-excore-system pycore-img-two-core

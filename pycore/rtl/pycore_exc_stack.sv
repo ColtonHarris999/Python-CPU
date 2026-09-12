@@ -51,6 +51,7 @@ module pycore_exc_stack #(
     // dmem master (one outstanding beat)
     output logic                  dmem_req_o,
     output logic                  dmem_we_o,
+    output logic [15:0]           dmem_wstrb_o,
     output logic [ADDR_WIDTH-1:0] dmem_addr_o,
     output logic [127:0]          dmem_wdata_o,
     input  logic                  dmem_ack_i,
@@ -100,6 +101,7 @@ module pycore_exc_stack #(
     assign pop_exc_addr_o  = pop_exc_addr_r;
     assign dmem_req_o   = dmem_req_r;
     assign dmem_we_o    = dmem_we_r;
+    assign dmem_wstrb_o = 16'hFFFF;
     assign dmem_addr_o  = dmem_addr_r;
     assign dmem_wdata_o = dmem_wdata_r;
 

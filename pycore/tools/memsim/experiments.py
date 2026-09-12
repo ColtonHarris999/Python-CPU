@@ -399,9 +399,13 @@ def e7(results):
 
 
 def e8():
-    """The bump allocator only guarantees 16-byte alignment, so a 64-byte dict
-    slot straddles two lines three times out of four.  Measure the fix."""
-    print("\n=== E8  line-aligning the heap allocator (16 B today -> 64 B) ===")
+    """Production bump start-aligns to 64 B; 16 B is the pre-P1 control.
+
+    A 64-byte dict slot under 16 B alignment straddles two lines three
+    times out of four.  P1 made 64 B the production allocator; this
+    experiment still reports both rows.
+    """
+    print("\n=== E8  line-aligning the heap allocator (16 B control vs 64 B production) ===")
     print(f"{'align':<8}{'lines':>7}" +
           "".join(f"{'%dB/%dw' % (sz, w):>12}"
                   for sz, w in ((512, 2), (1024, 2), (2048, 2), (2048, 4))))
@@ -422,10 +426,12 @@ def e8():
             row.append(f"{100*c.hit_rate:11.2f}%")
         label = "16 B" if align is None else "64 B"
         print(f"{label:<8}{len({a//64 for a in accs}):>7}" + "".join(row))
-    L.set_heap_alignment(None)
+    L.set_heap_alignment(64)
     print("\n  Saturates by 2 KB, so the payoff is a *smaller* L1D for the same\n"
           "  hit rate: 64 B alignment at 1 KB beats 16 B alignment at 1 KB by\n"
           "  7 points and cuts misses ~45%.")
+    import heap_image as _hi
+    _hi.HeapImageBuilder._alloc = _hi.HeapImageBuilder._alloc_line
 
 
 def main():

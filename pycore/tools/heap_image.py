@@ -13,6 +13,8 @@ import pathlib
 from dataclasses import dataclass, field
 
 from encoding import (
+    LINE_BYTES,
+    align_line,
     BOOT_RECORD_ADDR,
     CODE_FIELD_CO_CONSTS,
     CODE_FIELD_CO_DEFAULTS,
@@ -110,7 +112,12 @@ class HeapImageBuilder:
         """First free byte — use as HEAP_INIT_PTR."""
         return self.ptr
 
-    def _alloc(self, nbytes: int) -> int:
+    def _alloc_unaligned(self, nbytes: int) -> int:
+        """Raw 16-byte bump with no cache-line padding.
+
+        Production `_alloc` start-aligns to LINE_BYTES first.  memsim E8
+        swaps `_alloc` back to this method to measure the 16 B control arm.
+        """
         if nbytes % 16 != 0:
             raise ValueError(f"allocation must be 16-byte aligned, got {nbytes}")
         addr = self.ptr
@@ -120,6 +127,22 @@ class HeapImageBuilder:
             )
         self.ptr = addr + nbytes
         return addr
+
+    def _alloc(self, nbytes: int) -> int:
+        """Bump-allocate ``nbytes``. Payloads of ``LINE_BYTES`` or more are
+        start-aligned so 64-byte dict slots never straddle a line (F3b).
+
+        Smaller allocations (32 B list objects, 48 B dict objects, 1-element
+        tuples) stay packed — rounding those too blows several KB of firmware
+        image and starves ``allocator_list``.  The next large `_alloc` still
+        start-aligns, which is what places dict order/table on a line.
+        """
+        if nbytes >= LINE_BYTES:
+            self.ptr = align_line(self.ptr, LINE_BYTES)
+        return self._alloc_unaligned(nbytes)
+
+    # Alias so memsim can restore production alignment after swapping `_alloc`.
+    _alloc_line = _alloc
 
     def _write(self, addr: int, word: int) -> None:
         if addr % 16 != 0:

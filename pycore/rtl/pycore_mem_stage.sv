@@ -27,6 +27,7 @@ module pycore_mem_stage #(
     // dmem master port
     output logic                          dmem_req_o,
     output logic                          dmem_we_o,
+    output logic [DMEM_DATA_W/8-1:0]      dmem_wstrb_o,
     output logic [ADDR_WIDTH-1:0]         dmem_addr_o,
     output logic [DMEM_DATA_W-1:0]        dmem_wdata_o,
     input  logic                          dmem_ack_i,
@@ -64,6 +65,7 @@ module pycore_mem_stage #(
     // Handshake: assert req until it is captured, expect ack the next cycle.
     assign dmem_req_o   = is_ptr_op && !pre_trap && !req_sent_r;
     assign dmem_we_o    = is_store_ptr;
+    assign dmem_wstrb_o = {DMEM_DATA_W/8{1'b1}};
     assign dmem_addr_o  = addr_val[ADDR_WIDTH-1:0];
     assign dmem_wdata_o = pycore_get_val(alu_entry_i);
 
