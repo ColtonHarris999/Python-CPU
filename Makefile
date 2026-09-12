@@ -374,10 +374,13 @@ pycore-cache-transparency:
 	$(MAKE) pycore-img PYCORE_CACHE_EN=0
 	$(MAKE) pycore-img PYCORE_CACHE_EN=1
 
+# CACHE_EN=0 so RAM_T_FIRST is on the critical path. With L2 enabled the
+# 128 KB cache covers the present dmem and HIT_CYCLES=1 hides MEM_LATENCY
+# after warmup (img_recursion is ~52k at LAT=30 with L2 vs ~297k bypassed).
 pycore-mem-latency-sweep:
-	$(MAKE) pycore-img PYCORE_MEM_LATENCY=1
-	$(MAKE) pycore-img PYCORE_MEM_LATENCY=4
-	$(MAKE) pycore-img PYCORE_MEM_LATENCY=30
+	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=1
+	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=4
+	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=30
 
 pycore-tag-decode:
 	mkdir -p $(BUILD_DIR)
