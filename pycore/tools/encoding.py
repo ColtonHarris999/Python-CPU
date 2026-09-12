@@ -94,6 +94,56 @@ def align_line(addr: int, line: int = LINE_BYTES) -> int:
     if line <= 0 or (line & (line - 1)) != 0:
         raise ValueError(f"line size must be a positive power of two, got {line}")
     return (addr + line - 1) & ~(line - 1)
+
+
+def heap_place(ptr: int, nbytes: int, line: int = LINE_BYTES) -> int:
+    """First byte of an allocation of ``nbytes`` at ``ptr``.
+
+    Mirrors ``pycore_heap_place``: payloads of ``LINE_BYTES`` or more
+    start-align; smaller ones pack.
+    """
+    if nbytes >= line:
+        return align_line(ptr, line)
+    return ptr
+
+
+def heap_end(ptr: int, nbytes: int, line: int = LINE_BYTES) -> int:
+    """First free byte after placing ``nbytes`` at ``heap_place(ptr, nbytes)``."""
+    return heap_place(ptr, nbytes, line) + nbytes
+
+
+# String Accelerator ops / handle (planning/string_accelerator_plan.md).
+# Kind encoding: 1/2/4-byte units stored as 0/1/2 in bits [121:120].
+SA_CONCAT = 0
+SA_REPEAT = 1
+SA_SLICE = 2
+SA_PAD = 3
+SA_CMP = 4
+SA_SEARCH = 5
+SA_HASH = 6
+SA_CHAR_AT = 7
+SA_ITER_NEXT = 8
+
+SA_FIND = 0
+SA_RFIND = 1
+SA_COUNT = 2
+SA_CONTAINS = 3
+SA_STARTSWITH = 4
+SA_ENDSWITH = 5
+
+SA_PAD_LEFT = 0   # rjust
+SA_PAD_RIGHT = 1  # ljust
+SA_PAD_BOTH = 2   # center
+
+STRACC_KIND_ENC_1 = 0
+STRACC_KIND_ENC_2 = 1
+STRACC_KIND_ENC_4 = 2
+STRACC_FLAG_INTERNED = 1 << 0
+STRACC_FLAG_ALL_LOWER = 1 << 1
+STRACC_FLAG_ALL_UPPER = 1 << 2
+STRACC_FNV_OFFSET = 0x811C9DC5
+STRACC_FNV_PRIME = 0x01000193
+
 L1I_SIZE_BYTES = 8192
 L1I_WAYS = 4
 L1I_HIT_CYCLES = 1
@@ -371,6 +421,125 @@ def encode_short_string(data: bytes) -> int:
         payload |= int(byte) << shift
     payload |= (len(data) & 0xF) << SHORT_STR_SIZE_SHIFT
     return payload
+
+
+def decode_short_string(value: int) -> bytes:
+    """Inverse of encode_short_string."""
+    n = (value >> SHORT_STR_SIZE_SHIFT) & 0xF
+    out = bytearray()
+    for idx in range(n):
+        shift = SHORT_STR_DATA_SHIFT + (SHORT_STR_MAX_BYTES - 1 - idx) * 8
+        out.append((value >> shift) & 0xFF)
+    return bytes(out)
+
+
+def stracc_kind_of_text(text: str) -> int:
+    """Return 1, 2 or 4 from the maximum code point (CPython unicode kind)."""
+    if not text:
+        return 1
+    mx = max(ord(c) for c in text)
+    if mx <= 0xFF:
+        return 1
+    if mx <= 0xFFFF:
+        return 2
+    return 4
+
+
+def stracc_kind_width(kind: int) -> int:
+    if kind not in (1, 2, 4):
+        raise ValueError(f"invalid str kind {kind}")
+    return kind
+
+
+def stracc_kind_enc(kind: int) -> int:
+    return {1: STRACC_KIND_ENC_1, 2: STRACC_KIND_ENC_2, 4: STRACC_KIND_ENC_4}[kind]
+
+
+def stracc_kind_from_enc(enc: int) -> int:
+    return {STRACC_KIND_ENC_1: 1, STRACC_KIND_ENC_2: 2, STRACC_KIND_ENC_4: 4}[enc]
+
+
+def stracc_encode_units(text: str, kind: int | None = None) -> bytes:
+    """Fixed-width little-endian code units for ``text``."""
+    if kind is None:
+        kind = stracc_kind_of_text(text)
+    width = stracc_kind_width(kind)
+    return b"".join(int.to_bytes(ord(ch), width, "little") for ch in text)
+
+
+def stracc_decode_units(payload: bytes, kind: int) -> str:
+    width = stracc_kind_width(kind)
+    if len(payload) % width:
+        raise ValueError("payload length is not a multiple of kind")
+    chars = []
+    for i in range(0, len(payload), width):
+        chars.append(chr(int.from_bytes(payload[i:i + width], "little")))
+    return "".join(chars)
+
+
+def stracc_content_hash(payload: bytes) -> int:
+    """FNV-1a 32-bit over payload bytes. Shared by the model and RTL."""
+    h = STRACC_FNV_OFFSET
+    for b in payload:
+        h ^= b
+        h = (h * STRACC_FNV_PRIME) & 0xFFFFFFFF
+    return h
+
+
+def stracc_case_flags(units: list[int]) -> int:
+    """ALL_LOWER / ALL_UPPER hints for Latin-1 code units."""
+    flags = STRACC_FLAG_ALL_LOWER | STRACC_FLAG_ALL_UPPER
+    for u in units:
+        if u > 0xFF:
+            return 0
+        if (0x41 <= u <= 0x5A) or (0xC0 <= u <= 0xD6) or (0xD8 <= u <= 0xDE):
+            flags &= ~STRACC_FLAG_ALL_LOWER
+        if (0x61 <= u <= 0x7A) or (0xDF <= u <= 0xF6) or (0xF8 <= u <= 0xFF):
+            flags &= ~STRACC_FLAG_ALL_UPPER
+    return flags
+
+
+def stracc_pack_long_handle(
+    addr: int,
+    nchars: int,
+    nbytes: int,
+    kind: int,
+    digest: int,
+    flags: int = 0,
+) -> int:
+    """Pack the §3.2 LONG_STR handle."""
+    enc = stracc_kind_enc(kind) & 3
+    return (
+        (addr & 0xFFFFFFFF)
+        | ((nchars & 0xFFFFFFFF) << 32)
+        | ((digest & 0xFFFFFFFF) << 64)
+        | ((nbytes & 0xFFFFFF) << 96)
+        | (enc << 120)
+        | ((flags & 0x3F) << 122)
+    )
+
+
+def stracc_pack_header(
+    nchars: int,
+    nbytes: int,
+    kind: int,
+    digest: int,
+    flags: int = 0,
+) -> int:
+    """§3.3 object header: same as the handle with addr replaced by 0."""
+    return stracc_pack_long_handle(0, nchars, nbytes, kind, digest, flags)
+
+
+def stracc_unpack_long_handle(value: int) -> dict[str, int]:
+    enc = (value >> 120) & 3
+    return {
+        "addr": value & 0xFFFFFFFF,
+        "nchars": (value >> 32) & 0xFFFFFFFF,
+        "hash": (value >> 64) & 0xFFFFFFFF,
+        "nbytes": (value >> 96) & 0xFFFFFF,
+        "kind": stracc_kind_from_enc(enc),
+        "flags": (value >> 122) & 0x3F,
+    }
 
 
 # Alias used by heap_image.py

@@ -175,6 +175,37 @@ localparam int PYCORE_SHORT_STR_SIZE_LSB  = 124;
 localparam int PYCORE_SHORT_STR_DATA_MSB  = 123;
 localparam int PYCORE_SHORT_STR_DATA_LSB  = 4;
 
+// String Accelerator (planning/string_accelerator_plan.md P5).
+localparam logic [5:0] PY_SA_CONCAT    = 6'd0;
+localparam logic [5:0] PY_SA_REPEAT    = 6'd1;
+localparam logic [5:0] PY_SA_SLICE     = 6'd2;
+localparam logic [5:0] PY_SA_PAD       = 6'd3;
+localparam logic [5:0] PY_SA_CMP       = 6'd4;
+localparam logic [5:0] PY_SA_SEARCH    = 6'd5;
+localparam logic [5:0] PY_SA_HASH      = 6'd6;
+localparam logic [5:0] PY_SA_CHAR_AT   = 6'd7;
+localparam logic [5:0] PY_SA_ITER_NEXT = 6'd8;
+
+localparam logic [3:0] PY_SA_FIND       = 4'd0;
+localparam logic [3:0] PY_SA_RFIND      = 4'd1;
+localparam logic [3:0] PY_SA_COUNT      = 4'd2;
+localparam logic [3:0] PY_SA_CONTAINS   = 4'd3;
+localparam logic [3:0] PY_SA_STARTSWITH = 4'd4;
+localparam logic [3:0] PY_SA_ENDSWITH   = 4'd5;
+
+localparam logic [3:0] PY_SA_PAD_LEFT  = 4'd0;
+localparam logic [3:0] PY_SA_PAD_RIGHT = 4'd1;
+localparam logic [3:0] PY_SA_PAD_BOTH  = 4'd2;
+
+localparam logic [1:0] PYCORE_STRACC_KIND_ENC_1 = 2'd0;
+localparam logic [1:0] PYCORE_STRACC_KIND_ENC_2 = 2'd1;
+localparam logic [1:0] PYCORE_STRACC_KIND_ENC_4 = 2'd2;
+localparam logic [5:0] PYCORE_STRACC_FLAG_INTERNED  = 6'd1;
+localparam logic [5:0] PYCORE_STRACC_FLAG_ALL_LOWER = 6'd2;
+localparam logic [5:0] PYCORE_STRACC_FLAG_ALL_UPPER = 6'd4;
+localparam logic [31:0] PYCORE_STRACC_FNV_OFFSET = 32'h811C9DC5;
+localparam logic [31:0] PYCORE_STRACC_FNV_PRIME  = 32'h01000193;
+
 localparam logic [2:0] PY_EXEC_INT     = 3'd0;
 localparam logic [2:0] PY_EXEC_FLOAT   = 3'd1;
 localparam logic [2:0] PY_EXEC_BOOL    = 3'd2;
