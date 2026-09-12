@@ -1,0 +1,137 @@
+
+=== E1  baseline: where the cycles go (metadata traffic only) ===
+program                     ops  slots  CACHE   dmem  %fetch  %pipe  %dmem    CPO
+---------------------------------------------------------------------------------
+bench_fib                 36731  89411  52680  60716    40.3   25.7   34.0  14.57
+bench_sort                16766  35478  18712    369    56.3   43.0    0.7   9.29
+bench_wordcount            1477   3085   1608     81    55.5   42.8    1.8   9.33
+bench_matmul               7325  19296  11971    402    60.2   38.2    1.6  10.41
+bench_objloop               854   2304   1450    293    56.4   34.5    9.1  11.34
+example_sum_loop             47     86     39     35    43.4   35.8   20.8  10.74
+img_deep_callgraph          518   1225    707   1183    35.1   23.0   41.9  16.33
+img_branchy                 166    365    199     33    54.2   39.8    6.0   9.96
+float_dot_product            33     61     28     45    37.8   29.3   32.9  12.42
+img_list_repeat_jaro        148    326    178    126    45.7   32.7   21.6  11.83
+---------------------------------------------------------------------------------
+TOTAL                     64065 151637  87572  63283    45.7   30.6   23.6  12.54
+
+=== E1b  metadata dmem accesses by class (share of all metadata) ===
+  codeobj      22696   35.9%
+  globals      20211   31.9%
+  frame        13052   20.6%
+  name          6592   10.4%
+  const          682    1.1%
+  builtins        50    0.1%
+  TOTAL        63283
+
+=== E1c  container/heap traffic the metadata model leaves out ===
+  BINARY_OP              8460
+  STORE_SUBSCR           4180
+  LOAD_ATTR              1712
+  CONTAINS_OP             354
+  FOR_ITER                164
+  BUILD_LIST              125
+  GET_ITER                 10
+  BUILD_MAP                 9
+  ---------------------------
+  heap (upper bound)    15014
+  metadata (exact)      63283
+  heap is 19% of all dmem traffic; every heap access is an
+  address a generic L1D/L2 can cache but no Python-aware structure can.
+
+=== E2  L1 instruction cache (64-bit slots, 1:1 CPython wordcode) ===
+config                        accesses    hit%   misses
+512B/32B line/2w                151637   97.46     3854
+1024B/32B line/2w               151637   99.59      620
+2048B/32B line/2w               151637   99.76      364
+2048B/64B line/2w               151637   99.87      197
+4096B/64B line/4w               151637   99.96       60
+8192B/64B line/4w               151637   99.96       60
+16384B/64B line/4w              151637   99.96       60
+
+  CACHE-slot overhead if fetch keeps walking them slot by slot:
+    dynamic opcodes            64065
+    dead CACHE/EXT_ARG slots   87572  (1.37 per opcode)
+    cycles burned on them      175144  (21.8% of modelled cycles)
+
+=== E3  L1 data cache over the interpreter-metadata stream ===
+config                        accesses    hit%   misses  cyc saved
+512B/16B line/2w                 63283   64.92    22198      82170
+512B/32B line/2w                 63283   70.56    18632      89302
+512B/64B line/2w                 63283   75.94    15226      96114
+1024B/64B line/2w                63283   83.91    10183     106200
+2048B/64B line/4w                63283   99.37      399     125768
+4096B/64B line/4w                63283   99.58      263     126040
+2048B/128B line/4w               63283   99.50      316     125934
+8192B/64B line/4w                63283   99.74      166     126234
+
+=== E4  Python-aware structures ===
+  const cache   8e/1w :    341 lookups  hit  85.0%  saves   1740 cycles
+  const cache  16e/2w :    341 lookups  hit  87.1%  saves   1782 cycles
+  const cache  32e/2w :    341 lookups  hit  87.1%  saves   1782 cycles
+  const cache  64e/4w :    341 lookups  hit  87.1%  saves   1782 cycles
+
+  global IC     8e/1w :   3269 lookups  hit  98.6%  flushes  27  saves   77661 cycles
+  global IC    16e/2w :   3269 lookups  hit  98.7%  flushes  27  saves   77823 cycles
+  global IC    32e/2w :   3269 lookups  hit  98.8%  flushes  27  saves   77913 cycles
+  global IC    64e/4w :   3269 lookups  hit  99.0%  flushes  27  saves   78297 cycles
+
+  codeobj $     2e/1w :   6485 lookups  hit  98.5%  saves   67038 cycles
+  codeobj $     4e/2w :   6485 lookups  hit  98.6%  saves   67137 cycles
+  codeobj $     8e/2w :   6485 lookups  hit  98.6%  saves   67137 cycles
+  codeobj $    16e/4w :   6485 lookups  hit  98.8%  saves   67242 cycles
+
+  frame buf  1 frames:  13052 accesses  hit  49.2%  saves   19260 cycles
+  frame buf  2 frames:  13052 accesses  hit  68.0%  saves   26628 cycles
+  frame buf  4 frames:  13052 accesses  hit  86.8%  saves   33972 cycles
+  frame buf  8 frames:  13052 accesses  hit  96.7%  saves   37872 cycles
+
+=== E5  head-to-head: what actually removes cycles ===
+  L1D 2KB/64B/4w (generic)         saves   125768 cycles ( 15.7%)  -> CPO 10.58
+  L1I predecode+1cyc hit           saves   303274 cycles ( 37.8%)  -> CPO  7.80
+  const+global+codeobj caches      saves   146832 cycles ( 18.3%)  -> CPO 10.25
+  L1I + L1D together               saves   429042 cycles ( 53.4%)  -> CPO  5.84
+
+  baseline CPO 12.54 over 64065 dynamic opcodes
+
+=== E6  dependent-chain length: line caching vs result caching ===
+opcode              execs  acc/exec  now(3cyc)  perfectL1D  resultcache
+LOAD_GLOBAL          3259      8.10       24.3         8.1          1.0
+CALL                 3283      6.94       20.8         6.9          1.0
+RETURN_VALUE         3243      4.00       12.0         4.0          1.0
+LOAD_CONST            341      2.00        6.0         2.0          1.0
+STORE_NAME             27     13.41       40.2        13.4          1.0
+LOAD_NAME              10      8.20       24.6         8.2          1.0
+
+  A perfect L1D still walks every link of the chain at 1 cycle each.
+  A result cache (const / global IC / code descriptor) collapses the whole
+  chain into a single tag compare.
+
+=== E7  what happens when RAM is real (today's dmem is 1-cycle SRAM) ===
+
+  --- RAM latency 1 cycles ---
+    no cache                      CPO   11.54
+    L1I 2K + L1D 2K + L2 16K      CPO    7.24
+    + const/global/code caches    CPO    6.47   (14339 of 63283 dmem accesses survive)
+    + predecoded L1I              CPO    5.11   (64065 of 151637 fetches survive)
+
+  --- RAM latency 20 cycles ---
+    no cache                      CPO   70.94
+    L1I 2K + L1D 2K + L2 16K      CPO    7.30
+    + const/global/code caches    CPO    6.54   (14339 of 63283 dmem accesses survive)
+    + predecoded L1I              CPO    5.17   (64065 of 151637 fetches survive)
+
+  --- RAM latency 60 cycles ---
+    no cache                      CPO  205.12
+    L1I 2K + L1D 2K + L2 16K      CPO    7.44
+    + const/global/code caches    CPO    6.67   (14339 of 63283 dmem accesses survive)
+    + predecoded L1I              CPO    5.30   (64065 of 151637 fetches survive)
+
+=== E8  line-aligning the heap allocator (16 B today -> 64 B) ===
+align     lines     512B/2w    1024B/2w    2048B/2w    2048B/4w
+16 B        151      75.96%      83.92%      99.31%      99.38%
+64 B        141      84.54%      91.19%      99.39%      99.43%
+
+  Saturates by 2 KB, so the payoff is a *smaller* L1D for the same
+  hit rate: 64 B alignment at 1 KB beats 16 B alignment at 1 KB by
+  7 points and cuts misses ~45%.
