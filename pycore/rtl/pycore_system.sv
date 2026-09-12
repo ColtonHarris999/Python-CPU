@@ -53,8 +53,8 @@ module pycore_system #(
     logic [DMEM_DATA_W-1:0] dmem_rdata;
     logic                   dmem_fault;
 
-    // +CACHE_EN= overrides PYCORE_CACHE_EN at sim time. Caches are not
-    // instantiated until P2; this latch is the contract those modules read.
+    // +CACHE_EN= overrides PYCORE_CACHE_EN at sim time. Wired to L2
+    // (and later L1s) as the combinational pass-through switch.
     bit cache_en_sim /* verilator public */;
     int mem_latency_sim /* verilator public */;
     /* verilator lint_off UNUSEDSIGNAL */
@@ -77,9 +77,6 @@ module pycore_system #(
     assign l1d_hit_count = '0;
     assign l1d_miss_count = '0;
     assign l1d_writeback_count = '0;
-    assign l2_hit_count = '0;
-    assign l2_miss_count = '0;
-    assign l2_writeback_count = '0;
 
     initial begin
         mem_latency_sim = PYCORE_RAM_T_FIRST_CI;
@@ -139,43 +136,37 @@ module pycore_system #(
         .dbg_wb_entry_o(dbg_wb_entry_o)
     );
 
-    pycore_code_mem #(
+    pycore_mem_hier #(
         .ADDR_WIDTH(ADDR_WIDTH),
-        .DATA_WIDTH(IMEM_DATA_W),
-        .BLOCK_SHIFT(BLOCK_SHIFT),
-        .ROM_BLOCK_COUNT(IMEM_BLOCK_COUNT),
-        .INIT_HEX(PROG_HEX),
-        .CODE_RAM_HEX(CODE_RAM_HEX)
-    ) imem (
+        .IMEM_DATA_W(IMEM_DATA_W),
+        .DMEM_DATA_W(DMEM_DATA_W),
+        .PROG_HEX(PROG_HEX),
+        .CODE_RAM_HEX(CODE_RAM_HEX),
+        .DMEM_HEX(DMEM_HEX)
+    ) mem_hier (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
-        .req_i(imem_req),
-        .we_i(imem_we),
-        .wstrb_i({IMEM_DATA_W/8{1'b1}}),
-        .addr_i(imem_addr),
-        .wdata_i(imem_wdata),
-        .ack_o(imem_ack),
-        .rdata_o(imem_rdata),
-        .fault_o(imem_fault)
-    );
-
-    pycore_dmem #(
-        .ADDR_WIDTH(ADDR_WIDTH),
-        .DATA_WIDTH(DMEM_DATA_W),
-        .BLOCK_SHIFT(BLOCK_SHIFT),
-        .BLOCK_COUNT(DMEM_BLOCK_COUNT),
-        .INIT_HEX(DMEM_HEX)
-    ) dmem (
-        .clk_i(clk_i),
-        .rst_n_i(rst_n_i),
-        .req_i(dmem_req),
-        .we_i(dmem_we),
-        .wstrb_i(dmem_wstrb),
-        .addr_i(dmem_addr),
-        .wdata_i(dmem_wdata),
-        .ack_o(dmem_ack),
-        .rdata_o(dmem_rdata),
-        .fault_o(dmem_fault)
+        .cache_en_i(cache_en_sim),
+        .t_first_i(mem_latency_sim),
+        .imem_req_i(imem_req),
+        .imem_we_i(imem_we),
+        .imem_wstrb_i({IMEM_DATA_W/8{1'b1}}),
+        .imem_addr_i(imem_addr),
+        .imem_wdata_i(imem_wdata),
+        .imem_ack_o(imem_ack),
+        .imem_rdata_o(imem_rdata),
+        .imem_fault_o(imem_fault),
+        .dmem_req_i(dmem_req),
+        .dmem_we_i(dmem_we),
+        .dmem_wstrb_i(dmem_wstrb),
+        .dmem_addr_i(dmem_addr),
+        .dmem_wdata_i(dmem_wdata),
+        .dmem_ack_o(dmem_ack),
+        .dmem_rdata_o(dmem_rdata),
+        .dmem_fault_o(dmem_fault),
+        .l2_hit_count_o(l2_hit_count),
+        .l2_miss_count_o(l2_miss_count),
+        .l2_writeback_count_o(l2_writeback_count)
     );
 
 endmodule

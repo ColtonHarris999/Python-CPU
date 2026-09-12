@@ -55,6 +55,11 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_code_ram.sv \
 	pycore/rtl/pycore_code_mem.sv \
 	pycore/rtl/pycore_dmem.sv \
+	pycore/rtl/pycore_cache_lru.sv \
+	pycore/rtl/pycore_cache.sv \
+	pycore/rtl/pycore_ram.sv \
+	pycore/rtl/pycore_mem_xbar.sv \
+	pycore/rtl/pycore_mem_hier.sv \
 	pycore/rtl/pycore_mem_stage.sv \
 	pycore/rtl/pycore_exc_stack.sv \
 	pycore/rtl/pycore_core.sv \
@@ -66,7 +71,11 @@ PYCORE_RTL_SRCS := \
 
 PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_block.sv \
-	pycore/rtl/pycore_mem_bank.sv
+	pycore/rtl/pycore_mem_bank.sv \
+	pycore/rtl/pycore_cache_lru.sv \
+	pycore/rtl/pycore_cache.sv \
+	pycore/rtl/pycore_ram.sv \
+	pycore/rtl/pycore_mem_xbar.sv
 
 # ---- excore (Phase B: standalone excore, no pycore integration yet) -------
 EXCORE_FW_SRC ?= excore/fw/list_grow.s
@@ -444,6 +453,37 @@ pycore-mem:
 		-Wall -Wno-fatal \
 		$(PYCORE_MEM_SRCS) pycore/tb/tb_mem_bank.sv
 	./$(BUILD_DIR)/pycore_mem/Vtb_mem_bank
+
+pycore-cache-lru:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_cache_lru \
+		--Mdir $(BUILD_DIR)/pycore_cache_lru \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_cache_lru.sv pycore/tb/tb_cache_lru.sv
+	./$(BUILD_DIR)/pycore_cache_lru/Vtb_cache_lru
+
+pycore-cache:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_cache \
+		--Mdir $(BUILD_DIR)/pycore_cache \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_cache_lru.sv pycore/rtl/pycore_cache.sv \
+		pycore/rtl/pycore_ram.sv pycore/tb/tb_cache.sv
+	./$(BUILD_DIR)/pycore_cache/Vtb_cache
+
+pycore-ram:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_ram \
+		--Mdir $(BUILD_DIR)/pycore_ram \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_ram.sv pycore/tb/tb_ram.sv
+	./$(BUILD_DIR)/pycore_ram/Vtb_ram
 
 pycore-frame:
 	mkdir -p $(BUILD_DIR)
@@ -2636,7 +2676,8 @@ excore-cpu-test: excore-fw
 excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec pycore-string-exec \
-	pycore-type-pairs pycore-mem pycore-frame pycore-frame-fib
+	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
+	pycore-frame pycore-frame-fib
 
 pycore-test: pycore-python-tests pycore-rtl-unit pycore-container \
 	pycore-img pycore-excore-system pycore-img-two-core

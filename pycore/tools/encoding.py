@@ -104,6 +104,13 @@ RAM_BYTES = 16 * 1024 * 1024
 RAM_T_FIRST = 30
 RAM_T_BEAT = 2
 RAM_T_FIRST_CI = 4
+# Unified L2/RAM code namespace (memory_system_plan.md §2). Fetch still
+# uses Harvard slot addresses; the xbar adds this base so code and data
+# never alias in the unified cache.
+CODE_ADDR_BASE = 0x01000000
+# P2: L2 hit latency is 1 until L1s exist. See PYCORE_L2_HIT_CYCLES.
+L2_HIT_CYCLES = 1
+DMEM_BYTES = 32 * 4096  # PYCORE_DMEM_BLOCK_COUNT << BLOCK_SHIFT
 CODC_ENTRIES = 4
 CODC_WAYS = 2
 GIC_ENTRIES = 16

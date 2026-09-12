@@ -124,6 +124,9 @@ SHARED_CONSTANTS = {
     "RAM_T_FIRST": "PYCORE_RAM_T_FIRST",
     "RAM_T_BEAT": "PYCORE_RAM_T_BEAT",
     "RAM_T_FIRST_CI": "PYCORE_RAM_T_FIRST_CI",
+    "CODE_ADDR_BASE": "PYCORE_CODE_ADDR_BASE",
+    "L2_HIT_CYCLES": "PYCORE_L2_HIT_CYCLES",
+    "DMEM_BYTES": "PYCORE_DMEM_BYTES",
     "CODC_ENTRIES": "PYCORE_CODC_ENTRIES",
     "CODC_WAYS": "PYCORE_CODC_WAYS",
     "GIC_ENTRIES": "PYCORE_GIC_ENTRIES",
@@ -171,7 +174,8 @@ class TestMemoryMapMirror(unittest.TestCase):
         # itself must already be on a line or the first object would pad.
         self.assertEqual(encoding.HEAP_BASE % encoding.LINE_BYTES, 0)
         self.assertEqual(encoding.align_line(encoding.HEAP_BASE), encoding.HEAP_BASE)
-        self.assertEqual(encoding.align_line(1), encoding.LINE_BYTES)
+        self.assertEqual(encoding.DMEM_BYTES, 0x20000)
+        self.assertEqual(encoding.CODE_ADDR_BASE, 0x01000000)
 
 
 if __name__ == "__main__":

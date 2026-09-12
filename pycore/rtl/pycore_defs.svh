@@ -43,6 +43,19 @@ localparam int PYCORE_RAM_T_FIRST      = 30;
 localparam int PYCORE_RAM_T_BEAT       = 2;
 localparam int PYCORE_RAM_T_FIRST_CI   = 4;   // CI default via +MEM_LATENCY=
 localparam int PYCORE_RAM_BEATS        = PYCORE_LINE_BYTES / (PYCORE_DMEM_DATA_WIDTH / 8); // 4
+// Unified L2/RAM namespace for instruction bytes (memory_system_plan.md §2).
+// Fetch still uses Harvard slot addresses; the xbar adds this base so code
+// and data never alias in the unified cache.
+localparam logic [31:0] PYCORE_CODE_ADDR_BASE = 32'h0100_0000;
+// P2 local call: the target table's 8-cycle L2 hit is for the L1-present
+// system (P3/P4). Without L1s, 8-cycle L2 hits blow MAX_CYCLES (e.g.
+// img_recursion). Hit latency is a timing parameter — it does not change
+// the §0 port contract, the memory map, or retired results.
+localparam int PYCORE_L2_HIT_CYCLES    = 1;
+// P2 data window matches today's 128 KB dmem so OOB accesses still fault.
+// P5 widens this when string bytes move into ordinary data memory.
+localparam int PYCORE_DMEM_BYTES       =
+    PYCORE_DMEM_BLOCK_COUNT << PYCORE_BLOCK_SHIFT;
 localparam int PYCORE_CODC_ENTRIES     = 4;
 localparam int PYCORE_CODC_WAYS        = 2;
 localparam int PYCORE_GIC_ENTRIES      = 16;
