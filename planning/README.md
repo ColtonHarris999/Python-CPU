@@ -11,6 +11,7 @@ opcode/type inventories live under `pycore/docs/` and `excore/docs/`.
 | [`builtin_support.md`](builtin_support.md) | Remaining ROM / native builtins |
 | [`compile_plan.md`](compile_plan.md) | On-device `compile()` via PyCPython |
 | [`exceptions_plan.md`](exceptions_plan.md) | Remaining exception tracks |
+| [`memory_hierarchy_report.md`](memory_hierarchy_report.md) | Cache/RAM findings ahead of the L1/L2 work |
 
 Historical plans (including the old Plan 1 tokenizer and Plan 2/3 compiler
 splits) are in [`old/`](old/).
