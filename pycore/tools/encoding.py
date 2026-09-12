@@ -786,8 +786,10 @@ def dict_key_rich_eq(tag_a: int, val_a: int, tag_b: int, val_b: int) -> bool:
         if tag_a == TAG_FLOAT and tag_b == TAG_FLOAT:
             return val_a == val_b
         return False
-    if tag_a == tag_b and tag_a in (TAG_SHORT_STR, TAG_LONG_STR):
+    if tag_a == tag_b == TAG_SHORT_STR:
         return val_a == val_b
+    if tag_a == tag_b == TAG_LONG_STR:
+        return (val_a & 0xFFFFFFFF) == (val_b & 0xFFFFFFFF)
     if tag_a == tag_b == TAG_CONTROL:
         return (val_a & 0xF) == (val_b & 0xF)
     return False

@@ -194,6 +194,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-dict-store-lookup pycore-img-dict-overwrite \
 	pycore-img-dict-del-simple pycore-img-dict-del-then-insert \
 	pycore-img-dict-hash-neg1 pycore-img-dict-str-keys \
+	pycore-img-str-dict-key-runtime \
 	pycore-img-dict-large-pycore pycore-img-dict-grow-fatal \
 	pycore-img-dict-bool-int-collision pycore-img-dict-false-zero \
 	pycore-img-dict-grow-basic pycore-img-dict-grow-large \
@@ -1414,6 +1415,9 @@ pycore-img-dict-hash-neg1:
 pycore-img-dict-str-keys:
 	$(call PYCORE_IMAGE_RUN,dict_str_keys,50000)
 
+pycore-img-str-dict-key-runtime:
+	$(call PYCORE_IMAGE_RUN,str_dict_key_runtime,100000)
+
 pycore-img-dict-large-pycore:
 	$(call PYCORE_IMAGE_RUN,dict_large_pycore,100000)
 
@@ -1675,6 +1679,7 @@ pycore-img: \
 	pycore-img-dict-del-then-insert \
 	pycore-img-dict-hash-neg1 \
 	pycore-img-dict-str-keys \
+	pycore-img-str-dict-key-runtime \
 	pycore-img-dict-large-pycore \
 	pycore-img-dict-grow-fatal \
 	pycore-img-dict-bool-int-collision \

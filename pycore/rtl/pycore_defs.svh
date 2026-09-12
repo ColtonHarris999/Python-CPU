@@ -2097,10 +2097,32 @@ function automatic logic pycore_float_trunc_int64(
     end
 endfunction
 
+// Tier-3 payload compare: LONG vs LONG, same (hash, nbytes, nchars, kind),
+// distinct addresses. Combinational rich_eq cannot answer this; the dict
+// FSM issues SA_CMP and waits (P5d).
+function automatic logic pycore_str_need_payload_cmp(
+    input logic [3:0]                  tag_a,
+    input logic [PYCORE_VAL_WIDTH-1:0] val_a,
+    input logic [3:0]                  tag_b,
+    input logic [PYCORE_VAL_WIDTH-1:0] val_b
+);
+    begin
+        pycore_str_need_payload_cmp =
+            (tag_a == PY_TAG_LONG_STR) && (tag_b == PY_TAG_LONG_STR) &&
+            (pycore_stracc_addr(val_a) != pycore_stracc_addr(val_b)) &&
+            (pycore_stracc_hash(val_a) == pycore_stracc_hash(val_b)) &&
+            (pycore_stracc_nchars(val_a) == pycore_stracc_nchars(val_b)) &&
+            (pycore_stracc_nbytes(val_a) == pycore_stracc_nbytes(val_b)) &&
+            (pycore_stracc_kind_field(val_a) == pycore_stracc_kind_field(val_b));
+    end
+endfunction
+
 // Dict/set key (element) rich equality for open-addressing probes.
 // INT/BOOL/FLOAT: True==1, 1.0==1, False==0 via integer normalization;
 // non-integer FLOAT compares bit-exact only when both tags are FLOAT.
-// Same-tag SHORT_STR/LONG_STR: full 128-bit value compare. Else false.
+// SHORT_STR: full 128-bit value compare (payload is in the handle).
+// LONG_STR: address equality (tier 1). Content equality of distinct
+// objects is pycore_str_need_payload_cmp + SA_CMP (tier 3). Else false.
 function automatic logic pycore_dict_key_rich_eq(
     input logic [3:0]                  tag_a,
     input logic [PYCORE_VAL_WIDTH-1:0] val_a,
@@ -2146,10 +2168,13 @@ function automatic logic pycore_dict_key_rich_eq(
                 pycore_dict_key_rich_eq = (val_a == val_b);
             else
                 pycore_dict_key_rich_eq = 1'b0;
+        end else if ((tag_a == PY_TAG_LONG_STR) && (tag_b == PY_TAG_LONG_STR)) begin
+            pycore_dict_key_rich_eq =
+                (pycore_stracc_addr(val_a) == pycore_stracc_addr(val_b));
         end else if ((tag_a == tag_b) &&
-                     ((tag_a == PY_TAG_SHORT_STR) || (tag_a == PY_TAG_LONG_STR) ||
+                     ((tag_a == PY_TAG_SHORT_STR) ||
                       (tag_a == PY_TAG_OBJECT))) begin
-            // STR: full value compare. OBJECT: identity (addr) compare.
+            // SHORT_STR: payload is in the handle. OBJECT: identity.
             pycore_dict_key_rich_eq = (val_a == val_b);
         end else begin
             pycore_dict_key_rich_eq = 1'b0;

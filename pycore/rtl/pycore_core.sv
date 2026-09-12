@@ -530,6 +530,8 @@ module pycore_core #(
     logic                          stracc_issued_r;
     logic                          stracc_finishing_r;
     logic                          stracc_iter_pending_r;
+    logic                          container_stracc_done_r;
+    logic                          container_stracc_eq_r;
     // Active exception (§7.6) + boot StopIteration latch (§7.4).
     logic [PYCORE_ENTRY_WIDTH-1:0] active_exc_r;
     logic                          active_exc_valid_r;
@@ -791,6 +793,7 @@ module pycore_core #(
     logic        stracc_subscr;
     logic        stracc_slice;
     logic        stracc_iter;
+    logic        stracc_contains;
     assign stracc_concat =
         (cur_opcode_r == PY_OP_BINARY_OP) &&
         ((cur_arg_r[7:0] == PY_NBARG_ADD) || (cur_arg_r[7:0] == 8'd13)) &&
@@ -824,8 +827,12 @@ module pycore_core #(
         (pycore_get_tag(rs1_r) == PY_TAG_ITER) &&
         pycore_iter_valid(pycore_get_val(rs1_r)) &&
         (pycore_iter_kind(pycore_get_val(rs1_r)) == PY_ITER_KIND_STR);
+    assign stracc_contains =
+        (cur_opcode_r == PY_OP_CONTAINS_OP) &&
+        pycore_is_string_tag(pycore_get_tag(rs2_r));
     assign route_stracc = stracc_concat || stracc_repeat || stracc_cmp ||
-                          stracc_subscr || stracc_slice || stracc_iter;
+                          stracc_subscr || stracc_slice || stracc_iter ||
+                          stracc_contains;
     assign is_alu = ((cur_opcode_r == PY_OP_BINARY_OP) &&
                      !route_container && !route_stracc) ||
                     ((cur_opcode_r == PY_OP_COMPARE_OP) && !route_stracc) ||
@@ -857,6 +864,7 @@ module pycore_core #(
     logic [127:0] stracc_wdata;
     logic [PYCORE_LINE_BYTES*8-1:0] stracc_wline;
     logic        stracc_dmem_active;
+    logic        container_stracc_issue;
     logic [PYCORE_ENTRY_WIDTH-1:0] stracc_item_r;
 
     pycore_str_accel u_str_accel (
@@ -891,10 +899,15 @@ module pycore_core #(
         .cmd_count_o()
     );
 
-    assign stracc_dmem_active = (state_r == S_STRACC) && stracc_req;
-    assign stracc_cmd_valid = (state_r == S_STRACC) && stracc_cmd_ready &&
+    assign stracc_dmem_active = stracc_req &&
+        ((state_r == S_STRACC) ||
+         ((state_r == S_CONTAINER) && stracc_issued_r));
+    assign stracc_cmd_valid = stracc_cmd_ready &&
                               !stracc_issued_r && !stracc_iter_pending_r &&
-                              !stracc_finishing_r;
+                              !stracc_finishing_r &&
+                              ((state_r == S_STRACC) ||
+                               ((state_r == S_CONTAINER) &&
+                                container_stracc_issue));
 
     always_comb begin
         stracc_cmd_op  = PY_SA_CONCAT;
@@ -902,7 +915,18 @@ module pycore_core #(
         stracc_cmd_a   = rs1_r;
         stracc_cmd_b   = rs2_r;
         stracc_cmd_c   = pycore_make_control(PY_CTL_NONE);
-        if (stracc_repeat) begin
+        if (state_r == S_CONTAINER && container_stracc_issue) begin
+            stracc_cmd_op = PY_SA_CMP;
+            if (container_phase_r == CP_DICT_CHK_VAL) begin
+                stracc_cmd_a = pycore_make_entry(container_tag_r, container_val_r);
+                stracc_cmd_b = pycore_make_entry(
+                    container_probe_tag_r, container_rd_data_r);
+            end else begin
+                stracc_cmd_a = pycore_make_entry(
+                    container_rd_data_r[3:0], container_val_r);
+                stracc_cmd_b = rs1_r;
+            end
+        end else if (stracc_repeat) begin
             stracc_cmd_op = PY_SA_REPEAT;
             if (pycore_is_string_tag(pycore_get_tag(rs1_r))) begin
                 stracc_cmd_a = rs1_r;
@@ -923,6 +947,11 @@ module pycore_core #(
             stracc_cmd_a  = pycore_str_handle_from_iter(pycore_get_val(rs1_r));
             stracc_cmd_b  = pycore_int_entry({32'b0, pycore_iter_index(
                                 pycore_get_val(rs1_r))});
+        end else if (stracc_contains) begin
+            stracc_cmd_op  = PY_SA_SEARCH;
+            stracc_cmd_var = PY_SA_CONTAINS;
+            stracc_cmd_a   = rs2_r;
+            stracc_cmd_b   = rs1_r;
         end
     end
 
@@ -1627,13 +1656,30 @@ module pycore_core #(
     // Key comparison against the last kval read (container_rd_data_r).
     // INT: compare value[63:0]. BOOL: compare value[0].
     // Probe key/element match via rich equality (INT/BOOL/FLOAT cross-tag,
-    // same-tag STR). Slot tag latched in container_probe_tag_r at PROBE;
-    // slot value is container_rd_data_r at CHK_VAL. LONG_STR equality relies
-    // on interning (known limitation for runtime-concatenated strings).
+    // SHORT_STR handle, LONG_STR address). Distinct LONG objects with a
+    // matching (hash, nbytes, nchars, kind) issue SA_CMP (P5d tier 3).
     logic cont_dict_key_match;
-    assign cont_dict_key_match = pycore_dict_key_rich_eq(
+    logic cont_dict_key_need_cmp;
+    logic cont_contains_need_cmp;
+    assign cont_dict_key_need_cmp = pycore_str_need_payload_cmp(
         container_tag_r, container_val_r,
         container_probe_tag_r, container_rd_data_r);
+    assign cont_contains_need_cmp =
+        ((container_op_r == CONT_CONTAINS_LIST) ||
+         (container_op_r == CONT_CONTAINS_TUPLE)) &&
+        pycore_str_need_payload_cmp(
+            container_rd_data_r[3:0], container_val_r,
+            cont_rs1_tag, cont_rs1_val);
+    assign cont_dict_key_match = pycore_dict_key_rich_eq(
+        container_tag_r, container_val_r,
+        container_probe_tag_r, container_rd_data_r) ||
+        (container_stracc_done_r && container_stracc_eq_r &&
+         (container_phase_r == CP_DICT_CHK_VAL));
+    assign container_stracc_issue =
+        (state_r == S_CONTAINER) && !container_dmem_pending_r &&
+        !container_stracc_done_r &&
+        (((container_phase_r == CP_DICT_CHK_VAL) && cont_dict_key_need_cmp) ||
+         ((container_phase_r == CP_TAG) && cont_contains_need_cmp));
 
     // **kwargs dict being packed by the CALL binder (subs 52-55).  The object,
     // order sidecar and hash table are placed with the same line-aligned
@@ -1693,7 +1739,9 @@ module pycore_core #(
     logic cont_contains_eq;
     assign cont_contains_eq = pycore_elem_eq(
         container_rd_data_r[3:0], container_val_r,
-        cont_rs1_tag, cont_rs1_val);
+        cont_rs1_tag, cont_rs1_val) ||
+        (container_stracc_done_r && container_stracc_eq_r &&
+         (container_phase_r == CP_TAG));
 
     // Probe advance: (probe + 1) & mask.
     logic [31:0] cont_probe_next;
@@ -2001,6 +2049,8 @@ module pycore_core #(
             stracc_finishing_r       <= 1'b0;
             stracc_iter_pending_r    <= 1'b0;
             stracc_item_r            <= '0;
+            container_stracc_done_r  <= 1'b0;
+            container_stracc_eq_r    <= 1'b0;
             container_raise_trap_r   <= 1'b0;
             active_exc_r             <= '0;
             active_exc_valid_r       <= 1'b0;
@@ -2087,6 +2137,11 @@ module pycore_core #(
 
             if (state_r == S_FETCH) begin
                 redirect_pending_r <= 1'b0;
+                stracc_issued_r    <= 1'b0;
+            end
+            if ((container_phase_r != CP_DICT_CHK_VAL) &&
+                (container_phase_r != CP_TAG)) begin
+                container_stracc_done_r <= 1'b0;
             end
 
             unique case (state_r)
@@ -2127,7 +2182,12 @@ module pycore_core #(
                             stracc_finishing_r    <= 1'b0;
                             stracc_iter_pending_r <= 1'b0;
                             stracc_item_r         <= '0;
+                            container_stracc_done_r <= 1'b0;
+                            container_stracc_eq_r   <= 1'b0;
                         end else if (route_container) begin
+                            stracc_issued_r          <= 1'b0;
+                            container_stracc_done_r  <= 1'b0;
+                            container_stracc_eq_r    <= 1'b0;
                             container_phase_r        <= CP_INIT;
                             container_dmem_pending_r <= 1'b0;
                             container_type_trap_r    <= 1'b0;
@@ -2443,6 +2503,12 @@ module pycore_core #(
                                     endcase
                                     wb_entry = pycore_make_entry(
                                         PY_TAG_BOOL, {127'b0, cmp_bool});
+                                end else if (cur_opcode_r == PY_OP_CONTAINS_OP) begin
+                                    cmp_bool = pycore_get_val(stracc_res_entry)[0];
+                                    if (cur_arg_r[0])
+                                        cmp_bool = ~cmp_bool;
+                                    wb_entry = pycore_make_entry(
+                                        PY_TAG_BOOL, {127'b0, cmp_bool});
                                 end
                                 container_wb_we_r   <= 1'b1;
                                 if (cur_opcode_r == PY_OP_BINARY_SLICE) begin
@@ -2577,6 +2643,27 @@ module pycore_core #(
                         call_args_is_list_r  <= 1'b0;
                         container_dmem_pending_r <= 1'b0;
                         fetch_skip_r         <= 1'b1;
+                    end else if (container_stracc_issue ||
+                                 (stracc_issued_r && !container_stracc_done_r)) begin
+                        // P5d: SA_CMP for LONG vs LONG dict/set / list-in.
+                        if (stracc_cmd_valid) begin
+                            stracc_issued_r <= 1'b1;
+                        end else if (stracc_res_valid) begin
+                            stracc_issued_r <= 1'b0;
+                            if (stracc_res_trap) begin
+                                if (stracc_res_code == PY_TRAP_TYPE)
+                                    container_type_trap_r <= 1'b1;
+                                else
+                                    container_mem_fault_r <= 1'b1;
+                            end else begin
+                                container_stracc_done_r <= 1'b1;
+                                container_stracc_eq_r <=
+                                    (pycore_get_tag(stracc_res_entry) ==
+                                     PY_TAG_INT) &&
+                                    (pycore_get_val(stracc_res_entry)[63:0] ==
+                                     64'd0);
+                            end
+                        end
                     end else begin
                         // ---- Per-operation phase logic ----------------------
                         unique case (container_op_r)
