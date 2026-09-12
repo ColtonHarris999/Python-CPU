@@ -909,7 +909,7 @@ pycore-img-list-repeat-jaro:
 	$(call PYCORE_IMAGE_RUN,list_repeat_jaro,100000)
 
 pycore-img-list-repeat-type-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,list_repeat_type_trap,1,50000)
+	$(call PYCORE_IMAGE_RUN,list_repeat_type_trap,50000)
 
 pycore-img-list-concat:
 	$(call PYCORE_IMAGE_RUN,list_concat,100000)
