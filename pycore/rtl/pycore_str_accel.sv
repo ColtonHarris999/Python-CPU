@@ -60,7 +60,9 @@ module pycore_str_accel #(
         ENG_TRIM,
         ENG_CLASSIFY,
         ENG_MAP,
-        ENG_AFFIX
+        ENG_AFFIX,
+        ENG_EXPAND,
+        ENG_SPLIT
     } eng_e;
 
     typedef enum logic [2:0] {
@@ -165,6 +167,9 @@ module pycore_str_accel #(
     logic        cls_prev_cased_r;
     logic        cls_title_ok_r;
     logic [5:0]  a_flags_r;
+    logic        copy_hold_r;
+    logic [1:0]  hold_dest_r; // 0=part0, 1=part2, 2=list slot
+    logic [PYCORE_ENTRY_WIDTH-1:0] part0_r, part2_r;
 
     logic [31:0] dst_nchars_r;
     logic [2:0]  dst_kind_r;
@@ -347,6 +352,7 @@ module pycore_str_accel #(
             dst_word_dirty_r <= 1'b0;
             mem_we_r <= 1'b0;
             have_hay_r <= 1'b0;
+            copy_hold_r <= 1'b0;
         end else begin
             unique case (state_r)
                 ST_IDLE: begin
@@ -394,6 +400,7 @@ module pycore_str_accel #(
                     replace_copy_hay_r <= 1'b0;
                     hay_pos_r <= 32'd0;
                     new_idx_r <= 32'd0;
+                    copy_hold_r <= 1'b0;
                     hash_r <= PYCORE_STRACC_FNV_OFFSET;
                     flags_r <= PYCORE_STRACC_FLAG_ALL_LOWER | PYCORE_STRACC_FLAG_ALL_UPPER;
                     out_idx_r <= 32'd0;
@@ -800,6 +807,97 @@ module pycore_str_accel #(
                                 end
                             end
                         end
+                        PY_SA_EXPANDTABS: begin
+                            if (!a_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if (!b_is_none && !b_is_int)
+                                set_trap(PY_TRAP_TYPE);
+                            else begin
+                                s64 = b_is_none ? 64'sd8 : pycore_stracc_int64(b_val_r);
+                                if (view_nchars(a_tag_r, a_val_r) == 32'd0)
+                                    set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                                else begin
+                                    // CPython: tabsize < 1 deletes tabs (no divide).
+                                    split_r <= (s64 <= 0) ? 32'd0 : s64[31:0];
+                                    pos_r <= 32'd0;
+                                    count_r <= 32'd0;
+                                    cmp_idx_r <= 32'd0;
+                                    map_changed_r <= 1'b0;
+                                    map_measuring_r <= 1'b1;
+                                    new_idx_r <= 32'd0;
+                                    eng_r <= ENG_EXPAND;
+                                    state_r <= ST_STEP;
+                                end
+                            end
+                        end
+                        PY_SA_SPLIT: begin
+                            if (!a_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if ((var_r == PY_SA_SPLIT_PARTITION) ||
+                                     (var_r == PY_SA_SPLIT_RPARTITION)) begin
+                                if (!b_is_str)
+                                    set_trap(PY_TRAP_TYPE);
+                                else if (view_nchars(b_tag_r, b_val_r) == 32'd0)
+                                    set_trap(PY_TRAP_TYPE);
+                                else begin
+                                    nch = view_nchars(a_tag_r, a_val_r);
+                                    nout = view_nchars(b_tag_r, b_val_r);
+                                    rfind_r <= (var_r == PY_SA_SPLIT_RPARTITION);
+                                    nlen_r <= nout;
+                                    pos_r <= ((var_r == PY_SA_SPLIT_RPARTITION) &&
+                                              (nch >= nout))
+                                           ? (nch - nout) : 32'd0;
+                                    match_i_r <= 32'd0;
+                                    have_hay_r <= 1'b0;
+                                    search_end_r <= nch;
+                                    map_changed_r <= 1'b0;
+                                    join_phase_r <= 4'd0;
+                                    eng_r <= ENG_SPLIT;
+                                    state_r <= ST_STEP;
+                                end
+                            end else if ((var_r != PY_SA_SPLIT_LINES) &&
+                                         !b_is_none && !b_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if ((var_r == PY_SA_SPLIT_LINES) &&
+                                     !b_is_none && !b_is_int &&
+                                     (b_tag_r != PY_TAG_BOOL))
+                                set_trap(PY_TRAP_TYPE);
+                            else if (b_is_str &&
+                                     (view_nchars(b_tag_r, b_val_r) == 32'd0) &&
+                                     (var_r != PY_SA_SPLIT_LINES))
+                                set_trap(PY_TRAP_TYPE);
+                            else begin
+                                s64 = 64'sh7FFF_FFFF;
+                                if (c_is_int)
+                                    s64 = pycore_stracc_int64(c_val_r);
+                                if (s64 < 0)
+                                    s64 = 64'sh7FFF_FFFF;
+                                count_r <= s64[31:0];
+                                trim_has_cs_r <= b_is_str && (var_r != PY_SA_SPLIT_LINES);
+                                map_expand_r <= (var_r == PY_SA_SPLIT_LINES) &&
+                                    (((b_tag_r == PY_TAG_BOOL) && b_val_r[0]) ||
+                                     (b_is_int && (b_val_r != 128'd0)));
+                                pos_r <= 32'd0;
+                                join_n_r <= 32'd0;
+                                join_i_r <= 32'd0;
+                                join_sum_r <= 32'd0;
+                                split_r <= 32'd0;
+                                left_pad_r <= 32'd0;
+                                right_start_r <= 32'd0;
+                                map_measuring_r <= 1'b1;
+                                have_hay_r <= 1'b0;
+                                match_i_r <= 32'd0;
+                                trim_in_cs_r <= 1'b0;
+                                replace_copy_hay_r <= 1'b0;
+                                join_fill_sep_r <= 1'b0;
+                                nlen_r <= (b_is_str && (var_r != PY_SA_SPLIT_LINES))
+                                        ? view_nchars(b_tag_r, b_val_r) : 32'd0;
+                                rfind_r <= (var_r == PY_SA_SPLIT_REV);
+                                join_phase_r <= 4'd0;
+                                eng_r <= ENG_SPLIT;
+                                state_r <= ST_STEP;
+                            end
+                        end
                         default: set_trap(PY_TRAP_TYPE);
                     endcase
                 end
@@ -818,11 +916,22 @@ module pycore_str_accel #(
                             end else if (mem_kind_r == MEM_WR_DST)
                                 dst_word_dirty_r <= 1'b0;
                             else if (mem_kind_r == MEM_WR_HDR) begin
-                                set_res(pycore_make_entry(PY_TAG_LONG_STR,
-                                    pycore_stracc_pack_handle(
-                                        dst_place_r, dst_nchars_r, dst_nbytes_r[23:0],
-                                        dst_kind_r, hash_r, flags_r)),
-                                    dst_end_r);
+                                if (copy_hold_r) begin
+                                    hold_long_done(pycore_make_entry(PY_TAG_LONG_STR,
+                                        pycore_stracc_pack_handle(
+                                            dst_place_r, dst_nchars_r, dst_nbytes_r[23:0],
+                                            dst_kind_r, hash_r, flags_r)),
+                                        hold_dest_r);
+                                    heap_ptr_r <= dst_end_r;
+                                    copy_hold_r <= 1'b0;
+                                    state_r <= ST_STEP;
+                                end else begin
+                                    set_res(pycore_make_entry(PY_TAG_LONG_STR,
+                                        pycore_stracc_pack_handle(
+                                            dst_place_r, dst_nchars_r, dst_nbytes_r[23:0],
+                                            dst_kind_r, hash_r, flags_r)),
+                                        dst_end_r);
+                                end
                             end
                             if (mem_kind_r != MEM_WR_HDR)
                                 state_r <= ST_STEP;
@@ -847,6 +956,8 @@ module pycore_str_accel #(
                                 step_map();
                         end
                         ENG_AFFIX: step_affix();
+                        ENG_EXPAND: step_expandtabs();
+                        ENG_SPLIT: step_split();
                         default: set_trap(PY_TRAP_TYPE);
                     endcase
                 end
@@ -877,6 +988,8 @@ module pycore_str_accel #(
             dst_nbytes_r <= nbytes;
             dst_place_r <= heap_ptr_r;
             dst_end_r <= heap_ptr_r;
+            hash_r <= PYCORE_STRACC_FNV_OFFSET;
+            flags_r <= PYCORE_STRACC_FLAG_ALL_LOWER | PYCORE_STRACC_FLAG_ALL_UPPER;
             eng_r <= ENG_COPY;
             out_idx_r <= 32'd0;
             src_sel_r <= SRC_A;
@@ -897,6 +1010,8 @@ module pycore_str_accel #(
                 dst_word_r <= '0;
                 dst_word_addr_r <= place + 32'd16;
                 dst_word_dirty_r <= 1'b0;
+                hash_r <= PYCORE_STRACC_FNV_OFFSET;
+                flags_r <= PYCORE_STRACC_FLAG_ALL_LOWER | PYCORE_STRACC_FLAG_ALL_UPPER;
                 eng_r <= ENG_COPY;
                 out_idx_r <= 32'd0;
                 src_sel_r <= SRC_A;
@@ -1153,9 +1268,13 @@ module pycore_str_accel #(
     endtask
 
     task automatic finish_copy();
-        if (dst_short_r)
-            set_res(pack_short_local(), heap_ptr_r);
-        else if (dst_word_dirty_r)
+        if (dst_short_r) begin
+            if (copy_hold_r) begin
+                hold_long_done(pack_short_local(), hold_dest_r);
+                copy_hold_r <= 1'b0;
+            end else
+                set_res(pack_short_local(), heap_ptr_r);
+        end else if (dst_word_dirty_r)
             issue_write(dst_word_addr_r, dst_word_r, MEM_WR_DST);
         else
             issue_write(dst_place_r,
@@ -1958,6 +2077,609 @@ module pycore_str_accel #(
             setup_copy(nout, a_kind_r);
             op_r <= PY_SA_ZFILL;
             eng_r <= ENG_COPY;
+        end
+    endtask
+
+    task automatic hold_long_done(
+        input logic [PYCORE_ENTRY_WIDTH-1:0] entry,
+        input logic [1:0] dest
+    );
+        unique case (dest)
+            2'd0: begin
+                part0_r <= entry;
+                join_phase_r <= 4'd12;
+            end
+            2'd1: begin
+                part2_r <= entry;
+                join_phase_r <= 4'd13;
+            end
+            default: begin
+                join_el_tag_r <= entry[PYCORE_TAG_MSB:PYCORE_TAG_LSB];
+                join_el_val_r <= entry[PYCORE_VAL_MSB:PYCORE_VAL_LSB];
+                join_phase_r <= 4'd4;
+            end
+        endcase
+        hold_dest_r <= dest;
+        eng_r <= ENG_SPLIT;
+    endtask
+
+    task automatic start_slice_hold(
+        input logic [31:0] start_u,
+        input logic [31:0] nout,
+        input logic [1:0] dest
+    );
+        hold_dest_r <= dest;
+        if (nout == 32'd0) begin
+            hold_long_done(pycore_make_short_str_entry(4'd0, 120'd0), dest);
+            copy_hold_r <= 1'b0;
+        end else begin
+            src_idx_r <= start_u;
+            copy_hold_r <= 1'b1;
+            op_r <= PY_SA_SLICE;
+            setup_copy(nout, a_kind_r);
+        end
+    endtask
+
+    task automatic split_hold_piece(
+        input logic [31:0] start_u,
+        input logic [31:0] nout,
+        input logic [1:0] dest
+    );
+        if ((start_u == 32'd0) && (nout == a_nchars_r))
+            hold_long_done(cmd_entry(a_tag_r, a_val_r), dest);
+        else
+            start_slice_hold(start_u, nout, dest);
+    endtask
+
+    task automatic split_part_miss();
+        part0_r <= cmd_entry(a_tag_r, a_val_r);
+        part2_r <= pycore_make_short_str_entry(4'd0, 120'd0);
+        map_changed_r <= 1'b0;
+        join_phase_r <= 4'd13;
+    endtask
+
+    task automatic step_expandtabs();
+        logic got;
+        logic [31:0] unit, ns, tabsize, col;
+        tabsize = split_r;
+        col = cmp_idx_r;
+        if (map_measuring_r) begin
+            if (pos_r >= a_nchars_r) begin
+                if (!map_changed_r)
+                    set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                else begin
+                    map_measuring_r <= 1'b0;
+                    pos_r <= 32'd0;
+                    cmp_idx_r <= 32'd0;
+                    new_idx_r <= 32'd0;
+                    fill_unit_r <= 32'h20;
+                    setup_copy(count_r, a_kind_r);
+                    eng_r <= ENG_EXPAND;
+                end
+            end else begin
+                fetch_unit_ab(SRC_A, pos_r, got, unit);
+                if (got) begin
+                    if (unit == 32'h09) begin
+                        map_changed_r <= 1'b1;
+                        if (tabsize == 32'd0) begin
+                            // CPython: tabsize < 1 deletes the tab.
+                        end else begin
+                            ns = tabsize - (col % tabsize);
+                            count_r <= count_r + ns;
+                            cmp_idx_r <= col + ns;
+                        end
+                    end else if ((unit == 32'h0A) || (unit == 32'h0D)) begin
+                        count_r <= count_r + 32'd1;
+                        cmp_idx_r <= 32'd0;
+                    end else begin
+                        count_r <= count_r + 32'd1;
+                        cmp_idx_r <= col + 32'd1;
+                    end
+                    pos_r <= pos_r + 32'd1;
+                end
+            end
+        end else if (out_idx_r >= dst_nchars_r)
+            finish_copy();
+        else if (!dest_can_take())
+            issue_write(dst_word_addr_r, dst_word_r, MEM_WR_DST);
+        else if (new_idx_r != 32'd0) begin
+            consume_unit(32'h20);
+            new_idx_r <= new_idx_r - 32'd1;
+        end else begin
+            fetch_unit_ab(SRC_A, pos_r, got, unit);
+            if (got) begin
+                if (unit == 32'h09) begin
+                    if (tabsize == 32'd0)
+                        pos_r <= pos_r + 32'd1;
+                    else begin
+                        ns = tabsize - (cmp_idx_r % tabsize);
+                        consume_unit(32'h20);
+                        new_idx_r <= ns - 32'd1;
+                        cmp_idx_r <= cmp_idx_r + ns;
+                        pos_r <= pos_r + 32'd1;
+                    end
+                end else if ((unit == 32'h0A) || (unit == 32'h0D)) begin
+                    consume_unit(unit);
+                    cmp_idx_r <= 32'd0;
+                    pos_r <= pos_r + 32'd1;
+                end else begin
+                    consume_unit(unit);
+                    cmp_idx_r <= cmp_idx_r + 32'd1;
+                    pos_r <= pos_r + 32'd1;
+                end
+            end
+        end
+    endtask
+
+    task automatic step_split();
+        logic got, is_part, is_lines, is_ws;
+        logic [31:0] unit, nout, n, place, taddr, end_addr, buf_bytes, br;
+        logic [PYCORE_ENTRY_WIDTH-1:0] empty_s;
+        logic [3:0] mid_tag;
+        logic [127:0] mid_val;
+        empty_s = pycore_make_short_str_entry(4'd0, 120'd0);
+        is_part = (var_r == PY_SA_SPLIT_PARTITION) ||
+                  (var_r == PY_SA_SPLIT_RPARTITION);
+        is_lines = (var_r == PY_SA_SPLIT_LINES);
+        is_ws = !trim_has_cs_r && !is_lines;
+        if (is_part) begin
+            case (join_phase_r)
+                4'd0: begin
+                    if ((b_kind_r > a_kind_r) || (nlen_r > a_nchars_r))
+                        split_part_miss();
+                    else if (rfind_r && (pos_r + nlen_r > a_nchars_r))
+                        split_part_miss();
+                    else if (!rfind_r && (pos_r + nlen_r > a_nchars_r))
+                        split_part_miss();
+                    else if (!have_hay_r) begin
+                        fetch_unit_ab(SRC_A, pos_r + match_i_r, got, unit);
+                        if (got) begin
+                            hay_unit_r <= unit;
+                            have_hay_r <= 1'b1;
+                        end
+                    end else begin
+                        fetch_unit_ab(SRC_B, match_i_r, got, unit);
+                        if (got) begin
+                            if (hay_unit_r != unit) begin
+                                have_hay_r <= 1'b0;
+                                match_i_r <= 32'd0;
+                                if (rfind_r) begin
+                                    if (pos_r == 32'd0)
+                                        split_part_miss();
+                                    else
+                                        pos_r <= pos_r - 32'd1;
+                                end else
+                                    pos_r <= pos_r + 32'd1;
+                            end else if (match_i_r + 32'd1 == nlen_r) begin
+                                have_hay_r <= 1'b0;
+                                map_changed_r <= 1'b1;
+                                join_sum_r <= pos_r;
+                                split_hold_piece(32'd0, pos_r, 2'd0);
+                            end else begin
+                                have_hay_r <= 1'b0;
+                                match_i_r <= match_i_r + 32'd1;
+                            end
+                        end
+                    end
+                end
+                4'd12: begin
+                    nout = a_nchars_r - (join_sum_r + nlen_r);
+                    split_hold_piece(join_sum_r + nlen_r, nout, 2'd1);
+                end
+                4'd13: begin
+                    nout = pycore_tuple_alloc_bytes(32'd3);
+                    place = pycore_heap_place(heap_ptr_r, nout);
+                    end_addr = place + nout;
+                    if (end_addr > HEAP_LIMIT)
+                        set_trap(PY_TRAP_MEM_FAULT);
+                    else begin
+                        join_obj_r <= place;
+                        join_buf_r <= end_addr;
+                        join_i_r <= 32'd0;
+                        join_phase_r <= 4'd14;
+                    end
+                end
+                4'd14: begin
+                    if (map_changed_r) begin
+                        mid_tag = b_tag_r;
+                        mid_val = b_val_r;
+                    end else begin
+                        mid_tag = empty_s[PYCORE_TAG_MSB:PYCORE_TAG_LSB];
+                        mid_val = empty_s[PYCORE_VAL_MSB:PYCORE_VAL_LSB];
+                    end
+                    case (join_i_r[2:0])
+                        3'd0: issue_write(pycore_tuple_val_addr(join_obj_r, 32'd0),
+                            part0_r[PYCORE_VAL_MSB:PYCORE_VAL_LSB], MEM_WR_DST);
+                        3'd1: issue_write(pycore_tuple_tag_addr(join_obj_r, 32'd0),
+                            {124'b0, part0_r[PYCORE_TAG_MSB:PYCORE_TAG_LSB]},
+                            MEM_WR_DST);
+                        3'd2: issue_write(pycore_tuple_val_addr(join_obj_r, 32'd1),
+                            mid_val, MEM_WR_DST);
+                        3'd3: issue_write(pycore_tuple_tag_addr(join_obj_r, 32'd1),
+                            {124'b0, mid_tag}, MEM_WR_DST);
+                        3'd4: issue_write(pycore_tuple_val_addr(join_obj_r, 32'd2),
+                            part2_r[PYCORE_VAL_MSB:PYCORE_VAL_LSB], MEM_WR_DST);
+                        default: issue_write(pycore_tuple_tag_addr(join_obj_r, 32'd2),
+                            {124'b0, part2_r[PYCORE_TAG_MSB:PYCORE_TAG_LSB]},
+                            MEM_WR_DST);
+                    endcase
+                    if (join_i_r == 32'd5)
+                        join_phase_r <= 4'd15;
+                    else
+                        join_i_r <= join_i_r + 32'd1;
+                end
+                4'd15: begin
+                    set_res(pycore_make_entry(PY_TAG_TUPLE,
+                        {64'd3, {32'd0, join_obj_r}}), join_buf_r);
+                end
+                default: set_trap(PY_TRAP_TYPE);
+            endcase
+        end else begin
+            case (join_phase_r)
+                // ---- measure ----
+                4'd0: begin
+                    if (trim_has_cs_r && (count_r == 32'd0)) begin
+                        join_n_r <= 32'd1;
+                        split_r <= 32'd0;
+                        join_fill_sep_r <= 1'b0;
+                        join_phase_r <= 4'd1;
+                    end else if (pos_r >= a_nchars_r) begin
+                        if (is_ws)
+                            n = join_n_r + {31'b0, trim_in_cs_r};
+                        else
+                            n = join_n_r;
+                        if (trim_has_cs_r) begin
+                            n = cmp_idx_r + 32'd1;
+                            if (rfind_r && (cmp_idx_r > count_r)) begin
+                                split_r <= cmp_idx_r - count_r;
+                                n = count_r + 32'd1;
+                            end else
+                                split_r <= 32'd0;
+                            join_n_r <= n;
+                            join_fill_sep_r <= 1'b0;
+                            join_phase_r <= 4'd1;
+                        end else if (is_lines) begin
+                            join_n_r <= n;
+                            join_fill_sep_r <= 1'b0;
+                            join_phase_r <= 4'd1;
+                        end else begin
+                            join_n_r <= n;
+                            if (rfind_r && (n > (count_r + 32'd1))) begin
+                                join_n_r <= count_r + 32'd1;
+                                pos_r <= a_nchars_r - 32'd1;
+                                cmp_idx_r <= 32'd0;
+                                trim_in_cs_r <= 1'b0;
+                                replace_copy_hay_r <= 1'b0;
+                                join_fill_sep_r <= 1'b1;
+                                join_phase_r <= 4'd3;
+                            end else begin
+                                join_fill_sep_r <= 1'b0;
+                                join_phase_r <= 4'd1;
+                            end
+                        end
+                    end else if (is_ws) begin
+                        fetch_unit_ab(SRC_A, pos_r, got, unit);
+                        if (got) begin
+                            if (pycore_is_unicode_space(unit)) begin
+                                if (trim_in_cs_r) begin
+                                    join_n_r <= join_n_r + 32'd1;
+                                    trim_in_cs_r <= 1'b0;
+                                end
+                                pos_r <= pos_r + 32'd1;
+                            end else if (!rfind_r && (join_n_r >= count_r)) begin
+                                join_n_r <= join_n_r + 32'd1;
+                                pos_r <= a_nchars_r;
+                                trim_in_cs_r <= 1'b0;
+                                replace_copy_hay_r <= 1'b1;
+                            end else begin
+                                trim_in_cs_r <= 1'b1;
+                                pos_r <= pos_r + 32'd1;
+                            end
+                        end
+                    end else if (is_lines) begin
+                        if (have_hay_r) begin
+                            fetch_unit_ab(SRC_A, pos_r + 32'd1, got, unit);
+                            if (got) begin
+                                join_n_r <= join_n_r + 32'd1;
+                                pos_r <= pos_r + ((unit == 32'h0A) ? 32'd2 : 32'd1);
+                                have_hay_r <= 1'b0;
+                            end
+                        end else begin
+                            fetch_unit_ab(SRC_A, pos_r, got, unit);
+                            if (got) begin
+                                if (pycore_is_unicode_linebreak(unit)) begin
+                                    if ((unit == 32'h0D) &&
+                                        (pos_r + 32'd1 < a_nchars_r))
+                                        have_hay_r <= 1'b1;
+                                    else begin
+                                        join_n_r <= join_n_r + 32'd1;
+                                        pos_r <= pos_r + 32'd1;
+                                    end
+                                end else begin
+                                    pos_r <= pos_r + 32'd1;
+                                    if (pos_r + 32'd1 >= a_nchars_r)
+                                        join_n_r <= join_n_r + 32'd1;
+                                end
+                            end
+                        end
+                    end else begin
+                        // sep measure
+                        if (pos_r + nlen_r > a_nchars_r)
+                            pos_r <= a_nchars_r;
+                        else if (!have_hay_r) begin
+                            fetch_unit_ab(SRC_A, pos_r + match_i_r, got, unit);
+                            if (got) begin
+                                hay_unit_r <= unit;
+                                have_hay_r <= 1'b1;
+                            end
+                        end else begin
+                            fetch_unit_ab(SRC_B, match_i_r, got, unit);
+                            if (got) begin
+                                if (hay_unit_r != unit) begin
+                                    have_hay_r <= 1'b0;
+                                    match_i_r <= 32'd0;
+                                    pos_r <= pos_r + 32'd1;
+                                end else if (match_i_r + 32'd1 == nlen_r) begin
+                                    have_hay_r <= 1'b0;
+                                    match_i_r <= 32'd0;
+                                    cmp_idx_r <= cmp_idx_r + 32'd1;
+                                    pos_r <= pos_r + nlen_r;
+                                    if (!rfind_r &&
+                                        (cmp_idx_r + 32'd1 == count_r))
+                                        pos_r <= a_nchars_r;
+                                end else begin
+                                    have_hay_r <= 1'b0;
+                                    match_i_r <= match_i_r + 32'd1;
+                                end
+                            end
+                        end
+                    end
+                end
+                // ---- rsplit whitespace: find leftover cut from the right ----
+                4'd3: begin
+                    if (replace_copy_hay_r) begin
+                        right_start_r <= 32'd0;
+                        join_phase_r <= 4'd1;
+                    end else begin
+                        fetch_unit_ab(SRC_A, pos_r, got, unit);
+                        if (got) begin
+                            if (!trim_in_cs_r) begin
+                                if (pycore_is_unicode_space(unit)) begin
+                                    if (pos_r == 32'd0) begin
+                                        right_start_r <= 32'd0;
+                                        join_phase_r <= 4'd1;
+                                    end else
+                                        pos_r <= pos_r - 32'd1;
+                                end else if (cmp_idx_r >= count_r) begin
+                                    right_start_r <= pos_r + 32'd1;
+                                    join_phase_r <= 4'd1;
+                                end else
+                                    trim_in_cs_r <= 1'b1;
+                            end else if (!pycore_is_unicode_space(unit)) begin
+                                if (pos_r == 32'd0) begin
+                                    cmp_idx_r <= cmp_idx_r + 32'd1;
+                                    trim_in_cs_r <= 1'b0;
+                                    replace_copy_hay_r <= 1'b1;
+                                end else
+                                    pos_r <= pos_r - 32'd1;
+                            end else begin
+                                cmp_idx_r <= cmp_idx_r + 32'd1;
+                                trim_in_cs_r <= 1'b0;
+                            end
+                        end
+                    end
+                end
+                // ---- allocate list ----
+                4'd1: begin
+                    n = join_n_r;
+                    place = pycore_list_place_obj(heap_ptr_r);
+                    if (n == 32'd0) begin
+                        end_addr = place + 32'd32;
+                        if (end_addr > HEAP_LIMIT)
+                            set_trap(PY_TRAP_MEM_FAULT);
+                        else begin
+                            join_obj_r <= place;
+                            join_buf_r <= 32'd0;
+                            heap_ptr_r <= end_addr;
+                            join_phase_r <= 4'd6;
+                        end
+                    end else begin
+                        buf_bytes = n << 5;
+                        taddr = pycore_list_place_buf(heap_ptr_r, n);
+                        end_addr = taddr + buf_bytes;
+                        if (end_addr > HEAP_LIMIT)
+                            set_trap(PY_TRAP_MEM_FAULT);
+                        else begin
+                            join_obj_r <= place;
+                            join_buf_r <= taddr;
+                            heap_ptr_r <= end_addr;
+                            join_i_r <= 32'd0;
+                            pos_r <= 32'd0;
+                            join_sum_r <= 32'd0;
+                            hay_pos_r <= 32'd0;
+                            have_hay_r <= 1'b0;
+                            match_i_r <= 32'd0;
+                            trim_in_cs_r <= 1'b0;
+                            join_phase_r <= 4'd2;
+                        end
+                    end
+                end
+                // ---- emit scan ----
+                4'd2: begin
+                    if (join_i_r >= join_n_r)
+                        join_phase_r <= 4'd6;
+                    else if (join_fill_sep_r) begin
+                        hay_pos_r <= right_start_r;
+                        split_hold_piece(32'd0, right_start_r, 2'd2);
+                        join_fill_sep_r <= 1'b0;
+                    end else if (trim_has_cs_r) begin
+                        if (join_i_r + 32'd1 == join_n_r) begin
+                            nout = a_nchars_r - join_sum_r;
+                            hay_pos_r <= a_nchars_r;
+                            split_hold_piece(join_sum_r, nout, 2'd2);
+                        end else begin
+                            pos_r <= join_sum_r;
+                            match_i_r <= 32'd0;
+                            have_hay_r <= 1'b0;
+                            join_phase_r <= 4'd8;
+                        end
+                    end else if (is_lines) begin
+                        if (have_hay_r) begin
+                            fetch_unit_ab(SRC_A, pos_r + 32'd1, got, unit);
+                            if (got) begin
+                                br = (unit == 32'h0A) ? 32'd2 : 32'd1;
+                                nout = map_expand_r
+                                     ? (pos_r + br - join_sum_r)
+                                     : (pos_r - join_sum_r);
+                                hay_pos_r <= pos_r + br;
+                                have_hay_r <= 1'b0;
+                                split_hold_piece(join_sum_r, nout, 2'd2);
+                            end
+                        end else if (pos_r >= a_nchars_r) begin
+                            nout = a_nchars_r - join_sum_r;
+                            hay_pos_r <= a_nchars_r;
+                            split_hold_piece(join_sum_r, nout, 2'd2);
+                        end else begin
+                            fetch_unit_ab(SRC_A, pos_r, got, unit);
+                            if (got) begin
+                                if (pycore_is_unicode_linebreak(unit)) begin
+                                    if ((unit == 32'h0D) &&
+                                        (pos_r + 32'd1 < a_nchars_r))
+                                        have_hay_r <= 1'b1;
+                                    else begin
+                                        nout = map_expand_r
+                                             ? (pos_r + 32'd1 - join_sum_r)
+                                             : (pos_r - join_sum_r);
+                                        hay_pos_r <= pos_r + 32'd1;
+                                        split_hold_piece(join_sum_r, nout, 2'd2);
+                                    end
+                                end else
+                                    pos_r <= pos_r + 32'd1;
+                            end
+                        end
+                    end else begin
+                        // whitespace emit
+                        if (replace_copy_hay_r &&
+                            (join_i_r + 32'd1 == join_n_r)) begin
+                            if (pos_r >= a_nchars_r) begin
+                                hay_pos_r <= a_nchars_r;
+                                split_hold_piece(pos_r, 32'd0, 2'd2);
+                            end else begin
+                                fetch_unit_ab(SRC_A, pos_r, got, unit);
+                                if (got) begin
+                                    if (pycore_is_unicode_space(unit))
+                                        pos_r <= pos_r + 32'd1;
+                                    else begin
+                                        hay_pos_r <= a_nchars_r;
+                                        split_hold_piece(pos_r,
+                                            a_nchars_r - pos_r, 2'd2);
+                                    end
+                                end
+                            end
+                        end else if (pos_r >= a_nchars_r) begin
+                            nout = pos_r - join_sum_r;
+                            hay_pos_r <= pos_r;
+                            split_hold_piece(join_sum_r, nout, 2'd2);
+                        end else begin
+                            fetch_unit_ab(SRC_A, pos_r, got, unit);
+                            if (got) begin
+                                if (pycore_is_unicode_space(unit)) begin
+                                    if (trim_in_cs_r) begin
+                                        nout = pos_r - join_sum_r;
+                                        hay_pos_r <= pos_r;
+                                        split_hold_piece(join_sum_r, nout, 2'd2);
+                                        trim_in_cs_r <= 1'b0;
+                                    end else
+                                        pos_r <= pos_r + 32'd1;
+                                end else begin
+                                    if (!trim_in_cs_r) begin
+                                        join_sum_r <= pos_r;
+                                        trim_in_cs_r <= 1'b1;
+                                    end
+                                    pos_r <= pos_r + 32'd1;
+                                end
+                            end
+                        end
+                    end
+                end
+                4'd8: begin
+                    if (pos_r + nlen_r > a_nchars_r) begin
+                        nout = a_nchars_r - join_sum_r;
+                        hay_pos_r <= a_nchars_r;
+                        split_hold_piece(join_sum_r, nout, 2'd2);
+                    end else if (!have_hay_r) begin
+                        fetch_unit_ab(SRC_A, pos_r + match_i_r, got, unit);
+                        if (got) begin
+                            hay_unit_r <= unit;
+                            have_hay_r <= 1'b1;
+                        end
+                    end else begin
+                        fetch_unit_ab(SRC_B, match_i_r, got, unit);
+                        if (got) begin
+                            if (hay_unit_r != unit) begin
+                                have_hay_r <= 1'b0;
+                                match_i_r <= 32'd0;
+                                pos_r <= pos_r + 32'd1;
+                            end else if (match_i_r + 32'd1 == nlen_r) begin
+                                have_hay_r <= 1'b0;
+                                match_i_r <= 32'd0;
+                                if (split_r != 32'd0) begin
+                                    split_r <= split_r - 32'd1;
+                                    pos_r <= pos_r + nlen_r;
+                                end else begin
+                                    hay_pos_r <= pos_r;
+                                    nout = pos_r - join_sum_r;
+                                    split_hold_piece(join_sum_r, nout, 2'd2);
+                                end
+                            end else begin
+                                have_hay_r <= 1'b0;
+                                match_i_r <= match_i_r + 32'd1;
+                            end
+                        end
+                    end
+                end
+                4'd4: begin
+                    issue_write(pycore_list_val_addr(join_buf_r, join_i_r),
+                        join_el_val_r, MEM_WR_DST);
+                    join_phase_r <= 4'd5;
+                end
+                4'd5: begin
+                    issue_write(pycore_list_tag_addr(join_buf_r, join_i_r),
+                        {124'b0, join_el_tag_r}, MEM_WR_DST);
+                    if (trim_has_cs_r) begin
+                        join_sum_r <= hay_pos_r + nlen_r;
+                        pos_r <= hay_pos_r + nlen_r;
+                    end else begin
+                        join_sum_r <= hay_pos_r;
+                        pos_r <= hay_pos_r;
+                    end
+                    trim_in_cs_r <= 1'b0;
+                    have_hay_r <= 1'b0;
+                    match_i_r <= 32'd0;
+                    if (join_i_r + 32'd1 >= join_n_r)
+                        join_phase_r <= 4'd6;
+                    else begin
+                        join_i_r <= join_i_r + 32'd1;
+                        join_phase_r <= 4'd2;
+                    end
+                end
+                4'd6: begin
+                    issue_write(join_obj_r,
+                        pycore_list_header({32'd0, join_n_r}, {32'd0, join_n_r}),
+                        MEM_WR_DST);
+                    join_phase_r <= 4'd7;
+                end
+                4'd7: begin
+                    issue_write(join_obj_r + 32'd16,
+                        {64'd0, {32'd0, join_buf_r}}, MEM_WR_DST);
+                    join_phase_r <= 4'd9;
+                end
+                4'd9: begin
+                    set_res(pycore_make_mut(PY_MUT_LIST, {32'd0, join_obj_r}, 1'b0),
+                            heap_ptr_r);
+                end
+                default: set_trap(PY_TRAP_TYPE);
+            endcase
         end
     endtask
 endmodule

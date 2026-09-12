@@ -49,6 +49,13 @@ from pycore.tools.encoding import (
     SA_MAP,
     SA_AFFIX,
     SA_ZFILL,
+    SA_EXPANDTABS,
+    SA_SPLIT,
+    SA_SPLIT_FWD,
+    SA_SPLIT_REV,
+    SA_SPLIT_LINES,
+    SA_SPLIT_PARTITION,
+    SA_SPLIT_RPARTITION,
     SA_IS_DIGIT,
     SA_IS_ASCII,
     SA_IS_LOWER,
@@ -433,6 +440,71 @@ class StrModelTest(unittest.TestCase):
         self.assertEqual(self.text_of(r.entry), "00042")
         r = self.run_op(SA_ZFILL, 0, _short("-42"), _int(5))
         self.assertEqual(self.text_of(r.entry), "-0042")
+
+    def _texts(self, entry):
+        elems = self.accel._seq_entries(entry)
+        self.assertIsNotNone(elems)
+        return [self.text_of(e) for e in elems]
+
+    def test_expandtabs(self) -> None:
+        r = self.run_op(SA_EXPANDTABS, 0, _short("a\tb"), _none())
+        self.assertEqual(self.text_of(r.entry), "a\tb".expandtabs())
+        r = self.run_op(SA_EXPANDTABS, 0, _short("a\tb"), _int(4))
+        self.assertEqual(self.text_of(r.entry), "a   b")
+        r = self.run_op(SA_EXPANDTABS, 0, _short("hello"), _none())
+        self.assertEqual(self.text_of(r.entry), "hello")
+        r = self.run_op(SA_EXPANDTABS, 0, _short("\ta"), _int(0))
+        self.assertEqual(self.text_of(r.entry), "\ta".expandtabs(0))
+
+    def test_partition(self) -> None:
+        r = self.run_op(SA_SPLIT, SA_SPLIT_PARTITION, _short("a,b,c"), _short(","))
+        self.assertEqual(self._texts(r.entry), ["a", ",", "b,c"])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_RPARTITION, _short("a,b,c"), _short(","))
+        self.assertEqual(self._texts(r.entry), ["a,b", ",", "c"])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_PARTITION, _short("hello"), _short(","))
+        self.assertEqual(self._texts(r.entry), ["hello", "", ""])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_PARTITION, _short("hello"), _short(""))
+        self.assertTrue(r.trap)
+
+    def test_split_whitespace_and_sep(self) -> None:
+        r = self.run_op(SA_SPLIT, SA_SPLIT_FWD, _short("a b c"), _none())
+        self.assertEqual(self._texts(r.entry), ["a", "b", "c"])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_FWD, _short("  a  b"), _none())
+        self.assertEqual(self._texts(r.entry), ["a", "b"])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_FWD, _short(""), _none())
+        self.assertEqual(self._texts(r.entry), [])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_FWD, _short("a,b,c"), _short(","))
+        self.assertEqual(self._texts(r.entry), ["a", "b", "c"])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_FWD, _short(""), _short(","))
+        self.assertEqual(self._texts(r.entry), [""])
+        r = self.run_op(
+            SA_SPLIT, SA_SPLIT_FWD, _short("a,b,c,d"), _short(","), _int(1)
+        )
+        self.assertEqual(self._texts(r.entry), ["a", "b,c,d"])
+        r = self.run_op(
+            SA_SPLIT, SA_SPLIT_REV, _short("a,b,c,d"), _short(","), _int(1)
+        )
+        self.assertEqual(self._texts(r.entry), ["a,b,c", "d"])
+        r = self.run_op(
+            SA_SPLIT, SA_SPLIT_FWD, _short("a  b  c"), _none(), _int(1)
+        )
+        self.assertEqual(self._texts(r.entry), ["a", "b  c"])
+        r = self.run_op(
+            SA_SPLIT, SA_SPLIT_REV, _short("a  b  c"), _none(), _int(1)
+        )
+        self.assertEqual(self._texts(r.entry), ["a  b", "c"])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_FWD, _short("abc"), _short(","))
+        self.assertEqual(self._texts(r.entry), ["abc"])
+        elems = self.accel._seq_entries(r.entry)
+        self.assertEqual(elems[0], _short("abc"))
+        r = self.run_op(SA_SPLIT, SA_SPLIT_LINES, _short("a\nb\n"), _none())
+        self.assertEqual(self._texts(r.entry), ["a", "b"])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_LINES, _short("a\nb"), _int(1))
+        self.assertEqual(self._texts(r.entry), ["a\n", "b"])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_LINES, _short("a\r\nb"), _none())
+        self.assertEqual(self._texts(r.entry), ["a", "b"])
+        r = self.run_op(SA_SPLIT, SA_SPLIT_FWD, _short("ab"), _short(""))
+        self.assertTrue(r.trap)
 
 
 class TestImageAllocStr(unittest.TestCase):

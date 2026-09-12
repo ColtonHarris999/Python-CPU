@@ -50,6 +50,13 @@ from encoding import (
     SA_MAP,
     SA_AFFIX,
     SA_ZFILL,
+    SA_EXPANDTABS,
+    SA_SPLIT,
+    SA_SPLIT_FWD,
+    SA_SPLIT_REV,
+    SA_SPLIT_LINES,
+    SA_SPLIT_PARTITION,
+    SA_SPLIT_RPARTITION,
     SA_TRIM_LEFT,
     SA_TRIM_RIGHT,
     SA_TRIM_BOTH,
@@ -173,6 +180,8 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
             SA_MAP,
             SA_ZFILL,
             SA_AFFIX,
+            SA_EXPANDTABS,
+            SA_SPLIT,
         ]
     )
     a_ent, heap = accel.put(a_s, heap)
@@ -352,6 +361,63 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
         exp = a_s.removeprefix(b_s) if var == SA_AFFIX_PREFIX else a_s.removesuffix(b_s)
         assert got == exp, (a_s, b_s, var, got, exp)
         heap = r.heap_ptr
+    elif op == SA_EXPANDTABS:
+        tabsize = rng.choice([0, 1, 4, 8, 16, -1])
+        r = accel.exec(SA_EXPANDTABS, 0, a_ent, _int(tabsize), _none(), heap)
+        assert not r.trap
+        got = model_text(accel, r.entry)
+        assert got == a_s.expandtabs(tabsize), (a_s, tabsize, got)
+        heap = r.heap_ptr
+    elif op == SA_SPLIT:
+        var = rng.choice(
+            [
+                SA_SPLIT_FWD,
+                SA_SPLIT_REV,
+                SA_SPLIT_LINES,
+                SA_SPLIT_PARTITION,
+                SA_SPLIT_RPARTITION,
+            ]
+        )
+        if var in (SA_SPLIT_PARTITION, SA_SPLIT_RPARTITION):
+            if not b_s:
+                r = accel.exec(SA_SPLIT, var, a_ent, b_ent, _none(), heap)
+                assert r.trap
+            else:
+                r = accel.exec(SA_SPLIT, var, a_ent, b_ent, _none(), heap)
+                assert not r.trap
+                got = [model_text(accel, e) for e in accel._seq_entries(r.entry)]
+                exp = list(
+                    a_s.rpartition(b_s) if var == SA_SPLIT_RPARTITION else a_s.partition(b_s)
+                )
+                assert got == exp, (a_s, b_s, var, got, exp)
+                heap = r.heap_ptr
+        elif var == SA_SPLIT_LINES:
+            keep = rng.choice([False, True])
+            r = accel.exec(SA_SPLIT, var, a_ent, _int(int(keep)), _none(), heap)
+            assert not r.trap
+            got = [model_text(accel, e) for e in accel._seq_entries(r.entry)]
+            assert got == a_s.splitlines(keep), (a_s, keep, got)
+            heap = r.heap_ptr
+        else:
+            use_sep = rng.choice([False, True])
+            mx = rng.choice([-1, 0, 1, 2, 8])
+            if use_sep and not b_s:
+                r = accel.exec(SA_SPLIT, var, a_ent, b_ent, _int(mx), heap)
+                assert r.trap
+            elif use_sep:
+                r = accel.exec(SA_SPLIT, var, a_ent, b_ent, _int(mx), heap)
+                assert not r.trap
+                got = [model_text(accel, e) for e in accel._seq_entries(r.entry)]
+                exp = a_s.rsplit(b_s, mx) if var == SA_SPLIT_REV else a_s.split(b_s, mx)
+                assert got == exp, (a_s, b_s, mx, var, got, exp)
+                heap = r.heap_ptr
+            else:
+                r = accel.exec(SA_SPLIT, var, a_ent, _none(), _int(mx), heap)
+                assert not r.trap
+                got = [model_text(accel, e) for e in accel._seq_entries(r.entry)]
+                exp = a_s.rsplit(None, mx) if var == SA_SPLIT_REV else a_s.split(None, mx)
+                assert got == exp, (a_s, mx, var, got, exp)
+                heap = r.heap_ptr
     return heap
 
 

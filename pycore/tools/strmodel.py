@@ -40,6 +40,13 @@ from encoding import (
     SA_MAP,
     SA_AFFIX,
     SA_ZFILL,
+    SA_EXPANDTABS,
+    SA_SPLIT,
+    SA_SPLIT_FWD,
+    SA_SPLIT_REV,
+    SA_SPLIT_LINES,
+    SA_SPLIT_PARTITION,
+    SA_SPLIT_RPARTITION,
     SA_TRIM_LEFT,
     SA_TRIM_RIGHT,
     SA_TRIM_BOTH,
@@ -343,6 +350,10 @@ class StrAccel:
             return self._affix(a, b, var, heap_ptr)
         if op == SA_ZFILL:
             return self._zfill(a, b, heap_ptr)
+        if op == SA_EXPANDTABS:
+            return self._expandtabs(a, b, heap_ptr)
+        if op == SA_SPLIT:
+            return self._split(a, b, c, var, heap_ptr)
         if op == SA_HASH:
             return self._hash(a, heap_ptr)
         if op in (SA_CHAR_AT, SA_ITER_NEXT):
@@ -837,6 +848,127 @@ class StrAccel:
         return pack_result_from_units(
             [ord(c) for c in out], sa.kind, self.mem, heap_ptr, self.heap_limit
         )
+
+    def _expandtabs(self, a, b, heap_ptr: int) -> AccelResult:
+        sa = self._need_str(a, heap_ptr)
+        if isinstance(sa, AccelResult):
+            return sa
+        if _is_none(*b):
+            tabsize = 8
+        else:
+            tabsize = _int_val(*b)
+            if tabsize is None:
+                return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        text = sa.text(self.mem)
+        out = text.expandtabs(tabsize)
+        if out == text:
+            return AccelResult(sa.tag, a[1], heap_ptr)
+        return pack_result_from_units(
+            [ord(c) for c in out],
+            max(sa.kind, stracc_kind_of_text(out)),
+            self.mem,
+            heap_ptr,
+            self.heap_limit,
+        )
+
+    def plant_tuple(
+        self, elems: list[tuple[int, int]], heap_ptr: int
+    ) -> tuple[tuple[int, int], int]:
+        n = len(elems)
+        nbytes = n * 32
+        addr = heap_place(heap_ptr, nbytes) if n else heap_ptr
+        for i, (tag, val) in enumerate(elems):
+            self.mem.write_bytes(addr + i * 32, int(val).to_bytes(16, "little"))
+            self.mem.write_bytes(
+                addr + i * 32 + 16, (tag & 0xF).to_bytes(16, "little")
+            )
+        end = addr + nbytes if n else heap_ptr
+        return (TAG_TUPLE, ((n & ((1 << 64) - 1)) << 64) | (addr & ((1 << 64) - 1))), end
+
+    def _pack_split_piece(
+        self, piece: str, a: tuple[int, int], heap_ptr: int
+    ) -> tuple[tuple[int, int], int]:
+        text = decode_str(a[0], a[1], self.mem).text(self.mem)
+        if piece == text:
+            return a, heap_ptr
+        if piece == "":
+            return empty_short(), heap_ptr
+        r = pack_result_from_units(
+            [ord(c) for c in piece],
+            stracc_kind_of_text(piece),
+            self.mem,
+            heap_ptr,
+            self.heap_limit,
+        )
+        if r.trap:
+            return (0, 0), heap_ptr
+        return r.entry, r.heap_ptr
+
+    def _split(self, a, b, c, var: int, heap_ptr: int) -> AccelResult:
+        sa = self._need_str(a, heap_ptr)
+        if isinstance(sa, AccelResult):
+            return sa
+        text = sa.text(self.mem)
+        if var in (SA_SPLIT_PARTITION, SA_SPLIT_RPARTITION):
+            sb = self._need_str(b, heap_ptr)
+            if isinstance(sb, AccelResult):
+                return sb
+            sep = sb.text(self.mem)
+            if sep == "":
+                return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+            parts = (
+                text.rpartition(sep) if var == SA_SPLIT_RPARTITION else text.partition(sep)
+            )
+            hit = parts[1] != ""
+            hp = heap_ptr
+            entries: list[tuple[int, int]] = []
+            for i, p in enumerate(parts):
+                if i == 1 and hit:
+                    entries.append(b)
+                    continue
+                ent, hp = self._pack_split_piece(p, a, hp)
+                entries.append(ent)
+            tup, hp = self.plant_tuple(entries, hp)
+            return AccelResult(tup[0], tup[1], hp)
+        if var == SA_SPLIT_LINES:
+            keepends = False
+            if not _is_none(*b):
+                iv = _int_val(*b)
+                if iv is None:
+                    return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+                keepends = bool(iv)
+            parts_l = text.splitlines(keepends)
+            hp = heap_ptr
+            entries = []
+            for p in parts_l:
+                ent, hp = self._pack_split_piece(p, a, hp)
+                entries.append(ent)
+            lst, hp = self.plant_list(entries, hp)
+            return AccelResult(lst[0], lst[1], hp)
+        if not _is_none(*b) and not _is_string(b[0]):
+            return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        sep = None
+        if _is_string(b[0]):
+            sep = decode_str(b[0], b[1], self.mem).text(self.mem)
+            if sep == "":
+                return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        maxsplit = -1
+        if not _is_none(*c):
+            mv = _int_val(*c)
+            if mv is None:
+                return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+            maxsplit = mv
+        if var == SA_SPLIT_REV:
+            parts_l = text.rsplit(sep, maxsplit)
+        else:
+            parts_l = text.split(sep, maxsplit)
+        hp = heap_ptr
+        entries = []
+        for p in parts_l:
+            ent, hp = self._pack_split_piece(p, a, hp)
+            entries.append(ent)
+        lst, hp = self.plant_list(entries, hp)
+        return AccelResult(lst[0], lst[1], hp)
 
     def read_str(self, entry: tuple[int, int]) -> str:
         return decode_str(entry[0], entry[1], self.mem).text(self.mem)

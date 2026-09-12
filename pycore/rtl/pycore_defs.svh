@@ -192,6 +192,13 @@ localparam logic [5:0] PY_SA_MAP       = 6'd13;
 localparam logic [5:0] PY_SA_SPLIT     = 6'd14;
 localparam logic [5:0] PY_SA_AFFIX     = 6'd15;
 localparam logic [5:0] PY_SA_ZFILL     = 6'd16;
+localparam logic [5:0] PY_SA_EXPANDTABS = 6'd17;
+
+localparam logic [3:0] PY_SA_SPLIT_FWD        = 4'd0;
+localparam logic [3:0] PY_SA_SPLIT_REV        = 4'd1;
+localparam logic [3:0] PY_SA_SPLIT_LINES      = 4'd2;
+localparam logic [3:0] PY_SA_SPLIT_PARTITION  = 4'd3;
+localparam logic [3:0] PY_SA_SPLIT_RPARTITION = 4'd4;
 
 localparam logic [3:0] PY_SA_TRIM_LEFT  = 4'd0;
 localparam logic [3:0] PY_SA_TRIM_RIGHT = 4'd1;
@@ -415,6 +422,16 @@ function automatic logic pycore_is_unicode_space(input logic [31:0] u);
         ((u >= 32'h2000) && (u <= 32'h200A)) ||
         (u == 32'h2028) || (u == 32'h2029) || (u == 32'h202F) ||
         (u == 32'h205F) || (u == 32'h3000);
+endfunction
+
+// CPython unicode_linebreak used by str.splitlines (including CRLF pairing
+// at the call site). U+2028/U+2029 are the only non-Latin-1 breaks.
+function automatic logic pycore_is_unicode_linebreak(input logic [31:0] u);
+    pycore_is_unicode_linebreak =
+        (u == 32'h000A) || (u == 32'h000B) || (u == 32'h000C) ||
+        (u == 32'h000D) || (u == 32'h001C) || (u == 32'h001D) ||
+        (u == 32'h001E) || (u == 32'h0085) ||
+        (u == 32'h2028) || (u == 32'h2029);
 endfunction
 
 function automatic logic pycore_latin1_is_alnum(input logic [31:0] u);
@@ -2059,6 +2076,12 @@ localparam logic [5:0] PY_NMETH_STR_ISPRINTABLE  = 6'd43;
 localparam logic [5:0] PY_NMETH_STR_ISTITLE      = 6'd44;
 localparam logic [5:0] PY_NMETH_STR_ISDECIMAL    = 6'd45;
 localparam logic [5:0] PY_NMETH_STR_ISNUMERIC    = 6'd46;
+localparam logic [5:0] PY_NMETH_STR_EXPANDTABS   = 6'd47;
+localparam logic [5:0] PY_NMETH_STR_SPLIT        = 6'd48;
+localparam logic [5:0] PY_NMETH_STR_RSPLIT       = 6'd49;
+localparam logic [5:0] PY_NMETH_STR_SPLITLINES   = 6'd50;
+localparam logic [5:0] PY_NMETH_STR_PARTITION    = 6'd51;
+localparam logic [5:0] PY_NMETH_STR_RPARTITION   = 6'd52;
 
 // Sentinel CODE_OBJECT address for STRACC native methods. High half is
 // outside the data map, so CALL never mistakes it for a heap object.
@@ -2098,7 +2121,7 @@ function automatic logic pycore_native_method_is_stracc(input logic [5:0] index)
             (index == PY_NMETH_STR_RINDEX) ||
             (index == PY_NMETH_STR_COUNT) ||
             (index == PY_NMETH_STR_REPLACE) ||
-            ((index >= PY_NMETH_STR_STRIP) && (index <= PY_NMETH_STR_ISNUMERIC));
+            ((index >= PY_NMETH_STR_STRIP) && (index <= PY_NMETH_STR_RPARTITION));
     end
 endfunction
 
@@ -2256,6 +2279,30 @@ function automatic void pycore_stracc_method_decode(
             PY_NMETH_STR_ISNUMERIC: begin
                 op = PY_SA_CLASSIFY; svar = PY_SA_IS_NUMERIC;
                 argc_min = 3'd0; argc_max = 3'd0;
+            end
+            PY_NMETH_STR_EXPANDTABS: begin
+                op = PY_SA_EXPANDTABS; svar = 4'd0;
+                argc_min = 3'd0; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_SPLIT: begin
+                op = PY_SA_SPLIT; svar = PY_SA_SPLIT_FWD;
+                argc_min = 3'd0; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_RSPLIT: begin
+                op = PY_SA_SPLIT; svar = PY_SA_SPLIT_REV;
+                argc_min = 3'd0; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_SPLITLINES: begin
+                op = PY_SA_SPLIT; svar = PY_SA_SPLIT_LINES;
+                argc_min = 3'd0; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_PARTITION: begin
+                op = PY_SA_SPLIT; svar = PY_SA_SPLIT_PARTITION;
+                argc_min = 3'd1; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_RPARTITION: begin
+                op = PY_SA_SPLIT; svar = PY_SA_SPLIT_RPARTITION;
+                argc_min = 3'd1; argc_max = 3'd1;
             end
             default: begin
                 op = PY_SA_SEARCH; svar = PY_SA_FIND;
@@ -3182,6 +3229,18 @@ function automatic logic [6:0] pycore_native_method_id(
                     result = {1'b1, PY_NMETH_STR_ISDECIMAL};
                 else if (name_val == PY_NMETH_NAME_ISNUMERIC)
                     result = {1'b1, PY_NMETH_STR_ISNUMERIC};
+                else if (name_val == PY_NMETH_NAME_EXPANDTABS)
+                    result = {1'b1, PY_NMETH_STR_EXPANDTABS};
+                else if (name_val == PY_NMETH_NAME_SPLIT)
+                    result = {1'b1, PY_NMETH_STR_SPLIT};
+                else if (name_val == PY_NMETH_NAME_RSPLIT)
+                    result = {1'b1, PY_NMETH_STR_RSPLIT};
+                else if (name_val == PY_NMETH_NAME_SPLITLINES)
+                    result = {1'b1, PY_NMETH_STR_SPLITLINES};
+                else if (name_val == PY_NMETH_NAME_PARTITION)
+                    result = {1'b1, PY_NMETH_STR_PARTITION};
+                else if (name_val == PY_NMETH_NAME_RPARTITION)
+                    result = {1'b1, PY_NMETH_STR_RPARTITION};
             end else if (pycore_is_dict(recv_tag, recv_val)) begin
                 if (name_val == PY_NMETH_NAME_GET)
                     result = {1'b1, PY_NMETH_DICT_GET};

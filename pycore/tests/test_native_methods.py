@@ -105,6 +105,7 @@ PROGRAM_GOLDENS = {
     "img_str_methods.py": 331,
     "img_str_search_methods.py": 8191,
     "img_str_p5e_batch2.py": 268435455,
+    "img_str_p5e_batch3.py": 16777215,
     "img_exc_args.py": 2,
     "img_try_syntaxerror_msg.py": 2,
     "img_list_methods.py": 10,

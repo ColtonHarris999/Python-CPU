@@ -155,6 +155,55 @@ module tb_str_accel;
         tb_drv = 1'b0;
     endtask
 
+    task automatic ram_read(input logic [31:0] addr, output logic [127:0] data);
+        tb_drv = 1'b1;
+        @(negedge clk);
+        tb_req = 1'b1;
+        tb_we = 1'b0;
+        tb_wstrb = 16'h0;
+        tb_addr = addr;
+        tb_wdata = '0;
+        @(negedge clk);
+        tb_req = 1'b0;
+        wait_ack();
+        data = ram_rdata;
+        @(negedge clk);
+        tb_drv = 1'b0;
+    endtask
+
+    task automatic expect_seq_short(
+        input logic is_list,
+        input string want[$],
+        input string msg
+    );
+        logic [127:0] header, slot, val, tagw;
+        logic [31:0] obj, obuf, n, i;
+        logic [PYCORE_ENTRY_WIDTH-1:0] el, exp;
+        check(!res_trap, {msg, ": trapped"});
+        if (is_list) begin
+            check(res_entry[PYCORE_TAG_MSB:PYCORE_TAG_LSB] == PY_TAG_MUT_COLLEC,
+                  {msg, ": not list"});
+            obj = pycore_mut_addr(res_entry[PYCORE_VAL_MSB:PYCORE_VAL_LSB])[31:0];
+            ram_read(obj, header);
+            n = header[31:0];
+            ram_read(obj + 32'd16, slot);
+            obuf = slot[31:0];
+        end else begin
+            check(res_entry[PYCORE_TAG_MSB:PYCORE_TAG_LSB] == PY_TAG_TUPLE,
+                  {msg, ": not tuple"});
+            n = res_entry[PYCORE_VAL_MSB:PYCORE_VAL_LSB][95:64];
+            obuf = res_entry[PYCORE_VAL_MSB:PYCORE_VAL_LSB][31:0];
+        end
+        check(n == want.size(), {msg, ": length"});
+        for (i = 0; i < n; i++) begin
+            ram_read(obuf + (i << 5), val);
+            ram_read(obuf + (i << 5) + 32'd16, tagw);
+            el = pycore_make_entry(tagw[3:0], val);
+            exp = mk_short(want[i]);
+            check(el == exp, {msg, ": elem mismatch"});
+        end
+    endtask
+
     task automatic issue(
         input logic [5:0] op,
         input logic [3:0] var_,
@@ -429,6 +478,62 @@ module tb_str_accel;
         issue(PY_SA_JOIN, 0, mk_short("-"), mk_short("ab"), mk_none(),
               PYCORE_HEAP_BASE);
         expect_short("a-b", "join str");
+
+        issue(PY_SA_EXPANDTABS, 0, mk_short("a\tb"), mk_int(4), mk_none(),
+              PYCORE_HEAP_BASE);
+        expect_short("a   b", "expandtabs 4");
+
+        issue(PY_SA_EXPANDTABS, 0, mk_short("hello"), mk_none(), mk_none(),
+              PYCORE_HEAP_BASE);
+        expect_short("hello", "expandtabs identity");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_PARTITION, mk_short("a,b,c"), mk_short(","),
+              mk_none(), PYCORE_HEAP_BASE);
+        expect_seq_short(1'b0, '{"a", ",", "b,c"}, "partition");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_RPARTITION, mk_short("a,b,c"), mk_short(","),
+              mk_none(), PYCORE_HEAP_BASE);
+        expect_seq_short(1'b0, '{"a,b", ",", "c"}, "rpartition");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_PARTITION, mk_short("hello"), mk_short("x"),
+              mk_none(), PYCORE_HEAP_BASE);
+        expect_seq_short(1'b0, '{"hello", "", ""}, "partition miss");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_FWD, mk_short("a b c"), mk_none(), mk_none(),
+              PYCORE_HEAP_BASE);
+        expect_seq_short(1'b1, '{"a", "b", "c"}, "split ws");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_FWD, mk_short("a,b,c"), mk_short(","),
+              mk_none(), PYCORE_HEAP_BASE);
+        expect_seq_short(1'b1, '{"a", "b", "c"}, "split sep");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_REV, mk_short("a,b,c,d"), mk_short(","),
+              mk_int(1), PYCORE_HEAP_BASE);
+        expect_seq_short(1'b1, '{"a,b,c", "d"}, "rsplit 1");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_FWD, mk_short("a  b  c"), mk_none(),
+              mk_int(1), PYCORE_HEAP_BASE);
+        expect_seq_short(1'b1, '{"a", "b  c"}, "split maxsplit 1");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_LINES, mk_short("a\nb\n"), mk_none(),
+              mk_none(), PYCORE_HEAP_BASE);
+        expect_seq_short(1'b1, '{"a", "b"}, "splitlines");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_LINES, mk_short("a\nb"), mk_int(1),
+              mk_none(), PYCORE_HEAP_BASE);
+        expect_seq_short(1'b1, '{"a\n", "b"}, "splitlines keepends");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_FWD, mk_short(""), mk_none(), mk_none(),
+              PYCORE_HEAP_BASE);
+        expect_seq_short(1'b1, '{}, "split empty ws");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_FWD, mk_short(""), mk_short(","), mk_none(),
+              PYCORE_HEAP_BASE);
+        expect_seq_short(1'b1, '{""}, "split empty sep");
+
+        issue(PY_SA_SPLIT, PY_SA_SPLIT_PARTITION, mk_short("hello"), mk_short(""),
+              mk_none(), PYCORE_HEAP_BASE);
+        check(res_trap && res_code == PY_TRAP_TYPE, "partition empty sep");
 
         $display("tb_str_accel PASS");
         $finish;
