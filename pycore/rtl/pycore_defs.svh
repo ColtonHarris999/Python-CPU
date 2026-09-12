@@ -60,6 +60,8 @@ localparam int PYCORE_CODC_ENTRIES     = 4;
 localparam int PYCORE_CODC_WAYS        = 2;
 localparam int PYCORE_GIC_ENTRIES      = 16;
 localparam int PYCORE_GIC_WAYS         = 2;
+// P8 skipped: after P3, L1D hits 99.58% of frame-stack accesses on
+// img_recursion (1414/1420) and 95.29% on img_deep_callgraph (263/276).
 localparam int PYCORE_FTB_FRAMES       = 4;
 localparam int PYCORE_PERF_CNT_WIDTH   = 32;
 

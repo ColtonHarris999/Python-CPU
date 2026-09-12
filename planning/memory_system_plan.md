@@ -414,6 +414,11 @@ dmem, pop reads from the buffer when present.
 > instrument L1D hit rate on the frame region after P3, and if it is above 95%,
 > skip P8 and record that decision in the P9 write-up.** Building it anyway
 > costs 1 kbit of flops and adds a real correctness surface.
+>
+> **P3 measurement — skip P8.** L1D frame-region hit rate (`0x1C000`–`0x20000`)
+> at `CACHE_EN=1` / `MEM_LATENCY=4`: `img_recursion` 1414/1420 = **99.58%**,
+> `img_deep_callgraph` 263/276 = **95.29%**. Both above the 95% gate. Do not
+> build `pycore_frame_buf.sv`. Reconfirm in P9.
 
 If it is built: the exception-unwind path in `pycore_call_fsm.svh` pops frames
 too (`call_exc_pending_r`, RETURN phases 3–4). It must go through the same
