@@ -8,11 +8,11 @@ seeds or relinks a type. Opcode rows stay in
 
 ## On main
 
-T1–T5-A (except T4 oparg 2) + T8: `except Exception:`, `raise TypeError` /
+T1–T5-A (except T4 oparg 2) + T8 + T10: `except Exception:`, `raise TypeError` /
 `raise TypeError("msg")`, MRO + tuple match, cross-frame unwind,
-`try`/`except`/`else`/`finally`, `e.args`. Unhandled raise is still fatal
-`PY_TRAP_RAISE` (17). Hardware type/mem traps are **not** yet Python
-exceptions.
+`try`/`except`/`else`/`finally`, `e.args`, `class MyError(Exception)`.
+Unhandled raise is still fatal `PY_TRAP_RAISE` (17). Hardware type/mem
+traps are **not** yet Python exceptions.
 
 Firmware F1 (no `raise <int>`) and F4 (`e.args`) are done. F2/F3 remain
 under [`builtin_support.md`](builtin_support.md).
@@ -34,7 +34,7 @@ Locks that still apply:
 | **T4 leftover** | `RAISE_VARARGS` oparg 2 (`raise e from cause`) | small |
 | **T7** | `assert` / `LOAD_COMMON_CONSTANT` → `AssertionError` | needs T5-A (seeded) |
 | **T9** | `with` / `LOAD_SPECIAL` `__enter__`/`__exit__` | after T8 (done) |
-| **T10** | `class MyError(Exception)` | image folding currently rejects bases |
+| **T10** | `class MyError(Exception)` | landed: one Wave A exception base (`Exception` / `ValueError` / …); not `BaseException` / multiple bases |
 | **T5-B/C** | extra types (`OverflowError`, `ImportError`, `OSError` stub, `SystemExit`, …) | seed when a site needs the name |
 | **T11** | `except*` / exception groups | later; single `tp_base` cannot express dual inherit |
 | **T12** | generators / `GeneratorExit` | with `YIELD_*` |

@@ -234,7 +234,10 @@ EXCORE_RTL_SRCS := \
 	pycore-img-try-tuple-match pycore-img-try-lookuperror \
 	pycore-img-try-except-miss pycore-img-bare-raise \
 	pycore-img-bare-raise-no-active pycore-img-try-except-else \
-	pycore-img-try-finally pycore-img-try-except-as pycore-img-exc-all \
+	pycore-img-try-finally pycore-img-try-except-as \
+	pycore-img-class-myerror pycore-img-class-myerror-exact \
+	pycore-img-class-levendist-error pycore-img-class-myerror-miss \
+	pycore-img-exc-all \
 	pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-list-repeat pycore-img-list-repeat-jaro \
@@ -283,6 +286,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-call-all \
 	pycore-img-class-simple pycore-img-class-const \
 	pycore-img-staticmethod pycore-img-class-two-instances \
+	pycore-img-class-myerror pycore-img-class-myerror-exact \
+	pycore-img-class-levendist-error pycore-img-class-myerror-miss \
 	pycore-img-class-all \
 	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
@@ -1797,7 +1802,10 @@ pycore-img-attr-all: \
 	pycore-img-try-tuple-match pycore-img-try-lookuperror \
 	pycore-img-try-except-miss pycore-img-bare-raise \
 	pycore-img-bare-raise-no-active pycore-img-try-except-else \
-	pycore-img-try-finally pycore-img-try-except-as pycore-img-exc-all \
+	pycore-img-try-finally pycore-img-try-except-as \
+	pycore-img-class-myerror pycore-img-class-myerror-exact \
+	pycore-img-class-levendist-error pycore-img-class-myerror-miss \
+	pycore-img-exc-all \
 	pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-list-repeat pycore-img-list-repeat-jaro \
@@ -2111,7 +2119,11 @@ pycore-img-exc-all: \
 	pycore-img-fw-range-zero-step \
 	pycore-img-fw-next-exhausted \
 	pycore-img-fw-pow-neg-mod \
-	pycore-img-exc-args
+	pycore-img-exc-args \
+	pycore-img-class-myerror \
+	pycore-img-class-myerror-exact \
+	pycore-img-class-levendist-error \
+	pycore-img-class-myerror-miss
 
 pycore-img-return-true:
 	$(call PYCORE_IMAGE_RUN,return_true,50000)
@@ -2342,11 +2354,27 @@ pycore-img-staticmethod:
 pycore-img-class-two-instances:
 	$(call PYCORE_IMAGE_RUN,class_two_instances,100000)
 
+pycore-img-class-myerror:
+	$(call PYCORE_IMAGE_RUN,class_myerror,100000)
+
+pycore-img-class-myerror-exact:
+	$(call PYCORE_IMAGE_RUN,class_myerror_exact,100000)
+
+pycore-img-class-levendist-error:
+	$(call PYCORE_IMAGE_RUN,class_levendist_error,100000)
+
+pycore-img-class-myerror-miss:
+	$(call PYCORE_IMAGE_TRAP_RUN,class_myerror_miss,17,100000)
+
 pycore-img-class-all: \
 	pycore-img-class-simple \
 	pycore-img-class-const \
 	pycore-img-staticmethod \
-	pycore-img-class-two-instances
+	pycore-img-class-two-instances \
+	pycore-img-class-myerror \
+	pycore-img-class-myerror-exact \
+	pycore-img-class-levendist-error \
+	pycore-img-class-myerror-miss
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /
