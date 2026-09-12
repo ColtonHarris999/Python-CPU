@@ -1,14 +1,15 @@
 `include "pycore_defs.svh"
 
-// Routes the Harvard imem (64-bit) and dmem (128-bit) masters onto one
-// unified 128-bit L2 port. Instruction addresses are relocated to
-// PYCORE_CODE_ADDR_BASE so they cannot alias data in the L2.
+// Routes Harvard imem (64-bit), L1D-down / dmem (128-bit), and the excore
+// slot port onto one unified 128-bit L2 port. Instruction addresses are
+// relocated to PYCORE_CODE_ADDR_BASE so they cannot alias data in the L2.
 //
-// A master request is captured into flops the cycle `req` is high (the
-// master need not hold it). `l2_req_o` is then held until `l2_ack_i`,
-// dropping combinationally on the ack cycle so L2/RAM do not see a second
-// request on the completing posedge. Master `ack_o` is a one-cycle pulse
-// the cycle after L2 acks — extra occupancy, same §0 contract.
+// Priority: dmem (L1D) > excore > imem. Fetch is stalled outside S_FETCH,
+// so L1D-down and L1I-down never raise req in the same cycle; L1I hits
+// never reach this mux. Excore attaches at L2 (P3), never at L1D. A master request is captured the cycle `req`
+// is high. `l2_req_o` is held until `l2_ack_i`. Master `ack_o` is a
+// one-cycle pulse the cycle after L2 acks — extra occupancy, same §0
+// contract.
 module pycore_mem_xbar #(
     parameter int    ADDR_WIDTH    = PYCORE_ADDR_WIDTH,
     parameter int    IMEM_DATA_W   = PYCORE_IMEM_DATA_WIDTH,
@@ -36,6 +37,15 @@ module pycore_mem_xbar #(
     output logic [DMEM_DATA_W-1:0]  dmem_rdata_o,
     output logic                    dmem_fault_o,
 
+    input  logic                    excore_req_i,
+    input  logic                    excore_we_i,
+    input  logic [DMEM_DATA_W/8-1:0] excore_wstrb_i,
+    input  logic [ADDR_WIDTH-1:0]   excore_addr_i,
+    input  logic [DMEM_DATA_W-1:0]  excore_wdata_i,
+    output logic                    excore_ack_o,
+    output logic [DMEM_DATA_W-1:0]  excore_rdata_o,
+    output logic                    excore_fault_o,
+
     output logic                    l2_req_o,
     output logic                    l2_we_o,
     output logic [DMEM_DATA_W/8-1:0] l2_wstrb_o,
@@ -45,11 +55,12 @@ module pycore_mem_xbar #(
     input  logic [DMEM_DATA_W-1:0]  l2_rdata_i,
     input  logic                    l2_fault_i
 );
-    typedef enum logic [1:0] { G_NONE, G_IMEM, G_DMEM } grant_e;
+    typedef enum logic [1:0] { G_NONE, G_IMEM, G_DMEM, G_EXCORE } grant_e;
     grant_e grant_r;
     logic   imem_hi_r;
     logic   imem_ack_r;
     logic   dmem_ack_r;
+    logic   excore_ack_r;
     logic   fault_hold_r;
     logic [DMEM_DATA_W-1:0] rdata_hold_r;
 
@@ -60,15 +71,17 @@ module pycore_mem_xbar #(
     logic [DMEM_DATA_W-1:0]  l2_wdata_r;
 
     logic take_dmem;
+    logic take_excore;
     logic take_imem;
     logic imem_hi;
     logic [ADDR_WIDTH-1:0] imem_uaddr;
+    logic idle_take;
 
-    assign take_dmem = (grant_r == G_NONE) && !l2_req_r &&
-                       !imem_ack_r && !dmem_ack_r && dmem_req_i;
-    assign take_imem = (grant_r == G_NONE) && !l2_req_r &&
-                       !imem_ack_r && !dmem_ack_r &&
-                       !dmem_req_i && imem_req_i;
+    assign idle_take = (grant_r == G_NONE) && !l2_req_r &&
+                       !imem_ack_r && !dmem_ack_r && !excore_ack_r;
+    assign take_dmem   = idle_take && dmem_req_i;
+    assign take_excore = idle_take && !dmem_req_i && excore_req_i;
+    assign take_imem   = idle_take && !dmem_req_i && !excore_req_i && imem_req_i;
     assign imem_uaddr = ADDR_WIDTH'(CODE_BASE) + imem_addr_i;
     assign imem_hi    = imem_uaddr[3];
 
@@ -82,6 +95,10 @@ module pycore_mem_xbar #(
     assign dmem_rdata_o = rdata_hold_r;
     assign dmem_fault_o = dmem_ack_r && fault_hold_r;
 
+    assign excore_ack_o   = excore_ack_r;
+    assign excore_rdata_o = rdata_hold_r;
+    assign excore_fault_o = excore_ack_r && fault_hold_r;
+
     assign imem_ack_o   = imem_ack_r;
     assign imem_rdata_o = imem_hi_r ? rdata_hold_r[127:64] : rdata_hold_r[63:0];
     assign imem_fault_o = imem_ack_r && fault_hold_r;
@@ -92,6 +109,7 @@ module pycore_mem_xbar #(
             imem_hi_r    <= 1'b0;
             imem_ack_r   <= 1'b0;
             dmem_ack_r   <= 1'b0;
+            excore_ack_r <= 1'b0;
             fault_hold_r <= 1'b0;
             rdata_hold_r <= '0;
             l2_req_r     <= 1'b0;
@@ -100,8 +118,9 @@ module pycore_mem_xbar #(
             l2_addr_r    <= '0;
             l2_wdata_r   <= '0;
         end else begin
-            imem_ack_r <= 1'b0;
-            dmem_ack_r <= 1'b0;
+            imem_ack_r   <= 1'b0;
+            dmem_ack_r   <= 1'b0;
+            excore_ack_r <= 1'b0;
             if (take_dmem) begin
                 grant_r    <= G_DMEM;
                 imem_hi_r  <= 1'b0;
@@ -110,6 +129,14 @@ module pycore_mem_xbar #(
                 l2_wstrb_r <= dmem_wstrb_i;
                 l2_addr_r  <= dmem_addr_i;
                 l2_wdata_r <= dmem_wdata_i;
+            end else if (take_excore) begin
+                grant_r    <= G_EXCORE;
+                imem_hi_r  <= 1'b0;
+                l2_req_r   <= 1'b1;
+                l2_we_r    <= excore_we_i;
+                l2_wstrb_r <= excore_wstrb_i;
+                l2_addr_r  <= excore_addr_i;
+                l2_wdata_r <= excore_wdata_i;
             end else if (take_imem) begin
                 grant_r    <= G_IMEM;
                 imem_hi_r  <= imem_hi;
@@ -124,6 +151,7 @@ module pycore_mem_xbar #(
                 fault_hold_r <= l2_fault_i;
                 imem_ack_r   <= (grant_r == G_IMEM);
                 dmem_ack_r   <= (grant_r == G_DMEM);
+                excore_ack_r <= (grant_r == G_EXCORE);
                 l2_req_r     <= 1'b0;
                 grant_r      <= G_NONE;
             end

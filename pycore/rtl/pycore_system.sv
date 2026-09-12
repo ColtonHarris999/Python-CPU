@@ -42,6 +42,8 @@ module pycore_system #(
     logic                   imem_ack;
     logic [IMEM_DATA_W-1:0] imem_rdata;
     logic                   imem_fault;
+    logic [PYCORE_LINE_BYTES*8-1:0] imem_line;
+    logic                   imem_line_valid;
 
     // dmem master <-> bank
     logic                   dmem_req;
@@ -60,6 +62,7 @@ module pycore_system #(
     /* verilator lint_off UNUSEDSIGNAL */
     logic [PYCORE_PERF_CNT_WIDTH-1:0] l1i_hit_count, l1i_miss_count, l1i_writeback_count;
     logic [PYCORE_PERF_CNT_WIDTH-1:0] l1d_hit_count, l1d_miss_count, l1d_writeback_count;
+    logic [PYCORE_PERF_CNT_WIDTH-1:0] l1d_frame_hit_count, l1d_frame_miss_count;
     logic [PYCORE_PERF_CNT_WIDTH-1:0] l2_hit_count, l2_miss_count, l2_writeback_count;
     /* verilator lint_on UNUSEDSIGNAL */
 
@@ -71,12 +74,7 @@ module pycore_system #(
         cache_en_sim = (cache_en_i != 0);
     end
 
-    assign l1i_hit_count = '0;
-    assign l1i_miss_count = '0;
     assign l1i_writeback_count = '0;
-    assign l1d_hit_count = '0;
-    assign l1d_miss_count = '0;
-    assign l1d_writeback_count = '0;
 
     initial begin
         mem_latency_sim = PYCORE_RAM_T_FIRST_CI;
@@ -101,6 +99,8 @@ module pycore_system #(
         .imem_ack_i(imem_ack),
         .imem_rdata_i(imem_rdata),
         .imem_fault_i(imem_fault),
+        .imem_line_i(imem_line),
+        .imem_line_valid_i(imem_line_valid),
         .dmem_req_o(dmem_req),
         .dmem_we_o(dmem_we),
         .dmem_wstrb_o(dmem_wstrb),
@@ -156,6 +156,8 @@ module pycore_system #(
         .imem_ack_o(imem_ack),
         .imem_rdata_o(imem_rdata),
         .imem_fault_o(imem_fault),
+        .imem_line_o(imem_line),
+        .imem_line_valid_o(imem_line_valid),
         .dmem_req_i(dmem_req),
         .dmem_we_i(dmem_we),
         .dmem_wstrb_i(dmem_wstrb),
@@ -164,6 +166,26 @@ module pycore_system #(
         .dmem_ack_o(dmem_ack),
         .dmem_rdata_o(dmem_rdata),
         .dmem_fault_o(dmem_fault),
+        .excore_req_i(1'b0),
+        .excore_we_i(1'b0),
+        .excore_wstrb_i('0),
+        .excore_addr_i('0),
+        .excore_wdata_i('0),
+        .excore_ack_o(),
+        .excore_rdata_o(),
+        .excore_fault_o(),
+        .flush_req_i(1'b0),
+        .inv_req_i(1'b0),
+        .flush_done_o(),
+        .inv_done_o(),
+        .l1d_idle_o(),
+        .l1i_hit_count_o(l1i_hit_count),
+        .l1i_miss_count_o(l1i_miss_count),
+        .l1d_hit_count_o(l1d_hit_count),
+        .l1d_miss_count_o(l1d_miss_count),
+        .l1d_writeback_count_o(l1d_writeback_count),
+        .l1d_frame_hit_count_o(l1d_frame_hit_count),
+        .l1d_frame_miss_count_o(l1d_frame_miss_count),
         .l2_hit_count_o(l2_hit_count),
         .l2_miss_count_o(l2_miss_count),
         .l2_writeback_count_o(l2_writeback_count)

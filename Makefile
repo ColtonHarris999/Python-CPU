@@ -93,7 +93,8 @@ EXCORE_RTL_SRCS := \
 
 .PHONY: help lint-file pycore-preprocess run-file pycore-run-file all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs \
-	pycore-python-tests pycore-mem pycore-frame pycore-frame-fib \
+	pycore-python-tests pycore-mem pycore-cache-lru pycore-cache pycore-ram \
+	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib \
 	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
 	pycore-img-containers pycore-img-recursion pycore-img-extended-arg \
 	pycore-img-branchy pycore-img-undef-global pycore-img-noncallable \
@@ -383,10 +384,13 @@ pycore-cache-transparency:
 # CACHE_EN=0 so RAM_T_FIRST is on the critical path. With L2 enabled the
 # 128 KB cache covers the present dmem and HIT_CYCLES=1 hides MEM_LATENCY
 # after warmup (img_recursion is ~52k at LAT=30 with L2 vs ~297k bypassed).
+# One CACHE_EN=1 / LAT=30 arm still exercises the L2↔RAM burst at
+# non-trivial T_FIRST (protocol correctness, not the cycle count).
 pycore-mem-latency-sweep:
 	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=1
 	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=4
 	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=30
+	$(MAKE) pycore-img-recursion PYCORE_CACHE_EN=1 PYCORE_MEM_LATENCY=30
 
 pycore-tag-decode:
 	mkdir -p $(BUILD_DIR)
@@ -484,6 +488,17 @@ pycore-cache:
 		pycore/rtl/pycore_ram.sv pycore/tb/tb_cache.sv
 	./$(BUILD_DIR)/pycore_cache/Vtb_cache
 
+pycore-l1d-handoff:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_l1d_handoff \
+		--Mdir $(BUILD_DIR)/pycore_l1d_handoff \
+		-Wall -Wno-fatal \
+		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv \
+		pycore/tb/tb_l1d_handoff.sv
+	./$(BUILD_DIR)/pycore_l1d_handoff/Vtb_l1d_handoff
+
 pycore-ram:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
@@ -493,6 +508,16 @@ pycore-ram:
 		-Wall -Wno-fatal \
 		pycore/rtl/pycore_ram.sv pycore/tb/tb_ram.sv
 	./$(BUILD_DIR)/pycore_ram/Vtb_ram
+
+pycore-fetch:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_fetch \
+		--Mdir $(BUILD_DIR)/pycore_fetch \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_fetch.sv pycore/tb/tb_fetch.sv
+	./$(BUILD_DIR)/pycore_fetch/Vtb_fetch
 
 pycore-frame:
 	mkdir -p $(BUILD_DIR)
@@ -2722,7 +2747,7 @@ excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec pycore-string-exec \
 	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
-	pycore-frame pycore-frame-fib
+	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib
 
 pycore-test: pycore-python-tests pycore-rtl-unit pycore-container \
 	pycore-img pycore-excore-system pycore-img-two-core

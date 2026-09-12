@@ -47,10 +47,11 @@ localparam int PYCORE_RAM_BEATS        = PYCORE_LINE_BYTES / (PYCORE_DMEM_DATA_W
 // Fetch still uses Harvard slot addresses; the xbar adds this base so code
 // and data never alias in the unified cache.
 localparam logic [31:0] PYCORE_CODE_ADDR_BASE = 32'h0100_0000;
-// P2 local call: the target table's 8-cycle L2 hit is for the L1-present
-// system (P3/P4). Without L1s, 8-cycle L2 hits blow MAX_CYCLES (e.g.
-// img_recursion). Hit latency is a timing parameter — it does not change
-// the §0 port contract, the memory map, or retired results.
+localparam int PYCORE_L1I_HIT_CYCLES   = 1;
+localparam int PYCORE_L1D_HIT_CYCLES   = 1;
+// P2 local call, still in force with L1s present: the target table's
+// 8-cycle L2 hit blows MAX_CYCLES on cold-start fixtures. L1D covers
+// the hit path; record the real 8-cycle number in P9.
 localparam int PYCORE_L2_HIT_CYCLES    = 1;
 // P2 data window matches today's 128 KB dmem so OOB accesses still fault.
 // P5 widens this when string bytes move into ordinary data memory.
@@ -60,6 +61,8 @@ localparam int PYCORE_CODC_ENTRIES     = 4;
 localparam int PYCORE_CODC_WAYS        = 2;
 localparam int PYCORE_GIC_ENTRIES      = 16;
 localparam int PYCORE_GIC_WAYS         = 2;
+// P8 skipped: after P3, L1D hits 99.58% of frame-stack accesses on
+// img_recursion (1414/1420) and 95.29% on img_deep_callgraph (263/276).
 localparam int PYCORE_FTB_FRAMES       = 4;
 localparam int PYCORE_PERF_CNT_WIDTH   = 32;
 
@@ -2075,6 +2078,9 @@ function automatic logic [31:0] pycore_dict_alloc_bytes(
     begin
         // Bytes consumed from a line-aligned heap pointer (includes the
         // 16 B pad between the 48-byte object and the order buffer).
+        // RTL grow paths use place_end(heap_ptr, n) directly; this helper
+        // is the place_end(0, n) form. pycore/tests/test_placement_mirror.py
+        // is the consumer that keeps it honest against HeapImageBuilder.
         pycore_dict_alloc_bytes = pycore_dict_place_end(32'd0, slot_count);
     end
 endfunction

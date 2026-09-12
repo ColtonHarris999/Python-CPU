@@ -311,6 +311,14 @@ module tb_container #(
                   $sformatf("trap_req_count mismatch: expected %0d got %0d (%s)",
                             expected_trap_req_count, trap_req_count, prog_hex_disp));
         end
+        $display("L1I hits=%0d misses=%0d  L1D hits=%0d misses=%0d wb=%0d frame_hits=%0d frame_misses=%0d",
+                 g_dut.dut.l1i_hit_count, g_dut.dut.l1i_miss_count,
+                 g_dut.dut.l1d_hit_count, g_dut.dut.l1d_miss_count,
+                 g_dut.dut.l1d_writeback_count,
+                 g_dut.dut.l1d_frame_hit_count, g_dut.dut.l1d_frame_miss_count);
+        $display("fetch mem_req=%0d buf_hit=%0d",
+                 g_dut.dut.core.fetch.mem_req_count_r,
+                 g_dut.dut.core.fetch.buf_hit_count_r);
         $finish;
     end
 endmodule

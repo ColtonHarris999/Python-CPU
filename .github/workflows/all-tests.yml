@@ -4,6 +4,11 @@ on:
   pull_request:
     branches:
       - main
+    # `edited` is not in the default type set, so retargeting a stacked PR onto
+    # main did not start a run and the required `all-tests` check could never
+    # appear. Without it, a PR opened against another branch and later rebased
+    # onto main has no CI history at all.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches:
       - main
