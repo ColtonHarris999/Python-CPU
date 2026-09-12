@@ -142,32 +142,40 @@ module tb_fetch;
         check(mem_reqs == 32'd1, $sformatf("8 nops should be 1 mem req, got %0d", mem_reqs));
         check(buf_hits != 0, "expected buffer hits after the fill");
 
-        // Core-shaped skip: after latching, stall (execute), then unstall
-        // one cycle with fetch_skip set. A buffer hit may keep instr_valid
-        // high; skip must drop after that cycle or later slots are lost.
+        // Core-shaped skip: S_WB pulses fetch_skip so the held instruction
+        // is not re-latched. One unstalled S_FETCH cycle lets fetch replace
+        // the slot (a buffer hit may keep instr_valid high); skip then
+        // drops and the next S_FETCH latches, stalling fetch the same
+        // cycle so the following slot cannot overwrite.
         reset_dut();
         begin
-            int got, n;
+            int got, n, exec_left;
             bit skip;
-            got  = 0;
-            n    = 0;
-            skip = 1'b0;
-            stall = 1'b0;
+            got       = 0;
+            n         = 0;
+            skip      = 1'b0;
+            exec_left = 0;
+            stall     = 1'b0;
             while (got < 8) begin
                 @(negedge clk);
                 n++;
                 check(n < 256, "skip-walk timeout");
-                if (!stall && instr_valid && !skip) begin
+                if (exec_left != 0) begin
+                    stall = 1'b1;
+                    exec_left--;
+                end else if (skip) begin
+                    skip  = 1'b0;
+                    stall = 1'b0;
+                end else if (instr_valid) begin
                     check(pc == 32'(got),
                           $sformatf("skip-walk pc want %0d got %0d", got, pc));
                     check(opcode == PY_OP_NOP, "skip-walk opcode");
                     got++;
-                    skip  = 1'b1;
-                    stall = 1'b1;
-                    repeat (3) @(negedge clk);
+                    skip      = 1'b1;
+                    stall     = 1'b1;
+                    exec_left = 3;
+                end else begin
                     stall = 1'b0;
-                end else if (!stall && skip) begin
-                    skip = 1'b0;
                 end
             end
             check(mem_reqs == 32'd1,
