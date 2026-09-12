@@ -136,7 +136,8 @@ module tb_fetch;
             check(opcode == PY_OP_NOP, $sformatf("nop opcode slot %0d", i));
             check(pc == 32'(i), $sformatf("nop pc=%0d want %0d", pc, i));
             check(arg == 32'(i), $sformatf("nop arg slot %0d", i));
-            @(negedge clk);
+            if (i < 7)
+                @(negedge clk);
         end
         check(mem_reqs == 32'd1, $sformatf("8 nops should be 1 mem req, got %0d", mem_reqs));
         check(buf_hits != 0, "expected buffer hits after the fill");
@@ -195,7 +196,8 @@ module tb_fetch;
         for (i = 0; i < 4; i++) begin
             wait_instr();
             check(pc == 32'(i), $sformatf("bypass pc %0d", i));
-            @(negedge clk);
+            if (i < 3)
+                @(negedge clk);
         end
         check(mem_reqs == 32'd4, $sformatf("bypass should be 4 reqs, got %0d", mem_reqs));
         check(buf_hits == 32'd0, "bypass must not hit the line buffer");
