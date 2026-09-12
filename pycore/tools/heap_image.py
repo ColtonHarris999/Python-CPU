@@ -31,6 +31,7 @@ from encoding import (
     ITER_EXHAUST_TYPE_ADDR,
     NATIVE_METHOD_COUNT,
     NATIVE_METHOD_TABLE_ADDR,
+    STR_TYPE_ADDR,
     OBK_BOUND_METHOD,
     OBK_BUILTIN,
     OBK_BYTEARRAY,
@@ -665,6 +666,14 @@ class HeapImageBuilder:
         self._write_tagged(
             ITER_EXHAUST_TYPE_ADDR, stop_iteration[0], stop_iteration[1]
         )
+
+    def write_str_type(self, str_type: Tagged) -> None:
+        """Write the boot str type handle for LOAD_ATTR __class__ on strings."""
+        if str_type[0] != TAG_OBJECT:
+            raise ValueError("str type sidecar must be an OBJECT handle")
+        if STR_TYPE_ADDR % 16 != 0:
+            raise ValueError("STR_TYPE_ADDR must be 16-byte aligned")
+        self._write_tagged(STR_TYPE_ADDR, str_type[0], str_type[1])
 
     def write_native_method_table(self, handles: list[Tagged]) -> None:
         """Write tagged CODE_OBJECT handles into the native-method sidecar."""

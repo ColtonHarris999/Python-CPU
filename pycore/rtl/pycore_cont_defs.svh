@@ -178,6 +178,14 @@
     // Generic copy writeback phases used by list/tuple conversion paths.
     localparam logic [5:0] CP_COPY_VAL_WB = 6'd58;
     localparam logic [5:0] CP_COPY_TAG_WB = 6'd59;
+    // TUPLE dict-key content hash / eq. Reuse copy + range encodings: those
+    // phases are unused inside CONT_STORE/SUBSCR/CONTAINS_DICT case tables.
+    localparam logic [5:0] CP_DICT_TUPLE_HASH_VAL = 6'd58;
+    localparam logic [5:0] CP_DICT_TUPLE_HASH_TAG = 6'd59;
+    localparam logic [5:0] CP_DICT_TUPLE_EQ_A_VAL = 6'd41;
+    localparam logic [5:0] CP_DICT_TUPLE_EQ_A_TAG = 6'd42;
+    localparam logic [5:0] CP_DICT_TUPLE_EQ_B_VAL = 6'd43;
+    localparam logic [5:0] CP_DICT_TUPLE_EQ_B_TAG = 6'd44;
     // Bulk DICT_UPDATE / SET_UPDATE pycore (contaminated) phases. These walk a
     // source collection's table slots and single-insert each element into the
     // destination. Each container op owns its own case table, so these codes

@@ -146,7 +146,7 @@ whose ownership is being transferred.
 | 12 | `PY_TRAP_LIST_DELETE` | **recoverable** | mid-list `DELETE_SUBSCR` shift; excore COMPLETED pop 2 |
 | 13 | `PY_TRAP_SET_GROW` | **recoverable** | `SET_ADD` at load ≥ 2/3; excore realloc + insert |
 | 14 | `PY_TRAP_SET_UPDATE` | **recoverable** | uncontaminated `SET_UPDATE` with a `LIST`/`SET`/`DICT` source; excore grow-to-fit + merge (dict source inserts keys). `TUPLE` sources and any contaminated operand are owned by pycore (`pycore_cont_bulk.svh`) instead of trapping |
-| 15 | `PY_TRAP_ATTR_ERROR` | fatal | `LOAD_ATTR` / `DELETE_ATTR` miss after instance dict + MRO (dunder `__dict__`/`__class__`/`__base__` are special-cased before probe; STORE/DELETE of those names → TYPE) |
+| 15 | `PY_TRAP_ATTR_ERROR` | fatal | `LOAD_ATTR` / `DELETE_ATTR` miss after instance dict + MRO (dunder `__dict__`/`__class__`/`__base__` are special-cased before probe; `STR.__class__` returns the seeded `str` type; STORE/DELETE of those names → TYPE) |
 | 16 | `PY_TRAP_BUILTIN_CALL` | **recoverable** | builtin call handed to firmware |
 | 17 | `PY_TRAP_RAISE` | fatal | `RAISE_VARARGS` (no handler tables yet) |
 | 18 | `PY_TRAP_SLICE` | **recoverable** | slice helper |
@@ -566,7 +566,9 @@ bump allocation does not overwrite them.  `DMEM_HEX` on `pycore_system` /
 `pycore_dmem` preloads the whole dmem bank (not just the first 4 KB block).
 The boot record occupies `[0x3e0, 0x440)` and must not overlap heap objects.
 Boot also seeds Wave A exception types (including `StopIteration`) and a sidecar at
-`ITER_EXHAUST_TYPE_ADDR` (`0x1BFE0`) for `FOR_ITER` protocol exhaustion.
+`ITER_EXHAUST_TYPE_ADDR` (`0x1BFE0`) for `FOR_ITER` protocol exhaustion, plus
+the seeded `str` type at `STR_TYPE_ADDR` (`0x1BDC0`) for `LOAD_ATTR __class__`
+on strings.
 
 ### LIST in-dmem layout
 
@@ -869,11 +871,14 @@ phases without a header.
   each pair and appends each new key to the order buffer. Empty maps still
   get ≥4 slots.
 - **`NB_SUBSCR` on DICT**: reads header + `table_ptr`, probes; same-tag /
-  rich-eq hit returns value; miss → `MEM_FAULT`.
+  rich-eq hit returns value; miss → `MEM_FAULT`. TUPLE keys (len ≤ 8,
+  scalar elements) use a content hash + element rich-eq.
 - **`STORE_SUBSCR` on DICT**: same-tag / rich-eq upsert / tombstone reuse on
-  pycore; new-key insert may `DICT_GROW`.
+  pycore; new-key insert may `DICT_GROW`. TUPLE keys contaminate the dict
+  so grow stays on pycore.
 - **`DELETE_SUBSCR` / `CONTAINS_OP` on DICT**: tombstone / BOOL result via
-  same-tag / rich-eq probe on pycore.
+  same-tag / rich-eq probe on pycore. `CONTAINS_OP` accepts the same TUPLE
+  keys as STORE/SUBSCR; `DELETE_SUBSCR` still TYPE-traps TUPLE keys.
 - **`BUILD_TUPLE` / `NB_SUBSCR` on TUPLE**: no header; size is inline in the
   handle. `STORE_SUBSCR` on a TUPLE traps `PY_TRAP_TYPE` (immutable).
 

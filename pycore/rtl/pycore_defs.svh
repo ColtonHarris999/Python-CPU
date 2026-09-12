@@ -1570,7 +1570,11 @@ endfunction
 //
 // Hash: pycore_dict_key_hash(tag, value) & (slot_count - 1).
 // Supported key tags: CONTROL (None), INT, BOOL, FLOAT, SHORT_STR, LONG_STR.
-// Unsupported key tags trap PY_TRAP_TYPE.
+// TUPLE keys (len ≤ 8, scalar elements) are accepted on STORE/SUBSCR/
+// CONTAINS only: multi-cycle content hash + element rich-eq. Nested TUPLE /
+// LIST / OBJECT / LONG_STR elements still TYPE. BUILD_MAP / DELETE / SET
+// still TYPE on TUPLE keys. TUPLE keys contaminate the dict (pycore-only
+// grow). Unsupported key tags trap PY_TRAP_TYPE.
 // Load ≥ 2/3 before new-key insert → PY_TRAP_DICT_GROW.
 // Probe equality (same-tag + INT/BOOL/FLOAT rich) → pycore_dict_key_rich_eq.
 // -------------------------------------------------------------------------
@@ -1694,6 +1698,31 @@ function automatic logic pycore_dict_key_tag_ok(input logic [3:0] tag);
                               || (tag == PY_TAG_SHORT_STR)
                               || (tag == PY_TAG_LONG_STR)
                               || (tag == PY_TAG_OBJECT);
+    end
+endfunction
+
+// TUPLE dict-key ceiling: STORE/SUBSCR/CONTAINS accept TUPLE in addition
+// to pycore_dict_key_tag_ok. Elements must themselves be combinationally
+// hashable scalars. Nested TUPLE / LONG_STR / OBJECT / LIST → TYPE.
+localparam logic [31:0] PYCORE_DICT_TUPLE_KEY_MAX = 32'd8;
+localparam logic [31:0] PYCORE_DICT_TUPLE_EMPTY_HASH = 32'h9E3779B9;
+
+function automatic logic pycore_dict_tuple_elem_tag_ok(input logic [3:0] tag);
+    begin
+        pycore_dict_tuple_elem_tag_ok = (tag == PY_TAG_CONTROL)
+                                     || (tag == PY_TAG_INT)
+                                     || (tag == PY_TAG_BOOL)
+                                     || (tag == PY_TAG_FLOAT)
+                                     || (tag == PY_TAG_SHORT_STR);
+    end
+endfunction
+
+function automatic logic [31:0] pycore_dict_tuple_hash_mix(
+    input logic [31:0] acc,
+    input logic [31:0] elem_hash
+);
+    begin
+        pycore_dict_tuple_hash_mix = (acc * 32'd33) ^ elem_hash;
     end
 endfunction
 
@@ -1841,8 +1870,10 @@ function automatic logic pycore_dict_key_rich_eq(
                 pycore_dict_key_rich_eq = 1'b0;
         end else if ((tag_a == tag_b) &&
                      ((tag_a == PY_TAG_SHORT_STR) || (tag_a == PY_TAG_LONG_STR) ||
-                      (tag_a == PY_TAG_OBJECT))) begin
-            // STR: full value compare. OBJECT: identity (addr) compare.
+                      (tag_a == PY_TAG_OBJECT) || (tag_a == PY_TAG_TUPLE))) begin
+            // STR: full value compare. OBJECT/TUPLE: identity (addr) compare.
+            // Distinct TUPLE handles with equal elements use the multi-cycle
+            // content-eq FSM in STORE/SUBSCR/CONTAINS.
             pycore_dict_key_rich_eq = (val_a == val_b);
         end else begin
             pycore_dict_key_rich_eq = 1'b0;
@@ -2258,8 +2289,11 @@ localparam logic [31:0] PYCORE_NATIVE_METHOD_TABLE_BYTES =
     PYCORE_NATIVE_METHOD_COUNT * PYCORE_NATIVE_METHOD_ENTRY_BYTES;
 localparam logic [31:0] PYCORE_NATIVE_METHOD_TABLE_ADDR =
     PYCORE_ITER_EXHAUST_TYPE_ADDR - PYCORE_NATIVE_METHOD_TABLE_BYTES;
+// Seeded `str` OBK_TYPE handle for LOAD_ATTR __class__ on SHORT_STR/LONG_STR.
+localparam logic [31:0] PYCORE_STR_TYPE_ADDR =
+    PYCORE_NATIVE_METHOD_TABLE_ADDR - 32'd32;
 localparam logic [31:0] PYCORE_EXC_SIDECAR_RESERVE_BYTES =
-    PYCORE_NATIVE_METHOD_TABLE_BYTES + 32'd32;
+    PYCORE_NATIVE_METHOD_TABLE_BYTES + 32'd64;
 
 function automatic logic pycore_is_native_method_receiver(
     input logic [3:0] tag,

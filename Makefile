@@ -117,6 +117,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-list-repeat-type-trap \
 	pycore-img-list-concat pycore-img-list-concat-damerau \
 	pycore-img-list-concat-type-trap \
+	pycore-img-dict-tuple-key pycore-img-dict-tuple-empty pycore-img-damerau-memo \
+	pycore-img-damerau-ctor pycore-img-dict-empty-ctor \
+	pycore-img-dict-tuple-key-trap \
 	pycore-img-str-eq pycore-img-str-lt-trap \
 	pycore-img-str-subscr pycore-img-str-subscr-long \
 	pycore-img-exec-all \
@@ -213,6 +216,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-attr-dunder-dict pycore-img-attr-dunder-class \
 	pycore-img-attr-dunder-base pycore-img-attr-dunder-store-trap \
 	pycore-img-attr-dunder-del-trap \
+	pycore-img-str-class pycore-img-str-class-list-trap \
+	pycore-img-int-class-trap \
 	pycore-img-attr-grow-global pycore-img-seed-grow-global \
 	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
 	pycore-img-builtins-fallback pycore-img-builtins-shadow pycore-img-builtins-null-bit \
@@ -234,13 +239,19 @@ EXCORE_RTL_SRCS := \
 	pycore-img-try-tuple-match pycore-img-try-lookuperror \
 	pycore-img-try-except-miss pycore-img-bare-raise \
 	pycore-img-bare-raise-no-active pycore-img-try-except-else \
-	pycore-img-try-finally pycore-img-try-except-as pycore-img-exc-all \
+	pycore-img-try-finally pycore-img-try-except-as \
+	pycore-img-class-myerror pycore-img-class-myerror-exact \
+	pycore-img-class-levendist-error pycore-img-class-myerror-miss \
+	pycore-img-exc-all \
 	pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-list-repeat pycore-img-list-repeat-jaro \
 	pycore-img-list-repeat-type-trap \
 	pycore-img-list-concat pycore-img-list-concat-damerau \
 	pycore-img-list-concat-type-trap \
+	pycore-img-dict-tuple-key pycore-img-dict-tuple-empty pycore-img-damerau-memo \
+	pycore-img-damerau-ctor pycore-img-dict-empty-ctor \
+	pycore-img-dict-tuple-key-trap \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
@@ -283,6 +294,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-call-all \
 	pycore-img-class-simple pycore-img-class-const \
 	pycore-img-staticmethod pycore-img-class-two-instances \
+	pycore-img-class-myerror pycore-img-class-myerror-exact \
+	pycore-img-class-levendist-error pycore-img-class-myerror-miss \
 	pycore-img-class-all \
 	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
@@ -1147,6 +1160,12 @@ pycore-img-scalar-all: \
 	pycore-img-list-concat \
 	pycore-img-list-concat-damerau \
 	pycore-img-list-concat-type-trap \
+	pycore-img-dict-tuple-key \
+	pycore-img-dict-tuple-empty \
+	pycore-img-damerau-memo \
+	pycore-img-damerau-ctor \
+	pycore-img-dict-empty-ctor \
+	pycore-img-dict-tuple-key-trap \
 	pycore-img-str-eq \
 	pycore-img-str-lt \
 	pycore-img-format-simple \
@@ -1428,6 +1447,31 @@ pycore-img-dict-hash-neg1:
 
 pycore-img-dict-str-keys:
 	$(call PYCORE_IMAGE_RUN,dict_str_keys,50000)
+
+# TYPE ceiling (#76): TUPLE dict keys used by PyBGL memo Damerau.
+pycore-img-damerau-ctor:
+	$(call PYCORE_IMAGE_RUN,damerau_ctor,100000)
+
+pycore-img-dict-empty-ctor:
+	$(call PYCORE_IMAGE_RUN,dict_empty_ctor,100000)
+
+pycore-img-dict-tuple-key:
+	$(call PYCORE_IMAGE_RUN,dict_tuple_key,100000)
+
+pycore-img-dict-tuple-empty:
+	$(call PYCORE_IMAGE_RUN,dict_tuple_empty,100000)
+
+pycore-img-damerau-memo:
+	$(call PYCORE_IMAGE_RUN,damerau_memo,100000)
+
+pycore-img-dict-tuple-key-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,dict_tuple_key_trap,1,50000)
+
+pycore-img-dict-tuple-key-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_tuple_key,100000)
+
+pycore-img-damerau-memo-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,damerau_memo,100000)
 
 pycore-img-dict-large-pycore:
 	$(call PYCORE_IMAGE_RUN,dict_large_pycore,100000)
@@ -1760,6 +1804,18 @@ pycore-img-attr-dunder-store-trap:
 pycore-img-attr-dunder-del-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,attr_dunder_del_trap,1,50000)
 
+pycore-img-str-class:
+	$(call PYCORE_IMAGE_RUN,str_class,100000)
+
+pycore-img-str-class-list-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,str_class_list_trap,15,50000)
+
+pycore-img-int-class-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,int_class_trap,1,50000)
+
+pycore-img-str-class-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,str_class,100000)
+
 pycore-img-attr-all: \
 	pycore-img-attr-basic \
 	pycore-img-attr-overwrite \
@@ -1775,6 +1831,9 @@ pycore-img-attr-all: \
 	pycore-img-attr-dunder-base \
 	pycore-img-attr-dunder-store-trap \
 	pycore-img-attr-dunder-del-trap \
+	pycore-img-str-class \
+	pycore-img-str-class-list-trap \
+	pycore-img-int-class-trap \
 	pycore-img-attr-grow-global \
 	pycore-img-seed-grow-global \
 	pycore-img-load-global-namei pycore-img-builtin-max pycore-img-builtin-len-list \
@@ -1797,13 +1856,19 @@ pycore-img-attr-all: \
 	pycore-img-try-tuple-match pycore-img-try-lookuperror \
 	pycore-img-try-except-miss pycore-img-bare-raise \
 	pycore-img-bare-raise-no-active pycore-img-try-except-else \
-	pycore-img-try-finally pycore-img-try-except-as pycore-img-exc-all \
+	pycore-img-try-finally pycore-img-try-except-as \
+	pycore-img-class-myerror pycore-img-class-myerror-exact \
+	pycore-img-class-levendist-error pycore-img-class-myerror-miss \
+	pycore-img-exc-all \
 	pycore-img-return-true \
 	pycore-img-unpack-ex pycore-img-list-to-tuple \
 	pycore-img-list-repeat pycore-img-list-repeat-jaro \
 	pycore-img-list-repeat-type-trap \
 	pycore-img-list-concat pycore-img-list-concat-damerau \
 	pycore-img-list-concat-type-trap \
+	pycore-img-dict-tuple-key pycore-img-dict-tuple-empty pycore-img-damerau-memo \
+	pycore-img-damerau-ctor pycore-img-dict-empty-ctor \
+	pycore-img-dict-tuple-key-trap \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
@@ -2111,7 +2176,11 @@ pycore-img-exc-all: \
 	pycore-img-fw-range-zero-step \
 	pycore-img-fw-next-exhausted \
 	pycore-img-fw-pow-neg-mod \
-	pycore-img-exc-args
+	pycore-img-exc-args \
+	pycore-img-class-myerror \
+	pycore-img-class-myerror-exact \
+	pycore-img-class-levendist-error \
+	pycore-img-class-myerror-miss
 
 pycore-img-return-true:
 	$(call PYCORE_IMAGE_RUN,return_true,50000)
@@ -2342,11 +2411,27 @@ pycore-img-staticmethod:
 pycore-img-class-two-instances:
 	$(call PYCORE_IMAGE_RUN,class_two_instances,100000)
 
+pycore-img-class-myerror:
+	$(call PYCORE_IMAGE_RUN,class_myerror,100000)
+
+pycore-img-class-myerror-exact:
+	$(call PYCORE_IMAGE_RUN,class_myerror_exact,100000)
+
+pycore-img-class-levendist-error:
+	$(call PYCORE_IMAGE_RUN,class_levendist_error,100000)
+
+pycore-img-class-myerror-miss:
+	$(call PYCORE_IMAGE_TRAP_RUN,class_myerror_miss,17,100000)
+
 pycore-img-class-all: \
 	pycore-img-class-simple \
 	pycore-img-class-const \
 	pycore-img-staticmethod \
-	pycore-img-class-two-instances
+	pycore-img-class-two-instances \
+	pycore-img-class-myerror \
+	pycore-img-class-myerror-exact \
+	pycore-img-class-levendist-error \
+	pycore-img-class-myerror-miss
 
 # ---- Container (list/dict/tuple) tests -------------------------------------
 # tb_container is parameterized: PROG_HEX selects the program, EXPECTED_TAG /

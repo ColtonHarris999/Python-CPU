@@ -67,6 +67,7 @@ DUNDER_PROGRAM_GOLDENS = {
     "img_attr_dunder_base.py": 7,
     "img_firmware_attr_helpers.py": 31,
     "img_firmware_isinstance.py": 127,
+    "img_str_class.py": 31,
 }
 
 
@@ -86,11 +87,33 @@ class AttrDunderImageBuildTest(unittest.TestCase):
         for name in (
             "img_attr_dunder_store_trap.py",
             "img_attr_dunder_del_trap.py",
+            "img_str_class_list_trap.py",
+            "img_int_class_trap.py",
         ):
             with self.subTest(program=name):
                 text = (root / name).read_text(encoding="utf-8")
                 image = image_from_source.build_image_from_source_text(text, name)
                 self.assertGreater(len(image.program_slots), 0)
+
+
+class LevendistRequireStrShapeTest(unittest.TestCase):
+    def test_require_str_isinstance_image_ok(self) -> None:
+        text = (
+            "def _require_str(*args):\n"
+            "    for a in args:\n"
+            "        if not isinstance(a, str):\n"
+            "            return 0\n"
+            "    return 1\n"
+            "\n"
+            "def managed_entry():\n"
+            "    return _require_str(\"ab\", \"ba\")\n"
+            "\n"
+            "managed_entry()\n"
+        )
+        image = image_from_source.build_image_from_source_text(
+            text, "<levendist-require-str>"
+        )
+        self.assertGreater(len(image.program_slots), 0)
 
 
 class Wave4AttrRomSeedTest(unittest.TestCase):

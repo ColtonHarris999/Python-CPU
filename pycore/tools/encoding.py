@@ -130,6 +130,9 @@ NATIVE_METHOD_COUNT = 16
 NATIVE_METHOD_ENTRY_BYTES = 32
 NATIVE_METHOD_TABLE_BYTES = NATIVE_METHOD_COUNT * NATIVE_METHOD_ENTRY_BYTES
 NATIVE_METHOD_TABLE_ADDR = ITER_EXHAUST_TYPE_ADDR - NATIVE_METHOD_TABLE_BYTES  # 0x1BDE0
+# Seeded `str` OBK_TYPE handle for LOAD_ATTR __class__ on SHORT_STR/LONG_STR
+# (isinstance("x", str) in ROM firmware). Immediately below the native table.
+STR_TYPE_ADDR = NATIVE_METHOD_TABLE_ADDR - 32  # 0x1BDC0
 
 # LIST element buffer stride (bytes); mirror pycore list layout (32B/element).
 LIST_ELEMENT_BYTES = 32

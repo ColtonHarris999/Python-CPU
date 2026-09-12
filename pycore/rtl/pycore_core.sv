@@ -442,6 +442,9 @@ module pycore_core #(
     logic                          container_set_update_trap_r;
     // Occupied probe slot tag latched at CP_DICT_PROBE for rich_eq at CHK_VAL.
     logic [3:0]                    container_probe_tag_r;
+    // TUPLE dict-key content-eq hit: EQ FSM sets this and returns to
+    // CP_DICT_CHK_VAL so each op can reuse its existing match action.
+    logic                          container_tuple_eq_hit_r;
     // STORE_DICT / STORE_NAME / SET_ADD: first tombstone index seen during
     // probe (insert target when the key/element is absent).
     logic                          container_tomb_valid_r;
@@ -1964,6 +1967,7 @@ module pycore_core #(
             container_set_grow_trap_r       <= 1'b0;
             container_set_update_trap_r     <= 1'b0;
             container_probe_tag_r           <= '0;
+            container_tuple_eq_hit_r        <= 1'b0;
             container_tomb_valid_r          <= 1'b0;
             container_tomb_idx_r            <= '0;
             container_contam_r              <= 1'b0;

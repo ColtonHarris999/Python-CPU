@@ -1019,6 +1019,7 @@
                         //   args      → field1 TUPLE (OBK_EXCEPTION)
                         // Native MUT_COLLEC / STR methods (R7: before OBJECT):
                         //   table lookup → CODE_OBJECT + method bind.
+                        //   STR.__class__ → seeded str type sidecar (data).
                         // =====================================================
                         CONT_LOAD_ATTR: begin
                             unique case (container_phase_r)
@@ -1073,6 +1074,20 @@
                                                     container_dmem_we_r      <= 1'b0;
                                                     container_dmem_pending_r <= 1'b1;
                                                     container_phase_r        <= CP_SRC_HDR;
+                                                end else if (pycore_is_string_tag(cont_rs1_tag) &&
+                                                    pycore_attr_name_is_class(
+                                                        container_rd_data_r[3:0],
+                                                        container_val_r)) begin
+                                                    // STR.__class__ → seeded str OBK_TYPE
+                                                    // (isinstance("x", str) / levendist _require_str).
+                                                    container_lfb_hi_r      <= 4'd3;
+                                                    container_lfb_lo_r      <= 4'b0100;
+                                                    container_push_null_r   <= 1'b0;
+                                                    container_dmem_addr_r    <=
+                                                        PYCORE_STR_TYPE_ADDR;
+                                                    container_dmem_we_r      <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    container_phase_r        <= CP_SRC_HDR;
                                                 end else if (pycore_is_native_method_receiver(
                                                         cont_rs1_tag, cont_rs1_val)) begin
                                                     container_attr_error_r <= 1'b1;
@@ -1107,7 +1122,19 @@
 
                                 CP_LIST_WB: begin
                                     if (!container_dmem_pending_r) begin
-                                        if (container_rd_data_r[3:0] !=
+                                        if (container_lfb_hi_r == 4'd3) begin
+                                            // Seeded str type sidecar (STR.__class__).
+                                            if (container_rd_data_r[3:0] !=
+                                                    PY_TAG_OBJECT) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                container_tag_r       <= PY_TAG_OBJECT;
+                                                container_push_null_r <= 1'b0;
+                                                container_lfb_hi_r    <= 4'd0;
+                                                container_lfb_lo_r    <= 4'b0100;
+                                                container_phase_r     <= CP_ATTR_WB;
+                                            end
+                                        end else if (container_rd_data_r[3:0] !=
                                                 PY_TAG_CODE_OBJECT) begin
                                             container_type_trap_r <= 1'b1;
                                         end else begin

@@ -17,7 +17,8 @@ In ROM: `print(*args, sep=, end=)`, `min`/`sorted`/`sum` (kwargs wrappers),
 `map`/`zip`/`enumerate`/`filter`/`reversed` (**return lists**),
 `list`/`dict`/`tuple`/`set`, `abs`/`all`/`any`, `bin`/`hex`/`oct`,
 `hasattr`/`getattr`/`isinstance`/`delattr`, `exec`/`eval` on **code
-objects** (including `globals=`).
+objects** (including `globals=`). `isinstance(s, str)` works: `LOAD_ATTR`
+`__class__` on `SHORT_STR`/`LONG_STR` returns the seeded `str` type.
 
 Native methods via `LOAD_ATTR`: `list.append/pop/extend/clear`,
 `set.add/update`, `str.join/startswith/endswith/find`,

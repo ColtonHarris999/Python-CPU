@@ -351,7 +351,8 @@
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
-                                    if (!pycore_dict_key_tag_ok(cont_rs2_tag)) begin
+                                    if (!pycore_dict_key_tag_ok(cont_rs2_tag) &&
+                                        (cont_rs2_tag != PY_TAG_TUPLE)) begin
                                         container_type_trap_r <= 1'b1;
                                     end else begin
                                         container_tag_r <= cont_rs2_tag;
@@ -383,6 +384,38 @@
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             // Empty dict → KeyError analog.
                                             container_mem_fault_r <= 1'b1;
+                                        end else if (container_tag_r == PY_TAG_TUPLE) begin
+                                            if (pycore_tuple_size(container_val_r)
+                                                    > {32'd0, PYCORE_DICT_TUPLE_KEY_MAX}) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else if (pycore_tuple_size(container_val_r)
+                                                         == 64'd0) begin
+                                                begin
+                                                    logic [31:0] probe0;
+                                                    probe0 = PYCORE_DICT_TUPLE_EMPTY_HASH
+                                                        & (container_slot_count_r - 32'd1);
+                                                    container_probe_r   <= probe0;
+                                                    container_probe_n_r <= 32'd0;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            cont_dict_table_ptr, probe0);
+                                                end
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <= CP_DICT_PROBE;
+                                            end else begin
+                                                container_src_len_r <=
+                                                    pycore_tuple_size(container_val_r)[31:0];
+                                                container_src_idx_r <= 32'd0;
+                                                container_probe_r <=
+                                                    pycore_tuple_size(container_val_r)[31:0];
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_val_addr(
+                                                        container_val_r[31:0], 32'd0);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <= CP_DICT_TUPLE_HASH_VAL;
+                                            end
                                         end else begin
                                             begin
                                                 logic [31:0] probe0;
@@ -439,7 +472,40 @@
 
                                 CP_DICT_CHK_VAL: begin
                                     if (!container_dmem_pending_r) begin
-                                        if (cont_dict_key_match) begin
+                                        if ((container_tag_r == PY_TAG_TUPLE) &&
+                                            (container_probe_tag_r == PY_TAG_TUPLE) &&
+                                            (container_val_r != container_rd_data_r) &&
+                                            !container_tuple_eq_hit_r) begin
+                                            if (pycore_tuple_size(container_val_r) !=
+                                                pycore_tuple_size(container_rd_data_r)) begin
+                                                container_probe_r <= cont_probe_next;
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_ktag_addr(
+                                                        container_buf_r, cont_probe_next);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <= CP_DICT_PROBE;
+                                            end else if (pycore_tuple_size(container_val_r)
+                                                         == 64'd0) begin
+                                                container_tuple_eq_hit_r <= 1'b1;
+                                            end else begin
+                                                container_src_buf_r <=
+                                                    container_rd_data_r[31:0];
+                                                container_src_len_r <=
+                                                    pycore_tuple_size(
+                                                        container_val_r)[31:0];
+                                                container_src_idx_r <= 32'd0;
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_val_addr(
+                                                        container_val_r[31:0], 32'd0);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <=
+                                                    CP_DICT_TUPLE_EQ_A_VAL;
+                                            end
+                                        end else if (container_tuple_eq_hit_r ||
+                                                     cont_dict_key_match) begin
+                                            container_tuple_eq_hit_r <= 1'b0;
                                             container_dmem_addr_r <= pycore_dict_vval_addr(
                                                 container_buf_r, container_probe_r);
                                             container_dmem_we_r      <= 1'b0;
@@ -482,6 +548,8 @@
                                     end
                                 end
 
+                                `include "pycore_cont_dict_tuple.svh"
+
                                 CP_DONE: ;
                                 default: ;
 
@@ -492,15 +560,18 @@
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
-                                    if (!pycore_dict_key_tag_ok(cont_rs1_tag)) begin
+                                    if (!pycore_dict_key_tag_ok(cont_rs1_tag) &&
+                                        (cont_rs1_tag != PY_TAG_TUPLE)) begin
                                         container_type_trap_r <= 1'b1;
                                     end else begin
                                         container_tag_r <= cont_rs1_tag;
                                         container_order_key_tag_r <= cont_rs1_tag;
                                         container_val_r <= cont_rs1_val;
-                                        // OBJECT key contaminates the dict handle.
+                                        // OBJECT / TUPLE keys stay on pycore (excore
+                                        // grow does not hash tuple contents).
                                         container_contam_r <=
-                                            (cont_rs1_tag == PY_TAG_OBJECT);
+                                            (cont_rs1_tag == PY_TAG_OBJECT) ||
+                                            (cont_rs1_tag == PY_TAG_TUPLE);
                                         // Point RF port at value early so grow
                                         // marshal can assemble entry2.
                                         container_rf_addr_r     <= RF_AW'(tos_r - RF_AW'(3));
@@ -592,6 +663,38 @@
                                                 container_phase_r          <= CP_DONE;
                                             end else begin
                                                 container_dict_grow_trap_r <= 1'b1;
+                                            end
+                                        end else if (container_tag_r == PY_TAG_TUPLE) begin
+                                            if (pycore_tuple_size(container_val_r)
+                                                    > {32'd0, PYCORE_DICT_TUPLE_KEY_MAX}) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else if (pycore_tuple_size(container_val_r)
+                                                         == 64'd0) begin
+                                                begin
+                                                    logic [31:0] probe0;
+                                                    probe0 = PYCORE_DICT_TUPLE_EMPTY_HASH
+                                                        & (container_slot_count_r - 32'd1);
+                                                    container_probe_r   <= probe0;
+                                                    container_probe_n_r <= 32'd0;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            cont_dict_table_ptr, probe0);
+                                                end
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <= CP_DICT_PROBE;
+                                            end else begin
+                                                container_src_len_r <=
+                                                    pycore_tuple_size(container_val_r)[31:0];
+                                                container_src_idx_r <= 32'd0;
+                                                container_probe_r <=
+                                                    pycore_tuple_size(container_val_r)[31:0];
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_val_addr(
+                                                        container_val_r[31:0], 32'd0);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <= CP_DICT_TUPLE_HASH_VAL;
                                             end
                                         end else begin
                                             begin
@@ -748,7 +851,40 @@
 
                                 CP_DICT_CHK_VAL: begin
                                     if (!container_dmem_pending_r) begin
-                                        if (cont_dict_key_match) begin
+                                        if ((container_tag_r == PY_TAG_TUPLE) &&
+                                            (container_probe_tag_r == PY_TAG_TUPLE) &&
+                                            (container_val_r != container_rd_data_r) &&
+                                            !container_tuple_eq_hit_r) begin
+                                            if (pycore_tuple_size(container_val_r) !=
+                                                pycore_tuple_size(container_rd_data_r)) begin
+                                                container_probe_r <= cont_probe_next;
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_ktag_addr(
+                                                        container_buf_r, cont_probe_next);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <= CP_DICT_PROBE;
+                                            end else if (pycore_tuple_size(container_val_r)
+                                                         == 64'd0) begin
+                                                container_tuple_eq_hit_r <= 1'b1;
+                                            end else begin
+                                                container_src_buf_r <=
+                                                    container_rd_data_r[31:0];
+                                                container_src_len_r <=
+                                                    pycore_tuple_size(
+                                                        container_val_r)[31:0];
+                                                container_src_idx_r <= 32'd0;
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_val_addr(
+                                                        container_val_r[31:0], 32'd0);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <=
+                                                    CP_DICT_TUPLE_EQ_A_VAL;
+                                            end
+                                        end else if (container_tuple_eq_hit_r ||
+                                                     cont_dict_key_match) begin
+                                            container_tuple_eq_hit_r <= 1'b0;
                                             // Overwrite existing key — used unchanged.
                                             container_insert_new_r <= 1'b0;
                                             container_dmem_addr_r  <= pycore_dict_kval_addr(
@@ -872,6 +1008,8 @@
                                     end
                                 end
 
+                                `include "pycore_cont_dict_tuple.svh"
+
                                 CP_DONE: ;
                                 default: ;
 
@@ -882,7 +1020,8 @@
                             unique case (container_phase_r)
 
                                 CP_INIT: begin
-                                    if (!pycore_dict_key_tag_ok(cont_rs1_tag)) begin
+                                    if (!pycore_dict_key_tag_ok(cont_rs1_tag) &&
+                                        (cont_rs1_tag != PY_TAG_TUPLE)) begin
                                         container_type_trap_r <= 1'b1;
                                     end else begin
                                         container_tag_r <= cont_rs1_tag;
@@ -922,6 +1061,38 @@
                                             tos_r             <= tos_r - RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
+                                        end else if (container_tag_r == PY_TAG_TUPLE) begin
+                                            if (pycore_tuple_size(container_val_r)
+                                                    > {32'd0, PYCORE_DICT_TUPLE_KEY_MAX}) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else if (pycore_tuple_size(container_val_r)
+                                                         == 64'd0) begin
+                                                begin
+                                                    logic [31:0] probe0;
+                                                    probe0 = PYCORE_DICT_TUPLE_EMPTY_HASH
+                                                        & (container_slot_count_r - 32'd1);
+                                                    container_probe_r   <= probe0;
+                                                    container_probe_n_r <= 32'd0;
+                                                    container_dmem_addr_r <=
+                                                        pycore_dict_ktag_addr(
+                                                            cont_dict_table_ptr, probe0);
+                                                end
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <= CP_DICT_PROBE;
+                                            end else begin
+                                                container_src_len_r <=
+                                                    pycore_tuple_size(container_val_r)[31:0];
+                                                container_src_idx_r <= 32'd0;
+                                                container_probe_r <=
+                                                    pycore_tuple_size(container_val_r)[31:0];
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_val_addr(
+                                                        container_val_r[31:0], 32'd0);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <= CP_DICT_TUPLE_HASH_VAL;
+                                            end
                                         end else begin
                                             begin
                                                 logic [31:0] probe0;
@@ -1003,7 +1174,40 @@
 
                                 CP_DICT_CHK_VAL: begin
                                     if (!container_dmem_pending_r) begin
-                                        if (cont_dict_key_match) begin
+                                        if ((container_tag_r == PY_TAG_TUPLE) &&
+                                            (container_probe_tag_r == PY_TAG_TUPLE) &&
+                                            (container_val_r != container_rd_data_r) &&
+                                            !container_tuple_eq_hit_r) begin
+                                            if (pycore_tuple_size(container_val_r) !=
+                                                pycore_tuple_size(container_rd_data_r)) begin
+                                                container_probe_r <= cont_probe_next;
+                                                container_dmem_addr_r <=
+                                                    pycore_dict_ktag_addr(
+                                                        container_buf_r, cont_probe_next);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <= CP_DICT_PROBE;
+                                            end else if (pycore_tuple_size(container_val_r)
+                                                         == 64'd0) begin
+                                                container_tuple_eq_hit_r <= 1'b1;
+                                            end else begin
+                                                container_src_buf_r <=
+                                                    container_rd_data_r[31:0];
+                                                container_src_len_r <=
+                                                    pycore_tuple_size(
+                                                        container_val_r)[31:0];
+                                                container_src_idx_r <= 32'd0;
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_val_addr(
+                                                        container_val_r[31:0], 32'd0);
+                                                container_dmem_we_r      <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_phase_r <=
+                                                    CP_DICT_TUPLE_EQ_A_VAL;
+                                            end
+                                        end else if (container_tuple_eq_hit_r ||
+                                                     cont_dict_key_match) begin
+                                            container_tuple_eq_hit_r <= 1'b0;
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(2));
                                             container_wb_data_r <= pycore_make_entry(
@@ -1034,6 +1238,8 @@
                                         end
                                     end
                                 end
+
+                                `include "pycore_cont_dict_tuple.svh"
 
                                 CP_DONE: ;
                                 default: ;
