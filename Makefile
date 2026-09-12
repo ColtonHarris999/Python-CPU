@@ -592,8 +592,10 @@ endef
 
 # M6 target: allocator_list needs LIST_EXTEND (excore) for _zeros().
 # M8 target remains deferred until builtins/slices land.
+# LAT=4 ≈ 2.96e6; MEM_LATENCY=30 is memory-bound (~7x). Cap covers the
+# latency-30 sweep; a hang still dies well below this.
 pycore-img-allocator-list: excore-fw
-	$(call PYCORE_IMAGE_RUN_SRC_TWOCORE,img_allocator_list,allocator_list.py,5000000)
+	$(call PYCORE_IMAGE_RUN_SRC_TWOCORE,img_allocator_list,allocator_list.py,30000000)
 
 pycore-img-allocator-bytes:
 	$(call PYCORE_IMAGE_RUN_SRC,img_allocator_bytes,allocator_bytes.py,400000)
