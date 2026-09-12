@@ -206,6 +206,157 @@ localparam logic [5:0] PYCORE_STRACC_FLAG_ALL_UPPER = 6'd4;
 localparam logic [31:0] PYCORE_STRACC_FNV_OFFSET = 32'h811C9DC5;
 localparam logic [31:0] PYCORE_STRACC_FNV_PRIME  = 32'h01000193;
 
+function automatic logic [2:0] pycore_stracc_kind_width(input logic [1:0] enc);
+    case (enc)
+        PYCORE_STRACC_KIND_ENC_1: pycore_stracc_kind_width = 3'd1;
+        PYCORE_STRACC_KIND_ENC_2: pycore_stracc_kind_width = 3'd2;
+        default:                  pycore_stracc_kind_width = 3'd4;
+    endcase
+endfunction
+
+function automatic logic [1:0] pycore_stracc_kind_enc(input logic [2:0] width);
+    case (width)
+        3'd1:    pycore_stracc_kind_enc = PYCORE_STRACC_KIND_ENC_1;
+        3'd2:    pycore_stracc_kind_enc = PYCORE_STRACC_KIND_ENC_2;
+        default: pycore_stracc_kind_enc = PYCORE_STRACC_KIND_ENC_4;
+    endcase
+endfunction
+
+function automatic logic [2:0] pycore_stracc_kind_of_unit(input logic [31:0] unit);
+    if (unit <= 32'h0000_00FF)
+        pycore_stracc_kind_of_unit = 3'd1;
+    else if (unit <= 32'h0000_FFFF)
+        pycore_stracc_kind_of_unit = 3'd2;
+    else
+        pycore_stracc_kind_of_unit = 3'd4;
+endfunction
+
+function automatic logic [31:0] pycore_stracc_addr(input logic [127:0] v);
+    pycore_stracc_addr = v[31:0];
+endfunction
+
+function automatic logic [31:0] pycore_stracc_nchars(input logic [127:0] v);
+    pycore_stracc_nchars = v[63:32];
+endfunction
+
+function automatic logic [31:0] pycore_stracc_hash(input logic [127:0] v);
+    pycore_stracc_hash = v[95:64];
+endfunction
+
+function automatic logic [23:0] pycore_stracc_nbytes(input logic [127:0] v);
+    pycore_stracc_nbytes = v[119:96];
+endfunction
+
+function automatic logic [1:0] pycore_stracc_kind_field(input logic [127:0] v);
+    pycore_stracc_kind_field = v[121:120];
+endfunction
+
+function automatic logic [5:0] pycore_stracc_flags(input logic [127:0] v);
+    pycore_stracc_flags = v[127:122];
+endfunction
+
+function automatic logic [127:0] pycore_stracc_pack_handle(
+    input logic [31:0] addr,
+    input logic [31:0] nchars,
+    input logic [23:0] nbytes,
+    input logic [2:0]  kind,
+    input logic [31:0] digest,
+    input logic [5:0]  flags
+);
+    pycore_stracc_pack_handle = {
+        flags,
+        pycore_stracc_kind_enc(kind),
+        nbytes,
+        digest,
+        nchars,
+        addr
+    };
+endfunction
+
+function automatic logic [127:0] pycore_stracc_pack_header(
+    input logic [31:0] nchars,
+    input logic [23:0] nbytes,
+    input logic [2:0]  kind,
+    input logic [31:0] digest,
+    input logic [5:0]  flags
+);
+    pycore_stracc_pack_header = pycore_stracc_pack_handle(
+        32'd0, nchars, nbytes, kind, digest, flags);
+endfunction
+
+function automatic logic [31:0] pycore_stracc_fnv_step(
+    input logic [31:0] hash,
+    input logic [7:0]  byte_v
+);
+    pycore_stracc_fnv_step = (hash ^ {24'b0, byte_v}) * PYCORE_STRACC_FNV_PRIME;
+endfunction
+
+function automatic logic [31:0] pycore_stracc_unit_from_word(
+    input logic [127:0] word,
+    input logic [3:0]   byte_off,
+    input logic [2:0]   kind
+);
+    logic [31:0] u;
+    u = 32'(word >> (8 * byte_off));
+    case (kind)
+        3'd1:    pycore_stracc_unit_from_word = {24'b0, u[7:0]};
+        3'd2:    pycore_stracc_unit_from_word = {16'b0, u[15:0]};
+        default: pycore_stracc_unit_from_word = u;
+    endcase
+endfunction
+
+function automatic logic [127:0] pycore_stracc_insert_unit(
+    input logic [127:0] word,
+    input logic [3:0]   byte_off,
+    input logic [2:0]   kind,
+    input logic [31:0]  unit
+);
+    logic [127:0] w;
+    w = word;
+    w[8*byte_off +: 8] = unit[7:0];
+    if (kind >= 3'd2)
+        w[8*(byte_off + 4'd1) +: 8] = unit[15:8];
+    if (kind >= 3'd4) begin
+        w[8*(byte_off + 4'd2) +: 8] = unit[23:16];
+        w[8*(byte_off + 4'd3) +: 8] = unit[31:24];
+    end
+    pycore_stracc_insert_unit = w;
+endfunction
+
+function automatic logic [5:0] pycore_stracc_case_flags_step(
+    input logic [5:0]  flags,
+    input logic [31:0] unit
+);
+    logic [5:0] f;
+    f = flags;
+    if (unit > 32'h0000_00FF)
+        f = 6'd0;
+    else begin
+        if (((unit >= 32'h41) && (unit <= 32'h5A)) ||
+            ((unit >= 32'hC0) && (unit <= 32'hD6)) ||
+            ((unit >= 32'hD8) && (unit <= 32'hDE)))
+            f = f & ~PYCORE_STRACC_FLAG_ALL_LOWER;
+        if (((unit >= 32'h61) && (unit <= 32'h7A)) ||
+            ((unit >= 32'hDF) && (unit <= 32'hF6)) ||
+            ((unit >= 32'hF8) && (unit <= 32'hFF)))
+            f = f & ~PYCORE_STRACC_FLAG_ALL_UPPER;
+    end
+    pycore_stracc_case_flags_step = f;
+endfunction
+
+function automatic logic signed [63:0] pycore_stracc_int64(
+    input logic [127:0] val
+);
+    pycore_stracc_int64 = signed'(val[63:0]);
+endfunction
+
+function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_stracc_make_int(
+    input logic signed [31:0] v
+);
+    pycore_stracc_make_int = pycore_make_entry(
+        PY_TAG_INT, {{96{v[31]}}, v});
+endfunction
+
 localparam logic [2:0] PY_EXEC_INT     = 3'd0;
 localparam logic [2:0] PY_EXEC_FLOAT   = 3'd1;
 localparam logic [2:0] PY_EXEC_BOOL    = 3'd2;
@@ -1272,6 +1423,21 @@ function automatic logic [7:0] pycore_short_str_byte(
             pycore_short_str_byte = 8'h00;
         end
     end
+endfunction
+
+function automatic logic [31:0] pycore_stracc_hash_short(
+    input logic [127:0] val
+);
+    logic [31:0] h;
+    int unsigned i;
+    int unsigned n;
+    n = int'(pycore_short_str_size(val));
+    h = PYCORE_STRACC_FNV_OFFSET;
+    for (i = 0; i < PYCORE_SHORT_STR_MAX_BYTES; i++) begin
+        if (i < n)
+            h = pycore_stracc_fnv_step(h, pycore_short_str_byte(val, i));
+    end
+    pycore_stracc_hash_short = h;
 endfunction
 
 function automatic logic [63:0] pycore_long_str_size(

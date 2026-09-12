@@ -286,7 +286,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-class-all \
 	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
-	pycore-sim-img pycore-sim-img-twocore pycore-rtl-unit \
+	pycore-sim-img pycore-sim-img-twocore pycore-rtl-unit pycore-str-accel \
 	pycore-cache-transparency pycore-mem-latency-sweep \
 	docker-build docker-lint-file docker-run-file docker-pycore-test docker-all-tests \
 	docker-python-tests docker-rtl-unit docker-container docker-img \
@@ -502,6 +502,18 @@ pycore-ram:
 		-Wall -Wno-fatal \
 		pycore/rtl/pycore_ram.sv pycore/tb/tb_ram.sv
 	./$(BUILD_DIR)/pycore_ram/Vtb_ram
+
+pycore-str-accel:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_str_accel \
+		--Mdir $(BUILD_DIR)/pycore_str_accel \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_ram.sv pycore/rtl/pycore_str_accel.sv \
+		pycore/tb/tb_str_accel.sv
+	./$(BUILD_DIR)/pycore_str_accel/Vtb_str_accel
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) pycore/tools/strgen.py --seed 1 --n 400
 
 pycore-fetch:
 	mkdir -p $(BUILD_DIR)
@@ -2707,7 +2719,8 @@ excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec pycore-string-exec \
 	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
-	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib
+	pycore-str-accel pycore-l1d-handoff pycore-fetch pycore-frame \
+	pycore-frame-fib
 
 pycore-test: pycore-python-tests pycore-rtl-unit pycore-container \
 	pycore-img pycore-excore-system pycore-img-two-core
