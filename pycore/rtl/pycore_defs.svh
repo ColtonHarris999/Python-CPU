@@ -20,7 +20,7 @@ localparam int PYCORE_BLOCK_SHIFT      = 12;   // 4096 bytes / block
 // 64 KB / 8-byte slots = 8192 words — ROM firmware + large images (e.g.
 // allocator_list) exceed the prior 32 KB / 4096-slot ceiling.
 localparam int PYCORE_IMEM_BLOCK_COUNT = 16;
-localparam int PYCORE_DMEM_BLOCK_COUNT = 32;   // 128 KB data memory
+localparam int PYCORE_DMEM_BLOCK_COUNT = 256;  // 1 MB data memory
 localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
 localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot
 localparam int PYCORE_IMEM_WSTRB_WIDTH = PYCORE_IMEM_DATA_WIDTH / 8;  // 8
@@ -53,8 +53,7 @@ localparam int PYCORE_L1D_HIT_CYCLES   = 1;
 // 8-cycle L2 hit blows MAX_CYCLES on cold-start fixtures. L1D covers
 // the hit path; record the real 8-cycle number in P9.
 localparam int PYCORE_L2_HIT_CYCLES    = 1;
-// P2 data window matches today's 128 KB dmem so OOB accesses still fault.
-// P5 widens this when string bytes move into ordinary data memory.
+// P5: data window is 1 MB so string objects live on the ordinary heap.
 localparam int PYCORE_DMEM_BYTES       =
     PYCORE_DMEM_BLOCK_COUNT << PYCORE_BLOCK_SHIFT;
 localparam int PYCORE_CODC_ENTRIES     = 4;
@@ -2420,25 +2419,26 @@ endfunction
 // -------------------------------------------------------------------------
 // Heap allocator address-space parameters.
 //
-// The object heap lives at the bottom of dmem, below the frame stack which
-// starts at FRAME_STACK_BASE (0x1C000).  The low region holds the image boot
+// The object heap lives at the bottom of dmem, below the exception-info
+// arena and the frame stack.  The low region holds the image boot
 // record (see PYCORE_BOOT_RECORD_* below); PYCORE_HEAP_BASE begins at the
 // first byte after that record so bump/static allocations never overlap it.
 // The bump pointer starts at PYCORE_HEAP_BASE and grows upward; a trap is
 // raised when it would exceed PYCORE_HEAP_LIMIT.
 //
-// Default memory map (DMEM_BLOCK_COUNT=32 → 128 KB):
+// P5 map (DMEM_BLOCK_COUNT=256 → 1 MB):
 //   0x00000 – 0x003DF  reserved / user PTR data
 //   0x003E0 – 0x0043F  boot record (96 B: code / globals / builtins)
-//   0x00440 – 0x1AFFF  container heap (this region)
-//   0x1B000 – 0x1BFFF  (4 KB) exc-info stack arena (§5.5)
-//   0x1C000 – 0x1FFFF  (16 KB) call-frame stack
+//   0x00440 – 0xEFFFF  object heap (~955 KB)
+//   0xF0000 – 0xF0FFF  (4 KB) exc-info stack arena (§5.5)
+//   0xF1000 – 0xF8FFF  (32 KB) call-frame stack (1024 frames)
+//   0x100000           DATA_LIMIT
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0440;
-localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0001_B000;
-localparam logic [31:0] PYCORE_FRAME_STACK_BASE  = 32'h0001_C000;
-localparam logic [31:0] PYCORE_FRAME_STACK_BYTES = 32'h0000_4000;  // 16 KB, 512 frames
-localparam logic [31:0] PYCORE_EXC_STACK_BASE  = 32'h0001_B000;
+localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h000F_0000;
+localparam logic [31:0] PYCORE_FRAME_STACK_BASE  = 32'h000F_1000;
+localparam logic [31:0] PYCORE_FRAME_STACK_BYTES = 32'h0000_8000;  // 32 KB, 1024 frames
+localparam logic [31:0] PYCORE_EXC_STACK_BASE  = 32'h000F_0000;
 localparam logic [31:0] PYCORE_EXC_STACK_BYTES = 32'h0000_1000;
 localparam logic [31:0] PYCORE_EXC_NODE_BYTES  = 32'd32;
 localparam logic [31:0] PYCORE_EXC_STACK_MAX   = 32'd128;

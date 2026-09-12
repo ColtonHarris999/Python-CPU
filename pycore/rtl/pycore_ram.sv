@@ -12,8 +12,8 @@
 //   * Code lives in a side array rather than past the 16 MB data window
 //     (0x0100_0000 is just above RAM_BYTES). Hex preload matches today's
 //     PROG_HEX / CODE_RAM_HEX plusargs.
-//   * DATA_LIMIT defaults to the current 128 KB dmem so out-of-range
-//     accesses still fault. P5 widens this when strings move into dmem.
+//   * DATA_LIMIT defaults to the 1 MB data map so out-of-range
+//     accesses still fault. String objects live in this window.
 //
 // Timing: a request is captured the cycle `req_i` is high. `ack_o` pulses
 // `t_first_i` cycles later (min 1, matching today's SRAM bank). A line

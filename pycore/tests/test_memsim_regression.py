@@ -76,9 +76,9 @@ class TestMemsimRegression(unittest.TestCase):
 
     def test_addresses_land_in_the_real_heap(self) -> None:
         """Model addresses come from a real built image, not a synthetic map."""
-        from pycore.tools.encoding import HEAP_BASE, HEAP_LIMIT  # noqa: PLC0415
+        from pycore.tools.encoding import HEAP_BASE, HEAP_LIMIT, FRAME_STACK_BASE  # noqa: PLC0415
 
-        frame_base = 0x1C000
+        frame_base = FRAME_STACK_BASE
         for cost in self.result["_costs"]:
             for acc in cost.accesses:
                 if acc.cls == "frame":

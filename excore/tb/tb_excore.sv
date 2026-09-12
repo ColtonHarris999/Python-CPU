@@ -5,7 +5,7 @@
 // LIST_EXTEND trap messages driven directly onto the mailbox input ports
 // (no trap_mailbox.sv / pycore integration yet -- that is Phase C).
 //
-// pycore_mem_bank is configured as a single 128 KB block (BLOCK_SHIFT=17,
+// pycore_mem_bank is configured as a single 1 MB block (BLOCK_SHIFT=20,
 // BLOCK_COUNT=1) covering the whole heap [0, PYCORE_HEAP_LIMIT), so scenario
 // setup/verification can poke/peek `mem_bank.gen_block[0].blk.mem[...]`
 // directly instead of arbitrating a second bus master.
@@ -105,7 +105,7 @@ module tb_excore #(
     pycore_mem_bank #(
         .DATA_WIDTH(DATA_W),
         .ADDR_WIDTH(32),
-        .BLOCK_SHIFT(17),   // 128 KB single block covers PYCORE_HEAP_LIMIT
+        .BLOCK_SHIFT(20),   // 1 MB single block covers PYCORE_HEAP_LIMIT
         .BLOCK_COUNT(1),
         .READ_ONLY(0),
         .INIT_HEX("")
@@ -132,16 +132,14 @@ module tb_excore #(
         if (sp_req && sp_we)  write_count <= write_count + 1;
     end
 
-    // Word index inside the single 128 KB block: addr[BLOCK_SHIFT-1:4]
-    // with BLOCK_SHIFT=17 and 16-byte (128-bit) slots → addr[16:4].
-    // (addr[12:4] was correct only for the old 8 KB tile and aliases high
-    // heap addresses used by the OOM scenarios.)
+    // Word index inside the single 1 MB block: addr[BLOCK_SHIFT-1:4]
+    // with BLOCK_SHIFT=20 and 16-byte (128-bit) slots → addr[19:4].
     task automatic poke_slot(input logic [31:0] addr, input logic [127:0] data);
-        mem_bank.gen_block[0].blk.mem[addr[16:4]] = data;
+        mem_bank.gen_block[0].blk.mem[addr[19:4]] = data;
     endtask
 
     function automatic logic [127:0] peek_slot(input logic [31:0] addr);
-        peek_slot = mem_bank.gen_block[0].blk.mem[addr[16:4]];
+        peek_slot = mem_bank.gen_block[0].blk.mem[addr[19:4]];
     endfunction
 
     task automatic check(input bit condition, input string message);
@@ -441,10 +439,10 @@ module tb_excore #(
         // Scenario 4: OOM -> FATAL(MEM_FAULT), memory untouched.
         // ------------------------------------------------------------------
         do_reset();
-        obj_addr = 32'h1AF00;
-        old_buf  = 32'h1AF20;
+        obj_addr = 32'hE_FF00;
+        old_buf  = 32'hE_FF20;
         // new_cap would be 8 (doubling from 4); 8*32=256B from a heap_ptr
-        // near the limit overflows PYCORE_HEAP_LIMIT (0x1B000).
+        // near the limit overflows PYCORE_HEAP_LIMIT (0xF0000).
         poke_slot(obj_addr, {64'd4, 64'd2});
         poke_slot(obj_addr + 16, {96'd0, old_buf});
         poke_slot(old_buf,      128'd1);
@@ -452,7 +450,7 @@ module tb_excore #(
         poke_slot(old_buf + 32, 128'd2);
         poke_slot(old_buf + 48, {124'b0, 4'd1});
 
-        run_list_grow(obj_addr, {4'd1, 128'd7}, 32'h1AF80, 20000);
+        run_list_grow(obj_addr, {4'd1, 128'd7}, 32'hE_FF80, 20000);
 
         check(res_code == RES_FATAL, "scenario4: expected RES_FATAL");
         check(res_fatal_code == PY_TRAP_MEM_FAULT,

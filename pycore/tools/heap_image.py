@@ -43,6 +43,8 @@ from encoding import (
     OBJ_EXCEPTION_BYTES,
     OBJ_INSTANCE_BYTES,
     OBJ_TYPE_BYTES,
+    SHORT_STR_MAX_BYTES,
+    STRACC_FLAG_INTERNED,
     TAG_BOOL,
     TAG_CODE_OBJECT,
     TAG_CONTROL,
@@ -74,6 +76,12 @@ from encoding import (
     obj_field_val_addr,
     pack_code_metadata,
     pack_ob_head,
+    stracc_case_flags,
+    stracc_content_hash,
+    stracc_encode_units,
+    stracc_kind_of_text,
+    stracc_pack_header,
+    stracc_pack_long_handle,
 )
 
 Tagged = tuple[int, int]  # (tag, value128)
@@ -103,6 +111,8 @@ class HeapImageBuilder:
     ptr: int = field(init=False)
     # byte_addr -> 128-bit word
     words: dict[int, int] = field(default_factory=dict)
+    # (kind, payload_bytes) -> LONG_STR handle value. SHORT results are not interned.
+    _str_intern: dict[tuple[int, bytes], int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.ptr = self.base
@@ -158,6 +168,40 @@ class HeapImageBuilder:
             # CONTROL keys preserve their secondary id beside the primary tag.
             tag_word |= (value & 0xF) << 4
         self._write(val_addr + 16, tag_word)
+
+    def _write_bytes(self, addr: int, data: bytes) -> None:
+        for i, byte in enumerate(data):
+            word_addr = (addr + i) & ~15
+            off = (addr + i) & 15
+            word = self.words.get(word_addr, 0)
+            word &= ~(0xFF << (8 * off))
+            word |= byte << (8 * off)
+            self._write(word_addr, word)
+
+    def alloc_str(self, text: str, interned: bool = True) -> Tagged:
+        """P5 STR object: fixed-width units, SHORT iff kind==1 and nchars<=15."""
+        kind = stracc_kind_of_text(text)
+        units = [ord(ch) for ch in text]
+        payload = stracc_encode_units(text, kind)
+        nchars = len(text)
+        nbytes = len(payload)
+        flags = stracc_case_flags(units)
+        if interned:
+            flags |= STRACC_FLAG_INTERNED
+        if kind == 1 and nchars <= SHORT_STR_MAX_BYTES:
+            return TAG_SHORT_STR, encode_short_str(payload)
+        key = (kind, payload)
+        if interned and key in self._str_intern:
+            return TAG_LONG_STR, self._str_intern[key]
+        digest = stracc_content_hash(payload)
+        obj_bytes = 16 + ((nbytes + 15) & ~15)
+        addr = self._alloc(obj_bytes)
+        self._write(addr, stracc_pack_header(nchars, nbytes, kind, digest, flags))
+        self._write_bytes(addr + 16, payload)
+        handle = stracc_pack_long_handle(addr, nchars, nbytes, kind, digest, flags)
+        if interned:
+            self._str_intern[key] = handle
+        return TAG_LONG_STR, handle
 
     # ---- LIST ----
     # v2 layout (Phase A, growable split object/buffer — mirrors

@@ -993,10 +993,9 @@ module pycore_core #(
     // code-object fields and restores globals_base_r.
     // The core mediates those dmem transactions through the push/pop handshake.
     //
-    // The frame stack lives at the top of the 128 KB data memory
-    // (byte addresses 0x1C000–0x1FFFF), leaving ~110 KB below for the object
-    // heap.  STACK_BASE_ADDR must be within the dmem address window
-    // (BLOCK_COUNT × 2^BLOCK_SHIFT = 32 × 4 KB = 128 KB).
+    // The frame stack lives at the top of the data map
+    // (byte addresses PYCORE_FRAME_STACK_BASE .. + PYCORE_FRAME_STACK_BYTES).
+    // The object heap is everything from HEAP_BASE to HEAP_LIMIT.
     // ---------------------------------------------------------------------
     localparam int    RF_BASE_CORE          = STACK_BASE;
     localparam int    MAX_CALL_DEPTH_CORE   = 128;

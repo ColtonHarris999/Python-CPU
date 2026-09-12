@@ -314,5 +314,39 @@ class StrModelTest(unittest.TestCase):
         self.assertEqual(r.signed_int(), 0)
 
 
+class TestImageAllocStr(unittest.TestCase):
+    """P5b: HeapImageBuilder.alloc_str objects are readable by the spec model."""
+
+    def test_short_and_long_roundtrip(self) -> None:
+        from pycore.tools.heap_image import HeapImageBuilder
+        from pycore.tools.strmodel import StrAccel
+
+        img = HeapImageBuilder()
+        short = img.alloc_str("hello")
+        long_s = img.alloc_str("a" * 16)
+        greek = img.alloc_str("α")
+        self.assertEqual(short[0], TAG_SHORT_STR)
+        self.assertEqual(long_s[0], TAG_LONG_STR)
+        self.assertEqual(greek[0], TAG_LONG_STR)
+        accel = StrAccel()
+        accel.mem.words.update(img.words)
+        self.assertEqual(accel.read_str(short), "hello")
+        self.assertEqual(accel.read_str(long_s), "a" * 16)
+        self.assertEqual(accel.read_str(greek), "α")
+
+    def test_interned_long_reuses_addr(self) -> None:
+        from pycore.tools.heap_image import HeapImageBuilder
+
+        img = HeapImageBuilder()
+        a = img.alloc_str("αβγ")
+        b = img.alloc_str("αβγ")
+        self.assertEqual(a, b)
+        c = img.alloc_str("αβγ", interned=False)
+        self.assertNotEqual(
+            stracc_unpack_long_handle(a[1])["addr"],
+            stracc_unpack_long_handle(c[1])["addr"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

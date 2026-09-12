@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import layout as L
+from encoding import FRAME_STACK_BASE as FRAME_BASE
 
 READ, WRITE = 0, 1
 
@@ -181,9 +182,6 @@ def _name_key(lay, cl, namei):
     kval = lay.words.get(L.tuple_val_addr(cl.names_base, namei), 0)
     ktag = lay.words.get(L.tuple_tag_addr(cl.names_base, namei), 0) & 0xF
     return ktag, kval
-
-
-FRAME_BASE = 0x1C000
 
 
 def _frame_addr(depth: int, slot: int) -> int:
