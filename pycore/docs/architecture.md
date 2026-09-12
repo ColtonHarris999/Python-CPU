@@ -869,11 +869,14 @@ phases without a header.
   each pair and appends each new key to the order buffer. Empty maps still
   get ≥4 slots.
 - **`NB_SUBSCR` on DICT**: reads header + `table_ptr`, probes; same-tag /
-  rich-eq hit returns value; miss → `MEM_FAULT`.
+  rich-eq hit returns value; miss → `MEM_FAULT`. TUPLE keys (len ≤ 8,
+  scalar elements) use a content hash + element rich-eq.
 - **`STORE_SUBSCR` on DICT**: same-tag / rich-eq upsert / tombstone reuse on
-  pycore; new-key insert may `DICT_GROW`.
+  pycore; new-key insert may `DICT_GROW`. TUPLE keys contaminate the dict
+  so grow stays on pycore.
 - **`DELETE_SUBSCR` / `CONTAINS_OP` on DICT**: tombstone / BOOL result via
-  same-tag / rich-eq probe on pycore.
+  same-tag / rich-eq probe on pycore. `CONTAINS_OP` accepts the same TUPLE
+  keys as STORE/SUBSCR; `DELETE_SUBSCR` still TYPE-traps TUPLE keys.
 - **`BUILD_TUPLE` / `NB_SUBSCR` on TUPLE**: no header; size is inline in the
   handle. `STORE_SUBSCR` on a TUPLE traps `PY_TRAP_TYPE` (immutable).
 
