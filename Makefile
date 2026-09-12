@@ -102,6 +102,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-list-repeat-type-trap \
 	pycore-img-list-concat pycore-img-list-concat-damerau \
 	pycore-img-list-concat-type-trap \
+	pycore-img-dict-tuple-key pycore-img-dict-tuple-empty pycore-img-damerau-memo \
+	pycore-img-damerau-ctor pycore-img-dict-empty-ctor \
+	pycore-img-dict-tuple-key-trap \
 	pycore-img-str-eq pycore-img-str-lt-trap \
 	pycore-img-str-subscr pycore-img-str-subscr-long \
 	pycore-img-exec-all \
@@ -226,6 +229,9 @@ EXCORE_RTL_SRCS := \
 	pycore-img-list-repeat-type-trap \
 	pycore-img-list-concat pycore-img-list-concat-damerau \
 	pycore-img-list-concat-type-trap \
+	pycore-img-dict-tuple-key pycore-img-dict-tuple-empty pycore-img-damerau-memo \
+	pycore-img-damerau-ctor pycore-img-dict-empty-ctor \
+	pycore-img-dict-tuple-key-trap \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
@@ -1047,6 +1053,12 @@ pycore-img-scalar-all: \
 	pycore-img-list-concat \
 	pycore-img-list-concat-damerau \
 	pycore-img-list-concat-type-trap \
+	pycore-img-dict-tuple-key \
+	pycore-img-dict-tuple-empty \
+	pycore-img-damerau-memo \
+	pycore-img-damerau-ctor \
+	pycore-img-dict-empty-ctor \
+	pycore-img-dict-tuple-key-trap \
 	pycore-img-str-eq \
 	pycore-img-str-lt \
 	pycore-img-format-simple \
@@ -1328,6 +1340,31 @@ pycore-img-dict-hash-neg1:
 
 pycore-img-dict-str-keys:
 	$(call PYCORE_IMAGE_RUN,dict_str_keys,50000)
+
+# TYPE ceiling (#76): TUPLE dict keys used by PyBGL memo Damerau.
+pycore-img-damerau-ctor:
+	$(call PYCORE_IMAGE_RUN,damerau_ctor,100000)
+
+pycore-img-dict-empty-ctor:
+	$(call PYCORE_IMAGE_RUN,dict_empty_ctor,100000)
+
+pycore-img-dict-tuple-key:
+	$(call PYCORE_IMAGE_RUN,dict_tuple_key,100000)
+
+pycore-img-dict-tuple-empty:
+	$(call PYCORE_IMAGE_RUN,dict_tuple_empty,100000)
+
+pycore-img-damerau-memo:
+	$(call PYCORE_IMAGE_RUN,damerau_memo,100000)
+
+pycore-img-dict-tuple-key-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,dict_tuple_key_trap,1,50000)
+
+pycore-img-dict-tuple-key-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,dict_tuple_key,100000)
+
+pycore-img-damerau-memo-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,damerau_memo,100000)
 
 pycore-img-dict-large-pycore:
 	$(call PYCORE_IMAGE_RUN,dict_large_pycore,100000)
@@ -1703,6 +1740,9 @@ pycore-img-attr-all: \
 	pycore-img-list-repeat-type-trap \
 	pycore-img-list-concat pycore-img-list-concat-damerau \
 	pycore-img-list-concat-type-trap \
+	pycore-img-dict-tuple-key pycore-img-dict-tuple-empty pycore-img-damerau-memo \
+	pycore-img-damerau-ctor pycore-img-dict-empty-ctor \
+	pycore-img-dict-tuple-key-trap \
 	pycore-img-firmware-rom-subset pycore-img-firmware-iterators \
 	pycore-img-firmware-wave3a pycore-img-firmware-wave3-strings \
 	pycore-img-firmware-wave3-pow pycore-img-firmware-wave3-containers \
