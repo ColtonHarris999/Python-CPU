@@ -167,6 +167,11 @@ class TestMemoryMapMirror(unittest.TestCase):
             encoding.EXC_STACK_BASE + encoding.EXC_STACK_BYTES,
             encoding.FRAME_STACK_BASE,
         )
+        # P1: the bump allocator start-aligns to LINE_BYTES, so HEAP_BASE
+        # itself must already be on a line or the first object would pad.
+        self.assertEqual(encoding.HEAP_BASE % encoding.LINE_BYTES, 0)
+        self.assertEqual(encoding.align_line(encoding.HEAP_BASE), encoding.HEAP_BASE)
+        self.assertEqual(encoding.align_line(1), encoding.LINE_BYTES)
 
 
 if __name__ == "__main__":

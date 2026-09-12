@@ -50,6 +50,35 @@ localparam int PYCORE_GIC_WAYS         = 2;
 localparam int PYCORE_FTB_FRAMES       = 4;
 localparam int PYCORE_PERF_CNT_WIDTH   = 32;
 
+// Round `addr` up to the next multiple of PYCORE_LINE_BYTES. Matches
+// HeapImageBuilder._alloc start-alignment (memory_system_plan.md P1 / F3b):
+// each bump begins on a line so a 64-byte dict slot never straddles two lines.
+function automatic logic [31:0] pycore_align_line(input logic [31:0] addr);
+    pycore_align_line = (addr + 32'(PYCORE_LINE_BYTES - 1))
+                      & ~32'(PYCORE_LINE_BYTES - 1);
+endfunction
+
+// First byte of an allocation of `nbytes` starting at `ptr`.  Payloads of
+// PYCORE_LINE_BYTES or more start-align (F3b); smaller ones pack so the
+// firmware image does not spend a line per 32 B object.
+function automatic logic [31:0] pycore_heap_place(
+    input logic [31:0] ptr,
+    input logic [31:0] nbytes
+);
+    if (nbytes >= 32'(PYCORE_LINE_BYTES))
+        pycore_heap_place = pycore_align_line(ptr);
+    else
+        pycore_heap_place = ptr;
+endfunction
+
+// First free byte after placing `nbytes` at pycore_heap_place(ptr, nbytes).
+function automatic logic [31:0] pycore_heap_end(
+    input logic [31:0] ptr,
+    input logic [31:0] nbytes
+);
+    pycore_heap_end = pycore_heap_place(ptr, nbytes) + nbytes;
+endfunction
+
 // =========================================================================
 // Primary 4-bit tag map (tag restructure).
 //
@@ -1518,9 +1547,10 @@ endfunction
 // Deleted: key tag == PY_TAG_TOMBSTONE (skip during probe).
 // Slot count is a power of two (or 0); probe mask = slot_count - 1.
 //
-// BUILD_MAP may allocate object+order+table contiguously
-// (pycore_dict_alloc_bytes); grow relocates the table only and updates
-// table_ptr while preserving/copying order. Slot helpers take the TABLE base.
+// BUILD_MAP places object, then order, then table with each region
+// start-aligned to PYCORE_LINE_BYTES (pycore_dict_place_*); grow relocates
+// the table (and order, when both grow) and updates the pointers while
+// the object address stays stable. Slot helpers take the TABLE base.
 //
 // Hash: pycore_dict_key_hash(tag, value) & (slot_count - 1).
 // Supported key tags: CONTROL (None), INT, BOOL, FLOAT, SHORT_STR, LONG_STR.
@@ -1957,14 +1987,51 @@ function automatic logic [31:0] pycore_dict_order_tag_addr(
     end
 endfunction
 
+// Line-aligned BUILD_MAP placement matching HeapImageBuilder (object, then
+// order, then table — each `_alloc` start-aligned). The 48-byte object sits
+// at the aligned heap pointer; 16 B of pad puts the order buffer and the
+// 64-byte hash slots on line boundaries (report F3b).
+function automatic logic [31:0] pycore_dict_place_obj(input logic [31:0] ptr);
+    // 48-byte object packs; the order/table `_alloc`s start-align.
+    pycore_dict_place_obj = pycore_heap_place(ptr, 32'd48);
+endfunction
+
+function automatic logic [31:0] pycore_dict_place_order(input logic [31:0] ptr);
+    pycore_dict_place_order = pycore_heap_place(
+        pycore_dict_place_obj(ptr) + 32'd48,
+        32'd128); // min live order is 4*32; force line align
+endfunction
+
+function automatic logic [31:0] pycore_dict_place_table(
+    input logic [31:0] ptr,
+    input logic [31:0] slot_count
+);
+    if (slot_count == 32'd0)
+        pycore_dict_place_table = 32'd0;
+    else
+        pycore_dict_place_table = pycore_heap_place(
+            pycore_dict_place_order(ptr) + (slot_count << 5),
+            slot_count << 6);
+endfunction
+
+function automatic logic [31:0] pycore_dict_place_end(
+    input logic [31:0] ptr,
+    input logic [31:0] slot_count
+);
+    if (slot_count == 32'd0)
+        pycore_dict_place_end = pycore_dict_place_obj(ptr) + 32'd48;
+    else
+        pycore_dict_place_end = pycore_dict_place_table(ptr, slot_count)
+                              + (slot_count << 6);
+endfunction
+
 function automatic logic [31:0] pycore_dict_alloc_bytes(
     input logic [31:0] slot_count
 );
     begin
-        // Contiguous BUILD_MAP: 48-byte object + 32-byte/order key +
-        // 64-byte hash slot. Grow preserves the stable object.
-        pycore_dict_alloc_bytes = 32'd48 + (slot_count << 5) +
-                                  (slot_count << 6);
+        // Bytes consumed from a line-aligned heap pointer (includes the
+        // 16 B pad between the 48-byte object and the order buffer).
+        pycore_dict_alloc_bytes = pycore_dict_place_end(32'd0, slot_count);
     end
 endfunction
 
@@ -2070,12 +2137,40 @@ function automatic logic [31:0] pycore_set_table_ptr_addr(
     end
 endfunction
 
+function automatic logic [31:0] pycore_set_place_obj(input logic [31:0] ptr);
+    pycore_set_place_obj = pycore_heap_place(ptr, 32'd32);
+endfunction
+
+function automatic logic [31:0] pycore_set_place_table(
+    input logic [31:0] ptr,
+    input logic [31:0] slot_count
+);
+    if (slot_count == 32'd0)
+        pycore_set_place_table = 32'd0;
+    else
+        pycore_set_place_table = pycore_heap_place(
+            pycore_set_place_obj(ptr) + 32'd32,
+            slot_count << 5);
+endfunction
+
+function automatic logic [31:0] pycore_set_place_end(
+    input logic [31:0] ptr,
+    input logic [31:0] slot_count
+);
+    if (slot_count == 32'd0)
+        pycore_set_place_end = pycore_set_place_obj(ptr) + 32'd32;
+    else
+        pycore_set_place_end = pycore_set_place_table(ptr, slot_count)
+                             + (slot_count << 5);
+endfunction
+
 function automatic logic [31:0] pycore_set_alloc_bytes(
     input logic [31:0] slot_count
 );
     begin
-        // Contiguous BUILD_SET: 32-byte object + slot_count * 32-byte slots.
-        pycore_set_alloc_bytes = 32'd32 + (slot_count << 5);
+        // Bytes consumed from a line-aligned heap pointer (object + pad +
+        // table), matching HeapImageBuilder's two `_alloc` calls.
+        pycore_set_alloc_bytes = pycore_set_place_end(32'd0, slot_count);
     end
 endfunction
 
@@ -2328,6 +2423,37 @@ function automatic logic [31:0] pycore_list_buf_bytes(
     begin
         pycore_list_buf_bytes = capacity << 5;
     end
+endfunction
+
+// Line-aligned BUILD_LIST placement matching HeapImageBuilder: 32-byte
+// object, then (if capacity > 0) a buffer whose start is rounded up to
+// PYCORE_LINE_BYTES so 32-byte elements pack two-to-a-line.
+function automatic logic [31:0] pycore_list_place_obj(input logic [31:0] ptr);
+    pycore_list_place_obj = pycore_heap_place(ptr, pycore_list_obj_bytes());
+endfunction
+
+function automatic logic [31:0] pycore_list_place_buf(
+    input logic [31:0] ptr,
+    input logic [31:0] capacity
+);
+    if (capacity == 32'd0)
+        pycore_list_place_buf = 32'd0;
+    else
+        pycore_list_place_buf = pycore_heap_place(
+            pycore_list_place_obj(ptr) + pycore_list_obj_bytes(),
+            pycore_list_buf_bytes(capacity));
+endfunction
+
+function automatic logic [31:0] pycore_list_place_end(
+    input logic [31:0] ptr,
+    input logic [31:0] capacity
+);
+    if (capacity == 32'd0)
+        pycore_list_place_end = pycore_list_place_obj(ptr)
+                              + pycore_list_obj_bytes();
+    else
+        pycore_list_place_end = pycore_list_place_buf(ptr, capacity)
+                              + pycore_list_buf_bytes(capacity);
 endfunction
 
 // -------------------------------------------------------------------------

@@ -72,14 +72,21 @@ CONT_RAISE: begin
                             container_probe_r        <= 32'd7;
                         end else if (pycore_ob_kind(container_rd_data_r) ==
                                      PY_OBK_TYPE) begin
-                            if ((heap_ptr_r + PYCORE_OBJ_EXCEPTION_BYTES) >
+                            if (pycore_heap_end(
+                                    heap_ptr_r, PYCORE_OBJ_EXCEPTION_BYTES) >
                                     PYCORE_HEAP_LIMIT) begin
                                 container_mem_fault_r <= 1'b1;
                             end else begin
-                                container_base_r      <= heap_ptr_r;
-                                heap_ptr_r <= heap_ptr_r +
-                                    PYCORE_OBJ_EXCEPTION_BYTES;
-                                container_dmem_addr_r  <= heap_ptr_r;
+                                container_base_r      <=
+                                    pycore_heap_place(
+                                        heap_ptr_r,
+                                        PYCORE_OBJ_EXCEPTION_BYTES);
+                                heap_ptr_r <= pycore_heap_end(
+                                    heap_ptr_r, PYCORE_OBJ_EXCEPTION_BYTES);
+                                container_dmem_addr_r  <=
+                                    pycore_heap_place(
+                                        heap_ptr_r,
+                                        PYCORE_OBJ_EXCEPTION_BYTES);
                                 container_dmem_we_r    <= 1'b1;
                                 container_dmem_wdata_r <= pycore_pack_ob_head(
                                     PY_OBK_EXCEPTION, 32'd0, 64'd0);

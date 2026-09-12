@@ -1567,17 +1567,18 @@ module pycore_core #(
         container_probe_tag_r, container_rd_data_r);
 
     // **kwargs dict being packed by the CALL binder (subs 52-55).  The object,
-    // its order sidecar and its hash table are allocated contiguously, exactly
-    // like BUILD_MAP, so only base + slot count need to be carried around.
+    // order sidecar and hash table are placed with the same line-aligned
+    // layout as BUILD_MAP, so order/table pointers are derived from base +
+    // slot count via pycore_dict_place_*.
     logic [31:0] cont_varkw_base;
     logic [31:0] cont_varkw_slots;
     logic [31:0] cont_varkw_order_ptr;
     logic [31:0] cont_varkw_table_ptr;
     assign cont_varkw_base      = call_varkw_dict_r[31:0];
     assign cont_varkw_slots     = call_varkw_dict_r[63:32];
-    assign cont_varkw_order_ptr = cont_varkw_base + 32'd48;
-    assign cont_varkw_table_ptr = cont_varkw_base + 32'd48 +
-                                  (cont_varkw_slots << 5);
+    assign cont_varkw_order_ptr = pycore_dict_place_order(cont_varkw_base);
+    assign cont_varkw_table_ptr = pycore_dict_place_table(
+                                      cont_varkw_base, cont_varkw_slots);
 
     // Probe advance inside the **kwargs table: (probe + 1) & (slots - 1).
     logic [31:0] cont_varkw_probe_next;
@@ -1675,9 +1676,6 @@ module pycore_core #(
         128'h75f5f6c656e5f5f00000000000000000;
     // Empty dict for new instances: 4 slots (BUILD_MAP min for 0 pairs).
     localparam logic [31:0] CALL_EMPTY_DICT_SLOTS = 32'd4;
-    localparam logic [31:0] CALL_TYPE_ALLOC_BYTES =
-        32'd48 + (CALL_EMPTY_DICT_SLOTS << 5) +
-        (CALL_EMPTY_DICT_SLOTS << 6) + PYCORE_OBJ_INSTANCE_BYTES;
 
     always_comb begin
         state_next = state_r;  // default: hold current state

@@ -283,8 +283,9 @@ class TestListObjectBufferLayout(unittest.TestCase):
         self.assertEqual(length, 2)
 
         ob_item = builder.words[obj_addr + 16]
-        # Buffer immediately follows the 32-byte object.
-        self.assertEqual(ob_item, obj_addr + 32)
+        # Buffer start-aligns to LINE_BYTES (object is 32 B, so 32 B of pad).
+        self.assertEqual(ob_item, encoding.align_line(obj_addr + 32))
+        self.assertEqual(ob_item % encoding.LINE_BYTES, 0)
 
         # Element 0 at ob_item+0 (value) / ob_item+16 (tag).
         self.assertEqual(builder.words[ob_item], 7)
@@ -293,8 +294,8 @@ class TestListObjectBufferLayout(unittest.TestCase):
         self.assertEqual(builder.words[ob_item + 32], 9)
         self.assertEqual(builder.words[ob_item + 48], heap_image.TAG_INT)
 
-        # Total allocation: 32 (object) + 2*32 (buffer).
-        self.assertEqual(builder.end_ptr, obj_addr + 32 + 64)
+        # Total allocation: aligned object + pad + 2*32 (buffer).
+        self.assertEqual(builder.end_ptr, ob_item + 64)
 
     def test_alias_same_handle_round_trips(self) -> None:
         """Two RF slots referencing the same list handle name the same object.
@@ -351,7 +352,8 @@ class TestListWithSpareCapacity(unittest.TestCase):
         self.assertEqual(length, 1)
 
         ob_item = builder.words[obj_addr + 16]
-        self.assertEqual(ob_item, obj_addr + 32)
+        self.assertEqual(ob_item, encoding.align_line(obj_addr + 32))
+        self.assertEqual(ob_item % encoding.LINE_BYTES, 0)
         # Buffer reserved for 4 elements (128 bytes), only element 0 written.
         self.assertEqual(builder.end_ptr, ob_item + 4 * 32)
         self.assertEqual(builder.words[ob_item], 7)
@@ -363,6 +365,46 @@ class TestListWithSpareCapacity(unittest.TestCase):
             builder.alloc_list_with_capacity(
                 [(heap_image.TAG_INT, 1), (heap_image.TAG_INT, 2)], capacity=1
             )
+
+
+class TestLineAlignedHeapAlloc(unittest.TestCase):
+    """P1: every `_alloc` starts on a LINE_BYTES boundary (report F3b)."""
+
+    def test_dict_order_and_table_are_line_aligned(self) -> None:
+        builder = heap_image.HeapImageBuilder()
+        handle = builder.alloc_dict(
+            [((heap_image.TAG_INT, 1), (heap_image.TAG_INT, 2))],
+            slot_count=4,
+        )
+        obj = heap_image.mut_addr(handle[1])
+        packed = builder.words[obj + 32]
+        table = packed & ((1 << 64) - 1)
+        order = packed >> 64
+        self.assertEqual(order % encoding.LINE_BYTES, 0)
+        self.assertEqual(table % encoding.LINE_BYTES, 0)
+        self.assertEqual(order, encoding.align_line(obj + 48))
+        self.assertEqual(table, encoding.align_line(order + 4 * 32))
+
+    def test_list_buffer_is_line_aligned_when_buf_is_a_line(self) -> None:
+        builder = heap_image.HeapImageBuilder()
+        handle = builder.alloc_list(
+            [(heap_image.TAG_INT, 1), (heap_image.TAG_INT, 2)]
+        )
+        obj = heap_image.mut_addr(handle[1])
+        ob_item = builder.words[obj + 16]
+        self.assertEqual(ob_item % encoding.LINE_BYTES, 0)
+        self.assertEqual(ob_item, encoding.align_line(obj + 32))
+
+    def test_code_object_is_line_aligned(self) -> None:
+        builder = heap_image.HeapImageBuilder()
+        empty = builder.alloc_tuple([])
+        names = builder.alloc_tuple([])
+        varnames = builder.alloc_tuple([])
+        handle = builder.add_code_object(
+            0, empty, names, varnames, stacksize=1, nlocals=0, argcount=0
+        )
+        addr = handle[1]
+        self.assertEqual(addr % encoding.LINE_BYTES, 0)
 
 
 if __name__ == "__main__":

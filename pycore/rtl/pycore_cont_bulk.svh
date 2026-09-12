@@ -183,13 +183,20 @@
                                                 need, {32'b0, container_slot_count_r})) begin
                                             new_slots = pycore_dict_grow_slots(
                                                 need, container_slot_count_r);
-                                            if ((heap_ptr_r + (new_slots << 5))
+                                            if (pycore_heap_end(
+                                                    heap_ptr_r,
+                                                    (new_slots << 5))
                                                     > PYCORE_HEAP_LIMIT) begin
                                                 container_mem_fault_r <= 1'b1;
                                             end else begin
-                                                container_buf_r        <= heap_ptr_r;
+                                                container_buf_r        <=
+                                                    pycore_heap_place(
+                                                        heap_ptr_r,
+                                                        (new_slots << 5));
                                                 heap_ptr_r             <=
-                                                    heap_ptr_r + (new_slots << 5);
+                                                    pycore_heap_end(
+                                                        heap_ptr_r,
+                                                        (new_slots << 5));
                                                 container_slot_count_r <= new_slots;
                                                 container_bulk_mode_r  <= BULK_MODE_REHASH;
                                                 container_src_idx_r    <= 32'd0;
@@ -728,14 +735,28 @@
                                                 need, container_slot_count_r);
                                             ord_bytes = new_slots << 5;
                                             tbl_bytes = new_slots << 6;
-                                            if ((heap_ptr_r + ord_bytes + tbl_bytes)
+                                            if (pycore_heap_end(
+                                                    pycore_heap_end(
+                                                        heap_ptr_r, ord_bytes),
+                                                    tbl_bytes)
                                                     > PYCORE_HEAP_LIMIT) begin
                                                 container_mem_fault_r <= 1'b1;
                                             end else begin
-                                                container_order_ptr_r  <= heap_ptr_r;
-                                                container_buf_r        <= heap_ptr_r + ord_bytes;
+                                                container_order_ptr_r  <=
+                                                    pycore_heap_place(
+                                                        heap_ptr_r, ord_bytes);
+                                                container_buf_r        <=
+                                                    pycore_heap_place(
+                                                        pycore_heap_end(
+                                                            heap_ptr_r,
+                                                            ord_bytes),
+                                                        tbl_bytes);
                                                 heap_ptr_r             <=
-                                                    heap_ptr_r + ord_bytes + tbl_bytes;
+                                                    pycore_heap_end(
+                                                        pycore_heap_end(
+                                                            heap_ptr_r,
+                                                            ord_bytes),
+                                                        tbl_bytes);
                                                 container_slot_count_r <= new_slots;
                                                 container_bulk_mode_r  <= BULK_MODE_REHASH;
                                                 container_src_idx_r    <= 32'd0;
@@ -1246,16 +1267,17 @@
                                         logic [31:0] c_table;
                                         new_slots = pycore_dict_grow_slots(
                                             container_bulk_size_r, 32'd0);
-                                        c_base  = heap_ptr_r;
-                                        c_order = heap_ptr_r + 32'd48;
-                                        c_table = heap_ptr_r + 32'd48 + (new_slots << 5);
-                                        if ((heap_ptr_r
-                                                + pycore_dict_alloc_bytes(new_slots))
+                                        c_base  = pycore_dict_place_obj(heap_ptr_r);
+                                        c_order = pycore_dict_place_order(heap_ptr_r);
+                                        c_table = pycore_dict_place_table(
+                                            heap_ptr_r, new_slots);
+                                        if (pycore_dict_place_end(
+                                                heap_ptr_r, new_slots)
                                                 > PYCORE_HEAP_LIMIT) begin
                                             container_mem_fault_r <= 1'b1;
                                         end else begin
-                                            heap_ptr_r <= heap_ptr_r +
-                                                pycore_dict_alloc_bytes(new_slots);
+                                            heap_ptr_r <= pycore_dict_place_end(
+                                                heap_ptr_r, new_slots);
                                             container_base_r         <= c_base;
                                             container_order_ptr_r    <= c_order;
                                             container_buf_r          <= c_table;

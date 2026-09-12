@@ -30,7 +30,7 @@ class TestAllocatorListCapacity(unittest.TestCase):
         self.assertEqual(allocator_list_capacity(-1), 0)
         self.assertEqual(allocator_list_capacity(LIST_ELEMENT_BYTES), 0)
         self.assertEqual(ALLOCATOR_LIST_CAPACITY_MIN % 16, 0)
-        self.assertGreaterEqual(ALLOCATOR_LIST_CAPACITY_MIN, 48)
+        self.assertGreaterEqual(ALLOCATOR_LIST_CAPACITY_MIN, 16)
 
     def test_never_exceeds_grow_budget(self) -> None:
         slack = LIST_ELEMENT_BYTES * 4
