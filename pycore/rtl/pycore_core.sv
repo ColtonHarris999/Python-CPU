@@ -202,6 +202,11 @@ module pycore_core #(
     logic [RF_AW-1:0] return_wb_addr_r;
 
     // Fetch handshake bookkeeping.
+    // S_WB (and CALL/RETURN) pulse fetch_skip_r so the instruction still
+    // sitting on fetch's outputs is not re-latched when we re-enter S_FETCH.
+    // That skip lasts one unstalled S_FETCH cycle. It must drop even if
+    // instr_valid stays high: the P4 line buffer can replace the slot on
+    // that same cycle, and waiting for valid to go low would skip it.
     logic                          fetch_skip_r;
     logic                          redirect_pending_r;
     logic [31:0]                   redirect_tgt_r;
@@ -2027,7 +2032,7 @@ module pycore_core #(
                         cur_arg_r          <= if_arg;
                         cur_pc_r           <= if_pc;
                         // state_next = S_DECODE (from always_comb)
-                    end else if (!if_instr_valid) begin
+                    end else begin
                         fetch_skip_r <= 1'b0;
                     end
                 end

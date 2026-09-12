@@ -87,13 +87,7 @@ module pycore_fetch #(
         logic [7:0]  fetched_opcode;
         logic [31:0] fetched_arg;
         logic [31:0] folded_arg;
-        logic        found;
-        logic [31:0] prefix;
-        logic        have;
-        logic [31:0] next_pc;
-        logic [DATA_WIDTH-1:0] slot;
-        logic [7:0]  op;
-        logic [31:0] arg;
+        logic [DATA_WIDTH-1:0] slot_bits;
 
         if (!rst_n_i) begin
             pc_r            <= 32'b0;
@@ -126,40 +120,34 @@ module pycore_fetch #(
                     arg_prefix_r  <= 32'b0;
                     awaiting_r    <= 1'b0;
                 end else if (line_hit) begin
-                    // Walk the rest of the captured line. CACHE / EXTENDED_ARG
-                    // fold here; the emitted PC is still the real slot index.
-                    found   = 1'b0;
-                    prefix  = arg_prefix_r;
-                    have    = have_prefix_r;
-                    next_pc = pc_r;
+                    // One slot per cycle from the captured line — no mem req.
+                    // CACHE / EXTENDED_ARG still skip without a request; the
+                    // emitted PC is the real slot index (not compacted).
+                    // A hit may raise instr_valid the cycle after S_WB's
+                    // fetch_skip pulse; the core drops skip even if valid
+                    // stays high (see pycore_core.sv).
                     buf_hit_count_r <= buf_hit_count_r + 1'b1;
-                    for (int s = 0; s < SLOTS_PER_LINE; s++) begin
-                        if (!found && (s >= int'(pc_r[SLOT_W-1:0]))) begin
-                            slot = line_slot(line_data_r, s[SLOT_W-1:0]);
-                            op   = slot[7:0];
-                            arg  = slot[39:8];
-                            folded_arg = have ? ((prefix << 8) | arg[7:0]) : arg;
-                            if (op == PY_OP_CACHE) begin
-                                next_pc = next_pc + 32'd1;
-                            end else if (op == PY_OP_EXTENDED_ARG) begin
-                                prefix  = folded_arg;
-                                have    = 1'b1;
-                                next_pc = next_pc + 32'd1;
-                            end else begin
-                                instr_valid_o <= 1'b1;
-                                opcode_o      <= op;
-                                arg_o         <= folded_arg;
-                                pc_o          <= next_pc;
-                                have          = 1'b0;
-                                prefix        = 32'b0;
-                                next_pc       = next_pc + 32'd1;
-                                found         = 1'b1;
-                            end
-                        end
+                    slot_bits       = line_slot(line_data_r, pc_r[SLOT_W-1:0]);
+                    fetched_opcode = slot_bits[7:0];
+                    fetched_arg    = slot_bits[39:8];
+                    folded_arg     = have_prefix_r ?
+                                     ((arg_prefix_r << 8) | fetched_arg[7:0])
+                                     : fetched_arg;
+                    if (fetched_opcode == PY_OP_CACHE) begin
+                        pc_r <= pc_r + 1;
+                    end else if (fetched_opcode == PY_OP_EXTENDED_ARG) begin
+                        arg_prefix_r  <= folded_arg;
+                        have_prefix_r <= 1'b1;
+                        pc_r          <= pc_r + 1;
+                    end else begin
+                        instr_valid_o <= 1'b1;
+                        opcode_o      <= fetched_opcode;
+                        arg_o         <= folded_arg;
+                        pc_o          <= pc_r;
+                        have_prefix_r <= 1'b0;
+                        arg_prefix_r  <= 32'b0;
+                        pc_r          <= pc_r + 1;
                     end
-                    pc_r          <= next_pc;
-                    have_prefix_r <= have;
-                    arg_prefix_r  <= prefix;
                 end else if (!awaiting_r) begin
                     awaiting_r      <= 1'b1;
                     mem_req_count_r <= mem_req_count_r + 1'b1;
@@ -169,6 +157,10 @@ module pycore_fetch #(
                         line_valid_r <= 1'b1;
                         line_data_r  <= imem_line_i;
                         line_tag_r   <= pc_r[31:SLOT_W];
+                        if (line_slot(imem_line_i, pc_r[SLOT_W-1:0]) != imem_rdata_i)
+                            $error("fetch: rdata/line mismatch pc=%0d rdata=%h slot=%h",
+                                   pc_r, imem_rdata_i,
+                                   line_slot(imem_line_i, pc_r[SLOT_W-1:0]));
                     end
 
                     fetched_opcode = imem_rdata_i[7:0];

@@ -142,6 +142,38 @@ module tb_fetch;
         check(mem_reqs == 32'd1, $sformatf("8 nops should be 1 mem req, got %0d", mem_reqs));
         check(buf_hits != 0, "expected buffer hits after the fill");
 
+        // Core-shaped skip: after latching, stall (execute), then unstall
+        // one cycle with fetch_skip set. A buffer hit may keep instr_valid
+        // high; skip must drop after that cycle or later slots are lost.
+        reset_dut();
+        begin
+            int got, n;
+            bit skip;
+            got  = 0;
+            n    = 0;
+            skip = 1'b0;
+            stall = 1'b0;
+            while (got < 8) begin
+                @(negedge clk);
+                n++;
+                check(n < 256, "skip-walk timeout");
+                if (!stall && instr_valid && !skip) begin
+                    check(pc == 32'(got),
+                          $sformatf("skip-walk pc want %0d got %0d", got, pc));
+                    check(opcode == PY_OP_NOP, "skip-walk opcode");
+                    got++;
+                    skip  = 1'b1;
+                    stall = 1'b1;
+                    repeat (3) @(negedge clk);
+                    stall = 1'b0;
+                end else if (!stall && skip) begin
+                    skip = 1'b0;
+                end
+            end
+            check(mem_reqs == 32'd1,
+                  $sformatf("skip-walk should be 1 mem req, got %0d", mem_reqs));
+        end
+
         // --- CACHE, CACHE, NOP(arg=9), CACHE, NOP(arg=10): fold inside buffer
         slots[0] = mk_slot(PY_OP_CACHE, 0);
         slots[1] = mk_slot(PY_OP_CACHE, 0);
