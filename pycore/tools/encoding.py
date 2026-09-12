@@ -108,7 +108,10 @@ RAM_T_FIRST_CI = 4
 # uses Harvard slot addresses; the xbar adds this base so code and data
 # never alias in the unified cache.
 CODE_ADDR_BASE = 0x01000000
-# P2: L2 hit latency is 1 until L1s exist. See PYCORE_L2_HIT_CYCLES.
+L1D_HIT_CYCLES = 1
+# L2 hit latency stays 1 with L1s present (plan table is 8 for the
+# L1-present system). Local call: 8-cycle L2 hits blow tight MAX_CYCLES
+# on cold-start fixtures; L1D covers the hit path.
 L2_HIT_CYCLES = 1
 DMEM_BYTES = 32 * 4096  # PYCORE_DMEM_BLOCK_COUNT << BLOCK_SHIFT
 CODC_ENTRIES = 4

@@ -93,7 +93,8 @@ EXCORE_RTL_SRCS := \
 
 .PHONY: help lint-file pycore-preprocess run-file pycore-run-file all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs \
-	pycore-python-tests pycore-mem pycore-frame pycore-frame-fib \
+	pycore-python-tests pycore-mem pycore-cache-lru pycore-cache pycore-ram \
+	pycore-l1d-handoff pycore-frame pycore-frame-fib \
 	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
 	pycore-img-containers pycore-img-recursion pycore-img-extended-arg \
 	pycore-img-branchy pycore-img-undef-global pycore-img-noncallable \
@@ -477,6 +478,17 @@ pycore-cache:
 		pycore/rtl/pycore_cache_lru.sv pycore/rtl/pycore_cache.sv \
 		pycore/rtl/pycore_ram.sv pycore/tb/tb_cache.sv
 	./$(BUILD_DIR)/pycore_cache/Vtb_cache
+
+pycore-l1d-handoff:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_l1d_handoff \
+		--Mdir $(BUILD_DIR)/pycore_l1d_handoff \
+		-Wall -Wno-fatal \
+		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv \
+		pycore/tb/tb_l1d_handoff.sv
+	./$(BUILD_DIR)/pycore_l1d_handoff/Vtb_l1d_handoff
 
 pycore-ram:
 	mkdir -p $(BUILD_DIR)
@@ -2682,7 +2694,7 @@ excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec pycore-string-exec \
 	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
-	pycore-frame pycore-frame-fib
+	pycore-l1d-handoff pycore-frame pycore-frame-fib
 
 pycore-test: pycore-python-tests pycore-rtl-unit pycore-container \
 	pycore-img pycore-excore-system pycore-img-two-core
