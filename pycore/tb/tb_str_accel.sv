@@ -535,6 +535,56 @@ module tb_str_accel;
               mk_none(), PYCORE_HEAP_BASE);
         check(res_trap && res_code == PY_TRAP_TYPE, "partition empty sep");
 
+        issue(PY_SA_ORD, 0, mk_short("A"), mk_none(), mk_none(), PYCORE_HEAP_BASE);
+        check(!res_trap, "ord A trap");
+        check(res_entry[31:0] == 32'd65, "ord A");
+
+        issue(PY_SA_ORD, 0, mk_short("ab"), mk_none(), mk_none(), PYCORE_HEAP_BASE);
+        check(res_trap && res_code == PY_TRAP_TYPE, "ord len");
+
+        issue(PY_SA_CHR, 0, mk_int(65), mk_none(), mk_none(), PYCORE_HEAP_BASE);
+        expect_short("A", "chr A");
+
+        issue(PY_SA_CHR, 0, mk_int(32'h0011_0000), mk_none(), mk_none(),
+              PYCORE_HEAP_BASE);
+        check(res_trap && res_code == PY_TRAP_TYPE, "chr range");
+
+        begin
+            logic [PYCORE_ENTRY_WIDTH-1:0] h_alpha, h_emoji, h_chr;
+            logic [31:0] u_alpha [0:7];
+            logic [31:0] u_emoji [0:7];
+            u_alpha[0] = 32'h03B1;
+            u_emoji[0] = 32'h1F600;
+            plant_units(PYCORE_HEAP_BASE + 32'h200, 32'd1, 3'd2, u_alpha, h_alpha);
+            plant_units(PYCORE_HEAP_BASE + 32'h240, 32'd1, 3'd4, u_emoji, h_emoji);
+            issue(PY_SA_ORD, 0, h_alpha, mk_none(), mk_none(),
+                  PYCORE_HEAP_BASE + 32'h280);
+            check(!res_trap, "ord alpha trap");
+            check(res_entry[31:0] == 32'h03B1, "ord alpha");
+            issue(PY_SA_ORD, 0, h_emoji, mk_none(), mk_none(),
+                  PYCORE_HEAP_BASE + 32'h280);
+            check(res_entry[31:0] == 32'h1F600, "ord emoji");
+            issue(PY_SA_CHR, 0, mk_int(32'h03B1), mk_none(), mk_none(),
+                  PYCORE_HEAP_BASE + 32'h280);
+            check(!res_trap, "chr alpha trap");
+            h_chr = res_entry;
+            issue(PY_SA_ORD, 0, h_chr, mk_none(), mk_none(),
+                  PYCORE_HEAP_BASE + 32'h2C0);
+            check(res_entry[31:0] == 32'h03B1, "chr/ord alpha");
+            issue(PY_SA_CHR, 0, mk_int(32'h1F600), mk_none(), mk_none(),
+                  PYCORE_HEAP_BASE + 32'h300);
+            h_chr = res_entry;
+            issue(PY_SA_ORD, 0, h_chr, mk_none(), mk_none(),
+                  PYCORE_HEAP_BASE + 32'h340);
+            check(res_entry[31:0] == 32'h1F600, "chr/ord emoji");
+            issue(PY_SA_CHR, 0, mk_int(32'hD800), mk_none(), mk_none(),
+                  PYCORE_HEAP_BASE + 32'h380);
+            h_chr = res_entry;
+            issue(PY_SA_ORD, 0, h_chr, mk_none(), mk_none(),
+                  PYCORE_HEAP_BASE + 32'h3C0);
+            check(res_entry[31:0] == 32'hD800, "chr/ord surrogate");
+        end
+
         $display("tb_str_accel PASS");
         $finish;
     end

@@ -193,6 +193,8 @@ localparam logic [5:0] PY_SA_SPLIT     = 6'd14;
 localparam logic [5:0] PY_SA_AFFIX     = 6'd15;
 localparam logic [5:0] PY_SA_ZFILL     = 6'd16;
 localparam logic [5:0] PY_SA_EXPANDTABS = 6'd17;
+localparam logic [5:0] PY_SA_ORD       = 6'd18;
+localparam logic [5:0] PY_SA_CHR       = 6'd19;
 
 localparam logic [3:0] PY_SA_SPLIT_FWD        = 4'd0;
 localparam logic [3:0] PY_SA_SPLIT_REV        = 4'd1;

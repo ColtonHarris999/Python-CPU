@@ -1,13 +1,15 @@
-"""Lone surrogates have no well-formed UTF-8 encoding: PY_TRAP_TYPE (trap 1).
+"""Lone surrogates are valid code points under fixed-width kind 2.
 
-Deviation: CPython allows chr(0xD800). PyCore stores strings as UTF-8 and every
-string path (BI_LEN, FOR_ITER, s[i]) assumes well-formed input, so BI_CHR
-rejects U+D800..U+DFFF instead.
+Deviation retired: the UTF-8 SHORT path rejected U+D800..U+DFFF. STRACC stores
+code units, so chr(0xD800) round-trips like CPython.
 """
 
 
 def managed_entry():
-    return chr(55296)
+    s = chr(55296)
+    if ord(s) == 55296:
+        return 1
+    return 0
 
 
 managed_entry()

@@ -1548,105 +1548,27 @@
                                     call_sub_r               <= 6'd0;
                                     call_phase_r             <= 4'd3;
                                 end
-                                // ORD arg0: one-character STR → INT code point.
-                                // A one-character string is always SHORT_STR
-                                // (every string of <= 15 bytes is), so a
-                                // LONG_STR is by construction longer than one
-                                // character and is a length error here.  Bytes
-                                // are inline in the handle, so this needs no
-                                // string_mem access and completes in one cycle.
-                                6'd52: begin
-                                    begin
-                                        logic [31:0] ord_bytes;
-                                        logic [2:0]  ord_width;
-                                        logic        ord_conts_ok;
-                                        ord_bytes = {
-                                            pycore_short_str_byte(
-                                                cont_rf_rs1_val, 3),
-                                            pycore_short_str_byte(
-                                                cont_rf_rs1_val, 2),
-                                            pycore_short_str_byte(
-                                                cont_rf_rs1_val, 1),
-                                            pycore_short_str_byte(
-                                                cont_rf_rs1_val, 0)};
-                                        ord_width = pycore_utf8_char_width(
-                                            ord_bytes[7:0]);
-                                        ord_conts_ok =
-                                            ((ord_width < 3'd2) ||
-                                             pycore_utf8_cont_valid(
-                                                 ord_bytes[15:8])) &&
-                                            ((ord_width < 3'd3) ||
-                                             pycore_utf8_cont_valid(
-                                                 ord_bytes[23:16])) &&
-                                            ((ord_width < 3'd4) ||
-                                             pycore_utf8_cont_valid(
-                                                 ord_bytes[31:24]));
-                                        if ((cont_rf_rs1_tag !=
-                                                 PY_TAG_SHORT_STR) ||
-                                            (ord_width == 3'd0) ||
-                                            !ord_conts_ok ||
-                                            ({1'b0, ord_width} !=
-                                             pycore_short_str_size(
-                                                 cont_rf_rs1_val))) begin
-                                            // Not a string, malformed UTF-8, or
-                                            // not exactly one character.
-                                            container_type_trap_r <= 1'b1;
-                                        end else begin
-                                            container_wb_we_r   <= 1'b1;
-                                            container_wb_addr_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd3);
-                                            container_wb_data_r <=
-                                                pycore_make_entry(
-                                                    PY_TAG_INT,
-                                                    {{96{1'b0}},
-                                                     pycore_utf8_decode(
-                                                         ord_width,
-                                                         ord_bytes)});
-                                            tos_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd2);
-                                            fetch_skip_r <= 1'b1;
-                                            call_phase_r <= CALL_PHASE_DONE;
-                                            call_sub_r   <= 6'd0;
-                                        end
-                                    end
-                                end
-                                // CHR arg0: INT code point → one-character
-                                // SHORT_STR.  Also one cycle: the 1-4 encoded
-                                // bytes live inline in the result handle.
-                                6'd53: begin
-                                    begin
-                                        logic [31:0] chr_cp;
-                                        logic [2:0]  chr_width;
-                                        chr_cp    = cont_rf_rs1_val[31:0];
-                                        chr_width = pycore_utf8_encode_width(
-                                            chr_cp);
-                                        if (((cont_rf_rs1_tag != PY_TAG_INT) &&
-                                             (cont_rf_rs1_tag !=
-                                              PY_TAG_BOOL)) ||
-                                            (cont_rf_rs1_val[127:32] !=
-                                             96'b0) ||
-                                            (chr_width == 3'd0) ||
-                                            pycore_utf8_is_surrogate(
-                                                chr_cp)) begin
-                                            // Non-int, negative (high bits
-                                            // set), > U+10FFFF, or a surrogate.
-                                            container_type_trap_r <= 1'b1;
-                                        end else begin
-                                            container_wb_we_r   <= 1'b1;
-                                            container_wb_addr_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd3);
-                                            container_wb_data_r <=
-                                                pycore_make_short_str_entry(
-                                                    {1'b0, chr_width},
-                                                    pycore_utf8_encode_payload(
-                                                        chr_cp, chr_width));
-                                            tos_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd2);
-                                            fetch_skip_r <= 1'b1;
-                                            call_phase_r <= CALL_PHASE_DONE;
-                                            call_sub_r   <= 6'd0;
-                                        end
-                                    end
+                                // ORD / CHR: STRACC SA_ORD / SA_CHR. SHORT
+                                // 1-char ORD is a handle read; LONG 1-char
+                                // ORD and kind-2/4 CHR need the accelerator
+                                // (fixed-width units, not UTF-8).
+                                6'd52, 6'd53: begin
+                                    stracc_call_id_r  <= 6'd0;
+                                    stracc_call_op_r  <= (call_sub_r == 6'd52)
+                                                       ? PY_SA_ORD : PY_SA_CHR;
+                                    stracc_call_var_r <= 4'd0;
+                                    stracc_call_a_r   <= pycore_make_entry(
+                                        cont_rf_rs1_tag, cont_rf_rs1_val);
+                                    stracc_call_b_r   <= pycore_make_control(
+                                        PY_CTL_NONE);
+                                    stracc_call_c_r   <= pycore_make_control(
+                                        PY_CTL_NONE);
+                                    stracc_from_call_r <= 1'b1;
+                                    stracc_issued_r    <= 1'b0;
+                                    stracc_finishing_r <= 1'b0;
+                                    call_stracc_go_r   <= 1'b1;
+                                    call_phase_r       <= CALL_PHASE_DONE;
+                                    call_sub_r         <= 6'd0;
                                 end
                                 // Region marks (Plan 1 P8).  Zero-arg reads
                                 // return the cursor; releases restore it after

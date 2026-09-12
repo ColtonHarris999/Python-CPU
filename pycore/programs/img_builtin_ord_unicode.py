@@ -1,6 +1,6 @@
-"""BI_ORD / BI_CHR across all four UTF-8 widths, including a round trip.
+"""BI_ORD / BI_CHR across Latin-1, BMP, and supplementary code points.
 
-"e-acute" is 2 bytes, the CJK character 3, the emoji 4.
+"é" is kind 1 SHORT, "中" is kind 2 LONG, "😀" is kind 4 LONG.
 """
 
 

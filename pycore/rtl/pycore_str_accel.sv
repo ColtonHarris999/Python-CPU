@@ -579,6 +579,39 @@ module pycore_str_accel #(
                                 end
                             end
                         end
+                        PY_SA_ORD: begin
+                            if (!a_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if (view_nchars(a_tag_r, a_val_r) != 32'd1)
+                                set_trap(PY_TRAP_TYPE);
+                            else if (a_tag_r == PY_TAG_SHORT_STR)
+                                set_res(pycore_make_entry(PY_TAG_INT,
+                                    {120'b0, pycore_short_str_byte(a_val_r, 0)}),
+                                    heap_ptr_r);
+                            else begin
+                                eng_r <= ENG_CHAR;
+                                src_idx_r <= 32'd0;
+                                src_sel_r <= SRC_A;
+                                state_r <= ST_STEP;
+                            end
+                        end
+                        PY_SA_CHR: begin
+                            if (!a_is_int)
+                                set_trap(PY_TRAP_TYPE);
+                            else if ((a_val_r[127:32] != 96'b0) ||
+                                     (a_val_r[31:0] > 32'h0010_FFFF))
+                                set_trap(PY_TRAP_TYPE);
+                            else begin
+                                unit = a_val_r[31:0];
+                                kmax = pycore_stracc_kind_of_unit(unit);
+                                fill_unit_r <= unit;
+                                left_pad_r <= 32'd1;
+                                right_start_r <= 32'd1;
+                                split_r <= 32'd1;
+                                op_r <= PY_SA_PAD;
+                                setup_copy(32'd1, kmax);
+                            end
+                        end
                         PY_SA_REPLACE: begin
                             if (!a_is_str || !b_is_str || !c_is_str)
                                 set_trap(PY_TRAP_TYPE);
@@ -944,7 +977,12 @@ module pycore_str_accel #(
                         ENG_COPY: step_copy();
                         ENG_CMP: step_cmp();
                         ENG_SEARCH: step_search();
-                        ENG_CHAR: step_char();
+                        ENG_CHAR: begin
+                            if (op_r == PY_SA_ORD)
+                                step_ord();
+                            else
+                                step_char();
+                        end
                         ENG_REPLACE: step_replace();
                         ENG_JOIN: step_join();
                         ENG_TRIM: step_trim();
@@ -1432,6 +1470,14 @@ module pycore_str_accel #(
                 end
             end
         end
+    endtask
+
+    task automatic step_ord();
+        logic got;
+        logic [31:0] unit;
+        fetch_unit_ab(SRC_A, 32'd0, got, unit);
+        if (got)
+            set_res(pycore_make_entry(PY_TAG_INT, {96'b0, unit}), heap_ptr_r);
     endtask
 
     task automatic step_char();

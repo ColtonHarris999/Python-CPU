@@ -33,6 +33,8 @@ from pycore.tools.encoding import (
     SA_CHAR_AT,
     SA_ITER_NEXT,
     SA_REPLACE,
+    SA_ORD,
+    SA_CHR,
     SA_FIND,
     SA_RFIND,
     SA_COUNT,
@@ -302,6 +304,27 @@ class StrModelTest(unittest.TestCase):
         self.assertEqual(decode_short_string(r.value).decode("latin-1"), "a")
         r = self.accel.exec(SA_ITER_NEXT, 0, h, _int(2), _none(), self.heap)
         self.assertEqual(r.tag, TAG_CONTROL)
+
+    def test_ord_chr_roundtrip(self) -> None:
+        r = self.accel.exec(SA_ORD, 0, _short("A"), _none(), _none(), self.heap)
+        self.assertEqual(r.signed_int(), 65)
+        r = self.accel.exec(SA_CHR, 0, _int(65), _none(), _none(), self.heap)
+        self.assertEqual(self.text_of(r.entry), "A")
+        r = self.accel.exec(SA_ORD, 0, _short("ab"), _none(), _none(), self.heap)
+        self.assertTrue(r.trap)
+        r = self.accel.exec(SA_CHR, 0, _int(0x110000), _none(), _none(), self.heap)
+        self.assertTrue(r.trap)
+        greek = self.put("α")
+        r = self.accel.exec(SA_ORD, 0, greek, _none(), _none(), self.heap)
+        self.assertEqual(r.signed_int(), 0x03B1)
+        r = self.accel.exec(SA_CHR, 0, _int(0x03B1), _none(), _none(), self.heap)
+        self.assertEqual(self.text_of(r.entry), "α")
+        r = self.accel.exec(SA_CHR, 0, _int(0x1F600), _none(), _none(), self.heap)
+        self.assertEqual(self.text_of(r.entry), "😀")
+        r = self.accel.exec(SA_ORD, 0, r.entry, _none(), _none(), self.heap)
+        self.assertEqual(r.signed_int(), 0x1F600)
+        r = self.accel.exec(SA_CHR, 0, _int(0xD800), _none(), _none(), self.heap)
+        self.assertEqual(self.text_of(r.entry), "\ud800")
 
     def test_hash_fnv(self) -> None:
         s = "hello"

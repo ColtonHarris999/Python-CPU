@@ -2013,7 +2013,7 @@ pycore-img-builtin-chr-range-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,builtin_chr_range_trap,1,50000)
 
 pycore-img-builtin-chr-surrogate-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,builtin_chr_surrogate_trap,1,50000)
+	$(call PYCORE_IMAGE_RUN,builtin_chr_surrogate_trap,50000)
 
 pycore-img-builtin-int:
 	$(call PYCORE_IMAGE_RUN,builtin_int,50000)

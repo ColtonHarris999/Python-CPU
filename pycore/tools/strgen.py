@@ -52,6 +52,8 @@ from encoding import (
     SA_ZFILL,
     SA_EXPANDTABS,
     SA_SPLIT,
+    SA_ORD,
+    SA_CHR,
     SA_SPLIT_FWD,
     SA_SPLIT_REV,
     SA_SPLIT_LINES,
@@ -182,6 +184,8 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
             SA_AFFIX,
             SA_EXPANDTABS,
             SA_SPLIT,
+            SA_ORD,
+            SA_CHR,
         ]
     )
     a_ent, heap = accel.put(a_s, heap)
@@ -418,6 +422,21 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
                 exp = a_s.rsplit(None, mx) if var == SA_SPLIT_REV else a_s.split(None, mx)
                 assert got == exp, (a_s, mx, var, got, exp)
                 heap = r.heap_ptr
+    elif op == SA_ORD:
+        r = accel.exec(SA_ORD, 0, a_ent, _none(), _none(), heap)
+        if len(a_s) != 1:
+            assert r.trap, (a_s,)
+        else:
+            assert not r.trap and r.signed_int() == ord(a_s), (a_s, r.signed_int())
+    elif op == SA_CHR:
+        cp = rng.choice([0, 65, 233, 0x03B1, 0xD800, 0x1F600, 0x10FFFF, 0x110000, -1])
+        r = accel.exec(SA_CHR, 0, _int(cp), _none(), _none(), heap)
+        if cp < 0 or cp > 0x10FFFF:
+            assert r.trap, (cp,)
+        else:
+            assert not r.trap
+            assert model_text(accel, r.entry) == chr(cp), (cp,)
+            heap = r.heap_ptr
     return heap
 
 

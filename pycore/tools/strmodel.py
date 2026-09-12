@@ -42,6 +42,8 @@ from encoding import (
     SA_ZFILL,
     SA_EXPANDTABS,
     SA_SPLIT,
+    SA_ORD,
+    SA_CHR,
     SA_SPLIT_FWD,
     SA_SPLIT_REV,
     SA_SPLIT_LINES,
@@ -354,6 +356,10 @@ class StrAccel:
             return self._expandtabs(a, b, heap_ptr)
         if op == SA_SPLIT:
             return self._split(a, b, c, var, heap_ptr)
+        if op == SA_ORD:
+            return self._ord(a, heap_ptr)
+        if op == SA_CHR:
+            return self._chr(a, heap_ptr)
         if op == SA_HASH:
             return self._hash(a, heap_ptr)
         if op in (SA_CHAR_AT, SA_ITER_NEXT):
@@ -620,6 +626,22 @@ class StrAccel:
         if isinstance(sa, AccelResult):
             return sa
         return AccelResult(TAG_INT, sa.digest, heap_ptr)
+
+    def _ord(self, a, heap_ptr: int) -> AccelResult:
+        sa = self._need_str(a, heap_ptr)
+        if isinstance(sa, AccelResult):
+            return sa
+        if sa.nchars != 1:
+            return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        return AccelResult(TAG_INT, sa.units(self.mem)[0], heap_ptr)
+
+    def _chr(self, a, heap_ptr: int) -> AccelResult:
+        cp = _int_val(*a)
+        if cp is None or cp < 0 or cp > 0x10FFFF:
+            return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+        return pack_result_from_units(
+            [cp], kind_of_unit(cp), self.mem, heap_ptr, self.heap_limit
+        )
 
     def _char_at(
         self, a, b, heap_ptr: int, iter_next: bool = False
