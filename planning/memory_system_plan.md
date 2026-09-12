@@ -450,6 +450,7 @@ Per-module testbenches, added to `PYCORE_MEM_SRCS` and `pycore-rtl-unit`:
 | `tb_cache.sv` | hit; cold miss; capacity miss; conflict miss at every way; dirty eviction ordering; `fault_o` propagation from below; invalidate-all; flush-all with dirty lines; back-to-back requests; `READ_ONLY` write rejection |
 | `tb_cache_lru.sv` | victim selection over every access order for 4 and 8 ways |
 | `tb_ram.sv` | burst ordering; latency parameter honoured; writeback then read-back |
+| `tb_l1d_handoff.sv` | dirty L1D line is invisible at the excore L2 port until flush; inv refill; `CACHE_EN=0` still pulses `flush_done` |
 | `tb_str_unit.sv` | replaces `tb_string_exec.sv`: concat (both inline and allocated), slice, snapshot, window read across a 16-byte boundary, window read at the end of the region |
 | `tb_codc.sv` | fill, hit, way eviction, flush |
 | `tb_gic.sv` | fill, hit, flush on store, no-fill on miss |
