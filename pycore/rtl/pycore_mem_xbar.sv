@@ -4,11 +4,11 @@
 // unified 128-bit L2 port. Instruction addresses are relocated to
 // PYCORE_CODE_ADDR_BASE so they cannot alias data in the L2.
 //
-// Master responses are registered. Combinational `grant && l2_ack` races
-// the grant-clear NBA on the same posedge (Verilator can evaluate the
-// combo after the NBA, dropping the pulse). The port contract is
-// preserved: ack is a one-cycle pulse some latency after the captured
-// request; the master need not hold req.
+// A master request is captured into flops the cycle `req` is high (the
+// master need not hold it). `l2_req_o` is then held until `l2_ack_i`,
+// dropping combinationally on the ack cycle so L2/RAM do not see a second
+// request on the completing posedge. Master `ack_o` is a one-cycle pulse
+// the cycle after L2 acks — extra occupancy, same §0 contract.
 module pycore_mem_xbar #(
     parameter int    ADDR_WIDTH    = PYCORE_ADDR_WIDTH,
     parameter int    IMEM_DATA_W   = PYCORE_IMEM_DATA_WIDTH,
@@ -53,28 +53,30 @@ module pycore_mem_xbar #(
     logic   fault_hold_r;
     logic [DMEM_DATA_W-1:0] rdata_hold_r;
 
+    logic                    l2_req_r;
+    logic                    l2_we_r;
+    logic [DMEM_DATA_W/8-1:0] l2_wstrb_r;
+    logic [ADDR_WIDTH-1:0]   l2_addr_r;
+    logic [DMEM_DATA_W-1:0]  l2_wdata_r;
+
     logic take_dmem;
     logic take_imem;
     logic imem_hi;
     logic [ADDR_WIDTH-1:0] imem_uaddr;
 
-    assign take_dmem = (grant_r == G_NONE) && !imem_ack_r && !dmem_ack_r && dmem_req_i;
-    assign take_imem = (grant_r == G_NONE) && !imem_ack_r && !dmem_ack_r &&
+    assign take_dmem = (grant_r == G_NONE) && !l2_req_r &&
+                       !imem_ack_r && !dmem_ack_r && dmem_req_i;
+    assign take_imem = (grant_r == G_NONE) && !l2_req_r &&
+                       !imem_ack_r && !dmem_ack_r &&
                        !dmem_req_i && imem_req_i;
     assign imem_uaddr = ADDR_WIDTH'(CODE_BASE) + imem_addr_i;
     assign imem_hi    = imem_uaddr[3];
 
-    assign l2_req_o = take_dmem || take_imem;
-    assign l2_we_o  = take_dmem ? dmem_we_i : imem_we_i;
-    assign l2_addr_o = take_dmem ? dmem_addr_i
-                     : take_imem ? {imem_uaddr[ADDR_WIDTH-1:4], 4'b0}
-                     : (grant_r == G_DMEM) ? dmem_addr_i
-                                           : {imem_uaddr[ADDR_WIDTH-1:4], 4'b0};
-    assign l2_wdata_o = take_dmem ? dmem_wdata_i
-                      : (imem_hi ? {imem_wdata_i, 64'b0}
-                                 : {64'b0, imem_wdata_i});
-    assign l2_wstrb_o = take_dmem ? dmem_wstrb_i
-                      : (imem_hi ? {8'hFF, 8'h00} : {8'h00, 8'hFF});
+    assign l2_req_o   = l2_req_r && !l2_ack_i;
+    assign l2_we_o    = l2_we_r;
+    assign l2_wstrb_o = l2_wstrb_r;
+    assign l2_addr_o  = l2_addr_r;
+    assign l2_wdata_o = l2_wdata_r;
 
     assign dmem_ack_o   = dmem_ack_r;
     assign dmem_rdata_o = rdata_hold_r;
@@ -92,20 +94,37 @@ module pycore_mem_xbar #(
             dmem_ack_r   <= 1'b0;
             fault_hold_r <= 1'b0;
             rdata_hold_r <= '0;
+            l2_req_r     <= 1'b0;
+            l2_we_r      <= 1'b0;
+            l2_wstrb_r   <= '0;
+            l2_addr_r    <= '0;
+            l2_wdata_r   <= '0;
         end else begin
             imem_ack_r <= 1'b0;
             dmem_ack_r <= 1'b0;
             if (take_dmem) begin
-                grant_r   <= G_DMEM;
-                imem_hi_r <= 1'b0;
+                grant_r    <= G_DMEM;
+                imem_hi_r  <= 1'b0;
+                l2_req_r   <= 1'b1;
+                l2_we_r    <= dmem_we_i;
+                l2_wstrb_r <= dmem_wstrb_i;
+                l2_addr_r  <= dmem_addr_i;
+                l2_wdata_r <= dmem_wdata_i;
             end else if (take_imem) begin
-                grant_r   <= G_IMEM;
-                imem_hi_r <= imem_hi;
-            end else if (l2_ack_i && (grant_r != G_NONE)) begin
+                grant_r    <= G_IMEM;
+                imem_hi_r  <= imem_hi;
+                l2_req_r   <= 1'b1;
+                l2_we_r    <= imem_we_i;
+                l2_wstrb_r <= imem_hi ? {8'hFF, 8'h00} : {8'h00, 8'hFF};
+                l2_addr_r  <= {imem_uaddr[ADDR_WIDTH-1:4], 4'b0};
+                l2_wdata_r <= imem_hi ? {imem_wdata_i, 64'b0}
+                                      : {64'b0, imem_wdata_i};
+            end else if (l2_req_r && l2_ack_i) begin
                 rdata_hold_r <= l2_rdata_i;
                 fault_hold_r <= l2_fault_i;
                 imem_ack_r   <= (grant_r == G_IMEM);
                 dmem_ack_r   <= (grant_r == G_DMEM);
+                l2_req_r     <= 1'b0;
                 grant_r      <= G_NONE;
             end
         end

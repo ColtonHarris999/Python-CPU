@@ -68,6 +68,7 @@ module pycore_ram #(
     logic                   cap_line_r;
     logic [DATA_WIDTH/8-1:0] cap_wstrb_r;
     logic [ADDR_WIDTH-1:0]  cap_addr_r;
+    logic [DATA_WIDTH-1:0]  cap_wdata_r;
     logic [BEAT_W-1:0]      beat_r;
     int                     wait_r;
     logic                   ack_r;
@@ -122,6 +123,8 @@ module pycore_ram #(
     wire [DATA_WIDTH-1:0] cap_rdata = cap_is_code
         ? ((cap_code_idx < CODE_WORDS) ? code_arr[cap_code_idx] : '0)
         : ((cap_data_idx < DATA_WORDS) ? data_mem[cap_data_idx] : '0);
+    // Line bursts change wdata each beat; word writes use the captured data.
+    wire [DATA_WIDTH-1:0] cap_write_data = cap_line_r ? wdata_i : cap_wdata_r;
 
     function automatic logic [DATA_WIDTH-1:0] merge_strb(
         input logic [DATA_WIDTH-1:0] old_w,
@@ -135,11 +138,16 @@ module pycore_ram #(
         end
     endfunction
 
+    localparam int LOAD_WORDS = DATA_LIMIT / (DATA_WIDTH / 8);
+
+    logic [DATA_WIDTH-1:0] init_img [0:LOAD_WORDS-1];
+
     initial begin
         int i;
         int wi;
         string dmem_path, prog_path, cram_path;
-    logic [63:0] slot_tmp [0:RAM_SLOTS-1];
+        logic [63:0] rom_slots [0:ROM_SLOTS-1];
+        logic [63:0] ram_slots [0:RAM_SLOTS-1];
 
         dmem_path = DMEM_HEX;
         prog_path = PROG_HEX;
@@ -151,31 +159,38 @@ module pycore_ram #(
         if (CODE_RAM_PLUSARG.len() > 0)
             void'($value$plusargs({CODE_RAM_PLUSARG, "=%s"}, cram_path));
 
+        // Load into a DATA_LIMIT-sized image and copy, matching pycore_mem_bank.
+        // $readmemh directly into the 16 MB array does not bind the same
+        // storage the sequential block reads.
+        for (i = 0; i < LOAD_WORDS; i++)
+            init_img[i] = '0;
         if (dmem_path.len() > 0)
-            $readmemh(dmem_path, data_mem);
+            $readmemh(dmem_path, init_img);
+        for (i = 0; i < LOAD_WORDS; i++)
+            data_mem[i] = init_img[i];
 
-        for (i = 0; i < RAM_SLOTS; i++)
-            slot_tmp[i] = '0;
+        for (i = 0; i < ROM_SLOTS; i++)
+            rom_slots[i] = '0;
         if (prog_path.len() > 0)
-            $readmemh(prog_path, slot_tmp);
+            $readmemh(prog_path, rom_slots);
         for (i = 0; i < ROM_SLOTS; i++) begin
             wi = i / 2;
             if (i[0] == 1'b0)
-                code_arr[wi][63:0] = slot_tmp[i];
+                code_arr[wi][63:0] = rom_slots[i];
             else
-                code_arr[wi][127:64] = slot_tmp[i];
+                code_arr[wi][127:64] = rom_slots[i];
         end
 
         for (i = 0; i < RAM_SLOTS; i++)
-            slot_tmp[i] = '0;
+            ram_slots[i] = '0;
         if (cram_path.len() > 0)
-            $readmemh(cram_path, slot_tmp);
+            $readmemh(cram_path, ram_slots);
         for (i = 0; i < RAM_SLOTS; i++) begin
             wi = CODE_ROM_WORDS + (i / 2);
             if (i[0] == 1'b0)
-                code_arr[wi][63:0] = slot_tmp[i];
+                code_arr[wi][63:0] = ram_slots[i];
             else
-                code_arr[wi][127:64] = slot_tmp[i];
+                code_arr[wi][127:64] = ram_slots[i];
         end
     end
 
@@ -189,6 +204,7 @@ module pycore_ram #(
             cap_line_r  <= 1'b0;
             cap_wstrb_r <= '0;
             cap_addr_r  <= '0;
+            cap_wdata_r <= '0;
             beat_r      <= '0;
             wait_r      <= 0;
             ack_r       <= 1'b0;
@@ -206,6 +222,7 @@ module pycore_ram #(
                         cap_line_r  <= line_i;
                         cap_wstrb_r <= wstrb_i;
                         cap_addr_r  <= addr_i;
+                        cap_wdata_r <= wdata_i;
                         beat_r      <= '0;
                         if (t_first_eff() <= 1) begin
                             last_beat = !line_i;
@@ -248,11 +265,11 @@ module pycore_ram #(
                         if (!cap_fault && cap_we_r) begin
                             if (cap_is_code)
                                 code_arr[cap_code_idx] <=
-                                    merge_strb(code_arr[cap_code_idx], wdata_i,
+                                    merge_strb(code_arr[cap_code_idx], cap_write_data,
                                                cap_line_r ? {DATA_WIDTH/8{1'b1}} : cap_wstrb_r);
                             else
                                 data_mem[cap_data_idx] <=
-                                    merge_strb(data_mem[cap_data_idx], wdata_i,
+                                    merge_strb(data_mem[cap_data_idx], cap_write_data,
                                                cap_line_r ? {DATA_WIDTH/8{1'b1}} : cap_wstrb_r);
                         end
                         rdata_r <= cap_fault ? '0 : cap_rdata;
@@ -279,11 +296,11 @@ module pycore_ram #(
                     if (!cap_fault && cap_we_r) begin
                         if (cap_is_code)
                             code_arr[cap_code_idx] <=
-                                merge_strb(code_arr[cap_code_idx], wdata_i,
+                                merge_strb(code_arr[cap_code_idx], cap_write_data,
                                            cap_line_r ? {DATA_WIDTH/8{1'b1}} : cap_wstrb_r);
                         else
                             data_mem[cap_data_idx] <=
-                                merge_strb(data_mem[cap_data_idx], wdata_i,
+                                merge_strb(data_mem[cap_data_idx], cap_write_data,
                                            cap_line_r ? {DATA_WIDTH/8{1'b1}} : cap_wstrb_r);
                     end
                     rdata_r <= cap_fault ? '0 : cap_rdata;

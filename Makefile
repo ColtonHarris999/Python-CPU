@@ -775,8 +775,10 @@ pycore-img-str-consts:
 pycore-img-containers:
 	$(call PYCORE_IMAGE_RUN,containers,50000)
 
+# LAT=1 ≈ 51k, LAT=4 ≈ 76k, LAT=30 ≈ 297k (xbar + RAM_T_FIRST). Cap
+# covers the MEM_LATENCY=30 sweep; a hang still dies well below this.
 pycore-img-recursion:
-	$(call PYCORE_IMAGE_RUN,recursion,100000)
+	$(call PYCORE_IMAGE_RUN,recursion,500000)
 
 pycore-img-extended-arg:
 	$(call PYCORE_IMAGE_RUN,extended_arg,200000)
@@ -1518,7 +1520,7 @@ pycore-img-containers-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,containers,50000)
 
 pycore-img-recursion-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,recursion,100000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,recursion,500000)
 
 pycore-img-extended-arg-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,extended_arg,200000)
