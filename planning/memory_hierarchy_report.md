@@ -16,6 +16,8 @@ opposite extremes (0% vs 96% heap traffic).
 There is also a free 45%-fewer-misses result hiding in the allocator (F3b).
 
 Harness, benchmarks and raw output: [`pycore/tools/memsim/`](../pycore/tools/memsim/README.md).
+The implementation plan these findings feed is
+[`memory_system_plan.md`](memory_system_plan.md).
 
 ---
 
