@@ -7,7 +7,8 @@ produced them is [`pycore/tools/memsim/`](../pycore/tools/memsim/README.md) and
 is re-run as the acceptance gate in P9.
 
 **In scope:** L1I, L1D, unified L2, a parameterized RAM model, moving string
-bytes out of `pycore_string_mem.sv` into ordinary dmem behind a copy engine,
+bytes out of `pycore_string_mem.sv` into ordinary dmem behind a dedicated
+String Accelerator,
 the code-object descriptor cache, the global-name inline cache, and the frame
 top-of-stack buffer.
 
@@ -43,7 +44,8 @@ provided they preserve this contract:
 Do not change this. If any phase needs to change it, stop and re-plan — it is
 the reason this work can be staged behind a green regression at every step.
 
-The one addition in P0 is a byte-enable, which the string copy engine needs.
+The one addition in P0 is a byte-enable, which the String Accelerator needs
+for unaligned payload writes.
 
 ---
 
@@ -98,11 +100,16 @@ Structure caches (result caches, not line caches):
 
 ## 2. Memory map
 
-**Keep every existing address.** The heap, exception arena and frame stack
-constants are mirrored between `pycore_defs.svh` and `pycore/tools/encoding.py`
-and are referenced by ~300 host tests plus `excore/tb/tb_excore.sv` (which
-hardcodes `BLOCK_SHIFT(17)` to span `PYCORE_HEAP_LIMIT`). Moving them is a
-separate change with its own regression risk and is **not** part of this plan.
+**Keep every existing address through P4.** The heap, exception arena and
+frame stack constants are mirrored between `pycore_defs.svh` and
+`pycore/tools/encoding.py` and are referenced by ~300 host tests plus
+`excore/tb/tb_excore.sv` (which hardcodes `BLOCK_SHIFT(17)` to span
+`PYCORE_HEAP_LIMIT`). P0–P4 do not move any of them, so no phase before P5
+carries that regression risk.
+
+P5 does move them, deliberately: strings become heap objects and the heap has
+to grow. By then the P0 constant mirror and the P1 placement mirror both exist
+to guard the move. The post-P5 map is in the P5 section.
 
 ```
 0x0000_0000 – 0x0000_03DF   reserved
@@ -110,25 +117,27 @@ separate change with its own regression risk and is **not** part of this plan.
 0x0000_0440 – 0x0001_AFFF   object heap (bump allocator, ~106 KB)  unchanged
 0x0001_B000 – 0x0001_BFFF   exception-info arena (4 KB)            unchanged
 0x0001_C000 – 0x0001_FFFF   call-frame stack (16 KB)               unchanged
-0x0002_0000 – 0x0005_FFFF   STRING CONSTANTS (256 KB)              NEW  (P5)
-0x0006_0000 – 0x000F_FFFF   STRING RUNTIME  (640 KB)               NEW  (P5)
-0x0010_0000 – 0x00FF_FFFF   unallocated data (heap growth headroom)
+0x0002_0000 – 0x00FF_FFFF   unallocated (P5 grows the heap into this)
 0x0100_0000 – …             CODE address space (slot-indexed, unchanged split)
 ```
 
-`PYCORE_STRING_CONST_BASE = 0x0002_0000` replaces string-mem address 0;
-`PYCORE_STRING_RUNTIME_BASE = 0x0006_0000` replaces the old `16384`.
-**Long-string addresses are therefore rebased, not re-laid-out** — the
-interning invariant below is preserved by construction.
+`DATA_LIMIT` in `pycore_ram.sv` is the current 128 KB dmem through P4, so an
+access past `0x0002_0000` still faults. P5 widens it to 1 MB.
 
-> **Invariant that must not break.** `encoding.py::StringHeapBuilder` interns
-> identical byte sequences, and LONG_STR dict-key equality compares
-> `{size, addr}` descriptors *only* (`pycore/docs/architecture.md`, tag map
-> `1000`). Two LONG_STR handles are equal iff they name the same interned
-> payload. Rebasing every constant by a fixed offset preserves this. Anything
-> that de-duplicates differently, or that makes the copy engine emit a second
-> copy of an existing constant, breaks dict lookup silently. There is no test
-> that catches this directly — add one in P5.
+> **Invariant, restated for P5.** Today `encoding.py::StringHeapBuilder`
+> interns identical byte sequences and LONG_STR equality compares
+> `{size, addr}` descriptors *only*, so two LONG_STR handles are equal iff they
+> name the same interned payload. That is correct only for compile-time
+> constants — a runtime-built string that equals an interned one compares
+> unequal and hashes differently, so `d[a + b]` silently misses.
+>
+> P5 replaces descriptor equality with a content hash carried in the handle
+> plus a three-tier compare (identical address → equal; differing
+> `(hash, nbytes, nchars)` → unequal; otherwise an accelerator content
+> compare). Interning survives as the tier-1 fast path, not as a correctness
+> requirement. Until P5c lands, **do not weaken interning** — the current
+> semantics still depend on it. Details in
+> [`string_accelerator_plan.md`](string_accelerator_plan.md) §3.4.
 
 ---
 
@@ -142,7 +151,7 @@ interning invariant below is preserved by construction.
 | `pycore_cache_lru.sv` | Pseudo-LRU victim select, split out so it is unit-testable. |
 | `pycore_ram.sv` | Behavioral RAM: `RAM_BYTES`, `RAM_T_FIRST`, `RAM_T_BEAT`, line-granular fill/writeback, 4 × 128 b beats per 64 B line. |
 | `pycore_mem_xbar.sv` | Routes L1I / L1D / excore onto the L2, and the L2 onto RAM. Owns the flush/invalidate sequencer of §4. |
-| `pycore_str_unit.sv` | String copy engine. Replaces `pycore_string_mem.sv`. A master on the L1D port. |
+| `pycore_str_accel.sv` | **String Accelerator.** Replaces `pycore_string_mem.sv`. Own dmem master port so it is verifiable standalone; entered from the core's new `S_STRACC` state. |
 | `pycore_codc.sv` | Code-object descriptor cache. |
 | `pycore_gic.sv` | Global-name inline cache. |
 | `pycore_frame_buf.sv` | Frame top-of-stack buffer (gated — see P8). |
@@ -151,7 +160,7 @@ interning invariant below is preserved by construction.
 
 | File | Change |
 | --- | --- |
-| `pycore_defs.svh` | All new localparams; `wstrb` width; string region bases; `PYCORE_CACHE_EN`. |
+| `pycore_defs.svh` | All new localparams; `wstrb` width; STR object/handle layout and STRACC op encodings; `PYCORE_CACHE_EN`. |
 | `pycore_mem_bank.sv`, `pycore_dmem.sv`, `pycore_code_ram.sv`, `pycore_imem.sv` | Add `wstrb_i`; otherwise unchanged (they become the RAM-side backing store or are replaced by `pycore_ram.sv` — see P2). |
 | `pycore_mem_stage.sv`, `pycore_exc_stack.sv` | Tie `wstrb_o` to all-ones. |
 | `pycore_fetch.sv` | P4b: 64 B line buffer, `CACHE`/`EXTENDED_ARG` folded inside it. |
@@ -160,14 +169,15 @@ interning invariant below is preserved by construction.
 | `pycore_cont_object.svh` | GIC hit path in `CONT_LOAD_GLOBAL`; GIC invalidate in `CONT_STORE_NAME`. |
 | `pycore_cont_str.svh`, `pycore_cont_list.svh` | String window reads become `str_win_valid` handshakes. |
 | `pycore_system.sv`, `pycore_excore_system.sv` | Instantiate the hierarchy; wire the handoff flush. |
-| `pycore/tools/encoding.py`, `heap_image.py`, `image_from_source.py` | 64 B allocator alignment; string bytes emitted into the dmem hex instead of `--string-hex`. |
+| `pycore/tools/encoding.py`, `heap_image.py`, `image_from_source.py` | 64 B allocator alignment; `StringHeapBuilder` replaced by `HeapImageBuilder.alloc_str` emitting STR objects into the object heap. |
 | `Makefile` | New TB targets; `PYCORE_MEM_SRCS` gains the cache sources. |
 
 **Deleted**
 
 * `pycore/rtl/pycore_string_mem.sv`
-* `pycore/tb/tb_string_exec.sv` → rewritten as `tb_str_unit.sv`
-* the `--string-hex` / `STRING_HEX` plusarg path (P5)
+* `pycore/tb/tb_string_exec.sv` → replaced by `tb_str_accel.sv`
+* the `--string-hex` / `STRING_HEX` plusarg path and `pycore/programs/string_mem.hex` (P5)
+* `pycore_firmware/builtins/str_{find,join,startswith,endswith}.py` (P5f)
 
 ---
 
@@ -316,52 +326,56 @@ instructions per line.
 **Done when:** full regression green, and the fetch-cycle counter shows the
 predicted drop on `bench_fib`.
 
-### P5 — Strings into dmem, behind a copy engine
+### P5 — String Accelerator, and strings as ordinary heap objects
 
-The largest phase. `pycore_string_mem.sv` is not just storage — it does
-*combinational* whole-string concat and slice (any length up to 4096, one
-cycle) and serves a zero-latency 4-byte window read. All three move.
+**Superseded design.** P5 was originally "relocate the bytes, keep a copy
+engine". It is now a dedicated accelerator inside pycore, alongside the
+container FSM, that owns every non-trivial string operation — and strings
+become ordinary dmem heap objects with a self-describing header.
 
-**P5a — relocate the bytes.**
-* `StringHeapBuilder` emits into the dmem image at
-  `PYCORE_STRING_CONST_BASE`; drop `--string-hex` and the `STRING_HEX` plusarg.
-* All LONG_STR addresses rebase by a constant offset. Interning unchanged.
-* Add the test the invariant note in §2 asks for: two equal long-string
-  constants must produce the same address, and must hit as the same dict key.
+Full design, including the 47-method coverage matrix, the new object and
+handle layout, the standalone verification plan and the phase gates:
+**[`string_accelerator_plan.md`](string_accelerator_plan.md)**.
 
-**P5b — the window read.**
-`pycore_str_unit.sv` holds a **16-byte word register plus the low bytes of the
-next word**, so a 4-byte UTF-8 window at any byte offset is served
-combinationally while it stays inside the held pair. Sequential walking costs
-one dmem read per 16 bytes instead of one per byte.
+Why the change: `pycore_string_mem.sv` is a 64 KB private byte array with
+combinational whole-string concat and slice, and everything past
+`join`/`startswith`/`endswith`/`find` is firmware Python at roughly 250 cycles
+per haystack position. A copy engine would have preserved that. The
+accelerator replaces it, and along the way closes a real semantic hole:
+LONG_STR equality and hashing today use the `{size, addr}` descriptor and are
+correct only because every constant is interned, so `d[a + b]` silently misses
+for a runtime-built key.
 
-The container FSM's `cont_str_win` (`pycore_core.sv:1512`) gains a
-`str_win_valid` qualifier; `CONT_SUBSCR_STR`, `CONT_SLICE_STR` and the
-`FOR_ITER`-over-string path stall on `!str_win_valid`. Both string tags still
-share one decode window — SHORT_STR bytes stay inline in the handle.
+Sub-phases (each ends with the full regression green):
 
-**P5c — concat, slice, snapshot.**
-`pycore_str_unit.sv` becomes a master on the L1D port with three operations:
-
-| Op | Replaces | Behaviour |
+| | | Gate |
 | --- | --- | --- |
-| `CONCAT(a, b)` | `exec_*` port | walk both sources 128 b at a time into a fresh runtime allocation; ≤ 15 bytes returns inline SHORT_STR with no allocation, as today |
-| `SLICE(src, start, len)` | `slice_*` port | byte-offset copy, same ≤ 15-byte inline rule |
-| `SNAPSHOT(payload, size)` | `snapshot_*` port | materialise a SHORT_STR into the runtime region so `GET_ITER` can walk it by address |
+| **P5a** | `pycore_str_accel.sv` + `tb_str_accel.sv` + a CPython 3.14 differential harness. Not wired into the core. | The differential passes over the full corpus for COPY, COMPARE, SEARCH, CHAR_AT, ITER_NEXT, HASH |
+| **P5b** | New STR object + handle in the image tools and RTL helpers; memory map grows (below). Host-side only. | Host tests green; the Python model reads image-built objects |
+| **P5c** | Cutover: core adopts the handle, gains `S_STRACC`, `pycore_string_mem.sv` deleted, write-full-line path added to `pycore_cache.sv` | Every existing string fixture green at `CACHE_EN` 0 and 1 |
+| **P5d** | Container integration: three-tier string equality, `CONTAINS_OP`, `sorted`/`min`/`max`, `FOR_ITER`, `join`/`split` over LIST | `img_str_dict_key_runtime` passes (it fails on today's main) |
+| **P5e** | The 47 methods in four batches, each with fixtures and a differential sweep | Per-batch fixtures green |
+| **P5f** | Retire the firmware string builtins and reclaim their ROM slots | ROM size report |
 
-Unaligned copies use the P0 byte enables rather than read-modify-write.
+**Memory map (changed from §2).** Strings become heap objects, so the
+dedicated string regions in §2 are **not built**. Instead the data region grows
+and the exception/frame stacks move up — the move §2 deliberately deferred,
+taken now because `DATA_LIMIT` has to widen anyway and the P0 constant mirror
+plus the P1 placement mirror now guard it:
 
-`pycore_exec.sv` loses its `string_path_valid_i` fast path; `PY_ALU_ADD` on two
-string tags now routes to the copy engine and stalls `S_EXEC` until done.
+```
+0x0000_0440 – 0x000E_FFFF   object heap (~955 KB)          grows
+0x000F_0000 – 0x000F_0FFF   exception-info arena (4 KB)     moves
+0x000F_1000 – 0x000F_8FFF   call-frame stack (32 KB)        moves, 1024 frames
+0x0010_0000                 DATA_LIMIT                      widened from 128 KB
+```
 
-> These operations become multi-cycle. That is the accepted cost of the move —
-> the copy engine keeps them single-*instruction*, not single-cycle. Record the
-> before/after cycle count for the string fixtures in the P9 write-up rather
-> than letting it pass silently.
+`excore/tb/tb_excore.sv`'s hand-written `BLOCK_SHIFT(17)` sizes its bank to
+span `PYCORE_HEAP_LIMIT` and must move with it.
 
-**Done when:** every `img_str_*`, `img_build_string`, `img_sorted_str`,
-`img_for_iter_str_*` and `img_slice_str_clamp` fixture is green, and
-`pycore_string_mem.sv` is deleted.
+**New dmem master.** STRACC drives the dmem port only while the core is frozen
+in `S_STRACC`, so the §4 invalidation matrix is unchanged — but assert that
+`cmd_valid` never overlaps an excore-owned memory window.
 
 ### P6 — Code-object descriptor cache
 
@@ -435,8 +449,20 @@ buffer, or unwind reads stale dmem. `img_try_exc_cross_frame_fatal` and
 * Update `pycore/docs/architecture.md` §"Memory subsystem" and
   §"Code memory regions"; add a new `pycore/docs/memory_hierarchy.md` covering
   the levels, the port contract of §0, and the invalidation matrix of §4.
+* Extend `memsim` with string workloads and a STRACC access model. Strings in
+  dmem are a new traffic class and are part of what the 8 KB L1D was sized for
+  (report F5) — re-run E1/E3/E7 with them present and say whether the sizing
+  held.
 * Remove the string-memory rows from `pycore/docs/architecture.md` and
-  `pycore/docs/object_model.md`.
+  `pycore/docs/object_model.md`; add the STR object to `object_model.md` and
+  rewrite the LONG_STR row in `pycore/docs/tags.md` for the new handle.
+* Record the STRACC Unicode ceiling in `pycore/docs/bytecode_support.md`, next
+  to the 64-bit `int` ceiling.
+* Graduate `planning/string_accelerator_plan.md` to
+  `pycore/docs/string_accel.md`.
+* Note in `planning/compile_plan.md` that on-device `compile()` allocates
+  string constants through `HeapImageBuilder.alloc_str`, so a compiled-on-device
+  module and an image-built module produce byte-identical string objects.
 * Update the root `README.md` register/memory section.
 
 ---
@@ -451,7 +477,7 @@ Per-module testbenches, added to `PYCORE_MEM_SRCS` and `pycore-rtl-unit`:
 | `tb_cache_lru.sv` | victim selection over every access order for 4 and 8 ways |
 | `tb_ram.sv` | burst ordering; latency parameter honoured; writeback then read-back |
 | `tb_l1d_handoff.sv` | dirty L1D line is invisible at the excore L2 port until flush; inv refill; `CACHE_EN=0` still pulses `flush_done` |
-| `tb_str_unit.sv` | replaces `tb_string_exec.sv`: concat (both inline and allocated), slice, snapshot, window read across a 16-byte boundary, window read at the end of the region |
+| `tb_str_accel.sv` | the accelerator against real memory, standalone: every primitive engine, the SHORT/LONG boundary at 15/16 bytes, every source/destination byte phase, UTF-8 across word and line boundaries, OOM with the heap pointer unmoved. Plus the CPython 3.14 differential harness — see `string_accelerator_plan.md` §9 |
 | `tb_codc.sv` | fill, hit, way eviction, flush |
 | `tb_gic.sv` | fill, hit, flush on store, no-fill on miss |
 | `tb_frame_buf.sv` | push/pop/spill/refill, flush with dirty frames (if P8 is built) |
@@ -475,7 +501,8 @@ identical results. This catches anything that assumed a fixed memory latency.
 | A cache changes an architectural result | The transparency gate in §6. Build `PYCORE_CACHE_EN=0` in P0 and never let it rot. |
 | Something assumed 1-cycle memory | The latency-sweep gate. §0 lists every master and its wait mechanism — re-check each one in P2. |
 | `encoding.py` / `pycore_defs.svh` drift | The mirror test in P0. Both P1 and P5 touch shared constants. |
-| String interning broken by the rebase | Explicit test in P5a. Silent failure mode: dict lookups on long-string keys start missing. |
+| String equality regresses during the P5 cutover | `img_str_dict_key_runtime` is the fixture that proves the new model, and it fails on today's main. Silent failure mode: dict lookups on long-string keys start missing. |
+| STRACC diverges from CPython on one of 47 methods | The differential harness, not directed tests, is the P5a/P5e gate. |
 | L1D sized against alignment-unaware measurements | P1 lands before P3. |
 | GIC missing a flush point | §4 matrix; `img_exec_globals_type_trap` is the sharpest test. |
 | FTB and exception unwind diverge | P8 gate; if built, route unwind through the buffer. |
@@ -494,7 +521,9 @@ identical results. This catches anything that assumed a fixed memory latency.
 | Core FSM, dmem arbitration, heap pointer | `pycore/rtl/pycore_core.sv` (`:1124`, `:1202`, `:2343`) |
 | CALL / RETURN code-field reads | `pycore/rtl/pycore_call_fsm.svh` (phases 2–6, RETURN 1–2) |
 | `LOAD_GLOBAL` probe chain | `pycore/rtl/pycore_cont_object.svh:178` |
-| String unit and its four ports | `pycore/rtl/pycore_string_mem.sv`, `pycore_core.sv:1485`–`:1531` |
+| String unit being replaced, and its four ports | `pycore/rtl/pycore_string_mem.sv`, `pycore_core.sv:1485`–`:1531` |
+| String Accelerator design | `planning/string_accelerator_plan.md` |
+| Native method dispatch (extends to 47 str methods) | `pycore_defs.svh::pycore_native_method_id` |
 | excore grant mux and handoff | `pycore/rtl/pycore_excore_system.sv:278`–`:325` |
 | Memory map, address helpers, tag map | `pycore/rtl/pycore_defs.svh`, `pycore/docs/tags.md` |
 | Image build and heap allocator | `pycore/tools/heap_image.py`, `image_from_source.py`, `encoding.py` |
