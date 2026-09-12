@@ -21,7 +21,6 @@ from encoding import (
     IMEM_SLOT_HEX_DIGITS,
     SHORT_STR_DATA_SHIFT,
     SHORT_STR_SIZE_SHIFT,
-    STRING_MEM_BYTES,
     TAG_BOOL,
     TAG_BYTES,
     TAG_CODE_OBJECT,
@@ -39,7 +38,6 @@ from encoding import (
     TAG_TOMBSTONE,
     TAG_TUPLE,
     TAG_UNINITIALIZED,
-    StringHeapBuilder,
     format_imem_slot,
     tag_constant,
 )
@@ -253,7 +251,7 @@ def iter_filtered_instructions(fn) -> Iterable[dis.Instruction]:
 def emit_instruction_words(
     instructions: Iterable[dis.Instruction],
     co_consts: tuple[object, ...] | None = None,
-    string_heap: "StringHeapBuilder | None" = None,
+    string_heap: object | None = None,
 ) -> list[EmittedInstruction]:
     """Convert filtered dis.Instruction objects to EmittedInstruction records.
 
@@ -287,10 +285,9 @@ def emit_instruction_words(
         const_tag = None
         const_value = None
         if ins.opname == "LOAD_CONST":
-            if co_consts is None or string_heap is None:
+            if co_consts is None:
                 raise ValueError(
-                    "co_consts and string_heap are required when LOAD_CONST "
-                    "instructions are present"
+                    "co_consts is required when LOAD_CONST instructions are present"
                 )
             const_obj = co_consts[arg]
             const_tag, const_value = tag_constant(const_obj, string_heap)
@@ -414,22 +411,9 @@ def write_program_hex(path: pathlib.Path, instructions: Iterable[EmittedInstruct
     write_text(path, "\n".join(lines) + ("\n" if lines else ""))
 
 
-def write_string_hex(path: pathlib.Path, string_heap: StringHeapBuilder) -> None:
-    if not string_heap.image:
-        write_text(path, "00\n")
-        return
-
-    lines: list[str] = []
-    current_addr = -1
-    for addr in sorted(string_heap.image.keys()):
-        if addr < 0 or addr >= STRING_MEM_BYTES:
-            raise ValueError(f"String address {addr} is outside string memory")
-        if addr != current_addr + 1:
-            lines.append(f"@{addr:x}")
-        lines.append(f"{string_heap.image[addr]:02x}")
-        current_addr = addr
-
-    write_text(path, "\n".join(lines) + "\n")
+def write_string_hex(path: pathlib.Path, _heap: object | None = None) -> None:
+    """Legacy plusarg companion; string payloads now live in the object heap."""
+    write_text(path, "00\n")
 
 
 def inline_cache_entries() -> list[int]:
@@ -639,7 +623,7 @@ def preprocess(
 ) -> None:
     require_python_3_14()
     fn = load_function(source, function_name)
-    string_heap = StringHeapBuilder()
+    string_heap = None
     instructions = emit_instruction_words(
         iter_filtered_instructions(fn),
         co_consts=fn.__code__.co_consts,

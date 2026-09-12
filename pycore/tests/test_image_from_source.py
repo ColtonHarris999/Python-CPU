@@ -641,7 +641,7 @@ class ImageTranscodingTest(unittest.TestCase):
             src, "<to_bool_strings>"
         )
         self.assertGreater(len(result.program_slots), 0)
-        self.assertGreater(result.string_heap.next_addr, 0)
+        self.assertGreater(result.heap.end_ptr, 0)
 
     def test_unary_not_opcode_now_supported(self) -> None:
         src = (

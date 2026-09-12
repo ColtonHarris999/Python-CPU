@@ -42,6 +42,11 @@ module pycore_cache #(
     input  logic [DATA_WIDTH/8-1:0] wstrb_i,
     input  logic [ADDR_WIDTH-1:0] addr_i,
     input  logic [DATA_WIDTH-1:0] wdata_i,
+    // Full-line write (P5c): when `line_i` and `we_i`, install `wline_i`
+    // without a fill. STRACC uses this so a freshly allocated result line
+    // is not filled from memory only to be overwritten.
+    input  logic                  line_i,
+    input  logic [LINE_BYTES*8-1:0] wline_i,
     output logic                  ack_o,
     output logic [DATA_WIDTH-1:0] rdata_o,
     output logic                  fault_o,
@@ -125,6 +130,8 @@ module pycore_cache #(
     logic [DATA_WIDTH-1:0]  cap_wdata_r;
     logic [WAY_W-1:0]       cap_way_r;
     logic [LINE_W-1:0]      cap_line_r;
+    logic                   cap_line_wr_r;
+    logic [LINE_W-1:0]      cap_wline_r;
     logic [BEAT_W-1:0]      beat_r;
     logic [ADDR_WIDTH-1:0]  wb_addr_r;
     logic [LINE_W-1:0]      wb_line_r;
@@ -265,7 +272,7 @@ module pycore_cache #(
 
     assign down_req_o   = cache_en_i ? down_req_r : req_i;
     assign down_we_o    = cache_en_i ? down_we_r  : we_i;
-    assign down_line_o  = cache_en_i ? down_line_r : 1'b0;
+    assign down_line_o  = cache_en_i ? down_line_r : line_i;
     assign down_wstrb_o = cache_en_i ? down_wstrb_r : wstrb_i;
     assign down_addr_o  = cache_en_i ? down_addr_r
                                      : {addr_i[ADDR_WIDTH-1:WORD_SHIFT], {WORD_SHIFT{1'b0}}};
@@ -275,7 +282,7 @@ module pycore_cache #(
                                ? line_word(wb_line_r, beat_r)
                                : cap_wdata_r)
                         : wdata_i;
-    assign down_wline_o = cache_en_i ? wb_line_r : '0;
+    assign down_wline_o = cache_en_i ? wb_line_r : wline_i;
 
     assign hit_count_o       = hit_count_r;
     assign miss_count_o      = miss_count_r;
@@ -324,6 +331,8 @@ module pycore_cache #(
             cap_wdata_r <= '0;
             cap_way_r   <= '0;
             cap_line_r  <= '0;
+            cap_line_wr_r <= 1'b0;
+            cap_wline_r <= '0;
             beat_r      <= '0;
             wb_addr_r   <= '0;
             wb_line_r   <= '0;
@@ -382,6 +391,8 @@ module pycore_cache #(
                         cap_wstrb_r <= wstrb_i;
                         cap_addr_r  <= addr_i;
                         cap_wdata_r <= wdata_i;
+                        cap_line_wr_r <= we_i && line_i;
+                        cap_wline_r <= wline_i;
                         if (we_i && READ_ONLY) begin
                             ack_r   <= 1'b1;
                             fault_r <= 1'b1;
@@ -392,7 +403,10 @@ module pycore_cache #(
                             hit_count_r        <= hit_count_r + 1'b1;
                             if (req_in_region)
                                 region_hit_count_r <= region_hit_count_r + 1'b1;
-                            if (we_i) begin
+                            if (we_i && line_i) begin
+                                data_q[req_set][comb_hit_way] <= wline_i;
+                                dirty_q[req_set][comb_hit_way] <= 1'b1;
+                            end else if (we_i) begin
                                 data_q[req_set][comb_hit_way] <=
                                     merge_word(data_q[req_set][comb_hit_way],
                                                req_word, wdata_i, wstrb_i);
@@ -400,9 +414,12 @@ module pycore_cache #(
                             end
                             if (hit_cycles_eff <= 1) begin
                                 ack_r   <= 1'b1;
-                                rdata_r <= line_word(data_q[req_set][comb_hit_way],
+                                rdata_r <= line_i
+                                         ? line_word(wline_i, req_word)
+                                         : line_word(data_q[req_set][comb_hit_way],
                                                      req_word);
-                                rline_r <= data_q[req_set][comb_hit_way];
+                                rline_r <= line_i ? wline_i
+                                         : data_q[req_set][comb_hit_way];
                             end else begin
                                 hit_wait_r <= hit_cycles_eff - 1;
                                 state_r    <= ST_HIT_WAIT;
@@ -412,7 +429,20 @@ module pycore_cache #(
                             if (req_in_region)
                                 region_miss_count_r <= region_miss_count_r + 1'b1;
                             cap_way_r    <= victim_way;
-                            if (we_i && !WRITE_BACK) begin
+                            if (we_i && line_i &&
+                                !(valid_q[req_set][victim_way] &&
+                                  dirty_q[req_set][victim_way] &&
+                                  WRITE_BACK)) begin
+                                // Write-full-line / no-allocate: install without fill.
+                                data_q[req_set][victim_way]  <= wline_i;
+                                tag_q[req_set][victim_way]   <= req_tag;
+                                valid_q[req_set][victim_way] <= 1'b1;
+                                dirty_q[req_set][victim_way] <= 1'b1;
+                                ages_q[req_set]              <= lru_ages_next;
+                                ack_r   <= 1'b1;
+                                rdata_r <= line_word(wline_i, req_word);
+                                rline_r <= wline_i;
+                            end else if (we_i && !WRITE_BACK) begin
                                 state_r <= ST_WT_ISSUE;
                             end else if (valid_q[req_set][victim_way] &&
                                          dirty_q[req_set][victim_way] &&
@@ -464,9 +494,21 @@ module pycore_cache #(
                         if (down_fault_i) begin
                             state_r <= ST_FAULT;
                         end else if (down_beat_last) begin
-                            beat_r     <= '0;
-                            cap_line_r <= '0;
-                            state_r    <= ST_FILL_ISSUE;
+                            if (cap_line_wr_r) begin
+                                data_q[cap_set][cap_way_r]  <= cap_wline_r;
+                                tag_q[cap_set][cap_way_r]   <= cap_tag;
+                                valid_q[cap_set][cap_way_r] <= 1'b1;
+                                dirty_q[cap_set][cap_way_r] <= 1'b1;
+                                ages_q[cap_set]             <= lru_ages_next;
+                                ack_r   <= 1'b1;
+                                rdata_r <= line_word(cap_wline_r, cap_word);
+                                rline_r <= cap_wline_r;
+                                state_r <= ST_IDLE;
+                            end else begin
+                                beat_r     <= '0;
+                                cap_line_r <= '0;
+                                state_r    <= ST_FILL_ISSUE;
+                            end
                         end else begin
                             beat_r <= beat_r + BEAT_W'(1);
                             if (!DOWN_LINE)

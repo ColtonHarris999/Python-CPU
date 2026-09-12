@@ -206,7 +206,6 @@ class SharedSimPlusargsTest(unittest.TestCase):
             pycore_cli._run_shared_sim(
                 program_hex=pathlib.Path("/tmp/p.hex"),
                 dmem_hex=pathlib.Path("/tmp/d.hex"),
-                string_hex=pathlib.Path("/tmp/s.hex"),
                 meta={
                     "HEAP_INIT_PTR": "4096",
                     "EXPECTED_TAG": "1",
@@ -220,7 +219,6 @@ class SharedSimPlusargsTest(unittest.TestCase):
         self.assertEqual(cmd[0], str(fake_sim))
         blob = " ".join(cmd)
         self.assertIn("+PROG_HEX=", blob)
-        self.assertIn("+STRING_HEX=", blob)
         self.assertIn("+DMEM_HEX=", blob)
         self.assertIn("+FW_HEX=", blob)
         self.assertIn("+BOOT_EN=1", blob)

@@ -376,7 +376,6 @@ def _run_shared_sim(
     *,
     program_hex: pathlib.Path,
     dmem_hex: pathlib.Path,
-    string_hex: pathlib.Path,
     meta: dict[str, str],
     max_cycles: int,
     two_core: bool,
@@ -386,7 +385,6 @@ def _run_shared_sim(
     cmd = [
         str(sim),
         f"+PROG_HEX={program_hex.resolve()}",
-        f"+STRING_HEX={string_hex.resolve()}",
         f"+DMEM_HEX={dmem_hex.resolve()}",
         "+BOOT_EN=1",
         "+CHECK_ENTRY_RETURN=1",
@@ -453,7 +451,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     work.mkdir(parents=True, exist_ok=True)
     program_hex = work / "program.hex"
     dmem_hex = work / "dmem.hex"
-    string_hex = work / "string_mem.hex"
     meta_path = work / "image.meta"
     stdout_path = work / "console.txt"
 
@@ -464,7 +461,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         entry=args.entry,
         program_hex=program_hex,
         dmem_hex=dmem_hex,
-        string_hex=string_hex,
         meta=meta_path,
     )
     meta = _parse_meta(meta_path)
@@ -478,7 +474,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         sim_proc = _run_shared_sim(
             program_hex=program_hex,
             dmem_hex=dmem_hex,
-            string_hex=string_hex,
             meta=meta,
             max_cycles=args.max_cycles,
             two_core=two_core,

@@ -236,7 +236,6 @@ def run_image_test(
     entry: str,
     program_hex: pathlib.Path,
     dmem_hex: pathlib.Path,
-    string_hex: pathlib.Path,
     meta: pathlib.Path,
     slot_base: int = 0,
 ) -> tuple[int, int]:
@@ -257,7 +256,6 @@ def run_image_test(
         image,
         program_hex=program_hex,
         dmem_hex=dmem_hex,
-        string_hex=string_hex,
         meta=meta,
         expected_tag=expected_tag,
         expected_value=expected_value,
@@ -271,7 +269,6 @@ def main() -> None:
     parser.add_argument("--entry", default="managed_entry")
     parser.add_argument("--program-hex", default="pycore/programs/program.hex")
     parser.add_argument("--dmem-hex", default="pycore/programs/dmem.hex")
-    parser.add_argument("--string-hex", default="pycore/programs/string_mem.hex")
     parser.add_argument("--meta", default="pycore/programs/image.meta")
     parser.add_argument(
         "--code-ram",
@@ -289,7 +286,6 @@ def main() -> None:
         entry=args.entry,
         program_hex=pathlib.Path(args.program_hex),
         dmem_hex=pathlib.Path(args.dmem_hex),
-        string_hex=pathlib.Path(args.string_hex),
         meta=pathlib.Path(args.meta),
         slot_base=CODE_RAM_SLOT_BASE if args.code_ram else 0,
     )

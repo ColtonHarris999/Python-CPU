@@ -50,7 +50,6 @@ def main() -> None:
     parser.add_argument("--source", required=True, type=pathlib.Path)
     parser.add_argument("--program-hex", required=True, type=pathlib.Path)
     parser.add_argument("--dmem-hex", required=True, type=pathlib.Path)
-    parser.add_argument("--string-hex", required=True, type=pathlib.Path)
     parser.add_argument("--meta", required=True, type=pathlib.Path)
     args = parser.parse_args()
 
@@ -62,7 +61,6 @@ def main() -> None:
         result,
         program_hex=args.program_hex,
         dmem_hex=args.dmem_hex,
-        string_hex=args.string_hex,
         meta=args.meta,
         expected_tag=TAG_INT,
         expected_value=3,

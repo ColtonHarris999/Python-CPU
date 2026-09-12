@@ -70,49 +70,43 @@ class TestRestructuredTagMap(unittest.TestCase):
         self.assertEqual(value & ((1 << 64) - 1), 0x880)
 
     def test_tag_constant_rejects_non_inline_range_without_heap(self) -> None:
-        strings = encoding.StringHeapBuilder()
         with self.assertRaisesRegex(ValueError, "heap tuple"):
-            encoding.tag_constant(range(0, 1 << 40), strings)
+            encoding.tag_constant(range(0, 1 << 40))
 
 
 class TestTagConstantNoneAndContainers(unittest.TestCase):
     def test_none_is_control_none(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         tag, val = preprocess.tag_constant(None, heap)
         self.assertEqual(tag, preprocess.TAG_CONTROL)
         self.assertEqual(val, 1)
 
     def test_tuple_raises(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         with self.assertRaises(ValueError) as ctx:
             preprocess.tag_constant((1, 2), heap)
         self.assertIn("static heap image builder", str(ctx.exception))
 
     def test_list_raises(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         with self.assertRaises(ValueError):
             preprocess.tag_constant([1], heap)
 
     def test_frozenset_raises(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         with self.assertRaises(ValueError):
             preprocess.tag_constant(frozenset({1}), heap)
 
 
 class TestStringHeapInterning(unittest.TestCase):
     def test_identical_long_strings_share_address(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = heap_image.HeapImageBuilder()
         s = "abcdefghijklmnop"  # 16 bytes
         t1, v1 = preprocess.tag_constant(s, heap)
         t2, v2 = preprocess.tag_constant(s, heap)
         self.assertEqual(t1, preprocess.TAG_LONG_STR)
         self.assertEqual(t2, preprocess.TAG_LONG_STR)
         self.assertEqual(v1, v2)
-        addr1 = v1 & ((1 << 64) - 1)
-        addr2 = v2 & ((1 << 64) - 1)
-        self.assertEqual(addr1, addr2)
-        # Only one copy in the image.
-        self.assertEqual(heap.next_addr, len(s.encode("utf-8")))
 
 
 class TestControlKeyPacking(unittest.TestCase):
@@ -140,7 +134,7 @@ class TestBuildTupleAccepted(unittest.TestCase):
         )
 
     def test_build_tuple_in_opnames(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -150,7 +144,7 @@ class TestBuildTupleAccepted(unittest.TestCase):
         self.assertIn("BUILD_TUPLE", opnames)
 
     def test_build_tuple_single_slot(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -162,7 +156,7 @@ class TestBuildTupleAccepted(unittest.TestCase):
                 self.assertEqual(slot_map[i + 1] - slot_map[i], 1)
 
     def test_type_sketch_pushes_tuple(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -179,7 +173,7 @@ class TestBuildTupleAccepted(unittest.TestCase):
         emitted2 = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(fn2),
             co_consts=fn2.__code__.co_consts,
-            string_heap=preprocess.StringHeapBuilder(),
+            string_heap=None,
         )
         var_tags, _ = preprocess.infer_types(fn2, emitted2)
         self.assertEqual(var_tags.get("t"), preprocess.TAG_TUPLE)
@@ -241,10 +235,9 @@ class TestDictKeyHashAgreement(unittest.TestCase):
         self.assertEqual(val >> 124, 1)
 
     def test_long_str(self) -> None:
-        # size=16, addr=0x20 → value = (16 << 64) | 0x20
-        # hash = value[31:0] ^ value[95:64] = 0x20 ^ 16 = 0x30
-        val = (16 << 64) | 0x20
-        self.assertEqual(heap_image.dict_key_hash(heap_image.TAG_LONG_STR, val), 0x30)
+        # §3.2 handle: dict_key_hash is the cached content hash at [95:64].
+        val = (0xABCDEF << 64) | 0x20
+        self.assertEqual(heap_image.dict_key_hash(heap_image.TAG_LONG_STR, val), 0xABCDEF)
 
     def test_collision_keys(self) -> None:
         # Keys 0 and 4 collide under slot_count 4 (mask 3).

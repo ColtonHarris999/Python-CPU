@@ -1125,11 +1125,12 @@ endfunction
 function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_iter_value_str(
     input logic [31:0] index,
     input logic [31:0] size,
-    input logic [31:0] addr
+    input logic [31:0] addr,
+    input logic [19:0] aux
 );
     begin
         pycore_iter_value_str = {
-            PY_ITER_MAGIC, PY_ITER_KIND_STR, 20'b0, index, size, addr
+            PY_ITER_MAGIC, PY_ITER_KIND_STR, aux, index, size, addr
         };
     end
 endfunction
@@ -1182,11 +1183,11 @@ function automatic logic pycore_iter_valid(
                 pycore_iter_valid = common_magic &&
                                     (value[115:96] != 20'b0) &&
                                     (value[31:0] == 32'b0);
-            // String buffers are byte-addressed, so unlike dmem-backed
-            // iterators their base need not be 16-byte aligned.
+            // aux[0]=raw latin-1 payload at addr (SHORT spill); aux[2:1]=kind enc
+            // for a real LONG object. Remaining aux bits must stay zero.
             PY_ITER_KIND_STR:
                 pycore_iter_valid = common_magic &&
-                                    (value[115:96] == 20'b0) &&
+                                    (value[115:101] == 15'b0) &&
                                     (value[95:64] <= value[63:32]);
             PY_ITER_KIND_DICT, PY_ITER_KIND_SET:
                 pycore_iter_valid = common_magic &&
@@ -1443,7 +1444,7 @@ function automatic logic [63:0] pycore_long_str_size(
     input logic [PYCORE_VAL_WIDTH-1:0] value
 );
     begin
-        pycore_long_str_size = value[127:64];
+        pycore_long_str_size = {32'b0, pycore_stracc_nchars(value)};
     end
 endfunction
 
@@ -1451,7 +1452,7 @@ function automatic logic [63:0] pycore_long_str_addr(
     input logic [PYCORE_VAL_WIDTH-1:0] value
 );
     begin
-        pycore_long_str_addr = value[63:0];
+        pycore_long_str_addr = {32'b0, pycore_stracc_addr(value)};
     end
 endfunction
 
@@ -1468,11 +1469,122 @@ function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_short_str_entry(
 endfunction
 
 function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_make_long_str_entry(
-    input logic [63:0] size,
-    input logic [63:0] addr
+    input logic [31:0] addr,
+    input logic [31:0] nchars,
+    input logic [23:0] nbytes,
+    input logic [2:0]  kind,
+    input logic [31:0] hash,
+    input logic [5:0]  flags
 );
     begin
-        pycore_make_long_str_entry = pycore_make_entry(PY_TAG_LONG_STR, {size, addr});
+        pycore_make_long_str_entry = pycore_make_entry(
+            PY_TAG_LONG_STR,
+            pycore_stracc_pack_handle(addr, nchars, nbytes, kind, hash, flags)
+        );
+    end
+endfunction
+
+function automatic logic [31:0] pycore_str_nchars(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        if (tag == PY_TAG_SHORT_STR)
+            pycore_str_nchars = {28'b0, pycore_short_str_size(value)};
+        else
+            pycore_str_nchars = pycore_stracc_nchars(value);
+    end
+endfunction
+
+function automatic logic pycore_str_concat_fits_short(
+    input logic [3:0] tag_a, input logic [PYCORE_VAL_WIDTH-1:0] val_a,
+    input logic [3:0] tag_b, input logic [PYCORE_VAL_WIDTH-1:0] val_b
+);
+    begin
+        pycore_str_concat_fits_short =
+            (tag_a == PY_TAG_SHORT_STR) && (tag_b == PY_TAG_SHORT_STR) &&
+            ({1'b0, pycore_short_str_size(val_a)} +
+             {1'b0, pycore_short_str_size(val_b)} <=
+             5'(PYCORE_SHORT_STR_MAX_BYTES));
+    end
+endfunction
+
+function automatic logic pycore_is_str_repeat(
+    input logic [3:0] tag_a, input logic [PYCORE_VAL_WIDTH-1:0] val_a,
+    input logic [3:0] tag_b, input logic [PYCORE_VAL_WIDTH-1:0] val_b
+);
+    begin
+        pycore_is_str_repeat =
+            (pycore_is_string_tag(tag_a) && pycore_is_repeat_count(tag_b)) ||
+            (pycore_is_repeat_count(tag_a) && pycore_is_string_tag(tag_b));
+    end
+endfunction
+
+function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_short_str_concat(
+    input logic [PYCORE_VAL_WIDTH-1:0] a,
+    input logic [PYCORE_VAL_WIDTH-1:0] b
+);
+    logic [3:0] la, lb, out_len;
+    logic [119:0] pa, pb, outp;
+    int i;
+    begin
+        la = pycore_short_str_size(a);
+        lb = pycore_short_str_size(b);
+        out_len = la + lb;
+        pa = pycore_short_str_payload(a);
+        pb = pycore_short_str_payload(b);
+        outp = '0;
+        for (i = 0; i < PYCORE_SHORT_STR_MAX_BYTES; i++) begin
+            if (i < la)
+                outp[119-(i*8)-:8] = pa[119-(i*8)-:8];
+            else if (i < out_len)
+                outp[119-(i*8)-:8] = pb[119-((i-la)*8)-:8];
+        end
+        pycore_short_str_concat = pycore_make_short_str_entry(out_len, outp);
+    end
+endfunction
+
+function automatic logic [127:0] pycore_short_str_to_word(
+    input logic [PYCORE_VAL_WIDTH-1:0] val
+);
+    int i;
+    begin
+        pycore_short_str_to_word = '0;
+        for (i = 0; i < 16; i++) begin
+            if (i < pycore_short_str_size(val))
+                pycore_short_str_to_word[i*8 +: 8] =
+                    pycore_short_str_byte(val, i[3:0]);
+        end
+    end
+endfunction
+
+// Reconstruct a LONG_STR handle for SA_ITER_NEXT / SA_CHAR_AT from a KIND_STR
+// iterator. aux[0]=1 means addr names a raw kind-1 payload word (no header),
+// so the fake object base is addr-16. Otherwise addr is a real STR object.
+function automatic logic [PYCORE_ENTRY_WIDTH-1:0] pycore_str_handle_from_iter(
+    input logic [PYCORE_VAL_WIDTH-1:0] iter_val
+);
+    logic        raw;
+    logic [1:0]  kenc;
+    logic [2:0]  kwidth;
+    logic [31:0] nchars, nbytes, obj;
+    begin
+        raw    = iter_val[96];
+        kenc   = iter_val[98:97];
+        nchars = iter_val[63:32];
+        if (raw) begin
+            obj    = iter_val[31:0] - 32'd16;
+            kwidth = 3'd1;
+            nbytes = nchars;
+        end else begin
+            obj    = iter_val[31:0];
+            kwidth = pycore_stracc_kind_width(kenc);
+            nbytes = nchars * {29'b0, kwidth};
+        end
+        pycore_str_handle_from_iter = pycore_make_entry(
+            PY_TAG_LONG_STR,
+            pycore_stracc_pack_handle(obj, nchars, nbytes[23:0], kwidth, 32'd0, 6'd0)
+        );
     end
 endfunction
 
@@ -1799,7 +1911,7 @@ endfunction
 // INT: CPython -1 → -2; else value[31:0].
 // BOOL: 0/1 from value[0].
 // FLOAT: integer-valued / ±0 match int hashes; NaN/Inf/non-int → bit mix.
-// SHORT_STR: XOR of four 32-bit words. LONG_STR: low32(addr) ^ low32(size).
+// SHORT_STR: XOR of four 32-bit words. LONG_STR: cached content hash [95:64].
 function automatic logic [31:0] pycore_dict_key_hash(
     input logic [3:0]                    tag,
     input logic [PYCORE_VAL_WIDTH-1:0]   value
@@ -1872,8 +1984,7 @@ function automatic logic [31:0] pycore_dict_key_hash(
                 pycore_dict_key_hash = value[127:96] ^ value[95:64]
                                      ^ value[63:32]  ^ value[31:0];
             PY_TAG_LONG_STR:
-                // value = {size[63:0], addr[63:0]}
-                pycore_dict_key_hash = value[31:0] ^ value[95:64];
+                pycore_dict_key_hash = pycore_stracc_hash(value);
             default:
                 pycore_dict_key_hash = value[31:0];
         endcase

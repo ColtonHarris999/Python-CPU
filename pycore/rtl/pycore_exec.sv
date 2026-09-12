@@ -236,6 +236,8 @@ module pycore_exec #(
         logic signed [1:0] string_ord_cmp;
         logic        string_ord_bool;
 
+        logic        string_concat_valid;
+
         // Same-tag SHORT_STR / LONG_STR ==/!= : full 128-bit descriptor/
         // payload compare (LONG_STR is interned-descriptor equality).
         string_cmp_valid = valid_i &&
@@ -243,6 +245,20 @@ module pycore_exec #(
                            (rs1_tag == rs2_tag) &&
                            pycore_is_string_tag(rs1_tag);
         string_cmp_eq = (rs1_value_wide == rs2_value_wide);
+
+        // Mixed-tag string ==/!= is always false under the canonical invariant.
+        if (valid_i &&
+            ((alu_op_i == PY_ALU_EQ) || (alu_op_i == PY_ALU_NE)) &&
+            (rs1_tag != rs2_tag) &&
+            pycore_is_string_tag(rs1_tag) && pycore_is_string_tag(rs2_tag)) begin
+            string_cmp_valid = 1'b1;
+            string_cmp_eq = 1'b0;
+        end
+
+        string_concat_valid = valid_i && (alu_op_i == PY_ALU_ADD) &&
+                              pycore_str_concat_fits_short(
+                                  rs1_tag, rs1_value_wide,
+                                  rs2_tag, rs2_value_wide);
 
         // SHORT_STR lexicographic ordering (<,<=,>,>=).
         string_ord_valid = valid_i &&
@@ -287,6 +303,11 @@ module pycore_exec #(
                 PY_TAG_BOOL,
                 {{(PYCORE_VAL_WIDTH-1){1'b0}},
                  (alu_op_i == PY_ALU_EQ) ? string_cmp_eq : !string_cmp_eq});
+        end else if (string_concat_valid) begin
+            stall_o = 1'b0;
+            trap_o = 1'b0;
+            trap_code_o = PY_TRAP_NONE;
+            result_o = pycore_short_str_concat(rs1_value_wide, rs2_value_wide);
         end else if (string_path_valid_i) begin
             stall_o = 1'b0;
             trap_o = valid_i && string_trap_i;

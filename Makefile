@@ -41,7 +41,7 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_div.sv \
 	pycore/rtl/pycore_fpu.sv \
 	pycore/rtl/pycore_complex_alu.sv \
-	pycore/rtl/pycore_string_mem.sv \
+	pycore/rtl/pycore_str_accel.sv \
 	pycore/rtl/pycore_exec.sv \
 	pycore/rtl/pycore_regfile.sv \
 	pycore/rtl/pycore_fetch.sv \
@@ -92,7 +92,7 @@ EXCORE_RTL_SRCS := \
 	excore/rtl/excore_mmio.sv
 
 .PHONY: help lint-file pycore-preprocess run-file pycore-run-file all-tests pycore-test \
-	pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs \
+	pycore-tag-decode pycore-exec pycore-type-pairs \
 	pycore-python-tests pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib \
 	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
@@ -414,25 +414,6 @@ pycore-exec:
 		pycore/tb/tb_exec.sv
 	./$(BUILD_DIR)/pycore_exec/Vtb_exec
 
-pycore-string-exec:
-	mkdir -p $(BUILD_DIR)
-	$(VERILATOR) -sv --binary --timing \
-		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
-		--top-module tb_string_exec \
-		--Mdir $(BUILD_DIR)/pycore_string_exec \
-		-Wall -Wno-fatal \
-		pycore/rtl/pycore_tag_decode.sv \
-		pycore/rtl/pycore_promote.sv \
-		pycore/rtl/pycore_int_alu.sv \
-		pycore/rtl/pycore_mul.sv \
-		pycore/rtl/pycore_div.sv \
-		pycore/rtl/pycore_fpu.sv \
-		pycore/rtl/pycore_complex_alu.sv \
-		pycore/rtl/pycore_string_mem.sv \
-		pycore/rtl/pycore_exec.sv \
-		pycore/tb/tb_string_exec.sv
-	./$(BUILD_DIR)/pycore_string_exec/Vtb_string_exec
-
 pycore-type-pairs:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
@@ -562,7 +543,6 @@ define PYCORE_IMAGE_RUN_SRC
 		--entry managed_entry \
 		--program-hex $(BUILD_DIR)/$(1)/program.hex \
 		--dmem-hex $(BUILD_DIR)/$(1)/dmem.hex \
-		--string-hex $(BUILD_DIR)/$(1)/string_mem.hex \
 		--meta $(BUILD_DIR)/$(1)/image.meta
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
@@ -590,7 +570,6 @@ define PYCORE_IMAGE_RUN_SRC_TWOCORE
 		--entry managed_entry \
 		--program-hex $(BUILD_DIR)/$(1)/program.hex \
 		--dmem-hex $(BUILD_DIR)/$(1)/dmem.hex \
-		--string-hex $(BUILD_DIR)/$(1)/string_mem.hex \
 		--meta $(BUILD_DIR)/$(1)/image.meta
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
@@ -635,7 +614,6 @@ define PYCORE_IMAGE_RUN
 		--entry managed_entry \
 		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
 		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
-		--string-hex $(BUILD_DIR)/img_$(1)/string_mem.hex \
 		--meta $(BUILD_DIR)/img_$(1)/image.meta
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
@@ -668,7 +646,6 @@ define PYCORE_IMAGE_RUN_CODERAM
 		--code-ram \
 		--program-hex $(BUILD_DIR)/imgcr_$(1)/code_ram.hex \
 		--dmem-hex $(BUILD_DIR)/imgcr_$(1)/dmem.hex \
-		--string-hex $(BUILD_DIR)/imgcr_$(1)/string_mem.hex \
 		--meta $(BUILD_DIR)/imgcr_$(1)/image.meta
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/imgcr_$(1)/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/imgcr_$(1)/image.meta); \
@@ -697,7 +674,6 @@ define PYCORE_CONTAINER_CALL_SPIKE_RUN
 		--source pycore/programs/img_container_call_spike.py \
 		--program-hex $(BUILD_DIR)/img_container_call_spike/program.hex \
 		--dmem-hex $(BUILD_DIR)/img_container_call_spike/dmem.hex \
-		--string-hex $(BUILD_DIR)/img_container_call_spike/string_mem.hex \
 		--meta $(BUILD_DIR)/img_container_call_spike/image.meta
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
@@ -729,7 +705,6 @@ define PYCORE_IMAGE_RUN_TWOCORE
 		--entry managed_entry \
 		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
 		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
-		--string-hex $(BUILD_DIR)/img_$(1)/string_mem.hex \
 		--meta $(BUILD_DIR)/img_$(1)/image.meta
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
@@ -758,7 +733,6 @@ define PYCORE_IMAGE_RUN_TWOCORE_STDOUT
 		--source pycore/programs/img_$(1).py \
 		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
 		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
-		--string-hex $(BUILD_DIR)/img_$(1)/string_mem.hex \
 		--meta $(BUILD_DIR)/img_$(1)/image.meta \
 		--expected-tag 1 \
 		--expected-value 0
@@ -786,7 +760,6 @@ define PYCORE_IMAGE_TRAP_RUN
 		--source pycore/programs/img_$(1).py \
 		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
 		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
-		--string-hex $(BUILD_DIR)/img_$(1)/string_mem.hex \
 		--meta $(BUILD_DIR)/img_$(1)/image.meta
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
@@ -1529,7 +1502,6 @@ define PYCORE_IMAGE_TRAP_RUN_TWOCORE
 		--source pycore/programs/img_$(1).py \
 		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
 		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
-		--string-hex $(BUILD_DIR)/img_$(1)/string_mem.hex \
 		--meta $(BUILD_DIR)/img_$(1)/image.meta
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
@@ -2717,7 +2689,7 @@ excore-cpu-test: excore-fw
 
 excore-test: excore-asm-tests excore-cpu-test
 
-pycore-rtl-unit: pycore-tag-decode pycore-exec pycore-string-exec \
+pycore-rtl-unit: pycore-tag-decode pycore-exec \
 	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-str-accel pycore-l1d-handoff pycore-fetch pycore-frame \
 	pycore-frame-fib

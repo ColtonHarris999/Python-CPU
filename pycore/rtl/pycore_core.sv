@@ -87,9 +87,11 @@ module pycore_core #(
     // dmem master
     output logic                          dmem_req_o,
     output logic                          dmem_we_o,
+    output logic                          dmem_line_o,
     output logic [DMEM_DATA_W/8-1:0]      dmem_wstrb_o,
     output logic [ADDR_WIDTH-1:0]         dmem_addr_o,
     output logic [DMEM_DATA_W-1:0]        dmem_wdata_o,
+    output logic [PYCORE_LINE_BYTES*8-1:0] dmem_wline_o,
     input  logic                          dmem_ack_i,
     input  logic [DMEM_DATA_W-1:0]        dmem_rdata_i,
     input  logic                          dmem_fault_i,
@@ -154,6 +156,10 @@ module pycore_core #(
     // always_ff case below).
     localparam logic [3:0] S_TRAP_MARSHAL = 4'd10;
     localparam logic [3:0] S_TRAP_WAIT    = 4'd11;
+    // S_STRACC: string accelerator (P5c). Entered from S_EXEC for concat /
+    // repeat / slice / CHAR_AT / ITER_NEXT / non-SHORT ordering. The core is
+    // frozen and STRACC owns the dmem master until res_valid.
+    localparam logic [3:0] S_STRACC       = 4'd12;
 
     // trap_res_code_i values (mirrors excore/docs/mmio_map.md RES_CODE).
     localparam logic [3:0] TRAP_RES_COMPLETED = 4'd0;
@@ -520,6 +526,10 @@ module pycore_core #(
     logic                          container_type_trap_r;
     logic                          container_mem_fault_r;
     logic                          container_raise_trap_r;
+    // S_STRACC issue/finish bookkeeping (declared early for rs1_addr_eff).
+    logic                          stracc_issued_r;
+    logic                          stracc_finishing_r;
+    logic                          stracc_iter_pending_r;
     // Active exception (§7.6) + boot StopIteration latch (§7.4).
     logic [PYCORE_ENTRY_WIDTH-1:0] active_exc_r;
     logic                          active_exc_valid_r;
@@ -595,6 +605,7 @@ module pycore_core #(
     logic        binary_seq_mul;
     logic        binary_seq_add;
     logic        route_container;
+    logic        route_stracc;
     logic [2:0]  dec_mem_op;
     logic        dec_illegal;
 
@@ -682,15 +693,19 @@ module pycore_core #(
                 id_rd_we = 1'b0; id_tos_delta = 3'sd0;
             end
             PY_OP_BINARY_OP: begin
-                // NB_SUBSCR routes to S_CONTAINER; arithmetic ops use S_WB.
-                if (route_container) begin
+                // NB_SUBSCR routes to S_CONTAINER; STRACC ops skip S_WB.
+                if (route_container || route_stracc) begin
                     id_rd_we = 1'b0; id_tos_delta = 3'sd0;
                 end else begin
                     id_rd_we = !dec_illegal; id_tos_delta = -3'sd1;
                 end
             end
             PY_OP_COMPARE_OP, PY_OP_IS_OP: begin
-                id_rd_we = !dec_illegal; id_tos_delta = -3'sd1;
+                if (route_stracc) begin
+                    id_rd_we = 1'b0; id_tos_delta = 3'sd0;
+                end else begin
+                    id_rd_we = !dec_illegal; id_tos_delta = -3'sd1;
+                end
             end
             PY_OP_END_FOR, PY_OP_POP_TOP, PY_OP_POP_ITER: begin
                 id_tos_delta = -3'sd1;
@@ -735,7 +750,11 @@ module pycore_core #(
     // slots without a second read port (callable / null / STORE value).
     assign rs1_addr_eff = ((state_r == S_CONTAINER) || (state_r == S_CALL))
                           ? container_rf_addr_r
-                          : dec_rs1_sel[RF_AW-1:0];
+                          : ((state_r == S_STRACC) &&
+                             (cur_opcode_r == PY_OP_BINARY_SLICE) &&
+                             !stracc_issued_r)
+                            ? (tos_r - RF_AW'(1))
+                            : dec_rs1_sel[RF_AW-1:0];
 
     // ---------------------------------------------------------------------
     // EX: execute fabric + branch unit
@@ -764,8 +783,52 @@ module pycore_core #(
                                 pycore_get_tag(rs2_r), pycore_get_val(rs2_r));
     assign route_container = dec_is_container || binary_list_iadd ||
                              binary_seq_mul || binary_seq_add;
-    assign is_alu = ((cur_opcode_r == PY_OP_BINARY_OP) && !route_container) ||
-                    (cur_opcode_r == PY_OP_COMPARE_OP) ||
+    // STRACC (P5c): anything the string ALU cannot finish from the handles.
+    // BINARY_SLICE always goes here (non-str subjects TYPE-trap in SA_SLICE).
+    logic        stracc_concat;
+    logic        stracc_repeat;
+    logic        stracc_cmp;
+    logic        stracc_subscr;
+    logic        stracc_slice;
+    logic        stracc_iter;
+    assign stracc_concat =
+        (cur_opcode_r == PY_OP_BINARY_OP) &&
+        ((cur_arg_r[7:0] == PY_NBARG_ADD) || (cur_arg_r[7:0] == 8'd13)) &&
+        pycore_is_string_tag(pycore_get_tag(rs1_r)) &&
+        pycore_is_string_tag(pycore_get_tag(rs2_r)) &&
+        !pycore_str_concat_fits_short(
+            pycore_get_tag(rs1_r), pycore_get_val(rs1_r),
+            pycore_get_tag(rs2_r), pycore_get_val(rs2_r));
+    assign stracc_repeat =
+        (cur_opcode_r == PY_OP_BINARY_OP) &&
+        ((cur_arg_r[7:0] == PY_NBARG_MULTIPLY) ||
+         (cur_arg_r[7:0] == PY_NBARG_INPLACE_MULTIPLY)) &&
+        pycore_is_str_repeat(
+            pycore_get_tag(rs1_r), pycore_get_val(rs1_r),
+            pycore_get_tag(rs2_r), pycore_get_val(rs2_r));
+    assign stracc_cmp =
+        (cur_opcode_r == PY_OP_COMPARE_OP) &&
+        pycore_is_string_tag(pycore_get_tag(rs1_r)) &&
+        pycore_is_string_tag(pycore_get_tag(rs2_r)) &&
+        !((pycore_get_tag(rs1_r) == PY_TAG_SHORT_STR) &&
+          (pycore_get_tag(rs2_r) == PY_TAG_SHORT_STR)) &&
+        ((dec_alu_op == PY_ALU_LT) || (dec_alu_op == PY_ALU_LE) ||
+         (dec_alu_op == PY_ALU_GT) || (dec_alu_op == PY_ALU_GE));
+    assign stracc_subscr =
+        (cur_opcode_r == PY_OP_BINARY_OP) &&
+        (cur_arg_r[7:0] == PY_NBARG_SUBSCR) &&
+        pycore_is_string_tag(pycore_get_tag(rs1_r));
+    assign stracc_slice = (cur_opcode_r == PY_OP_BINARY_SLICE);
+    assign stracc_iter =
+        (cur_opcode_r == PY_OP_FOR_ITER) &&
+        (pycore_get_tag(rs1_r) == PY_TAG_ITER) &&
+        pycore_iter_valid(pycore_get_val(rs1_r)) &&
+        (pycore_iter_kind(pycore_get_val(rs1_r)) == PY_ITER_KIND_STR);
+    assign route_stracc = stracc_concat || stracc_repeat || stracc_cmp ||
+                          stracc_subscr || stracc_slice || stracc_iter;
+    assign is_alu = ((cur_opcode_r == PY_OP_BINARY_OP) &&
+                     !route_container && !route_stracc) ||
+                    ((cur_opcode_r == PY_OP_COMPARE_OP) && !route_stracc) ||
                     (cur_opcode_r == PY_OP_UNARY_INVERT) ||
                     (cur_opcode_r == PY_OP_UNARY_NEGATIVE);
 
@@ -773,62 +836,95 @@ module pycore_core #(
     logic                          exec_stall;
     logic                          exec_trap;
     logic [4:0]                    exec_trap_code;
-    logic                          string_exec_path_valid;
-    logic [PYCORE_ENTRY_WIDTH-1:0] string_exec_result;
-    logic                          string_exec_trap;
-    logic [4:0]                    string_exec_trap_code;
-    logic                          string_snapshot_valid;
-    logic [3:0]                    string_snapshot_size;
-    logic [119:0]                  string_snapshot_payload;
-    logic                          string_snapshot_ok;
-    logic [31:0]                   string_snapshot_addr;
     // Code-RAM bump cursor (slot index). Mark/release moves it (Plan 1 P8).
     logic [31:0]                   code_ram_ptr_r;
-    logic [31:0]                   string_read_addr;
-    logic [31:0]                   string_read_data;
-    // BINARY_SLICE port: driven from CONT_SLICE_STR once the character bounds
-    // have been walked into byte offsets.
-    logic                          string_slice_valid;
-    logic [63:0]                   string_slice_start;
-    logic [63:0]                   string_slice_len;
-    logic                          string_slice_ok;
-    logic [PYCORE_ENTRY_WIDTH-1:0] string_slice_result;
-    // CONT_SLICE_STR walk state: the stop bound arrives one cycle after CP_INIT
-    // (RF read latency), so `armed` distinguishes the latch cycle from the
-    // walk steps that follow.
-    logic [31:0]                   container_slice_stop_r;
-    logic                          container_slice_armed_r;
 
-    pycore_string_mem #(
-        .STRING_MEM_BYTES(STRING_MEM_BYTES),
-        .STRING_MAX_LEN(STRING_MAX_LEN),
-        .STRING_RUNTIME_BASE(STRING_RUNTIME_BASE),
-        .STRING_HEX(STRING_HEX)
-    ) string_store (
+    // -------------------------------------------------------------------------
+    // String accelerator (P5c). Own dmem master; active only in S_STRACC.
+    // -------------------------------------------------------------------------
+    logic        stracc_cmd_valid;
+    logic        stracc_cmd_ready;
+    logic [5:0]  stracc_cmd_op;
+    logic [3:0]  stracc_cmd_var;
+    logic [PYCORE_ENTRY_WIDTH-1:0] stracc_cmd_a, stracc_cmd_b, stracc_cmd_c;
+    logic        stracc_res_valid, stracc_res_trap;
+    logic [PYCORE_ENTRY_WIDTH-1:0] stracc_res_entry;
+    logic [31:0] stracc_res_heap;
+    logic [4:0]  stracc_res_code;
+    logic        stracc_req, stracc_we, stracc_line;
+    logic [15:0] stracc_wstrb;
+    logic [31:0] stracc_addr;
+    logic [127:0] stracc_wdata;
+    logic [PYCORE_LINE_BYTES*8-1:0] stracc_wline;
+    logic        stracc_dmem_active;
+    logic [PYCORE_ENTRY_WIDTH-1:0] stracc_item_r;
+
+    pycore_str_accel u_str_accel (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
-        .exec_valid_i((state_r == S_EXEC) && is_alu),
-        .exec_alu_op_i(dec_alu_op),
-        .exec_rs1_i(rs1_r),
-        .exec_rs2_i(rs2_r),
-        .exec_path_valid_o(string_exec_path_valid),
-        .exec_result_o(string_exec_result),
-        .exec_trap_o(string_exec_trap),
-        .exec_trap_code_o(string_exec_trap_code),
-        .snapshot_valid_i(string_snapshot_valid),
-        .snapshot_size_i(string_snapshot_size),
-        .snapshot_payload_i(string_snapshot_payload),
-        .snapshot_ok_o(string_snapshot_ok),
-        .snapshot_addr_o(string_snapshot_addr),
-        .slice_valid_i(string_slice_valid),
-        .slice_src_i(rs1_r),
-        .slice_start_i(string_slice_start),
-        .slice_len_i(string_slice_len),
-        .slice_ok_o(string_slice_ok),
-        .slice_result_o(string_slice_result),
-        .read_addr_i(string_read_addr),
-        .read_data_o(string_read_data)
+        .cmd_valid_i(stracc_cmd_valid),
+        .cmd_ready_o(stracc_cmd_ready),
+        .cmd_op_i(stracc_cmd_op),
+        .cmd_var_i(stracc_cmd_var),
+        .cmd_a_i(stracc_cmd_a),
+        .cmd_b_i(stracc_cmd_b),
+        .cmd_c_i(stracc_cmd_c),
+        .cmd_heap_ptr_i(heap_ptr_r),
+        .res_valid_o(stracc_res_valid),
+        .res_entry_o(stracc_res_entry),
+        .res_heap_ptr_o(stracc_res_heap),
+        .res_trap_o(stracc_res_trap),
+        .res_trap_code_o(stracc_res_code),
+        .req_o(stracc_req),
+        .we_o(stracc_we),
+        .line_o(stracc_line),
+        .wstrb_o(stracc_wstrb),
+        .addr_o(stracc_addr),
+        .wdata_o(stracc_wdata),
+        .wline_o(stracc_wline),
+        .ack_i(dmem_ack_i),
+        .last_i(dmem_ack_i),
+        .rdata_i(dmem_rdata_i),
+        .fault_i(dmem_fault_i),
+        .bytes_scanned_o(),
+        .bytes_written_o(),
+        .cmd_count_o()
     );
+
+    assign stracc_dmem_active = (state_r == S_STRACC) && stracc_req;
+    assign stracc_cmd_valid = (state_r == S_STRACC) && stracc_cmd_ready &&
+                              !stracc_issued_r && !stracc_iter_pending_r &&
+                              !stracc_finishing_r;
+
+    always_comb begin
+        stracc_cmd_op  = PY_SA_CONCAT;
+        stracc_cmd_var = 4'd0;
+        stracc_cmd_a   = rs1_r;
+        stracc_cmd_b   = rs2_r;
+        stracc_cmd_c   = pycore_make_control(PY_CTL_NONE);
+        if (stracc_repeat) begin
+            stracc_cmd_op = PY_SA_REPEAT;
+            if (pycore_is_string_tag(pycore_get_tag(rs1_r))) begin
+                stracc_cmd_a = rs1_r;
+                stracc_cmd_b = rs2_r;
+            end else begin
+                stracc_cmd_a = rs2_r;
+                stracc_cmd_b = rs1_r;
+            end
+        end else if (stracc_cmp) begin
+            stracc_cmd_op = PY_SA_CMP;
+        end else if (stracc_subscr) begin
+            stracc_cmd_op = PY_SA_CHAR_AT;
+        end else if (stracc_slice) begin
+            stracc_cmd_op = PY_SA_SLICE;
+            stracc_cmd_c  = rf_rs1;
+        end else if (stracc_iter) begin
+            stracc_cmd_op = PY_SA_ITER_NEXT;
+            stracc_cmd_a  = pycore_str_handle_from_iter(pycore_get_val(rs1_r));
+            stracc_cmd_b  = pycore_int_entry({32'b0, pycore_iter_index(
+                                pycore_get_val(rs1_r))});
+        end
+    end
 
     pycore_exec exec (
         .clk_i(clk_i),
@@ -837,10 +933,10 @@ module pycore_core #(
         .alu_op_i(dec_alu_op),
         .rs1_i(rs1_r),
         .rs2_i(rs2_r),
-        .string_path_valid_i(string_exec_path_valid),
-        .string_result_i(string_exec_result),
-        .string_trap_i(string_exec_trap),
-        .string_trap_code_i(string_exec_trap_code),
+        .string_path_valid_i(1'b0),
+        .string_result_i('0),
+        .string_trap_i(1'b0),
+        .string_trap_code_i(5'b0),
         .result_o(exec_result),
         .stall_o(exec_stall),
         .trap_o(exec_trap),
@@ -1128,16 +1224,18 @@ module pycore_core #(
     );
 
     // ---------------------------------------------------------------------
-    // Dmem mux: four sources share the single dmem port.
+    // Dmem mux: five sources share the single dmem port.
     //   1. frame_dmem_active (S_CALL / S_RETURN): frame push/pop.
     //   2. container_dmem_active: heap alloc / element R/W (S_CONTAINER)
     //      AND boot-record + code-object field reads (S_BOOT, S_CALL,
     //      S_RETURN before frame_dmem_pending_r goes high).
-    //   3. exc_dmem_active: exc-info stack push/pop (§5.5; step 5 opcodes).
-    //   4. ms_dmem_* (S_MEM): normal PTR load/store.
+    //   3. stracc_dmem_active: string accelerator (S_STRACC only).
+    //   4. exc_dmem_active: exc-info stack push/pop (§5.5; step 5 opcodes).
+    //   5. ms_dmem_* (S_MEM): normal PTR load/store.
     // Only one of container_dmem_pending_r / frame_dmem_pending_r may be
     // high at a time (the FSM issues them sequentially); S_MEM never
-    // overlaps with 1 or 2.
+    // overlaps with 1 or 2. STRACC is frozen in S_STRACC so it cannot
+    // overlap an excore-owned window.
     // ---------------------------------------------------------------------
     logic frame_dmem_active;
     logic container_dmem_active;
@@ -1221,24 +1319,32 @@ module pycore_core #(
                                     (state_r == S_CALL)      ||
                                     (state_r == S_RETURN));
     assign exc_dmem_active       = exc_dmem_req &&
-                                   !frame_dmem_active && !container_dmem_active;
+                                   !frame_dmem_active && !container_dmem_active &&
+                                   !stracc_dmem_active;
 
     assign dmem_req_o   = frame_dmem_active     ? 1'b1 :
                           container_dmem_active ? 1'b1 :
+                          stracc_dmem_active    ? 1'b1 :
                           exc_dmem_active       ? 1'b1 : ms_dmem_req;
     assign dmem_we_o    = frame_dmem_active     ? (state_r == S_CALL) :
                           container_dmem_active ? container_dmem_we_r  :
+                          stracc_dmem_active    ? stracc_we           :
                           exc_dmem_active       ? exc_dmem_we         : ms_dmem_we;
+    assign dmem_line_o  = stracc_dmem_active    ? stracc_line : 1'b0;
     assign dmem_wstrb_o = frame_dmem_active     ? {DMEM_DATA_W/8{1'b1}} :
                           container_dmem_active ? container_dmem_wstrb_r :
+                          stracc_dmem_active    ? stracc_wstrb        :
                           exc_dmem_active       ? exc_dmem_wstrb      : ms_dmem_wstrb;
     assign dmem_addr_o  = frame_dmem_active     ?
                               ((state_r == S_CALL) ? frame_push_addr : frame_pop_addr) :
                           container_dmem_active ? container_dmem_addr_r :
+                          stracc_dmem_active    ? stracc_addr          :
                           exc_dmem_active       ? exc_dmem_addr        : ms_dmem_addr;
     assign dmem_wdata_o = frame_dmem_active     ? frame_push_data :
                           container_dmem_active ? container_dmem_wdata_r :
+                          stracc_dmem_active    ? stracc_wdata         :
                           exc_dmem_active       ? exc_dmem_wdata       : ms_dmem_wdata;
+    assign dmem_wline_o = stracc_dmem_active    ? stracc_wline : '0;
 
     // ---------------------------------------------------------------------
     // Trap aggregation (single in-flight instruction).
@@ -1280,7 +1386,7 @@ module pycore_core #(
                             (container_attr_error_r && container_proto_resolve_r) ||
                             return_type_trap_r;
     assign stack_fault_sig = (state_r == S_WB) && !dec_is_call && !dec_is_return &&
-                              !route_container &&
+                              !route_container && !route_stracc &&
                              ((next_tos < STACK_BASE) || (next_tos > STACK_TOP_MAX));
     assign div_zero_sig   = exec_in && exec_trap && (exec_trap_code == PY_TRAP_DIV_ZERO);
     assign fpu_exc_sig    = exec_in && exec_trap && (exec_trap_code == PY_TRAP_FPU_EXCEPTION);
@@ -1294,7 +1400,7 @@ module pycore_core #(
                             container_mem_fault_r ||
                             imem_fault_i ||
                             ((container_dmem_active || frame_dmem_active ||
-                              exc_dmem_active) &&
+                              exc_dmem_active || stracc_dmem_active) &&
                              dmem_ack_i && dmem_fault_i);
     assign addr_align_sig = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ADDR_ALIGN)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_ADDR_ALIGN));
@@ -1501,53 +1607,6 @@ module pycore_core #(
     assign cont_iter_size     = pycore_iter_size(cont_rs1_val);
     assign cont_iter_addr     = pycore_iter_addr(cont_rs1_val);
     assign cont_iter_aux      = pycore_iter_aux(cont_rs1_val);
-    assign string_snapshot_size = pycore_short_str_size(cont_rs1_val);
-    assign string_snapshot_payload = pycore_short_str_payload(cont_rs1_val);
-    assign string_snapshot_valid =
-        (state_r == S_CONTAINER) &&
-        (container_op_r == CONT_GET_ITER) &&
-        (container_phase_r == CP_INIT) &&
-        (cont_rs1_tag == PY_TAG_SHORT_STR) &&
-        (string_snapshot_size != 4'b0);
-    // CONT_SUBSCR_STR geometry. container_probe_r is the current byte offset
-    // into the subject string; cont_str_win presents the same 4-byte,
-    // lead-byte-first window as string_read_data so a single UTF-8 decode
-    // serves both string tags — SHORT_STR bytes are inline in the handle,
-    // LONG_STR bytes live in string_mem. No snapshot allocation is needed.
-    logic        cont_str_subscr_active;
-    logic [31:0] cont_str_len;
-    logic [31:0] cont_str_base;
-    logic [31:0] cont_str_win;
-    // Both string walkers (s[i] and s[a:b]) index the subject with
-    // container_probe_r and share one decode window.
-    assign cont_str_subscr_active = (state_r == S_CONTAINER) &&
-                                    ((container_op_r == CONT_SUBSCR_STR) ||
-                                     (container_op_r == CONT_SLICE_STR));
-    assign cont_str_len  = (cont_rs1_tag == PY_TAG_SHORT_STR)
-                         ? {28'b0, pycore_short_str_size(cont_rs1_val)}
-                         : pycore_long_str_size(cont_rs1_val)[31:0];
-    assign cont_str_base = (cont_rs1_tag == PY_TAG_SHORT_STR)
-                         ? 32'd0
-                         : pycore_long_str_addr(cont_rs1_val)[31:0];
-    assign cont_str_win  = (cont_rs1_tag == PY_TAG_SHORT_STR)
-        ? {pycore_short_str_byte(cont_rs1_val, container_probe_r + 32'd3),
-           pycore_short_str_byte(cont_rs1_val, container_probe_r + 32'd2),
-           pycore_short_str_byte(cont_rs1_val, container_probe_r + 32'd1),
-           pycore_short_str_byte(cont_rs1_val, container_probe_r)}
-        : string_read_data;
-
-    assign string_read_addr = cont_str_subscr_active
-                            ? (cont_str_base + container_probe_r)
-                            : (cont_iter_addr + cont_iter_index);
-
-    // CONT_SLICE_STR hands the resolved byte range to string_mem in CP_TAG:
-    // container_base_r is the start byte, container_probe_r the end byte.
-    assign string_slice_valid = (state_r == S_CONTAINER) &&
-                                (container_op_r == CONT_SLICE_STR) &&
-                                (container_phase_r == CP_TAG);
-    assign string_slice_start = {32'b0, container_base_r};
-    assign string_slice_len   = {32'b0, container_probe_r - container_base_r};
-
     // Dict-specific combinational helpers.
     // Slot count computed from container_count_r (pairs), used during BUILD_MAP init.
     logic [31:0] cont_dict_min_slots;
@@ -1702,9 +1761,10 @@ module pycore_core #(
                 end
                 S_EXEC: begin
                     if (!exec_stall) begin
-                        // Container ops bypass S_MEM and S_WB entirely.
-                        if (route_container) state_next = S_CONTAINER;
-                        else                  state_next = S_MEM;
+                        // Container / STRACC ops bypass S_MEM and S_WB.
+                        if (route_stracc)         state_next = S_STRACC;
+                        else if (route_container) state_next = S_CONTAINER;
+                        else                      state_next = S_MEM;
                     end
                 end
                 S_MEM: begin
@@ -1757,6 +1817,10 @@ module pycore_core #(
                     end else if (container_phase_r == CP_DONE) begin
                         state_next = trap_marshal_pending_r ? S_TRAP_MARSHAL : S_FETCH;
                     end
+                end
+                S_STRACC: begin
+                    if (stracc_finishing_r)
+                        state_next = S_FETCH;
                 end
                 S_TRAP_MARSHAL: begin
                     if (trap_req_ready_i) state_next = S_TRAP_WAIT;
@@ -1933,6 +1997,10 @@ module pycore_core #(
             container_wb_data_r      <= '0;
             container_type_trap_r    <= 1'b0;
             container_mem_fault_r    <= 1'b0;
+            stracc_issued_r          <= 1'b0;
+            stracc_finishing_r       <= 1'b0;
+            stracc_iter_pending_r    <= 1'b0;
+            stracc_item_r            <= '0;
             container_raise_trap_r   <= 1'b0;
             active_exc_r             <= '0;
             active_exc_valid_r       <= 1'b0;
@@ -1951,8 +2019,6 @@ module pycore_core #(
             container_src_len_r          <= '0;
             container_rhs_buf_r          <= '0;
             container_rhs_len_r          <= '0;
-            container_slice_stop_r       <= '0;
-            container_slice_armed_r      <= 1'b0;
             container_src_is_tuple_r     <= 1'b0;
             container_unpack_before_r    <= '0;
             container_unpack_after_r     <= '0;
@@ -2017,6 +2083,7 @@ module pycore_core #(
             container_set_update_trap_r     <= 1'b0;
             excore_fatal_trap_r   <= 1'b0;
             call_filter_trap_r    <= 1'b0;
+            stracc_finishing_r    <= 1'b0;
 
             if (state_r == S_FETCH) begin
                 redirect_pending_r <= 1'b0;
@@ -2055,7 +2122,12 @@ module pycore_core #(
                         // transitions to S_CONTAINER (dec_is_container).
                         // Decode which sub-operation we are entering and
                         // pre-clear the dmem/trap handshake registers.
-                        if (route_container) begin
+                        if (route_stracc) begin
+                            stracc_issued_r       <= 1'b0;
+                            stracc_finishing_r    <= 1'b0;
+                            stracc_iter_pending_r <= 1'b0;
+                            stracc_item_r         <= '0;
+                        end else if (route_container) begin
                             container_phase_r        <= CP_INIT;
                             container_dmem_pending_r <= 1'b0;
                             container_type_trap_r    <= 1'b0;
@@ -2306,6 +2378,90 @@ module pycore_core #(
                 end
 
                 `include "pycore_call_fsm.svh"
+
+                // ----------------------------------------------------------
+                // S_STRACC: string accelerator. Pulse cmd_valid on the first
+                // cycle (STRACC IDLE→PREP). res_valid is one cycle (ST_DONE).
+                // RF writes reuse container_wb_*; traps reuse container_*_r.
+                // ----------------------------------------------------------
+                S_STRACC: begin
+                    if (stracc_cmd_valid) begin
+                        stracc_issued_r <= 1'b1;
+                    end else if (stracc_iter_pending_r) begin
+                        container_wb_we_r   <= 1'b1;
+                        container_wb_addr_r <= tos_r;
+                        container_wb_data_r <= stracc_item_r;
+                        tos_r               <= tos_r + RF_AW'(1);
+                        fetch_skip_r        <= 1'b1;
+                        stracc_iter_pending_r <= 1'b0;
+                        stracc_finishing_r  <= 1'b1;
+                    end else if (stracc_res_valid) begin
+                        if (stracc_res_trap) begin
+                            if (stracc_res_code == PY_TRAP_TYPE)
+                                container_type_trap_r <= 1'b1;
+                            else
+                                container_mem_fault_r <= 1'b1;
+                        end else if (cur_opcode_r == PY_OP_FOR_ITER) begin
+                            if (pycore_is_none(pycore_get_tag(stracc_res_entry),
+                                               pycore_get_val(stracc_res_entry))) begin
+                                redirect_pending_r <= 1'b1;
+                                redirect_tgt_r <= cur_pc_r + 32'd1 +
+                                    {24'b0, PY_CACHE_FOR_ITER} +
+                                    cur_arg_r + 32'd1;
+                                fetch_skip_r       <= 1'b1;
+                                stracc_finishing_r <= 1'b1;
+                            end else begin
+                                container_wb_we_r   <= 1'b1;
+                                container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                container_wb_data_r <= pycore_make_entry(
+                                    PY_TAG_ITER,
+                                    pycore_iter_value_str(
+                                        pycore_iter_index(pycore_get_val(rs1_r))
+                                            + 32'd1,
+                                        pycore_iter_size(pycore_get_val(rs1_r)),
+                                        pycore_iter_addr(pycore_get_val(rs1_r)),
+                                        pycore_iter_aux(pycore_get_val(rs1_r))));
+                                stracc_item_r         <= stracc_res_entry;
+                                stracc_iter_pending_r <= 1'b1;
+                                heap_ptr_r            <= stracc_res_heap;
+                            end
+                        end else begin
+                            begin
+                                logic [PYCORE_ENTRY_WIDTH-1:0] wb_entry;
+                                logic signed [63:0] cmpv;
+                                logic cmp_bool;
+                                wb_entry = stracc_res_entry;
+                                if (cur_opcode_r == PY_OP_COMPARE_OP) begin
+                                    cmpv = $signed(pycore_get_val(
+                                        stracc_res_entry)[63:0]);
+                                    unique case (dec_alu_op)
+                                        PY_ALU_LT: cmp_bool = (cmpv < 0);
+                                        PY_ALU_LE: cmp_bool = (cmpv <= 0);
+                                        PY_ALU_GT: cmp_bool = (cmpv > 0);
+                                        PY_ALU_GE: cmp_bool = (cmpv >= 0);
+                                        default:   cmp_bool = 1'b0;
+                                    endcase
+                                    wb_entry = pycore_make_entry(
+                                        PY_TAG_BOOL, {127'b0, cmp_bool});
+                                end
+                                container_wb_we_r   <= 1'b1;
+                                if (cur_opcode_r == PY_OP_BINARY_SLICE) begin
+                                    container_wb_addr_r <=
+                                        RF_AW'(tos_r - RF_AW'(3));
+                                    tos_r <= tos_r - RF_AW'(2);
+                                end else begin
+                                    container_wb_addr_r <=
+                                        RF_AW'(tos_r - RF_AW'(2));
+                                    tos_r <= tos_r - RF_AW'(1);
+                                end
+                                container_wb_data_r <= wb_entry;
+                                fetch_skip_r        <= 1'b1;
+                                stracc_finishing_r  <= 1'b1;
+                                heap_ptr_r          <= stracc_res_heap;
+                            end
+                        end
+                    end
+                end
 
                 // ----------------------------------------------------------
                 // S_CONTAINER: multi-cycle handler for container operations.

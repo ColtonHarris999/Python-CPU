@@ -298,9 +298,9 @@ module pycore_tag_decode (
                         exec_unit_sel_o = PY_EXEC_INT;
                         result_tag_o = PY_TAG_BOOL;
                     end else if ((alu_op_i == PY_ALU_EQ || alu_op_i == PY_ALU_NE) &&
-                                 (rs1_tag_i == rs2_tag_i) &&
-                                 (rs1_tag_i == PY_TAG_LONG_STR)) begin
-                        // Equality only; descriptor compare in pycore_exec.
+                                 pycore_is_string_tag(rs1_tag_i) &&
+                                 pycore_is_string_tag(rs2_tag_i)) begin
+                        // Same-tag descriptor compare, or mixed-tag canonical-false.
                         exec_unit_sel_o = PY_EXEC_INT;
                         result_tag_o = PY_TAG_BOOL;
                     end else begin

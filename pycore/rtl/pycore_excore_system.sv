@@ -57,9 +57,11 @@ module pycore_excore_system #(
 
     // ---- pycore's dmem master (into L1D) ----------------------------------
     logic                   core_dmem_req, core_dmem_we, core_dmem_ack, core_dmem_fault;
+    logic                   core_dmem_line;
     logic [DMEM_DATA_W/8-1:0] core_dmem_wstrb;
     logic [ADDR_WIDTH-1:0]  core_dmem_addr;
     logic [DMEM_DATA_W-1:0] core_dmem_wdata, core_dmem_rdata;
+    logic [PYCORE_LINE_BYTES*8-1:0] core_dmem_wline;
 
     // ---- excore's slot-port master (into L2, not L1D) --------------------
     logic          sp_req, sp_we, sp_ack, sp_fault;
@@ -146,9 +148,11 @@ module pycore_excore_system #(
         .imem_line_valid_i(imem_line_valid),
         .dmem_req_o(core_dmem_req),
         .dmem_we_o(core_dmem_we),
+        .dmem_line_o(core_dmem_line),
         .dmem_wstrb_o(core_dmem_wstrb),
         .dmem_addr_o(core_dmem_addr),
         .dmem_wdata_o(core_dmem_wdata),
+        .dmem_wline_o(core_dmem_wline),
         .dmem_ack_i(core_dmem_ack),
         .dmem_rdata_i(core_dmem_rdata),
         .dmem_fault_i(core_dmem_fault),
@@ -396,9 +400,11 @@ module pycore_excore_system #(
         .imem_line_valid_o(imem_line_valid),
         .dmem_req_i(core_dmem_req && (mem_owner_r == OWNER_PYCORE)),
         .dmem_we_i(core_dmem_we),
+        .dmem_line_i(core_dmem_line),
         .dmem_wstrb_i(core_dmem_wstrb),
         .dmem_addr_i(core_dmem_addr),
         .dmem_wdata_i(core_dmem_wdata),
+        .dmem_wline_i(core_dmem_wline),
         .dmem_ack_o(core_dmem_ack),
         .dmem_rdata_o(core_dmem_rdata),
         .dmem_fault_o(core_dmem_fault),

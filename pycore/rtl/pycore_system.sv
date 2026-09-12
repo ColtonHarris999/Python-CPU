@@ -48,9 +48,11 @@ module pycore_system #(
     // dmem master <-> bank
     logic                   dmem_req;
     logic                   dmem_we;
+    logic                   dmem_line;
     logic [DMEM_DATA_W/8-1:0] dmem_wstrb;
     logic [ADDR_WIDTH-1:0]  dmem_addr;
     logic [DMEM_DATA_W-1:0] dmem_wdata;
+    logic [PYCORE_LINE_BYTES*8-1:0] dmem_wline;
     logic                   dmem_ack;
     logic [DMEM_DATA_W-1:0] dmem_rdata;
     logic                   dmem_fault;
@@ -103,9 +105,11 @@ module pycore_system #(
         .imem_line_valid_i(imem_line_valid),
         .dmem_req_o(dmem_req),
         .dmem_we_o(dmem_we),
+        .dmem_line_o(dmem_line),
         .dmem_wstrb_o(dmem_wstrb),
         .dmem_addr_o(dmem_addr),
         .dmem_wdata_o(dmem_wdata),
+        .dmem_wline_o(dmem_wline),
         .dmem_ack_i(dmem_ack),
         .dmem_rdata_i(dmem_rdata),
         .dmem_fault_i(dmem_fault),
@@ -160,9 +164,11 @@ module pycore_system #(
         .imem_line_valid_o(imem_line_valid),
         .dmem_req_i(dmem_req),
         .dmem_we_i(dmem_we),
+        .dmem_line_i(dmem_line),
         .dmem_wstrb_i(dmem_wstrb),
         .dmem_addr_i(dmem_addr),
         .dmem_wdata_i(dmem_wdata),
+        .dmem_wline_i(dmem_wline),
         .dmem_ack_o(dmem_ack),
         .dmem_rdata_o(dmem_rdata),
         .dmem_fault_o(dmem_fault),

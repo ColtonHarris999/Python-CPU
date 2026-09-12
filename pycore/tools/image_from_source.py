@@ -40,10 +40,8 @@ from encoding import (
     OB_FLAG_EXC_TYPE,
     OB_FLAG_INT_TYPE,
     OB_FLAG_STR_TYPE,
-    STRING_MEM_BYTES,
     TAG_INT,
     VAL_MASK,
-    StringHeapBuilder,
     dict_slot_count_for_stores,
     format_imem_slot,
     int_value,
@@ -225,7 +223,6 @@ class ImageBuildResult:
     builtins_dict: Tagged
     program_slots: list[str]
     heap: HeapImageBuilder
-    string_heap: StringHeapBuilder
     code_handles: dict[int, Tagged] = field(default_factory=dict)
     entry_slots: dict[int, int] = field(default_factory=dict)
     global_store_count: int = 0
@@ -405,7 +402,6 @@ class _ImageSerializer:
         # HEAP_BASE is defined as the first byte after the boot record.
         static_base = HEAP_BASE
         self.heap = HeapImageBuilder(base=static_base)
-        self.string_heap = StringHeapBuilder()
         self.program_slots: list[str] = []
         # Slot index of program_slots[0] in the code address space. Non-zero
         # places the whole image in code RAM (Plan 1 P1): entry_slot values are
@@ -442,10 +438,10 @@ class _ImageSerializer:
             [self.serialize_constant(const, folded) for const in folded.co_consts]
         )
         co_names = self.heap.alloc_tuple(
-            [tag_constant(name, self.string_heap) for name in co.co_names]
+            [tag_constant(name, self.heap) for name in co.co_names]
         )
         co_varnames = self.heap.alloc_tuple(
-            [tag_constant(name, self.string_heap) for name in co.co_varnames]
+            [tag_constant(name, self.heap) for name in co.co_varnames]
         )
         defaults_py = self.defaults_map.get(co_id, ())
         co_defaults = self.heap.alloc_tuple(
@@ -455,7 +451,7 @@ class _ImageSerializer:
         co_kwdefaults = self.heap.alloc_dict(
             [
                 (
-                    tag_constant(str(name), self.string_heap),
+                    tag_constant(str(name), self.heap),
                     self.serialize_constant(default, co),
                 )
                 for name, default in kwdefaults_py.items()
@@ -511,7 +507,7 @@ class _ImageSerializer:
             ])
             return make_range_tuple(triple[1] & ((1 << 64) - 1))
         if isinstance(value, (bool, int, float, complex, str)):
-            return tag_constant(value, self.string_heap)
+            return tag_constant(value, self.heap)
         raise ValueError(
             f"Unsupported constant {value!r} of type {type(value).__name__} "
             f"in code object {owner.co_name!r}"
@@ -530,32 +526,32 @@ class _ImageSerializer:
                 if const_val is None:
                     tagged: Tagged = make_none()
                 elif isinstance(const_val, (bool, int, float, complex, str)):
-                    tagged = tag_constant(const_val, self.string_heap)
+                    tagged = tag_constant(const_val, self.heap)
                 else:
                     raise ValueError(
                         f"class {spec.name!r}: unsupported constant "
                         f"{attr_name!r}={const_val!r}"
                     )
                 attr_pairs.append(
-                    (tag_constant(attr_name, self.string_heap), tagged)
+                    (tag_constant(attr_name, self.heap), tagged)
                 )
             for meth_name, meth_co in spec.methods.items():
                 handle = self.serialize_code(meth_co)
                 attr_pairs.append(
-                    (tag_constant(meth_name, self.string_heap), handle)
+                    (tag_constant(meth_name, self.heap), handle)
                 )
             for meth_name, meth_co in spec.static_methods.items():
                 code_handle = self.serialize_code(meth_co)
                 # Convention: builtin_id=0 ⇒ staticmethod wrapper; field1=CODE.
                 builtin = self.heap.alloc_builtin(0, code_handle)
                 attr_pairs.append(
-                    (tag_constant(meth_name, self.string_heap), builtin)
+                    (tag_constant(meth_name, self.heap), builtin)
                 )
             n_keys = max(len(attr_pairs), 1)
             tp_dict = self.heap.alloc_dict(
                 attr_pairs, slot_count=dict_min_slots(n_keys)
             )
-            tp_name = tag_constant(spec.name, self.string_heap)
+            tp_name = tag_constant(spec.name, self.heap)
             handle = self.heap.alloc_type(tp_name, tp_dict=tp_dict)
             self.type_refs[spec.name] = handle
 
@@ -1167,7 +1163,6 @@ def _code_handles_by_name(
 
 def _seed_globals_pairs(
     heap: HeapImageBuilder,
-    string_heap: StringHeapBuilder,
     seeds: SeedSpecs,
     code_by_name: dict[str, Tagged],
 ) -> list[tuple[Tagged, Tagged]]:
@@ -1184,7 +1179,7 @@ def _seed_globals_pairs(
         for attr_name, attr_val in spec.attrs:
             attr_pairs.append(
                 (
-                    tag_constant(attr_name, string_heap),
+                    tag_constant(attr_name, heap),
                     (TAG_INT, int_value(attr_val)),
                 )
             )
@@ -1196,14 +1191,14 @@ def _seed_globals_pairs(
                     f"function {mspec.func_name!r} not found among code objects"
                 )
             attr_pairs.append(
-                (tag_constant(mspec.attr_name, string_heap), handle)
+                (tag_constant(mspec.attr_name, heap), handle)
             )
         n_keys = max(len(attr_pairs), 1)
         tp_dict = heap.alloc_dict(
             attr_pairs,
             slot_count=dict_min_slots(n_keys),
         )
-        tp_name = tag_constant(spec.name, string_heap)
+        tp_name = tag_constant(spec.name, heap)
         tp_base: Tagged | None = None
         if spec.base_name is not None:
             tp_base = type_handles.get(spec.base_name)
@@ -1214,7 +1209,7 @@ def _seed_globals_pairs(
                 )
         handle = heap.alloc_type(tp_name, tp_dict=tp_dict, tp_base=tp_base)
         type_handles[spec.name] = handle
-        pairs.append((tag_constant(spec.name, string_heap), handle))
+        pairs.append((tag_constant(spec.name, heap), handle))
 
     for mspec in seeds.type_methods:
         if mspec.type_name not in type_handles:
@@ -1237,7 +1232,7 @@ def _seed_globals_pairs(
         for attr_name, attr_val in spec.attrs:
             attr_pairs.append(
                 (
-                    tag_constant(attr_name, string_heap),
+                    tag_constant(attr_name, heap),
                     (TAG_INT, int_value(attr_val)),
                 )
             )
@@ -1249,7 +1244,7 @@ def _seed_globals_pairs(
             )
         idict = heap.alloc_dict(attr_pairs, slot_count=idict_slots)
         handle = heap.alloc_instance(type_addr=type_addr, idict=idict)
-        pairs.append((tag_constant(spec.name, string_heap), handle))
+        pairs.append((tag_constant(spec.name, heap), handle))
 
     return pairs
 
@@ -1420,7 +1415,7 @@ def seed_rom_firmware_builtins(
             raise FileNotFoundError(f"ROM firmware builtin source missing: {path}")
         handle = seed_firmware_function(serializer, path, func_name)
         pairs.append(
-            (tag_constant(dict_key, serializer.string_heap), handle)
+            (tag_constant(dict_key, serializer.heap), handle)
         )
     return pairs
 
@@ -1495,7 +1490,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
     ``S_BOOT`` can latch ``iter_exhaust_type_r`` without a dict probe.
     """
     heap = serializer.heap
-    string_heap = serializer.string_heap
+    string_heap = heap
     from_bytes = heap.alloc_builtin(BI_FROM_BYTES)
     to_bytes = heap.alloc_builtin(BI_TO_BYTES)
     int_tp_dict = heap.alloc_dict(
@@ -1598,7 +1593,7 @@ def build_image_from_code(
     module_handle = serializer.serialize_code(module_code)
     code_by_name = _code_handles_by_name(module_code, serializer.code_handles)
     seed_pairs = _seed_globals_pairs(
-        serializer.heap, serializer.string_heap, seeds, code_by_name
+        serializer.heap, seeds, code_by_name
     )
     # SEED_CODE payloads are compiled and serialized like any other code object,
     # so their bytecode joins the same imem pool as the module's.
@@ -1607,7 +1602,7 @@ def build_image_from_code(
         validate_code_tree(payload)
         handle = serializer.serialize_code(payload)
         seed_pairs.append(
-            (tag_constant(cspec.name, serializer.string_heap), handle)
+            (tag_constant(cspec.name, serializer.heap), handle)
         )
     if seed_pairs:
         if len(seed_pairs) >= globals_slot_count:
@@ -1629,7 +1624,6 @@ def build_image_from_code(
         builtins_dict=builtins_dict,
         program_slots=serializer.program_slots,
         heap=serializer.heap,
-        string_heap=serializer.string_heap,
         code_handles=serializer.code_handles,
         entry_slots=serializer.entry_slots,
         global_store_count=len(stored_names),
@@ -2409,23 +2403,6 @@ def write_program_hex(path: pathlib.Path, program_slots: Iterable[str]) -> None:
     write_text(path, "\n".join(lines) + ("\n" if lines else ""))
 
 
-def write_string_hex(path: pathlib.Path, string_heap: StringHeapBuilder) -> None:
-    if not string_heap.image:
-        write_text(path, "00\n")
-        return
-
-    lines: list[str] = []
-    current_addr = -1
-    for addr in sorted(string_heap.image.keys()):
-        if addr < 0 or addr >= STRING_MEM_BYTES:
-            raise ValueError(f"String address {addr} is outside string memory")
-        if addr != current_addr + 1:
-            lines.append(f"@{addr:x}")
-        lines.append(f"{string_heap.image[addr]:02x}")
-        current_addr = addr
-    write_text(path, "\n".join(lines) + "\n")
-
-
 def write_meta(
     path: pathlib.Path,
     result: ImageBuildResult,
@@ -2446,14 +2423,12 @@ def write_image_outputs(
     *,
     program_hex: pathlib.Path,
     dmem_hex: pathlib.Path,
-    string_hex: pathlib.Path,
     meta: pathlib.Path,
     expected_tag: int | None = None,
     expected_value: int | None = None,
 ) -> None:
     write_program_hex(program_hex, result.program_slots)
     result.heap.write_hex(dmem_hex)
-    write_string_hex(string_hex, result.string_heap)
     write_meta(meta, result, expected_tag=expected_tag, expected_value=expected_value)
 
 
@@ -2462,7 +2437,6 @@ def image_from_source(
     source: pathlib.Path,
     program_hex: pathlib.Path,
     dmem_hex: pathlib.Path,
-    string_hex: pathlib.Path,
     meta: pathlib.Path,
 ) -> ImageBuildResult:
     result = build_image_from_source(source)
@@ -2470,7 +2444,6 @@ def image_from_source(
         result,
         program_hex=program_hex,
         dmem_hex=dmem_hex,
-        string_hex=string_hex,
         meta=meta,
     )
     return result
@@ -2481,7 +2454,6 @@ def main() -> None:
     parser.add_argument("--source", required=True)
     parser.add_argument("--program-hex", required=True)
     parser.add_argument("--dmem-hex", required=True)
-    parser.add_argument("--string-hex", required=True)
     parser.add_argument("--meta", required=True)
     parser.add_argument(
         "--expected-tag",
@@ -2515,7 +2487,6 @@ def main() -> None:
         result,
         program_hex=pathlib.Path(args.program_hex),
         dmem_hex=pathlib.Path(args.dmem_hex),
-        string_hex=pathlib.Path(args.string_hex),
         meta=pathlib.Path(args.meta),
         expected_tag=args.expected_tag,
         expected_value=args.expected_value,

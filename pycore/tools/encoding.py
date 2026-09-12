@@ -556,50 +556,17 @@ def format_imem_slot(opcode: int, arg: int = 0) -> str:
     return f"{word:0{IMEM_SLOT_HEX_DIGITS}x}"
 
 
-class StringHeapBuilder:
-    """Builds an initialized long-string memory image for hardware.
-
-    Long strings are interned: identical byte sequences reuse the same address.
-    Dict key equality for LONG_STR relies on this interning invariant — hardware
-    compares {size, addr} descriptors only, so two descriptors are equal iff
-    they name the same interned payload.
-    """
-
-    def __init__(self) -> None:
-        self.next_addr = 0
-        self.image: dict[int, int] = {}
-        self._intern: dict[bytes, int] = {}
-
-    def allocate(self, data: bytes) -> int:
-        if not data:
-            return 0
-
-        existing = self._intern.get(data)
-        if existing is not None:
-            return existing
-
-        addr = self.next_addr
-        end = addr + len(data)
-        if end > STRING_RUNTIME_BASE:
-            raise ValueError(
-                "Long-string constants exceed reserved string-constant memory "
-                f"region (used {end} bytes, limit {STRING_RUNTIME_BASE})"
-            )
-
-        for offset, byte in enumerate(data):
-            self.image[addr + offset] = byte
-        self.next_addr = end
-        self._intern[data] = addr
-        return addr
-
-
 def tag_constant(
     value: object,
-    string_heap: StringHeapBuilder,
+    heap: object | None = None,
     *,
     allow_containers: bool = False,
 ) -> tuple[int, int]:
     """Encode a Python scalar/string/range constant as (tag, value128).
+
+    Strings go through ``heap.alloc_str`` (HeapImageBuilder) so SHORT vs LONG
+    follows the STRACC canonical invariant (kind-1 and nchars<=15). Callers
+    without a heap may only encode kind-1 strings that fit in SHORT_STR.
 
     When allow_containers is False (preprocess legacy path), tuple/list/dict
     constants raise. The image builder serializes containers itself and does
@@ -616,14 +583,15 @@ def tag_constant(
     if isinstance(value, complex):
         return make_complex(value.real, value.imag)
     if isinstance(value, str):
-        encoded = value.encode("utf-8")
-        if len(encoded) <= SHORT_STR_MAX_BYTES:
-            return TAG_SHORT_STR, encode_short_string(encoded)
-        if len(encoded) > ((1 << 64) - 1):
-            raise ValueError("String constant exceeds 64-bit length field")
-        addr = string_heap.allocate(encoded)
-        return TAG_LONG_STR, ((len(encoded) & ((1 << 64) - 1)) << 64) | (
-            addr & ((1 << 64) - 1)
+        if heap is not None and hasattr(heap, "alloc_str"):
+            return heap.alloc_str(value)
+        kind = stracc_kind_of_text(value)
+        if kind == 1 and len(value) <= SHORT_STR_MAX_BYTES:
+            return TAG_SHORT_STR, encode_short_string(
+                stracc_encode_units(value, kind)
+            )
+        raise ValueError(
+            "long or wide string constants require HeapImageBuilder.alloc_str"
         )
     if value is None:
         return make_none()
@@ -747,7 +715,7 @@ def dict_key_hash(tag: int, value: int) -> int:
     BOOL: value[0] as 0/1.
     FLOAT: integer-valued / ±0 match int; else bit-mix.
     SHORT_STR: XOR of four 32-bit words.
-    LONG_STR: low32(addr) ^ low32(size).
+    LONG_STR: cached content hash in value[95:64].
     """
     value &= VAL_MASK
     if tag == TAG_INT:
@@ -766,10 +734,8 @@ def dict_key_hash(tag: int, value: int) -> int:
         w3 = (value >> 96) & 0xFFFFFFFF
         return (w0 ^ w1 ^ w2 ^ w3) & 0xFFFFFFFF
     if tag == TAG_LONG_STR:
-        # value = {size[63:0], addr[63:0]}; hash = value[31:0] ^ value[95:64]
-        low_addr = value & 0xFFFFFFFF
-        low_size = (value >> 64) & 0xFFFFFFFF
-        return (low_addr ^ low_size) & 0xFFFFFFFF
+        # §3.2 handle: content hash lives at [95:64].
+        return (value >> 64) & 0xFFFFFFFF
     return value & 0xFFFFFFFF
 
 

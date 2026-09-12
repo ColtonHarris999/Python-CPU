@@ -215,7 +215,7 @@ class WaveABootSeedTest(unittest.TestCase):
         serializer = image_src._ImageSerializer()
         image_src.build_builtins_dict(serializer)
         words = serializer.heap.words
-        string_heap = serializer.string_heap
+        string_heap = serializer.heap
 
         by_name: dict[str, int] = {}
         for addr, head in words.items():

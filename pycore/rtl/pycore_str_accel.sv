@@ -1,7 +1,7 @@
 `include "pycore_defs.svh"
 
-// String Accelerator (planning/string_accelerator_plan.md P5a).
-// Own dmem master. Not wired into the core yet.
+// String Accelerator (planning/string_accelerator_plan.md P5c).
+// Own dmem master. Active only while the core is frozen in S_STRACC.
 module pycore_str_accel #(
     parameter logic [31:0] HEAP_LIMIT = PYCORE_HEAP_LIMIT
 ) (

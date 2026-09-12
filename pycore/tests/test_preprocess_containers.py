@@ -34,7 +34,7 @@ def _compile_fn(src: str, name: str = "managed_entry"):
 
 def _emitted_opnames(fn) -> list[str]:
     """Run preprocess pipeline up to emit_instruction_words; return opnames."""
-    heap = preprocess.StringHeapBuilder()
+    heap = None
     emitted = preprocess.emit_instruction_words(
         preprocess.iter_filtered_instructions(fn),
         co_consts=fn.__code__.co_consts,
@@ -62,7 +62,7 @@ class TestBuildListAccepted(unittest.TestCase):
 
     def test_build_list_single_slot(self) -> None:
         """BUILD_LIST must occupy exactly one imem slot (not 3 like LOAD_CONST)."""
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -77,7 +77,7 @@ class TestBuildListAccepted(unittest.TestCase):
                 )
 
     def test_type_sketch_list_variable(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -104,7 +104,7 @@ class TestBuildMapAccepted(unittest.TestCase):
         self.assertIn("BUILD_MAP", opnames)
 
     def test_build_map_single_slot(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -116,7 +116,7 @@ class TestBuildMapAccepted(unittest.TestCase):
                 self.assertEqual(slot_map[i + 1] - slot_map[i], 1)
 
     def test_type_sketch_dict_variable(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -135,7 +135,7 @@ class TestBuildMapAccepted(unittest.TestCase):
             "    d = {k: v}\n"
             "    return d\n"
         )
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(fn),
             co_consts=fn.__code__.co_consts,
@@ -161,7 +161,7 @@ class TestStoreSubscrAccepted(unittest.TestCase):
         self.assertIn("STORE_SUBSCR", opnames)
 
     def test_store_subscr_single_slot(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -173,7 +173,7 @@ class TestStoreSubscrAccepted(unittest.TestCase):
                 self.assertEqual(slot_map[i + 1] - slot_map[i], 1)
 
     def test_store_subscr_pops_three_in_type_sketch(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -200,7 +200,7 @@ class TestNbSubscrAccepted(unittest.TestCase):
         self.assertIn("BINARY_OP", opnames)
 
     def test_binary_op_nbsubscr_arg(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -213,7 +213,7 @@ class TestNbSubscrAccepted(unittest.TestCase):
         self.fail("No BINARY_OP with NB_SUBSCR arg found in emitted instructions")
 
     def test_nb_subscr_result_tagged_object(self) -> None:
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -258,7 +258,7 @@ class TestLFBLFBExpansion(unittest.TestCase):
 
     def test_expanded_args_are_variable_indices(self) -> None:
         """Each expanded LOAD_FAST_BORROW arg should be a valid local index."""
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(self.fn),
             co_consts=self.fn.__code__.co_consts,
@@ -486,7 +486,7 @@ class TestContainerSlotCount(unittest.TestCase):
             "    lst[0] = 99\n"
             "    return lst[0]\n"
         )
-        heap = preprocess.StringHeapBuilder()
+        heap = None
         emitted = preprocess.emit_instruction_words(
             preprocess.iter_filtered_instructions(fn),
             co_consts=fn.__code__.co_consts,

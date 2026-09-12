@@ -259,269 +259,13 @@
                         end // CONT_SUBSCR_LIST
 
                         CONT_SUBSCR_STR: begin
-                            // rs1_r = subject string (SHORT_STR or LONG_STR)
-                            // rs2_r = index          (INT or BOOL)
-                            //
-                            // Walks one UTF-8 character per cycle from the
-                            // start of the string, so cost is O(index) — the
-                            // same model as STR FOR_ITER.  Indexing is by
-                            // character, so s[i] agrees with `for c in s`.
-                            // container_probe_r   = current byte offset
-                            // container_src_len_r = characters left to skip
-                            // cont_str_win supplies the 4-byte decode window
-                            // for both tags (see pycore_core.sv), so no
-                            // string_mem snapshot is allocated here.
-                            unique case (container_phase_r)
-
-                                CP_INIT: begin
-                                    logic [32:0] str_end;
-                                    str_end = {1'b0, cont_str_base} +
-                                              {1'b0, cont_str_len};
-                                    if (cont_rs2_tag != PY_TAG_INT &&
-                                        cont_rs2_tag != PY_TAG_BOOL) begin
-                                        container_type_trap_r <= 1'b1;
-                                    end else if ((cont_rs1_tag == PY_TAG_LONG_STR) &&
-                                                 ((pycore_long_str_size(
-                                                       cont_rs1_val)[63:32] != 32'b0) ||
-                                                  (pycore_long_str_addr(
-                                                       cont_rs1_val)[63:32] != 32'b0) ||
-                                                  str_end[32] ||
-                                                  (str_end > STRING_MEM_BYTES))) begin
-                                        // Same descriptor sanity as STR GET_ITER.
-                                        container_type_trap_r <= 1'b1;
-                                    end else if (cont_key_u >=
-                                                 {32'b0, cont_str_len}) begin
-                                        // Byte length bounds the character
-                                        // count, so index >= len(s) can never
-                                        // resolve.  Unsigned compare, so
-                                        // negative indices do not wrap.
-                                        container_mem_fault_r <= 1'b1;
-                                    end else begin
-                                        container_probe_r   <= 32'd0;
-                                        container_src_len_r <= cont_key_u[31:0];
-                                        container_phase_r   <= CP_VAL;
-                                    end
-                                end
-
-                                CP_VAL: begin
-                                    logic [2:0] width;
-                                    logic [32:0] char_end;
-                                    logic continuations_valid;
-                                    logic [119:0] char_payload;
-                                    width = pycore_utf8_char_width(
-                                        cont_str_win[7:0]);
-                                    char_end = {1'b0, container_probe_r} +
-                                               {30'b0, width};
-                                    continuations_valid =
-                                        ((width < 3'd2) ||
-                                         pycore_utf8_cont_valid(
-                                             cont_str_win[15:8])) &&
-                                        ((width < 3'd3) ||
-                                         pycore_utf8_cont_valid(
-                                             cont_str_win[23:16])) &&
-                                        ((width < 3'd4) ||
-                                         pycore_utf8_cont_valid(
-                                             cont_str_win[31:24]));
-                                    char_payload = '0;
-                                    char_payload[119:112] = cont_str_win[7:0];
-                                    if (width >= 3'd2)
-                                        char_payload[111:104] =
-                                            cont_str_win[15:8];
-                                    if (width >= 3'd3)
-                                        char_payload[103:96] =
-                                            cont_str_win[23:16];
-                                    if (width >= 3'd4)
-                                        char_payload[95:88] =
-                                            cont_str_win[31:24];
-
-                                    if (container_probe_r >= cont_str_len) begin
-                                        // Ran off the end while skipping: the
-                                        // index exceeds the character count.
-                                        // Only reachable for non-ASCII, where
-                                        // len(s) (bytes) > character count.
-                                        container_mem_fault_r <= 1'b1;
-                                    end else if ((width == 3'd0) ||
-                                                 (char_end >
-                                                  {1'b0, cont_str_len}) ||
-                                                 !continuations_valid) begin
-                                        // Malformed UTF-8 in the subject.
-                                        container_type_trap_r <= 1'b1;
-                                    end else if (container_src_len_r != 32'd0) begin
-                                        container_probe_r   <= char_end[31:0];
-                                        container_src_len_r <=
-                                            container_src_len_r - 32'd1;
-                                    end else begin
-                                        // Landed on the requested character:
-                                        // result replaces the container slot
-                                        // at tos-2 and the index is popped.
-                                        container_wb_we_r   <= 1'b1;
-                                        container_wb_addr_r <=
-                                            RF_AW'(tos_r - RF_AW'(2));
-                                        container_wb_data_r <=
-                                            pycore_make_short_str_entry(
-                                                {1'b0, width}, char_payload);
-                                        tos_r             <= tos_r - RF_AW'(1);
-                                        fetch_skip_r      <= 1'b1;
-                                        container_phase_r <= CP_DONE;
-                                    end
-                                end
-
-                                CP_DONE: ;
-
-                                default: ;
-
-                            endcase
+                            // P5c: string subscript is SA_CHAR_AT in S_STRACC.
+                            container_type_trap_r <= 1'b1;
                         end // CONT_SUBSCR_STR
 
                         CONT_SLICE_STR: begin
-                            // rs1_r = subject string, rs2_r = start,
-                            // stop read from RF[tos-1] via container_rf_addr_r.
-                            //
-                            // Bounds are CHARACTER indices (consistent with
-                            // s[i] and `for c in s`), so one pass walks UTF-8
-                            // characters from the front, recording the byte
-                            // offset when the start index is reached and
-                            // finishing at the stop index or end of string --
-                            // which is also how out-of-range bounds get clamped
-                            // the way CPython clamps them.
-                            //
-                            // container_base_r       = start byte offset
-                            // container_probe_r      = current byte offset
-                            // container_src_len_r    = current character index
-                            // container_slot_count_r = stop character index
-                            unique case (container_phase_r)
-
-                                CP_INIT: begin
-                                    // Subject must be a string: list / tuple
-                                    // slicing is not implemented yet.
-                                    if (!pycore_is_string_tag(
-                                            cont_rs1_tag)) begin
-                                        container_type_trap_r <= 1'b1;
-                                    // `s[:b]` passes None for start; CPython
-                                    // emits LOAD_CONST None rather than 0.
-                                    end else if (pycore_is_none(cont_rs2_tag,
-                                                       cont_rs2_val)) begin
-                                        container_rf_addr_r <=
-                                            RF_AW'(tos_r - RF_AW'(1));
-                                        container_probe_r   <= 32'd0;
-                                        container_src_len_r <= 32'd0;
-                                        container_base_r    <= 32'd0;
-                                        container_phase_r   <= CP_VAL;
-                                    end else if (cont_rs2_tag != PY_TAG_INT &&
-                                                 cont_rs2_tag != PY_TAG_BOOL) begin
-                                        container_type_trap_r <= 1'b1;
-                                    end else if (cont_rs2_val[127:32] !=
-                                                 96'b0) begin
-                                        // Negative or > 32-bit start. Negative
-                                        // slice bounds do not wrap (deviation 3).
-                                        container_type_trap_r <= 1'b1;
-                                    end else begin
-                                        container_rf_addr_r <=
-                                            RF_AW'(tos_r - RF_AW'(1));
-                                        container_probe_r   <= 32'd0;
-                                        container_src_len_r <= 32'd0;
-                                        container_base_r    <= 32'd0;
-                                        container_phase_r   <= CP_VAL;
-                                    end
-                                end
-
-                                CP_VAL: begin
-                                    // First entry latches the stop bound (the
-                                    // RF address settled last cycle); later
-                                    // entries are walk steps.
-                                    logic [2:0] width;
-                                    logic [32:0] char_end;
-                                    logic continuations_valid;
-                                    logic [31:0] stop_idx;
-                                    logic [31:0] start_idx;
-                                    width = pycore_utf8_char_width(
-                                        cont_str_win[7:0]);
-                                    char_end = {1'b0, container_probe_r} +
-                                               {30'b0, width};
-                                    continuations_valid =
-                                        ((width < 3'd2) ||
-                                         pycore_utf8_cont_valid(
-                                             cont_str_win[15:8])) &&
-                                        ((width < 3'd3) ||
-                                         pycore_utf8_cont_valid(
-                                             cont_str_win[23:16])) &&
-                                        ((width < 3'd4) ||
-                                         pycore_utf8_cont_valid(
-                                             cont_str_win[31:24]));
-                                    start_idx = pycore_is_none(cont_rs2_tag,
-                                                               cont_rs2_val)
-                                              ? 32'd0 : cont_rs2_val[31:0];
-                                    stop_idx  = container_slice_stop_r;
-
-                                    if (!container_slice_armed_r) begin
-                                        // `s[a:]` passes None for stop, which
-                                        // means "to the end"; the walk's own
-                                        // length clamp then terminates it.
-                                        if (pycore_is_none(cont_rf_rs1_tag,
-                                                           cont_rf_rs1_val)) begin
-                                            container_slice_stop_r <= 32'hFFFF_FFFF;
-                                            container_slice_armed_r <= 1'b1;
-                                        end else if (cont_rf_rs1_tag != PY_TAG_INT &&
-                                            cont_rf_rs1_tag != PY_TAG_BOOL) begin
-                                            container_type_trap_r <= 1'b1;
-                                        end else if (cont_rf_rs1_val[127:32] !=
-                                                     96'b0) begin
-                                            container_type_trap_r <= 1'b1;
-                                        end else begin
-                                            container_slice_stop_r <=
-                                                cont_rf_rs1_val[31:0];
-                                            container_slice_armed_r <= 1'b1;
-                                        end
-                                    end else if ((container_src_len_r >=
-                                                  stop_idx) ||
-                                                 (container_probe_r >=
-                                                  cont_str_len)) begin
-                                        // Reached the stop index, or ran out of
-                                        // string: clamp here.  If start was
-                                        // never reached the slice is empty, so
-                                        // collapse it to a zero-length range.
-                                        if (container_src_len_r <= start_idx)
-                                            container_base_r <=
-                                                container_probe_r;
-                                        container_phase_r <= CP_TAG;
-                                    end else if ((width == 3'd0) ||
-                                                 (char_end >
-                                                  {1'b0, cont_str_len}) ||
-                                                 !continuations_valid) begin
-                                        container_type_trap_r <= 1'b1;
-                                    end else begin
-                                        if (container_src_len_r == start_idx)
-                                            container_base_r <=
-                                                container_probe_r;
-                                        container_probe_r   <= char_end[31:0];
-                                        container_src_len_r <=
-                                            container_src_len_r + 32'd1;
-                                    end
-                                end
-
-                                CP_TAG: begin
-                                    // string_slice_* is asserted for this phase
-                                    // and the result is combinational.
-                                    if (!string_slice_ok) begin
-                                        container_mem_fault_r <= 1'b1;
-                                    end else begin
-                                        container_wb_we_r   <= 1'b1;
-                                        container_wb_addr_r <=
-                                            RF_AW'(tos_r - RF_AW'(3));
-                                        container_wb_data_r <=
-                                            string_slice_result;
-                                        tos_r <= RF_AW'(tos_r - RF_AW'(2));
-                                        fetch_skip_r <= 1'b1;
-                                        container_slice_armed_r <= 1'b0;
-                                        container_phase_r <= CP_DONE;
-                                    end
-                                end
-
-                                CP_DONE: ;
-
-                                default: ;
-
-                            endcase
+                            // P5c: BINARY_SLICE is SA_SLICE in S_STRACC.
+                            container_type_trap_r <= 1'b1;
                         end // CONT_SLICE_STR
 
                         CONT_GET_ITER: begin
@@ -561,7 +305,8 @@
                                         container_phase_r <= CP_ITER_WB;
                                     end else if (cont_rs1_tag ==
                                                  PY_TAG_SHORT_STR) begin
-                                        if (string_snapshot_size == 4'b0) begin
+                                        if (pycore_short_str_size(cont_rs1_val)
+                                                == 4'b0) begin
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <=
                                                 RF_AW'(tos_r - RF_AW'(1));
@@ -569,54 +314,55 @@
                                                 pycore_make_entry(
                                                     PY_TAG_ITER,
                                                     pycore_iter_value_str(
-                                                        32'd0, 32'd0, 32'd0));
+                                                        32'd0, 32'd0, 32'd0,
+                                                        20'd0));
                                             container_phase_r <= CP_ITER_WB;
-                                        end else if (!string_snapshot_ok) begin
-                                            container_mem_fault_r <= 1'b1;
                                         end else begin
-                                            container_wb_we_r   <= 1'b1;
-                                            container_wb_addr_r <=
-                                                RF_AW'(tos_r - RF_AW'(1));
-                                            container_wb_data_r <=
-                                                pycore_make_entry(
-                                                    PY_TAG_ITER,
-                                                    pycore_iter_value_str(
-                                                        32'd0,
-                                                        {28'b0,
-                                                         string_snapshot_size},
-                                                        string_snapshot_addr));
-                                            container_phase_r <= CP_ITER_WB;
+                                            logic [31:0] place;
+                                            logic [31:0] endp;
+                                            place = pycore_heap_place(
+                                                heap_ptr_r, 32'd16);
+                                            endp = pycore_heap_end(
+                                                heap_ptr_r, 32'd16);
+                                            if (endp > PYCORE_HEAP_LIMIT) begin
+                                                container_mem_fault_r <= 1'b1;
+                                            end else begin
+                                                container_dmem_addr_r <= place;
+                                                container_dmem_wdata_r <=
+                                                    pycore_short_str_to_word(
+                                                        cont_rs1_val);
+                                                container_dmem_we_r <= 1'b1;
+                                                container_dmem_wstrb_r <=
+                                                    {DMEM_DATA_W/8{1'b1}};
+                                                container_dmem_pending_r <= 1'b1;
+                                                container_base_r <= place;
+                                                container_src_len_r <=
+                                                    {28'b0,
+                                                     pycore_short_str_size(
+                                                         cont_rs1_val)};
+                                                heap_ptr_r <= endp;
+                                                container_phase_r <= CP_LIST_BUF;
+                                            end
                                         end
                                     end else if (cont_rs1_tag ==
                                                  PY_TAG_LONG_STR) begin
-                                        logic [63:0] str_size;
-                                        logic [63:0] str_addr;
-                                        logic [64:0] str_end;
-                                        str_size = pycore_long_str_size(
-                                            cont_rs1_val);
-                                        str_addr = pycore_long_str_addr(
-                                            cont_rs1_val);
-                                        str_end = {1'b0, str_addr} +
-                                                  {1'b0, str_size};
-                                        if ((str_size[63:32] != 32'b0) ||
-                                            (str_addr[63:32] != 32'b0) ||
-                                            str_end[64] ||
-                                            (str_end >
-                                             STRING_MEM_BYTES)) begin
-                                            container_type_trap_r <= 1'b1;
-                                        end else begin
-                                            container_wb_we_r   <= 1'b1;
-                                            container_wb_addr_r <=
-                                                RF_AW'(tos_r - RF_AW'(1));
-                                            container_wb_data_r <=
-                                                pycore_make_entry(
-                                                    PY_TAG_ITER,
-                                                    pycore_iter_value_str(
-                                                        32'd0,
-                                                        str_size[31:0],
-                                                        str_addr[31:0]));
-                                            container_phase_r <= CP_ITER_WB;
-                                        end
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <=
+                                            RF_AW'(tos_r - RF_AW'(1));
+                                        container_wb_data_r <=
+                                            pycore_make_entry(
+                                                PY_TAG_ITER,
+                                                pycore_iter_value_str(
+                                                    32'd0,
+                                                    pycore_stracc_nchars(
+                                                        cont_rs1_val),
+                                                    pycore_stracc_addr(
+                                                        cont_rs1_val),
+                                                    {17'b0,
+                                                     pycore_stracc_kind_field(
+                                                         cont_rs1_val),
+                                                     1'b0}));
+                                        container_phase_r <= CP_ITER_WB;
                                     end else if (pycore_is_dict(
                                                      cont_rs1_tag,
                                                      cont_rs1_val)) begin
@@ -946,6 +692,25 @@
                                     end
                                 end
 
+                                CP_LIST_BUF: begin
+                                    // SHORT_STR GET_ITER: wait for the 16 B
+                                    // latin-1 payload spill, then rewrite TOS
+                                    // as a KIND_STR iterator (aux[0]=raw).
+                                    if (!container_dmem_pending_r) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <=
+                                            RF_AW'(tos_r - RF_AW'(1));
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_ITER,
+                                            pycore_iter_value_str(
+                                                32'd0,
+                                                container_src_len_r,
+                                                container_base_r,
+                                                20'd1));
+                                        container_phase_r <= CP_ITER_WB;
+                                    end
+                                end
+
                                 CP_ITER_WB: begin
                                     fetch_skip_r     <= 1'b1;
                                     container_phase_r <= CP_DONE;
@@ -1037,83 +802,9 @@
                                                 end
                                             end
                                             PY_ITER_KIND_STR: begin
-                                                logic [32:0] str_end;
-                                                logic [32:0] char_end;
-                                                logic [2:0] width;
-                                                logic continuations_valid;
-                                                logic [119:0] char_payload;
-                                                str_end =
-                                                    {1'b0, cont_iter_addr} +
-                                                    {1'b0, cont_iter_size};
-                                                width = pycore_utf8_char_width(
-                                                    string_read_data[7:0]);
-                                                char_end =
-                                                    {1'b0, cont_iter_index} +
-                                                    {30'b0, width};
-                                                continuations_valid =
-                                                    ((width < 3'd2) ||
-                                                     pycore_utf8_cont_valid(
-                                                         string_read_data[15:8])) &&
-                                                    ((width < 3'd3) ||
-                                                     pycore_utf8_cont_valid(
-                                                         string_read_data[23:16])) &&
-                                                    ((width < 3'd4) ||
-                                                     pycore_utf8_cont_valid(
-                                                         string_read_data[31:24]));
-                                                char_payload = '0;
-                                                char_payload[119:112] =
-                                                    string_read_data[7:0];
-                                                if (width >= 3'd2)
-                                                    char_payload[111:104] =
-                                                        string_read_data[15:8];
-                                                if (width >= 3'd3)
-                                                    char_payload[103:96] =
-                                                        string_read_data[23:16];
-                                                if (width >= 3'd4)
-                                                    char_payload[95:88] =
-                                                        string_read_data[31:24];
-
-                                                if (str_end[32] ||
-                                                    (str_end >
-                                                     STRING_MEM_BYTES)) begin
-                                                    container_type_trap_r <= 1'b1;
-                                                end else if (cont_iter_index >=
-                                                             cont_iter_size) begin
-                                                    redirect_pending_r <= 1'b1;
-                                                    redirect_tgt_r <=
-                                                        cur_pc_r + 32'd1 +
-                                                        {24'b0,
-                                                         PY_CACHE_FOR_ITER} +
-                                                        cur_arg_r + 32'd1;
-                                                    fetch_skip_r <= 1'b1;
-                                                    container_phase_r <= CP_DONE;
-                                                end else if ((width == 3'd0) ||
-                                                             (char_end >
-                                                              {1'b0,
-                                                               cont_iter_size}) ||
-                                                             !continuations_valid) begin
-                                                    container_type_trap_r <= 1'b1;
-                                                end else begin
-                                                    container_tag_r <=
-                                                        PY_TAG_SHORT_STR;
-                                                    container_val_r <= {
-                                                        1'b0, width,
-                                                        char_payload, 4'b0
-                                                    };
-                                                    container_wb_we_r <= 1'b1;
-                                                    container_wb_addr_r <=
-                                                        RF_AW'(tos_r -
-                                                               RF_AW'(1));
-                                                    container_wb_data_r <=
-                                                        pycore_make_entry(
-                                                            PY_TAG_ITER,
-                                                            pycore_iter_value_str(
-                                                                char_end[31:0],
-                                                                cont_iter_size,
-                                                                cont_iter_addr));
-                                                    container_phase_r <=
-                                                        CP_ITER_WB;
-                                                end
+                                                // P5c: string FOR_ITER is
+                                                // SA_ITER_NEXT in S_STRACC.
+                                                container_type_trap_r <= 1'b1;
                                             end
                                             PY_ITER_KIND_DICT: begin
                                                 container_dmem_addr_r <=
