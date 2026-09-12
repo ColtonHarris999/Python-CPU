@@ -408,18 +408,18 @@ module tb_str_accel;
         expect_short("bar", "removeprefix");
 
         begin
-            logic [31:0] obj, buf;
+            logic [31:0] obj, obuf;
             logic [PYCORE_ENTRY_WIDTH-1:0] lst, s0, s1;
             obj = 32'h0000_2000;
-            buf = 32'h0000_2040;
+            obuf = 32'h0000_2040;
             s0 = mk_short("a");
             s1 = mk_short("b");
             ram_write(obj, {64'd2, 64'd2});
-            ram_write(obj + 32'd16, {64'd0, 64'(buf)});
-            ram_write(buf, s0[PYCORE_VAL_MSB:PYCORE_VAL_LSB]);
-            ram_write(buf + 32'd16, {124'b0, PY_TAG_SHORT_STR});
-            ram_write(buf + 32'd32, s1[PYCORE_VAL_MSB:PYCORE_VAL_LSB]);
-            ram_write(buf + 32'd48, {124'b0, PY_TAG_SHORT_STR});
+            ram_write(obj + 32'd16, {64'd0, 64'(obuf)});
+            ram_write(obuf, s0[PYCORE_VAL_MSB:PYCORE_VAL_LSB]);
+            ram_write(obuf + 32'd16, {124'b0, PY_TAG_SHORT_STR});
+            ram_write(obuf + 32'd32, s1[PYCORE_VAL_MSB:PYCORE_VAL_LSB]);
+            ram_write(obuf + 32'd48, {124'b0, PY_TAG_SHORT_STR});
             lst = pycore_make_mut(PY_MUT_LIST, {32'd0, obj}, 1'b0);
             issue(PY_SA_JOIN, 0, mk_short("-"), lst, mk_none(),
                   PYCORE_HEAP_BASE);
