@@ -2204,10 +2204,14 @@ module pycore_core #(
                                 else
                                     container_op_r <= CONT_SUBSCR_LIST;
                             end else if (cur_opcode_r == PY_OP_BINARY_SLICE) begin
-                                // Strings only for now; the arm type-traps any
-                                // other subject. list/tuple slicing needs an
-                                // alloc + element copy (Plan 1 P6.1 follow-on).
-                                container_op_r <= CONT_SLICE_STR;
+                                // Strings: UTF-8 character walk + slice port.
+                                // LIST/TUPLE: allocate a new sequence and copy
+                                // the [start:stop] window (CONT_SLICE_SEQ).
+                                // Other subjects TYPE-trap in CONT_SLICE_STR.
+                                if (pycore_is_seq(cont_rs1_tag, cont_rs1_val))
+                                    container_op_r <= CONT_SLICE_SEQ;
+                                else
+                                    container_op_r <= CONT_SLICE_STR;
                             end else if (cur_opcode_r == PY_OP_RAISE_VARARGS) begin
                                 container_op_r <= CONT_RAISE;
                             end else if (cur_opcode_r == PY_OP_PUSH_EXC_INFO) begin

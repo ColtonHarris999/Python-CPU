@@ -62,6 +62,9 @@
     // BINARY_OP add: LIST+LIST or TUPLE+TUPLE. Allocates a new sequence.
     // Mixed kinds (list+tuple) stay on the ALU and TYPE-trap.
     localparam logic [5:0] CONT_SEQ_CONCAT    = 6'd50;
+    // BINARY_SLICE on LIST/TUPLE. Unit-step [start:stop] copy into a new
+    // sequence. Negative bounds TYPE-trap (same deviation as strings).
+    localparam logic [5:0] CONT_SLICE_SEQ     = 6'd51;
 
     // Container phases (stored in container_phase_r, 6-bit).
     //

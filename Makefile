@@ -1019,6 +1019,21 @@ pycore-img-slice-str-neg-trap:
 pycore-img-slice-list-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,slice_list_trap,1,50000)
 
+pycore-img-slice-list-neg-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,slice_list_neg_trap,1,50000)
+
+pycore-img-slice-list:
+	$(call PYCORE_IMAGE_RUN,slice_list,50000)
+
+pycore-img-slice-tuple:
+	$(call PYCORE_IMAGE_RUN,slice_tuple,50000)
+
+pycore-img-slice-list-open:
+	$(call PYCORE_IMAGE_RUN,slice_list_open,50000)
+
+pycore-img-slice-list-clamp:
+	$(call PYCORE_IMAGE_RUN,slice_list_clamp,50000)
+
 pycore-img-slice-str-const:
 	$(call PYCORE_IMAGE_RUN,slice_str_const,50000)
 
@@ -1099,7 +1114,12 @@ pycore-img-slice-all: \
 	pycore-img-slice-str-empty \
 	pycore-img-slice-str-scan \
 	pycore-img-slice-str-neg-trap \
+	pycore-img-slice-list \
+	pycore-img-slice-tuple \
+	pycore-img-slice-list-open \
+	pycore-img-slice-list-clamp \
 	pycore-img-slice-list-trap \
+	pycore-img-slice-list-neg-trap \
 	pycore-img-slice-str-const \
 	pycore-img-slice-damerau
 
