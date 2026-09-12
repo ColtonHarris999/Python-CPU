@@ -7,6 +7,13 @@
 //   * `fault_o` accompanies `ack_o`.
 //   * At most one outstanding request per master port.
 //
+// The two faces speak different protocols on purpose: the CPU port is the
+// §0 word req/ack used by every master; the down port adds `down_line_o` /
+// `down_last_i` / `down_wline_o` for L2→RAM line bursts. L1 instantiations
+// set DOWN_LINE=0 and issue one word at a time into the L2 CPU port (no
+// `line_i` there). P4's fetch buffer is the place that grows a 512-bit
+// line read on the L1I CPU port — do not silently change this contract.
+//
 // `cache_en_i=0` is a combinational pass-through to `down_*` (no extra
 // cycle from this module). That is the bisect switch and the transparency
 // test's control arm — keep it working.
@@ -44,6 +51,10 @@ module pycore_cache #(
     output logic [DATA_WIDTH/8-1:0] down_wstrb_o,
     output logic [ADDR_WIDTH-1:0] down_addr_o,
     output logic [DATA_WIDTH-1:0] down_wdata_o,
+    // Whole dirty line for DOWN_LINE writeback. RAM indexes it with its
+    // own beat counter so the two FSMs cannot drift (word 0 twice / word
+    // 3 never). Master need not hold this after the captured req cycle.
+    output logic [LINE_BYTES*8-1:0] down_wline_o,
     input  logic                  down_ack_i,
     input  logic                  down_last_i,
     input  logic [DATA_WIDTH-1:0] down_rdata_i,
@@ -257,6 +268,7 @@ module pycore_cache #(
                                ? line_word(wb_line_r, beat_r)
                                : cap_wdata_r)
                         : wdata_i;
+    assign down_wline_o = cache_en_i ? wb_line_r : '0;
 
     assign hit_count_o       = hit_count_r;
     assign miss_count_o      = miss_count_r;
@@ -270,6 +282,15 @@ module pycore_cache #(
                                (state_r == ST_FLUSH_WB_WAIT);
     assign inv_done_o        = inv_done_r;
     assign flush_done_o      = flush_done_r;
+
+    // Flush/inv take priority over req in ST_IDLE, so a same-cycle request
+    // is dropped (no ack). The handoff sequencer waits for idle_o before
+    // pulsing flush/inv; this is the backstop if that gate ever slips.
+    always_ff @(posedge clk_i) begin
+        if (rst_n_i && cache_en_i && req_i &&
+            (flush_all_i || inv_all_i || flush_busy_o || inv_busy_o))
+            $error("%m: req_i while flush/inv (request would be dropped)");
+    end
 
     wire req_in_region = (REGION_LIMIT != 32'd0) &&
                          (addr_i >= ADDR_WIDTH'(REGION_BASE)) &&
@@ -563,6 +584,11 @@ module pycore_cache #(
                     end
                 end
                 ST_INV: begin
+                    // Deliberate area/timing trade for a research core:
+                    // clear every valid/dirty flop in one cycle (L2: 256
+                    // sets × 8 ways = 2048). Do not turn this into a
+                    // multi-cycle walk without re-checking the handoff
+                    // sequencer's inv_done pulse.
                     for (int s = 0; s < SETS; s++) begin
                         for (int w = 0; w < WAYS; w++) begin
                             valid_q[s][w] <= 1'b0;

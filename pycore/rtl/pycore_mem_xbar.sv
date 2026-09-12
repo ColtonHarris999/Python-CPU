@@ -4,10 +4,13 @@
 // slot port onto one unified 128-bit L2 port. Instruction addresses are
 // relocated to PYCORE_CODE_ADDR_BASE so they cannot alias data in the L2.
 //
-// Priority: dmem (L1D) > excore > imem. Excore attaches at L2 (P3), never
-// at L1D. A master request is captured the cycle `req` is high. `l2_req_o`
-// is held until `l2_ack_i`. Master `ack_o` is a one-cycle pulse the cycle
-// after L2 acks — extra occupancy, same §0 contract.
+// Priority: dmem (L1D) > excore > imem. Fine today: fetch is stalled
+// whenever the container FSM runs. Once L1s make fetch and dmem concurrent,
+// imem can starve — revisit in P4 (round-robin or age). Excore attaches
+// at L2 (P3), never at L1D. A master request is captured the cycle `req`
+// is high. `l2_req_o` is held until `l2_ack_i`. Master `ack_o` is a
+// one-cycle pulse the cycle after L2 acks — extra occupancy, same §0
+// contract.
 module pycore_mem_xbar #(
     parameter int    ADDR_WIDTH    = PYCORE_ADDR_WIDTH,
     parameter int    IMEM_DATA_W   = PYCORE_IMEM_DATA_WIDTH,

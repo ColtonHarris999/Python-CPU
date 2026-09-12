@@ -88,6 +88,7 @@ module pycore_mem_hier #(
     logic [DMEM_DATA_W/8-1:0] ram_wstrb;
     logic [ADDR_WIDTH-1:0]  ram_addr;
     logic [DMEM_DATA_W-1:0] ram_wdata, ram_rdata;
+    logic [PYCORE_LINE_BYTES*8-1:0] ram_wline;
 
     typedef enum logic [2:0] {
         SQ_IDLE,
@@ -136,6 +137,7 @@ module pycore_mem_hier #(
         .down_wstrb_o(l1d_down_wstrb),
         .down_addr_o(l1d_down_addr),
         .down_wdata_o(l1d_down_wdata),
+        .down_wline_o(),
         .down_ack_i(l1d_down_ack),
         .down_last_i(1'b0),
         .down_rdata_i(l1d_down_rdata),
@@ -222,6 +224,7 @@ module pycore_mem_hier #(
         .down_wstrb_o(ram_wstrb),
         .down_addr_o(ram_addr),
         .down_wdata_o(ram_wdata),
+        .down_wline_o(ram_wline),
         .down_ack_i(ram_ack),
         .down_last_i(ram_last),
         .down_rdata_i(ram_rdata),
@@ -256,6 +259,7 @@ module pycore_mem_hier #(
         .wstrb_i(ram_wstrb),
         .addr_i(ram_addr),
         .wdata_i(ram_wdata),
+        .wline_i(ram_wline),
         .ack_o(ram_ack),
         .last_o(ram_last),
         .rdata_o(ram_rdata),
