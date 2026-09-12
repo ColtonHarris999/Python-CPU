@@ -259,10 +259,11 @@ module pycore_tag_decode (
                     end
                 end
 
-                // Native COMPARE_OP: numeric pairs + same-tag SHORT_STR/LONG_STR
-                // equality (==/!=) + SHORT_STR lexicographic ordering
-                // (<,<=,>,>=). LONG_STR ordering and cross-tag string compares
-                // still TYPE-trap. LONG_STR ==/!= uses descriptor equality.
+                // Native COMPARE_OP: numeric pairs + string EQ/NE (same-tag
+                // or mixed SHORT/LONG; mixed is canonical-false in exec) +
+                // SHORT_STR lexicographic ordering (<,<=,>,>=). LONG_STR
+                // ordering still TYPE-traps here; the core routes it to
+                // STRACC. LONG_STR ==/!= uses descriptor or payload compare.
                 PY_ALU_EQ, PY_ALU_NE, PY_ALU_LT, PY_ALU_LE, PY_ALU_GT, PY_ALU_GE: begin
                     if ((rs1_tag_i == PY_TAG_COMPLEX) || (rs2_tag_i == PY_TAG_COMPLEX)) begin
                         if ((alu_op_i == PY_ALU_EQ || alu_op_i == PY_ALU_NE) &&

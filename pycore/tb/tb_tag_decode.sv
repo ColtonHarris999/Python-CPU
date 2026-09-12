@@ -118,8 +118,9 @@ module tb_tag_decode;
         rs2_tag = PY_TAG_LONG_STR;
         alu_op = PY_ALU_EQ;
         #1;
-        check(is_trap && trap_code == PY_TRAP_TYPE,
-              "cross-tag string EQ should type trap");
+        check(!is_trap, "cross-tag string EQ should not trap");
+        check(result_tag == PY_TAG_BOOL, "cross-tag string EQ should produce BOOL");
+        check(exec_unit_sel == PY_EXEC_INT, "cross-tag string EQ should route to INT");
 
         rs1_tag = PY_TAG_SHORT_STR;
         rs2_tag = PY_TAG_SHORT_STR;
