@@ -82,6 +82,8 @@ module pycore_core #(
     input  logic                          imem_ack_i,
     input  logic [IMEM_DATA_W-1:0]        imem_rdata_i,
     input  logic                          imem_fault_i,
+    input  logic [PYCORE_LINE_BYTES*8-1:0] imem_line_i,
+    input  logic                          imem_line_valid_i,
     // dmem master
     output logic                          dmem_req_o,
     output logic                          dmem_we_o,
@@ -563,10 +565,14 @@ module pycore_core #(
         .imem_wdata_o(imem_wdata_o),
         .imem_ack_i(imem_ack_i),
         .imem_rdata_i(imem_rdata_i),
+        .imem_line_i(imem_line_i),
+        .imem_line_valid_i(imem_line_valid_i),
         .instr_valid_o(if_instr_valid),
         .opcode_o(if_opcode),
         .arg_o(if_arg),
-        .pc_o(if_pc)
+        .pc_o(if_pc),
+        .mem_req_count_o(),
+        .buf_hit_count_o()
     );
 
     // ---------------------------------------------------------------------

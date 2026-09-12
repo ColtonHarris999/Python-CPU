@@ -47,6 +47,7 @@ localparam int PYCORE_RAM_BEATS        = PYCORE_LINE_BYTES / (PYCORE_DMEM_DATA_W
 // Fetch still uses Harvard slot addresses; the xbar adds this base so code
 // and data never alias in the unified cache.
 localparam logic [31:0] PYCORE_CODE_ADDR_BASE = 32'h0100_0000;
+localparam int PYCORE_L1I_HIT_CYCLES   = 1;
 localparam int PYCORE_L1D_HIT_CYCLES   = 1;
 // P2 local call, still in force with L1s present: the target table's
 // 8-cycle L2 hit blows MAX_CYCLES on cold-start fixtures. L1D covers

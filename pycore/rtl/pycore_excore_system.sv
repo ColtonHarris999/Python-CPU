@@ -52,6 +52,8 @@ module pycore_excore_system #(
     logic                   imem_req, imem_we, imem_ack, imem_fault;
     logic [ADDR_WIDTH-1:0]  imem_addr;
     logic [IMEM_DATA_W-1:0] imem_wdata, imem_rdata;
+    logic [PYCORE_LINE_BYTES*8-1:0] imem_line;
+    logic                   imem_line_valid;
 
     // ---- pycore's dmem master (into L1D) ----------------------------------
     logic                   core_dmem_req, core_dmem_we, core_dmem_ack, core_dmem_fault;
@@ -140,6 +142,8 @@ module pycore_excore_system #(
         .imem_ack_i(imem_ack),
         .imem_rdata_i(imem_rdata),
         .imem_fault_i(imem_fault),
+        .imem_line_i(imem_line),
+        .imem_line_valid_i(imem_line_valid),
         .dmem_req_o(core_dmem_req),
         .dmem_we_o(core_dmem_we),
         .dmem_wstrb_o(core_dmem_wstrb),
@@ -341,8 +345,6 @@ module pycore_excore_system #(
         cache_en_sim = (cache_en_i != 0);
     end
 
-    assign l1i_hit_count = '0;
-    assign l1i_miss_count = '0;
     assign l1i_writeback_count = '0;
 
     initial begin
@@ -390,6 +392,8 @@ module pycore_excore_system #(
         .imem_ack_o(imem_ack),
         .imem_rdata_o(imem_rdata),
         .imem_fault_o(imem_fault),
+        .imem_line_o(imem_line),
+        .imem_line_valid_o(imem_line_valid),
         .dmem_req_i(core_dmem_req && (mem_owner_r == OWNER_PYCORE)),
         .dmem_we_i(core_dmem_we),
         .dmem_wstrb_i(core_dmem_wstrb),
@@ -411,6 +415,8 @@ module pycore_excore_system #(
         .flush_done_o(l1d_flush_done),
         .inv_done_o(l1d_inv_done),
         .l1d_idle_o(),
+        .l1i_hit_count_o(l1i_hit_count),
+        .l1i_miss_count_o(l1i_miss_count),
         .l1d_hit_count_o(l1d_hit_count),
         .l1d_miss_count_o(l1d_miss_count),
         .l1d_writeback_count_o(l1d_writeback_count),

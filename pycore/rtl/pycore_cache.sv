@@ -11,8 +11,9 @@
 // §0 word req/ack used by every master; the down port adds `down_line_o` /
 // `down_last_i` / `down_wline_o` for L2→RAM line bursts. L1 instantiations
 // set DOWN_LINE=0 and issue one word at a time into the L2 CPU port (no
-// `line_i` there). P4's fetch buffer is the place that grows a 512-bit
-// line read on the L1I CPU port — do not silently change this contract.
+// `line_i` there). `rdata_line_o` is a sideband on the CPU port: the full
+// line of the responding way, valid with `ack_o`. Fetch captures it into
+// the P4b line register. L1D/L2 leave it unconnected.
 //
 // `cache_en_i=0` is a combinational pass-through to `down_*` (no extra
 // cycle from this module). That is the bisect switch and the transparency
@@ -44,6 +45,10 @@ module pycore_cache #(
     output logic                  ack_o,
     output logic [DATA_WIDTH-1:0] rdata_o,
     output logic                  fault_o,
+    // Full line of the responding way, valid with ack_o when cache_en_i.
+    // CACHE_EN=0 pass-through has no line; drives 0 so fetch will not fill
+    // its buffer from a single-word bypass response.
+    output logic [LINE_BYTES*8-1:0] rdata_line_o,
 
     output logic                  down_req_o,
     output logic                  down_we_o,
@@ -131,6 +136,7 @@ module pycore_cache #(
     logic                   ack_r;
     logic                   fault_r;
     logic [DATA_WIDTH-1:0]  rdata_r;
+    logic [LINE_W-1:0]      rline_r;
     logic                   down_req_r;
     logic                   down_we_r;
     logic                   down_line_r;
@@ -255,6 +261,7 @@ module pycore_cache #(
     assign ack_o   = cache_en_i ? ack_r   : down_ack_i;
     assign rdata_o = cache_en_i ? rdata_r : down_rdata_i;
     assign fault_o = cache_en_i ? fault_r : down_fault_i;
+    assign rdata_line_o = cache_en_i ? rline_r : '0;
 
     assign down_req_o   = cache_en_i ? down_req_r : req_i;
     assign down_we_o    = cache_en_i ? down_we_r  : we_i;
@@ -326,6 +333,7 @@ module pycore_cache #(
             ack_r       <= 1'b0;
             fault_r     <= 1'b0;
             rdata_r     <= '0;
+            rline_r     <= '0;
             down_req_r  <= 1'b0;
             down_we_r   <= 1'b0;
             down_line_r <= 1'b0;
@@ -394,6 +402,7 @@ module pycore_cache #(
                                 ack_r   <= 1'b1;
                                 rdata_r <= line_word(data_q[req_set][comb_hit_way],
                                                      req_word);
+                                rline_r <= data_q[req_set][comb_hit_way];
                             end else begin
                                 hit_wait_r <= hit_cycles_eff - 1;
                                 state_r    <= ST_HIT_WAIT;
@@ -431,6 +440,7 @@ module pycore_cache #(
                     ack_r   <= 1'b1;
                     fault_r <= 1'b0;
                     rdata_r <= line_word(data_q[cap_set][cap_way_r], cap_word);
+                    rline_r <= data_q[cap_set][cap_way_r];
                     state_r <= ST_IDLE;
                 end
                 ST_FAULT: begin
@@ -493,6 +503,7 @@ module pycore_cache #(
                                 cap_line_r                  <= installed;
                                 ack_r                       <= 1'b1;
                                 rdata_r <= line_word(installed, cap_word);
+                                rline_r <= installed;
                                 state_r                     <= ST_IDLE;
                             end else begin
                                 beat_r <= beat_r + BEAT_W'(1);

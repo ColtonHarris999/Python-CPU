@@ -2,14 +2,15 @@
 
 // Memory hierarchy shared by pycore_system and pycore_excore_system:
 //
-//   core dmem  → L1D (8 KB WB+WA) → xbar dmem  ─┐
-//   core imem  ─────────────────────────────── xbar ─ L2 ─ RAM
-//   excore sp  ─────────────────────────────── xbar excore ┘
+//   core dmem  → L1D (8 KB WB+WA)  → xbar dmem  ─┐
+//   core imem  → L1I (8 KB RO)     → xbar imem  ─┼─ L2 ─ RAM
+//   excore sp  ─────────────────── → xbar excore┘
 //
 // Excore attaches at L2, never at L1D (memory_system_plan.md §4). The
 // flush/invalidate sequencer lives here, next to the ports the grant mux
 // in pycore_excore_system.sv waits on: pulse flush_req_i / inv_req_i,
 // wait for the matching *_done_o pulse. Single-core ties those off.
+// L1I is read-only; it is not flushed on the excore handoff.
 module pycore_mem_hier #(
     parameter int    ADDR_WIDTH       = PYCORE_ADDR_WIDTH,
     parameter int    IMEM_DATA_W      = PYCORE_IMEM_DATA_WIDTH,
@@ -20,6 +21,9 @@ module pycore_mem_hier #(
     parameter int    L2_SIZE_BYTES    = PYCORE_L2_SIZE_BYTES,
     parameter int    L2_WAYS          = PYCORE_L2_WAYS,
     parameter int    L2_HIT_CYCLES    = PYCORE_L2_HIT_CYCLES,
+    parameter int    L1I_SIZE_BYTES   = PYCORE_L1I_SIZE_BYTES,
+    parameter int    L1I_WAYS         = PYCORE_L1I_WAYS,
+    parameter int    L1I_HIT_CYCLES   = PYCORE_L1I_HIT_CYCLES,
     parameter int    L1D_SIZE_BYTES   = PYCORE_L1D_SIZE_BYTES,
     parameter int    L1D_WAYS         = PYCORE_L1D_WAYS,
     parameter int    L1D_HIT_CYCLES   = PYCORE_L1D_HIT_CYCLES
@@ -37,6 +41,8 @@ module pycore_mem_hier #(
     output logic                    imem_ack_o,
     output logic [IMEM_DATA_W-1:0]  imem_rdata_o,
     output logic                    imem_fault_o,
+    output logic [PYCORE_LINE_BYTES*8-1:0] imem_line_o,
+    output logic                    imem_line_valid_o,
 
     input  logic                    dmem_req_i,
     input  logic                    dmem_we_i,
@@ -62,6 +68,8 @@ module pycore_mem_hier #(
     output logic                    inv_done_o,
     output logic                    l1d_idle_o,
 
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] l1i_hit_count_o,
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] l1i_miss_count_o,
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] l1d_hit_count_o,
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] l1d_miss_count_o,
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] l1d_writeback_count_o,
@@ -75,6 +83,12 @@ module pycore_mem_hier #(
     logic [DMEM_DATA_W/8-1:0] l1d_down_wstrb;
     logic [ADDR_WIDTH-1:0]  l1d_down_addr;
     logic [DMEM_DATA_W-1:0] l1d_down_wdata, l1d_down_rdata;
+
+    logic                   l1i_down_req, l1i_down_we, l1i_down_ack, l1i_down_fault;
+    logic [IMEM_DATA_W/8-1:0] l1i_down_wstrb;
+    logic [ADDR_WIDTH-1:0]  l1i_down_addr;
+    logic [IMEM_DATA_W-1:0] l1i_down_wdata, l1i_down_rdata;
+    logic [PYCORE_LINE_BYTES*8-1:0] l1i_line;
 
     logic                   l1d_flush_all, l1d_inv_all;
     logic                   l1d_flush_done, l1d_inv_done, l1d_idle;
@@ -106,6 +120,56 @@ module pycore_mem_hier #(
     assign l1d_idle_o   = l1d_idle;
     assign flush_done_o = flush_done_r;
     assign inv_done_o   = inv_done_r;
+    assign imem_line_o  = l1i_line;
+    assign imem_line_valid_o = cache_en_i && imem_ack_o;
+
+    pycore_cache #(
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .DATA_WIDTH(IMEM_DATA_W),
+        .SIZE_BYTES(L1I_SIZE_BYTES),
+        .LINE_BYTES(PYCORE_LINE_BYTES),
+        .WAYS(L1I_WAYS),
+        .READ_ONLY(1'b1),
+        .WRITE_BACK(1'b0),
+        .HIT_CYCLES(L1I_HIT_CYCLES),
+        .DOWN_LINE(1'b0)
+    ) l1i (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .cache_en_i(cache_en_i),
+        .req_i(imem_req_i),
+        .we_i(imem_we_i),
+        .wstrb_i(imem_wstrb_i),
+        .addr_i(imem_addr_i),
+        .wdata_i(imem_wdata_i),
+        .ack_o(imem_ack_o),
+        .rdata_o(imem_rdata_o),
+        .fault_o(imem_fault_o),
+        .rdata_line_o(l1i_line),
+        .down_req_o(l1i_down_req),
+        .down_we_o(l1i_down_we),
+        .down_line_o(),
+        .down_wstrb_o(l1i_down_wstrb),
+        .down_addr_o(l1i_down_addr),
+        .down_wdata_o(l1i_down_wdata),
+        .down_wline_o(),
+        .down_ack_i(l1i_down_ack),
+        .down_last_i(1'b0),
+        .down_rdata_i(l1i_down_rdata),
+        .down_fault_i(l1i_down_fault),
+        .inv_all_i(1'b0),
+        .flush_all_i(1'b0),
+        .inv_busy_o(),
+        .flush_busy_o(),
+        .inv_done_o(),
+        .flush_done_o(),
+        .idle_o(),
+        .hit_count_o(l1i_hit_count_o),
+        .miss_count_o(l1i_miss_count_o),
+        .writeback_count_o(),
+        .region_hit_count_o(),
+        .region_miss_count_o()
+    );
 
     pycore_cache #(
         .ADDR_WIDTH(ADDR_WIDTH),
@@ -131,6 +195,7 @@ module pycore_mem_hier #(
         .ack_o(dmem_ack_o),
         .rdata_o(dmem_rdata_o),
         .fault_o(dmem_fault_o),
+        .rdata_line_o(),
         .down_req_o(l1d_down_req),
         .down_we_o(l1d_down_we),
         .down_line_o(),
@@ -163,14 +228,14 @@ module pycore_mem_hier #(
     ) xbar (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
-        .imem_req_i(imem_req_i),
-        .imem_we_i(imem_we_i),
-        .imem_wstrb_i(imem_wstrb_i),
-        .imem_addr_i(imem_addr_i),
-        .imem_wdata_i(imem_wdata_i),
-        .imem_ack_o(imem_ack_o),
-        .imem_rdata_o(imem_rdata_o),
-        .imem_fault_o(imem_fault_o),
+        .imem_req_i(l1i_down_req),
+        .imem_we_i(l1i_down_we),
+        .imem_wstrb_i(l1i_down_wstrb),
+        .imem_addr_i(l1i_down_addr),
+        .imem_wdata_i(l1i_down_wdata),
+        .imem_ack_o(l1i_down_ack),
+        .imem_rdata_o(l1i_down_rdata),
+        .imem_fault_o(l1i_down_fault),
         .dmem_req_i(l1d_down_req),
         .dmem_we_i(l1d_down_we),
         .dmem_wstrb_i(l1d_down_wstrb),
@@ -218,6 +283,7 @@ module pycore_mem_hier #(
         .ack_o(l2_ack),
         .rdata_o(l2_rdata),
         .fault_o(l2_fault),
+        .rdata_line_o(),
         .down_req_o(ram_req),
         .down_we_o(ram_we),
         .down_line_o(ram_line),

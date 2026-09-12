@@ -42,6 +42,8 @@ module pycore_system #(
     logic                   imem_ack;
     logic [IMEM_DATA_W-1:0] imem_rdata;
     logic                   imem_fault;
+    logic [PYCORE_LINE_BYTES*8-1:0] imem_line;
+    logic                   imem_line_valid;
 
     // dmem master <-> bank
     logic                   dmem_req;
@@ -72,8 +74,6 @@ module pycore_system #(
         cache_en_sim = (cache_en_i != 0);
     end
 
-    assign l1i_hit_count = '0;
-    assign l1i_miss_count = '0;
     assign l1i_writeback_count = '0;
 
     initial begin
@@ -99,6 +99,8 @@ module pycore_system #(
         .imem_ack_i(imem_ack),
         .imem_rdata_i(imem_rdata),
         .imem_fault_i(imem_fault),
+        .imem_line_i(imem_line),
+        .imem_line_valid_i(imem_line_valid),
         .dmem_req_o(dmem_req),
         .dmem_we_o(dmem_we),
         .dmem_wstrb_o(dmem_wstrb),
@@ -154,6 +156,8 @@ module pycore_system #(
         .imem_ack_o(imem_ack),
         .imem_rdata_o(imem_rdata),
         .imem_fault_o(imem_fault),
+        .imem_line_o(imem_line),
+        .imem_line_valid_o(imem_line_valid),
         .dmem_req_i(dmem_req),
         .dmem_we_i(dmem_we),
         .dmem_wstrb_i(dmem_wstrb),
@@ -175,6 +179,8 @@ module pycore_system #(
         .flush_done_o(),
         .inv_done_o(),
         .l1d_idle_o(),
+        .l1i_hit_count_o(l1i_hit_count),
+        .l1i_miss_count_o(l1i_miss_count),
         .l1d_hit_count_o(l1d_hit_count),
         .l1d_miss_count_o(l1d_miss_count),
         .l1d_writeback_count_o(l1d_writeback_count),

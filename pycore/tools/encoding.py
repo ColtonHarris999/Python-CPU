@@ -96,6 +96,7 @@ def align_line(addr: int, line: int = LINE_BYTES) -> int:
     return (addr + line - 1) & ~(line - 1)
 L1I_SIZE_BYTES = 8192
 L1I_WAYS = 4
+L1I_HIT_CYCLES = 1
 L1D_SIZE_BYTES = 8192
 L1D_WAYS = 4
 L2_SIZE_BYTES = 131072

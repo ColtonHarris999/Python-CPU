@@ -94,7 +94,7 @@ EXCORE_RTL_SRCS := \
 .PHONY: help lint-file pycore-preprocess run-file pycore-run-file all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-string-exec pycore-type-pairs \
 	pycore-python-tests pycore-mem pycore-cache-lru pycore-cache pycore-ram \
-	pycore-l1d-handoff pycore-frame pycore-frame-fib \
+	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib \
 	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
 	pycore-img-containers pycore-img-recursion pycore-img-extended-arg \
 	pycore-img-branchy pycore-img-undef-global pycore-img-noncallable \
@@ -502,6 +502,16 @@ pycore-ram:
 		-Wall -Wno-fatal \
 		pycore/rtl/pycore_ram.sv pycore/tb/tb_ram.sv
 	./$(BUILD_DIR)/pycore_ram/Vtb_ram
+
+pycore-fetch:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_fetch \
+		--Mdir $(BUILD_DIR)/pycore_fetch \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_fetch.sv pycore/tb/tb_fetch.sv
+	./$(BUILD_DIR)/pycore_fetch/Vtb_fetch
 
 pycore-frame:
 	mkdir -p $(BUILD_DIR)
@@ -2697,7 +2707,7 @@ excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec pycore-string-exec \
 	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
-	pycore-l1d-handoff pycore-frame pycore-frame-fib
+	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib
 
 pycore-test: pycore-python-tests pycore-rtl-unit pycore-container \
 	pycore-img pycore-excore-system pycore-img-two-core
