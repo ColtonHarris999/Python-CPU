@@ -1000,7 +1000,7 @@ pycore-img-slice-str-scan:
 	$(call PYCORE_IMAGE_RUN,slice_str_scan,200000)
 
 pycore-img-slice-str-neg-trap:
-	$(call PYCORE_IMAGE_TRAP_RUN,slice_str_neg_trap,1,50000)
+	$(call PYCORE_IMAGE_RUN,slice_str_neg_trap,50000)
 
 pycore-img-slice-list-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,slice_list_trap,1,50000)

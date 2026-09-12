@@ -1,8 +1,8 @@
-"""Negative slice bounds do not wrap: PY_TRAP_TYPE (1).
+"""Negative slice bounds wrap like CPython: "abcde"[1:-1] == "bcd".
 
-CPython gives "abcde"[1:-1] == "bcd". PyCore bounds are unsigned (the same
-deviation 3 that applies to indices), so this traps rather than silently
-computing something else. Documented in bytecode_support.md.
+STRACC uses signed character indices. The old string_mem path trapped
+PY_TRAP_TYPE on negatives (bytecode_support.md deviation 3); the accelerator
+matches CPython instead.
 """
 
 
