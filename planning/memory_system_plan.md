@@ -502,12 +502,24 @@ Per-module testbenches, added to `PYCORE_MEM_SRCS` and `pycore-rtl-unit`:
 **The acceptance gate is a transparency test.** Run the entire image suite
 twice — `PYCORE_CACHE_EN=1` and `PYCORE_CACHE_EN=0` — and require
 **byte-identical retired results**. A cache that changes an architectural
-result is a bug, and this catches it across all ~200 fixtures at once. Wire it
-as a new Makefile target `pycore-cache-transparency` and add it to
-`make all-tests`.
+result is a bug, and this catches it across all ~200 fixtures at once.
 
 Second gate: run the image suite at `MEM_LATENCY` 1, 4 and 30 and require
 identical results. This catches anything that assumed a fixed memory latency.
+
+Both are `make pycore-cache-transparency` / `make pycore-mem-latency-sweep`,
+and both run in CI as the **`gates`** job (`make docker-gates`). They are the
+only jobs that run more than one memory configuration: every other job runs
+`CACHE_EN=1` at `MEM_LATENCY=4`. The L2→RAM writeback bug fixed in #101 was
+invisible for exactly that reason — do not let the gates job be dropped or
+made non-blocking.
+
+> **In-RTL `$error` does fail the run.** Verified on the Debian-packaged
+> Verilator the Docker image uses: a bare `$error` in a module prints
+> `%Error: ... Assertion failed`, issues `$stop`, and aborts with exit code
+> 134, so the job fails. The assertions in `pycore_cache.sv` (request racing
+> flush/inv) and `pycore_fetch.sv` (acked rdata vs line lane) are real gates,
+> not documentation, and do not need converting to `$fatal`.
 
 ---
 
