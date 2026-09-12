@@ -54,6 +54,7 @@ module pycore_excore_system #(
 
     // ---- pycore's raw dmem master port (pre-grant-mux) --------------------
     logic                   core_dmem_req, core_dmem_we, core_dmem_ack, core_dmem_fault;
+    logic [DMEM_DATA_W/8-1:0] core_dmem_wstrb;
     logic [ADDR_WIDTH-1:0]  core_dmem_addr;
     logic [DMEM_DATA_W-1:0] core_dmem_wdata, core_dmem_rdata;
 
@@ -129,6 +130,7 @@ module pycore_excore_system #(
         .imem_fault_i(imem_fault),
         .dmem_req_o(core_dmem_req),
         .dmem_we_o(core_dmem_we),
+        .dmem_wstrb_o(core_dmem_wstrb),
         .dmem_addr_o(core_dmem_addr),
         .dmem_wdata_o(core_dmem_wdata),
         .dmem_ack_i(core_dmem_ack),
@@ -170,6 +172,7 @@ module pycore_excore_system #(
         .rst_n_i(rst_n_i),
         .req_i(imem_req),
         .we_i(imem_we),
+        .wstrb_i({IMEM_DATA_W/8{1'b1}}),
         .addr_i(imem_addr),
         .wdata_i(imem_wdata),
         .ack_o(imem_ack),
@@ -291,14 +294,50 @@ module pycore_excore_system #(
     end
 
     logic                   dmem_req, dmem_we, dmem_ack, dmem_fault;
+    logic [DMEM_DATA_W/8-1:0] dmem_wstrb;
     logic [ADDR_WIDTH-1:0]  dmem_addr;
     logic [DMEM_DATA_W-1:0] dmem_wdata, dmem_rdata;
+
+    // +CACHE_EN= overrides PYCORE_CACHE_EN at sim time. Caches land in P2;
+    // this latch plus the zeroed counters are the P0 contract.
+    bit cache_en_sim /* verilator public */;
+    int mem_latency_sim /* verilator public */;
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic [PYCORE_PERF_CNT_WIDTH-1:0] l1i_hit_count, l1i_miss_count, l1i_writeback_count;
+    logic [PYCORE_PERF_CNT_WIDTH-1:0] l1d_hit_count, l1d_miss_count, l1d_writeback_count;
+    logic [PYCORE_PERF_CNT_WIDTH-1:0] l2_hit_count, l2_miss_count, l2_writeback_count;
+    /* verilator lint_on UNUSEDSIGNAL */
+
+    initial begin
+        int cache_en_i;
+        cache_en_i = int'(PYCORE_CACHE_EN);
+        void'($value$plusargs("CACHE_EN=%d", cache_en_i));
+        void'($value$plusargs("PYCORE_CACHE_EN=%d", cache_en_i));
+        cache_en_sim = (cache_en_i != 0);
+    end
+
+    assign l1i_hit_count = '0;
+    assign l1i_miss_count = '0;
+    assign l1i_writeback_count = '0;
+    assign l1d_hit_count = '0;
+    assign l1d_miss_count = '0;
+    assign l1d_writeback_count = '0;
+    assign l2_hit_count = '0;
+    assign l2_miss_count = '0;
+    assign l2_writeback_count = '0;
+
+    initial begin
+        mem_latency_sim = PYCORE_RAM_T_FIRST_CI;
+        void'($value$plusargs("MEM_LATENCY=%d", mem_latency_sim));
+    end
 
     // sp_wdata_o/sp_rdata_i are fixed at 128 bits (one pycore dmem slot);
     // DMEM_DATA_W matches PYCORE_DMEM_DATA_WIDTH (128) by default and must
     // not be changed independently of the slot-port width.
     assign dmem_req   = (mem_owner_r == OWNER_PYCORE) ? core_dmem_req   : sp_req;
     assign dmem_we    = (mem_owner_r == OWNER_PYCORE) ? core_dmem_we    : sp_we;
+    assign dmem_wstrb = (mem_owner_r == OWNER_PYCORE) ? core_dmem_wstrb
+                                                      : {DMEM_DATA_W/8{1'b1}};
     assign dmem_addr  = (mem_owner_r == OWNER_PYCORE) ? core_dmem_addr  : sp_addr;
     assign dmem_wdata = (mem_owner_r == OWNER_PYCORE) ? core_dmem_wdata : sp_wdata;
 
@@ -341,6 +380,7 @@ module pycore_excore_system #(
         .rst_n_i(rst_n_i),
         .req_i(dmem_req),
         .we_i(dmem_we),
+        .wstrb_i(dmem_wstrb),
         .addr_i(dmem_addr),
         .wdata_i(dmem_wdata),
         .ack_o(dmem_ack),

@@ -77,6 +77,27 @@ HEAP_LIMIT = 0x1B000
 # Exc-info stack arena (§5.5); last tagged entry holds the boot StopIteration latch.
 EXC_STACK_BASE = 0x1B000
 EXC_STACK_BYTES = 0x1000
+# Call-frame stack (mirror PYCORE_FRAME_STACK_* in pycore_defs.svh).
+FRAME_STACK_BASE = 0x1C000
+FRAME_STACK_BYTES = 0x4000
+# Cache / RAM hierarchy (mirror pycore_defs.svh; RTL-only until P2 instantiates).
+CACHE_EN = 1
+LINE_BYTES = 64
+L1I_SIZE_BYTES = 8192
+L1I_WAYS = 4
+L1D_SIZE_BYTES = 8192
+L1D_WAYS = 4
+L2_SIZE_BYTES = 131072
+L2_WAYS = 8
+RAM_BYTES = 16 * 1024 * 1024
+RAM_T_FIRST = 30
+RAM_T_BEAT = 2
+RAM_T_FIRST_CI = 4
+CODC_ENTRIES = 4
+CODC_WAYS = 2
+GIC_ENTRIES = 16
+GIC_WAYS = 2
+FTB_FRAMES = 4
 ITER_EXHAUST_TYPE_ADDR = EXC_STACK_BASE + EXC_STACK_BYTES - 32  # 0x1BFE0
 # Native method CODE_OBJECT table (16 × 32 B tagged entries) immediately
 # below the StopIteration sidecar. LOAD_ATTR indexes this instead of

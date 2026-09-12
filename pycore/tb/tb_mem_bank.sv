@@ -13,6 +13,7 @@ module tb_mem_bank;
     logic rst_n;
     logic req;
     logic we;
+    logic [DATA_WIDTH/8-1:0] wstrb;
     logic [ADDR_WIDTH-1:0] addr;
     logic [DATA_WIDTH-1:0] wdata;
     logic ack;
@@ -31,6 +32,7 @@ module tb_mem_bank;
         .rst_n_i(rst_n),
         .req_i(req),
         .we_i(we),
+        .wstrb_i(wstrb),
         .addr_i(addr),
         .wdata_i(wdata),
         .ack_o(ack),
@@ -54,17 +56,20 @@ module tb_mem_bank;
     task automatic transact(
         input bit                  do_we,
         input logic [ADDR_WIDTH-1:0] a,
-        input logic [DATA_WIDTH-1:0] d
+        input logic [DATA_WIDTH-1:0] d,
+        input logic [DATA_WIDTH/8-1:0] strobe = {DATA_WIDTH/8{1'b1}}
     );
         begin
             @(negedge clk);
             req   = 1'b1;
             we    = do_we;
+            wstrb = strobe;
             addr  = a;
             wdata = d;
             @(negedge clk);
             req = 1'b0;
             we  = 1'b0;
+            wstrb = {DATA_WIDTH/8{1'b1}};
         end
     endtask
 
@@ -73,6 +78,7 @@ module tb_mem_bank;
         rst_n = 1'b0;
         req = 1'b0;
         we = 1'b0;
+        wstrb = {DATA_WIDTH/8{1'b1}};
         addr = '0;
         wdata = '0;
         #12;
@@ -104,6 +110,14 @@ module tb_mem_bank;
         transact(1'b0, 32'd128, '0);
         check(ack, "out-of-range access should still ack");
         check(fault, "out-of-range access should fault");
+
+        // Byte-enable: write only the low 8 bytes of a 16-byte slot.
+        transact(1'b1, 32'd32, 128'hAAAA_AAAA_AAAA_AAAA_BBBB_BBBB_BBBB_BBBB);
+        transact(1'b1, 32'd32, 128'h1111_1111_1111_1111_2222_2222_2222_2222,
+                 16'h00FF);
+        transact(1'b0, 32'd32, '0);
+        check(rdata == 128'hAAAA_AAAA_AAAA_AAAA_2222_2222_2222_2222,
+              "wstrb low-8 merge mismatch");
 
         $display("PASS: pycore_mem_bank read/write/ack/fault isolation test complete");
         $finish;

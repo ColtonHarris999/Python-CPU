@@ -33,6 +33,7 @@ module pycore_mem_bank #(
     input  logic                  rst_n_i,
     input  logic                  req_i,
     input  logic                  we_i,
+    input  logic [DATA_WIDTH/8-1:0] wstrb_i,
     input  logic [ADDR_WIDTH-1:0] addr_i,
     input  logic [DATA_WIDTH-1:0] wdata_i,
     output logic                  ack_o,
@@ -99,6 +100,7 @@ module pycore_mem_bank #(
             ) blk (
                 .clk_i(clk_i),
                 .we_i(blk_we),
+                .wstrb_i(wstrb_i),
                 .addr_i(word_idx),
                 .wdata_i(wdata_i),
                 .rdata_o(blk_rdata[g])

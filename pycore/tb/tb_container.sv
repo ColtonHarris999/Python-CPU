@@ -9,6 +9,7 @@
 //   +EXPECTED_TAG= +EXPECTED_VALUE= +MAX_CYCLES=
 //   +EXPECT_TRAP= +EXPECTED_TRAP_CODE= +EXPECTED_TRAP_REQ_COUNT=
 //   +CONTAINER_CALL_SPIKE_EN= +STDOUT_PATH=
+//   +CACHE_EN= +MEM_LATENCY=
 //
 // EXCORE_EN still selects the generate (single-core vs two-core top), so
 // those two topologies are compiled once each.
@@ -216,6 +217,14 @@ module tb_container #(
         void'($value$plusargs("EXPECTED_TRAP_REQ_COUNT=%d",
                              expected_trap_req_count));
         void'($value$plusargs("PROG_HEX=%s", prog_hex_disp));
+
+        begin
+            int cache_en_disp;
+            cache_en_disp = int'(PYCORE_CACHE_EN);
+            void'($value$plusargs("CACHE_EN=%d", cache_en_disp));
+            void'($value$plusargs("PYCORE_CACHE_EN=%d", cache_en_disp));
+            $display("tb_container: CACHE_EN=%0d", cache_en_disp);
+        end
 
         clk = 1'b0;
         rst_n = 1'b0;

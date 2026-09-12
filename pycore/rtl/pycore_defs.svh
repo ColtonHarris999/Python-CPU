@@ -23,6 +23,32 @@ localparam int PYCORE_IMEM_BLOCK_COUNT = 16;
 localparam int PYCORE_DMEM_BLOCK_COUNT = 32;   // 128 KB data memory
 localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
 localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot
+localparam int PYCORE_IMEM_WSTRB_WIDTH = PYCORE_IMEM_DATA_WIDTH / 8;  // 8
+localparam int PYCORE_DMEM_WSTRB_WIDTH = PYCORE_DMEM_DATA_WIDTH / 8;  // 16
+
+// Cache hierarchy (memory_system_plan.md §1). PYCORE_CACHE_EN=0 turns every
+// cache into a combinational pass-through to the next level — the bisect
+// switch and the transparency-test control arm. Overridable at sim time
+// with +CACHE_EN=.
+localparam bit PYCORE_CACHE_EN         = 1'b1;
+localparam int PYCORE_LINE_BYTES       = 64;
+localparam int PYCORE_L1I_SIZE_BYTES   = 8192;
+localparam int PYCORE_L1I_WAYS         = 4;
+localparam int PYCORE_L1D_SIZE_BYTES   = 8192;
+localparam int PYCORE_L1D_WAYS         = 4;
+localparam int PYCORE_L2_SIZE_BYTES    = 131072;  // 128 KB
+localparam int PYCORE_L2_WAYS          = 8;
+localparam int PYCORE_RAM_BYTES        = 16777216;  // 16 MB
+localparam int PYCORE_RAM_T_FIRST      = 30;
+localparam int PYCORE_RAM_T_BEAT       = 2;
+localparam int PYCORE_RAM_T_FIRST_CI   = 4;   // CI default via +MEM_LATENCY=
+localparam int PYCORE_RAM_BEATS        = PYCORE_LINE_BYTES / (PYCORE_DMEM_DATA_WIDTH / 8); // 4
+localparam int PYCORE_CODC_ENTRIES     = 4;
+localparam int PYCORE_CODC_WAYS        = 2;
+localparam int PYCORE_GIC_ENTRIES      = 16;
+localparam int PYCORE_GIC_WAYS         = 2;
+localparam int PYCORE_FTB_FRAMES       = 4;
+localparam int PYCORE_PERF_CNT_WIDTH   = 32;
 
 // =========================================================================
 // Primary 4-bit tag map (tag restructure).
@@ -2099,6 +2125,8 @@ endfunction
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0440;
 localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h0001_B000;
+localparam logic [31:0] PYCORE_FRAME_STACK_BASE  = 32'h0001_C000;
+localparam logic [31:0] PYCORE_FRAME_STACK_BYTES = 32'h0000_4000;  // 16 KB, 512 frames
 localparam logic [31:0] PYCORE_EXC_STACK_BASE  = 32'h0001_B000;
 localparam logic [31:0] PYCORE_EXC_STACK_BYTES = 32'h0000_1000;
 localparam logic [31:0] PYCORE_EXC_NODE_BYTES  = 32'd32;

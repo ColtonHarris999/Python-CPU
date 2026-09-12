@@ -114,6 +114,7 @@ module tb_excore #(
         .rst_n_i(rst_n),
         .req_i(sp_req),
         .we_i(sp_we),
+        .wstrb_i(16'hFFFF),
         .addr_i(sp_addr),
         .wdata_i(sp_wdata),
         .ack_o(sp_ack),
