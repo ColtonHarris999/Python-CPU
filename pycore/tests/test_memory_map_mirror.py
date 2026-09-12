@@ -110,6 +110,7 @@ SHARED_CONSTANTS = {
     "NATIVE_METHOD_ENTRY_BYTES": "PYCORE_NATIVE_METHOD_ENTRY_BYTES",
     "NATIVE_METHOD_TABLE_BYTES": "PYCORE_NATIVE_METHOD_TABLE_BYTES",
     "NATIVE_METHOD_TABLE_ADDR": "PYCORE_NATIVE_METHOD_TABLE_ADDR",
+    "STR_TYPE_ADDR": "PYCORE_STR_TYPE_ADDR",
     "CODE_OBJECT_NFIELDS": "PYCORE_CODE_NFIELDS",
     "CODE_OBJECT_BYTES": "PYCORE_CODE_OBJECT_BYTES",
     "CACHE_EN": "PYCORE_CACHE_EN",
@@ -165,6 +166,10 @@ class TestMemoryMapMirror(unittest.TestCase):
         self.assertEqual(
             encoding.NATIVE_METHOD_TABLE_ADDR,
             encoding.ITER_EXHAUST_TYPE_ADDR - encoding.NATIVE_METHOD_TABLE_BYTES,
+        )
+        self.assertEqual(
+            encoding.STR_TYPE_ADDR,
+            encoding.NATIVE_METHOD_TABLE_ADDR - 32,
         )
         self.assertEqual(encoding.CODE_OBJECT_BYTES, encoding.CODE_OBJECT_NFIELDS * 32)
         self.assertLess(encoding.HEAP_LIMIT, encoding.FRAME_STACK_BASE)

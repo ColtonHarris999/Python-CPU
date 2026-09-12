@@ -1,8 +1,10 @@
 """True if ``obj`` is an instance of ``classinfo``.
 
 ``classinfo`` must be a single class object. Walks ``obj.__class__``
-via ``__base__`` (depth ≤ 8). Tuple/list-of-types form deferred (cannot
-branch on type tag in pure Python without trapping).
+via ``__base__`` (depth ≤ 8). ``str`` receivers resolve ``__class__`` to
+the seeded ``str`` type (SHORT_STR / LONG_STR). Tuple/list-of-types form
+deferred (cannot branch on type tag in pure Python without trapping).
+INT/FLOAT/LIST still trap on ``__class__``.
 """
 
 

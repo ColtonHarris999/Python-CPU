@@ -86,8 +86,10 @@ firmware names (`print`, `sum`, `abs`, `bool`, `all`, `any`, `enumerate`,
 (`BI_PRINT`) is the one-arg `CONSOLE_TX` sink. The same `StopIteration`
 handle is also written to the exc-arena sidecar at
 `ITER_EXHAUST_TYPE_ADDR` (`0x1BFE0`) so `S_BOOT` can latch
-`iter_exhaust_type_r` without probing the builtins dict. Total boot record
-size is `BOOT_RECORD_BYTES = 96`.
+`iter_exhaust_type_r` without probing the builtins dict. The same `str`
+`OBK_TYPE` is written to `STR_TYPE_ADDR` (`0x1BDC0`) so `LOAD_ATTR`
+`__class__` on a string can return it without a builtins-dict probe.
+Total boot record size is `BOOT_RECORD_BYTES = 96`.
 
 **Resolution:** `LOAD_GLOBAL` / `LOAD_NAME` probe globals, then this
 builtins dict (LEGB **B**). **CALL** on an `OBK_BUILTIN` handle dispatches
@@ -150,7 +152,11 @@ creation until frame-local namespaces exist.
    `PYCORE_NATIVE_METHOD_TABLE_ADDR` (`0x1BDE0`). A hit is a pre-seeded
    `CODE_OBJECT`; writeback is the ordinary method form (`method_flag=1`
    pushes `[func, self]` with no allocation; `method_flag=0` allocates
-   `OBK_BOUND_METHOD`). Miss → `PY_TRAP_ATTR_ERROR` (15).
+   `OBK_BOUND_METHOD`). On a string receiver, `__class__` is a **data**
+   special: it returns the seeded `str` `OBK_TYPE` from
+   `PYCORE_STR_TYPE_ADDR` (`0x1BDC0`) so ROM `isinstance("x", str)` works.
+   Other native-receiver misses (including `list.__class__`) still
+   `PY_TRAP_ATTR_ERROR` (15).
 3. Else the receiver must be `PY_TAG_OBJECT`; else `PY_TRAP_TYPE`.
 4. Read `ob_head`. Before any dict probe, SHORT_STR **special names**:
 
@@ -159,6 +165,7 @@ creation until frame-local namespaces exist.
    | `__dict__` | `OBK_INSTANCE` / `OBK_TYPE` | field0 dict handle (`MUT_COLLEC`) |
    | `__class__` | `OBK_INSTANCE` | `ob_type` as `OBJECT` (TYPE_TRAP if 0) |
    | `__class__` | `OBK_TYPE` | the type itself (identity; not host `type`) |
+   | `__class__` | `SHORT_STR` / `LONG_STR` | seeded `str` type (sidecar; before native miss) |
    | `__base__` | `OBK_TYPE` | field1 `tp_base`, or `None` if unset/zero |
    | `__base__` | `OBK_INSTANCE` | fall through to normal probe (usually ATTR_ERROR) |
    | `args` | `OBK_EXCEPTION` | field1 args tuple |

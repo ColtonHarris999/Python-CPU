@@ -1542,7 +1542,9 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
       ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
 
     Also writes the StopIteration handle to the exc-arena boot sidecar so
-    ``S_BOOT`` can latch ``iter_exhaust_type_r`` without a dict probe.
+    ``S_BOOT`` can latch ``iter_exhaust_type_r`` without a dict probe, and
+    the seeded ``str`` type to ``STR_TYPE_ADDR`` for ``LOAD_ATTR __class__``
+    on strings.
     """
     heap = serializer.heap
     string_heap = serializer.string_heap
@@ -1564,6 +1566,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         tag_constant("str", string_heap),
         flags=OB_FLAG_STR_TYPE,
     )
+    heap.write_str_type(str_type)
     exc_handles = alloc_wave_a_exception_types(serializer)
     heap.write_native_method_table(seed_rom_native_methods(serializer))
     pairs: list[tuple[Tagged, Tagged]] = [

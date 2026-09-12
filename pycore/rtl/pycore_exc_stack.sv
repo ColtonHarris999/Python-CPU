@@ -144,7 +144,7 @@ module pycore_exc_stack #(
                             (sp_r + NODE_BYTES[ADDR_WIDTH-1:0]) >
                             (STACK_BASE_ADDR + STACK_SIZE_BYTES[ADDR_WIDTH-1:0]
                              - PYCORE_EXC_SIDECAR_RESERVE_BYTES[ADDR_WIDTH-1:0])) begin
-                            // Reserve native-method table + StopIteration sidecar.
+                            // Reserve native-method table + StopIteration + str-type sidecars.
                             push_fault_r <= 1'b1;
                             push_done_r  <= 1'b1;
                         end else begin
