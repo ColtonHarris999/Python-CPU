@@ -155,27 +155,59 @@ jobs:
       - uses: actions/checkout@v4
       - run: make docker-excore
 
+  # The architectural gates from memory_system_plan.md §6. Every other job
+  # runs one configuration (CACHE_EN=1, MEM_LATENCY=4); these run the image
+  # suite across the CACHE_EN 0-vs-1 transparency comparison and the
+  # MEM_LATENCY sweep. A cache that changes a retired result, or a master
+  # that assumed single-cycle memory, fails only here -- the L2-to-RAM
+  # writeback bug fixed in #101 was invisible precisely because CI never ran
+  # a second configuration.
+  gates:
+    name: gates
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-gates TEST_JOBS=2
+
   # Keep this job id/name so existing branch protection on "all-tests" still
   # matches. It is a gate over the path-filtered jobs, not a 3h monolith.
   all-tests:
     name: all-tests
-    needs: [changes, docs, python, rtl-unit, container, img, two-core, excore]
+    needs: [changes, docs, python, rtl-unit, container, img, two-core, excore, gates]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require the jobs that ran
+      - name: Require every job that ran
         run: |
           set -euo pipefail
           echo "docs_only=${{ needs.changes.outputs.docs_only }}"
           echo "hw=${{ needs.changes.outputs.hw }}"
+          RESULTS='${{ toJSON(needs) }}'
+          echo "$RESULTS"
+
+          # Classification decides which jobs run, so it must succeed outright.
           test "${{ needs.changes.result }}" = "success"
+
+          # Any job that ran must have passed. Checking for bad outcomes rather
+          # than listing good ones means a newly added job is gated the moment
+          # it appears in `needs` -- a hardcoded allow-list silently stops
+          # gating whenever someone adds a job and forgets this block.
+          if echo "$RESULTS" | grep -qE '"result": *"(failure|cancelled|timed_out)"'; then
+            echo "::error::one or more required jobs did not pass"
+            exit 1
+          fi
+
+          # Guard against a classify bug that skips everything and looks green.
           if [ "${{ needs.changes.outputs.docs_only }}" = "true" ]; then
             test "${{ needs.docs.result }}" = "success"
           else
-            test "${{ needs.python.result }}" = "success"
-            test "${{ needs.rtl-unit.result }}" = "success"
-            test "${{ needs.container.result }}" = "success"
-            test "${{ needs.img.result }}" = "success"
-            test "${{ needs.two-core.result }}" = "success"
-            test "${{ needs.excore.result }}" = "success"
+            for r in "${{ needs.python.result }}" "${{ needs.rtl-unit.result }}" \
+                     "${{ needs.container.result }}" "${{ needs.img.result }}" \
+                     "${{ needs.two-core.result }}" "${{ needs.excore.result }}" \
+                     "${{ needs.gates.result }}"; do
+              test "$r" = "success"
+            done
           fi

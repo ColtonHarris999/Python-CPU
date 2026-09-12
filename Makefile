@@ -383,8 +383,8 @@ all-tests:
 # CACHE_EN / MEM_LATENCY setting; a cache that changes an architectural
 # result, or a master that assumed 1-cycle memory, fails here.
 pycore-cache-transparency:
-	$(MAKE) pycore-img PYCORE_CACHE_EN=0
-	$(MAKE) pycore-img PYCORE_CACHE_EN=1
+	$(MAKE) -j$(TEST_JOBS) pycore-img PYCORE_CACHE_EN=0
+	$(MAKE) -j$(TEST_JOBS) pycore-img PYCORE_CACHE_EN=1
 
 # CACHE_EN=0 so RAM_T_FIRST is on the critical path. With L2 enabled the
 # 128 KB cache covers the present dmem and HIT_CYCLES=1 hides MEM_LATENCY
@@ -392,9 +392,9 @@ pycore-cache-transparency:
 # One CACHE_EN=1 / LAT=30 arm still exercises the L2↔RAM burst at
 # non-trivial T_FIRST (protocol correctness, not the cycle count).
 pycore-mem-latency-sweep:
-	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=1
-	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=4
-	$(MAKE) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=30
+	$(MAKE) -j$(TEST_JOBS) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=1
+	$(MAKE) -j$(TEST_JOBS) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=4
+	$(MAKE) -j$(TEST_JOBS) pycore-img PYCORE_CACHE_EN=0 PYCORE_MEM_LATENCY=30
 	$(MAKE) pycore-img-recursion PYCORE_CACHE_EN=1 PYCORE_MEM_LATENCY=30
 
 pycore-tag-decode:
@@ -2820,6 +2820,12 @@ docker-excore: docker-build
 
 docker-pycore-test: docker-build
 	$(DOCKER_MAKE) make pycore-test TEST_JOBS=$(TEST_JOBS)
+
+# The two architectural gates, in one container so the shared tb_container
+# binary is built once and reused across all five passes. CACHE_EN and
+# MEM_LATENCY are plusargs, not compile-time parameters.
+docker-gates: docker-build
+	$(DOCKER_MAKE) sh -c 'make pycore-sim-img && make pycore-cache-transparency pycore-mem-latency-sweep TEST_JOBS=$(TEST_JOBS)'
 
 docker-all-tests: docker-build
 	$(DOCKER_MAKE) make all-tests TEST_JOBS=$(TEST_JOBS)
