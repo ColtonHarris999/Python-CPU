@@ -815,8 +815,12 @@ module pycore_core #(
         pycore_is_string_tag(pycore_get_tag(rs2_r)) &&
         !((pycore_get_tag(rs1_r) == PY_TAG_SHORT_STR) &&
           (pycore_get_tag(rs2_r) == PY_TAG_SHORT_STR)) &&
-        ((dec_alu_op == PY_ALU_LT) || (dec_alu_op == PY_ALU_LE) ||
-         (dec_alu_op == PY_ALU_GT) || (dec_alu_op == PY_ALU_GE));
+        (((dec_alu_op == PY_ALU_LT) || (dec_alu_op == PY_ALU_LE) ||
+          (dec_alu_op == PY_ALU_GT) || (dec_alu_op == PY_ALU_GE)) ||
+         (((dec_alu_op == PY_ALU_EQ) || (dec_alu_op == PY_ALU_NE)) &&
+          pycore_str_need_payload_cmp(
+              pycore_get_tag(rs1_r), pycore_get_val(rs1_r),
+              pycore_get_tag(rs2_r), pycore_get_val(rs2_r))));
     assign stracc_subscr =
         (cur_opcode_r == PY_OP_BINARY_OP) &&
         (cur_arg_r[7:0] == PY_NBARG_SUBSCR) &&
@@ -2546,7 +2550,8 @@ module pycore_core #(
                                             PY_ALU_LE: cmp_bool = (cmpv <= 0);
                                             PY_ALU_GT: cmp_bool = (cmpv > 0);
                                             PY_ALU_GE: cmp_bool = (cmpv >= 0);
-                                            default:   cmp_bool = 1'b0;
+                                            PY_ALU_NE: cmp_bool = (cmpv != 0);
+                                            default:   cmp_bool = (cmpv == 0);
                                         endcase
                                         wb_entry = pycore_make_entry(
                                             PY_TAG_BOOL, {127'b0, cmp_bool});

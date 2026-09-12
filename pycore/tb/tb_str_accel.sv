@@ -571,12 +571,21 @@ module tb_str_accel;
             issue(PY_SA_ORD, 0, h_chr, mk_none(), mk_none(),
                   PYCORE_HEAP_BASE + 32'h2C0);
             check(res_entry[31:0] == 32'h03B1, "chr/ord alpha");
+            issue(PY_SA_CMP, 0, h_chr, h_alpha, mk_none(),
+                  PYCORE_HEAP_BASE + 32'h2C0);
+            check(!res_trap, "chr/plant alpha cmp trap");
+            check(res_entry[PYCORE_VAL_MSB:PYCORE_VAL_LSB] == 128'd0,
+                  "chr/plant alpha cmp");
             issue(PY_SA_CHR, 0, mk_int(32'h1F600), mk_none(), mk_none(),
                   PYCORE_HEAP_BASE + 32'h300);
             h_chr = res_entry;
             issue(PY_SA_ORD, 0, h_chr, mk_none(), mk_none(),
                   PYCORE_HEAP_BASE + 32'h340);
             check(res_entry[31:0] == 32'h1F600, "chr/ord emoji");
+            issue(PY_SA_CMP, 0, h_chr, h_emoji, mk_none(),
+                  PYCORE_HEAP_BASE + 32'h340);
+            check(res_entry[PYCORE_VAL_MSB:PYCORE_VAL_LSB] == 128'd0,
+                  "chr/plant emoji cmp");
             issue(PY_SA_CHR, 0, mk_int(32'hD800), mk_none(), mk_none(),
                   PYCORE_HEAP_BASE + 32'h380);
             h_chr = res_entry;

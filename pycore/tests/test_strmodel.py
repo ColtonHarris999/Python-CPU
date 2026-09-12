@@ -319,6 +319,10 @@ class StrModelTest(unittest.TestCase):
         self.assertEqual(r.signed_int(), 0x03B1)
         r = self.accel.exec(SA_CHR, 0, _int(0x03B1), _none(), _none(), self.heap)
         self.assertEqual(self.text_of(r.entry), "α")
+        self.assertEqual(
+            self.accel.exec(SA_CMP, 0, r.entry, greek, _none(), self.heap).signed_int(),
+            0,
+        )
         r = self.accel.exec(SA_CHR, 0, _int(0x1F600), _none(), _none(), self.heap)
         self.assertEqual(self.text_of(r.entry), "😀")
         r = self.accel.exec(SA_ORD, 0, r.entry, _none(), _none(), self.heap)

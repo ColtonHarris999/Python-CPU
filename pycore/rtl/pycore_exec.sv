@@ -238,8 +238,10 @@ module pycore_exec #(
 
         logic        string_concat_valid;
 
-        // Same-tag SHORT_STR / LONG_STR ==/!= : full 128-bit descriptor/
-        // payload compare (LONG_STR is interned-descriptor equality).
+        // Same-tag SHORT_STR ==/!= is the inline payload. LONG_STR ==/!=
+        // of identical handles (tier 1) or mismatched (hash, nchars)
+        // (tier 2) also resolves here; equal-meta distinct addresses go
+        // to STRACC SA_CMP (pycore_str_need_payload_cmp).
         string_cmp_valid = valid_i &&
                            ((alu_op_i == PY_ALU_EQ) || (alu_op_i == PY_ALU_NE)) &&
                            (rs1_tag == rs2_tag) &&
