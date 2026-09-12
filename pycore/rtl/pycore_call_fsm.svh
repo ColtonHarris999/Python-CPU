@@ -65,9 +65,38 @@
                             // Callable: CODE_OBJECT or OBJECT (BM / TYPE).
                             if (cont_rf_rs1_tag == PY_TAG_CODE_OBJECT) begin
                                 call_code_addr_r    <= cont_rf_rs1_val[31:0];
-                                container_rf_addr_r <= RF_AW'(
-                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd1);
-                                call_phase_r        <= 5'd2;
+                                if (pycore_is_stracc_method_code(
+                                        cont_rf_rs1_val[31:0])) begin
+                                    if ((call_mode_r == CALL_MODE_KW) ||
+                                        (call_mode_r == CALL_MODE_EX_KW))
+                                        call_filter_trap_r <= 1'b1;
+                                    else begin
+                                        begin
+                                            logic [5:0] mop;
+                                            logic [3:0] mvar;
+                                            logic [2:0] amin, amax;
+                                            pycore_stracc_method_decode(
+                                                pycore_stracc_method_id_from_addr(
+                                                    cont_rf_rs1_val[31:0]),
+                                                mop, mvar, amin, amax);
+                                            stracc_call_id_r   <=
+                                                pycore_stracc_method_id_from_addr(
+                                                    cont_rf_rs1_val[31:0]);
+                                            stracc_call_op_r   <= mop;
+                                            stracc_call_var_r  <= mvar;
+                                            stracc_call_amin_r <= amin;
+                                            stracc_call_amax_r <= amax;
+                                            container_rf_addr_r <= RF_AW'(
+                                                {2'b0, tos_r} -
+                                                {2'b0, cur_arg_r[6:0]} - 9'd1);
+                                            call_phase_r <= CALL_PHASE_STRACC_SELF;
+                                        end
+                                    end
+                                end else begin
+                                    container_rf_addr_r <= RF_AW'(
+                                        {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd1);
+                                    call_phase_r        <= 5'd2;
+                                end
                             end else if (cont_rf_rs1_tag == PY_TAG_OBJECT) begin
                                 call_obj_addr_r     <= cont_rf_rs1_val[31:0];
                                 container_rf_addr_r <= RF_AW'(
@@ -426,14 +455,59 @@
                                         - 9'd1);
                                     call_sub_r        <= 6'd2;
                                 end else begin
-                                    container_dmem_addr_r    <=
-                                        pycore_code_field_val_addr(
-                                            call_code_addr_r,
-                                            PYCORE_CODE_FIELD_ENTRY_SLOT);
-                                    container_dmem_we_r      <= 1'b0;
-                                    container_dmem_pending_r <= 1'b1;
-                                    call_sub_r               <= 6'd0;
-                                    call_phase_r             <= 4'd3;
+                                    if (pycore_is_stracc_method_code(call_code_addr_r)) begin
+                                        if ((call_mode_r == CALL_MODE_KW) ||
+                                            (call_mode_r == CALL_MODE_EX_KW))
+                                            call_filter_trap_r <= 1'b1;
+                                        else begin
+                                            begin
+                                                logic [5:0] mop;
+                                                logic [3:0] mvar;
+                                                logic [2:0] amin, amax;
+                                                pycore_stracc_method_decode(
+                                                    pycore_stracc_method_id_from_addr(
+                                                        call_code_addr_r),
+                                                    mop, mvar, amin, amax);
+                                                stracc_call_id_r   <=
+                                                    pycore_stracc_method_id_from_addr(
+                                                        call_code_addr_r);
+                                                stracc_call_op_r   <= mop;
+                                                stracc_call_var_r  <= mvar;
+                                                stracc_call_amin_r <= amin;
+                                                stracc_call_amax_r <= amax;
+                                                stracc_call_a_r <= pycore_make_entry(
+                                                    call_self_tag_r, call_self_val_r);
+                                                stracc_call_b_r <= pycore_make_control(
+                                                    PY_CTL_NONE);
+                                                stracc_call_c_r <= pycore_make_control(
+                                                    PY_CTL_NONE);
+                                                if ((cur_arg_r[15:0] < {13'b0, amin}) ||
+                                                    (cur_arg_r[15:0] > {13'b0, amax}))
+                                                    call_filter_trap_r <= 1'b1;
+                                                else if (cur_arg_r[15:0] == 16'd0) begin
+                                                    stracc_from_call_r <= 1'b1;
+                                                    stracc_issued_r    <= 1'b0;
+                                                    stracc_finishing_r <= 1'b0;
+                                                    call_stracc_go_r   <= 1'b1;
+                                                    call_phase_r       <= CALL_PHASE_DONE;
+                                                end else begin
+                                                    container_rf_addr_r <= RF_AW'(
+                                                        {2'b0, tos_r} -
+                                                        {2'b0, cur_arg_r[6:0]});
+                                                    call_phase_r <= CALL_PHASE_STRACC_ARG0;
+                                                end
+                                            end
+                                        end
+                                    end else begin
+                                        container_dmem_addr_r    <=
+                                            pycore_code_field_val_addr(
+                                                call_code_addr_r,
+                                                PYCORE_CODE_FIELD_ENTRY_SLOT);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r               <= 6'd0;
+                                        call_phase_r             <= 4'd3;
+                                    end
                                 end
                             end
                         end
@@ -3924,6 +3998,58 @@
                                     default: call_filter_trap_r <= 1'b1;
                                 endcase
                             end
+                        end
+
+                        CALL_PHASE_STRACC_SELF: begin
+                            if (pycore_is_null(
+                                    cont_rf_rs1_tag, cont_rf_rs1_val)) begin
+                                call_filter_trap_r <= 1'b1;
+                            end else if ((cur_arg_r[15:0] <
+                                          {13'b0, stracc_call_amin_r}) ||
+                                         (cur_arg_r[15:0] >
+                                          {13'b0, stracc_call_amax_r})) begin
+                                call_filter_trap_r <= 1'b1;
+                            end else begin
+                                stracc_call_a_r <= pycore_make_entry(
+                                    cont_rf_rs1_tag, cont_rf_rs1_val);
+                                stracc_call_b_r <= pycore_make_control(PY_CTL_NONE);
+                                stracc_call_c_r <= pycore_make_control(PY_CTL_NONE);
+                                if (cur_arg_r[15:0] == 16'd0) begin
+                                    stracc_from_call_r <= 1'b1;
+                                    stracc_issued_r    <= 1'b0;
+                                    stracc_finishing_r <= 1'b0;
+                                    call_stracc_go_r   <= 1'b1;
+                                    call_phase_r       <= CALL_PHASE_DONE;
+                                end else begin
+                                    container_rf_addr_r <= RF_AW'(
+                                        {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]});
+                                    call_phase_r <= CALL_PHASE_STRACC_ARG0;
+                                end
+                            end
+                        end
+
+                        CALL_PHASE_STRACC_ARG0: begin
+                            stracc_call_b_r <= rf_rs1;
+                            if (cur_arg_r[15:0] == 16'd1) begin
+                                stracc_from_call_r <= 1'b1;
+                                stracc_issued_r    <= 1'b0;
+                                stracc_finishing_r <= 1'b0;
+                                call_stracc_go_r   <= 1'b1;
+                                call_phase_r       <= CALL_PHASE_DONE;
+                            end else begin
+                                container_rf_addr_r <= RF_AW'(
+                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} + 9'd1);
+                                call_phase_r <= CALL_PHASE_STRACC_ARG1;
+                            end
+                        end
+
+                        CALL_PHASE_STRACC_ARG1: begin
+                            stracc_call_c_r <= rf_rs1;
+                            stracc_from_call_r <= 1'b1;
+                            stracc_issued_r    <= 1'b0;
+                            stracc_finishing_r <= 1'b0;
+                            call_stracc_go_r   <= 1'b1;
+                            call_phase_r       <= CALL_PHASE_DONE;
                         end
 
                         default: ;

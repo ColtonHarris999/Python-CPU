@@ -1058,21 +1058,30 @@
                                             container_type_trap_r <= 1'b1;
                                         end else begin
                                             begin
-                                                logic [4:0] nmeth;
+                                                logic [6:0] nmeth;
                                                 nmeth = pycore_native_method_id(
                                                     cont_rs1_tag, cont_rs1_val,
                                                     container_rd_data_r[3:0],
                                                     container_val_r);
-                                                if (nmeth[4]) begin
+                                                if (nmeth[6]) begin
                                                     // R7: native table before OBJECT path.
                                                     container_lfb_hi_r      <= 4'd1;
                                                     container_lfb_lo_r      <= 4'd0;
-                                                    container_dmem_addr_r    <=
-                                                        pycore_native_method_entry_addr(
-                                                            nmeth[3:0]);
-                                                    container_dmem_we_r      <= 1'b0;
-                                                    container_dmem_pending_r <= 1'b1;
-                                                    container_phase_r        <= CP_SRC_HDR;
+                                                    if (pycore_native_method_is_stracc(
+                                                            nmeth[5:0])) begin
+                                                        container_val_r <= {96'b0,
+                                                            pycore_stracc_method_code_addr(
+                                                                nmeth[5:0])};
+                                                        container_tag_r  <= PY_TAG_CODE_OBJECT;
+                                                        container_phase_r <= CP_ATTR_WB;
+                                                    end else begin
+                                                        container_dmem_addr_r    <=
+                                                            pycore_native_method_entry_addr(
+                                                                nmeth[5:0]);
+                                                        container_dmem_we_r      <= 1'b0;
+                                                        container_dmem_pending_r <= 1'b1;
+                                                        container_phase_r        <= CP_SRC_HDR;
+                                                    end
                                                 end else if (pycore_is_native_method_receiver(
                                                         cont_rs1_tag, cont_rs1_val)) begin
                                                     container_attr_error_r <= 1'b1;

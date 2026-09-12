@@ -866,6 +866,18 @@ module pycore_core #(
     logic        stracc_dmem_active;
     logic        container_stracc_issue;
     logic [PYCORE_ENTRY_WIDTH-1:0] stracc_item_r;
+    // P5e: CALL of a STRACC native method. Operands latched in S_CALL,
+    // then the core freezes in S_STRACC the same way as opcode routing.
+    logic        stracc_from_call_r;
+    logic        call_stracc_go_r;
+    logic [5:0]  stracc_call_id_r;
+    logic [5:0]  stracc_call_op_r;
+    logic [3:0]  stracc_call_var_r;
+    logic [2:0]  stracc_call_amin_r;
+    logic [2:0]  stracc_call_amax_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] stracc_call_a_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] stracc_call_b_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] stracc_call_c_r;
 
     pycore_str_accel u_str_accel (
         .clk_i(clk_i),
@@ -926,6 +938,12 @@ module pycore_core #(
                     container_rd_data_r[3:0], container_val_r);
                 stracc_cmd_b = rs1_r;
             end
+        end else if (stracc_from_call_r) begin
+            stracc_cmd_op  = stracc_call_op_r;
+            stracc_cmd_var = stracc_call_var_r;
+            stracc_cmd_a   = stracc_call_a_r;
+            stracc_cmd_b   = stracc_call_b_r;
+            stracc_cmd_c   = stracc_call_c_r;
         end else if (stracc_repeat) begin
             stracc_cmd_op = PY_SA_REPEAT;
             if (pycore_is_string_tag(pycore_get_tag(rs1_r))) begin
@@ -1778,6 +1796,9 @@ module pycore_core #(
     localparam logic [4:0] CALL_PHASE_EX_KW    = 5'd17;
     localparam logic [4:0] CALL_PHASE_EX_ARGS  = 5'd18;
     localparam logic [4:0] CALL_PHASE_EX_EXPAND = 5'd19;
+    localparam logic [4:0] CALL_PHASE_STRACC_SELF = 5'd20;
+    localparam logic [4:0] CALL_PHASE_STRACC_ARG0 = 5'd21;
+    localparam logic [4:0] CALL_PHASE_STRACC_ARG1 = 5'd22;
     localparam logic [2:0] RET_PHASE_DONE  = 3'd7;
     localparam logic [3:0] BOOT_PHASE_DONE = 4'd15;
     // call_mode_r encodings
@@ -1830,12 +1851,12 @@ module pycore_core #(
                     end
                 end
                 S_CALL: begin
-                    // Multi-phase CALL: callable/null RF settle, four code-
-                    // field dmem reads, frame push, then init.  Exit only
-                    // after the whole sequence commits (CALL_PHASE_DONE).
-                    // Builtin CALL may raise PY_TRAP_BUILTIN_CALL via
-                    // trap_marshal_pending_r before CALL_PHASE_DONE.
-                    if (call_phase_r == CALL_PHASE_DONE)
+                    // Multi-phase CALL. STRACC native methods leave to
+                    // S_STRACC after the self/args RF walk; everything else
+                    // exits on CALL_PHASE_DONE.
+                    if (call_stracc_go_r)
+                        state_next = S_STRACC;
+                    else if (call_phase_r == CALL_PHASE_DONE)
                         state_next = trap_marshal_pending_r ? S_TRAP_MARSHAL
                                                            : S_FETCH;
                 end
@@ -2049,6 +2070,16 @@ module pycore_core #(
             stracc_finishing_r       <= 1'b0;
             stracc_iter_pending_r    <= 1'b0;
             stracc_item_r            <= '0;
+            stracc_from_call_r       <= 1'b0;
+            call_stracc_go_r         <= 1'b0;
+            stracc_call_id_r         <= '0;
+            stracc_call_op_r         <= PY_SA_SEARCH;
+            stracc_call_var_r        <= '0;
+            stracc_call_amin_r       <= '0;
+            stracc_call_amax_r       <= '0;
+            stracc_call_a_r          <= '0;
+            stracc_call_b_r          <= '0;
+            stracc_call_c_r          <= '0;
             container_stracc_done_r  <= 1'b0;
             container_stracc_eq_r    <= 1'b0;
             container_raise_trap_r   <= 1'b0;
@@ -2182,6 +2213,8 @@ module pycore_core #(
                             stracc_finishing_r    <= 1'b0;
                             stracc_iter_pending_r <= 1'b0;
                             stracc_item_r         <= '0;
+                            stracc_from_call_r    <= 1'b0;
+                            call_stracc_go_r      <= 1'b0;
                             container_stracc_done_r <= 1'b0;
                             container_stracc_eq_r   <= 1'b0;
                         end else if (route_container) begin
@@ -2407,6 +2440,8 @@ module pycore_core #(
                         call_varargs_to_frame_r  <= 1'b0;
                         call_args_is_list_r <= 1'b0;
                         container_dmem_pending_r <= 1'b0;
+                        call_stracc_go_r     <= 1'b0;
+                        stracc_from_call_r   <= 1'b0;
                         fetch_skip_r         <= 1'b1;
                         // state_next = S_CALL (from always_comb)
 
@@ -2447,6 +2482,7 @@ module pycore_core #(
                 S_STRACC: begin
                     if (stracc_cmd_valid) begin
                         stracc_issued_r <= 1'b1;
+                        call_stracc_go_r <= 1'b0;
                     end else if (stracc_iter_pending_r) begin
                         container_wb_we_r   <= 1'b1;
                         container_wb_addr_r <= tos_r;
@@ -2490,40 +2526,56 @@ module pycore_core #(
                                 logic [PYCORE_ENTRY_WIDTH-1:0] wb_entry;
                                 logic signed [63:0] cmpv;
                                 logic cmp_bool;
+                                logic miss;
                                 wb_entry = stracc_res_entry;
-                                if (cur_opcode_r == PY_OP_COMPARE_OP) begin
-                                    cmpv = $signed(pycore_get_val(
-                                        stracc_res_entry)[63:0]);
-                                    unique case (dec_alu_op)
-                                        PY_ALU_LT: cmp_bool = (cmpv < 0);
-                                        PY_ALU_LE: cmp_bool = (cmpv <= 0);
-                                        PY_ALU_GT: cmp_bool = (cmpv > 0);
-                                        PY_ALU_GE: cmp_bool = (cmpv >= 0);
-                                        default:   cmp_bool = 1'b0;
-                                    endcase
-                                    wb_entry = pycore_make_entry(
-                                        PY_TAG_BOOL, {127'b0, cmp_bool});
-                                end else if (cur_opcode_r == PY_OP_CONTAINS_OP) begin
-                                    cmp_bool = pycore_get_val(stracc_res_entry)[0];
-                                    if (cur_arg_r[0])
-                                        cmp_bool = ~cmp_bool;
-                                    wb_entry = pycore_make_entry(
-                                        PY_TAG_BOOL, {127'b0, cmp_bool});
-                                end
-                                container_wb_we_r   <= 1'b1;
-                                if (cur_opcode_r == PY_OP_BINARY_SLICE) begin
-                                    container_wb_addr_r <=
-                                        RF_AW'(tos_r - RF_AW'(3));
-                                    tos_r <= tos_r - RF_AW'(2);
+                                miss = (pycore_get_tag(stracc_res_entry) == PY_TAG_INT) &&
+                                       ($signed(pycore_get_val(stracc_res_entry)[63:0])
+                                        == -64'sd1);
+                                if (stracc_from_call_r &&
+                                    ((stracc_call_id_r == PY_NMETH_STR_INDEX) ||
+                                     (stracc_call_id_r == PY_NMETH_STR_RINDEX)) &&
+                                    miss) begin
+                                    container_type_trap_r <= 1'b1;
+                                    stracc_from_call_r    <= 1'b0;
                                 end else begin
-                                    container_wb_addr_r <=
-                                        RF_AW'(tos_r - RF_AW'(2));
-                                    tos_r <= tos_r - RF_AW'(1);
+                                    if (cur_opcode_r == PY_OP_COMPARE_OP) begin
+                                        cmpv = $signed(pycore_get_val(
+                                            stracc_res_entry)[63:0]);
+                                        unique case (dec_alu_op)
+                                            PY_ALU_LT: cmp_bool = (cmpv < 0);
+                                            PY_ALU_LE: cmp_bool = (cmpv <= 0);
+                                            PY_ALU_GT: cmp_bool = (cmpv > 0);
+                                            PY_ALU_GE: cmp_bool = (cmpv >= 0);
+                                            default:   cmp_bool = 1'b0;
+                                        endcase
+                                        wb_entry = pycore_make_entry(
+                                            PY_TAG_BOOL, {127'b0, cmp_bool});
+                                    end else if (cur_opcode_r == PY_OP_CONTAINS_OP) begin
+                                        cmp_bool = pycore_get_val(stracc_res_entry)[0];
+                                        if (cur_arg_r[0])
+                                            cmp_bool = ~cmp_bool;
+                                        wb_entry = pycore_make_entry(
+                                            PY_TAG_BOOL, {127'b0, cmp_bool});
+                                    end
+                                    container_wb_we_r   <= 1'b1;
+                                    if (stracc_from_call_r) begin
+                                        container_wb_addr_r <= call_tos_base_r;
+                                        tos_r <= call_tos_base_r + RF_AW'(1);
+                                        stracc_from_call_r <= 1'b0;
+                                    end else if (cur_opcode_r == PY_OP_BINARY_SLICE) begin
+                                        container_wb_addr_r <=
+                                            RF_AW'(tos_r - RF_AW'(3));
+                                        tos_r <= tos_r - RF_AW'(2);
+                                    end else begin
+                                        container_wb_addr_r <=
+                                            RF_AW'(tos_r - RF_AW'(2));
+                                        tos_r <= tos_r - RF_AW'(1);
+                                    end
+                                    container_wb_data_r <= wb_entry;
+                                    fetch_skip_r        <= 1'b1;
+                                    stracc_finishing_r  <= 1'b1;
+                                    heap_ptr_r          <= stracc_res_heap;
                                 end
-                                container_wb_data_r <= wb_entry;
-                                fetch_skip_r        <= 1'b1;
-                                stracc_finishing_r  <= 1'b1;
-                                heap_ptr_r          <= stracc_res_heap;
                             end
                         end
                     end

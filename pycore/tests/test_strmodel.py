@@ -32,6 +32,7 @@ from pycore.tools.encoding import (
     SA_HASH,
     SA_CHAR_AT,
     SA_ITER_NEXT,
+    SA_REPLACE,
     SA_FIND,
     SA_RFIND,
     SA_COUNT,
@@ -283,6 +284,17 @@ class StrModelTest(unittest.TestCase):
             SA_PAD, SA_PAD_BOTH, _short("ab"), _int(6), _none(), self.heap
         )
         self.assertEqual(self.text_of(r.entry), "  ab  ")
+
+    def test_replace_short(self) -> None:
+        hay = _short("banana")
+        old = _short("ana")
+        new = _short("XY")
+        r = self.accel.exec(SA_REPLACE, 0, hay, old, new, self.heap)
+        self.assertEqual(self.text_of(r.entry), "banana".replace("ana", "XY"))
+        r = self.accel.exec(SA_REPLACE, 0, hay, _short("z"), _short("Q"), self.heap)
+        self.assertEqual(self.text_of(r.entry), "banana")
+        r = self.accel.exec(SA_REPLACE, 0, _short("abc"), _short(""), _short("-"), self.heap)
+        self.assertEqual(self.text_of(r.entry), "abc".replace("", "-"))
 
     def test_type_error(self) -> None:
         r = self.accel.exec(SA_CONCAT, 0, _int(1), _short("x"), _none(), self.heap)

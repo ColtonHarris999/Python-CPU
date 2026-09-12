@@ -29,6 +29,7 @@ from encoding import (
     SA_PAD_LEFT,
     SA_PAD_RIGHT,
     SA_REPEAT,
+    SA_REPLACE,
     SA_RFIND,
     SA_SEARCH,
     SA_SLICE,
@@ -294,6 +295,8 @@ class StrAccel:
             return self._cmp(a, b, heap_ptr)
         if op == SA_SEARCH:
             return self._search(a, b, c, var, heap_ptr)
+        if op == SA_REPLACE:
+            return self._replace(a, b, c, heap_ptr)
         if op == SA_HASH:
             return self._hash(a, heap_ptr)
         if op in (SA_CHAR_AT, SA_ITER_NEXT):
@@ -500,6 +503,53 @@ class StrAccel:
             hit = end >= nlen and hay[end - nlen:end] == needle
             return AccelResult(TAG_BOOL, int(hit), heap_ptr)
         return AccelResult(0, 0, heap_ptr, True, TRAP_TYPE)
+
+    def _replace(self, a, b, c, heap_ptr: int) -> AccelResult:
+        sa = self._need_str(a, heap_ptr)
+        if isinstance(sa, AccelResult):
+            return sa
+        sb = self._need_str(b, heap_ptr)
+        if isinstance(sb, AccelResult):
+            return sb
+        sc = self._need_str(c, heap_ptr)
+        if isinstance(sc, AccelResult):
+            return sc
+        hay = sa.units(self.mem)
+        old = sb.units(self.mem)
+        new = sc.units(self.mem)
+        if sb.nchars > 0 and sb.kind > sa.kind:
+            return AccelResult(sa.tag, a[1], heap_ptr)
+        out: list[int] = []
+        if sb.nchars == 0:
+            if sc.nchars == 0:
+                return AccelResult(sa.tag, a[1], heap_ptr)
+            for ch in hay:
+                out.extend(new)
+                out.append(ch)
+            out.extend(new)
+        else:
+            i = 0
+            matched = False
+            while i < len(hay):
+                if hay[i:i + len(old)] == old:
+                    out.extend(new)
+                    i += len(old)
+                    matched = True
+                else:
+                    out.append(hay[i])
+                    i += 1
+            if not matched:
+                return AccelResult(sa.tag, a[1], heap_ptr)
+        if out == hay:
+            return AccelResult(sa.tag, a[1], heap_ptr)
+        if not out:
+            return AccelResult(*empty_short(), heap_ptr)
+        kind = 1
+        for unit in out:
+            kind = max(kind, kind_of_unit(unit))
+        return pack_result_from_units(
+            out, kind, self.mem, heap_ptr, self.heap_limit
+        )
 
     def _search_miss(self, var: int, heap_ptr: int) -> AccelResult:
         if var in (SA_FIND, SA_RFIND):

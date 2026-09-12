@@ -54,13 +54,15 @@ module pycore_str_accel #(
         ENG_CMP,
         ENG_SEARCH,
         ENG_HASH,
-        ENG_CHAR
+        ENG_CHAR,
+        ENG_REPLACE
     } eng_e;
 
     typedef enum logic [1:0] {
         SRC_A,
         SRC_B,
-        SRC_FILL
+        SRC_FILL,
+        SRC_C
     } src_e;
 
     typedef enum logic [1:0] {
@@ -100,10 +102,16 @@ module pycore_str_accel #(
     logic         dst_word_dirty_r;
     logic [7:0]   short_bytes_r [0:14];
 
-    logic [31:0] a_nchars_r, b_nchars_r;
-    logic [2:0]  a_kind_r, b_kind_r;
-    logic [31:0] a_addr_r, b_addr_r;
-    logic        a_short_r, b_short_r;
+    logic [31:0] a_nchars_r, b_nchars_r, c_nchars_r;
+    logic [2:0]  a_kind_r, b_kind_r, c_kind_r;
+    logic [31:0] a_addr_r, b_addr_r, c_addr_r;
+    logic        a_short_r, b_short_r, c_short_r;
+    logic        replace_empty_r;
+    logic        replace_fill_r;
+    logic        replace_emit_new_r;
+    logic        replace_copy_hay_r;
+    logic [31:0] hay_pos_r;
+    logic [31:0] new_idx_r;
 
     logic [31:0] dst_nchars_r;
     logic [2:0]  dst_kind_r;
@@ -142,6 +150,7 @@ module pycore_str_accel #(
                      (pycore_ctl_id(c_val_r) == PY_CTL_NONE);
     wire b_is_none = (b_tag_r == PY_TAG_CONTROL) &&
                      (pycore_ctl_id(b_val_r) == PY_CTL_NONE);
+    wire c_is_str = (c_tag_r == PY_TAG_SHORT_STR) || (c_tag_r == PY_TAG_LONG_STR);
 
     assign cmd_ready_o = (state_r == ST_IDLE);
     assign res_valid_o = (state_r == ST_DONE);
@@ -314,6 +323,20 @@ module pycore_str_accel #(
                     b_addr_r <= pycore_stracc_addr(b_val_r);
                     a_short_r <= (a_tag_r == PY_TAG_SHORT_STR);
                     b_short_r <= (b_tag_r == PY_TAG_SHORT_STR);
+                    c_nchars_r <= ((c_tag_r == PY_TAG_SHORT_STR) ||
+                                   (c_tag_r == PY_TAG_LONG_STR))
+                                ? view_nchars(c_tag_r, c_val_r) : 32'd0;
+                    c_kind_r <= ((c_tag_r == PY_TAG_SHORT_STR) ||
+                                 (c_tag_r == PY_TAG_LONG_STR))
+                              ? view_kind(c_tag_r, c_val_r) : 3'd1;
+                    c_addr_r <= pycore_stracc_addr(c_val_r);
+                    c_short_r <= (c_tag_r == PY_TAG_SHORT_STR);
+                    replace_empty_r <= 1'b0;
+                    replace_fill_r <= 1'b0;
+                    replace_emit_new_r <= 1'b0;
+                    replace_copy_hay_r <= 1'b0;
+                    hay_pos_r <= 32'd0;
+                    new_idx_r <= 32'd0;
                     hash_r <= PYCORE_STRACC_FNV_OFFSET;
                     flags_r <= PYCORE_STRACC_FLAG_ALL_LOWER | PYCORE_STRACC_FLAG_ALL_UPPER;
                     out_idx_r <= 32'd0;
@@ -492,6 +515,44 @@ module pycore_str_accel #(
                                 end
                             end
                         end
+                        PY_SA_REPLACE: begin
+                            if (!a_is_str || !b_is_str || !c_is_str)
+                                set_trap(PY_TRAP_TYPE);
+                            else if ((view_nchars(b_tag_r, b_val_r) == 32'd0) &&
+                                     (view_nchars(c_tag_r, c_val_r) == 32'd0))
+                                set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                            else if (view_nchars(b_tag_r, b_val_r) == 32'd0) begin
+                                nch = view_nchars(a_tag_r, a_val_r);
+                                nout = nch + (nch + 32'd1) *
+                                       view_nchars(c_tag_r, c_val_r);
+                                kmax = (view_kind(a_tag_r, a_val_r) >
+                                        view_kind(c_tag_r, c_val_r))
+                                     ? view_kind(a_tag_r, a_val_r)
+                                     : view_kind(c_tag_r, c_val_r);
+                                replace_empty_r <= 1'b1;
+                                replace_fill_r <= 1'b1;
+                                hay_pos_r <= 32'd0;
+                                new_idx_r <= 32'd0;
+                                setup_copy(nout, kmax);
+                                eng_r <= ENG_REPLACE;
+                            end else if ((view_nchars(b_tag_r, b_val_r) != 32'd0) &&
+                                         (view_kind(b_tag_r, b_val_r) >
+                                          view_kind(a_tag_r, a_val_r)))
+                                set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+                            else begin
+                                replace_empty_r <= 1'b0;
+                                replace_fill_r <= 1'b0;
+                                count_r <= 32'd0;
+                                pos_r <= 32'd0;
+                                match_i_r <= 32'd0;
+                                have_hay_r <= 1'b0;
+                                nlen_r <= view_nchars(b_tag_r, b_val_r);
+                                search_start_r <= 32'd0;
+                                search_end_r <= view_nchars(a_tag_r, a_val_r);
+                                eng_r <= ENG_REPLACE;
+                                state_r <= ST_STEP;
+                            end
+                        end
                         default: set_trap(PY_TRAP_TYPE);
                     endcase
                 end
@@ -528,6 +589,7 @@ module pycore_str_accel #(
                         ENG_CMP: step_cmp();
                         ENG_SEARCH: step_search();
                         ENG_CHAR: step_char();
+                        ENG_REPLACE: step_replace();
                         default: set_trap(PY_TRAP_TYPE);
                     endcase
                 end
@@ -844,6 +906,11 @@ module pycore_str_accel #(
             sval = a_val_r;
             skind = a_kind_r;
             saddr = a_addr_r;
+        end else if (sel == SRC_C) begin
+            sshort = c_short_r;
+            sval = c_val_r;
+            skind = c_kind_r;
+            saddr = c_addr_r;
         end else begin
             sshort = b_short_r;
             sval = b_val_r;
@@ -988,6 +1055,140 @@ module pycore_str_accel #(
             fill_unit_r <= unit;
             left_pad_r <= 32'd1;
             right_start_r <= 32'd1;
+        end
+    endtask
+
+    task automatic finish_replace_measure();
+        logic [31:0] nout;
+        logic [2:0] kmax;
+        if (count_r == 32'd0)
+            set_res(cmd_entry(a_tag_r, a_val_r), heap_ptr_r);
+        else begin
+            nout = a_nchars_r + (count_r * c_nchars_r) - (count_r * b_nchars_r);
+            kmax = (a_kind_r > c_kind_r) ? a_kind_r : c_kind_r;
+            replace_fill_r <= 1'b1;
+            replace_emit_new_r <= 1'b0;
+            hay_pos_r <= 32'd0;
+            new_idx_r <= 32'd0;
+            match_i_r <= 32'd0;
+            have_hay_r <= 1'b0;
+            setup_copy(nout, kmax);
+            eng_r <= ENG_REPLACE;
+        end
+    endtask
+
+    task automatic step_replace();
+        logic got;
+        logic [31:0] unit;
+        logic [31:0] period, group, off;
+        if (replace_fill_r && replace_empty_r) begin
+            if (out_idx_r >= dst_nchars_r)
+                finish_copy();
+            else begin
+                period = c_nchars_r + 32'd1;
+                group = (period == 32'd0) ? 32'd0 : (out_idx_r / period);
+                off = (period == 32'd0) ? 32'd0 : (out_idx_r % period);
+                if (off < c_nchars_r)
+                    fetch_unit_ab(SRC_C, off, got, unit);
+                else
+                    fetch_unit_ab(SRC_A, group, got, unit);
+                if (got)
+                    consume_unit(unit);
+            end
+        end else if (replace_fill_r) begin
+            if (out_idx_r >= dst_nchars_r)
+                finish_copy();
+            else if (replace_emit_new_r) begin
+                if (new_idx_r >= c_nchars_r) begin
+                    replace_emit_new_r <= 1'b0;
+                    hay_pos_r <= hay_pos_r + b_nchars_r;
+                    match_i_r <= 32'd0;
+                    have_hay_r <= 1'b0;
+                    new_idx_r <= 32'd0;
+                end else begin
+                    fetch_unit_ab(SRC_C, new_idx_r, got, unit);
+                    if (got) begin
+                        consume_unit(unit);
+                        new_idx_r <= new_idx_r + 32'd1;
+                    end
+                end
+            end             else if (replace_copy_hay_r) begin
+                fetch_unit_ab(SRC_A, hay_pos_r, got, unit);
+                if (got) begin
+                    consume_unit(unit);
+                    hay_pos_r <= hay_pos_r + 32'd1;
+                    replace_copy_hay_r <= 1'b0;
+                    have_hay_r <= 1'b0;
+                    match_i_r <= 32'd0;
+                end
+            end else if (hay_pos_r >= a_nchars_r)
+                finish_copy();
+            else if (hay_pos_r + b_nchars_r > a_nchars_r) begin
+                fetch_unit_ab(SRC_A, hay_pos_r, got, unit);
+                if (got) begin
+                    consume_unit(unit);
+                    hay_pos_r <= hay_pos_r + 32'd1;
+                end
+            end             else if (!have_hay_r) begin
+                fetch_unit_ab(SRC_A, hay_pos_r + match_i_r, got, unit);
+                if (got) begin
+                    hay_unit_r <= unit;
+                    have_hay_r <= 1'b1;
+                end
+            end else begin
+                fetch_unit_ab(SRC_B, match_i_r, got, unit);
+                if (got) begin
+                    if (hay_unit_r != unit) begin
+                        have_hay_r <= 1'b0;
+                        match_i_r <= 32'd0;
+                        if (match_i_r == 32'd0) begin
+                            consume_unit(hay_unit_r);
+                            hay_pos_r <= hay_pos_r + 32'd1;
+                        end else
+                            replace_copy_hay_r <= 1'b1;
+                    end else if (match_i_r + 32'd1 == b_nchars_r) begin
+                        have_hay_r <= 1'b0;
+                        match_i_r <= 32'd0;
+                        if (c_nchars_r == 32'd0) begin
+                            hay_pos_r <= hay_pos_r + b_nchars_r;
+                        end else begin
+                            replace_emit_new_r <= 1'b1;
+                            new_idx_r <= 32'd0;
+                        end
+                    end else begin
+                        have_hay_r <= 1'b0;
+                        match_i_r <= match_i_r + 32'd1;
+                    end
+                end
+            end
+        end else begin
+            // Measure: non-overlapping COUNT of B in A.
+            if (pos_r + nlen_r > search_end_r)
+                finish_replace_measure();
+            else if (!have_hay_r) begin
+                fetch_unit_ab(SRC_A, pos_r + match_i_r, got, unit);
+                if (got) begin
+                    hay_unit_r <= unit;
+                    have_hay_r <= 1'b1;
+                end
+            end else begin
+                fetch_unit_ab(SRC_B, match_i_r, got, unit);
+                if (got) begin
+                    if (hay_unit_r != unit) begin
+                        have_hay_r <= 1'b0;
+                        match_i_r <= 32'd0;
+                        pos_r <= pos_r + 32'd1;
+                    end else if (match_i_r + 32'd1 == nlen_r) begin
+                        have_hay_r <= 1'b0;
+                        match_i_r <= 32'd0;
+                        count_r <= count_r + 32'd1;
+                        pos_r <= pos_r + nlen_r;
+                    end else begin
+                        have_hay_r <= 1'b0;
+                        match_i_r <= match_i_r + 32'd1;
+                    end
+                end
+            end
         end
     endtask
 endmodule

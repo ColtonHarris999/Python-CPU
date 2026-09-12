@@ -1817,6 +1817,9 @@ pycore-img-list-pop-empty:
 pycore-img-str-methods:
 	$(call PYCORE_IMAGE_RUN,str_methods,150000)
 
+pycore-img-str-search-methods:
+	$(call PYCORE_IMAGE_RUN,str_search_methods,200000)
+
 pycore-img-exc-args:
 	$(call PYCORE_IMAGE_RUN,exc_args,100000)
 
@@ -1839,6 +1842,7 @@ pycore-img-native-methods-all: \
 	pycore-img-list-pop \
 	pycore-img-list-pop-empty \
 	pycore-img-str-methods \
+	pycore-img-str-search-methods \
 	pycore-img-exc-args \
 	pycore-img-list-method-missing \
 	pycore-img-list-methods \

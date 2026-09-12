@@ -377,6 +377,12 @@ module tb_str_accel;
             issue(PY_SA_SEARCH, PY_SA_ENDSWITH, mk_short("hello"), mk_short("lo"),
                   mk_none(), PYCORE_HEAP_BASE);
             check(res_entry[0] == 1'b1, "endswith lo");
+
+            issue(PY_SA_REPLACE, 0, mk_short("banana"), mk_short("ana"),
+                  mk_short("XY"), PYCORE_HEAP_BASE);
+            check(!res_trap, "replace trap");
+            check(res_entry[PYCORE_TAG_MSB:PYCORE_TAG_LSB] == PY_TAG_SHORT_STR,
+                  "replace tag");
         end
 
         $display("tb_str_accel PASS");

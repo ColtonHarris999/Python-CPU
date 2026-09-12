@@ -184,6 +184,7 @@ localparam logic [5:0] PY_SA_SEARCH    = 6'd5;
 localparam logic [5:0] PY_SA_HASH      = 6'd6;
 localparam logic [5:0] PY_SA_CHAR_AT   = 6'd7;
 localparam logic [5:0] PY_SA_ITER_NEXT = 6'd8;
+localparam logic [5:0] PY_SA_REPLACE   = 6'd9;
 
 localparam logic [3:0] PY_SA_FIND       = 4'd0;
 localparam logic [3:0] PY_SA_RFIND      = 4'd1;
@@ -1795,6 +1796,136 @@ localparam logic [127:0] PY_NMETH_NAME_ITEMS      =
     128'h56974656d73000000000000000000000; // "items" size=5
 localparam logic [127:0] PY_NMETH_NAME_VALUES     =
     128'h676616c7565730000000000000000000; // "values" size=6
+localparam logic [127:0] PY_NMETH_NAME_RFIND      =
+    128'h57266696e64000000000000000000000; // "rfind" size=5
+localparam logic [127:0] PY_NMETH_NAME_INDEX      =
+    128'h5696e646578000000000000000000000; // "index" size=5
+localparam logic [127:0] PY_NMETH_NAME_RINDEX     =
+    128'h672696e6465780000000000000000000; // "rindex" size=6
+localparam logic [127:0] PY_NMETH_NAME_COUNT      =
+    128'h5636f756e74000000000000000000000; // "count" size=5
+localparam logic [127:0] PY_NMETH_NAME_REPLACE    =
+    128'h77265706c61636500000000000000000; // "replace" size=7
+
+// Native-method table indices. List/set/dict keep 0–5 and 10–15 so the
+// 16-entry firmware sidecar stays put. String SEARCH methods 7–9 plus
+// 16–20 are STRACC sentinels (P5e); join (6) stays firmware until P5e.4.
+localparam logic [5:0] PY_NMETH_LIST_APPEND     = 6'd0;
+localparam logic [5:0] PY_NMETH_LIST_POP        = 6'd1;
+localparam logic [5:0] PY_NMETH_LIST_EXTEND     = 6'd2;
+localparam logic [5:0] PY_NMETH_LIST_CLEAR      = 6'd3;
+localparam logic [5:0] PY_NMETH_SET_ADD         = 6'd4;
+localparam logic [5:0] PY_NMETH_SET_UPDATE      = 6'd5;
+localparam logic [5:0] PY_NMETH_STR_JOIN        = 6'd6;
+localparam logic [5:0] PY_NMETH_STR_STARTSWITH  = 6'd7;
+localparam logic [5:0] PY_NMETH_STR_ENDSWITH    = 6'd8;
+localparam logic [5:0] PY_NMETH_STR_FIND        = 6'd9;
+localparam logic [5:0] PY_NMETH_DICT_GET        = 6'd10;
+localparam logic [5:0] PY_NMETH_DICT_KEYS       = 6'd11;
+localparam logic [5:0] PY_NMETH_DICT_ITEMS      = 6'd12;
+localparam logic [5:0] PY_NMETH_DICT_UPDATE     = 6'd13;
+localparam logic [5:0] PY_NMETH_DICT_POP        = 6'd14;
+localparam logic [5:0] PY_NMETH_DICT_VALUES     = 6'd15;
+localparam logic [5:0] PY_NMETH_STR_RFIND       = 6'd16;
+localparam logic [5:0] PY_NMETH_STR_INDEX       = 6'd17;
+localparam logic [5:0] PY_NMETH_STR_RINDEX      = 6'd18;
+localparam logic [5:0] PY_NMETH_STR_COUNT       = 6'd19;
+localparam logic [5:0] PY_NMETH_STR_REPLACE     = 6'd20;
+
+// Sentinel CODE_OBJECT address for STRACC native methods. High half is
+// outside the data map, so CALL never mistakes it for a heap object.
+localparam logic [31:0] PYCORE_STRACC_METH_CODE_BASE = 32'hFFFF_0000;
+
+function automatic logic pycore_is_stracc_method_code(input logic [31:0] addr);
+    begin
+        pycore_is_stracc_method_code = (addr[31:8] == 24'hFFFF00);
+    end
+endfunction
+
+function automatic logic [5:0] pycore_stracc_method_id_from_addr(
+    input logic [31:0] addr
+);
+    begin
+        pycore_stracc_method_id_from_addr = addr[5:0];
+    end
+endfunction
+
+function automatic logic [31:0] pycore_stracc_method_code_addr(
+    input logic [5:0] index
+);
+    begin
+        pycore_stracc_method_code_addr = PYCORE_STRACC_METH_CODE_BASE | {26'b0, index};
+    end
+endfunction
+
+function automatic logic pycore_native_method_is_stracc(input logic [5:0] index);
+    begin
+        pycore_native_method_is_stracc =
+            (index == PY_NMETH_STR_STARTSWITH) ||
+            (index == PY_NMETH_STR_ENDSWITH) ||
+            (index == PY_NMETH_STR_FIND) ||
+            (index == PY_NMETH_STR_RFIND) ||
+            (index == PY_NMETH_STR_INDEX) ||
+            (index == PY_NMETH_STR_RINDEX) ||
+            (index == PY_NMETH_STR_COUNT) ||
+            (index == PY_NMETH_STR_REPLACE);
+    end
+endfunction
+
+// Map a STRACC native-method id to (op, var, argc_min, argc_max).
+// argc is CALL oparg: positional args excluding self.
+function automatic void pycore_stracc_method_decode(
+    input  logic [5:0] index,
+    output logic [5:0] op,
+    output logic [3:0] svar,
+    output logic [2:0] argc_min,
+    output logic [2:0] argc_max
+);
+    begin
+        op = PY_SA_SEARCH;
+        svar = PY_SA_FIND;
+        argc_min = 3'd1;
+        argc_max = 3'd1;
+        unique case (index)
+            PY_NMETH_STR_FIND: begin
+                op = PY_SA_SEARCH; svar = PY_SA_FIND;
+                argc_min = 3'd1; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_RFIND: begin
+                op = PY_SA_SEARCH; svar = PY_SA_RFIND;
+                argc_min = 3'd1; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_INDEX: begin
+                op = PY_SA_SEARCH; svar = PY_SA_FIND;
+                argc_min = 3'd1; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_RINDEX: begin
+                op = PY_SA_SEARCH; svar = PY_SA_RFIND;
+                argc_min = 3'd1; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_COUNT: begin
+                op = PY_SA_SEARCH; svar = PY_SA_COUNT;
+                argc_min = 3'd1; argc_max = 3'd2;
+            end
+            PY_NMETH_STR_STARTSWITH: begin
+                op = PY_SA_SEARCH; svar = PY_SA_STARTSWITH;
+                argc_min = 3'd1; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_ENDSWITH: begin
+                op = PY_SA_SEARCH; svar = PY_SA_ENDSWITH;
+                argc_min = 3'd1; argc_max = 3'd1;
+            end
+            PY_NMETH_STR_REPLACE: begin
+                op = PY_SA_REPLACE; svar = 4'd0;
+                argc_min = 3'd2; argc_max = 3'd2;
+            end
+            default: begin
+                op = PY_SA_SEARCH; svar = PY_SA_FIND;
+                argc_min = 3'd7; argc_max = 3'd0;
+            end
+        endcase
+    end
+endfunction
 
 function automatic logic pycore_attr_name_is_dict(
     input logic [3:0] tag,
@@ -2608,62 +2739,72 @@ function automatic logic pycore_is_native_method_receiver(
 endfunction
 
 function automatic logic [31:0] pycore_native_method_entry_addr(
-    input logic [3:0] index
+    input logic [5:0] index
 );
     begin
         pycore_native_method_entry_addr =
-            PYCORE_NATIVE_METHOD_TABLE_ADDR + ({28'b0, index} << 5);
+            PYCORE_NATIVE_METHOD_TABLE_ADDR + ({26'b0, index} << 5);
     end
 endfunction
 
-// Returns {hit, index[3:0]}. Index matches ROM_NATIVE_METHODS in
-// image_from_source.py. Miss is 5'd0 (hit=0).
-function automatic logic [4:0] pycore_native_method_id(
+// Returns {hit, index[5:0]}. Firmware indices 0–15 match ROM_NATIVE_METHODS.
+// String SEARCH methods 7–9 and 16–20 are STRACC sentinels. Miss is 7'd0.
+function automatic logic [6:0] pycore_native_method_id(
     input logic [3:0] recv_tag,
     input logic [PYCORE_VAL_WIDTH-1:0] recv_val,
     input logic [3:0] name_tag,
     input logic [PYCORE_VAL_WIDTH-1:0] name_val
 );
-    logic [4:0] result;
+    logic [6:0] result;
     begin
-        result = 5'd0;
+        result = 7'd0;
         if (name_tag == PY_TAG_SHORT_STR) begin
             if (pycore_is_list(recv_tag, recv_val)) begin
                 if (name_val == PY_NMETH_NAME_APPEND)
-                    result = {1'b1, 4'd0};
+                    result = {1'b1, PY_NMETH_LIST_APPEND};
                 else if (name_val == PY_NMETH_NAME_POP)
-                    result = {1'b1, 4'd1};
+                    result = {1'b1, PY_NMETH_LIST_POP};
                 else if (name_val == PY_NMETH_NAME_EXTEND)
-                    result = {1'b1, 4'd2};
+                    result = {1'b1, PY_NMETH_LIST_EXTEND};
                 else if (name_val == PY_NMETH_NAME_CLEAR)
-                    result = {1'b1, 4'd3};
+                    result = {1'b1, PY_NMETH_LIST_CLEAR};
             end else if (pycore_is_set(recv_tag, recv_val)) begin
                 if (name_val == PY_NMETH_NAME_ADD)
-                    result = {1'b1, 4'd4};
+                    result = {1'b1, PY_NMETH_SET_ADD};
                 else if (name_val == PY_NMETH_NAME_UPDATE)
-                    result = {1'b1, 4'd5};
+                    result = {1'b1, PY_NMETH_SET_UPDATE};
             end else if (pycore_is_string_tag(recv_tag)) begin
                 if (name_val == PY_NMETH_NAME_JOIN)
-                    result = {1'b1, 4'd6};
+                    result = {1'b1, PY_NMETH_STR_JOIN};
                 else if (name_val == PY_NMETH_NAME_STARTSWITH)
-                    result = {1'b1, 4'd7};
+                    result = {1'b1, PY_NMETH_STR_STARTSWITH};
                 else if (name_val == PY_NMETH_NAME_ENDSWITH)
-                    result = {1'b1, 4'd8};
+                    result = {1'b1, PY_NMETH_STR_ENDSWITH};
                 else if (name_val == PY_NMETH_NAME_FIND)
-                    result = {1'b1, 4'd9};
+                    result = {1'b1, PY_NMETH_STR_FIND};
+                else if (name_val == PY_NMETH_NAME_RFIND)
+                    result = {1'b1, PY_NMETH_STR_RFIND};
+                else if (name_val == PY_NMETH_NAME_INDEX)
+                    result = {1'b1, PY_NMETH_STR_INDEX};
+                else if (name_val == PY_NMETH_NAME_RINDEX)
+                    result = {1'b1, PY_NMETH_STR_RINDEX};
+                else if (name_val == PY_NMETH_NAME_COUNT)
+                    result = {1'b1, PY_NMETH_STR_COUNT};
+                else if (name_val == PY_NMETH_NAME_REPLACE)
+                    result = {1'b1, PY_NMETH_STR_REPLACE};
             end else if (pycore_is_dict(recv_tag, recv_val)) begin
                 if (name_val == PY_NMETH_NAME_GET)
-                    result = {1'b1, 4'd10};
+                    result = {1'b1, PY_NMETH_DICT_GET};
                 else if (name_val == PY_NMETH_NAME_KEYS)
-                    result = {1'b1, 4'd11};
+                    result = {1'b1, PY_NMETH_DICT_KEYS};
                 else if (name_val == PY_NMETH_NAME_ITEMS)
-                    result = {1'b1, 4'd12};
+                    result = {1'b1, PY_NMETH_DICT_ITEMS};
                 else if (name_val == PY_NMETH_NAME_UPDATE)
-                    result = {1'b1, 4'd13};
+                    result = {1'b1, PY_NMETH_DICT_UPDATE};
                 else if (name_val == PY_NMETH_NAME_POP)
-                    result = {1'b1, 4'd14};
+                    result = {1'b1, PY_NMETH_DICT_POP};
                 else if (name_val == PY_NMETH_NAME_VALUES)
-                    result = {1'b1, 4'd15};
+                    result = {1'b1, PY_NMETH_DICT_VALUES};
             end
         end
         pycore_native_method_id = result;
