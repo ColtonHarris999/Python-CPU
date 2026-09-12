@@ -1,5 +1,6 @@
 """P5e batch 3: expandtabs, split/rsplit/splitlines, partition/rpartition.
 
+List/tuple equality is not used; checks go through len + indexing + str ==.
 Expected is computed by the host image builder from managed_entry().
 """
 
@@ -12,48 +13,67 @@ def managed_entry():
         n = n + 2
     if "\ta".expandtabs() == "        a":
         n = n + 4
-    if "hello".partition(",") == ("hello", "", ""):
+    t = "hello".partition(",")
+    if t[0] == "hello" and t[1] == "" and t[2] == "":
         n = n + 8
-    if "a,b,c".partition(",") == ("a", ",", "b,c"):
+    t = "a,b,c".partition(",")
+    if t[0] == "a" and t[1] == "," and t[2] == "b,c":
         n = n + 16
-    if "a,b,c".rpartition(",") == ("a,b", ",", "c"):
+    t = "a,b,c".rpartition(",")
+    if t[0] == "a,b" and t[1] == "," and t[2] == "c":
         n = n + 32
-    if "a b c".split() == ["a", "b", "c"]:
+    p = "a b c".split()
+    if len(p) == 3 and p[0] == "a" and p[1] == "b" and p[2] == "c":
         n = n + 64
-    if "  a  b".split() == ["a", "b"]:
+    p = "  a  b".split()
+    if len(p) == 2 and p[0] == "a" and p[1] == "b":
         n = n + 128
-    if "a,b,c".split(",") == ["a", "b", "c"]:
+    p = "a,b,c".split(",")
+    if len(p) == 3 and p[0] == "a" and p[1] == "b" and p[2] == "c":
         n = n + 256
-    if "".split() == []:
+    if len("".split()) == 0:
         n = n + 512
-    if "".split(",") == [""]:
+    p = "".split(",")
+    if len(p) == 1 and p[0] == "":
         n = n + 1024
-    if "a,b,c,d".rsplit(",", 1) == ["a,b,c", "d"]:
+    p = "a,b,c,d".rsplit(",", 1)
+    if len(p) == 2 and p[0] == "a,b,c" and p[1] == "d":
         n = n + 2048
-    if "a  b  c".split(None, 1) == ["a", "b  c"]:
+    p = "a  b  c".split(None, 1)
+    if len(p) == 2 and p[0] == "a" and p[1] == "b  c":
         n = n + 4096
-    if "a  b  c".rsplit(None, 1) == ["a  b", "c"]:
+    p = "a  b  c".rsplit(None, 1)
+    if len(p) == 2 and p[0] == "a  b" and p[1] == "c":
         n = n + 8192
-    if "a\nb\n".splitlines() == ["a", "b"]:
+    p = "a\nb\n".splitlines()
+    if len(p) == 2 and p[0] == "a" and p[1] == "b":
         n = n + 16384
-    if "a\nb".splitlines(True) == ["a\n", "b"]:
+    p = "a\nb".splitlines(True)
+    if len(p) == 2 and p[0] == "a\n" and p[1] == "b":
         n = n + 32768
-    if "a\r\nb".splitlines() == ["a", "b"]:
+    p = "a\r\nb".splitlines()
+    if len(p) == 2 and p[0] == "a" and p[1] == "b":
         n = n + 65536
-    if "a\r\nb".splitlines(True) == ["a\r\n", "b"]:
+    p = "a\r\nb".splitlines(True)
+    if len(p) == 2 and p[0] == "a\r\n" and p[1] == "b":
         n = n + 131072
-    if "\n".splitlines() == [""]:
+    p = "\n".splitlines()
+    if len(p) == 1 and p[0] == "":
         n = n + 262144
-    if "a,b,c,d".split(",", 2) == ["a", "b", "c,d"]:
+    p = "a,b,c,d".split(",", 2)
+    if len(p) == 3 and p[0] == "a" and p[1] == "b" and p[2] == "c,d":
         n = n + 524288
-    if "a,b,".split(",") == ["a", "b", ""]:
+    p = "a,b,".split(",")
+    if len(p) == 3 and p[0] == "a" and p[1] == "b" and p[2] == "":
         n = n + 1048576
     s = "abcdefghijklmnop"
     if s.split("x")[0] is s:
         n = n + 2097152
-    if "abc".split(",") == ["abc"]:
+    p = "abc".split(",")
+    if len(p) == 1 and p[0] == "abc":
         n = n + 4194304
-    if "foo bar".rsplit(None, 1) == ["foo", "bar"]:
+    p = "foo bar".rsplit(None, 1)
+    if len(p) == 2 and p[0] == "foo" and p[1] == "bar":
         n = n + 8388608
     return n
 
