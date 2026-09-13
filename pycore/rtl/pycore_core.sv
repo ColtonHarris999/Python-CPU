@@ -937,6 +937,14 @@ module pycore_core #(
                 stracc_cmd_a = pycore_make_entry(container_tag_r, container_val_r);
                 stracc_cmd_b = pycore_make_entry(
                     container_probe_tag_r, container_rd_data_r);
+            end else if (container_phase_r == CP_DICT_ORDER_SCAN_TAG) begin
+                // Order-buffer scan: needle vs the current order entry
+                // (val read into container_order_shift_val_r at SCAN_VAL,
+                // tag in container_rd_data_r[3:0] this phase).
+                stracc_cmd_a = pycore_make_entry(
+                    cont_order_needle_tag, container_val_r);
+                stracc_cmd_b = pycore_make_entry(
+                    container_rd_data_r[3:0], container_order_shift_val_r);
             end else begin
                 stracc_cmd_a = pycore_make_entry(
                     container_rd_data_r[3:0], container_val_r);
@@ -1683,6 +1691,19 @@ module pycore_core #(
     logic cont_dict_key_match;
     logic cont_dict_key_need_cmp;
     logic cont_contains_need_cmp;
+    // Insertion-order-buffer scan (CONT_DELETE_DICT / CONT_DELETE_ATTR) runs in
+    // CP_DICT_ORDER_SCAN_TAG, a different phase from the table probe. It also
+    // needs the tier-3 payload compare for distinct-address LONG_STR keys: on
+    // an overwrite the table key handle is rewritten while the order buffer
+    // keeps the original, so a runtime-built delete key can be address-distinct
+    // from the order entry even though the table probe already matched it.
+    // Without this the bare rich_eq never matches and the scan faults off the
+    // end of the order buffer (PY_TRAP_MEM_FAULT halt).
+    logic [3:0] cont_order_needle_tag;
+    logic       cont_order_scan_need_cmp;
+    logic       cont_order_scan_match;
+    assign cont_order_needle_tag = (container_op_r == CONT_DELETE_ATTR)
+                                 ? container_tag_r : container_order_key_tag_r;
     assign cont_dict_key_need_cmp = pycore_str_need_payload_cmp(
         container_tag_r, container_val_r,
         container_probe_tag_r, container_rd_data_r);
@@ -1692,16 +1713,29 @@ module pycore_core #(
         pycore_str_need_payload_cmp(
             container_rd_data_r[3:0], container_val_r,
             cont_rs1_tag, cont_rs1_val);
+    assign cont_order_scan_need_cmp =
+        ((container_op_r == CONT_DELETE_DICT) ||
+         (container_op_r == CONT_DELETE_ATTR)) &&
+        pycore_str_need_payload_cmp(
+            cont_order_needle_tag, container_val_r,
+            container_rd_data_r[3:0], container_order_shift_val_r);
     assign cont_dict_key_match = pycore_dict_key_rich_eq(
         container_tag_r, container_val_r,
         container_probe_tag_r, container_rd_data_r) ||
         (container_stracc_done_r && container_stracc_eq_r &&
          (container_phase_r == CP_DICT_CHK_VAL));
+    assign cont_order_scan_match = pycore_dict_key_rich_eq(
+        cont_order_needle_tag, container_val_r,
+        container_rd_data_r[3:0], container_order_shift_val_r) ||
+        (container_stracc_done_r && container_stracc_eq_r &&
+         (container_phase_r == CP_DICT_ORDER_SCAN_TAG));
     assign container_stracc_issue =
         (state_r == S_CONTAINER) && !container_dmem_pending_r &&
         !container_stracc_done_r &&
         (((container_phase_r == CP_DICT_CHK_VAL) && cont_dict_key_need_cmp) ||
-         ((container_phase_r == CP_TAG) && cont_contains_need_cmp));
+         ((container_phase_r == CP_TAG) && cont_contains_need_cmp) ||
+         ((container_phase_r == CP_DICT_ORDER_SCAN_TAG) &&
+          cont_order_scan_need_cmp));
 
     // **kwargs dict being packed by the CALL binder (subs 52-55).  The object,
     // order sidecar and hash table are placed with the same line-aligned
@@ -2175,7 +2209,8 @@ module pycore_core #(
                 stracc_issued_r    <= 1'b0;
             end
             if ((container_phase_r != CP_DICT_CHK_VAL) &&
-                (container_phase_r != CP_TAG)) begin
+                (container_phase_r != CP_TAG) &&
+                (container_phase_r != CP_DICT_ORDER_SCAN_TAG)) begin
                 container_stracc_done_r <= 1'b0;
             end
 

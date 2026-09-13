@@ -2516,11 +2516,10 @@
 
                                 CP_DICT_ORDER_SCAN_TAG: begin
                                     if (!container_dmem_pending_r) begin
-                                        if (pycore_dict_key_rich_eq(
-                                                container_tag_r,
-                                                container_val_r,
-                                                container_rd_data_r[3:0],
-                                                container_order_shift_val_r)) begin
+                                        // cont_order_scan_match adds the tier-3
+                                        // SA_CMP result for distinct-address
+                                        // LONG_STR keys (see pycore_core.sv).
+                                        if (cont_order_scan_match) begin
                                             if (container_order_idx_r + 32'd1 >=
                                                 container_order_len_r[31:0]) begin
                                                 container_used_r <=
