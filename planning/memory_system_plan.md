@@ -1,16 +1,23 @@
 # Memory system plan — L1I / L1D / L2 / RAM, strings in dmem, descriptor caches
 
+**Status: complete on `main`.** P0–P7 are built; P8 (frame top-of-stack
+buffer) is skipped; P9 remeasured RTL vs memsim. As-built:
+[`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md),
+[`pycore/docs/string_accel.md`](../pycore/docs/string_accel.md). Numbers:
+[`memory_hierarchy_report.md`](memory_hierarchy_report.md) §7. This file is
+the design history; do not treat remaining “will be” / phase-checklist
+language as current work.
+
 Implementation plan for the "Neumann on the outside, modified Harvard on the
 inside" memory system. Sizing and priority come from the measurements in
 [`memory_hierarchy_report.md`](memory_hierarchy_report.md); the harness that
-produced them is [`pycore/tools/memsim/`](../pycore/tools/memsim/README.md) and
-is re-run as the acceptance gate in P9.
+produced them is [`pycore/tools/memsim/`](../pycore/tools/memsim/README.md)
+and was the P9 acceptance gate.
 
-**In scope:** L1I, L1D, unified L2, a parameterized RAM model, moving string
-bytes out of `pycore_string_mem.sv` into ordinary dmem behind a dedicated
-String Accelerator,
-the code-object descriptor cache, the global-name inline cache, and the frame
-top-of-stack buffer.
+**In scope (all built except FTB):** L1I, L1D, unified L2, a parameterized RAM
+model, strings in ordinary dmem behind STRACC, the code-object descriptor
+cache, and the global-name inline cache. The frame top-of-stack buffer was
+gated and skipped (P8).
 
 **Explicitly out of scope:** the constant cache (measured weakest of the four —
 report F6); storage / block device; any change to the ISA, the tag map, or the
@@ -234,7 +241,8 @@ builtins raises `PY_TRAP_MEM_FAULT`. Only fill on a successful resolve.
 
 ## 5. Phases
 
-Every phase ends with the **full regression green**. Do not stack phases.
+Every phase ended with the **full regression green**. Do not stack phases
+(historical build rule; the stack is on `main`).
 
 ### P0 — Groundwork and contracts
 
@@ -446,10 +454,10 @@ dmem, pop reads from the buffer when present.
 > skip P8 and record that decision in the P9 write-up.** Building it anyway
 > costs 1 kbit of flops and adds a real correctness surface.
 >
-> **P3 measurement — skip P8.** L1D frame-region hit rate (`0x1C000`–`0x20000`)
-> at `CACHE_EN=1` / `MEM_LATENCY=4`: `img_recursion` 1414/1420 = **99.58%**,
-> `img_deep_callgraph` 263/276 = **95.29%**. Both above the 95% gate. Do not
-> build `pycore_frame_buf.sv`. Reconfirm in P9.
+> **P3 measurement — skip P8.** L1D frame-region hit rate (post-P5 map
+> `0xF1000`–`0xF8FFF`) at `CACHE_EN=1` / `MEM_LATENCY=4`: `img_recursion`
+> 1414/1420 = **99.58%**, `img_deep_callgraph` 263/276 = **95.29%**. Both
+> above the 95% gate. Do not build `pycore_frame_buf.sv`. P9 reconfirmed.
 
 If it is built: the exception-unwind path in `pycore_call_fsm.svh` pops frames
 too (`call_exc_pending_r`, RETURN phases 3–4). It must go through the same
@@ -458,7 +466,7 @@ buffer, or unwind reads stale dmem. `img_try_exc_cross_frame_fatal` and
 
 ### P9 — Re-measure, and write down what actually happened
 
-**Done on `cursor/p9-remeasure-ecae`.** Docs:
+**Done; landed on `main` with P6/P7.** Docs:
 [`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md),
 [`pycore/docs/string_accel.md`](../pycore/docs/string_accel.md).
 Numbers: [`memory_hierarchy_report.md`](memory_hierarchy_report.md) §7.
@@ -556,9 +564,8 @@ made non-blocking.
 | Core FSM, dmem arbitration, heap pointer | `pycore/rtl/pycore_core.sv` (`:1124`, `:1202`, `:2343`) |
 | CALL / RETURN code-field reads | `pycore/rtl/pycore_call_fsm.svh` (phases 2–6, RETURN 1–2) |
 | `LOAD_GLOBAL` probe chain | `pycore/rtl/pycore_cont_object.svh:178` |
-| String unit being replaced, and its four ports | `pycore/rtl/pycore_string_mem.sv`, `pycore_core.sv:1485`–`:1531` |
-| String Accelerator design | `planning/string_accelerator_plan.md` |
-| Native method dispatch (extends to 47 str methods) | `pycore_defs.svh::pycore_native_method_id` |
+| String Accelerator (as-built) | `pycore/docs/string_accel.md` |
+| Native method dispatch | `pycore_defs.svh::pycore_native_method_id` |
 | excore grant mux and handoff | `pycore/rtl/pycore_excore_system.sv:278`–`:325` |
 | Memory map, address helpers, tag map | `pycore/rtl/pycore_defs.svh`, `pycore/docs/tags.md` |
 | Image build and heap allocator | `pycore/tools/heap_image.py`, `image_from_source.py`, `encoding.py` |

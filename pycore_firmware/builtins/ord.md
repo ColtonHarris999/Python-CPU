@@ -6,7 +6,7 @@ Status: **native** (`BI_ORD`, builtin id 10)
 
 `ord(c)` is a hardware CALL fast path that owns the `ord` entry in the boot
 builtins dict. It decodes a one-character UTF-8 string to its code point in a
-single cycle with no dmem or `string_mem` access.
+single cycle with no dmem access.
 
 ## Why it turned out to be cheap
 
@@ -14,11 +14,11 @@ The original blocker was "no pure-Python way to read the payload bytes as an
 integer". Two observations collapsed the rest of the work:
 
 1. **A one-character string is always a `SHORT_STR`.** Every string of ≤15
-   bytes is `SHORT_STR` — `tag_constant` chooses by encoded length, runtime
-   concatenation in `pycore_string_mem.sv` does the same, and `s[i]`
-   (`CONT_SUBSCR_STR`) returns `SHORT_STR`. A character is at most 4 bytes, so
-   `ord` never needs to touch `string_mem`, and a `LONG_STR` argument is by
-   construction longer than one character — a length error.
+   kind-1 characters is `SHORT_STR` — image build and STRACC both enforce
+   that, and `s[i]` (`CONT_SUBSCR_STR`) returns `SHORT_STR`. A character is
+   at most 4 bytes, so `ord` never needs a heap payload walk, and a
+   `LONG_STR` argument is by construction longer than one character — a
+   length error.
 2. **The UTF-8 primitives already existed** for STR `FOR_ITER` and `s[i]`:
    `pycore_utf8_char_width`, `pycore_utf8_cont_valid`, and
    `pycore_short_str_byte`. Only the payload-bits-to-code-point step was new

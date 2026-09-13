@@ -2,8 +2,9 @@
 
 Remaining machine work. The current system is specified in
 [`pycore/docs/architecture.md`](../pycore/docs/architecture.md),
-[`pycore/docs/tags.md`](../pycore/docs/tags.md), and
-[`pycore/docs/code_loading.md`](../pycore/docs/code_loading.md).
+[`pycore/docs/tags.md`](../pycore/docs/tags.md),
+[`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md),
+and [`pycore/docs/code_loading.md`](../pycore/docs/code_loading.md).
 
 This file is only what is **not** built yet.
 
@@ -59,7 +60,6 @@ returns a real code object.
 | Item | When |
 | --- | --- |
 | `_bi_intern(s)` | compiler names exceed 15 bytes and SHORT_STR policy fails |
-| LONG_STR content equality on every dict/set probe | intern is not enough |
 | List/tuple `BINARY_SLICE` | `copy_range` helper is a size/perf problem (see compile subset) |
 | Negative indices in hardware | rewrite with `len-1` is no longer honest |
 | GC / sweeping heap | after mark/release is insufficient for compiling large sources |
@@ -67,13 +67,19 @@ returns a real code object.
 
 ## Memory map locks
 
-Do not move these without updating `encoding.py`, RTL params, and
-`code_loading.md` together:
+Do not move these without updating `encoding.py`, RTL params,
+`memory_hierarchy.md`, and `code_loading.md` together. Post-P5 map:
 
 - Code ROM slots `0x0000..0x1FFF`, code RAM `0x2000..0xA1FF`.
-- Heap bump below `PYCORE_HEAP_LIMIT` (`0x1B000`); exc-info arena
-  `0x1B000–0x1BFFF`; frames `0x1C000–0x1FFFF`.
+- Heap bump `0x440`–`PYCORE_HEAP_LIMIT` (`0xF0000`); exc-info arena
+  `0xF0000–0xF0FFF`; native-method table `0xF0DE0`; frames
+  `0xF1000–0xF8FFF`.
 - `CONSOLE_TX` at `0xF0`.
+
+The L1I/L1D/L2/RAM hierarchy, STRACC, CODC, and GIC are **built**. FTB is
+skipped. See [`memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md).
+Dead `STRING_HEX` plusarg plumbing is a leftover, not a map move:
+[`p5_review_followup.md`](p5_review_followup.md) §4.
 
 ## Out of scope here
 

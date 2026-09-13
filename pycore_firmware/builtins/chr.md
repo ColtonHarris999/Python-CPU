@@ -6,7 +6,7 @@ Status: **native** (`BI_CHR`, builtin id 11)
 
 `chr(i)` is a hardware CALL fast path that owns the `chr` entry in the boot
 builtins dict. It encodes a code point as 1–4 UTF-8 bytes directly into an
-inline `SHORT_STR` handle — one cycle, no allocation, no `string_mem` write.
+inline `SHORT_STR` handle — one cycle, no allocation, no heap write.
 
 The original blocker was "no pure-Python way to build a `SHORT_STR` from an
 integer code point". Since the result is at most 4 bytes it always fits inline,
@@ -27,7 +27,7 @@ so no string heap is involved at all.
 
 CPython allows `chr(0xD800)`, producing a lone surrogate. PyCore stores strings
 as UTF-8 and surrogates have no well-formed UTF-8 encoding, so accepting them
-would put ill-formed bytes into `string_mem` and into `SHORT_STR` payloads that
+would put ill-formed bytes into `SHORT_STR` payloads that
 `BI_LEN`, STR `FOR_ITER`, and `s[i]` all assume are valid.
 
 Rejecting them keeps a useful invariant: `ord(chr(n)) == n` for every `n` that

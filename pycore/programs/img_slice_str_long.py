@@ -1,11 +1,11 @@
 """Slices crossing the SHORT_STR/LONG_STR boundary in both directions.
 
-The subject is a LONG_STR (>15 bytes). A slice of <= 15 bytes must come back as
-an inline SHORT_STR (so `==` against a literal works); longer ones are written
-to string_mem as a LONG_STR, whose equality is *descriptor* equality
-(bytecode_support.md deviation 4) -- so those are checked by length and by
-sampling characters rather than by comparing whole strings. Content-based
-long-string equality is Plan 1 P6.4 and is not implemented yet.
+The subject is a LONG_STR (>15 bytes). A slice of <= 15 kind-1 characters
+must come back as an inline SHORT_STR (so `==` against a literal works);
+longer ones are heap LONG_STR objects. COMPARE_OP == of distinct LONG
+handles is still identity (bytecode_support.md deviation 4), so those
+slices are checked by length and by sampling characters rather than by
+comparing whole strings. Dict/set probes use three-tier content equality.
 
 Slice lengths of exactly 15 and 16 bytes pin the tag boundary.
 """

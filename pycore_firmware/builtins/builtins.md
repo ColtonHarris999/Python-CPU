@@ -159,7 +159,7 @@ Coverage: `img_firmware_rom_subset`, `img_firmware_iterators`,
 `ord` (`BI_ORD`, id 10), `chr` (`BI_CHR`, id 11). No pure-Python body is
 possible: reading UTF-8 payload bytes as an integer and building a string from
 raw bytes are exactly the primitives Python lacks here. Both complete in one
-cycle with no dmem or `string_mem` access, because a one-character string is
+cycle with no dmem access, because a one-character string is
 always a `SHORT_STR` and its bytes are inline in the handle.
 
 `int` stays an `OBK_TYPE` (so `int.from_bytes` / `int.to_bytes` remain on

@@ -80,7 +80,7 @@ EXC_STACK_BYTES = 0x1000
 # Call-frame stack (mirror PYCORE_FRAME_STACK_* in pycore_defs.svh).
 FRAME_STACK_BASE = 0xF1000
 FRAME_STACK_BYTES = 0x8000
-# Cache / RAM hierarchy (mirror pycore_defs.svh; RTL-only until P2 instantiates).
+# Cache / RAM hierarchy (mirror pycore_defs.svh).
 CACHE_EN = 1
 LINE_BYTES = 64
 
@@ -112,7 +112,7 @@ def heap_end(ptr: int, nbytes: int, line: int = LINE_BYTES) -> int:
     return heap_place(ptr, nbytes, line) + nbytes
 
 
-# String Accelerator ops / handle (planning/string_accelerator_plan.md).
+# String Accelerator ops / handle (pycore/docs/string_accel.md).
 # Kind encoding: 1/2/4-byte units stored as 0/1/2 in bits [121:120].
 SA_CONCAT = 0
 SA_REPEAT = 1
@@ -225,7 +225,7 @@ ITER_EXHAUST_TYPE_ADDR = EXC_STACK_BASE + EXC_STACK_BYTES - 32  # 0xF0FE0
 NATIVE_METHOD_COUNT = 16
 NATIVE_METHOD_ENTRY_BYTES = 32
 NATIVE_METHOD_TABLE_BYTES = NATIVE_METHOD_COUNT * NATIVE_METHOD_ENTRY_BYTES
-NATIVE_METHOD_TABLE_ADDR = ITER_EXHAUST_TYPE_ADDR - NATIVE_METHOD_TABLE_BYTES  # 0x1BDE0
+NATIVE_METHOD_TABLE_ADDR = ITER_EXHAUST_TYPE_ADDR - NATIVE_METHOD_TABLE_BYTES  # 0xF0DE0
 
 # LIST element buffer stride (bytes); mirror pycore list layout (32B/element).
 LIST_ELEMENT_BYTES = 32

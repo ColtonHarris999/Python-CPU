@@ -1,4 +1,4 @@
-"""LONG_STR subscript: bytes live in string_mem, indexed via the read port."""
+"""LONG_STR subscript: payload is a heap object, indexed via STRACC CHAR_AT."""
 
 
 def managed_entry():

@@ -22,7 +22,8 @@ planning/master_plan.md          timeline
         └── exceptions_plan.md     trap→raise, assert, with, subclasses
                 │
                 ▼
-pycore/docs/*                    current machine (tags, opcodes, exceptions)
+pycore/docs/*                    current machine (tags, opcodes, exceptions,
+                                 memory_hierarchy.md, string_accel.md)
 pycore_firmware/builtins/*       current ROM inventory
 ```
 
@@ -43,6 +44,11 @@ Do not duplicate opcode tables or type lists in planning files. Point at
 - ROM builtins (`print`, `min`/`sorted`/`map`/`zip`/…), native `ord`/`chr`/`int`/`str`/`len`.
 - Writable **code RAM** + `exec`/`eval` on **precompiled** code objects.
 - Heap / code mark-release.
+- Memory hierarchy on the hart: 8 KB L1I, 8 KB L1D, 128 KB inclusive L2,
+  parameterized RAM, STRACC (strings are heap objects), 4-entry CODC, 16-entry
+  GIC. Frame top-of-stack buffer **skipped** (L1D already hits >95% of the
+  frame region). As-built: [`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md),
+  [`pycore/docs/string_accel.md`](../pycore/docs/string_accel.md).
 
 ## Timeline
 

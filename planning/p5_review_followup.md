@@ -7,15 +7,17 @@ item lists what, where, why, and how to verify.
 
 Status is tracked inline — **[DONE]**, **[IN PROGRESS]**, or **[TODO]**.
 
-## Status summary (this branch: claude/p5-review-fixes)
+## Status summary
 
-- **[DONE, pending CI]** §1 bug fix — order-scan tier-3 escalation + del/pop
-  fixture. RTL is unvalidatable host-side; the `gates` job must confirm it.
+§1–§3 landed on `main` in #107 (`f0690a4`). Remaining leftovers:
+
+- **[DONE]** §1 bug fix — order-scan tier-3 escalation + del/pop fixture
+  (`img_str_dict_key_runtime_del`). CI `gates` green on that merge.
 - **[DONE]** §2 differential coverage — REPLACE, JOIN, isdecimal, isnumeric
-  now generated; 12k cases clean host-side.
+  now generated.
 - **[DONE]** §3 CI seed budget — raised to 8 seeds x 400.
-- **[TODO]** §4 dead STRING_HEX plumbing — deliberately deferred to keep this
-  PR's RTL change surface to the one correctness fix. Follow-up.
+- **[TODO]** §4 dead STRING_HEX plumbing — deferred to keep #107's RTL
+  change surface to the one correctness fix.
 - **[TODO]** §5 allocator-bytes orphan — pre-existing, low priority.
 
 ---

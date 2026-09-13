@@ -1,8 +1,9 @@
 # Memory-hierarchy study: what PyCore should cache, and why
 
-Findings report ahead of the L1I / L1D / L2 / RAM work. **§7 is the P9
-as-built measurement** — RTL counters vs this model, P8 skip, and whether
-the 8 KB L1D still holds with STRACC traffic.
+Findings report that sized the L1I / L1D / L2 / RAM work. **§7 is the P9
+as-built measurement on `main`** — RTL counters vs this model, P8 skip, and
+whether the 8 KB L1D still holds with STRACC traffic. The hierarchy itself
+is specified in [`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md).
 
 The original question:
 Python-specific cache structures — for code objects, frames, functions,

@@ -14,7 +14,8 @@ much better end state: it retires `pycore_string_mem.sv` entirely, closes a
 real semantic hole in long-string equality, and turns the O(n·m) firmware
 string methods into hardware scans.
 
-Graduates to `pycore/docs/string_accel.md` when it is built.
+Built; the as-built file is `pycore/docs/string_accel.md`. P9 remeasure is
+done ([`memory_hierarchy_report.md`](memory_hierarchy_report.md) §7).
 
 ---
 
@@ -44,7 +45,7 @@ applies to `replace`, `split`, `count`, and `in`.
 
 > Derivation, not measurement: opcode count is from `dis` on the actual
 > firmware source; CPO is `memory_hierarchy_report.md` E1. Re-derive against
-> real RTL counters in P9.
+> real RTL counters in P9 (done; [`memory_hierarchy_report.md`](memory_hierarchy_report.md) §7).
 
 **Long-string equality is wrong in principle.** `pycore_dict_key_rich_eq`
 compares LONG_STR by `{size, addr}` descriptor, and

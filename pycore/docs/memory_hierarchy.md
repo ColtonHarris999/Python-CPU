@@ -1,10 +1,10 @@
 # Memory hierarchy (as built)
 
-This is the as-built memory system after P0–P7 of
-[`planning/memory_system_plan.md`](../../planning/memory_system_plan.md).
-P8 (frame top-of-stack buffer) is **skipped**. P9 re-measured the RTL
-counters against [`pycore/tools/memsim/`](../tools/memsim/README.md);
-the numbers live in
+This is the as-built memory system on `main` after P0–P7 of
+[`planning/memory_system_plan.md`](../../planning/memory_system_plan.md)
+(that plan is complete). P8 (frame top-of-stack buffer) is **skipped**.
+P9 re-measured the RTL counters against
+[`pycore/tools/memsim/`](../tools/memsim/README.md); the numbers live in
 [`planning/memory_hierarchy_report.md`](../../planning/memory_hierarchy_report.md)
 §7.
 

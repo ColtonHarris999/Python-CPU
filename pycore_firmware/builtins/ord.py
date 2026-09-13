@@ -3,7 +3,7 @@
 Implemented natively as ``BI_ORD`` (id 10) in the CALL FSM, which owns the
 ``ord`` entry in the boot builtins dict. A one-character string is always a
 SHORT_STR (every string of <= 15 bytes is), so the encoded bytes sit inline in
-the handle and the UTF-8 decode needs no ``string_mem`` access — one cycle, no
+the handle and the UTF-8 decode needs no heap access — one cycle, no
 dmem traffic.
 
 Reading payload bytes as an integer is precisely the primitive that pure Python
