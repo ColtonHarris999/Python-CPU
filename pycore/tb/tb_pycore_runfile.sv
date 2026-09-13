@@ -2,7 +2,6 @@
 
 module tb_pycore_runfile #(
     parameter string PROG_HEX   = "pycore/programs/run_program.hex",
-    parameter string STRING_HEX = "pycore/programs/run_string_mem.hex",
     parameter int MAX_CYCLES = 2000
 );
     localparam logic [2:0] CORE_S_WB = 3'd4;
@@ -17,8 +16,7 @@ module tb_pycore_runfile #(
     logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry;
 
     pycore_system #(
-        .PROG_HEX(PROG_HEX),
-        .STRING_HEX(STRING_HEX)
+        .PROG_HEX(PROG_HEX)
     ) dut (
         .clk_i(clk),
         .rst_n_i(rst_n),
