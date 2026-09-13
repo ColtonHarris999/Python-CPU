@@ -58,6 +58,9 @@ localparam int PYCORE_DMEM_BYTES       =
     PYCORE_DMEM_BLOCK_COUNT << PYCORE_BLOCK_SHIFT;
 localparam int PYCORE_CODC_ENTRIES     = 4;
 localparam int PYCORE_CODC_WAYS        = 2;
+// Packed CALL/RETURN descriptor: entry_slot[63:0], co_consts[127:0],
+// co_names[127:0], metadata[127:0], co_defaults[127:0].
+localparam int PYCORE_CODC_PAYLOAD_W   = 576;
 localparam int PYCORE_GIC_ENTRIES      = 16;
 localparam int PYCORE_GIC_WAYS         = 2;
 // P8 skipped: after P3, L1D hits 99.58% of frame-stack accesses on

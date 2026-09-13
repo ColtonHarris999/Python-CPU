@@ -121,7 +121,12 @@ module pycore_core #(
     // debug writeback snoop (for verification; mirrors the RF write port)
     output logic                          dbg_wb_we_o,
     output logic [7:0]                    dbg_wb_addr_o,
-    output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry_o
+    output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry_o,
+    // CODC performance counters (P6). Hierarchical TBs also snoop these.
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] codc_hit_count_o,
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] codc_miss_count_o,
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] codc_fill_count_o,
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] codc_flush_count_o
 );
 
     localparam int RF_AW = $clog2(RF_DEPTH);
@@ -269,6 +274,11 @@ module pycore_core #(
     logic [31:0]                   call_obj_addr_r;
     // co_defaults TUPLE handle {size[63:0], addr[63:0]}.
     logic [127:0]                  call_defaults_r;
+    logic [127:0]                  call_meta_r;        // raw metadata field for CODC fill
+    logic                          call_codc_hit_r;    // skip dmem latch of cached fields
+    logic                          codc_fill_r;
+    logic [31:0]                   codc_fill_key_r;
+    logic [PYCORE_CODC_PAYLOAD_W-1:0] codc_fill_payload_r;
     logic [15:0]                   call_defaults_len_r;
     logic [15:0]                   call_min_argc_r;
     // Defaults-fill / TYPE-setup sub-phase (used under call_phase 8–14).
@@ -321,6 +331,17 @@ module pycore_core #(
         void'($value$plusargs("CONTAINER_CALL_SPIKE_EN=%d",
                              container_call_spike_en_sim));
         void'($value$plusargs("HEAP_INIT_PTR=%d", heap_init_ptr_sim));
+    end
+
+    // Same plusarg as pycore_system / pycore_excore_system so CACHE_EN=0
+    // turns CODC into a miss pass-through without a new core pin.
+    bit cache_en_sim;
+    initial begin
+        int cache_en_i;
+        cache_en_i = int'(PYCORE_CACHE_EN);
+        void'($value$plusargs("CACHE_EN=%d", cache_en_i));
+        void'($value$plusargs("PYCORE_CACHE_EN=%d", cache_en_i));
+        cache_en_sim = (cache_en_i != 0);
     end
 
     // Which container operation is in flight (CONT_* constants above).
@@ -1228,6 +1249,59 @@ module pycore_core #(
     );
 
     // ---------------------------------------------------------------------
+    // CODC: combinational descriptor cache for CALL phases 3-6 and RETURN
+    // phases 1-2 (memory_system_plan.md P6). Flushed on MAKE_FUNCTION,
+    // _bi_code_release, trap_res grant-back, and reset. No code-RAM writer
+    // exists yet; that flush lands with the first imem store.
+    // ---------------------------------------------------------------------
+    logic        codc_hit;
+    logic        codc_lookup;
+    logic        codc_flush;
+    logic [31:0] codc_lookup_key;
+    logic [PYCORE_CODC_PAYLOAD_W-1:0] codc_payload;
+    logic [63:0]  codc_p_entry;
+    logic [127:0] codc_p_consts;
+    logic [127:0] codc_p_names;
+    logic [127:0] codc_p_meta;
+    logic [127:0] codc_p_defaults;
+
+    assign codc_lookup =
+        ((state_r == S_CALL) && (call_phase_r == 5'd2)) ||
+        ((state_r == S_RETURN) && (return_phase_r == 3'd0) && frame_return_done);
+    assign codc_lookup_key = (state_r == S_RETURN)
+                           ? frame_cur_code_out
+                           : call_code_addr_r;
+    assign codc_flush =
+        ((state_r == S_EXEC) && !exec_stall &&
+         (cur_opcode_r == PY_OP_MAKE_FUNCTION)) ||
+        ((state_r == S_TRAP_WAIT) && trap_res_valid_i && !trap_res_seen_r) ||
+        ((state_r == S_CALL) && (call_phase_r == 5'd13) &&
+         (call_sub_r == 6'd57));
+    assign codc_p_entry    = codc_payload[63:0];
+    assign codc_p_consts   = codc_payload[191:64];
+    assign codc_p_names    = codc_payload[319:192];
+    assign codc_p_meta     = codc_payload[447:320];
+    assign codc_p_defaults = codc_payload[575:448];
+
+    pycore_codc u_codc (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .cache_en_i(cache_en_sim),
+        .lookup_i(codc_lookup),
+        .lookup_key_i(codc_lookup_key),
+        .hit_o(codc_hit),
+        .payload_o(codc_payload),
+        .fill_i(codc_fill_r),
+        .fill_key_i(codc_fill_key_r),
+        .fill_payload_i(codc_fill_payload_r),
+        .flush_i(codc_flush),
+        .hit_count_o(codc_hit_count_o),
+        .miss_count_o(codc_miss_count_o),
+        .fill_count_o(codc_fill_count_o),
+        .flush_count_o(codc_flush_count_o)
+    );
+
+    // ---------------------------------------------------------------------
     // Register file.  push_stack / pop_stack are left idle.
     // The return_wb path lets S_RETURN place the callee's return value
     // onto the caller's stack in the cycle after frame_return_done fires.
@@ -1988,6 +2062,11 @@ module pycore_core #(
             call_tos_base_r      <= '0;
             call_obj_addr_r      <= '0;
             call_defaults_r      <= '0;
+            call_meta_r          <= '0;
+            call_codc_hit_r      <= 1'b0;
+            codc_fill_r          <= 1'b0;
+            codc_fill_key_r      <= '0;
+            codc_fill_payload_r  <= '0;
             call_defaults_len_r  <= '0;
             call_min_argc_r      <= '0;
             call_sub_r           <= '0;
@@ -2169,6 +2248,7 @@ module pycore_core #(
             excore_fatal_trap_r   <= 1'b0;
             call_filter_trap_r    <= 1'b0;
             stracc_finishing_r    <= 1'b0;
+            codc_fill_r           <= 1'b0;
 
             if (state_r == S_FETCH) begin
                 redirect_pending_r <= 1'b0;
