@@ -213,6 +213,8 @@ CODC_WAYS = 2
 CODC_PAYLOAD_W = 576
 GIC_ENTRIES = 16
 GIC_WAYS = 2
+GIC_KEY_W = 48
+GIC_PAYLOAD_W = 132  # TAG_WIDTH + VAL_WIDTH; pycore_make_entry packing
 # P8 skipped: L1D frame-region hit rate after P3 is 99.58% / 95.29%
 # on img_recursion / img_deep_callgraph (gate was >95%).
 FTB_FRAMES = 4

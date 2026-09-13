@@ -193,6 +193,20 @@
                                                 (cur_arg_r >> 1) : cur_arg_r;
                                         if ({32'b0, namei} >= names_base_r[127:64]) begin
                                             container_mem_fault_r <= 1'b1;
+                                        end else if (gic_hit) begin
+                                            // Cached {tag,val} → TOS. Honour the
+                                            // LOAD_GLOBAL null bit with the same
+                                            // two-beat CP_LG_WB_NULL path.
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'({2'b0, tos_r});
+                                            container_wb_data_r <= gic_payload;
+                                            tos_r <= tos_r + RF_AW'(1);
+                                            if (container_push_null_r) begin
+                                                container_phase_r <= CP_LG_WB_NULL;
+                                            end else begin
+                                                fetch_skip_r      <= 1'b1;
+                                                container_phase_r <= CP_DONE;
+                                            end
                                         end else begin
                                             container_dmem_addr_r <= pycore_tuple_val_addr(
                                                 names_base_r[31:0], namei);
@@ -406,6 +420,14 @@
                                             container_rd_data_r[3:0],
                                             container_val_r);
                                         tos_r <= tos_r + RF_AW'(1);
+                                        // Fill only on a successful LOAD_GLOBAL /
+                                        // LOAD_NAME resolve. Other ops reuse
+                                        // CP_DICT_RD_VTAG and must not install.
+                                        gic_fill_r         <= 1'b1;
+                                        gic_fill_key_r     <= gic_lookup_key;
+                                        gic_fill_payload_r <= pycore_make_entry(
+                                            container_rd_data_r[3:0],
+                                            container_val_r);
                                         if (container_push_null_r) begin
                                             // Second beat: push NULL next cycle.
                                             container_phase_r <= CP_LG_WB_NULL;

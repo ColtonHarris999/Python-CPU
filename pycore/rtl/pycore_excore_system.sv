@@ -181,7 +181,11 @@ module pycore_excore_system #(
         .codc_hit_count_o(),
         .codc_miss_count_o(),
         .codc_fill_count_o(),
-        .codc_flush_count_o()
+        .codc_flush_count_o(),
+        .gic_hit_count_o(),
+        .gic_miss_count_o(),
+        .gic_fill_count_o(),
+        .gic_flush_count_o()
     );
 
     // =========================================================================
