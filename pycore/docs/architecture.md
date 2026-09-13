@@ -246,8 +246,8 @@ The tag encoding (see also `pycore/docs/tags.md`):
 | `0100` | BOOL | `value[0]` significant |
 | `0101` | ITER | hybrid iterator payload |
 | `0110` | TUPLE | `{ size[63:0], addr[63:0] }` |
-| `0111` | SHORT_STR | inline ≤15 UTF-8 bytes |
-| `1000` | LONG_STR | `{ size[63:0], addr[63:0] }` |
+| `0111` | SHORT_STR | inline ≤15 kind-1 (Latin-1) bytes; see [`string_accel.md`](string_accel.md) |
+| `1000` | LONG_STR | STRACC handle: `{flags, kind, nbytes, hash, nchars, addr}` |
 | `1001` | MUT_COLLEC | kind `[127:124]`: LIST/DICT/SET/BYTEARRAY; addr `[63:0]` |
 | `1010` | OBJECT | general heap object (`ob_head` kinds) |
 | `1011` | RANGE | mode bit 127: inline i32 triple or tuple pointer |
@@ -273,10 +273,11 @@ rather than widening every leave:
 - `BOOL` keeps the truth value in `value[0]` with all other bits zero.
 - `MUT_COLLEC` / `OBJECT` / `ITER` / `CODE_OBJECT` addresses use the low
   64 bits; the data bus is 32-bit (`ADDR_WIDTH = 32`).
-- `SHORT_STR` uses 15 UTF-8 bytes inline plus a 4-bit size.
-- `LONG_STR` uses `{size, addr}` and stores byte payloads in string memory
-  (`pycore_string_mem`). `BINARY_OP (+)` concatenates string pairs; oversized
-  results trap with `MEM_FAULT`.
+- `SHORT_STR` uses 15 kind-1 bytes inline plus a 4-bit size (`nchars == nbytes`).
+- `LONG_STR` is a STRACC handle (`addr`, `nchars`, `hash`, `nbytes`, `kind`,
+  `flags`). Payload bytes live in the object heap, not a private string
+  bank. `BINARY_OP (+)` concatenates via the ALU if the result fits in a
+  SHORT_STR, otherwise STRACC `SA_CONCAT`. See [`string_accel.md`](string_accel.md).
 - `CONTROL` (UNINIT/NONE/NULL) and non-numeric tags trap on arithmetic unless
   a dedicated path handles them (e.g. string `+`, identity `IS_OP`).
 
@@ -375,33 +376,27 @@ completes. Taken branches are applied by asserting the fetch unit's
 
 ## Memory subsystem
 
-PyCore is a Harvard machine. The core is a memory master: instruction fetch and
-the MEM stage drive synchronous `req`/`ack` ports (`imem_*`, `dmem_*`) with a
-one-cycle access latency. There is no `imem_rdata` loopback into the core; memory
-banks live in `pycore_system.sv`.
+The hart presents two req/ack master ports (`imem_*`, `dmem_*`). Behind them
+is a modified-Harvard hierarchy: split L1s, a unified inclusive L2, and a
+parameterized RAM. The **port contract is unchanged** from the 1-cycle SRAM
+days — caches drop in underneath:
 
-Each bank (`pycore_mem_bank.sv`) is built from parameterized fixed-size SRAM
-tiles (`pycore_mem_block.sv`). `BLOCK_SHIFT` (log2 bytes per block, default 12 =
-4 KB) is the primary retarget knob. Byte addresses decode as:
+> A request is captured the cycle `req_i` is high. `ack_o` pulses one cycle
+> when ready, any latency later. At most one outstanding per master.
+> `PYCORE_CACHE_EN=0` (`+CACHE_EN=0`) is combinational pass-through.
 
-```text
-block_idx = addr[ADDR_WIDTH-1:BLOCK_SHIFT]
-block_off = addr[BLOCK_SHIFT-1:0]
-word_idx  = block_off >> log2(DATA_WIDTH/8)
-```
+Sizes, the P5 data map, the invalidation matrix, and the P8 skip are in
+[`memory_hierarchy.md`](memory_hierarchy.md). STRACC is its own dmem master
+([`string_accel.md`](string_accel.md)), active only in `S_STRACC`.
 
-- `pycore_imem.sv`: read-only, `IMEM_DATA_WIDTH = 64`. Each CPython two-byte
-  code unit is one 8-byte slot. `CACHE` and `EXTENDED_ARG` units remain present
-  in the image; fetch folds/skips them at execution time. Fetch drives `pc << 3`.
-- `pycore_dmem.sv`: read/write, `DMEM_DATA_WIDTH = 128`. Access is one 128-bit
-  value per transaction, 16-byte aligned in v1.
-
-Default memory map (all parameters in `pycore_defs.svh`): `ADDR_WIDTH = 32`,
-`BLOCK_SHIFT = 12`, `IMEM_BLOCK_COUNT = 16` (64 KB / 8192 instruction slots),
-`DMEM_BLOCK_COUNT = 32` (128 KB). Out-of-range or misaligned data accesses
-raise `MEM_FAULT` / `ADDR_ALIGN`. IMEM grew from 32 KB so boot images that
-seed the full `ROM_FIRMWARE_BUILTINS` set (plus large programs such as
-`allocator_list`) fit under `$readmemh`.
+- Fetch drives `pc << 3` into 64-bit slots. `CACHE` and `EXTENDED_ARG` stay
+  in the image; the fetch line buffer folds them. The xbar adds
+  `PYCORE_CODE_ADDR_BASE = 0x01000000` so code and data do not alias in L2.
+- Data port is 128-bit, 16-byte aligned, with `wstrb[15:0]`.
+- Default map (`pycore_defs.svh`): `ADDR_WIDTH = 32`, `BLOCK_SHIFT = 12`,
+  `IMEM_BLOCK_COUNT = 16` (64 KB ROM), `DMEM_BLOCK_COUNT = 256` (1 MB).
+  Heap `0x440`–`0xEFFFF`, frames `0xF1000`–`0xF8FFF`. Out-of-range or
+  misaligned data accesses raise `MEM_FAULT` / `ADDR_ALIGN`.
 
 PTR load/store reach data memory through two internal-only opcodes
 (`PY_OP_MEM_LOAD_PTR`, `PY_OP_MEM_STORE_PTR`) that are not part of the CPython
@@ -430,18 +425,18 @@ slot 1: { globals_base[30:0], saved_instance_addr[63:0],
 
 `globals_base_r` is saved and restored across CALL/RETURN so
 `_bi_exec_globals(code, dict)` can point a callee at a supplied `MUT_DICT`
-and the caller gets its original globals back. The address is 31 bits because
-dmem is 128 KB; `FRAME_ENTRY_BYTES` stays 32.
+and the caller gets its original globals back. `FRAME_ENTRY_BYTES` stays 32.
 
 Each RETURN pops slot 1 then slot 0, restores the caller's code object pointer,
 PC, TOS base, locals base, and globals base, then reloads the caller's `co_consts` and
 `co_names` from the code object before fetch resumes. Frame depth is bounded by
-the reserved frame-stack region (`0x1C000`-`0x1FFFF`).
+the reserved frame-stack region (`0xF1000`–`0xF8FFF`, 32 KB).
 
-> **Future work:** an earlier design study (`pycore/rtl/attic/pycore_frame_buffer.sv`)
-> explored a ring-buffer RF window with memory spill so call depth could scale
-> with dmem capacity rather than RF depth. That module is unintegrated; the
-> production path remains the simple `pycore_frame.sv` push/pop manager.
+> **P8 skipped.** L1D already hits 99.58% / 95.29% of frame-stack accesses on
+> `img_recursion` / `img_deep_callgraph`. `PYCORE_FTB_FRAMES` is a named
+> localparam only; see [`memory_hierarchy.md`](memory_hierarchy.md). An
+> unintegrated ring-buffer study remains in
+> `pycore/rtl/attic/pycore_frame_buffer.sv`.
 
 ## Image boot and code objects
 
@@ -656,9 +651,9 @@ size/stop[63:32], addr[31:0]`. Kinds 0/1/2/3 are LIST/TUPLE/RANGE/STR;
 kind 4 is `HEAP_ITER` (object protocol); kinds 5/6 are DICT/SET. LIST stores
 `size=0, addr=list_object`;
 TUPLE stores its immutable length and element-buffer address. RANGE stores
-`index=current, size=stop, aux=step, addr=0`. STR stores a UTF-8 byte offset
-in `index`, the byte length in `size`, and a byte-addressed `string_mem` base
-in `addr`; `aux` is zero. DICT stores an insertion-order index/length and a
+`index=current, size=stop, aux=step, addr=0`. STR stores a character index
+in `index`, the character count in `size`, and the STR object base in
+`addr`; `aux` holds kind. DICT stores an insertion-order index/length and a
 20-bit mutation-version snapshot. SET stores a hash-slot index/count and a
 20-bit `used` snapshot. `HEAP_ITER` stores `addr=iterator_object` with other
 fields zero.
@@ -718,23 +713,12 @@ clamps a crossing next value to `stop`, avoiding signed-32 wrap at the
 boundary. Empty ranges take the same redirect over `END_FOR` to `POP_ITER` as
 empty LIST/TUPLE iterators.
 
-`string_mem` is shared by `S_EXEC` and `S_CONTAINER`. Image LONG_STR constants
-occupy the static region `[0, 16384)` and GET_ITER aliases their immutable
-`{size, addr}` descriptor. SHORT_STR payloads cannot fit in the iterator
-socket, so GET_ITER snapshots their bytes into the shared runtime bump region
-`[16384, 65536)`. The iterator pins that `{size, addr}` snapshot; rebinding
-the source name cannot affect an active loop. Exec concatenation and SHORT_STR
-snapshots use the same bump pointer. The states are mutually exclusive, so
-writes are ordered by instruction execution and cannot conflict.
-
-STR `FOR_ITER` reads the UTF-8 lead byte, decodes a width of one through four,
-validates every continuation byte, and advances `index` by that width. The
-yielded value is a one-character SHORT_STR containing the original UTF-8
-bytes. This is character iteration, not byte iteration: `"é"` and `"😀"`
-each produce one value while advancing by two and four bytes respectively.
-Invalid lead bytes, truncated sequences, and invalid continuation bytes raise
-`PY_TRAP_TYPE`. Empty strings take the normal exhaustion redirect on their
-first `FOR_ITER`.
+STR `FOR_ITER` issues `SA_ITER_NEXT`: one character per step as a
+one-character SHORT_STR (kind-1) or a one-character LONG_STR for kind 2/4.
+Indexing `s[i]` is `SA_CHAR_AT` (O(1) for every kind). Empty strings take
+the normal exhaustion redirect on their first `FOR_ITER`. Invalid / truncated
+sequences are a construction-time concern — payloads are fixed-width units,
+not UTF-8.
 
 `HEAP_ITER` is live for custom `__iter__`/`__next__` objects. Dict views that
 are not plain DICT key iteration still go through that path. Generators
@@ -830,16 +814,15 @@ Hash = `pycore_dict_key_hash(tag, value) & (slot_count − 1)`:
 | `BOOL` | `value[0]` as 0/1 |
 | `FLOAT` | integer-valued / ±0 match int hashes; else bit-mix |
 | `SHORT_STR` | XOR of the four 32-bit words of `value[127:0]` |
-| `LONG_STR` | `value[31:0] ^ value[95:64]` (low 32 of addr XOR low 32 of size) |
+| `LONG_STR` | cached content hash in `value[95:64]` (FNV-1a over the payload) |
 
 Supported key tags: `INT`, `BOOL`, `FLOAT`, `SHORT_STR`, `LONG_STR`. Other key
 tags trap `PY_TRAP_TYPE`. Key-not-found traps `PY_TRAP_MEM_FAULT`.
 
-`LONG_STR` equality is descriptor equality (`{size, addr}`). This relies on
-**interning**: `StringHeapBuilder` deduplicates identical long-string constants
-so descriptor equality is string equality. Runtime-concatenated `LONG_STR`
-results (private to `pycore_exec` string memory, not interned) are not valid
-dict keys semantically; hardware cannot detect this.
+`LONG_STR` dict-key equality is the three-tier STRACC compare (identity,
+handle fast-reject, payload `SA_CMP`). Interning is the tier-1 fast path,
+not a correctness requirement — runtime concats are valid dict keys
+(`img_str_dict_key_runtime`). See [`string_accel.md`](string_accel.md).
 
 **Same-tag probe**, **cross-tag rich equality**, and **tombstone skip** stay
 on pycore. Before a new-key insert, load ≥ 2/3 (`used*3 >= slot_count*2`),
@@ -950,8 +933,10 @@ and `trap=` fields.
 
 ## Code memory regions
 
-The PC indexes an 8-byte code slot, and that slot space is split between a
-read-only ROM (the image) and a writable code RAM:
+The PC indexes an 8-byte code slot. That slot space is split between a
+read-only ROM (the image) and a writable code RAM. In the unified L2/RAM
+namespace the xbar adds `PYCORE_CODE_ADDR_BASE = 0x01000000` so those bytes
+never alias dmem:
 
 ```text
 slot 0x0000 .. 0x1FFF   CODE ROM   pycore_imem      READ_ONLY    64 KB
@@ -960,4 +945,5 @@ slot 0x2000 .. 0xA1FF   CODE RAM   pycore_code_ram  writable    256 KB
 
 `pycore_code_mem.sv` muxes the two and is a drop-in replacement for
 `pycore_imem`. Full details, sizing rationale, and the planned module/loader
-format are in [`code_loading.md`](code_loading.md).
+format are in [`code_loading.md`](code_loading.md). Hierarchy, port contract
+and invalidation: [`memory_hierarchy.md`](memory_hierarchy.md).

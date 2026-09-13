@@ -1,7 +1,10 @@
 # Memory-hierarchy study: what PyCore should cache, and why
 
-Findings report ahead of the L1I / L1D / L2 / RAM work. It answers the
-question that was asked alongside the hierarchy request: **would
+Findings report ahead of the L1I / L1D / L2 / RAM work. **§7 is the P9
+as-built measurement** — RTL counters vs this model, P8 skip, and whether
+the 8 KB L1D still holds with STRACC traffic.
+
+The original question:
 Python-specific cache structures — for code objects, frames, functions,
 constants, names — be a meaningful win, or is a conventional hierarchy
 enough?**
@@ -331,8 +334,9 @@ Ranked by measured cycles-per-gate, not by architectural tidiness.
   dict slot's four words from one fill, or two code fields from one line —
   chains shorten *and* shorten again. That is a control-path change, not a
   cache change, and it may be worth more than the cache.
-* **String memory** (`pycore_string_mem.sv`) is a third, separate bank outside
-  this study. Does it join the hierarchy or stay private?
+* **String memory** (`pycore_string_mem.sv`) — **closed in P5.** Strings are
+  heap objects behind STRACC; see [`string_accel.md`](../pycore/docs/string_accel.md)
+  and §7.
 * **Storage.** Nothing here constrains it; the natural shape is a block device
   behind the L2 with the module loader as its only client, which fits the
   BIOS/module-loader track already in `master_plan.md`.
@@ -343,5 +347,112 @@ Ranked by measured cycles-per-gate, not by architectural tidiness.
 python3.14 pycore/tools/memsim/experiments.py
 ```
 
-Prints E1–E8. Requires Python 3.14 (same gate as `image_from_source.py`); no
-Verilator.
+Prints E1–E9. Requires Python 3.14 (same gate as `image_from_source.py`).
+E9 also needs the shared `Vtb_container` (`tools/ensure_sim.py img`).
+
+---
+
+## 7. P9 — what the RTL actually did
+
+F1–F8 above are the **pre-hierarchy prediction** (metadata-only model, 1-cycle
+128 KB SRAM as the machine). This section is the as-built system: 8 KB L1s,
+128 KB L2, CODC, GIC, strings in the heap, STRACC. Re-run:
+
+```bash
+python3.14 pycore/tools/memsim/experiments.py
+```
+
+Eleven programs (original ten plus `bench_strings.py`). 64,534 dynamic
+opcodes. STRACC traffic in the mix is 206 accesses (0.3% of modelled dmem) —
+the long-string arm is small next to `bench_fib`, which is the point of F5's
+bimodality.
+
+### Model fixes
+
+* **GIC set index** is `namei[2:0]`, not Python `hash()`. With that, E4's
+  shipped 16/2 is **98.3%** (was 99.0% under salted `hash()`). On
+  `img_recursion` the model and RTL agree **exactly at 98.31%** (175/178).
+* **CODC set index** is `(addr >> 6)`, and the key is the code-object base,
+  not `addr & ~0xFF`. Shipped 4/2 is **98.7%** on the mix.
+* **STRACC** is a new `C_STR` class. Superinstructions
+  (`LOAD_FAST_BORROW_LOAD_FAST_BORROW`) have to be decoded or the string
+  shadow never sees a concat.
+
+### Measured vs predicted (`CACHE_EN=1`, `MEM_LATENCY=4`)
+
+| program | struct | model | RTL | Δpt |
+| --- | --- | ---: | ---: | ---: |
+| `img_recursion` | L1I | 99.80% | 98.87% | +0.9 |
+| `img_recursion` | L1D | 99.36% | 98.42% | +0.9 |
+| `img_recursion` | frame | 99.16% | **99.58%** | −0.4 |
+| `img_recursion` | CODC | 99.16% | 99.44% | −0.3 |
+| `img_recursion` | GIC | **98.31%** | **98.31%** | 0.0 |
+| `img_recursion` | cycles | — | 23675 | — |
+| `img_deep_callgraph` | L1I | 95.10% | 72.81% | +22.3 |
+| `img_deep_callgraph` | L1D | 92.98% | 96.01% | −3.0 |
+| `img_deep_callgraph` | frame | 90.71% | **95.29%** | −4.6 |
+| `img_deep_callgraph` | CODC | 11.43% | 26.09% | −14.7 |
+| `img_deep_callgraph` | GIC | 5.71% | 5.71% | 0.0 |
+| `img_deep_callgraph` | cycles | — | 14246 | — |
+| `img_globals_accum` | GIC | 40.00% | 40.00% | 0.0 |
+| `img_globals_accum` | cycles | — | 3844 | — |
+| `bench_strings` | L1D | 85.93% | 88.09% | −2.2 |
+| `bench_strings` | GIC | **50.00%** | **50.00%** | 0.0 |
+| `bench_strings` | cycles | — | 7950 | — |
+
+`img_recursion` is the load-bearing comparison: every structure within a
+point, GIC exact. That is the program whose metadata stream the caches were
+sized for.
+
+### Where they disagree, and why the model was not "fixed" by hiding heap
+
+* **L1I on short programs.** The model is slot-granular. RTL L1I sits
+  *behind* the P4b 64 B fetch buffer that folds `CACHE`/`EXTENDED_ARG`, so
+  the counter is "of the requests that missed the line buffer, how many hit
+  L1I". A handful of compulsory fills on `img_str_subscr_long` (8.33%) or
+  `img_globals_accum` (50%) is not a 90-point model bug — it is a different
+  statistic. On `img_recursion` the two converge. E9 also prints
+  `fetch-buf` (`buf_hit / (buf_hit+mem_req)`), which is the closer analogue
+  of "the instruction stream hit".
+* **L1D extra traffic.** The model is metadata + STRACC. RTL also caches
+  heap / iterator / boot reads. Direction of the gap depends on that extra
+  stream (sometimes RTL is *higher*, as on `img_deep_callgraph` 96.01% vs
+  92.98%). Do not "fix" this by omitting heap from the RTL counter.
+* **CODC 4/2 on a 10-function ring.** `img_deep_callgraph` has ~10 live
+  code objects and 4 cache entries. Both model and RTL report a low hit
+  rate; the percentage gap is a few fills on a small N. GIC on the same
+  program matches at 5.71%. The mix-wide 98.7% is still the sizing number,
+  because the working set of a loop nest is a handful of code objects (F6).
+
+### P8 skip, reconfirmed
+
+Frame-region L1D: `img_recursion` 1414/1420 = **99.58%**,
+`img_deep_callgraph` 263/276 = **95.29%**. Both above the 95% gate.
+`pycore_frame_buf.sv` is not built.
+
+### Did the 8 KB L1D sizing hold with strings? (F5)
+
+E3 at the shipped 8192 B / 64 B / 4-way over metadata+STRACC: **99.74%**
+(167 misses / 63,596). The 2 KB / 4-way knee is unchanged at 99.39%.
+`bench_strings` on RTL (concat / find / slice / `in` / index of ≥16-char
+payloads, 7950 cycles) hits L1D **88.09%** — a short cold-start, not a
+working-set overflow. STRACC is 0.3% of the eleven-program mix. **The 8 KB
+L1D still covers what it was sized for.**
+
+E7 as-built row (L1I 8K + L1D 8K + L2 128K, L2 hit = 1 cycle as shipped):
+CPO 7.19 / 7.25 / 7.39 at RAM 1 / 20 / 60, vs 7.23 / 7.30 / 7.43 for the
+study's 2K+16K hierarchy. `PYCORE_L2_HIT_CYCLES = 1` is a P2 local call
+(plan table is 8); L1D covers the hit path.
+
+Small-cache E3 numbers rose vs the pre-P5 study (512 B / 16 B: 64.9% →
+94.8%) because P1 line-alignment is now production and the P5 map moved.
+The 2 KB knee did not move.
+
+### Shipped vs study (F6 structures)
+
+| Structure | Study F6 | P9 model (RTL index) | RTL `img_recursion` |
+| --- | ---: | ---: | ---: |
+| CODC 4/2 | 98.6% | 98.7% mix / 99.16% recursion | 99.44% |
+| GIC 16/2 | 99.0% | 98.3% mix / 98.31% recursion | **98.31%** |
+| L1D 2 KB/4-way metadata | 99.4% | 99.39% | (shipped is 8 KB: 98.42% all traffic) |
+| Frame, 4-deep FTB | 86.8% (no L1D) | — | L1D 99.58% → skip FTB |

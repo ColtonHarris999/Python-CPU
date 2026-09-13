@@ -104,6 +104,63 @@ class TestMemsimRegression(unittest.TestCase):
                          "builtins dict table must start on a cache line")
         self.assertTrue(callable(L.set_heap_alignment))
 
+    def test_gic_index_matches_rtl_namei_lsbs(self) -> None:
+        """GIC set index is namei[2:0], not Python's salted hash()."""
+        from cachesim import DirectTagCache, gic_set_index  # noqa: PLC0415
+
+        self.assertEqual(gic_set_index(("code", 0)), 0)
+        self.assertEqual(gic_set_index(("code", 7)), 7)
+        self.assertEqual(gic_set_index(("code", 8)), 0)
+        gc = DirectTagCache(16, 2, index_fn=gic_set_index)
+        gc.access(("c", 1))
+        gc.access(("c", 1))
+        self.assertEqual(gc.hits, 1)
+        self.assertEqual(gc.misses, 1)
+
+    def test_string_bench_emits_stracc_accesses(self) -> None:
+        """Long-string concat/index/find must show up as C_STR, not disappear."""
+        from run import run_program  # noqa: PLC0415
+        import model as M  # noqa: PLC0415
+
+        r = run_program(MEMSIM / "bench" / "bench_strings.py")
+        n_str = sum(1 for c in r["_costs"] for a in c.accesses if a.cls == M.C_STR)
+        self.assertGreater(n_str, 20, "bench_strings should issue STRACC dmem")
+        for c in r["_costs"]:
+            for acc in c.accesses:
+                if acc.cls == M.C_STR:
+                    self.assertGreaterEqual(acc.addr, 0x440)
+
+    def test_str_access_class_exists(self) -> None:
+        """P9 models STRACC payload traffic as its own class."""
+        import model as M  # noqa: PLC0415
+
+        self.assertEqual(M.C_STR, "str")
+        self.assertTrue(any(a.cls != M.C_STR for c in self.result["_costs"]
+                            for a in c.accesses))
+
+    def test_rtl_counter_parser_round_trip(self) -> None:
+        """tb_container lines must parse without depending on Verilator."""
+        from rtl_measure import parse_counters  # noqa: PLC0415
+
+        sample = (
+            "PASS: img_recursion.hex — tag=1 value=0x37 cycles=23675\n"
+            "L1I hits=878 misses=10  L1D hits=1557 misses=25 wb=3 "
+            "frame_hits=1414 frame_misses=6\n"
+            "CODC hits=353 misses=2 fills=2 flushes=1\n"
+            "GIC hits=175 misses=178 fills=178 flushes=3\n"
+            "fetch mem_req=100 buf_hit=50\n"
+        )
+        c = parse_counters(sample)
+        self.assertTrue(c.passed)
+        self.assertEqual(c.cycles, 23675)
+        self.assertEqual(c.l1i_hits, 878)
+        self.assertEqual(c.l1d_misses, 25)
+        self.assertEqual(c.frame_hits, 1414)
+        self.assertAlmostEqual(c.frame_hit_rate, 1414 / 1420)
+        self.assertEqual(c.codc_fills, 2)
+        self.assertEqual(c.gic_hits, 175)
+        self.assertEqual(c.fetch_buf_hit, 50)
+
 
 if __name__ == "__main__":
     unittest.main()

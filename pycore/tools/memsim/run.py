@@ -43,6 +43,7 @@ def collect(path: pathlib.Path):
     if "managed_entry()" not in src.split("def managed_entry")[-1]:
         src += "\nmanaged_entry()\n"
     folded, lay = L.build_from_source(src, path.name)
+    folded_codes = {id(c): c for c in _code_tree(folded)}
     try:
         tr = trace_module(folded, {"__name__": "__main__"})
         remap = None
@@ -68,8 +69,7 @@ def collect(path: pathlib.Path):
         if s.callee_id:
             s.callee_id = remap.get(s.callee_id, s.callee_id) if remap else s.callee_id
         steps.append(s)
-    codes = dict(tr.codes)
-    costs = M.expand(lay, steps, codes, CACHES)
+    costs = M.expand(lay, steps, folded_codes, CACHES)
     return lay, steps, tr, costs
 
 
