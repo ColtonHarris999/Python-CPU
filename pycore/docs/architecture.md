@@ -13,6 +13,9 @@ exception **types** are tracked the same way in `pycore/docs/exception_support.m
 and `pycore.json` → `exceptions.types`. Remaining architecture work is
 [`planning/architecture_plan.md`](../../planning/architecture_plan.md);
 the timeline is [`planning/master_plan.md`](../../planning/master_plan.md).
+The memory hierarchy and STRACC as built are
+[`memory_hierarchy.md`](memory_hierarchy.md) and
+[`string_accel.md`](string_accel.md).
 
 Paper-oriented systems notes (LaTeX) for near-complete subsystems live under
 `docs/paper/` — start with `docs/paper/systems/call_fsm.tex` for the CALL FSM
