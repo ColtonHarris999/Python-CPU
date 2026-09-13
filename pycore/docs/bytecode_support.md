@@ -9,7 +9,8 @@ The analyzer (`pycore/tools/btanalyze`) reads that file. To check whether a
 user program fits the current subset, run `make help` / `make lint-file`
 (`pycore/tools/pycore_cli.py`). This document is the human notes — including
 semantic ceilings that remain even when JSON says `execute` (e.g. `COMPARE_OP`
-still TYPE-traps `LONG_STR` ordering).
+still TYPE-traps `LONG_STR` ordering; STRACC MAP/CLASSIFY above U+00FF is a
+firmware trap, not a silent wrong answer).
 
 **Exception types** are tracked separately, the same way: machine catalog in
 `pycore.json` → `exceptions.types`, human table in
@@ -72,7 +73,7 @@ JSON `plan_track` on an opcode names the exceptions-plan track that lifts it
 | `MAP_ADD`                               | `dict[key]=value` inside a dict comprehension; value at TOS, key at TOS-1, dict at `TOS-2-oparg`; pop 2, leave dict. | Single-pair pycore insert reusing the `STORE_DICT` probe/upsert path; new key at load ≥ 2/3 → `DICT_GROW` (11) via excore. An `OBJECT` key sets the dict handle's contamination bit (written back to its RF slot). compile() emits `MAP_ADD` in dict comprehensions (with table/`RERAISE` cleanup — Option B below); `img_map_add` still drives it via the `MAP_ADD_SEQ` inject. |
 | `TO_BOOL`                               | Converts TOS to exact bool for branch helpers.                                              | `CONT_TO_BOOL`: `None` → False; `INT`/`BOOL`/`FLOAT`/`SHORT_STR`/`LONG_STR` as before (corrupt short size >15 → `TYPE`); `TUPLE` / inline `RANGE` by length≠0; `LIST`/`DICT`/`SET` via header length/used. Other tags (incl. `OBJECT` without protocol) → `TYPE`. Layer D: `img_to_bool`, `img_to_bool_str`, `img_to_bool_none`, `img_to_bool_containers` (legacy `img_to_bool_type_trap` / `img_to_bool_list_trap` are positive None/list cases). |
 | `FORMAT_SIMPLE`                         | `value.__format__("")` for f-strings.                                                       | STR identity; INT → decimal SHORT_STR (≤15 chars); BOOL/None → `"True"`/`"False"`/`"None"`. Other tags → `TYPE`. Layer D: `img_format_simple`. |
-| `COMPARE_OP`                            | Compares TOS-2 and TOS-1 using the packed CPython 3.14 `oparg`, replacing both with `BOOL`. | Selectors `0..5`; native `INT`/`BOOL`/`FLOAT` plus same-tag `SHORT_STR` equality **and** lexicographic ordering; same-tag `LONG_STR` equality (descriptor). `LONG_STR` ordering and other tags → `TYPE`. Layer D: `img_compare_op`, `img_str_eq`, `img_str_lt`, `img_sorted_str`. |
+| `COMPARE_OP`                            | Compares TOS-2 and TOS-1 using the packed CPython 3.14 `oparg`, replacing both with `BOOL`. | Selectors `0..5`; native `INT`/`BOOL`/`FLOAT` plus same-tag `SHORT_STR` equality **and** lexicographic ordering; same-tag `LONG_STR` equality of identical handles (interned constants). `LONG_STR` ordering and other tags → `TYPE`. Dict/set probes use the three-tier STRACC compare (`SA_CMP`) so runtime concats are valid keys. Layer D: `img_compare_op`, `img_str_eq`, `img_str_lt`, `img_sorted_str`. |
 | `UNARY_NOT`                             | Invert TOS bool (`not` after `TO_BOOL`).                                                    | `BOOL` bit invert in place; non-`BOOL` → `PY_TRAP_TYPE`. Layer D: `img_unary_not`.                                                                                                                                                                                                                                                                                                                                                         |
 | `IS_OP`                                 | `is` / `is not` (oparg 0/1).                                                                | Full RF-entry identity → `BOOL`; all tags; no trap. Layer D: `img_is_op`.                                                                                                                                                                                                                                                                                                                                                                  |
 | `NOT_TAKEN`                             | CPython branch prediction/adaptation marker.                                                | Treated as a no-op marker.                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -96,9 +97,9 @@ JSON `plan_track` on an opcode names the exceptions-plan track that lifts it
 | `BUILD_TUPLE`                           | Pops `count` values, allocates a tuple (no header), pushes a `TUPLE` handle `{size, addr}`. | Opcode 51 (resolved from CPython 3.14). Same index rules as LIST for `NB_SUBSCR`.                                                                                                                                                                                                                                                                                                                                                          |
 | `BUILD_MAP`                             | Pops `2*count` items (interleaved key/value), allocates a dict, pushes `MUT_COLLEC`/`MUT_DICT`. | Open-addressed linear-probe insert. Keys: `INT`, `BOOL`, `FLOAT`, `SHORT_STR`, `LONG_STR`, `OBJECT` (identity; sets contamination bit). Slot count = `next_pow2(max(4, 2*count))`. Stable 48B object + insertion-order sidecar + relocatable table.                                                                                                                                                                                                                                |
 | `BUILD_SET`                             | Pops `count` values, allocates a set, pushes a `MUT_COLLEC`/`MUT_SET` handle.               | Open-addressed element table (32B/slot). Same hash/rich-eq key rules as dict (no values). Deleted slots use the dedicated `PY_TAG_TOMBSTONE`. Images: `img_set_*`.                                                                                                                                                                                                                                                                                              |
-| `BINARY_OP` with oparg `NB_SUBSCR` (26) | Subscript read `x[k]`.                                                                      | `LIST`/`TUPLE`: unsigned bounds-checked index read. `DICT`: linear-probe lookup; missing key traps `PY_TRAP_MEM_FAULT`. Dict keys may be `INT`/`BOOL`/`FLOAT`/`SHORT_STR`/`LONG_STR`; other key tags trap `PY_TRAP_TYPE`. `SHORT_STR`/`LONG_STR` (`CONT_SUBSCR_STR`): walks one UTF-8 **character** per cycle from the start, so `s[i]` agrees with `for c in s` (cost is O(i), like STR `FOR_ITER`); returns a one-character `SHORT_STR`. Index past the last character traps `PY_TRAP_MEM_FAULT`; malformed UTF-8 traps `PY_TRAP_TYPE`. Layer D: `img_str_subscr`, `img_str_subscr_long`, `img_str_subscr_unicode`, `img_str_subscr_loop`, `img_str_subscr_oob_trap`, `img_str_subscr_char_oob_trap`. |
+| `BINARY_OP` with oparg `NB_SUBSCR` (26) | Subscript read `x[k]`.                                                                      | `LIST`/`TUPLE`: unsigned bounds-checked index read. `DICT`: linear-probe lookup; missing key traps `PY_TRAP_MEM_FAULT`. Dict keys may be `INT`/`BOOL`/`FLOAT`/`SHORT_STR`/`LONG_STR`; other key tags trap `PY_TRAP_TYPE`. `SHORT_STR`/`LONG_STR` is STRACC `SA_CHAR_AT`: O(1) index by character for every kind, returns a one-character string (SHORT if kind-1). Index past the last character traps `PY_TRAP_MEM_FAULT`. Layer D: `img_str_subscr`, `img_str_subscr_long`, `img_str_subscr_unicode`, `img_str_subscr_loop`, `img_str_subscr_oob_trap`, `img_str_subscr_char_oob_trap`. |
 | `STORE_SUBSCR`                          | Subscript write `x[k] = v`.                                                                 | `LIST`: bounds-checked index write. `DICT`: same-tag / rich-eq upsert on pycore (tombstone reuse); new-key insert at load ≥ 2/3 → `DICT_GROW` (11). `TUPLE`/`SET`: `TYPE`. Pops key, container, value (3 items). Prefer `d={}` + stores or locals for `BUILD_MAP` (CPython 3.14 may emit `BUILD_CONST_KEY_MAP` for constant `{k:v}`).                                                                                                      |
-| `BINARY_SLICE`                          | Slice read `x[a:b]` (stack `subject, start, stop`).                                          | Strings only (`CONT_SLICE_STR`). Bounds are **character** indices, matching `s[i]` and `for c in s`; one UTF-8 walk resolves them to byte offsets, so cost is O(stop). Out-of-range bounds **clamp** like CPython (`"abc"[1:99] == "bc"`), `stop <= start` gives `""`, and omitted bounds arrive as `None`. Result ≤15 bytes is an inline `SHORT_STR`, longer goes to `string_mem` as `LONG_STR` via the slice port. Negative bounds trap `PY_TRAP_TYPE` (deviation 3); LIST/TUPLE subjects trap `PY_TRAP_TYPE` (not implemented). All-literal slices (`s[1:3]`, `s[:]`) are folded by CPython to a `slice` constant + `NB_SUBSCR`; `image_from_source.fold_slice_constants_one` rewrites that to `BINARY_SLICE` (step must be `None`/1). Layer D: `img_slice_str*`, `img_slice_str_const`, `img_slice_damerau`, `img_slice_list_trap`. |
+| `BINARY_SLICE`                          | Slice read `x[a:b]` (stack `subject, start, stop`).                                          | Strings only (`SA_SLICE`). Bounds are **character** indices, matching `s[i]` and `for c in s`; cost is O(result) copies, not an UTF-8 walk. Out-of-range bounds **clamp** like CPython (`"abc"[1:99] == "bc"`), `stop <= start` gives `""`, and omitted bounds arrive as `None`. Result ≤15 kind-1 characters is `SHORT_STR`, otherwise a heap LONG_STR. Negative bounds trap `PY_TRAP_TYPE` (deviation 3); LIST/TUPLE subjects trap `PY_TRAP_TYPE` (not implemented). All-literal slices (`s[1:3]`, `s[:]`) are folded by CPython to a `slice` constant + `NB_SUBSCR`; `image_from_source.fold_slice_constants_one` rewrites that to `BINARY_SLICE` (step must be `None`/1). Layer D: `img_slice_str*`, `img_slice_str_const`, `img_slice_damerau`, `img_slice_list_trap`. |
 | `COPY`                                  | Duplicates the stack entry at depth `oparg`, pushing a copy to TOS.                         | Clone of the `LOAD_FAST` datapath: reads RF slot `tos_index - oparg` and pushes the `{tag, value}` entry verbatim. Tag-agnostic, no trap. Value-stack-overflow is not detected (see deviation 10).                                                                                                                                                                                                                                         |
 | `SWAP`                                  | Swaps TOS with the stack entry at depth `oparg`.                                            | Two-beat `S_CONTAINER` RF exchange (`CONT_LFB_PAIR` clone): writes deep→TOS then TOS→deep; tag-agnostic, net stack 0, no trap.                                                                                                                                                                                                                                                                                                             |
 
@@ -153,11 +154,13 @@ this milestone:
    raise the memory-fault trap. `CONTAINS_OP` misses push `False` instead.
 3. **Negative list/tuple indices trap.** Bounds checks are unsigned; negative
   INT indices do not wrap to `size + idx`.
-4. **Non-interned runtime strings as dict keys.** `LONG_STR` equality is
-  descriptor (`{size, addr}`) equality and relies on tooling interning.
-   Runtime-concatenated long strings live in the exec unit's private
-   `string_mem` and are not interned; using them as dict keys is not
-   semantically valid. Hardware cannot detect this.
+4. **Runtime strings as dict keys work.** LONG_STR dict/set equality is the
+   three-tier STRACC compare (identity / handle reject / `SA_CMP` payload).
+   Interning is the tier-1 fast path, not a correctness requirement.
+   `d[a + b]` hits (`img_str_dict_key_runtime`). `COMPARE_OP ==` on two
+   distinct LONG objects is still handle identity — interned constants that
+   share a handle compare equal (`img_str_eq`); a runtime concat vs an
+   interned copy of the same text does not, unless they are the same object.
 5. **Dict grow via excore.** Load ≥ 2/3 (or empty table / no free slot) before
   a new-key insert raises `DICT_GROW` (11). With `EXCORE_EN=1` excore
    reallocates the table, rehashes, and completes the STORE; without excore
@@ -203,13 +206,11 @@ this milestone:
    traps `PY_TRAP_TYPE` rather than counting from the end (the same unsigned
    rule as deviation 3 for indices). So `s[1:99]` works and `s[1:-1]` traps.
    Coverage: `img_slice_str_clamp`, `img_slice_str_neg_trap`.
-15. **String length is bytes, indexing and iteration are characters.** `BI_LEN`
-  returns the UTF-8 **byte** count from the `SHORT_STR` size nibble or the
-   `LONG_STR` descriptor, while `s[i]` and `for c in s` both step whole
-   **characters**. The two agree for ASCII. For non-ASCII, `len(s)` overstates
-   the character count, so `range(len(s))` walks past the last character and
-   `s[i]` traps `PY_TRAP_MEM_FAULT` instead of silently returning a partial
-   continuation byte. Coverage: `img_str_subscr_char_oob_trap`.
+15. **`len(s)` is characters, matching index and iteration.** `BI_LEN` reads
+  `nchars` from the SHORT_STR size nibble or the LONG_STR handle. `s[i]`
+   and `for c in s` step code units (`SA_CHAR_AT` / `SA_ITER_NEXT`), so
+   `range(len(s))` is in bounds for every kind. The old UTF-8-bytes-vs-
+   characters split is gone with fixed-width units.
 16. **Exceptions propagate across ordinary Python frames.** On an exception-
   table miss, `RAISE_VARARGS` preserves the existing `OBK_EXCEPTION`, pops the
    frame through `S_RETURN`, and walks the caller's table at the CALL site.
@@ -226,10 +227,16 @@ this milestone:
   INT fast path and existing INT/BOOL-to-FLOAT promotion. Integers outside
    that range and mixed large-INT/FLOAT precision boundaries do not provide
    CPython arbitrary-precision comparison semantics. Same-tag `SHORT_STR`
-   supports equality and lexicographic (UTF-8 byte) ordering. Same-tag
-   `LONG_STR` supports descriptor equality only; `LONG_STR` ordering,
-   cross-tag string compares, `None`, containers, and user-defined rich
-   comparison still trap `PY_TRAP_TYPE`.
+   supports equality and lexicographic ordering. Same-tag `LONG_STR`
+   supports handle-identity equality; `LONG_STR` ordering, `None`,
+   containers, and user-defined rich comparison still trap `PY_TRAP_TYPE`.
+   Mixed SHORT/LONG `==` is always false (canonical invariant).
+18. **STRACC Unicode ceiling (performance, not correctness).** Structural
+   string ops are exact for all of Unicode. Case mapping and character
+   classification (`upper`/`lower`/`is*` and friends) run in hardware for
+   Latin-1 (U+0000–U+00FF). Code points above U+00FF raise a recoverable
+   firmware trap — slower, never silently wrong. `isidentifier` is
+   firmware-only in v1. See [`string_accel.md`](string_accel.md) §Unicode.
 
 
 

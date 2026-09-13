@@ -91,7 +91,8 @@ future ROM compiler (`git submodule update --init`).
 
 **Ceilings:** missing dict keys and unbound locals still halt with a hardware
 trap rather than a catchable Python exception. `int` is 64-bit, not
-arbitrary-precision.
+arbitrary-precision. STRACC case/classify above U+00FF is a recoverable
+firmware trap (performance, still correct).
 
 The linter is the gate: if `lint` is OK, image-boot will accept the file. Hardware
 may still trap on a semantic ceiling the linter cannot see. Details:
@@ -101,7 +102,9 @@ may still trap on a semantic ceiling the linter cannot see. Details:
 
 96-entry RF: `RF[0..31]` frame locals, `RF[32..95]` operand stack. Entries are
 `{ tag[3:0], value[127:0] }`. Call frames are a dmem push/pop stack
-(`pycore/rtl/pycore_frame.sv`).
+(`pycore/rtl/pycore_frame.sv`). Behind `imem_*` / `dmem_*` is an 8 KB L1I,
+8 KB L1D, 128 KB L2 and parameterized RAM; see
+`pycore/docs/memory_hierarchy.md`.
 
 | Tag | Name | Notes |
 | --- | --- | --- |
@@ -112,8 +115,8 @@ may still trap on a semantic ceiling the linter cannot see. Details:
 | `0100` | BOOL | `value[0]` |
 | `0101` | ITER | hybrid iterator |
 | `0110` | TUPLE | `{size, addr}` |
-| `0111` | SHORT_STR | inline ≤15 UTF-8 bytes |
-| `1000` | LONG_STR | `{len, addr}` |
+| `0111` | SHORT_STR | inline ≤15 kind-1 bytes |
+| `1000` | LONG_STR | STRACC handle `{flags, kind, nbytes, hash, nchars, addr}` |
 | `1001` | MUT_COLLEC | LIST / DICT / SET / BYTEARRAY via kind nibble |
 | `1010` | OBJECT | general heap object |
 | `1011` | RANGE | inline i32 triple or tuple pointer |

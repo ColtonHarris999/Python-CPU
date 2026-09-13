@@ -27,8 +27,7 @@ Outputs:
 - instruction memory image (`program.hex`) -- one 64-bit slot per raw CPython
   two-byte code unit
 - data memory image (`dmem.hex`) -- tagged object graph, including code objects,
-  tuples, globals dict, and the boot record
-- string memory image (`string_mem.hex`) -- long string payload bytes
+  tuples, globals dict, interned STR objects, and the boot record
 - metadata (`image.meta`) -- currently `HEAP_INIT_PTR` and optional expected
   result fields used by tests
 
@@ -45,7 +44,7 @@ Steps:
    same order. `CACHE` and `EXTENDED_ARG` stay in the image.
 5. **Serialize object graph**: lowers `co_consts`, `co_names`, nested code
    objects, scalar constants, tuple constants, the module globals dict, and
-   interned long strings into tagged slots.
+   interned STR objects into tagged slots.
 6. **Write boot record**: stores the module `CODE_OBJECT` handle, globals
    dict handle, and builtins dict handle at `0x3e0` (96 bytes total).
 7. **Export metadata**: reports `HEAP_INIT_PTR` so runtime heap allocation starts
