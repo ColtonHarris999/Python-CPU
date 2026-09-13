@@ -43,6 +43,22 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 
 `range` values use the dedicated `PY_TAG_RANGE` tag (not an OBJECT kind).
 
+## STR objects
+
+Strings are **not** `PY_TAG_OBJECT`. `SHORT_STR` / `LONG_STR` are first-class
+tags. LONG payloads are ordinary heap objects allocated by
+`HeapImageBuilder.alloc_str` (image) and STRACC (runtime):
+
+```
+obj + 0    header  { flags, kind, nbytes, hash, nchars, reserved }
+obj + 16   payload code units, padded to 16 B
+```
+
+The LONG_STR *handle* in the RF carries the same fields plus `addr`, so
+`len` / `hash` / `bool` never read the header. Canonical form: SHORT_STR
+iff kind-1 and `nchars <= 15`. Full layout, equality tiers, and the
+Unicode ceiling: [`string_accel.md`](string_accel.md).
+
 ### Builtin ids (`PY_BI_*` / `BI_*`)
 
 | Id | Name | Notes |
@@ -57,7 +73,7 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | 7 | `LEN` | Tag fast paths (LIST/TUPLE/DICT/SET/STR/inline RANGE); INSTANCE `__len__` via own `tp_dict` |
 | 8 | `RANGE` | Emits `PY_TAG_RANGE` |
 | 9 | `SET` | Native empty / from-list-or-tuple constructor |
-| 10 | `ORD` | One-character STR → INT code point. Always SHORT_STR (any string ≤15 bytes is), so the UTF-8 decode reads the inline payload — one cycle, no `string_mem` access. Non-STR / not exactly one character / malformed UTF-8 → `TYPE` |
+| 10 | `ORD` | One-character STR → INT code point. SHORT_STR (kind-1, `nchars==1`) is a handle decode; LONG_STR is STRACC `SA_ORD`. Non-STR / not exactly one character → `TYPE` |
 | 11 | `CHR` | INT code point → one-character SHORT_STR (1–4 UTF-8 bytes inline). Rejects > U+10FFFF, negatives, and lone surrogates (`TYPE`) |
 | 12 | `HEAP_MARK` | Zero-arg; returns `heap_ptr_r` as `INT` |
 | 13 | `HEAP_RELEASE` | Restores `heap_ptr_r`. Mark must be within `[HEAP_INIT_PTR, heap_ptr_r]`, else `MEM_FAULT` |
@@ -144,7 +160,7 @@ creation until frame-local namespaces exist.
 1. Resolve `co_names[namei]` (`namei = oparg >> 1`).
 2. Native receivers (`LIST` / `SET` / `DICT` / `SHORT_STR` / `LONG_STR`):
    look up the name in the 16-entry sidecar table at
-   `PYCORE_NATIVE_METHOD_TABLE_ADDR` (`0x1BDE0`). A hit is a pre-seeded
+   `PYCORE_NATIVE_METHOD_TABLE_ADDR` (`0xF0DE0`). A hit is a pre-seeded
    `CODE_OBJECT`; writeback is the ordinary method form (`method_flag=1`
    pushes `[func, self]` with no allocation; `method_flag=0` allocates
    `OBK_BOUND_METHOD`). Miss → `PY_TRAP_ATTR_ERROR` (15).

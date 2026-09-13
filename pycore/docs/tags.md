@@ -13,8 +13,8 @@ the value field for `CONTROL` and `MUT_COLLEC`.
 | `0100` | BOOL | truth value in `value[0]` |
 | `0101` | ITER | hybrid iterator payload (see architecture.md) |
 | `0110` | TUPLE | `{ size[63:0], addr[63:0] }` |
-| `0111` | SHORT_STR | inline ≤15 UTF-8 bytes |
-| `1000` | LONG_STR | `{ len[127:64], addr[63:0] }` |
+| `0111` | SHORT_STR | inline ≤15 kind-1 bytes |
+| `1000` | LONG_STR | STRACC handle: `addr[31:0]`, `nchars[63:32]`, `hash[95:64]`, `nbytes[119:96]`, `kind[121:120]`, `flags[127:122]`. See [`string_accel.md`](string_accel.md). |
 | `1001` | MUT_COLLEC | kind `[127:124]`: LIST=1, DICT=2, SET=3, BYTEARRAY=4; addr `[63:0]`; contamination bit `[123]` (see below) |
 | `1010` | OBJECT | general heap object (`ob_head` kinds) |
 | `1011` | RANGE | mode bit `value[127]`: 0 = inline i32 start/stop/step in `[95:0]`; 1 = pointer to a 3-tuple at `[63:0]` |

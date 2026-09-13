@@ -92,7 +92,7 @@ These limit every firmware builtin:
 | `object` | Return a new featureless object; base for all classes. | blocked | No `OBK_INSTANCE` alloc without a class body. |
 | `oct` | Convert an integer to an octal string prefixed with '0o'. | in ROM | String concat digit loop. |
 | `open` | Open a file and return a corresponding file object. | blocked | See `open.md`. |
-| `ord` | Return the Unicode code point for a one-character string. | native | `BI_ORD` (id 10): one-character SHORT_STR → INT. A one-character string is always SHORT_STR, so the decode is inline (no `string_mem` read). Non-STR / multi-character → TYPE trap. |
+| `ord` | Return the Unicode code point for a one-character string. | native | `BI_ORD` (id 10): one-character STR → INT. SHORT is a handle decode; LONG is STRACC `SA_ORD`. Non-STR / multi-character → TYPE trap. |
 | `pow` | Return base**exp, optionally modulo mod. | in ROM | Binary modexp for non-neg exp; neg exp+mod → `raise`. |
 | `print` | Print objects to a stream (default stdout), separated by sep and ended by end. | in ROM | ROM `*args`/`sep=`/`end=` → `_bi_print` (`BI_PRINT` → `CONSOLE_TX`). LONG_STR Phase 2. |
 | `property` | Return a property attribute with optional getter/setter/deleter. | blocked | See `property.md`. |

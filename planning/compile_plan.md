@@ -192,6 +192,12 @@ Until the ROM compiler exists, images still use CPython `compile()` in
 oracle-built images. Slice-const folding (literal `s[1:]` → `BINARY_SLICE`)
 is host tooling, not firmware; see [`bytecode_support.md`](bytecode_support.md).
 
+On-device `compile()` allocates string constants through
+`HeapImageBuilder.alloc_str` — the same helper the image builder uses —
+so a compiled-on-device module and an image-built module produce
+byte-identical string objects (same header packing, same intern key
+`(kind, payload)`).
+
 ## Historical docs
 
 Folded into this file and superseded:

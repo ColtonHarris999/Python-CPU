@@ -29,8 +29,7 @@ def managed_entry():
     found = s.find("012")
     n = n + found
     extra = a + b
-    if extra == "abcdefghijklmnopqrstuvwxyz012345":
-        n = n + 100
+    n = n + len(extra)
     return n
 
 

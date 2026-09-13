@@ -505,6 +505,22 @@ def e9(results, *, run_hw: bool = True):
             rows.append((src.stem, name, m, hw, delta))
         if rtl is not None:
             print(f"  {src.stem:<22}{'cycles':<10}{'':>8}{rtl.cycles:8d}")
+            freq = rtl.fetch_mem_req + rtl.fetch_buf_hit
+            if freq:
+                print(f"  {src.stem:<22}{'fetch-buf':<10}{'':>8}"
+                      f"{100*rtl.fetch_buf_hit/freq:7.2f}%  "
+                      f"(buf {rtl.fetch_buf_hit} / mem {rtl.fetch_mem_req})")
+    print("\n  How to read the gaps:")
+    print("  * L1I: the model is slot-granular; RTL L1I sits behind the P4b")
+    print("    64 B fetch buffer that folds CACHE/EXTENDED_ARG. Long-running")
+    print("    programs (img_recursion) converge; short ones are dominated by")
+    print("    a handful of compulsory line fills. fetch-buf is the closer")
+    print("    analogue of 'the instruction stream hit'.")
+    print("  * L1D: the model is metadata + STRACC only. RTL also caches heap")
+    print("    / iterator / excore traffic, so the rates need not match.")
+    print("  * GIC uses the RTL namei[2:0] index; img_recursion matches")
+    print("    exactly. CODC 4/2 thrashes a 10-function ring")
+    print("    (img_deep_callgraph) — that is the working set, not a bug.")
     print("\n  P8 FTB skipped: L1D frame-region hit rate after P3 is above the")
     print("  95% gate on img_recursion / img_deep_callgraph (reconfirmed here).")
     return rows
