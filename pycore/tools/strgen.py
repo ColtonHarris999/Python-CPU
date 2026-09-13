@@ -45,6 +45,7 @@ from encoding import (
     SA_SLICE,
     SA_STARTSWITH,
     SA_JOIN,
+    SA_REPLACE,
     SA_TRIM,
     SA_CLASSIFY,
     SA_MAP,
@@ -71,6 +72,8 @@ from encoding import (
     SA_IS_UPPER,
     SA_IS_PRINTABLE,
     SA_IS_TITLE,
+    SA_IS_DECIMAL,
+    SA_IS_NUMERIC,
     SA_MAP_UPPER,
     SA_MAP_LOWER,
     SA_MAP_SWAPCASE,
@@ -108,6 +111,10 @@ CORPUS = [
     "\n\t ",
     "aaa",
     "ab" * 20,
+    "123",
+    "²",
+    "½",
+    "12a",
 ]
 
 
@@ -162,7 +169,12 @@ def classify(entry: tuple[int, int]) -> dict:
     return {"tag": tag, "value": value}
 
 
-def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
+def run_case(
+    rng: random.Random,
+    accel: StrAccel,
+    heap: int,
+    seen: set[tuple[int, int]] | None = None,
+) -> int:
     """Run one random case. Returns the updated heap pointer."""
     a_s = rng.choice(CORPUS)
     b_s = rng.choice(CORPUS)
@@ -184,12 +196,15 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
             SA_AFFIX,
             SA_EXPANDTABS,
             SA_SPLIT,
+            SA_REPLACE,
+            SA_JOIN,
             SA_ORD,
             SA_CHR,
         ]
     )
     a_ent, heap = accel.put(a_s, heap)
     b_ent, heap = accel.put(b_s, heap)
+    var = 0
 
     if op == SA_CONCAT:
         r = accel.exec(SA_CONCAT, 0, a_ent, b_ent, _none(), heap)
@@ -304,6 +319,8 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
                 SA_IS_UPPER,
                 SA_IS_PRINTABLE,
                 SA_IS_TITLE,
+                SA_IS_DECIMAL,
+                SA_IS_NUMERIC,
             ]
         )
         r = accel.exec(SA_CLASSIFY, var, a_ent, _none(), _none(), heap)
@@ -321,6 +338,8 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
                 SA_IS_UPPER: str.isupper,
                 SA_IS_PRINTABLE: str.isprintable,
                 SA_IS_TITLE: str.istitle,
+                SA_IS_DECIMAL: str.isdecimal,
+                SA_IS_NUMERIC: str.isnumeric,
             }[var]
             assert bool(r.value) == meth(a_s), (a_s, var, r.value)
     elif op == SA_MAP:
@@ -422,6 +441,33 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
                 exp = a_s.rsplit(None, mx) if var == SA_SPLIT_REV else a_s.split(None, mx)
                 assert got == exp, (a_s, mx, var, got, exp)
                 heap = r.heap_ptr
+    elif op == SA_REPLACE:
+        c_s = rng.choice(CORPUS)
+        c_ent, heap = accel.put(c_s, heap)
+        r = accel.exec(SA_REPLACE, 0, a_ent, b_ent, c_ent, heap)
+        assert not r.trap
+        got = model_text(accel, r.entry)
+        assert got == a_s.replace(b_s, c_s), (a_s, b_s, c_s, got)
+        heap = r.heap_ptr
+    elif op == SA_JOIN:
+        if rng.choice([False, True]):
+            r = accel.exec(SA_JOIN, 0, a_ent, b_ent, _none(), heap)
+            assert not r.trap
+            got = model_text(accel, r.entry)
+            assert got == a_s.join(b_s), (a_s, b_s, got)
+            heap = r.heap_ptr
+        else:
+            parts = [rng.choice(CORPUS) for _ in range(rng.choice([0, 1, 2, 3, 4]))]
+            ents: list[tuple[int, int]] = []
+            for part in parts:
+                ent, heap = accel.put(part, heap)
+                ents.append(ent)
+            lst, heap = accel.plant_list(ents, heap)
+            r = accel.exec(SA_JOIN, 0, a_ent, lst, _none(), heap)
+            assert not r.trap
+            got = model_text(accel, r.entry)
+            assert got == a_s.join(parts), (a_s, parts, got)
+            heap = r.heap_ptr
     elif op == SA_ORD:
         r = accel.exec(SA_ORD, 0, a_ent, _none(), _none(), heap)
         if len(a_s) != 1:
@@ -437,6 +483,8 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
             assert not r.trap
             assert model_text(accel, r.entry) == chr(cp), (cp,)
             heap = r.heap_ptr
+    if seen is not None:
+        seen.add((op, var))
     return heap
 
 
@@ -459,6 +507,51 @@ def directed_kind_pairs(accel: StrAccel, heap: int) -> int:
     return heap
 
 
+def directed_replace_join_classify(accel: StrAccel, heap: int) -> int:
+    """Always-on coverage for ops the random sweep historically skipped."""
+    hay_s, old_s, new_s = "banana", "ana", "XY"
+    hay, heap = accel.put(hay_s, heap)
+    old, heap = accel.put(old_s, heap)
+    new, heap = accel.put(new_s, heap)
+    r = accel.exec(SA_REPLACE, 0, hay, old, new, heap)
+    assert model_text(accel, r.entry) == hay_s.replace(old_s, new_s)
+    heap = r.heap_ptr
+    empty, heap = accel.put("", heap)
+    dash, heap = accel.put("-", heap)
+    r = accel.exec(SA_REPLACE, 0, hay, empty, dash, heap)
+    assert model_text(accel, r.entry) == hay_s.replace("", "-")
+    heap = r.heap_ptr
+
+    sep, heap = accel.put("-", heap)
+    ab, heap = accel.put("ab", heap)
+    r = accel.exec(SA_JOIN, 0, sep, ab, _none(), heap)
+    assert model_text(accel, r.entry) == "-".join("ab")
+    heap = r.heap_ptr
+    a, heap = accel.put("a", heap)
+    b, heap = accel.put("b", heap)
+    lst, heap = accel.plant_list([a, b], heap)
+    r = accel.exec(SA_JOIN, 0, sep, lst, _none(), heap)
+    assert model_text(accel, r.entry) == "-".join(["a", "b"])
+    heap = r.heap_ptr
+    empty_list, heap = accel.plant_list([], heap)
+    r = accel.exec(SA_JOIN, 0, sep, empty_list, _none(), heap)
+    assert model_text(accel, r.entry) == ""
+    heap = r.heap_ptr
+
+    for s, var, meth in (
+        ("123", SA_IS_DECIMAL, str.isdecimal),
+        ("²", SA_IS_DECIMAL, str.isdecimal),
+        ("½", SA_IS_NUMERIC, str.isnumeric),
+        ("²", SA_IS_NUMERIC, str.isnumeric),
+        ("12a", SA_IS_NUMERIC, str.isnumeric),
+    ):
+        ent, heap = accel.put(s, heap)
+        r = accel.exec(SA_CLASSIFY, var, ent, _none(), _none(), heap)
+        assert not r.trap
+        assert bool(r.value) == meth(s), (s, var, r.value)
+    return heap
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--seed", type=int, default=1)
@@ -468,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
     accel = StrAccel()
     heap = HEAP_BASE
     heap = directed_kind_pairs(accel, heap)
+    heap = directed_replace_join_classify(accel, heap)
     for i in range(args.n):
         try:
             heap = run_case(rng, accel, heap)
