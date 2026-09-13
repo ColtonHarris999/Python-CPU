@@ -71,6 +71,9 @@ from encoding import (
     SA_IS_UPPER,
     SA_IS_PRINTABLE,
     SA_IS_TITLE,
+    SA_IS_DECIMAL,
+    SA_IS_NUMERIC,
+    SA_REPLACE,
     SA_MAP_UPPER,
     SA_MAP_LOWER,
     SA_MAP_SWAPCASE,
@@ -108,6 +111,11 @@ CORPUS = [
     "\n\t ",
     "aaa",
     "ab" * 20,
+    "12",
+    "007",
+    "²",      # SUPERSCRIPT TWO: numeric, not decimal
+    "½",      # VULGAR FRACTION HALF: numeric, not decimal
+    "٤",      # ARABIC-INDIC DIGIT FOUR: decimal
 ]
 
 
@@ -186,6 +194,8 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
             SA_SPLIT,
             SA_ORD,
             SA_CHR,
+            SA_REPLACE,
+            SA_JOIN,
         ]
     )
     a_ent, heap = accel.put(a_s, heap)
@@ -304,6 +314,8 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
                 SA_IS_UPPER,
                 SA_IS_PRINTABLE,
                 SA_IS_TITLE,
+                SA_IS_DECIMAL,
+                SA_IS_NUMERIC,
             ]
         )
         r = accel.exec(SA_CLASSIFY, var, a_ent, _none(), _none(), heap)
@@ -321,6 +333,8 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
                 SA_IS_UPPER: str.isupper,
                 SA_IS_PRINTABLE: str.isprintable,
                 SA_IS_TITLE: str.istitle,
+                SA_IS_DECIMAL: str.isdecimal,
+                SA_IS_NUMERIC: str.isnumeric,
             }[var]
             assert bool(r.value) == meth(a_s), (a_s, var, r.value)
     elif op == SA_MAP:
@@ -437,6 +451,28 @@ def run_case(rng: random.Random, accel: StrAccel, heap: int) -> int:
             assert not r.trap
             assert model_text(accel, r.entry) == chr(cp), (cp,)
             heap = r.heap_ptr
+    elif op == SA_REPLACE:
+        old_s = rng.choice(CORPUS)
+        new_s = rng.choice(CORPUS)
+        old_e, heap = accel.put(old_s, heap)
+        new_e, heap = accel.put(new_s, heap)
+        r = accel.exec(SA_REPLACE, 0, a_ent, old_e, new_e, heap)
+        assert not r.trap, ("replace trap", a_s, old_s, new_s)
+        got = model_text(accel, r.entry)
+        assert got == a_s.replace(old_s, new_s), (a_s, old_s, new_s, got)
+        heap = r.heap_ptr
+    elif op == SA_JOIN:
+        parts = [rng.choice(CORPUS) for _ in range(rng.randint(0, 4))]
+        ents = []
+        for part in parts:
+            e, heap = accel.put(part, heap)
+            ents.append(e)
+        lst, heap = accel.plant_list(ents, heap)
+        r = accel.exec(SA_JOIN, 0, a_ent, lst, _none(), heap)
+        assert not r.trap, ("join trap", a_s, parts)
+        got = model_text(accel, r.entry)
+        assert got == a_s.join(parts), (a_s, parts, got)
+        heap = r.heap_ptr
     return heap
 
 
