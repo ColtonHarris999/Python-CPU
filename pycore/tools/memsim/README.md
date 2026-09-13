@@ -17,7 +17,7 @@ Verilator. It is a *trace-and-model* study, not an RTL simulation:
    dict so runtime `STORE_NAME` inserts change later probe sequences.
 4. `cachesim.py` provides an LRU set-associative cache plus a "result cache"
    model keyed on Python-level identities rather than addresses.
-5. `experiments.py` runs E1–E8 and prints the tables.
+5. `experiments.py` runs E1–E9 and prints the tables.
 
 Run it:
 
@@ -25,15 +25,24 @@ Run it:
 python3.14 pycore/tools/memsim/experiments.py
 ```
 
+E9 launches the shared `Vtb_container` (building it via `tools/ensure_sim.py`
+if needed) and compares RTL hit counters to the model at the shipped sizes.
+
 ## Scope and honesty
 
 * **Exactly modelled:** `LOAD_CONST`, `LOAD_GLOBAL` / `LOAD_NAME`,
   `STORE_NAME` / `STORE_GLOBAL`, `CALL` frame entry, `RETURN_VALUE` frame exit
-  — i.e. all interpreter *metadata* traffic, at real addresses.
+  — i.e. all interpreter *metadata* traffic, at real addresses — plus STRACC
+  payload/header accesses for concat, compare, slice, subscript, contains,
+  iteration, and the native search/map methods the shadow can see.
 * **Bounded, not modelled:** container/heap traffic (list and dict element
   access, attributes, iterators). E1c estimates it from RTL-counted
   per-opcode access counts. Leaving it out of E1/E3 understates total
-  traffic, so every cache saving reported there is a lower bound.
+  traffic, so every cache saving reported there is a lower bound. RTL L1D
+  hit rate in E9 is the full stream and will sit below the metadata-only
+  model.
+* **GIC / CODC set index** matches the RTL: GIC uses `namei[2:0]`, CODC uses
+  `(addr >> 6)`. Python's salted `hash()` is not used for those structures.
 * **Cycle model** (derived by reading `pycore_core.sv`, not measured):
   `S_FETCH` = 3 cycles + 2 per skipped `CACHE`/`EXTENDED_ARG` slot;
   scalar pipe = 4 (`S_DECODE`+`S_EXEC`+`S_MEM`+`S_WB`); container pipe = 3;
@@ -42,5 +51,7 @@ python3.14 pycore/tools/memsim/experiments.py
   treated as ±1 cycle/opcode; the *ratios* between configurations are what
   the study is for.
 
-`bench/` holds five workloads written inside the PyCore subset (all pass
+`bench/` holds six workloads written inside the PyCore subset (all pass
 `pycore_cli.py lint`); the rest of the program list is repo fixtures.
+`bench_strings.py` is the long-string arm (concat / find / slice / `in` /
+index of ≥16-character payloads).

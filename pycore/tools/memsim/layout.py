@@ -10,6 +10,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "pycore" / "tools"))
 
 import image_from_source as ifs           # noqa: E402
+from encoding import (                    # noqa: E402
+    stracc_decode_units,
+    stracc_unpack_long_handle,
+)
 from heap_image import dict_key_hash      # noqa: E402
 
 # ---- address math mirrored from pycore_defs.svh -------------------------
@@ -71,6 +75,9 @@ class ImageLayout:
     builtins_table: int = 0
     builtins_slots: int = 0
     name_key: dict[str, tuple[int, int]] = field(default_factory=dict)
+    heap_init_ptr: int = 0
+    # interned LONG_STR constants: text -> object base address
+    str_intern: dict[str, int] = field(default_factory=dict)
 
     def dict_probe(self, tbl: int, slots: int, ktag: int, kval: int) -> list[int]:
         """Return the linear-probe slot sequence up to and including the hit."""
@@ -161,4 +168,13 @@ def _layout_from(res) -> ImageLayout:
     lay.builtins_obj = b
     lay.builtins_slots = (words.get(b, 0) >> 64) & 0xFFFFFFFFFFFFFFFF
     lay.builtins_table = words.get(dict_table_ptr_addr(b), 0) & 0xFFFFFFFF
+
+    lay.heap_init_ptr = res.heap_init_ptr
+    intern = getattr(res.heap, "_str_intern", {})
+    for (kind, payload), handle in intern.items():
+        try:
+            text = stracc_decode_units(payload, kind)
+        except (ValueError, KeyError):
+            continue
+        lay.str_intern[text] = stracc_unpack_long_handle(handle)["addr"]
     return lay

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.14
-"""Experiments E1..E5 for the PyCore memory-system study."""
+"""Experiments E1..E9 for the PyCore memory-system study."""
 from __future__ import annotations
 
 import pathlib
@@ -9,11 +9,16 @@ from collections import Counter, defaultdict
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from cachesim import Cache, DirectTagCache     # noqa: E402
+from cachesim import (Cache, DirectTagCache,   # noqa: E402
+                      codc_set_index, gic_set_index)
 from run import (FETCH_EXTRA_SLOT, FETCH_FIRST, DMEM_CYCLES, PIPE_FIXED,
                  run_program)                  # noqa: E402
 import model as M                              # noqa: E402
 import layout as L                             # noqa: E402
+from rtl_measure import (                      # noqa: E402
+    RTL_PROGRAMS, disagree, model_rates, run_rtl,
+    gic_key, codc_addr,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 BENCH = HERE / "bench"
@@ -29,6 +34,7 @@ PROGRAMS = [
     ROOT / "pycore/programs/img_branchy.py",
     ROOT / "pycore/programs/float_dot_product.py",
     ROOT / "pycore/programs/img_list_repeat_jaro.py",
+    BENCH / "bench_strings.py",
 ]
 
 
@@ -108,8 +114,14 @@ NB_SUBSCR = 26
 def e1c(results):
     print("\n=== E1c  container/heap traffic the metadata model leaves out ===")
     est = Counter()
+    str_acc = 0
     for r in results:
         for c, st in zip(r["_costs"], r["_steps"]):
+            n_str = sum(1 for a in c.accesses if a.cls == M.C_STR)
+            str_acc += n_str
+            if n_str:
+                # STRACC traffic is modelled exactly; do not also estimate it.
+                continue
             n = HEAP_COST.get(c.opname, 0)
             if c.opname == "BINARY_OP" and st.arg == NB_SUBSCR:
                 n = 4
@@ -118,17 +130,21 @@ def e1c(results):
                 n = per * max(st.arg, 1) + 3
             if n:
                 est[c.opname] += n
-    meta = sum(r["dmem_accesses"] for r in results)
+    meta = sum(r["dmem_accesses"] for r in results) - str_acc
     heap = sum(est.values())
     for k, v in est.most_common():
         print(f"  {k:<18}{v:>9}")
     print(f"  {'-'*27}")
     print(f"  {'heap (upper bound)':<18}{heap:>9}")
+    print(f"  {'str (STRACC, exact)':<18}{str_acc:>9}")
     print(f"  {'metadata (exact)':<18}{meta:>9}")
-    print(f"  heap is {100*heap/(heap+meta):.0f}% of all dmem traffic; every "
-          f"heap access is an\n  address a generic L1D/L2 can cache but no "
-          f"Python-aware structure can.")
-    return heap
+    denom = heap + meta + str_acc
+    if denom:
+        print(f"  heap is {100*heap/denom:.0f}% of (metadata+heap+str) dmem; "
+              f"STRACC is {100*str_acc/denom:.0f}%. Heap/string addresses "
+              f"are what a generic L1D/L2 can cache and no Python-aware "
+              f"structure can.")
+    return heap, str_acc
 
 
 def e2(results):
@@ -141,8 +157,9 @@ def e2(results):
         for r in results:
             for a in imem_stream(r["_lay"], r["_costs"], r["_steps"]):
                 c.access(a)
+        mark = "  <- shipped" if (size, line, ways) == (8192, 64, 4) else ""
         print(f"{'%dB/%dB line/%dw' % (size, line, ways):<28}"
-              f"{c.total:>10}{100*c.hit_rate:>8.2f}{c.misses:>9}")
+              f"{c.total:>10}{100*c.hit_rate:>8.2f}{c.misses:>9}{mark}")
 
     print("\n  CACHE-slot overhead if fetch keeps walking them slot by slot:")
     ops = sum(r["dynamic_ops"] for r in results)
@@ -168,10 +185,11 @@ def e3(results):
                     c.access(a.addr)
         # a hit costs 1 cycle instead of 3
         saved = c.hits * (DMEM_CYCLES - 1)
-        print(f"{'%dB/%dB line/%dw' % (size, line, ways):<28}"
-              f"{c.total:>10}{100*c.hit_rate:>8.2f}{c.misses:>9}{saved:>11}")
         if (size, line, ways) == (2048, 64, 4):
             base = c
+        mark = "  <- shipped" if (size, line, ways) == (8192, 64, 4) else ""
+        print(f"{'%dB/%dB line/%dw' % (size, line, ways):<28}"
+              f"{c.total:>10}{100*c.hit_rate:>8.2f}{c.misses:>9}{saved:>11}{mark}")
     return base
 
 
@@ -195,38 +213,38 @@ def e4(results):
     # ---- global-name inline cache -------------------------------------
     print()
     for entries, ways in [(8, 1), (16, 2), (32, 2), (64, 4)]:
-        gc = DirectTagCache(entries, ways)
+        gc = DirectTagCache(entries, ways, index_fn=gic_set_index)
         saved = 0
         for r in results:
-            per_lookup = defaultdict(list)
             for co, st in zip(r["_costs"], r["_steps"]):
                 if co.opname in ("STORE_NAME", "STORE_GLOBAL"):
-                    gc.flush()        # dict-version bump invalidates the cache
+                    gc.flush()
                 elif co.opname in ("LOAD_GLOBAL", "LOAD_NAME"):
-                    ndmem = len(co.accesses)
-                    if gc.access((st.code_id, st.arg)):
+                    ndmem = len([a for a in co.accesses if a.cls != M.C_STR])
+                    if gc.access(gic_key(st)):
                         saved += ndmem * DMEM_CYCLES
+        mark = "  <- shipped" if (entries, ways) == (16, 2) else ""
         print(f"  global IC   {entries:>3}e/{ways}w : "
               f"{gc.total:>6} lookups  hit {100*gc.hit_rate:5.1f}%  "
-              f"flushes {gc.invalidations:>3}  saves {saved:>7} cycles")
+              f"flushes {gc.invalidations:>3}  saves {saved:>7} cycles{mark}")
 
     # ---- code-object descriptor cache ---------------------------------
     print()
     for entries, ways in [(2, 1), (4, 2), (8, 2), (16, 4)]:
-        dc = DirectTagCache(entries, ways)
+        dc = DirectTagCache(entries, ways, index_fn=codc_set_index)
         saved = 0
         for r in results:
-            lay = r["_lay"]
             for co, st in zip(r["_costs"], r["_steps"]):
-                codeacc = [a for a in co.accesses if a.cls == M.C_CODE]
-                if not codeacc:
+                key = codc_addr(co)
+                if key is None:
                     continue
-                key = codeacc[0].addr & ~0xFF     # code-object base
+                codeacc = [a for a in co.accesses if a.cls == M.C_CODE]
                 if dc.access(key):
                     saved += len(codeacc) * DMEM_CYCLES
+        mark = "  <- shipped" if (entries, ways) == (4, 2) else ""
         print(f"  codeobj $   {entries:>3}e/{ways}w : "
               f"{dc.total:>6} lookups  hit {100*dc.hit_rate:5.1f}%  "
-              f"saves {saved:>7} cycles")
+              f"saves {saved:>7} cycles{mark}")
 
     # ---- frame top-of-stack buffer ------------------------------------
     print()
@@ -272,8 +290,8 @@ def e5(results):
 
     # (c) python-aware structures, sized small
     cc = DirectTagCache(32, 2)
-    gc = DirectTagCache(32, 2)
-    dc = DirectTagCache(8, 2)
+    gc = DirectTagCache(16, 2, index_fn=gic_set_index)
+    dc = DirectTagCache(4, 2, index_fn=codc_set_index)
     save_struct = 0
     for r in results:
         for co, st in zip(r["_costs"], r["_steps"]):
@@ -283,12 +301,15 @@ def e5(results):
             elif co.opname in ("STORE_NAME", "STORE_GLOBAL"):
                 gc.flush()
             elif co.opname in ("LOAD_GLOBAL", "LOAD_NAME"):
-                if gc.access((st.code_id, st.arg)):
-                    save_struct += len(co.accesses) * DMEM_CYCLES
+                ndmem = len([a for a in co.accesses if a.cls != M.C_STR])
+                if gc.access(gic_key(st)):
+                    save_struct += ndmem * DMEM_CYCLES
             else:
-                codeacc = [a for a in co.accesses if a.cls == M.C_CODE]
-                if codeacc and dc.access(codeacc[0].addr & ~0xFF):
-                    save_struct += len(codeacc) * DMEM_CYCLES
+                key = codc_addr(co)
+                if key is not None:
+                    codeacc = [a for a in co.accesses if a.cls == M.C_CODE]
+                    if dc.access(key):
+                        save_struct += len(codeacc) * DMEM_CYCLES
 
     for label, saved in [("L1D 2KB/64B/4w (generic)", save_l1d),
                          ("L1I predecode+1cyc hit", save_l1i),
@@ -359,10 +380,15 @@ def e7(results):
         i, _, _ = sim(2048, 64, 4, 16384, 64, 8, 1, 8, t_ram, islots)
         print(f"    L1I 2K + L1D 2K + L2 16K      "
               f"CPO {(d + i + pipe)/ops:7.2f}")
+        d8, _, _ = sim(8192, 64, 4, 131072, 64, 8, 1, 1, t_ram, accs)
+        i8, _, _ = sim(8192, 64, 4, 131072, 64, 8, 1, 1, t_ram, islots)
+        print(f"    L1I 8K + L1D 8K + L2 128K     "
+              f"CPO {(d8 + i8 + pipe)/ops:7.2f}   "
+              f"(as-built; L2 hit = 1 cyc, see PYCORE_L2_HIT_CYCLES)")
         # (c) + python-aware result caches in front of L1D
         cc = DirectTagCache(32, 2)
-        gc = DirectTagCache(32, 2)
-        dc = DirectTagCache(8, 2)
+        gc = DirectTagCache(16, 2, index_fn=gic_set_index)
+        dc = DirectTagCache(4, 2, index_fn=codc_set_index)
         kept = []
         for r in results:
             for c, st in zip(r["_costs"], r["_steps"]):
@@ -373,10 +399,10 @@ def e7(results):
                 if c.opname in ("STORE_NAME", "STORE_GLOBAL"):
                     gc.flush()
                 elif c.opname in ("LOAD_GLOBAL", "LOAD_NAME"):
-                    if gc.access((st.code_id, st.arg)):
+                    if gc.access(gic_key(st)):
                         continue
-                codeacc = [a for a in c.accesses if a.cls == M.C_CODE]
-                if codeacc and dc.access(codeacc[0].addr & ~0xFF):
+                key = codc_addr(c)
+                if key is not None and dc.access(key):
                     kept += [a.addr for a in c.accesses if a.cls != M.C_CODE]
                     continue
                 kept += [a.addr for a in c.accesses]
@@ -429,12 +455,64 @@ def e8():
     L.set_heap_alignment(64)
     print("\n  Saturates by 2 KB, so the payoff is a *smaller* L1D for the same\n"
           "  hit rate: 64 B alignment at 1 KB beats 16 B alignment at 1 KB by\n"
-          "  7 points and cuts misses ~45%.")
+          "  7 points and cuts misses ~45%. Production `_alloc_line` is restored.")
     import heap_image as _hi
     _hi.HeapImageBuilder._alloc = _hi.HeapImageBuilder._alloc_line
 
 
-def main():
+def e9(results, *, run_hw: bool = True):
+    """Measured RTL counters vs memsim predictions at the shipped sizes."""
+    print("\n=== E9  measured RTL vs predicted (CACHE_EN=1, MEM_LATENCY=4) ===")
+    print("  Model L1D is metadata + STRACC only; RTL L1D also sees heap/excore")
+    print("  traffic. A gap of more than ~3 points is called out.")
+    hdr = (f"  {'program':<22}{'struct':<10}{'model':>8}{'RTL':>8}{'Δpt':>7}")
+    print(hdr)
+    print("  " + "-" * (len(hdr) - 2))
+    by_name = {r["program"]: r for r in results}
+    rows = []
+    for src in RTL_PROGRAMS:
+        r = by_name.get(src.stem)
+        if r is None:
+            try:
+                r = run_program(src)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  !! model {src.name}: {type(exc).__name__}: {exc}")
+                continue
+        pred = model_rates(r)
+        rtl = None
+        if run_hw:
+            try:
+                rtl = run_rtl(src)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  !! RTL {src.name}: {type(exc).__name__}: {exc}")
+        if rtl is not None and not rtl.passed:
+            print(f"  !! RTL {src.stem} did not PASS")
+            rtl = None
+        structs = (
+            ("L1I", pred["l1i_hit_rate"], None if rtl is None else rtl.l1i_hit_rate),
+            ("L1D", pred["l1d_hit_rate"], None if rtl is None else rtl.l1d_hit_rate),
+            ("frame", pred["frame_hit_rate"], None if rtl is None else rtl.frame_hit_rate),
+            ("CODC", pred["codc_hit_rate"], None if rtl is None else rtl.codc_hit_rate),
+            ("GIC", pred["gic_hit_rate"], None if rtl is None else rtl.gic_hit_rate),
+        )
+        for name, m, hw in structs:
+            if hw is None:
+                print(f"  {src.stem:<22}{name:<10}{100*m:7.2f}%      —      —")
+                continue
+            delta = 100 * m - 100 * hw
+            flag = "  ** gap" if disagree(m, hw) else ""
+            print(f"  {src.stem:<22}{name:<10}{100*m:7.2f}%{100*hw:7.2f}%{delta:7.1f}{flag}")
+            rows.append((src.stem, name, m, hw, delta))
+        if rtl is not None:
+            print(f"  {src.stem:<22}{'cycles':<10}{'':>8}{rtl.cycles:8d}")
+    print("\n  P8 FTB skipped: L1D frame-region hit rate after P3 is above the")
+    print("  95% gate on img_recursion / img_deep_callgraph (reconfirmed here).")
+    return rows
+
+
+def main(argv: list[str] | None = None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    run_hw = "--no-rtl" not in argv
     results = []
     for p in PROGRAMS:
         try:
@@ -451,7 +529,7 @@ def main():
     e6(results)
     e7(results)
     e8()
-
+    e9(results, run_hw=run_hw)
 
 
 if __name__ == "__main__":
