@@ -316,6 +316,11 @@ module tb_container #(
                  g_dut.dut.l1d_hit_count, g_dut.dut.l1d_miss_count,
                  g_dut.dut.l1d_writeback_count,
                  g_dut.dut.l1d_frame_hit_count, g_dut.dut.l1d_frame_miss_count);
+        $display("CODC hits=%0d misses=%0d fills=%0d flushes=%0d",
+                 g_dut.dut.core.codc_hit_count_o,
+                 g_dut.dut.core.codc_miss_count_o,
+                 g_dut.dut.core.codc_fill_count_o,
+                 g_dut.dut.core.codc_flush_count_o);
         $display("fetch mem_req=%0d buf_hit=%0d",
                  g_dut.dut.core.fetch.mem_req_count_r,
                  g_dut.dut.core.fetch.buf_hit_count_r);

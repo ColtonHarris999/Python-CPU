@@ -6,9 +6,11 @@
 //         EX: RF = kwargs TOS → EX_KW (17)
 //   1  : CODE_OBJECT → 2; OBJECT → 8; else CALL_FILTER
 //   2  : sentinel NULL → free (eff=n_pos or oparg); else method;
-//        start entry_slot → 3
+//        CODC lookup on call_code_addr_r. Hit skips 3-6 (and the
+//        co_defaults read) and goes to 14 with cached fields.
+//        Miss starts entry_slot → 3
 //   3-5: code fields entry_slot / co_consts / co_names
-//   6  : metadata; start co_defaults → 14
+//   6  : metadata; start co_defaults → 14; miss fills CODC at 14
 //   7  : frame push + init
 //   8-11: BOUND_METHOD unwrap (NULL sentinel required) → join 3
 //   12 : TYPE instantiate / exception / int / str convert (call_sub_r)
@@ -133,11 +135,51 @@
                                 call_new_locals_r <= RF_AW'(
                                     {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd1);
                             end
-                            container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                call_code_addr_r, PYCORE_CODE_FIELD_ENTRY_SLOT);
-                            container_dmem_we_r      <= 1'b0;
-                            container_dmem_pending_r <= 1'b1;
-                            call_phase_r             <= 5'd3;
+                            if (codc_hit) begin
+                                call_entry_slot_r <= codc_p_entry;
+                                call_consts_r     <= codc_p_consts;
+                                call_names_r      <= codc_p_names;
+                                call_meta_r       <= codc_p_meta;
+                                call_defaults_r   <= codc_p_defaults;
+                                call_defaults_len_r <= codc_p_defaults[79:64];
+                                call_meta_argc_r <= pycore_code_meta_argcount(
+                                    codc_p_meta);
+                                call_nlocals_r   <= pycore_code_meta_nlocals(
+                                    codc_p_meta);
+                                call_kwonly_r <= pycore_code_meta_kwonlyargcount(
+                                    codc_p_meta);
+                                call_varargs_r <= pycore_code_meta_varargs(
+                                    codc_p_meta);
+                                call_varkw_r <= pycore_code_meta_varkeywords(
+                                    codc_p_meta);
+                                call_posonly_r <=
+                                    pycore_code_meta_posonlyargcount(
+                                        codc_p_meta);
+                                call_total_params_r <=
+                                    pycore_code_meta_argcount(codc_p_meta)
+                                    + pycore_code_meta_kwonlyargcount(
+                                        codc_p_meta);
+                                call_varkw_left_r    <= 128'd0;
+                                call_varkw_step_r    <= 5'd0;
+                                call_varkw_alloced_r <= 1'b0;
+                                call_codc_hit_r      <= 1'b1;
+                                if ((call_mode_r == CALL_MODE_KW) ||
+                                    (call_mode_r == CALL_MODE_EX_KW) ||
+                                    pycore_code_meta_varkeywords(codc_p_meta) ||
+                                    (pycore_code_meta_kwonlyargcount(
+                                        codc_p_meta) != 16'd0))
+                                    call_sub_r <= 6'd32;
+                                else
+                                    call_sub_r <= 6'd0;
+                                call_phase_r <= 5'd14;
+                            end else begin
+                                call_codc_hit_r          <= 1'b0;
+                                container_dmem_addr_r    <= pycore_code_field_val_addr(
+                                    call_code_addr_r, PYCORE_CODE_FIELD_ENTRY_SLOT);
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_pending_r <= 1'b1;
+                                call_phase_r             <= 5'd3;
+                            end
                         end
 
                         4'd3: begin
@@ -175,6 +217,7 @@
 
                         4'd6: begin
                             if (!container_dmem_pending_r) begin
+                                call_meta_r      <= container_rd_data_r;
                                 call_meta_argc_r <= pycore_code_meta_argcount(
                                     container_rd_data_r);
                                 call_nlocals_r   <= pycore_code_meta_nlocals(
@@ -2310,15 +2353,29 @@
                             if (!container_dmem_pending_r) begin
                                 unique case (call_sub_r)
                                     6'd0: begin
-                                        call_defaults_r     <= container_rd_data_r;
-                                        call_defaults_len_r <=
-                                            container_rd_data_r[79:64];
+                                        if (!call_codc_hit_r) begin
+                                            call_defaults_r     <= container_rd_data_r;
+                                            call_defaults_len_r <=
+                                                container_rd_data_r[79:64];
+                                            codc_fill_r         <= 1'b1;
+                                            codc_fill_key_r     <= call_code_addr_r;
+                                            codc_fill_payload_r <= {
+                                                container_rd_data_r,
+                                                call_meta_r,
+                                                call_names_r,
+                                                call_consts_r,
+                                                call_entry_slot_r
+                                            };
+                                        end
+                                        call_codc_hit_r <= 1'b0;
                                         begin
                                             logic [15:0] def_len;
                                             logic [15:0] meta_ac;
                                             logic [15:0] min_ac;
                                             logic [15:0] local_slots;
-                                            def_len = container_rd_data_r[79:64];
+                                            def_len = call_codc_hit_r
+                                                ? call_defaults_len_r
+                                                : container_rd_data_r[79:64];
                                             meta_ac = call_meta_argc_r;
                                             local_slots = meta_ac +
                                                 (call_varargs_r ? 16'd1 : 16'd0) +
@@ -2548,9 +2605,21 @@
                                     // ------------------------------------------
                                     // 32: latch defaults; read co_varnames
                                     6'd32: begin
-                                        call_defaults_r     <= container_rd_data_r;
-                                        call_defaults_len_r <=
-                                            container_rd_data_r[79:64];
+                                        if (!call_codc_hit_r) begin
+                                            call_defaults_r     <= container_rd_data_r;
+                                            call_defaults_len_r <=
+                                                container_rd_data_r[79:64];
+                                            codc_fill_r         <= 1'b1;
+                                            codc_fill_key_r     <= call_code_addr_r;
+                                            codc_fill_payload_r <= {
+                                                container_rd_data_r,
+                                                call_meta_r,
+                                                call_names_r,
+                                                call_consts_r,
+                                                call_entry_slot_r
+                                            };
+                                        end
+                                        call_codc_hit_r <= 1'b0;
                                         container_dmem_addr_r <=
                                             pycore_code_field_val_addr(
                                                 call_code_addr_r,
@@ -3979,8 +4048,9 @@
                 end
 
                 // ----------------------------------------------------------
-                // S_RETURN: pop caller frame, re-read consts/names, then
-                // commit return value (or saved instance under ret_discard).
+                // S_RETURN: pop caller frame, re-read consts/names (CODC
+                // can skip those two dmem reads), then commit return value
+                // (or saved instance under ret_discard).
                 // ----------------------------------------------------------
                 S_RETURN: begin
                     if (container_dmem_pending_r && dmem_ack_i) begin
@@ -4018,11 +4088,19 @@
                                 frame_saved_inst_r   <= frame_saved_inst_out;
                                 call_sent_r          <= 1'b0;
                                 frame_dmem_pending_r <= 1'b0;
-                                container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                    frame_cur_code_out, PYCORE_CODE_FIELD_CO_CONSTS);
-                                container_dmem_we_r      <= 1'b0;
-                                container_dmem_pending_r <= 1'b1;
-                                return_phase_r <= 3'd1;
+                                if (codc_hit) begin
+                                    consts_base_r   <= codc_p_consts;
+                                    names_base_r    <= codc_p_names;
+                                    call_codc_hit_r <= 1'b1;
+                                    return_phase_r  <= 3'd2;
+                                end else begin
+                                    call_codc_hit_r <= 1'b0;
+                                    container_dmem_addr_r    <= pycore_code_field_val_addr(
+                                        frame_cur_code_out, PYCORE_CODE_FIELD_CO_CONSTS);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    return_phase_r <= 3'd1;
+                                end
                             end
                         end
 
@@ -4039,7 +4117,9 @@
 
                         3'd2: begin
                             if (!container_dmem_pending_r) begin
-                                names_base_r <= container_rd_data_r;
+                                if (!call_codc_hit_r)
+                                    names_base_r <= container_rd_data_r;
+                                call_codc_hit_r <= 1'b0;
                                 if (call_exc_pending_r) begin
                                     // Exception-table entries are relative to
                                     // the caller's code entry.  Normal return

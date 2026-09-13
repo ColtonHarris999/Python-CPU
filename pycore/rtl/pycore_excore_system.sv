@@ -177,7 +177,11 @@ module pycore_excore_system #(
         .cycle_count_o(cycle_count_o),
         .dbg_wb_we_o(dbg_wb_we_o),
         .dbg_wb_addr_o(dbg_wb_addr_o),
-        .dbg_wb_entry_o(dbg_wb_entry_o)
+        .dbg_wb_entry_o(dbg_wb_entry_o),
+        .codc_hit_count_o(),
+        .codc_miss_count_o(),
+        .codc_fill_count_o(),
+        .codc_flush_count_o()
     );
 
     // =========================================================================
