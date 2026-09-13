@@ -1,3 +1,7 @@
+Graduated to [`pycore/docs/string_accel.md`](../pycore/docs/string_accel.md)
+(as-built). This file is the design history; do not treat its "will be" /
+"today `string_mem`" language as current.
+
 # String Accelerator (STRACC) — design
 
 A tightly-coupled accelerator inside pycore, alongside the container FSM, that

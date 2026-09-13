@@ -50,6 +50,20 @@ class TwoLevel:
         return "l2" if self.l2.access(addr) else "mem"
 
 
+def gic_set_index(key) -> int:
+    """RTL GIC (`pycore_gic.sv`): set index is namei LSBs, not Python `hash`.
+
+    Key is `(code_id_or_addr, namei)`. 16 entries / 2-way → 8 sets, so the
+    hardware uses `key[2:0] == namei[2:0]`.
+    """
+    return int(key[1]) & 0x7
+
+
+def codc_set_index(addr) -> int:
+    """RTL CODC (`pycore_codc.sv`): set index is `(addr >> 6)` (line number)."""
+    return int(addr) >> 6
+
+
 @dataclass
 class DirectTagCache:
     """A tagged lookaside keyed by an arbitrary python-level key (not an address).
@@ -57,10 +71,14 @@ class DirectTagCache:
     Models the Python-aware structures: a per-frame const cache keyed by
     (code, const index), a global-name inline cache keyed by (code, namei), a
     code-object descriptor cache keyed by code address.
+
+    `index_fn`, when set, must be deterministic. Python's salted `hash()` is
+    not a model of the RTL — GIC uses namei LSBs, CODC uses `(addr >> 6)`.
     """
     entries: int
     ways: int = 1
     name: str = "struct"
+    index_fn: object = None
     _sets: dict = field(default_factory=dict)
     hits: int = 0
     misses: int = 0
@@ -70,7 +88,10 @@ class DirectTagCache:
         self.nsets = max(1, self.entries // self.ways)
 
     def access(self, key) -> bool:
-        s = hash(key) % self.nsets
+        if callable(self.index_fn):
+            s = int(self.index_fn(key)) % self.nsets
+        else:
+            s = hash(key) % self.nsets
         way = self._sets.setdefault(s, [])
         if key in way:
             way.remove(key)

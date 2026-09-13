@@ -458,6 +458,12 @@ buffer, or unwind reads stale dmem. `img_try_exc_cross_frame_fatal` and
 
 ### P9 — Re-measure, and write down what actually happened
 
+**Done on `cursor/p9-remeasure-ecae`.** Docs:
+[`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md),
+[`pycore/docs/string_accel.md`](../pycore/docs/string_accel.md).
+Numbers: [`memory_hierarchy_report.md`](memory_hierarchy_report.md) §7.
+P8 remains skipped.
+
 * Extend `pycore/tools/memsim/` to ingest the RTL performance counters and
   compare measured hit rates against the model's predictions. Where they
   disagree by more than a few points, the model was wrong — say so and fix it.
