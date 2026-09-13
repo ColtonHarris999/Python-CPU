@@ -63,6 +63,10 @@ localparam int PYCORE_CODC_WAYS        = 2;
 localparam int PYCORE_CODC_PAYLOAD_W   = 576;
 localparam int PYCORE_GIC_ENTRIES      = 16;
 localparam int PYCORE_GIC_WAYS         = 2;
+// {code_addr[31:0], namei[15:0]}. Set index is key[2:0] (namei LSBs).
+localparam int PYCORE_GIC_KEY_W        = 48;
+// Resolved {tag[3:0], val[127:0]} — same packing as pycore_make_entry.
+localparam int PYCORE_GIC_PAYLOAD_W    = PYCORE_ENTRY_WIDTH;
 // P8 skipped: after P3, L1D hits 99.58% of frame-stack accesses on
 // img_recursion (1414/1420) and 95.29% on img_deep_callgraph (263/276).
 localparam int PYCORE_FTB_FRAMES       = 4;

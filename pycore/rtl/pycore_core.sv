@@ -122,11 +122,15 @@ module pycore_core #(
     output logic                          dbg_wb_we_o,
     output logic [7:0]                    dbg_wb_addr_o,
     output logic [PYCORE_ENTRY_WIDTH-1:0] dbg_wb_entry_o,
-    // CODC performance counters (P6). Hierarchical TBs also snoop these.
+    // CODC / GIC performance counters (P6 / P7). Hierarchical TBs also snoop these.
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] codc_hit_count_o,
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] codc_miss_count_o,
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] codc_fill_count_o,
-    output logic [PYCORE_PERF_CNT_WIDTH-1:0] codc_flush_count_o
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] codc_flush_count_o,
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] gic_hit_count_o,
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] gic_miss_count_o,
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] gic_fill_count_o,
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] gic_flush_count_o
 );
 
     localparam int RF_AW = $clog2(RF_DEPTH);
@@ -279,6 +283,9 @@ module pycore_core #(
     logic                          codc_fill_r;
     logic [31:0]                   codc_fill_key_r;
     logic [PYCORE_CODC_PAYLOAD_W-1:0] codc_fill_payload_r;
+    logic                          gic_fill_r;
+    logic [PYCORE_GIC_KEY_W-1:0]   gic_fill_key_r;
+    logic [PYCORE_GIC_PAYLOAD_W-1:0] gic_fill_payload_r;
     logic [15:0]                   call_defaults_len_r;
     logic [15:0]                   call_min_argc_r;
     // Defaults-fill / TYPE-setup sub-phase (used under call_phase 8–14).
@@ -334,7 +341,7 @@ module pycore_core #(
     end
 
     // Same plusarg as pycore_system / pycore_excore_system so CACHE_EN=0
-    // turns CODC into a miss pass-through without a new core pin.
+    // turns CODC / GIC into a miss pass-through without a new core pin.
     bit cache_en_sim;
     initial begin
         int cache_en_i;
@@ -1302,6 +1309,58 @@ module pycore_core #(
     );
 
     // ---------------------------------------------------------------------
+    // GIC: combinational global-name cache for CONT_LOAD_GLOBAL (LOAD_GLOBAL
+    // and LOAD_NAME) at CP_INIT, before the co_names read (memory_system_plan
+    // P7). Key is {cur_code_r, namei}. Flushed on STORE_NAME/STORE_GLOBAL,
+    // an actual globals_base_r change, trap_res grant-back, and reset.
+    // ---------------------------------------------------------------------
+    logic        gic_hit;
+    logic        gic_lookup;
+    logic        gic_flush;
+    logic [31:0] gic_namei_full;
+    logic [PYCORE_GIC_KEY_W-1:0] gic_lookup_key;
+    logic [PYCORE_GIC_PAYLOAD_W-1:0] gic_payload;
+
+    assign gic_namei_full = (cur_opcode_r == PY_OP_LOAD_GLOBAL) ?
+                            (cur_arg_r >> 1) : cur_arg_r;
+    assign gic_lookup_key = {cur_code_r, gic_namei_full[15:0]};
+    assign gic_lookup =
+        (state_r == S_CONTAINER) &&
+        (container_op_r == CONT_LOAD_GLOBAL) &&
+        (container_phase_r == CP_INIT) &&
+        ({32'b0, gic_namei_full} < names_base_r[127:64]);
+    assign gic_flush =
+        ((state_r == S_CONTAINER) &&
+         (container_op_r == CONT_STORE_NAME) &&
+         (container_phase_r == CP_INIT)) ||
+        ((state_r == S_TRAP_WAIT) && trap_res_valid_i && !trap_res_seen_r) ||
+        ((state_r == S_BOOT) && (boot_phase_r == 4'd3) &&
+         !container_dmem_pending_r) ||
+        ((state_r == S_CALL) && (call_phase_r == 5'd7) &&
+         frame_init_new_frame && call_globals_override_en_r &&
+         (call_globals_override_r != globals_base_r)) ||
+        ((state_r == S_RETURN) && (return_phase_r == 3'd0) &&
+         frame_return_done && (frame_globals_base_out != globals_base_r));
+
+    pycore_gic u_gic (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .cache_en_i(cache_en_sim),
+        .lookup_i(gic_lookup),
+        .lookup_key_i(gic_lookup_key),
+        .hit_o(gic_hit),
+        .payload_o(gic_payload),
+        .fill_i(gic_fill_r),
+        .fill_key_i(gic_fill_key_r),
+        .fill_payload_i(gic_fill_payload_r),
+        .flush_i(gic_flush),
+        .hit_count_o(gic_hit_count_o),
+        .miss_count_o(gic_miss_count_o),
+        .fill_count_o(gic_fill_count_o),
+        .flush_count_o(gic_flush_count_o)
+    );
+
+    // ---------------------------------------------------------------------
     // Register file.  push_stack / pop_stack are left idle.
     // The return_wb path lets S_RETURN place the callee's return value
     // onto the caller's stack in the cycle after frame_return_done fires.
@@ -2067,6 +2126,9 @@ module pycore_core #(
             codc_fill_r          <= 1'b0;
             codc_fill_key_r      <= '0;
             codc_fill_payload_r  <= '0;
+            gic_fill_r           <= 1'b0;
+            gic_fill_key_r       <= '0;
+            gic_fill_payload_r   <= '0;
             call_defaults_len_r  <= '0;
             call_min_argc_r      <= '0;
             call_sub_r           <= '0;
@@ -2249,6 +2311,7 @@ module pycore_core #(
             call_filter_trap_r    <= 1'b0;
             stracc_finishing_r    <= 1'b0;
             codc_fill_r           <= 1'b0;
+            gic_fill_r            <= 1'b0;
 
             if (state_r == S_FETCH) begin
                 redirect_pending_r <= 1'b0;

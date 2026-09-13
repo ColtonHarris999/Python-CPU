@@ -58,6 +58,7 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_cache_lru.sv \
 	pycore/rtl/pycore_cache.sv \
 	pycore/rtl/pycore_codc.sv \
+	pycore/rtl/pycore_gic.sv \
 	pycore/rtl/pycore_ram.sv \
 	pycore/rtl/pycore_mem_xbar.sv \
 	pycore/rtl/pycore_mem_hier.sv \
@@ -97,6 +98,7 @@ EXCORE_RTL_SRCS := \
 	pycore-python-tests pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib \
 	pycore-codc \
+	pycore-gic \
 	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
 	pycore-img-containers pycore-img-recursion pycore-img-extended-arg \
 	pycore-img-branchy pycore-img-undef-global pycore-img-noncallable \
@@ -290,7 +292,7 @@ EXCORE_RTL_SRCS := \
 	pycore-allocator-host pycore-img-allocator-list pycore-img-allocator-bytes \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	pycore-sim-img pycore-sim-img-twocore pycore-rtl-unit pycore-str-accel \
-	pycore-codc pycore-cache-transparency pycore-mem-latency-sweep \
+	pycore-codc pycore-gic pycore-cache-transparency pycore-mem-latency-sweep \
 	docker-build docker-lint-file docker-run-file docker-pycore-test docker-all-tests \
 	docker-python-tests docker-rtl-unit docker-container docker-img \
 	docker-two-core docker-excore
@@ -476,6 +478,17 @@ pycore-codc:
 		pycore/rtl/pycore_cache_lru.sv pycore/rtl/pycore_codc.sv \
 		pycore/tb/tb_codc.sv
 	./$(BUILD_DIR)/pycore_codc/Vtb_codc
+
+pycore-gic:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_gic \
+		--Mdir $(BUILD_DIR)/pycore_gic \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_cache_lru.sv pycore/rtl/pycore_gic.sv \
+		pycore/tb/tb_gic.sv
+	./$(BUILD_DIR)/pycore_gic/Vtb_gic
 
 pycore-l1d-handoff:
 	mkdir -p $(BUILD_DIR)
@@ -2723,7 +2736,7 @@ excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec \
 	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
-	pycore-str-accel pycore-codc pycore-l1d-handoff pycore-fetch pycore-frame \
+	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff pycore-fetch pycore-frame \
 	pycore-frame-fib
 
 pycore-test: pycore-python-tests pycore-rtl-unit pycore-container \

@@ -67,6 +67,7 @@ module pycore_system #(
     logic [PYCORE_PERF_CNT_WIDTH-1:0] l1d_frame_hit_count, l1d_frame_miss_count;
     logic [PYCORE_PERF_CNT_WIDTH-1:0] l2_hit_count, l2_miss_count, l2_writeback_count;
     logic [PYCORE_PERF_CNT_WIDTH-1:0] codc_hit_count, codc_miss_count, codc_fill_count, codc_flush_count;
+    logic [PYCORE_PERF_CNT_WIDTH-1:0] gic_hit_count, gic_miss_count, gic_fill_count, gic_flush_count;
     /* verilator lint_on UNUSEDSIGNAL */
 
     initial begin
@@ -142,7 +143,11 @@ module pycore_system #(
         .codc_hit_count_o(codc_hit_count),
         .codc_miss_count_o(codc_miss_count),
         .codc_fill_count_o(codc_fill_count),
-        .codc_flush_count_o(codc_flush_count)
+        .codc_flush_count_o(codc_flush_count),
+        .gic_hit_count_o(gic_hit_count),
+        .gic_miss_count_o(gic_miss_count),
+        .gic_fill_count_o(gic_fill_count),
+        .gic_flush_count_o(gic_flush_count)
     );
 
     pycore_mem_hier #(
