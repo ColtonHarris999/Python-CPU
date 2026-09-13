@@ -4,7 +4,7 @@
 // programs. Compile-time parameters remain for unit/legacy flows; image
 // CI uses one Verilator binary plus runtime plusargs:
 //
-//   +PROG_HEX= +STRING_HEX= +DMEM_HEX= +CODE_RAM_HEX= +FW_HEX=
+//   +PROG_HEX= +DMEM_HEX= +CODE_RAM_HEX= +FW_HEX=
 //   +HEAP_INIT_PTR= +BOOT_EN= +CHECK_ENTRY_RETURN=
 //   +EXPECTED_TAG= +EXPECTED_VALUE= +MAX_CYCLES=
 //   +EXPECT_TRAP= +EXPECTED_TRAP_CODE= +EXPECTED_TRAP_REQ_COUNT=
@@ -20,7 +20,6 @@
 module tb_container #(
     parameter string PROG_HEX       = "pycore/programs/list_build_index.hex",
     parameter string CODE_RAM_HEX   = "",
-    parameter string STRING_HEX     = "pycore/programs/string_mem.hex",
     parameter string DMEM_HEX       = "",
     parameter logic [31:0] HEAP_INIT_PTR = PYCORE_HEAP_BASE,
     parameter int    MAX_CYCLES     = 8000,
@@ -81,7 +80,6 @@ module tb_container #(
             pycore_excore_system #(
                 .PROG_HEX  (PROG_HEX),
                 .CODE_RAM_HEX(CODE_RAM_HEX),
-                .STRING_HEX(STRING_HEX),
                 .DMEM_HEX  (DMEM_HEX),
                 .HEAP_INIT_PTR(HEAP_INIT_PTR),
                 .BOOT_EN(BOOT_EN),
@@ -140,7 +138,6 @@ module tb_container #(
             pycore_system #(
                 .PROG_HEX  (PROG_HEX),
                 .CODE_RAM_HEX(CODE_RAM_HEX),
-                .STRING_HEX(STRING_HEX),
                 .DMEM_HEX  (DMEM_HEX),
                 .HEAP_INIT_PTR(HEAP_INIT_PTR),
                 .BOOT_EN(BOOT_EN),

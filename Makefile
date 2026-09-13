@@ -27,7 +27,6 @@ PYCORE_CACHE_MAP ?= pycore/programs/cache_map.hex
 RUN_SOURCE ?= pycore/programs/smoke_return.py
 RUN_FUNCTION ?= managed_entry
 RUN_PROGRAM_HEX ?= pycore/programs/run_program.hex
-RUN_STRING_HEX ?= pycore/programs/run_string_mem.hex
 RUN_TYPES ?= pycore/programs/run_program.types
 RUN_CACHE_MAP ?= pycore/programs/run_cache_map.hex
 RUN_MAX_CYCLES ?= 200000
@@ -333,7 +332,6 @@ PYCORE_SIM_VERILATOR_FLAGS := \
 	+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
 	--top-module tb_container \
 	-GPROG_HEX=\"\" \
-	-GSTRING_HEX=\"\" \
 	-GDMEM_HEX=\"\" \
 	-GCODE_RAM_HEX=\"\" \
 	-GFW_HEX=\"\" \
@@ -495,7 +493,8 @@ pycore-str-accel:
 		pycore/rtl/pycore_ram.sv pycore/rtl/pycore_str_accel.sv \
 		pycore/tb/tb_str_accel.sv
 	./$(BUILD_DIR)/pycore_str_accel/Vtb_str_accel
-	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) pycore/tools/strgen.py --seed 1 --n 400
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) pycore/tools/strgen.py --seed 1 --n 2000
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) pycore/tools/strgen.py --seed 7 --n 2000
 
 pycore-fetch:
 	mkdir -p $(BUILD_DIR)
@@ -531,8 +530,10 @@ pycore-frame-fib:
 
 
 # ---- Broad-object-support milestone targets (M6 / M8) ---------------------
-# Host smoke always runs. Image-boot targets are wired now but fail until
-# LOAD_ATTR / classes / bound-method CALL land (M2–M6 / M8).
+# M6 allocator_list is in pycore-img (needs LIST_EXTEND / two-core).
+# M8 allocator_bytes still needs bytearray / int.from_bytes; image build
+# fails today. Host smoke is pycore-allocator-host (docker-python-tests).
+# Do not add pycore-img-allocator-bytes to pycore-img until that builds.
 pycore-allocator-host:
 	PYTHONPATH=pycore/tools:$$PYTHONPATH $(PYTHON) -c 'from pathlib import Path; import runpy, tempfile; from run_image_test import apply_heap_list_capacity_inject; text=apply_heap_list_capacity_inject(Path("pycore/programs/allocator_list.py").read_text(), filename="allocator_list.py"); p=Path(tempfile.mkdtemp())/"a.py"; p.write_text(text); ns=runpy.run_path(str(p)); assert isinstance(ns["managed_entry"](), int); ns=runpy.run_path("pycore/programs/allocator_bytes.py"); assert isinstance(ns["managed_entry"](), int); print("allocator host smoke ok")'
 
@@ -551,7 +552,6 @@ define PYCORE_IMAGE_RUN_SRC
 	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/$(1)/program.hex \
-		+STRING_HEX=$(BUILD_DIR)/$(1)/string_mem.hex \
 		+DMEM_HEX=$(BUILD_DIR)/$(1)/dmem.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
@@ -578,7 +578,6 @@ define PYCORE_IMAGE_RUN_SRC_TWOCORE
 	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/$(1)/program.hex \
-		+STRING_HEX=$(BUILD_DIR)/$(1)/string_mem.hex \
 		+DMEM_HEX=$(BUILD_DIR)/$(1)/dmem.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
@@ -624,7 +623,6 @@ define PYCORE_IMAGE_RUN
 	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
-		+STRING_HEX=$(BUILD_DIR)/img_$(1)/string_mem.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
@@ -656,7 +654,6 @@ define PYCORE_IMAGE_RUN_CODERAM
 	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+CODE_RAM_HEX=$(BUILD_DIR)/imgcr_$(1)/code_ram.hex \
-		+STRING_HEX=$(BUILD_DIR)/imgcr_$(1)/string_mem.hex \
 		+DMEM_HEX=$(BUILD_DIR)/imgcr_$(1)/dmem.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
@@ -684,7 +681,6 @@ define PYCORE_CONTAINER_CALL_SPIKE_RUN
 	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_container_call_spike/program.hex \
-		+STRING_HEX=$(BUILD_DIR)/img_container_call_spike/string_mem.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_container_call_spike/dmem.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
@@ -715,7 +711,6 @@ define PYCORE_IMAGE_RUN_TWOCORE
 	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
-		+STRING_HEX=$(BUILD_DIR)/img_$(1)/string_mem.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
@@ -743,7 +738,6 @@ define PYCORE_IMAGE_RUN_TWOCORE_STDOUT
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
-		+STRING_HEX=$(BUILD_DIR)/img_$(1)/string_mem.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
@@ -768,7 +762,6 @@ define PYCORE_IMAGE_TRAP_RUN
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
-		+STRING_HEX=$(BUILD_DIR)/img_$(1)/string_mem.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
@@ -1513,7 +1506,6 @@ define PYCORE_IMAGE_TRAP_RUN_TWOCORE
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
-		+STRING_HEX=$(BUILD_DIR)/img_$(1)/string_mem.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
@@ -1707,6 +1699,7 @@ pycore-img: \
 	pycore-img-varargs-call-ex \
 	pycore-img-class-all \
 	pycore-img-allocator-list
+# pycore-img-allocator-bytes is M8 (bytearray); host-only via pycore-allocator-host.
 
 # Attribute protocol (M2): LOAD/STORE/DELETE_ATTR via seeded OBK_INSTANCE.
 pycore-img-attr-basic:
@@ -2371,7 +2364,6 @@ define PYCORE_CONTAINER_BOOT_RUN
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=pycore/programs/$(1).hex \
-		+STRING_HEX=pycore/programs/$(1)_str.hex \
 		+DMEM_HEX=pycore/programs/$(1)_dmem.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
@@ -2392,16 +2384,16 @@ pycore-container-dict-store:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_store_subscr.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=99,pycore_container_dict_store)
 
 pycore-container-list-empty:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_empty.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=1 +STRING_HEX=pycore/programs/list_empty_str.hex,pycore_container_list_empty)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_empty.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=1,pycore_container_list_empty)
 
 pycore-container-dict-multi-pair:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_multi_pair.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=100 +STRING_HEX=pycore/programs/dict_multi_pair_str.hex,pycore_container_dict_multi_pair)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_multi_pair.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=100,pycore_container_dict_multi_pair)
 
 pycore-container-dict-collision:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_collision.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=30 +STRING_HEX=pycore/programs/dict_collision_str.hex,pycore_container_dict_collision)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_collision.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=30,pycore_container_dict_collision)
 
 pycore-container-dict-insert-new-key:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_insert_new_key.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=20 +STRING_HEX=pycore/programs/dict_insert_new_key_str.hex,pycore_container_dict_insert_new_key)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_insert_new_key.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=20,pycore_container_dict_insert_new_key)
 
 # pycore-container-dict-bool-key / dict-str-key / dict-str-key-long removed:
 # their hex fixtures still use the pre-3.14 inline 3-slot LOAD_CONST
@@ -2409,45 +2401,45 @@ pycore-container-dict-insert-new-key:
 # under img_str_consts.py and img_containers.py.
 
 pycore-container-dict-empty:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_empty.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=2 +STRING_HEX=pycore/programs/dict_empty_str.hex,pycore_container_dict_empty)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_empty.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=2,pycore_container_dict_empty)
 
 pycore-container-list-nested:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_nested.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=7 +STRING_HEX=pycore/programs/list_nested_str.hex,pycore_container_list_nested)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_nested.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=7,pycore_container_list_nested)
 
 pycore-container-tuple-index:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_index.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=40 +STRING_HEX=pycore/programs/tuple_index_str.hex,pycore_container_tuple_index)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_index.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=40,pycore_container_tuple_index)
 
 pycore-container-tuple-empty:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_empty.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=9 +STRING_HEX=pycore/programs/tuple_empty_str.hex,pycore_container_tuple_empty)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_empty.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=9,pycore_container_tuple_empty)
 
 # pycore-container-across-call removed: its hex fixture uses the pre-3.14
 # CALL encoding.  Replacement coverage lives in img_call_chain / image
 # boot programs run through tb_container with BOOT_EN=1.
 
 pycore-container-list-oob-read:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_read.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7 +STRING_HEX=pycore/programs/list_oob_read_str.hex,pycore_container_list_oob_read)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_read.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7,pycore_container_list_oob_read)
 
 pycore-container-list-oob-write:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_write.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7 +STRING_HEX=pycore/programs/list_oob_write_str.hex,pycore_container_list_oob_write)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_write.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7,pycore_container_list_oob_write)
 
 pycore-container-dict-missing-key:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_missing_key.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7 +STRING_HEX=pycore/programs/dict_missing_key_str.hex,pycore_container_dict_missing_key)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_missing_key.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7,pycore_container_dict_missing_key)
 
 # pycore-container-list-float-key removed: hex uses pre-3.14 inline
 # 3-slot LOAD_CONST for the float key.  Equivalent type-trap coverage
 # is available through image-boot fixtures.
 
 pycore-container-tuple-store-trap:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_store_trap.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=1 +STRING_HEX=pycore/programs/tuple_store_trap_str.hex,pycore_container_tuple_store_trap)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_store_trap.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=1,pycore_container_tuple_store_trap)
 
 pycore-container-dict-full-insert:
 	# Load ≥ 2/3 / last-slot insert → PY_TRAP_DICT_GROW (11), not MEM_FAULT.
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=11 +STRING_HEX=pycore/programs/dict_full_insert_str.hex +MAX_CYCLES=20000,pycore_container_dict_full_insert)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=11 +MAX_CYCLES=20000,pycore_container_dict_full_insert)
 
 # HEAP_INIT_PTR = HEAP_LIMIT-100 so BUILD_LIST 3 (112 bytes) exceeds
 # PYCORE_HEAP_LIMIT (0xF0000; exc-info arena begins there).
 pycore-container-list-oom:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7 +STRING_HEX=pycore/programs/list_oom_str.hex +HEAP_INIT_PTR=982940,pycore_container_list_oom)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7 +HEAP_INIT_PTR=982940,pycore_container_list_oom)
 
 # Natural FOR_ITER exhaustion skips END_FOR, so this raw stream executes
 # END_FOR directly and verifies its POP_TOP-equivalent stack effect.
@@ -2475,7 +2467,7 @@ pycore-container-list-append-fast: pycore-list-append-fixtures
 # then one LIST_APPEND -> PY_TRAP_LIST_GROW (trap code 9). Phase A has no
 # excore, so this is fatal.
 pycore-container-list-append-full-fatal:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_append_full_fatal.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=9 +STRING_HEX=pycore/programs/list_append_full_fatal_str.hex,pycore_container_list_append_full_fatal)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_append_full_fatal.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=9,pycore_container_list_append_full_fatal)
 
 # list_extend_* (LIST_EXTEND): hand-built fixtures — see
 # pycore/tools/gen_list_extend_fixtures.py. Non-empty extend always traps
@@ -2495,10 +2487,10 @@ pycore-container-list-extend-empty: pycore-list-extend-fixtures
 	$(call PYCORE_CONTAINER_BOOT_RUN,list_extend_empty,+EXPECTED_TAG=1 +EXPECTED_VALUE=42)
 
 pycore-container-list-extend-full-fatal:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_extend_full_fatal.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=10 +STRING_HEX=pycore/programs/list_extend_full_fatal_str.hex,pycore_container_list_extend_full_fatal)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_extend_full_fatal.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=10,pycore_container_list_extend_full_fatal)
 
 pycore-container-list-extend-type-fatal:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_extend_type_fatal.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=1 +STRING_HEX=pycore/programs/list_extend_type_fatal_str.hex,pycore_container_list_extend_type_fatal)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_extend_type_fatal.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=1,pycore_container_list_extend_type_fatal)
 
 # ---- Phase C: two-core (pycore + excore) system tests ----------------------
 # Hand-built images (gen_excore_integration_fixtures.py) exercising the real
@@ -2515,7 +2507,6 @@ define PYCORE_EXCORE_RUN
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=pycore/programs/$(1).hex \
-		+STRING_HEX=pycore/programs/$(1)_str.hex \
 		+DMEM_HEX=pycore/programs/$(1)_dmem.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
@@ -2536,7 +2527,6 @@ pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 	$(PYTHON) tools/ensure_sim.py twocore
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=pycore/programs/grow_oom_fatal.hex \
-		+STRING_HEX=pycore/programs/grow_oom_fatal_str.hex \
 		+DMEM_HEX=pycore/programs/grow_oom_fatal_dmem.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
@@ -2567,7 +2557,6 @@ pycore-excore-disabled: pycore-excore-integration-fixtures
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=pycore/programs/grow_from_zero.hex \
-		+STRING_HEX=pycore/programs/grow_from_zero_str.hex \
 		+DMEM_HEX=pycore/programs/grow_from_zero_dmem.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
@@ -2602,7 +2591,6 @@ pycore-excore-extend-oom-fatal: excore-fw pycore-excore-integration-fixtures
 	$(PYTHON) tools/ensure_sim.py twocore
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=pycore/programs/extend_oom_fatal.hex \
-		+STRING_HEX=pycore/programs/extend_oom_fatal_str.hex \
 		+DMEM_HEX=pycore/programs/extend_oom_fatal_dmem.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
@@ -2622,7 +2610,6 @@ pycore-excore-extend-disabled: pycore-excore-integration-fixtures
 	test -n "$$HEAP_INIT_PTR" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=pycore/programs/extend_grow_list.hex \
-		+STRING_HEX=pycore/programs/extend_grow_list_str.hex \
 		+DMEM_HEX=pycore/programs/extend_grow_list_dmem.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
