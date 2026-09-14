@@ -1,7 +1,8 @@
 # Watermark-straddling call/return ×1000. pad() builds a deep stack so leaf()
 # spills once (with RF_SPILL_HYST); subsequent leaf calls must not re-spill
 # the same window. Return value is 1000; spill-count golden is checked via
-# +CHECK_RF_SPILL_COUNT.
+# +CHECK_RF_SPILL_COUNT=33 (one burst of HYST+1; later leaf() calls must
+# not re-spill).
 
 
 def leaf():

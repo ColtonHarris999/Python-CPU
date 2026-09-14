@@ -669,7 +669,7 @@ define PYCORE_IMAGE_RUN
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
 		+MAX_CYCLES=$(2) \
-		$(PYCORE_MEM_PLUSARGS)
+		$(PYCORE_MEM_PLUSARGS) $(3)
 endef
 
 # Plan 1 P1: same differential flow as PYCORE_IMAGE_RUN, but the program is
@@ -859,7 +859,7 @@ pycore-img-rf-spill-refill:
 	$(call PYCORE_IMAGE_RUN,rf_spill_refill,2000000)
 
 pycore-img-rf-thrash:
-	$(call PYCORE_IMAGE_RUN,rf_thrash,4000000)
+	$(call PYCORE_IMAGE_RUN,rf_thrash,4000000,+CHECK_RF_SPILL_COUNT=33)
 
 pycore-img-rf-window-too-big-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,rf_window_too_big_trap,6,100000)
