@@ -28,7 +28,7 @@ These limit every firmware builtin:
 | **`CALL_KW` / `CALL_FUNCTION_EX` unfrozen** | Hardware binder supports keyword / `*args` / `**kwargs` calls on `CODE_OBJECT`. ROM modules may use `sep=` / `key=` / `*args` when implemented as Python `CODE_OBJECT`s. Native `OBK_BUILTIN` / `BI_*` paths remain positional-only (`CALL_FILTER` on kwargs). |
 | No `YIELD_VALUE` | `enumerate`/`zip`/`map`/`filter`/`reversed` return lists, not iterators |
 | `TO_BOOL` widened | `None` + LIST/TUPLE/DICT/SET/inline RANGE truthiness work; `OBJECT` `__bool__`/`__len__` protocol still TYPE-traps |
-| `COMPARE_OP` numeric only | `min`/`max`/`sorted` TYPE-trap on containers; **SHORT_STR ordering works** |
+| `COMPARE_OP` numeric + SHORT/LONG string | `min`/`max`/`sorted` TYPE-trap on containers; **SHORT_STR and LONG_STR ordering work** (`img_str_lt`, `img_str_eq_runtime_long`) |
 | No negative indices | `reversed` counts length explicitly |
 | Comprehensions emit `RERAISE` | Policy C: prefer `out += [x]` / `{*iterable}` (see `bytecode_support.md`) |
 | List/set growth | `LIST_EXTEND` / `SET_UPDATE` need excore for non-empty work |
@@ -36,7 +36,7 @@ These limit every firmware builtin:
 | `UNPACK_EX` + `CALL_INTRINSIC_1` (LIST_TO_TUPLE) | Starred unpack and `(*lst,)` / list→tuple materialization are available |
 | Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`. `ord.md` / `chr.md` are shipped notes. |
 | Next plan | `planning/builtin_support.md` — `LOAD_SUPER_ATTR` / OBJECT `TO_BOOL`; F2 `getattr` / empty min/max |
-| `compile`/`exec`/`eval` plan | `planning/compile_plan.md` (PyCPython host oracle → ROM subset compiler). Code-object `exec`/`eval` already in ROM. |
+| `compile`/`exec`/`eval` plan | [`planning/compiler_design.md`](../../planning/compiler_design.md). Code-object `exec`/`eval` already in ROM. |
 
 ## Builtin functions
 
@@ -56,7 +56,7 @@ These limit every firmware builtin:
 | `callable` | Return True if the object appears callable. | in progress | Heuristic via `__call__` in `__dict__`; no tag probe for `CODE_OBJECT`. |
 | `chr` | Return the Unicode character for an integer code point. | native | `BI_CHR` (id 11): INT → one-character SHORT_STR, 1–4 UTF-8 bytes inline. Rejects > U+10FFFF, negatives, and lone surrogates → TYPE trap (CPython allows surrogates). |
 | `classmethod` | Transform a method into a class method. | blocked | No classmethod kind; image folding rejects `@classmethod`. |
-| `compile` | Compile source into a code object usable by exec/eval. | blocked | See `compile.md`. |
+| `compile` | Compile source into a code object usable by exec/eval. | blocked | See `compile.md`. Subset gate: `pycore/tests/test_compiler_subset.py`. |
 | `complex` | Create a complex number from real/imag or a string. | blocked | COMPLEX ALU tag exists; no runtime constructor. |
 | `delattr` | Delete a named attribute from an object. | in ROM | `del obj.__dict__[name]` (instance dict only; no MRO). |
 | `dict` | Create a new dictionary. | in ROM | From iterable of pairs via `UNPACK_SEQUENCE` + `STORE_SUBSCR`. No kwargs ctor. |

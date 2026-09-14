@@ -100,11 +100,13 @@ may still trap on a semantic ceiling the linter cannot see. Details:
 
 ## Register layout and tags
 
-96-entry RF: `RF[0..31]` frame locals, `RF[32..95]` operand stack. Entries are
-`{ tag[3:0], value[127:0] }`. Call frames are a dmem push/pop stack
-(`pycore/rtl/pycore_frame.sv`). Behind `imem_*` / `dmem_*` is an 8 KB L1I,
-8 KB L1D, 128 KB L2 and parameterized RAM; see
-`pycore/docs/memory_hierarchy.md`.
+256-entry RF (`RF_DEPTH`): `RF[0..31]` frame-0 locals, `RF[32..255]` operand
+stack. Entries are `{ tag[3:0], value[127:0] }`. Call frames are a dmem
+push/pop stack (`pycore/rtl/pycore_frame.sv`). Live depth is RF-bound today
+(~25 tiny frames); the ring-window spill/fill is
+[`planning/compiler_design.md`](planning/compiler_design.md) step B. Behind
+`imem_*` / `dmem_*` is an 8 KB L1I, 8 KB L1D, 128 KB L2 and parameterized
+RAM; see `pycore/docs/memory_hierarchy.md`.
 
 | Tag | Name | Notes |
 | --- | --- | --- |

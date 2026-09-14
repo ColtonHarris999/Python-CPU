@@ -1,6 +1,11 @@
 `include "pycore_defs.svh"
 
-// Code memory region mux (Plan 1 P1).
+// Code memory region mux (Plan 1 P1) — UNINSTANTIATED.
+//
+// The live fetch path is pycore_mem_hier → pycore_ram (both system tops).
+// This module is still compiled as part of PYCORE_RTL_SRCS but is not
+// connected. Kept as a reference for the ROM/RAM slot split; do not
+// instantiate it in new work. See pycore/docs/code_loading.md §1.
 //
 // Presents one code address space to fetch while backing it with two banks:
 // a read-only ROM (the image) below PYCORE_CODE_RAM_BYTE_BASE and a writable

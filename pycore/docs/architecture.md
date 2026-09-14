@@ -15,7 +15,9 @@ and `pycore.json` → `exceptions.types`. Remaining architecture work is
 the timeline is [`planning/master_plan.md`](../../planning/master_plan.md).
 The memory hierarchy and STRACC as built are
 [`memory_hierarchy.md`](memory_hierarchy.md) and
-[`string_accel.md`](string_accel.md).
+[`string_accel.md`](string_accel.md). On-device `compile()`:
+[`compiler.md`](compiler.md) and
+[`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 Paper-oriented systems notes (LaTeX) for near-complete subsystems live under
 `docs/paper/` — start with `docs/paper/systems/call_fsm.tex` for the CALL FSM
@@ -409,12 +411,20 @@ result `INT` in v1.
 
 ## Register file and frames
 
-`pycore_regfile.sv` owns the 96-entry register file:
+`pycore_regfile.sv` owns the **256-entry** register file (`RF_DEPTH = 256`).
+Today the window is still linear: `STACK_BASE = 32` splits
 
 ```text
-RF[0..31]  frame locals
-RF[32..95] operand stack
+RF[0..31]   frame-0 locals / args
+RF[32..255] operand stack (grows up; live callees take windows from TOS)
 ```
+
+A function with more than 32 parameters is a `CALL_FILTER` trap; there is
+no guard on `co_nlocals`, and the UNINIT-clear loop is only 32 entries
+(compiler_design.md C1 — fixed in step B). Live depth is bounded by the
+resident window (~25 tiny frames on `img_deep_callgraph`), not by
+`MAX_CALL_DEPTH_CORE = 128`. Step B of [`planning/compiler_design.md`](../../planning/compiler_design.md)
+replaces this with a ring window plus spill/fill.
 
 Function calls are managed by the as-built `pycore_frame.sv`, which implements
 a **simple push/pop call-frame stack in dmem** (not a ring-buffer spill design).
@@ -942,11 +952,12 @@ namespace the xbar adds `PYCORE_CODE_ADDR_BASE = 0x01000000` so those bytes
 never alias dmem:
 
 ```text
-slot 0x0000 .. 0x1FFF   CODE ROM   pycore_imem      READ_ONLY    64 KB
-slot 0x2000 .. 0xA1FF   CODE RAM   pycore_code_ram  writable    256 KB
+slot 0x0000 .. 0x1FFF   CODE ROM   pycore_ram.code_arr   READ_ONLY below RAM base   64 KB
+slot 0x2000 .. 0xA1FF   CODE RAM   pycore_ram.code_arr   writable                   256 KB
 ```
 
-`pycore_code_mem.sv` muxes the two and is a drop-in replacement for
-`pycore_imem`. Full details, sizing rationale, and the planned module/loader
-format are in [`code_loading.md`](code_loading.md). Hierarchy, port contract
-and invalidation: [`memory_hierarchy.md`](memory_hierarchy.md).
+The live path is `pycore_mem_hier` → `pycore_ram`. `pycore_code_mem.sv` /
+`pycore_code_ram.sv` are compiled but not instantiated. Full details, sizing
+rationale, and the planned module/loader format are in
+[`code_loading.md`](code_loading.md). Hierarchy, port contract and
+invalidation: [`memory_hierarchy.md`](memory_hierarchy.md).

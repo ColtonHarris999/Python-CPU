@@ -18,14 +18,16 @@ Pure-Python modules under `builtins/` implement **miss / protocol**
 paths (e.g. `len(obj)` → `obj.__len__()`), not slower rewrites of the
 fast paths. Bytecode and CALL work needed to finish this split is in
 `planning/old/implemented/builtins_bytecode_support_plan.md`.
-On-device `compile()`: `planning/compile_plan.md` and `vendor/pycpython`
-(host oracle only).
+On-device `compile()`: [`planning/compiler_design.md`](../planning/compiler_design.md)
+and [`pycore/docs/compiler.md`](../pycore/docs/compiler.md). Host oracle only:
+`vendor/pycpython`.
 
 ## Layout
 
 | Path | Role |
 | --- | --- |
 | `builtins/` | Pure-Python miss-path / ROM builtins + `builtins.md` inventory |
+| `compiler/` | On-device `compile()` (PyCore subset). `compat.py` now; lexer/parser/codegen next |
 
 Image tests compile these modules via `ROM_FIRMWARE_BUILTINS` in
 `pycore/tools/image_from_source.py` and seed them into the boot-record

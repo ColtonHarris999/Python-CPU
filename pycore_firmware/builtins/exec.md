@@ -2,7 +2,7 @@
 
 Status: **in ROM** for code objects; string form **blocked** on `compile()`.
 
-**Plan:** [`planning/compile_plan.md`](../../planning/compile_plan.md)
+**Plan:** [`planning/compiler_design.md`](../../planning/compiler_design.md)
 (string form) and [`planning/builtin_support.md`](../../planning/builtin_support.md).
 
 `exec(code_object)` needs **no further hardware**: `CALL` on a
