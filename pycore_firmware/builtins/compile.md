@@ -17,10 +17,12 @@ usable by `eval` / `exec`. First success:
 
 ## Current
 
-- **T0.** `img_str_eq_runtime_long`, `img_compile_ns_inherit`, measured ROM
-  occupancy in `test_compiler_rom_occupancy.py`.
-- **A.** `test_compiler_subset.py` is red on `xs[-1]`, `xs[1:]`, `class`,
-  closures, and an over-cap frame window. `compat.py` is the rewrite kit.
+T0 and A are green.
+
+- Runtime LONG_STR `==` / ordering: `img_str_eq_runtime_long` → 63.
+- `_bi_exec_globals` inheritance through nested `CALL`: `img_compile_ns_inherit` → 42.
+- ROM occupancy: 2365 firmware slots; smoke image 2384 slots / 70528 heap bytes.
+- Subset gate: `test_compiler_subset.py`. Rewrite helpers: `compat.py`.
 
 ## Still blocked for a working `compile()`
 

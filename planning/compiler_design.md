@@ -350,6 +350,9 @@ def compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1):
 `_PYC_ENTRY` is a zero-argument `CODE_OBJECT` whose body is
 `return _pyc_compile(_in_src, _in_file, _in_mode)`. Both `_PYC_G` and
 `_PYC_ENTRY` are seeded in the boot builtins dict (two names, not sixty).
+T0 `img_compile_ns_inherit` returned 42: a helper `CALL` nested under
+`_bi_exec_globals` resolves `LOAD_GLOBAL` in the supplied dict, so
+fallback F-A is not needed.
 
 **Consequences to write down:**
 
@@ -1056,7 +1059,7 @@ loader for this.
 | --- | --- | --- |
 | R1 | Parser recursion creeps back in and turns into spill traffic | `img_compile_deep_nesting` (A3) golden includes the RF spill count, so it regresses visibly rather than silently |
 | R1b | The §6.1 ring rewrite breaks the CALL/RETURN path — the highest-blast-radius change in this plan | Step B's acceptance is the **entire existing image suite unchanged**, plus a directed `tb_regfile`. Land it alone, before any compiler code, so a later failure is never ambiguous between the two |
-| R2 | `_bi_exec_globals` namespace inheritance does not hold for some call shape | Prove it in step T0 with `img_compile_ns_inherit` **before** writing the compiler; fallback F-A in §4.2 |
+| R2 | `_bi_exec_globals` namespace inheritance does not hold for some call shape | **Closed T0.** `img_compile_ns_inherit` → 42. Fallback F-A unused. |
 | R3 | Compiler exceeds code RAM | Size report hard-fails (W-8); levers in §7 |
 | R4 | Working-set leak exhausts the heap on repeated compiles | `img_compile_repeat` watermark golden; caller mark/release pattern documented; O-2 if it bites |
 | R5 | Silent miscompilation | Every differential compares **results** against host CPython *and* against `vendor/pycpython`; never `co_code` |
@@ -1078,8 +1081,8 @@ parallel with B and C.
 
 | Step | Work | Done when |
 | --- | --- | --- |
-| **T0** | Pin the three uncertain facts: (a) runtime LONG_STR `==` and ordering, (b) `_bi_exec_globals` namespace inheritance through nested `CALL`, (c) current ROM slot occupancy | `img_str_eq_runtime_long`, `img_compile_ns_inherit`, and a measured §7 table |
-| **A** | `test_compiler_subset.py` + `compat` helpers + empty `pycore_firmware/compiler/` | Host test is **red** on `xs[-1]`, `xs[1:]`, `class`, a closure, and an over-cap frame window. Pure host Python, so it can land while B is in flight |
+| **T0** | Pin the three uncertain facts: (a) runtime LONG_STR `==` and ordering, (b) `_bi_exec_globals` namespace inheritance through nested `CALL`, (c) current ROM slot occupancy | **Done.** `img_str_eq_runtime_long` → 63; `img_compile_ns_inherit` → 42 (inheritance **holds**, fallback F-A is not needed); occupancy in `test_compiler_rom_occupancy.py` |
+| **A** | `test_compiler_subset.py` + `compat` helpers + empty `pycore_firmware/compiler/` | **Done.** Host test is **red** on `xs[-1]`, `xs[1:]`, `class`, a closure, and an over-cap frame window |
 | **B** | **§6.1 S-1…S-9: the RF ring window, spill/fill, and the locals lift.** Land it on its own, touching no compiler code | The **entire existing image suite passes unchanged**, plus `img_locals_40_uninit` (red on `main` today), `img_locals_64`, `img_rf_deep_recursion`, `img_rf_spill_refill`, `img_rf_thrash`, `img_rf_window_too_big_trap`, `img_rf_spill_oom_trap`, `tb_regfile` |
 | **C** | R-1…R-6 + W-4 + W-5 (the code write path and the four builtins) | `img_code_new_call`: blit `RESUME; LOAD_SMALL_INT 7; RETURN_VALUE`, `_bi_code_new`, call it, get 7. Plus `img_code_emit_then_call`, `img_code_alloc_oom_trap`, `img_code_write_floor_trap` |
 | **D** | W-1, W-2, W-6: seed a two-function toy package into `_PYC_G` and call one from the other | `img_pyc_package_call` |
