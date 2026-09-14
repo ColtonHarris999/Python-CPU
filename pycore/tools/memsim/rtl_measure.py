@@ -188,6 +188,11 @@ def run_rtl(
         f"+CACHE_EN={cache_en}",
         f"+MEM_LATENCY={mem_latency}",
     ]
+    code_ram_hex = work / "code_ram.hex"
+    if code_ram_hex.is_file():
+        cmd.append(f"+CODE_RAM_HEX={code_ram_hex.resolve()}")
+    if "CODE_RAM_INIT_SLOT" in meta:
+        cmd.append(f"+CODE_RAM_INIT_SLOT={meta['CODE_RAM_INIT_SLOT']}")
     proc = subprocess.run(
         cmd, cwd=ROOT, text=True, capture_output=True, check=False
     )

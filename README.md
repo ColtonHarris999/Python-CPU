@@ -100,11 +100,12 @@ may still trap on a semantic ceiling the linter cannot see. Details:
 
 ## Register layout and tags
 
-96-entry RF: `RF[0..31]` frame locals, `RF[32..95]` operand stack. Entries are
-`{ tag[3:0], value[127:0] }`. Call frames are a dmem push/pop stack
-(`pycore/rtl/pycore_frame.sv`). Behind `imem_*` / `dmem_*` is an 8 KB L1I,
-8 KB L1D, 128 KB L2 and parameterized RAM; see
-`pycore/docs/memory_hierarchy.md`.
+256-entry RF ring: occupancy is the suffix `[watermark, tos)`; CALL spills a
+watermark prefix to dmem (`0x100000`) when the live window would not fit, and
+RETURN fills it back. Entries are `{ tag[3:0], value[127:0] }`. Call-frame
+*descriptors* are a dmem push/pop stack (`pycore/rtl/pycore_frame.sv`). Behind
+`imem_*` / `dmem_*` is an 8 KB L1I, 8 KB L1D, 128 KB L2 and parameterized RAM;
+see `pycore/docs/memory_hierarchy.md`.
 
 | Tag | Name | Notes |
 | --- | --- | --- |

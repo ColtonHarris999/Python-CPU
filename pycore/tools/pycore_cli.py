@@ -380,8 +380,10 @@ def _run_shared_sim(
     max_cycles: int,
     two_core: bool,
     stdout_path: pathlib.Path,
+    code_ram_hex: pathlib.Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     sim = _ensure_shared_sim(two_core)
+    ram_hex = code_ram_hex or (pathlib.Path(program_hex).parent / "code_ram.hex")
     cmd = [
         str(sim),
         f"+PROG_HEX={program_hex.resolve()}",
@@ -395,6 +397,10 @@ def _run_shared_sim(
         f"+CACHE_EN={os.environ.get('PYCORE_CACHE_EN', '1')}",
         f"+MEM_LATENCY={os.environ.get('PYCORE_MEM_LATENCY', '4')}",
     ]
+    if ram_hex.is_file():
+        cmd.append(f"+CODE_RAM_HEX={ram_hex.resolve()}")
+    if "CODE_RAM_INIT_SLOT" in meta:
+        cmd.append(f"+CODE_RAM_INIT_SLOT={meta['CODE_RAM_INIT_SLOT']}")
     if two_core:
         cmd.append(f"+FW_HEX={EXCORE_FW_HEX.resolve()}")
         cmd.append(f"+STDOUT_PATH={stdout_path.resolve()}")
@@ -464,7 +470,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         meta=meta_path,
     )
     meta = _parse_meta(meta_path)
-    for key in ("HEAP_INIT_PTR", "EXPECTED_TAG", "EXPECTED_VALUE"):
+    for key in ("HEAP_INIT_PTR", "EXPECTED_TAG", "EXPECTED_VALUE", "CODE_RAM_INIT_SLOT"):
         if key not in meta:
             print(f"run FAIL: image.meta missing {key}")
             return 1

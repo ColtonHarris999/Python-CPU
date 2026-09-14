@@ -1,8 +1,9 @@
-"""Code-RAM mark / release, and that the cursor starts at the region base.
+"""Code-RAM mark / release, and that the cursor starts at the write floor.
 
-Nothing writes code RAM yet, so the cursor does not move on its own; this pins
-the read/restore path and the region base so P2's loader and Plan 2's emitter
-inherit a tested primitive.
+The floor is ``CODE_RAM_INIT_SLOT``: ``PYCORE_CODE_RAM_SLOT_BASE`` plus any
+preloaded firmware-package slots (compiler_design.md step D). Nothing writes
+code RAM here, so the cursor does not move on its own; this pins the
+read/restore path.
 
 # pycore-expect: 111
 """
@@ -11,8 +12,8 @@ inherit a tested primitive.
 def managed_entry():
     total = 0
     mark = _bi_code_mark()
-    # 0x2000 == PYCORE_CODE_RAM_SLOT_BASE.
-    if mark == 8192:
+    # Write floor sits in code RAM (>= PYCORE_CODE_RAM_SLOT_BASE).
+    if mark >= 8192:
         total += 1
     _bi_code_release(mark)
     if _bi_code_mark() == mark:

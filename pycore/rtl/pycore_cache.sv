@@ -25,6 +25,11 @@ module pycore_cache #(
     parameter int    LINE_BYTES  = PYCORE_LINE_BYTES,
     parameter int    WAYS        = PYCORE_L2_WAYS,
     parameter bit    READ_ONLY   = 1'b0,
+    // L1I: write-invalidate, no-allocate. On we_i, drop a hit line if
+    // present and forward the write downstream (ST_WT_*). Do not merge
+    // the written word into the cache. Orthogonal to READ_ONLY, which
+    // still faults writes when this is 0.
+    parameter bit    WRITE_INV_NO_ALLOC = 1'b0,
     parameter bit    WRITE_BACK  = 1'b1,
     parameter int    HIT_CYCLES  = 1,
     // 1: down port is a 4-beat line burst (L2 → RAM). 0: each beat is a
@@ -393,7 +398,13 @@ module pycore_cache #(
                         cap_wdata_r <= wdata_i;
                         cap_line_wr_r <= we_i && line_i;
                         cap_wline_r <= wline_i;
-                        if (we_i && READ_ONLY) begin
+                        if (we_i && WRITE_INV_NO_ALLOC) begin
+                            if (comb_hit) begin
+                                valid_q[req_set][comb_hit_way] <= 1'b0;
+                                dirty_q[req_set][comb_hit_way] <= 1'b0;
+                            end
+                            state_r <= ST_WT_ISSUE;
+                        end else if (we_i && READ_ONLY) begin
                             ack_r   <= 1'b1;
                             fault_r <= 1'b1;
                             rdata_r <= '0;

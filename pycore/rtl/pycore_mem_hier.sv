@@ -10,7 +10,8 @@
 // flush/invalidate sequencer lives here, next to the ports the grant mux
 // in pycore_excore_system.sv waits on: pulse flush_req_i / inv_req_i,
 // wait for the matching *_done_o pulse. Single-core ties those off.
-// L1I is read-only; it is not flushed on the excore handoff.
+// L1I is write-invalidate / no-allocate (compiler_design.md R-1); it is
+// not flushed on the excore handoff.
 module pycore_mem_hier #(
     parameter int    ADDR_WIDTH       = PYCORE_ADDR_WIDTH,
     parameter int    IMEM_DATA_W      = PYCORE_IMEM_DATA_WIDTH,
@@ -132,6 +133,7 @@ module pycore_mem_hier #(
         .LINE_BYTES(PYCORE_LINE_BYTES),
         .WAYS(L1I_WAYS),
         .READ_ONLY(1'b1),
+        .WRITE_INV_NO_ALLOC(1'b1),
         .WRITE_BACK(1'b0),
         .HIT_CYCLES(L1I_HIT_CYCLES),
         .DOWN_LINE(1'b0)

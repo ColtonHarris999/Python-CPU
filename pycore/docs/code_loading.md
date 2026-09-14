@@ -3,11 +3,11 @@
 How bytecode gets into memory and becomes executable. Companion to
 `architecture.md` (memory map) and `object_model.md` (code objects).
 
-Status: **code ROM + code RAM + fetch mux shipped.** Runtime writers
-(`_bi_code_alloc` / `_bi_code_emit` / `_bi_code_new`) are the next slice
-([`planning/compile_plan.md`](../../planning/compile_plan.md)). The module
-image format and loader are not implemented yet; §4 records the intended
-design so the region layout is not re-litigated when it lands.
+Status: **code ROM + code RAM + fetch mux + runtime writers shipped.**
+`_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new` write
+code RAM and fabricate `CODE_OBJECT` handles (`compiler_design.md` step C).
+The module image format and loader are not implemented yet; §4 records the
+intended design so the region layout is not re-litigated when it lands.
 
 ## 1. The code address space
 
@@ -63,18 +63,28 @@ resident at once.
 
 ## 2. What can write code RAM
 
-Nothing yet, at runtime. The banks and fetch path are in; the writers
-are [`planning/compile_plan.md`](../../planning/compile_plan.md) F1:
+The banks, fetch path, and on-core writers are in:
 
 | Writer | Status | Mechanism |
 | --- | --- | --- |
 | Image preload (`CODE_RAM_HEX`) | **shipped** | `$readmemh` at elaboration; test-only |
-| `_bi_code_alloc` / `_bi_code_emit` / `_bi_code_new` | **next** | bump-reserve, write one word, fabricate `CODE_OBJECT` |
+| `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new` | **shipped** | bump-reserve, multi-word blit, one-slot patch, fabricate `CODE_OBJECT` |
 | `_bi_load_module` | later | copies a module image's text section into RAM |
 
-The code-RAM bump cursor `code_ram_ptr_r` exists and starts at
-`CODE_RAM_INIT_SLOT` (default `PYCORE_CODE_RAM_SLOT_BASE`); only mark/release
-moves it so far.
+The code-RAM bump cursor `code_ram_ptr_r` starts at `CODE_RAM_INIT_SLOT`
+(plusarg `+CODE_RAM_INIT_SLOT=`, default `PYCORE_CODE_RAM_SLOT_BASE`). Alloc
+moves it forward; mark/release still restore it. Writes below
+`code_ram_floor_r` (the reset cursor) trap `MEM_FAULT`.
+
+The image builder reports `CODE_RAM_INIT_SLOT` in `image.meta` as
+`PYCORE_CODE_RAM_SLOT_BASE + N`, where `N` is the number of slots in
+`code_ram.hex`. Step D preloads the firmware package (every top-level `def`
+under `pycore_firmware/compiler/`, plus the `_PYC_ENTRY` trampoline) into
+that bank at elaboration. Those slots sit below the write floor, so they are
+as unwritable as ROM. Ordinary ROM images still emit `program.hex` for the
+boot image and ROM firmware; `code_ram.hex` holds only the package.
+`--code-ram` (Plan 1 P1) still relocates the *whole* user image into RAM and
+skips the package so the two preloads cannot overlap.
 
 **Excore cannot write code memory at all.** The two cores share dmem but keep
 private instruction memories, so every code-memory writer must run on-core.

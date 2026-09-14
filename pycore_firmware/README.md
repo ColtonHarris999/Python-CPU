@@ -26,9 +26,17 @@ On-device `compile()`: `planning/compile_plan.md` and `vendor/pycpython`
 | Path | Role |
 | --- | --- |
 | `builtins/` | Pure-Python miss-path / ROM builtins + `builtins.md` inventory |
+| `compiler/` | On-device `compile()` package. Step D seeds a two-function toy into `_PYC_G`; later steps drop in lexer/parser/codegen. `tables.py` is generated from `pycore/targets/pycore.json` (`pycore/tools/gen_compiler_tables.py`). |
 
 Image tests compile these modules via `ROM_FIRMWARE_BUILTINS` in
 `pycore/tools/image_from_source.py` and seed them into the boot-record
 builtins dict. Host goldens in `run_image_test.py` inject the same bodies
 through `load_rom_firmware_callables()` so firmware semantics (e.g.
 `reversed` → list) match hardware.
+
+The compiler package is **not** listed in that builtins dict. The image
+builder serializes every top-level `def` under `compiler/` (except generated
+`tables.py`) into code RAM, builds one `MUT_DICT` bound as `_PYC_G`, and
+binds a 0-arg trampoline as `_PYC_ENTRY`. User programs enter the package
+with `_bi_exec_globals(_PYC_ENTRY, _PYC_G)`.
+

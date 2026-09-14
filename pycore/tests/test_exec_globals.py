@@ -35,6 +35,7 @@ class TestExecGlobalsIds(unittest.TestCase):
     def test_bi_exec_globals_matches_rtl(self):
         self.assertEqual(encoding.BI_EXEC_GLOBALS, _rtl_bi("PY_BI_EXEC_GLOBALS"))
         self.assertEqual(encoding.BI_EXEC_GLOBALS, encoding.BI_CODE_RELEASE + 1)
+        self.assertEqual(encoding.BI_CODE_ALLOC, encoding.BI_EXEC_GLOBALS + 1)
 
     def test_seeded_as_native_builtin(self):
         from encoding import OBK_BUILTIN, int_value, ob_kind, obj_field_val_addr
