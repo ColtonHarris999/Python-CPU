@@ -120,7 +120,8 @@ EXCORE_RTL_SRCS := \
 	pycore-img-list-repeat-type-trap \
 	pycore-img-list-concat pycore-img-list-concat-damerau \
 	pycore-img-list-concat-type-trap \
-	pycore-img-str-eq pycore-img-str-lt-trap \
+	pycore-img-str-eq pycore-img-str-lt pycore-img-str-eq-runtime-long \
+	pycore-img-compile-ns-inherit pycore-img-compiler-t0 \
 	pycore-img-str-subscr pycore-img-str-subscr-long \
 	pycore-img-exec-all \
 	pycore-img-slice-all \
@@ -945,8 +946,14 @@ pycore-img-list-concat-type-trap:
 pycore-img-str-eq:
 	$(call PYCORE_IMAGE_RUN,str_eq,50000)
 
+pycore-img-str-eq-runtime-long:
+	$(call PYCORE_IMAGE_RUN,str_eq_runtime_long,100000)
+
 pycore-img-str-lt:
 	$(call PYCORE_IMAGE_RUN,str_lt,50000)
+
+pycore-img-compile-ns-inherit:
+	$(call PYCORE_IMAGE_RUN,compile_ns_inherit,50000)
 
 pycore-img-format-simple:
 	$(call PYCORE_IMAGE_RUN,format_simple,50000)
@@ -1122,7 +1129,12 @@ pycore-img-exec-all: \
 	pycore-img-exec-globals-read \
 	pycore-img-exec-globals-restore \
 	pycore-img-exec-globals-nested \
-	pycore-img-exec-globals-type-trap
+	pycore-img-exec-globals-type-trap \
+	pycore-img-compile-ns-inherit
+
+pycore-img-compiler-t0: \
+	pycore-img-str-eq-runtime-long \
+	pycore-img-compile-ns-inherit
 
 pycore-img-str-subscr-long:
 	$(call PYCORE_IMAGE_RUN,str_subscr_long,50000)
@@ -1156,6 +1168,7 @@ pycore-img-scalar-all: \
 	pycore-img-list-concat-damerau \
 	pycore-img-list-concat-type-trap \
 	pycore-img-str-eq \
+	pycore-img-str-eq-runtime-long \
 	pycore-img-str-lt \
 	pycore-img-format-simple \
 	pycore-img-convert-value \
@@ -1642,6 +1655,7 @@ pycore-img-two-core: \
 	pycore-img-set-methods
 
 pycore-img: \
+	pycore-img-compiler-t0 \
 	pycore-img-exec-all \
 	pycore-img-slice-all \
 	pycore-img-exc-types-all \

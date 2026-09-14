@@ -1,5 +1,6 @@
-# COMPARE_OP ==/!= on SHORT_STR and LONG_STR (same-tag).
-# Short equal + short unequal + long equal → host golden 7.
+# COMPARE_OP ==/!= on interned SHORT_STR and LONG_STR (same handle).
+# Short equal + short unequal + interned long equal → host golden 7.
+# Distinct runtime LONG objects: img_str_eq_runtime_long.
 
 
 def managed_entry():

@@ -57,9 +57,9 @@ Order is “what unblocks the next product step,” not calendar estimates.
 ### 1. Code-RAM writers (architecture + compile)
 
 Nothing writes code RAM at runtime (`imem_we` is still 0). Add
-`_bi_code_alloc` / `_bi_code_emit` / `_bi_code_new` and host stand-ins.
-This is the only RTL gate for `compile()`. Details:
-[`compile_plan.md`](compile_plan.md) F1 and [`architecture_plan.md`](architecture_plan.md).
+`_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new` and
+host stand-ins. Step B (RF ring window) lands first. Details:
+[`compiler_design.md`](compiler_design.md) §6 and [`architecture_plan.md`](architecture_plan.md).
 
 ### 2. On-device `compile()` (compile plan)
 

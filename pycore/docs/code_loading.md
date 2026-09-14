@@ -3,11 +3,12 @@
 How bytecode gets into memory and becomes executable. Companion to
 `architecture.md` (memory map) and `object_model.md` (code objects).
 
-Status: **code ROM + code RAM + fetch mux shipped.** Runtime writers
-(`_bi_code_alloc` / `_bi_code_emit` / `_bi_code_new`) are the next slice
-([`planning/compile_plan.md`](../../planning/compile_plan.md)). The module
-image format and loader are not implemented yet; §4 records the intended
-design so the region layout is not re-litigated when it lands.
+Status: **code ROM + code RAM shipped inside `pycore_ram.sv`.** Runtime writers
+(`_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new`) are
+the next slice ([`planning/compiler_design.md`](../../planning/compiler_design.md)
+step C). The module image format and loader are not implemented yet; §4
+records the intended design so the region layout is not re-litigated when
+it lands.
 
 ## 1. The code address space
 
@@ -15,8 +16,8 @@ The PC is a **slot index**, not a byte address; fetch converts it with
 `pc << 3` because every code word is 8 bytes. Two banks share that space:
 
 ```text
-slot 0x0000 .. 0x1FFF   CODE ROM   pycore_imem      READ_ONLY, $readmemh      64 KB /  8192 slots
-slot 0x2000 .. 0xA1FF   CODE RAM   pycore_code_ram  writable                 256 KB / 32768 slots
+slot 0x0000 .. 0x1FFF   CODE ROM   pycore_ram.code_arr   READ_ONLY below RAM base   64 KB /  8192 slots
+slot 0x2000 .. 0xA1FF   CODE RAM   pycore_ram.code_arr   writable                   256 KB / 32768 slots
 ```
 
 `PYCORE_CODE_RAM_SLOT_BASE` (`0x2000`) is exactly the ROM's slot count
@@ -26,11 +27,12 @@ large entry slot. `pycore/tests/test_code_ram.py` pins that relationship, along
 with the tooling mirrors in `encoding.py`, so the two copies of the geometry
 cannot drift.
 
-`pycore_code_mem.sv` is the region mux and is a drop-in replacement for
-`pycore_imem`, so both tops (`pycore_system.sv`, `pycore_excore_system.sv`)
-changed only the module name plus a `CODE_RAM_HEX` parameter. Both banks are the
-same `pycore_mem_bank`, so read latency and the ack handshake are identical
-whichever region is selected and fetch needed no new stall state.
+The live fetch path is `pycore_mem_hier` → `pycore_ram` (both
+`pycore_system.sv` and `pycore_excore_system.sv`). The ROM/RAM split is a
+compare against `PYCORE_CODE_RAM_BYTE_BASE` inside `pycore_ram.sv`.
+`pycore_code_mem.sv` / `pycore_code_ram.sv` are still compiled
+(`Makefile` `PYCORE_RTL_SRCS`) but **not instantiated** — they are the
+pre-hierarchy region mux, kept as a reference, not the production path.
 
 A request at or beyond `PYCORE_CODE_RAM_SLOT_LIMIT` has no bank to answer it, so
 the mux synthesises `fault_o` **and still acks** — a silent wrap or a hang would
@@ -69,7 +71,7 @@ are [`planning/compile_plan.md`](../../planning/compile_plan.md) F1:
 | Writer | Status | Mechanism |
 | --- | --- | --- |
 | Image preload (`CODE_RAM_HEX`) | **shipped** | `$readmemh` at elaboration; test-only |
-| `_bi_code_alloc` / `_bi_code_emit` / `_bi_code_new` | **next** | bump-reserve, write one word, fabricate `CODE_OBJECT` |
+| `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new` | **next** | bump-reserve, bulk write, patch, fabricate `CODE_OBJECT` |
 | `_bi_load_module` | later | copies a module image's text section into RAM |
 
 The code-RAM bump cursor `code_ram_ptr_r` exists and starts at

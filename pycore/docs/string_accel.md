@@ -73,11 +73,11 @@ Dict/set probes issue tier 3 at `CP_DICT_CHK_VAL` when meta matches
 
 `COMPARE_OP` `==`/`!=` on strings: identical handles compare equal; mixed
 SHORT/LONG is always false (canonical invariant). Same-tag SHORT_STR also
-has lexicographic ordering. **LONG_STR ordering still TYPE-traps.**
-`COMPARE_OP` equality of two distinct LONG objects with matching meta is
-not the dict-probe path — interned constants that share a handle compare
-equal (`img_str_eq`); a runtime concat vs an interned copy of the same
-text does not, unless they happen to be the same object.
+has lexicographic ordering. Same-tag LONG_STR equality of *distinct*
+objects with matching `(hash, nbytes, nchars, kind)` and LONG_STR
+ordering (`<`/`<=`/`>`/`>=`) both go through STRACC `SA_CMP`
+(`img_str_eq_runtime_long`). Interned constants that share a handle still
+take the cheap identity path (`img_str_eq`).
 
 Dict hash for LONG_STR is the cached content hash in `value[95:64]`, not
 `addr XOR len`.

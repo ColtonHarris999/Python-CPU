@@ -1032,17 +1032,17 @@ code units ≈ **3.9 units/line**; regenerate with
 
 | Resource | Capacity | Budget for this work | Source |
 | --- | ---: | --- | --- |
-| Code ROM | 8 192 slots | unchanged: boot image + ~33 existing builtins (~2 000 slots today, estimated) | `PYCORE_IMEM_BLOCK_COUNT = 16` |
+| Code ROM | 8 192 slots | **measured T0:** firmware+native methods = **2365** slots; `img_smoke` total = **2384** (user program 19). ~5800 slots of ROM headroom before the compiler is seeded. Pinned by `test_compiler_rom_occupancy.py`. | `PYCORE_IMEM_BLOCK_COUNT = 16` |
 | Code RAM | 32 768 slots | **compiler ≤ 14 000 slots** (≈ 3 500 source lines), leaving ≥ 18 000 for compiled output | `PYCORE_CODE_RAM_BLOCK_COUNT = 64`, `pycore_defs.svh:3661` |
-| Heap | ~960 KB (`0x440`–`0xF0000`) | static image + `_PYC_G`; peak working set for a 4 KB source ≈ 250 KB (tokens 96 B each, nodes 192 B each) | `pycore_defs.svh:3098-3099` |
+| Heap | ~960 KB (`0x440`–`0xF0000`) | **measured T0:** `img_smoke` static image = **70 528** bytes (`HEAP_INIT_PTR=0x117c0`). Peak working set for a 4 KB source still estimated ≈ 250 KB | `pycore_defs.svh:3098-3099` |
 | Register file | 256 entries, ring window | after §6.1: resident working set only; per-frame `nlocals + co_stacksize ≤ ~240` | S-1, S-6 |
 | RF spill region | 256 KB / 8 192 entries (new) | ≈ 500–1 000 typical frames before `MEM_FAULT` | S-7 |
 | Frame stack | 32 KB / 1 024 descriptors | the binding depth limit after S-5 raises `MAX_CALL_DEPTH_CORE` to match it | `pycore_defs.svh:3100-3101` |
 | `int` | signed 64-bit, wraps | line numbers, offsets, packed fields all fit | `architecture.md` |
 
-**First task of the implementation is to replace the estimates in this table
-with measurements** (build one image, read `image.meta` and the hex line
-counts). If the compiler overruns code RAM, the answer is in order:
+**T0 measurement (2026-09-14).** Firmware+native-method bytecode is 2365
+ROM slots; a smoke image is 2384 slots and 70 528 bytes of static heap.
+If the compiler overruns code RAM, the answer is in order:
 (1) shrink `codegen.py` by deferring a tier, (2) raise
 `PYCORE_CODE_RAM_BLOCK_COUNT` (it is a parameter, `code_loading.md` §1.2 says
 so explicitly), (3) only then consider overlays. Do **not** restart the module

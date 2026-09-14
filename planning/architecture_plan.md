@@ -32,11 +32,13 @@ Missing: runtime writes. Fetch still hard-wires `imem_we_o = 0`.
 | Builtin | Job |
 | --- | --- |
 | `_bi_code_alloc(nslots) → INT` | bump-reserve RAM slots |
-| `_bi_code_emit(slot, opcode, oparg)` | write one 8-byte code word |
-| `_bi_code_new(...) → CODE_OBJECT` | 8-field heap object + flags arg |
+| `_bi_code_blit(base, words) → INT` | bulk-write a `list[int]` of packed words |
+| `_bi_code_patch(slot, word)` | single-slot overwrite (jump backpatch) |
+| `_bi_code_new(fields) → CODE_OBJECT` | 9-element list → 8-field heap object |
 
 Host stand-ins in `image_from_source.py` so the firmware compiler can be
-developed off-device. Sequence and tests: [`compile_plan.md`](compile_plan.md).
+developed off-device. Sequence and tests: [`compiler_design.md`](compiler_design.md)
+step C. The RF ring window (step B) lands first.
 
 Do **not** invent a module-image loader just to emit one function.
 
