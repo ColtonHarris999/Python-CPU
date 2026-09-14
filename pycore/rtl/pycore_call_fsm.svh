@@ -45,20 +45,20 @@
                             if (call_mode_r == CALL_MODE_KW) begin
                                 // TOS = names tuple; settle RF before latch.
                                 container_rf_addr_r <= RF_AW'(
-                                    {2'b0, tos_r} - 9'd1);
+                                    {1'b0, tos_r} - 9'd1);
                                 call_phase_r <= CALL_PHASE_KW_NAMES;
                             end else if (call_mode_r == CALL_MODE_EX) begin
                                 container_rf_addr_r <= RF_AW'(
-                                    {2'b0, tos_r} - 9'd1);
+                                    {1'b0, tos_r} - 9'd1);
                                 call_phase_r <= CALL_PHASE_EX_KW;
                             end else begin
                                 // Bases from oparg (positional args excluding self).
                                 call_new_locals_r <= RF_AW'(
-                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]});
+                                    {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]});
                                 call_tos_base_r   <= RF_AW'(
-                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd2);
+                                    {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]} - 9'd2);
                                 container_rf_addr_r <= RF_AW'(
-                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd2);
+                                    {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]} - 9'd2);
                                 call_phase_r <= 5'd1;
                             end
                         end
@@ -89,20 +89,20 @@
                                             stracc_call_amin_r <= amin;
                                             stracc_call_amax_r <= amax;
                                             container_rf_addr_r <= RF_AW'(
-                                                {2'b0, tos_r} -
-                                                {2'b0, cur_arg_r[6:0]} - 9'd1);
+                                                {1'b0, tos_r} -
+                                                {1'b0, cur_arg_r[7:0]} - 9'd1);
                                             call_phase_r <= CALL_PHASE_STRACC_SELF;
                                         end
                                     end
                                 end else begin
                                     container_rf_addr_r <= RF_AW'(
-                                        {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd1);
+                                        {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]} - 9'd1);
                                     call_phase_r        <= 5'd2;
                                 end
                             end else if (cont_rf_rs1_tag == PY_TAG_OBJECT) begin
                                 call_obj_addr_r     <= cont_rf_rs1_val[31:0];
                                 container_rf_addr_r <= RF_AW'(
-                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd1);
+                                    {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]} - 9'd1);
                                 call_sub_r          <= 6'd0;
                                 call_phase_r        <= 5'd8;
                             end else begin
@@ -133,7 +133,7 @@
                                     call_n_pos_r    <= cur_arg_r[7:0];
                                 end
                                 call_new_locals_r <= RF_AW'(
-                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} - 9'd1);
+                                    {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]} - 9'd1);
                             end
                             if (codc_hit) begin
                                 call_entry_slot_r <= codc_p_entry;
@@ -145,6 +145,8 @@
                                 call_meta_argc_r <= pycore_code_meta_argcount(
                                     codc_p_meta);
                                 call_nlocals_r   <= pycore_code_meta_nlocals(
+                                    codc_p_meta);
+                                call_stacksize_r <= pycore_code_meta_stacksize(
                                     codc_p_meta);
                                 call_kwonly_r <= pycore_code_meta_kwonlyargcount(
                                     codc_p_meta);
@@ -222,6 +224,8 @@
                                     container_rd_data_r);
                                 call_nlocals_r   <= pycore_code_meta_nlocals(
                                     container_rd_data_r);
+                                call_stacksize_r <= pycore_code_meta_stacksize(
+                                    container_rd_data_r);
                                 call_kwonly_r <= pycore_code_meta_kwonlyargcount(
                                     container_rd_data_r);
                                 call_varargs_r <= pycore_code_meta_varargs(
@@ -262,7 +266,12 @@
                         end
 
                         4'd7: begin
-                            if (!call_sent_r && !frame_busy) begin
+                            if (!rf_spill_needed_r && (rf_spill_n_comb != 17'd0) &&
+                                    !call_sent_r) begin
+                                rf_spill_needed_r <= 1'b1;
+                                rf_spill_left_r   <= rf_spill_n_comb[8:0];
+                            end else if (!rf_spill_needed_r &&
+                                         !call_sent_r && !frame_busy) begin
                                 frame_call_valid_r   <= 1'b1;
                                 call_sent_r          <= 1'b1;
                             end
@@ -289,8 +298,14 @@
                                     (call_argcount_r < call_nlocals_r);
                                 rf_init_from_r       <= call_argcount_r[RF_AW-1:0];
                                 rf_init_until_r      <= call_nlocals_r[RF_AW-1:0];
+                                if ((call_nlocals_r - call_argcount_r) >
+                                        16'(RF_INIT_CHUNK)) begin
+                                    rf_init_more_r <= 1'b1;
+                                    rf_init_next_r <= call_argcount_r[RF_AW-1:0]
+                                                      + RF_AW'(RF_INIT_CHUNK);
+                                end
                                 tos_r                <= frame_next_locals_base
-                                                        + call_nlocals_r[6:0];
+                                                        + call_nlocals_r[RF_AW-1:0];
                                 call_sent_r          <= 1'b0;
                                 frame_dmem_pending_r <= 1'b0;
                                 cur_code_r           <= call_code_addr_r;
@@ -354,7 +369,7 @@
                                         end else begin
                                             if (cur_arg_r[15:0] == 16'd1) begin
                                                 container_rf_addr_r <= RF_AW'(
-                                                    {2'b0, tos_r} - 9'd1);
+                                                    {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 6'd22;
                                             end else begin
                                                 call_sub_r <= 6'd23;
@@ -382,7 +397,7 @@
                                             call_sub_r   <= 6'd0;
                                         end else begin
                                             container_rf_addr_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd1);
+                                                {1'b0, tos_r} - 9'd1);
                                             call_sub_r   <= 6'd32;
                                             call_phase_r <= 4'd12;
                                         end
@@ -407,7 +422,7 @@
                                             call_sub_r   <= 6'd0;
                                         end else begin
                                             container_rf_addr_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd1);
+                                                {1'b0, tos_r} - 9'd1);
                                             call_sub_r   <= 6'd33;
                                             call_phase_r <= 4'd12;
                                         end
@@ -480,7 +495,7 @@
                                     // Overwrite NULL sentinel with __self__.
                                     container_wb_we_r   <= 1'b1;
                                     container_wb_addr_r <= RF_AW'(
-                                        {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]}
+                                        {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]}
                                         - 9'd1);
                                     container_wb_data_r <= pycore_make_entry(
                                         container_rd_data_r[3:0], call_self_val_r);
@@ -494,7 +509,7 @@
                                         call_n_pos_r    <= cur_arg_r[7:0];
                                     end
                                     call_new_locals_r <= RF_AW'(
-                                        {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]}
+                                        {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]}
                                         - 9'd1);
                                     call_sub_r        <= 6'd2;
                                 end else begin
@@ -535,8 +550,8 @@
                                                     call_phase_r       <= CALL_PHASE_DONE;
                                                 end else begin
                                                     container_rf_addr_r <= RF_AW'(
-                                                        {2'b0, tos_r} -
-                                                        {2'b0, cur_arg_r[6:0]});
+                                                        {1'b0, tos_r} -
+                                                        {1'b0, cur_arg_r[7:0]});
                                                     call_phase_r <= CALL_PHASE_STRACC_ARG0;
                                                 end
                                             end
@@ -617,7 +632,7 @@
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
                                                 container_rf_addr_r <= RF_AW'(
-                                                    {2'b0, tos_r} - 9'd2);
+                                                    {1'b0, tos_r} - 9'd2);
                                                 call_sub_r <= 6'd4;
                                             end
                                         end else if (call_entry_slot_r[31:0] == PY_BI_LEN) begin
@@ -625,7 +640,7 @@
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
                                                 container_rf_addr_r <= RF_AW'(
-                                                    {2'b0, tos_r} - 9'd1);
+                                                    {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 6'd6;
                                             end
                                         end else if (call_entry_slot_r[31:0] ==
@@ -636,8 +651,8 @@
                                             end else begin
                                                 call_argcount_r <= cur_arg_r[15:0];
                                                 container_rf_addr_r <= RF_AW'(
-                                                    {2'b0, tos_r} -
-                                                    {2'b0, cur_arg_r[6:0]});
+                                                    {1'b0, tos_r} -
+                                                    {1'b0, cur_arg_r[7:0]});
                                                 call_sub_r <= 6'd12;
                                             end
                                         end else if ((call_entry_slot_r[31:0] ==
@@ -661,7 +676,7 @@
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
                                                 container_rf_addr_r <= RF_AW'(
-                                                    {2'b0, tos_r} - 9'd1);
+                                                    {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <=
                                                     (call_entry_slot_r[31:0] ==
                                                      PY_BI_HEAP_RELEASE)
@@ -673,7 +688,7 @@
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
                                                 container_rf_addr_r <= RF_AW'(
-                                                    {2'b0, tos_r} - 9'd1);
+                                                    {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 6'd52;
                                             end
                                         end else if (call_entry_slot_r[31:0] ==
@@ -682,7 +697,7 @@
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
                                                 container_rf_addr_r <= RF_AW'(
-                                                    {2'b0, tos_r} - 9'd1);
+                                                    {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 6'd53;
                                             end
                                         end else if (call_entry_slot_r[31:0] ==
@@ -697,7 +712,7 @@
                                                     call_sub_r <= 6'd27;
                                                 end else begin
                                                     container_rf_addr_r <=
-                                                        RF_AW'({2'b0, tos_r} -
+                                                        RF_AW'({1'b0, tos_r} -
                                                                9'd1);
                                                     call_sub_r <= 6'd24;
                                                 end
@@ -709,7 +724,7 @@
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
                                                 container_rf_addr_r <= RF_AW'(
-                                                    {2'b0, tos_r} - 9'd2);
+                                                    {1'b0, tos_r} - 9'd2);
                                                 call_sub_r <= 6'd58;
                                             end
                                         end else if (EXCORE_EN &&
@@ -733,7 +748,7 @@
                                                 call_sub_r   <= 6'd0;
                                             end else begin
                                                 container_rf_addr_r <= RF_AW'(
-                                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]});
+                                                    {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]});
                                                 call_sub_r <= 6'd10;
                                             end
                                         end else begin
@@ -744,7 +759,7 @@
                                 // MAX arg0 - scratch in return_wb_data_r (entry-width).
                                 6'd4: begin
                                     return_wb_data_r    <= rf_rs1;
-                                    container_rf_addr_r <= RF_AW'({2'b0, tos_r} - 9'd1);
+                                    container_rf_addr_r <= RF_AW'({1'b0, tos_r} - 9'd1);
                                     call_sub_r          <= 6'd5;
                                 end
                                 6'd5: begin
@@ -783,13 +798,13 @@
                                                 rb = $itor($signed(cont_rf_rs1_val[63:0]));
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd4);
+                                                {1'b0, tos_r} - 9'd4);
                                             container_wb_data_r <= (rb > ra)
                                                 ? pycore_make_entry(
                                                     cont_rf_rs1_tag,
                                                     cont_rf_rs1_val)
                                                 : return_wb_data_r;
-                                            tos_r <= RF_AW'({2'b0, tos_r} - 9'd3);
+                                            tos_r <= RF_AW'({1'b0, tos_r} - 9'd3);
                                             fetch_skip_r <= 1'b1;
                                             call_phase_r <= CALL_PHASE_DONE;
                                             call_sub_r   <= 6'd0;
@@ -802,10 +817,10 @@
                                             m = (a > b) ? a : b;
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd4);
+                                                {1'b0, tos_r} - 9'd4);
                                             container_wb_data_r <= pycore_make_entry(
                                                 PY_TAG_INT, m);
-                                            tos_r <= RF_AW'({2'b0, tos_r} - 9'd3);
+                                            tos_r <= RF_AW'({1'b0, tos_r} - 9'd3);
                                             fetch_skip_r <= 1'b1;
                                             call_phase_r <= CALL_PHASE_DONE;
                                             call_sub_r   <= 6'd0;
@@ -823,12 +838,12 @@
                                     end else if (cont_rf_rs1_tag == PY_TAG_TUPLE) begin
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd3);
+                                            {1'b0, tos_r} - 9'd3);
                                         container_wb_data_r <= pycore_make_entry(
                                             PY_TAG_INT,
                                             {{64{1'b0}},
                                              pycore_tuple_size(cont_rf_rs1_val)});
-                                        tos_r <= RF_AW'({2'b0, tos_r} - 9'd2);
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 6'd0;
@@ -845,24 +860,24 @@
                                     end else if (cont_rf_rs1_tag == PY_TAG_SHORT_STR) begin
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd3);
+                                            {1'b0, tos_r} - 9'd3);
                                         container_wb_data_r <= pycore_make_entry(
                                             PY_TAG_INT,
                                             {{120{1'b0}},
                                              pycore_short_str_size(cont_rf_rs1_val)});
-                                        tos_r <= RF_AW'({2'b0, tos_r} - 9'd2);
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 6'd0;
                                     end else if (cont_rf_rs1_tag == PY_TAG_LONG_STR) begin
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd3);
+                                            {1'b0, tos_r} - 9'd3);
                                         container_wb_data_r <= pycore_make_entry(
                                             PY_TAG_INT,
                                             {{64{1'b0}},
                                              pycore_long_str_size(cont_rf_rs1_val)});
-                                        tos_r <= RF_AW'({2'b0, tos_r} - 9'd2);
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 6'd0;
@@ -878,14 +893,14 @@
                                         end else begin
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd3);
+                                                {1'b0, tos_r} - 9'd3);
                                             container_wb_data_r <= pycore_make_entry(
                                                 PY_TAG_INT,
                                                 {{64{1'b0}},
                                                  pycore_range_inline_len(
                                                      cont_rf_rs1_val)});
                                             tos_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd2);
+                                                {1'b0, tos_r} - 9'd2);
                                             fetch_skip_r <= 1'b1;
                                             call_phase_r <= CALL_PHASE_DONE;
                                             call_sub_r   <= 6'd0;
@@ -904,11 +919,11 @@
                                     if (!container_dmem_pending_r) begin
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd3);
+                                            {1'b0, tos_r} - 9'd3);
                                         container_wb_data_r <= pycore_make_entry(
                                             PY_TAG_INT,
                                             {{64{1'b0}}, cont_hdr_len});
-                                        tos_r <= RF_AW'({2'b0, tos_r} - 9'd2);
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 6'd0;
@@ -920,11 +935,11 @@
                                         // via cont_dict_hdr_used
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd3);
+                                            {1'b0, tos_r} - 9'd3);
                                         container_wb_data_r <= pycore_make_entry(
                                             PY_TAG_INT,
                                             {{64{1'b0}}, cont_dict_hdr_used});
-                                        tos_r <= RF_AW'({2'b0, tos_r} - 9'd2);
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 6'd0;
@@ -935,7 +950,7 @@
                                     trap_marshal_entries_r[2] <= rf_rs1;
                                     if (call_argcount_r >= 16'd2) begin
                                         container_rf_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd1);
+                                            {1'b0, tos_r} - 9'd1);
                                         call_sub_r <= 6'd11;
                                     end else begin
                                         call_phase_r <= CALL_PHASE_DONE;
@@ -961,8 +976,8 @@
                                     end else begin
                                         call_range_start_r <= cont_rf_rs1_val;
                                         container_rf_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} -
-                                            {2'b0, call_argcount_r[6:0]} + 9'd1);
+                                            {1'b0, tos_r} -
+                                            {1'b0, call_argcount_r[7:0]} + 9'd1);
                                         call_sub_r <= 6'd13;
                                     end
                                 end
@@ -978,7 +993,7 @@
                                     end else begin
                                         call_range_stop_r <= cont_rf_rs1_val;
                                         container_rf_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd1);
+                                            {1'b0, tos_r} - 9'd1);
                                         call_sub_r <= 6'd14;
                                     end
                                 end
@@ -1006,8 +1021,8 @@
                                             {97{call_range_step_r[31]}}) begin
                                         container_wb_we_r <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} -
-                                            {2'b0, call_argcount_r[6:0]} - 9'd2);
+                                            {1'b0, tos_r} -
+                                            {1'b0, call_argcount_r[7:0]} - 9'd2);
                                         container_wb_data_r <= pycore_make_entry(
                                             PY_TAG_RANGE,
                                             pycore_range_inline_value(
@@ -1015,8 +1030,8 @@
                                                 call_range_stop_r[31:0],
                                                 call_range_step_r[31:0]));
                                         tos_r <= RF_AW'(
-                                            {2'b0, tos_r} -
-                                            {2'b0, call_argcount_r[6:0]} - 9'd1);
+                                            {1'b0, tos_r} -
+                                            {1'b0, call_argcount_r[7:0]} - 9'd1);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r <= 6'd0;
@@ -1086,15 +1101,15 @@
                                     if (!container_dmem_pending_r) begin
                                         container_wb_we_r <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} -
-                                            {2'b0, call_argcount_r[6:0]} - 9'd2);
+                                            {1'b0, tos_r} -
+                                            {1'b0, call_argcount_r[7:0]} - 9'd2);
                                         container_wb_data_r <= pycore_make_entry(
                                             PY_TAG_RANGE,
                                             pycore_range_tuple_value(
                                                 {32'b0, container_base_r}));
                                         tos_r <= RF_AW'(
-                                            {2'b0, tos_r} -
-                                            {2'b0, call_argcount_r[6:0]} - 9'd1);
+                                            {1'b0, tos_r} -
+                                            {1'b0, call_argcount_r[7:0]} - 9'd1);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r <= 6'd0;
@@ -1224,7 +1239,7 @@
                                         container_dmem_addr_r <=
                                             pycore_list_tag_addr(
                                                 container_src_buf_r,
-                                                {25'b0, container_idx_r});
+                                                {24'b0, container_idx_r});
                                         container_dmem_we_r <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd31;
@@ -1330,7 +1345,7 @@
                                         container_dmem_addr_r <=
                                             pycore_list_val_addr(
                                                 container_src_buf_r,
-                                                {25'b0, container_idx_r} +
+                                                {24'b0, container_idx_r} +
                                                 32'd1);
                                         container_dmem_we_r <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
@@ -1352,16 +1367,16 @@
                                     if (!container_dmem_pending_r) begin
                                         container_wb_we_r <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} -
+                                            {1'b0, tos_r} -
                                             {2'b0,
-                                             call_argcount_r[6:0]} - 9'd2);
+                                             call_argcount_r[7:0]} - 9'd2);
                                         container_wb_data_r <= pycore_make_mut(
                                             PY_MUT_SET,
                                             {32'b0, container_base_r}, 1'b0);
                                         tos_r <= RF_AW'(
-                                            {2'b0, tos_r} -
+                                            {1'b0, tos_r} -
                                             {2'b0,
-                                             call_argcount_r[6:0]} - 9'd1);
+                                             call_argcount_r[7:0]} - 9'd1);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r <= 6'd0;
@@ -1559,13 +1574,13 @@
                                         end else begin
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd3);
+                                                {1'b0, tos_r} - 9'd3);
                                             container_wb_data_r <= pycore_make_entry(
                                                 PY_TAG_CODE_OBJECT,
                                                 {{96{1'b0}}, call_code_addr_r});
                                             call_argcount_r   <= 16'd1;
                                             call_new_locals_r <= RF_AW'(
-                                                {2'b0, tos_r} - 9'd2);
+                                                {1'b0, tos_r} - 9'd2);
                                             call_sub_r <= 6'd50;
                                         end
                                     end
@@ -1574,7 +1589,7 @@
                                 6'd50: begin
                                     container_wb_we_r   <= 1'b1;
                                     container_wb_addr_r <= RF_AW'(
-                                        {2'b0, tos_r} - 9'd2);
+                                        {1'b0, tos_r} - 9'd2);
                                     container_wb_data_r <= pycore_make_entry(
                                         PY_TAG_OBJECT,
                                         {{96{1'b0}}, call_inst_addr_r});
@@ -1624,10 +1639,10 @@
                                 6'd54: begin
                                     container_wb_we_r   <= 1'b1;
                                     container_wb_addr_r <= RF_AW'(
-                                        {2'b0, tos_r} - 9'd2);
+                                        {1'b0, tos_r} - 9'd2);
                                     container_wb_data_r <= pycore_make_entry(
                                         PY_TAG_INT, {{96{1'b0}}, heap_ptr_r});
-                                    tos_r <= RF_AW'({2'b0, tos_r} - 9'd1);
+                                    tos_r <= RF_AW'({1'b0, tos_r} - 9'd1);
                                     fetch_skip_r <= 1'b1;
                                     call_phase_r <= CALL_PHASE_DONE;
                                     call_sub_r   <= 6'd0;
@@ -1636,11 +1651,11 @@
                                 6'd55: begin
                                     container_wb_we_r   <= 1'b1;
                                     container_wb_addr_r <= RF_AW'(
-                                        {2'b0, tos_r} - 9'd2);
+                                        {1'b0, tos_r} - 9'd2);
                                     container_wb_data_r <= pycore_make_entry(
                                         PY_TAG_INT,
                                         {{96{1'b0}}, code_ram_ptr_r});
-                                    tos_r <= RF_AW'({2'b0, tos_r} - 9'd1);
+                                    tos_r <= RF_AW'({1'b0, tos_r} - 9'd1);
                                     fetch_skip_r <= 1'b1;
                                     call_phase_r <= CALL_PHASE_DONE;
                                     call_sub_r   <= 6'd0;
@@ -1658,13 +1673,13 @@
                                         heap_ptr_r <= cont_rf_rs1_val[31:0];
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd3);
+                                            {1'b0, tos_r} - 9'd3);
                                         container_wb_data_r <=
                                             pycore_make_entry(
                                                 PY_TAG_CONTROL,
                                                 {{124{1'b0}}, PY_CTL_NONE});
                                         tos_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd2);
+                                            {1'b0, tos_r} - 9'd2);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 6'd0;
@@ -1683,13 +1698,13 @@
                                         code_ram_ptr_r <= cont_rf_rs1_val[31:0];
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd3);
+                                            {1'b0, tos_r} - 9'd3);
                                         container_wb_data_r <=
                                             pycore_make_entry(
                                                 PY_TAG_CONTROL,
                                                 {{124{1'b0}}, PY_CTL_NONE});
                                         tos_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd2);
+                                            {1'b0, tos_r} - 9'd2);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 6'd0;
@@ -1707,7 +1722,7 @@
                                     end else begin
                                         call_code_addr_r    <= cont_rf_rs1_val[31:0];
                                         container_rf_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd1);
+                                            {1'b0, tos_r} - 9'd1);
                                         call_sub_r          <= 6'd59;
                                     end
                                 end
@@ -2031,16 +2046,16 @@
                                             // self = instance at sentinel slot
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
-                                                {2'b0, tos_r}
-                                                - {2'b0, cur_arg_r[6:0]} - 9'd1);
+                                                {1'b0, tos_r}
+                                                - {1'b0, cur_arg_r[7:0]} - 9'd1);
                                             container_wb_data_r <= pycore_make_entry(
                                                 PY_TAG_OBJECT,
                                                 {{96{1'b0}}, call_inst_addr_r});
                                             call_argcount_r   <=
                                                 cur_arg_r[15:0] + 16'd1;
                                             call_new_locals_r <= RF_AW'(
-                                                {2'b0, tos_r}
-                                                - {2'b0, cur_arg_r[6:0]} - 9'd1);
+                                                {1'b0, tos_r}
+                                                - {1'b0, cur_arg_r[7:0]} - 9'd1);
                                             call_ret_mode_r   <= 1'b1;
                                             call_saved_inst_r <=
                                                 {32'b0, call_inst_addr_r};
@@ -2389,16 +2404,16 @@
                                                     (!call_varargs_r &&
                                                      (call_argcount_r > meta_ac))) begin
                                                     call_filter_trap_r <= 1'b1;
-                                                end else if (local_slots > 16'd32) begin
+                                                end else if (local_slots >
+                                                        16'(RF_WINDOW_CAP)) begin
                                                     call_filter_trap_r <= 1'b1;
-                                                end else if ((9'(call_new_locals_r)
-                                                              + 9'(call_nlocals_r))
-                                                             > 9'(STACK_TOP_MAX)) begin
+                                                end else if (rf_call_need >
+                                                        16'(RF_WINDOW_CAP)) begin
                                                     call_filter_trap_r <= 1'b1;
                                                 end else if (call_argcount_r <
                                                              meta_ac) begin
                                                     container_idx_r <=
-                                                        call_argcount_r[6:0];
+                                                        call_argcount_r[7:0];
                                                     call_sub_r <= 6'd1;
                                                 end else if (call_varargs_r) begin
                                                     call_after_varargs_sub_r <= 6'd0;
@@ -2542,7 +2557,7 @@
                                         container_tag_r <= cont_rf_rs1_tag;
                                         container_val_r <= cont_rf_rs1_val;
                                         container_dmem_addr_r <= pycore_tuple_val_addr(
-                                            container_base_r, {25'b0, container_idx_r});
+                                            container_base_r, {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b1;
                                         container_dmem_wdata_r   <= cont_rf_rs1_val;
                                         container_dmem_pending_r <= 1'b1;
@@ -2550,7 +2565,7 @@
                                     end
                                     6'd22: begin
                                         container_dmem_addr_r <= pycore_tuple_tag_addr(
-                                            container_base_r, {25'b0, container_idx_r});
+                                            container_base_r, {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b1;
                                         container_dmem_wdata_r   <= {124'b0, container_tag_r};
                                         container_dmem_pending_r <= 1'b1;
@@ -2673,11 +2688,10 @@
                                                 // Positional into kw-only.
                                                 call_filter_trap_r <= 1'b1;
                                             end else if (
-                                                    local_slots > 16'd32) begin
+                                                    local_slots > 16'(RF_WINDOW_CAP)) begin
                                                 call_filter_trap_r <= 1'b1;
-                                            end else if ((9'(call_new_locals_r)
-                                                          + 9'(call_nlocals_r))
-                                                         > 9'(STACK_TOP_MAX)) begin
+                                            end else if (rf_call_need >
+                                                    16'(RF_WINDOW_CAP)) begin
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
                                                 min_ac = meta_ac - def_len;
@@ -2747,7 +2761,7 @@
                                         container_dmem_addr_r <=
                                             pycore_tuple_val_addr(
                                                 call_kw_names_r[31:0],
-                                                {25'b0, container_idx_r});
+                                                {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd38;
@@ -2757,7 +2771,7 @@
                                         container_dmem_addr_r <=
                                             pycore_tuple_tag_addr(
                                                 call_kw_names_r[31:0],
-                                                {25'b0, container_idx_r});
+                                                {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd39;
@@ -2955,7 +2969,7 @@
                                             // defaults[idx - min]
                                             begin
                                                 logic [31:0] def_i;
-                                                def_i = {25'b0, container_idx_r}
+                                                def_i = {24'b0, container_idx_r}
                                                         - {16'b0, call_min_argc_r};
                                                 container_dmem_addr_r <=
                                                     pycore_tuple_val_addr(
@@ -2970,7 +2984,7 @@
                                         container_val_r <= container_rd_data_r;
                                         begin
                                             logic [31:0] def_i;
-                                            def_i = {25'b0, container_idx_r}
+                                            def_i = {24'b0, container_idx_r}
                                                     - {16'b0, call_min_argc_r};
                                             container_dmem_addr_r <=
                                                 pycore_tuple_tag_addr(
@@ -3023,7 +3037,7 @@
                                             container_dmem_addr_r <=
                                                 pycore_tuple_val_addr(
                                                     call_varnames_r[31:0],
-                                                    {25'b0, container_idx_r});
+                                                    {24'b0, container_idx_r});
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             call_sub_r <= 6'd46;
@@ -3034,7 +3048,7 @@
                                         container_dmem_addr_r <=
                                             pycore_tuple_tag_addr(
                                                 call_varnames_r[31:0],
-                                                {25'b0, container_idx_r});
+                                                {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd47;
@@ -3409,7 +3423,7 @@
                                                 container_dmem_addr_r <=
                                                     pycore_tuple_val_addr(
                                                         call_kw_names_r[31:0],
-                                                        {25'b0, container_idx_r});
+                                                        {24'b0, container_idx_r});
                                                 container_dmem_we_r <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
                                                 call_varkw_step_r <= 5'd1;
@@ -3420,7 +3434,7 @@
                                             container_dmem_addr_r <=
                                                 pycore_tuple_tag_addr(
                                                     call_kw_names_r[31:0],
-                                                    {25'b0, container_idx_r});
+                                                    {24'b0, container_idx_r});
                                             container_dmem_we_r <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             call_varkw_step_r <= 5'd2;
@@ -3471,7 +3485,7 @@
                                             container_dmem_addr_r <=
                                                 pycore_dict_order_val_addr(
                                                     cont_dict_order_ptr,
-                                                    {25'b0, container_idx_r});
+                                                    {24'b0, container_idx_r});
                                             container_dmem_we_r <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             call_varkw_step_r <= 5'd10;
@@ -3481,7 +3495,7 @@
                                             container_dmem_addr_r <=
                                                 pycore_dict_order_tag_addr(
                                                     container_order_ptr_r,
-                                                    {25'b0, container_idx_r});
+                                                    {24'b0, container_idx_r});
                                             container_dmem_we_r <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             call_varkw_step_r <= 5'd11;
@@ -3771,14 +3785,14 @@
                                             cur_arg_r[7:0] - nk[7:0];
                                         // Pop names; bases like plain CALL.
                                         call_new_locals_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd1
-                                            - {2'b0, cur_arg_r[6:0]});
+                                            {1'b0, tos_r} - 9'd1
+                                            - {1'b0, cur_arg_r[7:0]});
                                         call_tos_base_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd1
-                                            - {2'b0, cur_arg_r[6:0]} - 9'd2);
+                                            {1'b0, tos_r} - 9'd1
+                                            - {1'b0, cur_arg_r[7:0]} - 9'd2);
                                         container_rf_addr_r <= RF_AW'(
-                                            {2'b0, tos_r} - 9'd1
-                                            - {2'b0, cur_arg_r[6:0]} - 9'd2);
+                                            {1'b0, tos_r} - 9'd1
+                                            - {1'b0, cur_arg_r[7:0]} - 9'd2);
                                         tos_r <= tos_r - RF_AW'(1);
                                         call_phase_r <= 5'd1;
                                     end
@@ -3795,7 +3809,7 @@
                                 call_n_kwargs_r <= 8'd0;
                                 tos_r <= tos_r - RF_AW'(1);
                                 container_rf_addr_r <= RF_AW'(
-                                    {2'b0, tos_r} - 9'd2);
+                                    {1'b0, tos_r} - 9'd2);
                                 call_phase_r <= CALL_PHASE_EX_ARGS;
                             end else if (pycore_is_dict(
                                              cont_rf_rs1_tag,
@@ -3804,7 +3818,7 @@
                                 call_n_kwargs_r <= 8'd1; // flag: has kwargs dict
                                 tos_r <= tos_r - RF_AW'(1);
                                 container_rf_addr_r <= RF_AW'(
-                                    {2'b0, tos_r} - 9'd2);
+                                    {1'b0, tos_r} - 9'd2);
                                 call_phase_r <= CALL_PHASE_EX_ARGS;
                             end else begin
                                 call_filter_trap_r <= 1'b1;
@@ -3863,14 +3877,13 @@
                                         container_dmem_addr_r <=
                                             pycore_tuple_tag_addr(
                                                 call_defaults_r[31:0],
-                                                {25'b0, container_idx_r});
+                                                {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd1;
                                     end
                                     6'd1: begin
-                                        if ((9'(tos_r) + 9'd1) >
-                                                9'(STACK_TOP_MAX)) begin
+                                        if (rf_resident >= 9'(RF_DEPTH - 1)) begin
                                             call_filter_trap_r <= 1'b1;
                                         end else begin
                                             container_wb_we_r   <= 1'b1;
@@ -3895,7 +3908,7 @@
                                                 container_dmem_addr_r <=
                                                     pycore_tuple_val_addr(
                                                         call_defaults_r[31:0],
-                                                        {25'b0, container_idx_r}
+                                                        {24'b0, container_idx_r}
                                                         + 32'd1);
                                                 container_dmem_we_r <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
@@ -3946,14 +3959,13 @@
                                         container_dmem_addr_r <=
                                             pycore_list_tag_addr(
                                                 container_buf_r,
-                                                {25'b0, container_idx_r});
+                                                {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         call_sub_r <= 6'd13;
                                     end
                                     6'd13: begin
-                                        if ((9'(tos_r) + 9'd1) >
-                                                9'(STACK_TOP_MAX)) begin
+                                        if (rf_resident >= 9'(RF_DEPTH - 1)) begin
                                             call_filter_trap_r <= 1'b1;
                                         end else begin
                                             container_wb_we_r   <= 1'b1;
@@ -3978,7 +3990,7 @@
                                                 container_dmem_addr_r <=
                                                     pycore_list_val_addr(
                                                         container_buf_r,
-                                                        {25'b0, container_idx_r}
+                                                        {24'b0, container_idx_r}
                                                         + 32'd1);
                                                 container_dmem_we_r <= 1'b0;
                                                 container_dmem_pending_r <= 1'b1;
@@ -4013,7 +4025,7 @@
                                     call_phase_r       <= CALL_PHASE_DONE;
                                 end else begin
                                     container_rf_addr_r <= RF_AW'(
-                                        {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]});
+                                        {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]});
                                     call_phase_r <= CALL_PHASE_STRACC_ARG0;
                                 end
                             end
@@ -4029,7 +4041,7 @@
                                 call_phase_r       <= CALL_PHASE_DONE;
                             end else begin
                                 container_rf_addr_r <= RF_AW'(
-                                    {2'b0, tos_r} - {2'b0, cur_arg_r[6:0]} + 9'd1);
+                                    {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]} + 9'd1);
                                 call_phase_r <= CALL_PHASE_STRACC_ARG1;
                             end
                         end
@@ -4074,6 +4086,19 @@
                                 frame_dmem_pending_r <= 1'b0;
                             end
 
+                            if (return_after_fill_r && !rf_fill_needed_r) begin
+                                return_after_fill_r <= 1'b0;
+                                if (call_codc_hit_r) begin
+                                    return_phase_r <= 3'd2;
+                                end else begin
+                                    container_dmem_addr_r    <= pycore_code_field_val_addr(
+                                        cur_code_r, PYCORE_CODE_FIELD_CO_CONSTS);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    return_phase_r <= 3'd1;
+                                end
+                            end
+
                             if (frame_return_done) begin
                                 cur_locals_base_r    <= frame_locals_base_out;
                                 rf_set_locals_r      <= 1'b1;
@@ -4088,18 +4113,30 @@
                                 frame_saved_inst_r   <= frame_saved_inst_out;
                                 call_sent_r          <= 1'b0;
                                 frame_dmem_pending_r <= 1'b0;
-                                if (codc_hit) begin
-                                    consts_base_r   <= codc_p_consts;
-                                    names_base_r    <= codc_p_names;
-                                    call_codc_hit_r <= 1'b1;
-                                    return_phase_r  <= 3'd2;
-                                end else begin
-                                    call_codc_hit_r <= 1'b0;
-                                    container_dmem_addr_r    <= pycore_code_field_val_addr(
-                                        frame_cur_code_out, PYCORE_CODE_FIELD_CO_CONSTS);
-                                    container_dmem_we_r      <= 1'b0;
-                                    container_dmem_pending_r <= 1'b1;
-                                    return_phase_r <= 3'd1;
+                                begin
+                                    logic [8:0] fill_n;
+                                    fill_n = rf_fill_n_f(
+                                        frame_locals_base_out, rf_wm_r, tos_r);
+                                    if (codc_hit) begin
+                                        consts_base_r   <= codc_p_consts;
+                                        names_base_r    <= codc_p_names;
+                                        call_codc_hit_r <= 1'b1;
+                                    end else begin
+                                        call_codc_hit_r <= 1'b0;
+                                    end
+                                    if (fill_n != 9'd0) begin
+                                        rf_fill_left_r      <= fill_n;
+                                        rf_fill_needed_r    <= 1'b1;
+                                        return_after_fill_r <= 1'b1;
+                                    end else if (codc_hit) begin
+                                        return_phase_r  <= 3'd2;
+                                    end else begin
+                                        container_dmem_addr_r    <= pycore_code_field_val_addr(
+                                            frame_cur_code_out, PYCORE_CODE_FIELD_CO_CONSTS);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        return_phase_r <= 3'd1;
+                                    end
                                 end
                             end
                         end
@@ -4208,6 +4245,8 @@
                                 // Handler stack placement is based on the
                                 // caller's nlocals, not the raising callee's.
                                 call_nlocals_r <= pycore_code_meta_nlocals(
+                                    container_rd_data_r);
+                                call_stacksize_r <= pycore_code_meta_stacksize(
                                     container_rd_data_r);
                                 if (container_call_returning_r) begin
                                     // Protocol CALL: restore the paused

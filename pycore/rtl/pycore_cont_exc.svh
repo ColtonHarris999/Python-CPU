@@ -129,7 +129,7 @@ CONT_CHECK_EXC_MATCH: begin
             if (!container_dmem_pending_r) begin
                 container_list_hdr_r     <= container_rd_data_r;
                 container_dmem_addr_r    <= pycore_tuple_tag_addr(
-                    container_buf_r, {25'b0, container_idx_r});
+                    container_buf_r, {24'b0, container_idx_r});
                 container_dmem_we_r      <= 1'b0;
                 container_dmem_pending_r <= 1'b1;
                 container_phase_r        <= CP_LIST_BUF;
@@ -180,11 +180,11 @@ CONT_CHECK_EXC_MATCH: begin
                 if (pycore_is_none(
                         container_rd_data_r[3:0], container_order_shift_val_r)) begin
                     if (container_src_is_tuple_r &&
-                        ({25'b0, container_idx_r} + 32'd1 < container_src_len_r)) begin
+                        ({24'b0, container_idx_r} + 32'd1 < container_src_len_r)) begin
                         container_idx_r          <= container_idx_r + 7'd1;
                         container_dmem_addr_r    <= pycore_tuple_val_addr(
                             container_buf_r,
-                            {25'b0, container_idx_r} + 32'd1);
+                            {24'b0, container_idx_r} + 32'd1);
                         container_dmem_we_r      <= 1'b0;
                         container_dmem_pending_r <= 1'b1;
                         container_phase_r        <= CP_HDR;
@@ -206,11 +206,11 @@ CONT_CHECK_EXC_MATCH: begin
                     container_phase_r   <= CP_DONE;
                 end else if (container_count_r >= 7'd7) begin
                     if (container_src_is_tuple_r &&
-                        ({25'b0, container_idx_r} + 32'd1 < container_src_len_r)) begin
+                        ({24'b0, container_idx_r} + 32'd1 < container_src_len_r)) begin
                         container_idx_r          <= container_idx_r + 7'd1;
                         container_dmem_addr_r    <= pycore_tuple_val_addr(
                             container_buf_r,
-                            {25'b0, container_idx_r} + 32'd1);
+                            {24'b0, container_idx_r} + 32'd1);
                         container_dmem_we_r      <= 1'b0;
                         container_dmem_pending_r <= 1'b1;
                         container_phase_r        <= CP_HDR;
