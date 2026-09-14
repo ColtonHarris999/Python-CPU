@@ -588,13 +588,16 @@ define PYCORE_IMAGE_RUN_SRC
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
 	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
-	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/$(1)/program.hex \
 		+DMEM_HEX=$(BUILD_DIR)/$(1)/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/$(1)/code_ram.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
 		+MAX_CYCLES=$(3) \
@@ -614,14 +617,17 @@ define PYCORE_IMAGE_RUN_SRC_TWOCORE
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
 	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
-	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/$(1)/program.hex \
 		+DMEM_HEX=$(BUILD_DIR)/$(1)/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/$(1)/code_ram.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
 		+MAX_CYCLES=$(3) \
@@ -659,13 +665,16 @@ define PYCORE_IMAGE_RUN
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
-	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/img_$(1)/code_ram.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
 		+MAX_CYCLES=$(2) \
@@ -690,13 +699,15 @@ define PYCORE_IMAGE_RUN_CODERAM
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/imgcr_$(1)/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/imgcr_$(1)/image.meta); \
 	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/imgcr_$(1)/image.meta); \
-	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/imgcr_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+CODE_RAM_HEX=$(BUILD_DIR)/imgcr_$(1)/code_ram.hex \
 		+DMEM_HEX=$(BUILD_DIR)/imgcr_$(1)/dmem.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
 		+MAX_CYCLES=$(2) \
@@ -717,14 +728,17 @@ define PYCORE_CONTAINER_CALL_SPIKE_RUN
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
 	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
-	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/img_container_call_spike/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_container_call_spike/program.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_container_call_spike/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/img_container_call_spike/code_ram.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
 		+CONTAINER_CALL_SPIKE_EN=1 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
 		+MAX_CYCLES=100000 \
@@ -747,14 +761,17 @@ define PYCORE_IMAGE_RUN_TWOCORE
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
 	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
-	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" || exit 1; \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/img_$(1)/code_ram.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
 		+MAX_CYCLES=$(2) \
@@ -774,14 +791,17 @@ define PYCORE_IMAGE_RUN_TWOCORE_STDOUT
 		--expected-tag 1 \
 		--expected-value 0
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
-	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/img_$(1)/code_ram.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
 		+EXPECTED_TAG=1 \
 		+EXPECTED_VALUE=0 \
 		+STDOUT_PATH=$(BUILD_DIR)/img_$(1)/sim.stdout \
@@ -798,15 +818,18 @@ define PYCORE_IMAGE_TRAP_RUN
 		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
 		--meta $(BUILD_DIR)/img_$(1)/image.meta
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
-	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_IMG_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/img_$(1)/code_ram.hex \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=$(2) \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
 		+MAX_CYCLES=$(3) \
 		$(PYCORE_MEM_PLUSARGS)
 endef
@@ -1139,6 +1162,17 @@ pycore-img-code-write-all: \
 	pycore-img-code-alloc-oom-trap \
 	pycore-img-code-write-floor-trap \
 	pycore-img-code-new-badfield-trap
+
+# compiler_design.md step D: seed a two-function package into _PYC_G and
+# call one from the other via _bi_exec_globals.
+pycore-img-pyc-package-call:
+	$(call PYCORE_IMAGE_RUN,pyc_package_call,100000)
+
+pycore-img-pyc-package-call-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,pyc_package_call,100000)
+
+pycore-img-package-all: \
+	pycore-img-pyc-package-call
 
 pycore-img-code-new-call-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,code_new_call,100000)
@@ -1592,16 +1626,19 @@ define PYCORE_IMAGE_TRAP_RUN_TWOCORE
 		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
 		--meta $(BUILD_DIR)/img_$(1)/image.meta
 	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
-	test -n "$$HEAP_INIT_PTR" || exit 1; \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
 		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
 		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/img_$(1)/code_ram.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=$(2) \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
 		+MAX_CYCLES=$(3) \
 		$(PYCORE_MEM_PLUSARGS)
 endef
@@ -1681,6 +1718,7 @@ pycore-img-two-core: \
 	pycore-img-locals-40-uninit-two-core \
 	pycore-img-locals-64-two-core \
 	pycore-img-code-new-call-two-core \
+	pycore-img-pyc-package-call-two-core \
 	pycore-img-helper-containers-two-core \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \
@@ -1716,6 +1754,7 @@ pycore-img: \
 	pycore-img-code-ram-all \
 	pycore-img-marks-all \
 	pycore-img-code-write-all \
+	pycore-img-package-all \
 	pycore-img-smoke \
 	pycore-img-call-chain \
 	pycore-img-str-consts \

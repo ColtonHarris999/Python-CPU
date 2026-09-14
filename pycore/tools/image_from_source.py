@@ -232,6 +232,10 @@ class ImageBuildResult:
     entry_slots: dict[int, int] = field(default_factory=dict)
     global_store_count: int = 0
     globals_slot_count: int = 0
+    # Per-object bank (compiler_design.md W-2): package bodies live here
+    # while the boot image stays in program_slots / ROM.
+    code_ram_slots: list[str] = field(default_factory=list)
+    code_ram_init_slot: int = CODE_RAM_SLOT_BASE
 
     @property
     def heap_init_ptr(self) -> int:
@@ -408,15 +412,46 @@ class _ImageSerializer:
         static_base = HEAP_BASE
         self.heap = HeapImageBuilder(base=static_base)
         self.program_slots: list[str] = []
+        self.code_ram_slots: list[str] = []
         # Slot index of program_slots[0] in the code address space. Non-zero
         # places the whole image in code RAM (Plan 1 P1): entry_slot values are
         # offset so the PC lands in the writable region.
         self.slot_base = slot_base
+        # "rom" appends to program_slots; "ram" appends to code_ram_slots at
+        # CODE_RAM_SLOT_BASE. Whole-image --code-ram (slot_base != 0) always
+        # uses program_slots so the existing CODE_RAM_HEX path stays one file.
+        self._code_bank = "rom"
         self.code_handles: dict[int, Tagged] = {}
         self.entry_slots: dict[int, int] = {}
         self.defaults_map: dict[int, tuple] = defaults_map or {}
         self.kwdefaults_map: dict[int, dict] = kwdefaults_map or {}
         self.type_refs: dict[str, Tagged] = type_refs if type_refs is not None else {}
+
+    def _append_code_units(self, units: list[str]) -> int:
+        """Append transcoded slots to the active bank; return entry_slot."""
+        if self.slot_base != 0:
+            entry_slot = self.slot_base + len(self.program_slots)
+            self.program_slots.extend(units)
+            return entry_slot
+        if self._code_bank == "ram":
+            entry_slot = CODE_RAM_SLOT_BASE + len(self.code_ram_slots)
+            end = entry_slot + len(units)
+            if end > CODE_RAM_SLOT_LIMIT:
+                raise ValueError(
+                    "firmware package overflows code RAM "
+                    f"(end slot {end} > {CODE_RAM_SLOT_LIMIT})"
+                )
+            self.code_ram_slots.extend(units)
+            return entry_slot
+        entry_slot = len(self.program_slots)
+        self.program_slots.extend(units)
+        return entry_slot
+
+    def code_ram_init_slot(self) -> int:
+        """First writable code-RAM slot after preloaded package (or image)."""
+        if self.slot_base != 0:
+            return self.slot_base + len(self.program_slots)
+        return CODE_RAM_SLOT_BASE + len(self.code_ram_slots)
 
     def serialize_code(self, co: types.CodeType) -> Tagged:
         co_id = id(co)
@@ -435,8 +470,7 @@ class _ImageSerializer:
             if isinstance(const, types.CodeType):
                 self.serialize_code(const)
 
-        entry_slot = self.slot_base + len(self.program_slots)
-        self.program_slots.extend(transcode_code_units(folded))
+        entry_slot = self._append_code_units(transcode_code_units(folded))
         self.entry_slots[co_id] = entry_slot
 
         co_consts = self.heap.alloc_tuple(
@@ -1324,6 +1358,18 @@ HOST_STANDIN_BUILTINS: frozenset[str] = frozenset({"exec", "eval"})
 FIRMWARE_BUILTINS_DIR = (
     pathlib.Path(__file__).resolve().parents[2] / "pycore_firmware" / "builtins"
 )
+FIRMWARE_COMPILER_DIR = (
+    pathlib.Path(__file__).resolve().parents[2] / "pycore_firmware" / "compiler"
+)
+
+# 0-arg trampoline bound as ``_PYC_ENTRY`` in the boot builtins dict.
+# Helpers resolve in ``_PYC_G`` via ``_bi_exec_globals`` (compiler_design.md §4.2).
+PACKAGE_ENTRY_NAME = "_pyc_entry"
+PACKAGE_ENTRY_SOURCE = """\
+def _pyc_entry():
+    return _pyc_add(_pyc_inc(40), 1)
+"""
+PACKAGE_SKIP_FILES = frozenset({"tables.py"})
 
 
 def _host_bi_print(x: object) -> None:
@@ -1338,6 +1384,22 @@ def _host_bi_print(x: object) -> None:
         sys.stdout.write("False")
     else:
         sys.stdout.write(str(x))
+
+
+def _host_exec_globals(code: object, g: object) -> object:
+    """Host stand-in for ``_bi_exec_globals(code, dict)``.
+
+    Device frames inherit the supplied dict as ``globals_base_r``. Host goldens
+    eval the trampoline's code object against that dict so helper names resolve
+    the same way.
+    """
+    if not isinstance(g, dict):
+        raise TypeError("_bi_exec_globals() globals must be a dict")
+    if isinstance(code, types.FunctionType):
+        code = code.__code__
+    if not isinstance(code, types.CodeType):
+        raise TypeError("_bi_exec_globals() code must be a code object")
+    return eval(code, g)
 
 
 # CPython 3.14 opcodes used by the host code-RAM interpreter (W-5).
@@ -1465,6 +1527,8 @@ def load_rom_firmware_callables() -> dict[str, object]:
     their device semantics are not reproducible by running the same source.
     Native code-RAM writers (``_bi_code_alloc`` / blit / patch / new) are
     injected the same way as ``_bi_print`` — they are not ROM bodies.
+    ``_bi_exec_globals``, ``_PYC_G``, and ``_PYC_ENTRY`` mirror the step-D
+    package seed in the boot builtins dict.
     """
     ram = _HostCodeRam()
     out: dict[str, object] = {
@@ -1473,6 +1537,7 @@ def load_rom_firmware_callables() -> dict[str, object]:
         "_bi_code_blit": ram.blit,
         "_bi_code_patch": ram.patch,
         "_bi_code_new": ram.new,
+        "_bi_exec_globals": _host_exec_globals,
     }
     for dict_key, stem, func_name in ROM_FIRMWARE_BUILTINS:
         path = FIRMWARE_BUILTINS_DIR / f"{stem}.py"
@@ -1492,6 +1557,10 @@ def load_rom_firmware_callables() -> dict[str, object]:
                 f"got {type(fn).__name__}"
             )
         out[dict_key] = fn
+    pkg = load_firmware_package_functions()
+    entry = compile_package_entry()
+    out["_PYC_G"] = dict(pkg)
+    out["_PYC_ENTRY"] = entry
     return out
 
 
@@ -1528,6 +1597,106 @@ def seed_firmware_function(
     if kwdefaults:
         serializer.kwdefaults_map[id(co)] = dict(kwdefaults)
     return serializer.serialize_code(co)
+
+
+def iter_firmware_package_sources(
+    package_dir: pathlib.Path | None = None,
+) -> list[pathlib.Path]:
+    """Return compiler-package ``.py`` files that contribute top-level defs."""
+    root = pathlib.Path(package_dir) if package_dir is not None else FIRMWARE_COMPILER_DIR
+    if not root.is_dir():
+        raise FileNotFoundError(f"firmware package directory missing: {root}")
+    paths = [
+        path
+        for path in sorted(root.glob("*.py"))
+        if path.name not in PACKAGE_SKIP_FILES
+    ]
+    if not paths:
+        raise ValueError(f"firmware package {root} has no seedable .py files")
+    return paths
+
+
+def load_firmware_package_functions(
+    package_dir: pathlib.Path | None = None,
+) -> dict[str, types.FunctionType]:
+    """Collect every top-level ``def`` in the firmware compiler package."""
+    out: dict[str, types.FunctionType] = {}
+    for path in iter_firmware_package_sources(package_dir):
+        source_text = path.read_text(encoding="utf-8")
+        ns: dict[str, object] = {
+            "__name__": f"pycore_firmware.compiler.{path.stem}",
+        }
+        exec(compile(source_text, str(path), "exec"), ns)
+        for name, value in ns.items():
+            if name.startswith("__"):
+                continue
+            if not isinstance(value, types.FunctionType):
+                continue
+            if value.__code__.co_filename != str(path):
+                continue
+            if value.__code__.co_name != name:
+                continue
+            if name in out:
+                raise ValueError(
+                    f"duplicate firmware package function {name!r} "
+                    f"(already seeded from another module)"
+                )
+            out[name] = value
+    if not out:
+        raise ValueError("firmware package has no top-level functions to seed")
+    return out
+
+
+def compile_package_entry() -> types.FunctionType:
+    """Compile the 0-arg ``_PYC_ENTRY`` trampoline."""
+    ns: dict[str, object] = {"__name__": "pycore_firmware.compiler._entry"}
+    exec(compile(PACKAGE_ENTRY_SOURCE, "<pyc_entry>", "exec"), ns)
+    func = ns.get(PACKAGE_ENTRY_NAME)
+    if not isinstance(func, types.FunctionType):
+        raise ValueError(
+            f"package entry: expected function {PACKAGE_ENTRY_NAME!r}, "
+            f"got {type(func).__name__}"
+        )
+    return func
+
+
+def seed_firmware_package(
+    serializer: _ImageSerializer,
+    package_dir: pathlib.Path | None = None,
+) -> tuple[Tagged, Tagged] | None:
+    """Serialize the compiler package into code RAM and return ``(_PYC_G, _PYC_ENTRY)``.
+
+    Returns ``None`` when ``slot_base != 0`` (whole-image ``--code-ram``): the
+    relocated user image already occupies the RAM bank, so a second preload
+    at ``CODE_RAM_SLOT_BASE`` would overlap.
+    """
+    if serializer.slot_base != 0:
+        return None
+    functions = load_firmware_package_functions(package_dir)
+    prev_bank = serializer._code_bank
+    serializer._code_bank = "ram"
+    try:
+        pairs: list[tuple[Tagged, Tagged]] = []
+        for name, func in functions.items():
+            co = func.__code__
+            validate_code_tree(co)
+            defaults = func.__defaults__
+            if defaults:
+                serializer.defaults_map[id(co)] = defaults
+            kwdefaults = func.__kwdefaults__
+            if kwdefaults:
+                serializer.kwdefaults_map[id(co)] = dict(kwdefaults)
+            handle = serializer.serialize_code(co)
+            pairs.append((tag_constant(name, serializer.heap), handle))
+        entry = compile_package_entry()
+        validate_code_tree(entry.__code__)
+        entry_handle = serializer.serialize_code(entry.__code__)
+    finally:
+        serializer._code_bank = prev_bank
+    pyc_g = serializer.heap.alloc_dict(
+        pairs, slot_count=dict_min_slots(max(len(pairs), 1))
+    )
+    return pyc_g, entry_handle
 
 
 def seed_rom_firmware_builtins(
@@ -1613,6 +1782,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
       Wave A exception types → OBK_TYPE with documented tp_base + OB_FLAG_EXC_TYPE
         (includes SyntaxError so Plan 1 P7 tests still LOAD_GLOBAL)
       ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
+      _PYC_G → MUT_DICT (compiler package namespace, compiler_design.md W-1)
+      _PYC_ENTRY → CODE_OBJECT (0-arg trampoline in code RAM)
 
     Also writes the StopIteration handle to the exc-arena boot sidecar so
     ``S_BOOT`` can latch ``iter_exhaust_type_r`` without a dict probe.
@@ -1704,6 +1875,11 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         for name, _ in WAVE_A_EXCEPTION_TYPES
     )
     pairs.extend(seed_rom_firmware_builtins(serializer))
+    package = seed_firmware_package(serializer)
+    if package is not None:
+        pyc_g, pyc_entry = package
+        pairs.append((tag_constant("_PYC_G", string_heap), pyc_g))
+        pairs.append((tag_constant("_PYC_ENTRY", string_heap), pyc_entry))
     return heap.alloc_dict(pairs, slot_count=dict_min_slots(len(pairs)))
 
 
@@ -1772,6 +1948,8 @@ def build_image_from_code(
         entry_slots=serializer.entry_slots,
         global_store_count=len(stored_names),
         globals_slot_count=globals_slot_count,
+        code_ram_slots=list(serializer.code_ram_slots),
+        code_ram_init_slot=serializer.code_ram_init_slot(),
     )
 
 
@@ -2554,7 +2732,10 @@ def write_meta(
     expected_tag: int | None = None,
     expected_value: int | None = None,
 ) -> None:
-    lines = [f"HEAP_INIT_PTR={result.heap_init_ptr}"]
+    lines = [
+        f"HEAP_INIT_PTR={result.heap_init_ptr}",
+        f"CODE_RAM_INIT_SLOT={result.code_ram_init_slot}",
+    ]
     if expected_tag is not None:
         lines.append(f"EXPECTED_TAG={expected_tag}")
     if expected_value is not None:
@@ -2570,8 +2751,19 @@ def write_image_outputs(
     meta: pathlib.Path,
     expected_tag: int | None = None,
     expected_value: int | None = None,
+    code_ram_hex: pathlib.Path | None = None,
 ) -> None:
+    program_hex = pathlib.Path(program_hex)
     write_program_hex(program_hex, result.program_slots)
+    ram_hex = (
+        pathlib.Path(code_ram_hex)
+        if code_ram_hex is not None
+        else program_hex.parent / "code_ram.hex"
+    )
+    # Whole-image --code-ram writes program_slots to a path already named
+    # code_ram.hex; do not clobber it with the (empty) package bank.
+    if ram_hex.resolve() != program_hex.resolve():
+        write_program_hex(ram_hex, result.code_ram_slots)
     result.heap.write_hex(dmem_hex)
     write_meta(meta, result, expected_tag=expected_tag, expected_value=expected_value)
 

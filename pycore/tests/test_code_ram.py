@@ -100,16 +100,28 @@ class TestSlotBaseOffsets(unittest.TestCase):
         self.assertTrue(all(v >= base for v in img.entry_slots.values()))
 
     def test_offset_is_uniform_and_layout_identical(self):
-        # Relocating the image must shift every entry slot by exactly the base
-        # and change nothing else about the emitted code.
+        # Relocating the image must shift every *ROM-bank* entry slot by
+        # exactly the base and change nothing else about the emitted ROM
+        # slots. Package bodies live in code_ram_slots (W-2) and are not
+        # seeded into the whole-image --code-ram pool.
         base = encoding.CODE_RAM_SLOT_BASE
         rom = self.build(0)
         ram = self.build(base)
         self.assertEqual(rom.program_slots, ram.program_slots)
-        self.assertEqual(len(rom.entry_slots), len(ram.entry_slots))
-        rom_sorted = sorted(rom.entry_slots.values())
+        rom_user = sorted(
+            v for v in rom.entry_slots.values() if v < base
+        )
         ram_sorted = sorted(ram.entry_slots.values())
-        self.assertEqual([v + base for v in rom_sorted], ram_sorted)
+        self.assertEqual(len(rom_user), len(ram_sorted))
+        self.assertEqual([v + base for v in rom_user], ram_sorted)
+
+    def test_rom_build_seeds_package_in_code_ram_bank(self):
+        img = self.build(0)
+        self.assertGreater(len(img.code_ram_slots), 0)
+        self.assertEqual(
+            img.code_ram_init_slot,
+            encoding.CODE_RAM_SLOT_BASE + len(img.code_ram_slots),
+        )
 
     def test_code_ram_build_fits_in_the_region(self):
         base = encoding.CODE_RAM_SLOT_BASE
