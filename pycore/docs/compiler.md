@@ -1,7 +1,7 @@
 # On-device `compile()`
 
-Status: **T0 + A in progress.** Design:
-[`planning/compiler_design.md`](../../planning/compiler_design.md).
+Status: **T0 + A green.** Next is step B (RF ring window), on its own.
+Design: [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` will be a resident PyCore builtin. This file records the
 pipeline, subset, and the deviations from CPython that tests pin.
