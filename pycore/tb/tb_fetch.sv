@@ -48,6 +48,7 @@ module tb_fetch;
         .flush_i(flush),
         .branch_taken_i(branch_taken),
         .branch_target_i(branch_target),
+        .code_write_i(1'b0),
         .imem_req_o(req),
         .imem_we_o(we),
         .imem_addr_o(addr),

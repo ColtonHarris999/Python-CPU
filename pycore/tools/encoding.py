@@ -80,6 +80,14 @@ EXC_STACK_BYTES = 0x1000
 # Call-frame stack (mirror PYCORE_FRAME_STACK_* in pycore_defs.svh).
 FRAME_STACK_BASE = 0xF1000
 FRAME_STACK_BYTES = 0x8000
+# RF spill LIFO (mirror PYCORE_RF_SPILL_* in pycore_defs.svh).
+RF_SPILL_BASE = 0x100000
+RF_SPILL_BYTES = 0x40000
+RF_DEPTH = 256
+RF_RESERVE = 16
+RF_SPILL_HYST = 32
+RF_INIT_CHUNK = 32
+RF_WINDOW_CAP = RF_DEPTH - RF_RESERVE
 # Cache / RAM hierarchy (mirror pycore_defs.svh).
 CACHE_EN = 1
 LINE_BYTES = 64
@@ -207,7 +215,7 @@ L1D_HIT_CYCLES = 1
 # L1-present system). Local call: 8-cycle L2 hits blow tight MAX_CYCLES
 # on cold-start fixtures; L1D covers the hit path.
 L2_HIT_CYCLES = 1
-DMEM_BYTES = 256 * 4096  # PYCORE_DMEM_BLOCK_COUNT << BLOCK_SHIFT
+DMEM_BYTES = 512 * 4096  # PYCORE_DMEM_BLOCK_COUNT << BLOCK_SHIFT
 CODC_ENTRIES = 4
 CODC_WAYS = 2
 CODC_PAYLOAD_W = 576
@@ -303,6 +311,11 @@ BI_HEAP_RELEASE = 13
 BI_CODE_MARK = 14
 BI_CODE_RELEASE = 15
 BI_EXEC_GLOBALS = 16
+# Runtime code-RAM writers (compiler_design.md R-5).
+BI_CODE_ALLOC = 17
+BI_CODE_BLIT = 18
+BI_CODE_PATCH = 19
+BI_CODE_NEW = 20
 
 # Code address space (mirror pycore_defs.svh PYCORE_CODE_RAM_*).
 # The ROM holds IMEM_BLOCK_COUNT * 4096 / 8 slots; code RAM starts right after.

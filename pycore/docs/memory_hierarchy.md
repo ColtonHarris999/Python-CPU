@@ -71,7 +71,7 @@ is never cached. `CACHE_EN=0` is a miss pass-through.
 
 ## Data map (P5)
 
-`DMEM_BLOCK_COUNT = 256` → 1 MB. Constants are mirrored in
+`DMEM_BLOCK_COUNT = 512` → 2 MB. Constants are mirrored in
 `pycore/tools/encoding.py` (`test_memory_map_mirror.py`).
 
 ```
@@ -80,7 +80,8 @@ is never cached. `CACHE_EN=0` is a miss pass-through.
 0x0000_0440 – 0x000E_FFFF   object heap (~955 KB, bump, 64 B start-align)
 0x000F_0000 – 0x000F_0FFF   exception-info arena (4 KB)
 0x000F_1000 – 0x000F_8FFF   call-frame stack (32 KB, 1024 frames)
-0x0010_0000                 DATA_LIMIT
+0x0010_0000 – 0x0013_FFFF   RF spill LIFO (256 KB, 8192 entries)
+0x0020_0000                 DATA_LIMIT
 0x0100_0000 – …             CODE address space (slot-indexed ROM + RAM)
 ```
 
@@ -99,7 +100,9 @@ handoff) and it is coarse: pycore is frozen in `S_TRAP_MARSHAL` /
 | --- | :-: | :-: | :-: | :-: | :-: | :-: |
 | `trap_req` (grant to excore) | — | wb+inv | — | — | — | — |
 | `trap_res` (grant back) | — | inv | — | flush | flush | — |
-| code-RAM write (future writers) | inv | — | — | flush | — | — |
+| `_bi_code_blit` / `_bi_code_patch` write | **inv** | — | (write goes through) | **flush** | — | — |
+| `_bi_code_new` | — | — | — | **flush** | **flush** | — |
+| `_bi_heap_release` | — | — | — | **flush** | **flush** | — |
 | `MAKE_FUNCTION` / code release | — | — | — | flush | — | — |
 | `STORE_NAME` / `STORE_GLOBAL` | — | — | — | — | flush | — |
 | `globals_base_r` change (`_bi_exec_globals`) | — | — | — | — | flush | — |
@@ -129,6 +132,11 @@ that would have justified `pycore_frame_buf.sv`:
 `PYCORE_FTB_FRAMES = 4` remains as a named localparam. Do not build the
 buffer unless a future workload drops under the gate.
 
+RF spill/fill (`S_RF_SPILL` / `S_RF_FILL`, `compiler_design.md` §6.1) uses the
+**ordinary dmem master**, so spilled slots land in L1D like any other access.
+No extra invalidation row: `trap_req` already write-backs and invalidates L1D
+before granting dmem to excore.
+
 ---
 
 ## Performance counters
@@ -140,6 +148,7 @@ L1I hits=… misses=…
 L1D hits=… misses=… wb=… frame_hits=… frame_misses=…
 CODC hits=… misses=… fills=… flushes=…
 GIC hits=… misses=… fills=… flushes=…
+RF spill_count=… wm=… tos=… resident=…
 fetch mem_req=… buf_hit=…
 PASS: … cycles=…
 ```

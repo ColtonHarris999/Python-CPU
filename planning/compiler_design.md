@@ -136,7 +136,7 @@ program reads a stale tagged value. `tos_r` is sized correctly from
 function; the reason it has never fired is that the deepest function in the
 whole `pycore/programs` corpus has 18 locals.
 
-*Traced in source, not yet confirmed in simulation.* Step B fixes it and
+*Confirmed in simulation by `img_locals_40_uninit` (step B).* Step B fixed it and
 `img_locals_40_uninit` pins it.
 
 **C2 — the register file is shared by all live frames.**
@@ -147,12 +147,11 @@ window starts at `tos - argcount` (`pycore_call_fsm.svh:55-57`), and
 frame**, not by `MAX_CALL_DEPTH_CORE = 128`. `img_deep_callgraph` demonstrates
 ~25 live frames with tiny functions.
 
-> Until step B lands this is the single most important constraint: a
-> recursive-descent compiler whose depth scales with source nesting will
-> exhaust the RF on ordinary programs and halt. Step B (§6.1) replaces the
-> linear window with a ring plus spill/fill, which raises the ceiling from
-> ~25 live frames to a documented, growable resource limit. §5.2 keeps the
-> parser iterative anyway, because not spilling is always cheaper than
+> Step B (§6.1) replaces the linear window with a ring plus spill/fill so
+> ordinary programs (and a recursive-descent compiler) can run at depths the
+> old ~25-frame cap forbade. Live depth is now the 1024-frame descriptor
+> region, or the 8192-entry spill LIFO, whichever exhausts first. §5.2 keeps
+> the parser iterative anyway, because not spilling is always cheaper than
 > spilling well.
 
 **C3 — no list/tuple slicing, no negative indices.** `xs[a:b]` on a
@@ -1080,8 +1079,8 @@ parallel with B and C.
 | --- | --- | --- |
 | **T0** | Pin the three uncertain facts: (a) runtime LONG_STR `==` and ordering, (b) `_bi_exec_globals` namespace inheritance through nested `CALL`, (c) current ROM slot occupancy | `img_str_eq_runtime_long`, `img_compile_ns_inherit`, and a measured §7 table |
 | **A** | `test_compiler_subset.py` + `compat` helpers + empty `pycore_firmware/compiler/` | Host test is **red** on `xs[-1]`, `xs[1:]`, `class`, a closure, and an over-cap frame window. Pure host Python, so it can land while B is in flight |
-| **B** | **§6.1 S-1…S-9: the RF ring window, spill/fill, and the locals lift.** Land it on its own, touching no compiler code | The **entire existing image suite passes unchanged**, plus `img_locals_40_uninit` (red on `main` today), `img_locals_64`, `img_rf_deep_recursion`, `img_rf_spill_refill`, `img_rf_thrash`, `img_rf_window_too_big_trap`, `img_rf_spill_oom_trap`, `tb_regfile` |
-| **C** | R-1…R-6 + W-4 + W-5 (the code write path and the four builtins) | `img_code_new_call`: blit `RESUME; LOAD_SMALL_INT 7; RETURN_VALUE`, `_bi_code_new`, call it, get 7. Plus `img_code_emit_then_call`, `img_code_alloc_oom_trap`, `img_code_write_floor_trap` |
+| **B** | **§6.1 S-1…S-9: the RF ring window, spill/fill, and the locals lift.** **Landed** (no compiler code) | The **entire existing image suite passes unchanged**, plus `img_locals_40_uninit` (red on `main` today), `img_locals_64`, `img_rf_deep_recursion`, `img_rf_spill_refill`, `img_rf_thrash`, `img_rf_window_too_big_trap`, `img_rf_spill_oom_trap`, `tb_regfile` |
+| **C** | R-1…R-6 + W-4 + W-5 (the code write path and the four builtins). **Landed** | `img_code_new_call`: blit `RESUME; LOAD_SMALL_INT 7; RETURN_VALUE`, `_bi_code_new`, call it, get 7. Plus `img_code_emit_then_call`, `img_code_alloc_oom_trap`, `img_code_write_floor_trap` |
 | **D** | W-1, W-2, W-6: seed a two-function toy package into `_PYC_G` and call one from the other | `img_pyc_package_call` |
 | **E** | `tables.py` + `lexer.py` | Host: token stream vs CPython `tokenize` on a small corpus. Device: `img_lexer_count` |
 | **F** | `parser.py` T1 expressions (iterative) + SoA AST | Host: shape round-trip vs `ast.parse`. Device: `img_parser_tiny_expr`, `img_compile_deep_nesting` |

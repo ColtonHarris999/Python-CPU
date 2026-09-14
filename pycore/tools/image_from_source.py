@@ -21,12 +21,17 @@ from typing import Iterable
 from encoding import (
     BI_BYTEARRAY,
     BI_CHR,
+    BI_CODE_ALLOC,
+    BI_CODE_BLIT,
     BI_CODE_MARK,
+    BI_CODE_NEW,
+    BI_CODE_PATCH,
     BI_CODE_RELEASE,
     BI_EXEC_GLOBALS,
     BI_HEAP_MARK,
     BI_HEAP_RELEASE,
     CODE_RAM_SLOT_BASE,
+    CODE_RAM_SLOT_LIMIT,
     BI_FROM_BYTES,
     BI_LEN,
     BI_MAX,
@@ -1335,6 +1340,118 @@ def _host_bi_print(x: object) -> None:
         sys.stdout.write(str(x))
 
 
+# CPython 3.14 opcodes used by the host code-RAM interpreter (W-5).
+_HOST_OP_CACHE = 0
+_HOST_OP_RETURN_VALUE = 35
+_HOST_OP_LOAD_SMALL_INT = 94
+_HOST_OP_RESUME = 128
+
+
+class _HostEmittedCode:
+    """Callable stand-in for a ``CODE_OBJECT`` built by ``_bi_code_new``."""
+
+    def __init__(self, ram: "_HostCodeRam", entry_slot: int) -> None:
+        self._ram = ram
+        self._entry = entry_slot
+
+    def __call__(self, *args: object) -> object:
+        if args:
+            raise TypeError("_HostEmittedCode() takes no arguments")
+        pc = self._entry
+        stack: list[object] = []
+        # Bound the walk so a missing RETURN cannot hang the host golden.
+        for _ in range(1 << 16):
+            word = self._ram.words.get(pc, 0)
+            opcode = word & 0xFF
+            oparg = (word >> 8) & 0xFFFFFFFF
+            pc += 1
+            if opcode in (_HOST_OP_CACHE, _HOST_OP_RESUME):
+                continue
+            if opcode == _HOST_OP_LOAD_SMALL_INT:
+                stack.append(oparg)
+                continue
+            if opcode == _HOST_OP_RETURN_VALUE:
+                return stack.pop() if stack else None
+            raise RuntimeError(
+                f"host code-RAM interpreter: unsupported opcode {opcode}"
+            )
+        raise RuntimeError("host code-RAM interpreter: no RETURN_VALUE")
+
+
+class _HostCodeRam:
+    """In-process stand-in for the device code-RAM bump allocator (W-5)."""
+
+    def __init__(self) -> None:
+        self.ptr = CODE_RAM_SLOT_BASE
+        self.floor = CODE_RAM_SLOT_BASE
+        self.words: dict[int, int] = {}
+
+    def alloc(self, nslots: object) -> int:
+        if not isinstance(nslots, int) or isinstance(nslots, bool):
+            raise TypeError("_bi_code_alloc() nslots must be int")
+        if nslots <= 0:
+            raise TypeError("_bi_code_alloc() nslots must be > 0")
+        if self.ptr + nslots > CODE_RAM_SLOT_LIMIT:
+            raise MemoryError("_bi_code_alloc() exceeds code RAM")
+        base = self.ptr
+        self.ptr += nslots
+        return base
+
+    def blit(self, base: object, words: object) -> int:
+        if not isinstance(base, int) or isinstance(base, bool):
+            raise TypeError("_bi_code_blit() base must be int")
+        if not isinstance(words, list):
+            raise TypeError("_bi_code_blit() words must be a list")
+        for i, word in enumerate(words):
+            if not isinstance(word, int) or isinstance(word, bool):
+                raise TypeError("_bi_code_blit() element must be int")
+            if (word >> 40) & ((1 << 24) - 1):
+                raise TypeError("_bi_code_blit() word[63:40] must be zero")
+            slot = base + i
+            if slot < self.floor or slot >= CODE_RAM_SLOT_LIMIT:
+                raise MemoryError("_bi_code_blit() slot outside write floor")
+            self.words[slot] = word & ((1 << 40) - 1)
+        return len(words)
+
+    def patch(self, slot: object, word: object) -> None:
+        if not isinstance(slot, int) or isinstance(slot, bool):
+            raise TypeError("_bi_code_patch() slot must be int")
+        if not isinstance(word, int) or isinstance(word, bool):
+            raise TypeError("_bi_code_patch() word must be int")
+        if (word >> 40) & ((1 << 24) - 1):
+            raise TypeError("_bi_code_patch() word[63:40] must be zero")
+        if slot < self.floor or slot >= CODE_RAM_SLOT_LIMIT:
+            raise MemoryError("_bi_code_patch() slot outside write floor")
+        self.words[slot] = word & ((1 << 40) - 1)
+        return None
+
+    def new(self, fields: object) -> _HostEmittedCode:
+        if not isinstance(fields, list) or len(fields) != 9:
+            raise TypeError("_bi_code_new() fields must be a 9-list")
+        entry = fields[0]
+        if not isinstance(entry, int) or isinstance(entry, bool):
+            raise TypeError("_bi_code_new() entry_slot must be int")
+        if entry < self.floor or entry >= self.ptr:
+            raise MemoryError("_bi_code_new() entry_slot outside allocated range")
+        if not isinstance(fields[1], tuple):
+            raise TypeError("_bi_code_new() co_consts must be a tuple")
+        if not isinstance(fields[2], tuple):
+            raise TypeError("_bi_code_new() co_names must be a tuple")
+        if not isinstance(fields[3], int) or isinstance(fields[3], bool):
+            raise TypeError("_bi_code_new() metadata must be int")
+        if not isinstance(fields[4], tuple):
+            raise TypeError("_bi_code_new() co_defaults must be a tuple")
+        if not isinstance(fields[5], tuple):
+            raise TypeError("_bi_code_new() co_varnames must be a tuple")
+        if not isinstance(fields[6], dict):
+            raise TypeError("_bi_code_new() co_kwdefaults must be a dict")
+        if not isinstance(fields[7], tuple):
+            raise TypeError("_bi_code_new() co_exceptiontable must be a tuple")
+        if not isinstance(fields[8], int) or isinstance(fields[8], bool):
+            raise TypeError("_bi_code_new() flags must be int")
+        return _HostEmittedCode(self, entry)
+
+
 def load_rom_firmware_callables() -> dict[str, object]:
     """Load ROM firmware bodies as host callables for golden / unit tests.
 
@@ -1346,8 +1463,17 @@ def load_rom_firmware_callables() -> dict[str, object]:
     ``HOST_STANDIN_BUILTINS`` names are still loaded and validated here, but
     callers are expected to override them (``run_image_test.py`` does) because
     their device semantics are not reproducible by running the same source.
+    Native code-RAM writers (``_bi_code_alloc`` / blit / patch / new) are
+    injected the same way as ``_bi_print`` — they are not ROM bodies.
     """
-    out: dict[str, object] = {"_bi_print": _host_bi_print}
+    ram = _HostCodeRam()
+    out: dict[str, object] = {
+        "_bi_print": _host_bi_print,
+        "_bi_code_alloc": ram.alloc,
+        "_bi_code_blit": ram.blit,
+        "_bi_code_patch": ram.patch,
+        "_bi_code_new": ram.new,
+    }
     for dict_key, stem, func_name in ROM_FIRMWARE_BUILTINS:
         path = FIRMWARE_BUILTINS_DIR / f"{stem}.py"
         if not path.is_file():
@@ -1478,6 +1604,8 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
       _bi_heap_mark / _bi_heap_release / _bi_code_mark / _bi_code_release
         → OBK_BUILTIN
       _bi_exec_globals → OBK_BUILTIN (Plan 1 P4)
+      _bi_code_alloc / _bi_code_blit / _bi_code_patch / _bi_code_new
+        → OBK_BUILTIN (compiler_design.md R-5)
       int → OBK_TYPE (OB_FLAG_INT_TYPE) whose tp_dict holds from_bytes / to_bytes;
         CALL converts INT/BOOL/FLOAT (trunc toward 0)/decimal SHORT_STR
         instead of INSTANCE construction
@@ -1551,6 +1679,22 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (
             tag_constant("_bi_exec_globals", string_heap),
             heap.alloc_builtin(BI_EXEC_GLOBALS),
+        ),
+        (
+            tag_constant("_bi_code_alloc", string_heap),
+            heap.alloc_builtin(BI_CODE_ALLOC),
+        ),
+        (
+            tag_constant("_bi_code_blit", string_heap),
+            heap.alloc_builtin(BI_CODE_BLIT),
+        ),
+        (
+            tag_constant("_bi_code_patch", string_heap),
+            heap.alloc_builtin(BI_CODE_PATCH),
+        ),
+        (
+            tag_constant("_bi_code_new", string_heap),
+            heap.alloc_builtin(BI_CODE_NEW),
         ),
         (tag_constant("int", string_heap), int_type),
         (tag_constant("str", string_heap), str_type),
