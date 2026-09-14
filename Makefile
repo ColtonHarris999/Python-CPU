@@ -96,6 +96,7 @@ EXCORE_RTL_SRCS := \
 	pycore-tag-decode pycore-exec pycore-type-pairs \
 	pycore-python-tests pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib \
+	pycore-regfile \
 	pycore-codc \
 	pycore-gic \
 	pycore-img pycore-img-smoke pycore-img-call-chain pycore-img-str-consts \
@@ -555,6 +556,17 @@ pycore-frame-fib:
 		pycore/tb/tb_frame_fib_recursion.sv
 	./$(BUILD_DIR)/pycore_frame_fib/Vtb_frame_fib_recursion
 
+pycore-regfile:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_regfile \
+		--Mdir $(BUILD_DIR)/pycore_regfile \
+		-Wall -Wno-fatal \
+		pycore/rtl/pycore_regfile.sv \
+		pycore/tb/tb_regfile.sv
+	./$(BUILD_DIR)/pycore_regfile/Vtb_regfile
+
 
 # ---- Broad-object-support milestone targets (M6 / M8) ---------------------
 # M6 allocator_list is in pycore-img (needs LIST_EXTEND / two-core).
@@ -833,6 +845,27 @@ pycore-img-bad-argc:
 
 pycore-img-deep-callgraph:
 	$(call PYCORE_IMAGE_RUN,deep_callgraph,400000)
+
+pycore-img-locals-40-uninit:
+	$(call PYCORE_IMAGE_TRAP_RUN,locals_40_uninit,7,100000)
+
+pycore-img-locals-64:
+	$(call PYCORE_IMAGE_RUN,locals_64,100000)
+
+pycore-img-rf-deep-recursion:
+	$(call PYCORE_IMAGE_RUN,rf_deep_recursion,8000000)
+
+pycore-img-rf-spill-refill:
+	$(call PYCORE_IMAGE_RUN,rf_spill_refill,2000000)
+
+pycore-img-rf-thrash:
+	$(call PYCORE_IMAGE_RUN,rf_thrash,4000000)
+
+pycore-img-rf-window-too-big-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,rf_window_too_big_trap,6,100000)
+
+pycore-img-rf-spill-oom-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,rf_spill_oom_trap,7,2000000)
 
 pycore-img-helper-containers:
 	$(call PYCORE_IMAGE_RUN,helper_containers,100000)
@@ -1580,6 +1613,12 @@ pycore-img-bad-argc-two-core: excore-fw
 pycore-img-deep-callgraph-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,deep_callgraph,400000)
 
+pycore-img-locals-40-uninit-two-core: excore-fw
+	$(call PYCORE_IMAGE_TRAP_RUN_TWOCORE,locals_40_uninit,7,100000)
+
+pycore-img-locals-64-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,locals_64,100000)
+
 pycore-img-helper-containers-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,helper_containers,100000)
 
@@ -1613,6 +1652,8 @@ pycore-img-two-core: \
 	pycore-img-noncallable-two-core \
 	pycore-img-bad-argc-two-core \
 	pycore-img-deep-callgraph-two-core \
+	pycore-img-locals-40-uninit-two-core \
+	pycore-img-locals-64-two-core \
 	pycore-img-helper-containers-two-core \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \
@@ -1658,6 +1699,13 @@ pycore-img: \
 	pycore-img-noncallable \
 	pycore-img-bad-argc \
 	pycore-img-deep-callgraph \
+	pycore-img-locals-40-uninit \
+	pycore-img-locals-64 \
+	pycore-img-rf-deep-recursion \
+	pycore-img-rf-spill-refill \
+	pycore-img-rf-thrash \
+	pycore-img-rf-window-too-big-trap \
+	pycore-img-rf-spill-oom-trap \
 	pycore-img-helper-containers \
 	pycore-img-algo-sort \
 	pycore-img-bitwise-calls \
@@ -2728,8 +2776,8 @@ excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec \
 	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
-	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff pycore-fetch pycore-frame \
-	pycore-frame-fib
+	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff \
+	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile
 
 pycore-test: pycore-python-tests pycore-rtl-unit pycore-container \
 	pycore-img pycore-excore-system pycore-img-two-core
