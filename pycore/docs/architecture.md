@@ -409,16 +409,24 @@ result `INT` in v1.
 
 ## Register file and frames
 
-`pycore_regfile.sv` owns the 96-entry register file:
+`pycore_regfile.sv` owns the **256-entry ring**. Pointers (`tos_r`,
+`locals_base_r`, `rf_wm_r`) wrap; data does not shift. Frame 0 is an ordinary
+frame — there is no reserved `RF[0..31]` base-frame region.
 
 ```text
-RF[0..31]  frame locals
-RF[32..95] operand stack
+resident suffix  [rf_wm_r, tos_r)
+spilled prefix   everything below the watermark, in RF order
 ```
 
+A callee needs `nlocals + co_stacksize` entries simultaneously resident, capped
+at `RF_WINDOW_CAP = 240`. If the live occupancy plus that window would exceed
+256, `S_RF_SPILL` evicts a watermark suffix (plus `RF_SPILL_HYST = 32`) to the
+dmem LIFO at `0x100000`. `S_RF_FILL` restores it on RETURN. Spilling *within* a
+frame is out of scope; an oversized window is `CALL_FILTER`.
+
 Function calls are managed by the as-built `pycore_frame.sv`, which implements
-a **simple push/pop call-frame stack in dmem** (not a ring-buffer spill design).
-Each CALL pushes a two-slot, 32-byte frame descriptor:
+a **simple push/pop call-frame stack in dmem** (descriptors only; RF spill is
+separate). Each CALL pushes a two-slot, 32-byte frame descriptor:
 
 ```text
 slot 0: { pc_return[31:0], tos_base, locals_base, zero padding }
@@ -433,13 +441,17 @@ and the caller gets its original globals back. `FRAME_ENTRY_BYTES` stays 32.
 Each RETURN pops slot 1 then slot 0, restores the caller's code object pointer,
 PC, TOS base, locals base, and globals base, then reloads the caller's `co_consts` and
 `co_names` from the code object before fetch resumes. Frame depth is bounded by
-the reserved frame-stack region (`0xF1000`–`0xF8FFF`, 32 KB).
+the reserved frame-stack region (`0xF1000`–`0xF8FFF`, 32 KB / 1024 descriptors);
+`MAX_CALL_DEPTH_CORE` matches that. RF occupancy is bounded by the 256-entry ring
+plus the 256 KB spill region (`0x100000`–`0x13FFFF`).
 
-> **P8 skipped.** L1D already hits 99.58% / 95.29% of frame-stack accesses on
-> `img_recursion` / `img_deep_callgraph`. `PYCORE_FTB_FRAMES` is a named
-> localparam only; see [`memory_hierarchy.md`](memory_hierarchy.md). An
-> unintegrated ring-buffer study remains in
-> `pycore/rtl/attic/pycore_frame_buffer.sv`.
+> **P8 skipped.** L1D already hits the frame-stack region well above the 95%
+> gate on `img_recursion` / `img_deep_callgraph`. RF spill/fill uses the
+> ordinary dmem master, so it lands in L1D like any other access — no extra
+> invalidation row. `PYCORE_FTB_FRAMES` is a named localparam only; see
+> [`memory_hierarchy.md`](memory_hierarchy.md). The attic
+> `pycore_frame_buffer.sv` per-slot residency map is superseded by this suffix
+> watermark (`planning/compiler_design.md` §6.1).
 
 ## Image boot and code objects
 
