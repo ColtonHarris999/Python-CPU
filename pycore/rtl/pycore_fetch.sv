@@ -27,6 +27,9 @@ module pycore_fetch #(
     input  logic                  flush_i,
     input  logic                  branch_taken_i,
     input  logic [31:0]           branch_target_i,
+    // Pulse: a code-RAM write is in flight. Drop the line buffer so a
+    // subsequent fetch cannot see a pre-blit slot (compiler_design.md R-3).
+    input  logic                  code_write_i,
     // imem master port
     output logic                  imem_req_o,
     output logic                  imem_we_o,
@@ -104,6 +107,8 @@ module pycore_fetch #(
             arg_o           <= 32'b0;
             pc_o            <= 32'b0;
         end else begin
+            if (code_write_i)
+                line_valid_r <= 1'b0;
             if (!stall_i) begin
                 instr_valid_o <= 1'b0;
                 opcode_o      <= 8'b0;

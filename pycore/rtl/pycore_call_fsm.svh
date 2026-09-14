@@ -582,6 +582,7 @@
 //   sub12-23: RANGE - normalize args, allocate object
 //   sub54-57: heap/code mark and release
 //   sub58-59: EXEC_GLOBALS - type-check args, join phase 3 as a 0-arg call
+//   sub60-63: CODE_ALLOC / BLIT / PATCH / NEW (compiler_design.md R-5)
 //   else: marshal PY_TRAP_BUILTIN_CALL
                         // --------------------------------------------------
                         4'd13: begin
@@ -726,6 +727,46 @@
                                                 container_rf_addr_r <= RF_AW'(
                                                     {1'b0, tos_r} - 9'd2);
                                                 call_sub_r <= 6'd58;
+                                            end
+                                        end else if (call_entry_slot_r[31:0] ==
+                                                     PY_BI_CODE_ALLOC) begin
+                                            if (cur_arg_r[15:0] != 16'd1) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd1);
+                                                call_sub_r <= 6'd60;
+                                                code_op_phase_r <= 5'd0;
+                                            end
+                                        end else if (call_entry_slot_r[31:0] ==
+                                                     PY_BI_CODE_BLIT) begin
+                                            if (cur_arg_r[15:0] != 16'd2) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd2);
+                                                call_sub_r <= 6'd61;
+                                                code_op_phase_r <= 5'd0;
+                                            end
+                                        end else if (call_entry_slot_r[31:0] ==
+                                                     PY_BI_CODE_PATCH) begin
+                                            if (cur_arg_r[15:0] != 16'd2) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd2);
+                                                call_sub_r <= 6'd62;
+                                                code_op_phase_r <= 5'd0;
+                                            end
+                                        end else if (call_entry_slot_r[31:0] ==
+                                                     PY_BI_CODE_NEW) begin
+                                            if (cur_arg_r[15:0] != 16'd1) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd1);
+                                                call_sub_r <= 6'd63;
+                                                code_op_phase_r <= 5'd0;
                                             end
                                         end else if (EXCORE_EN &&
                                             pycore_trap_recoverable(PY_TRAP_BUILTIN_CALL)) begin
@@ -1690,7 +1731,7 @@
                                     if ((cont_rf_rs1_tag != PY_TAG_INT) ||
                                         (cont_rf_rs1_val[127:32] != 96'b0) ||
                                         (cont_rf_rs1_val[31:0] <
-                                         CODE_RAM_INIT_SLOT) ||
+                                         code_ram_floor_r) ||
                                         (cont_rf_rs1_val[31:0] >
                                          code_ram_ptr_r)) begin
                                         container_mem_fault_r <= 1'b1;
@@ -1748,6 +1789,427 @@
                                         call_sub_r               <= 6'd0;
                                         call_phase_r             <= 5'd3;
                                     end
+                                end
+                                // 60: _bi_code_alloc(nslots) -> INT base
+                                6'd60: begin
+                                    if (cont_rf_rs1_tag != PY_TAG_INT) begin
+                                        call_filter_trap_r <= 1'b1;
+                                    end else if (cont_rf_rs1_val[127] ||
+                                                 (cont_rf_rs1_val[31:0] == 32'd0) ||
+                                                 (cont_rf_rs1_val[126:32] != 95'b0)) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else if (({1'b0, code_ram_ptr_r} +
+                                                  {1'b0, cont_rf_rs1_val[31:0]}) >
+                                                 {1'b0, PYCORE_CODE_RAM_SLOT_LIMIT}) begin
+                                        container_mem_fault_r <= 1'b1;
+                                    end else begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {1'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_INT,
+                                            {{96{1'b0}}, code_ram_ptr_r});
+                                        code_ram_ptr_r <=
+                                            code_ram_ptr_r + cont_rf_rs1_val[31:0];
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 6'd0;
+                                        code_op_phase_r <= 5'd0;
+                                    end
+                                end
+                                // 61: _bi_code_blit(base, words) -> INT count
+                                6'd61: begin
+                                    if (code_write_needed_r) begin
+                                    end else unique case (code_op_phase_r)
+                                        5'd0: begin
+                                            if (cont_rf_rs1_tag != PY_TAG_INT) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                container_base_r <=
+                                                    cont_rf_rs1_val[31:0];
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd1);
+                                                code_op_phase_r <= 5'd1;
+                                            end
+                                        end
+                                        5'd1: begin
+                                            if (!pycore_is_list(
+                                                    cont_rf_rs1_tag,
+                                                    cont_rf_rs1_val)) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                container_src_buf_r <=
+                                                    cont_rf_rs1_val[31:0];
+                                                container_dmem_addr_r <=
+                                                    cont_rf_rs1_val[31:0];
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                code_op_phase_r <= 5'd2;
+                                            end
+                                        end
+                                        5'd2: begin
+                                            if (!container_dmem_pending_r) begin
+                                                code_len_r <= cont_hdr_len[31:0];
+                                                container_dmem_addr_r <=
+                                                    pycore_list_obitem_addr(
+                                                        container_src_buf_r);
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                code_op_phase_r <= 5'd3;
+                                            end
+                                        end
+                                        5'd3: begin
+                                            if (!container_dmem_pending_r) begin
+                                                container_buf_r <=
+                                                    cont_obitem_raw[31:0];
+                                                if (code_len_r == 32'd0) begin
+                                                    container_wb_we_r   <= 1'b1;
+                                                    container_wb_addr_r <= RF_AW'(
+                                                        {1'b0, tos_r} - 9'd4);
+                                                    container_wb_data_r <=
+                                                        pycore_make_entry(
+                                                            PY_TAG_INT, 128'd0);
+                                                    tos_r <= RF_AW'(
+                                                        {1'b0, tos_r} - 9'd3);
+                                                    fetch_skip_r <= 1'b1;
+                                                    call_phase_r <= CALL_PHASE_DONE;
+                                                    call_sub_r   <= 6'd0;
+                                                    code_op_phase_r <= 5'd0;
+                                                end else begin
+                                                    code_idx_r <= 32'd0;
+                                                    container_dmem_addr_r <=
+                                                        pycore_list_val_addr(
+                                                            cont_obitem_raw[31:0],
+                                                            32'd0);
+                                                    container_dmem_we_r <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    code_op_phase_r <= 5'd4;
+                                                end
+                                            end
+                                        end
+                                        5'd4: begin
+                                            if (!container_dmem_pending_r) begin
+                                                container_val_r <=
+                                                    container_rd_data_r;
+                                                container_dmem_addr_r <=
+                                                    pycore_list_tag_addr(
+                                                        container_buf_r,
+                                                        code_idx_r);
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                code_op_phase_r <= 5'd5;
+                                            end
+                                        end
+                                        5'd5: begin
+                                            if (!container_dmem_pending_r) begin
+                                                if (container_rd_data_r[3:0] !=
+                                                        PY_TAG_INT) begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end else if (container_val_r[63:40] !=
+                                                             24'b0) begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end else if (
+                                                    ((container_base_r +
+                                                      code_idx_r) <
+                                                     code_ram_floor_r) ||
+                                                    ((container_base_r +
+                                                      code_idx_r) >=
+                                                     PYCORE_CODE_RAM_SLOT_LIMIT)
+                                                ) begin
+                                                    container_mem_fault_r <= 1'b1;
+                                                end else begin
+                                                    code_write_slot_r <=
+                                                        container_base_r +
+                                                        code_idx_r;
+                                                    code_write_word_r <=
+                                                        container_val_r[63:0];
+                                                    code_write_needed_r <= 1'b1;
+                                                end
+                                            end
+                                        end
+                                        5'd6: begin
+                                            if (code_idx_r == code_len_r) begin
+                                                container_wb_we_r   <= 1'b1;
+                                                container_wb_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd4);
+                                                container_wb_data_r <=
+                                                    pycore_make_entry(
+                                                        PY_TAG_INT,
+                                                        {{96{1'b0}}, code_len_r});
+                                                tos_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd3);
+                                                fetch_skip_r <= 1'b1;
+                                                call_phase_r <= CALL_PHASE_DONE;
+                                                call_sub_r   <= 6'd0;
+                                                code_op_phase_r <= 5'd0;
+                                            end else begin
+                                                container_dmem_addr_r <=
+                                                    pycore_list_val_addr(
+                                                        container_buf_r,
+                                                        code_idx_r);
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                code_op_phase_r <= 5'd4;
+                                            end
+                                        end
+                                        default: call_filter_trap_r <= 1'b1;
+                                    endcase
+                                end
+                                // 62: _bi_code_patch(slot, word) -> None
+                                6'd62: begin
+                                    if (code_write_needed_r) begin
+                                    end else unique case (code_op_phase_r)
+                                        5'd0: begin
+                                            if (cont_rf_rs1_tag != PY_TAG_INT) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                container_base_r <=
+                                                    cont_rf_rs1_val[31:0];
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd1);
+                                                code_op_phase_r <= 5'd1;
+                                            end
+                                        end
+                                        5'd1: begin
+                                            if (cont_rf_rs1_tag != PY_TAG_INT) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else if (cont_rf_rs1_val[63:40] !=
+                                                         24'b0) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else if ((container_base_r <
+                                                          code_ram_floor_r) ||
+                                                         (container_base_r >=
+                                                          PYCORE_CODE_RAM_SLOT_LIMIT)
+                                            ) begin
+                                                container_mem_fault_r <= 1'b1;
+                                            end else begin
+                                                code_write_slot_r <=
+                                                    container_base_r;
+                                                code_write_word_r <=
+                                                    cont_rf_rs1_val[63:0];
+                                                code_write_needed_r <= 1'b1;
+                                            end
+                                        end
+                                        5'd7: begin
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                {1'b0, tos_r} - 9'd4);
+                                            container_wb_data_r <=
+                                                pycore_make_entry(
+                                                    PY_TAG_CONTROL,
+                                                    {{124{1'b0}}, PY_CTL_NONE});
+                                            tos_r <= RF_AW'(
+                                                {1'b0, tos_r} - 9'd3);
+                                            fetch_skip_r <= 1'b1;
+                                            call_phase_r <= CALL_PHASE_DONE;
+                                            call_sub_r   <= 6'd0;
+                                            code_op_phase_r <= 5'd0;
+                                        end
+                                        default: call_filter_trap_r <= 1'b1;
+                                    endcase
+                                end
+                                // 63: _bi_code_new(fields) -> CODE_OBJECT
+                                6'd63: begin
+                                    unique case (code_op_phase_r)
+                                        5'd0: begin
+                                            if (!pycore_is_list(
+                                                    cont_rf_rs1_tag,
+                                                    cont_rf_rs1_val)) begin
+                                                container_type_trap_r <= 1'b1;
+                                            end else begin
+                                                container_src_buf_r <=
+                                                    cont_rf_rs1_val[31:0];
+                                                container_dmem_addr_r <=
+                                                    cont_rf_rs1_val[31:0];
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                code_op_phase_r <= 5'd1;
+                                            end
+                                        end
+                                        5'd1: begin
+                                            if (!container_dmem_pending_r) begin
+                                                if (cont_hdr_len != 64'd9) begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end else begin
+                                                    container_dmem_addr_r <=
+                                                        pycore_list_obitem_addr(
+                                                            container_src_buf_r);
+                                                    container_dmem_we_r <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    code_op_phase_r <= 5'd2;
+                                                end
+                                            end
+                                        end
+                                        5'd2: begin
+                                            if (!container_dmem_pending_r) begin
+                                                begin
+                                                    logic [31:0] new_obj;
+                                                    logic [31:0] alloc_end;
+                                                    new_obj = pycore_heap_place(
+                                                        heap_ptr_r,
+                                                        PYCORE_CODE_OBJECT_BYTES);
+                                                    alloc_end = pycore_heap_end(
+                                                        heap_ptr_r,
+                                                        PYCORE_CODE_OBJECT_BYTES);
+                                                    if (alloc_end >
+                                                            PYCORE_HEAP_LIMIT) begin
+                                                        container_mem_fault_r <=
+                                                            1'b1;
+                                                    end else begin
+                                                        container_buf_r <=
+                                                            cont_obitem_raw[31:0];
+                                                        container_base_r <= new_obj;
+                                                        heap_ptr_r <= alloc_end;
+                                                        code_idx_r <= 32'd0;
+                                                        container_dmem_addr_r <=
+                                                            pycore_list_val_addr(
+                                                                cont_obitem_raw[31:0],
+                                                                32'd0);
+                                                        container_dmem_we_r <= 1'b0;
+                                                        container_dmem_pending_r <=
+                                                            1'b1;
+                                                        code_op_phase_r <= 5'd3;
+                                                    end
+                                                end
+                                            end
+                                        end
+                                        5'd3: begin
+                                            if (!container_dmem_pending_r) begin
+                                                container_val_r <=
+                                                    container_rd_data_r;
+                                                container_dmem_addr_r <=
+                                                    pycore_list_tag_addr(
+                                                        container_buf_r,
+                                                        code_idx_r);
+                                                container_dmem_we_r <= 1'b0;
+                                                container_dmem_pending_r <= 1'b1;
+                                                code_op_phase_r <= 5'd4;
+                                            end
+                                        end
+                                        5'd4: begin
+                                            if (!container_dmem_pending_r) begin
+                                                if ((code_idx_r == 32'd0) &&
+                                                    (container_rd_data_r[3:0] !=
+                                                     PY_TAG_INT)) begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end else if ((code_idx_r == 32'd0) &&
+                                                    ((container_val_r[31:0] <
+                                                      code_ram_floor_r) ||
+                                                     (container_val_r[31:0] >=
+                                                      code_ram_ptr_r))) begin
+                                                    container_mem_fault_r <= 1'b1;
+                                                end else if ((code_idx_r == 32'd3) &&
+                                                    (container_rd_data_r[3:0] !=
+                                                     PY_TAG_INT)) begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end else if (code_idx_r == 32'd3) begin
+                                                    code_meta_lo_r <=
+                                                        container_val_r[63:0];
+                                                    code_idx_r <= code_idx_r + 32'd1;
+                                                    container_dmem_addr_r <=
+                                                        pycore_list_val_addr(
+                                                            container_buf_r,
+                                                            code_idx_r + 32'd1);
+                                                    container_dmem_we_r <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    code_op_phase_r <= 5'd3;
+                                                end else if ((code_idx_r == 32'd8) &&
+                                                    (container_rd_data_r[3:0] !=
+                                                     PY_TAG_INT)) begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end else if (code_idx_r == 32'd8) begin
+                                                    container_tag_r <= PY_TAG_INT;
+                                                    container_val_r <= {
+                                                        46'b0,
+                                                        container_val_r[17:2],
+                                                        container_val_r[1],
+                                                        container_val_r[0],
+                                                        code_meta_lo_r
+                                                    };
+                                                    code_op_phase_r <= 5'd7;
+                                                end else if ((code_idx_r == 32'd6) &&
+                                                    !pycore_is_dict(
+                                                        container_rd_data_r[3:0],
+                                                        container_val_r)) begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end else if (
+                                                    ((code_idx_r == 32'd1) ||
+                                                     (code_idx_r == 32'd2) ||
+                                                     (code_idx_r == 32'd4) ||
+                                                     (code_idx_r == 32'd5) ||
+                                                     (code_idx_r == 32'd7)) &&
+                                                    (container_rd_data_r[3:0] !=
+                                                     PY_TAG_TUPLE)
+                                                ) begin
+                                                    container_type_trap_r <= 1'b1;
+                                                end else begin
+                                                    container_tag_r <=
+                                                        container_rd_data_r[3:0];
+                                                    code_op_phase_r <= 5'd7;
+                                                end
+                                            end
+                                        end
+                                        5'd7: begin
+                                            container_dmem_addr_r <=
+                                                pycore_code_field_val_addr(
+                                                    container_base_r,
+                                                    (code_idx_r == 32'd8)
+                                                        ? PYCORE_CODE_FIELD_METADATA
+                                                        : code_idx_r);
+                                            container_dmem_we_r <= 1'b1;
+                                            container_dmem_wdata_r <=
+                                                container_val_r;
+                                            container_dmem_pending_r <= 1'b1;
+                                            code_op_phase_r <= 5'd5;
+                                        end
+                                        5'd5: begin
+                                            if (!container_dmem_pending_r) begin
+                                                container_dmem_addr_r <=
+                                                    pycore_tuple_tag_addr(
+                                                        container_base_r,
+                                                        (code_idx_r == 32'd8)
+                                                            ? PYCORE_CODE_FIELD_METADATA
+                                                            : code_idx_r);
+                                                container_dmem_we_r <= 1'b1;
+                                                container_dmem_wdata_r <=
+                                                    {124'b0, container_tag_r};
+                                                container_dmem_pending_r <= 1'b1;
+                                                code_op_phase_r <= 5'd6;
+                                            end
+                                        end
+                                        5'd6: begin
+                                            if (!container_dmem_pending_r) begin
+                                                if ((code_idx_r + 32'd1) == 32'd9) begin
+                                                    container_wb_we_r   <= 1'b1;
+                                                    container_wb_addr_r <= RF_AW'(
+                                                        {1'b0, tos_r} - 9'd3);
+                                                    container_wb_data_r <=
+                                                        pycore_make_entry(
+                                                            PY_TAG_CODE_OBJECT,
+                                                            {{96{1'b0}},
+                                                             container_base_r});
+                                                    tos_r <= RF_AW'(
+                                                        {1'b0, tos_r} - 9'd2);
+                                                    fetch_skip_r <= 1'b1;
+                                                    call_phase_r <= CALL_PHASE_DONE;
+                                                    call_sub_r   <= 6'd0;
+                                                    code_op_phase_r <= 5'd0;
+                                                end else begin
+                                                    code_idx_r <=
+                                                        code_idx_r + 32'd1;
+                                                    container_dmem_addr_r <=
+                                                        pycore_list_val_addr(
+                                                            container_buf_r,
+                                                            code_idx_r + 32'd1);
+                                                    container_dmem_we_r <= 1'b0;
+                                                    container_dmem_pending_r <= 1'b1;
+                                                    code_op_phase_r <= 5'd3;
+                                                end
+                                            end
+                                        end
+                                        default: call_filter_trap_r <= 1'b1;
+                                    endcase
                                 end
                                 default: call_filter_trap_r <= 1'b1;
                             endcase

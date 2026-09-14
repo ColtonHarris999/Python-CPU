@@ -135,25 +135,25 @@ module pycore_core #(
     localparam int RF_WINDOW_CAP = PYCORE_RF_WINDOW_CAP;
 
     // FSM states (4-bit to accommodate S_CONTAINER and S_BOOT).
-    localparam logic [3:0] S_FETCH     = 4'd0;
-    localparam logic [3:0] S_DECODE    = 4'd1;
-    localparam logic [3:0] S_EXEC      = 4'd2;
-    localparam logic [3:0] S_MEM       = 4'd3;
-    localparam logic [3:0] S_WB        = 4'd4;
-    localparam logic [3:0] S_HALT      = 4'd5;
-    localparam logic [3:0] S_CALL      = 4'd6;
-    localparam logic [3:0] S_RETURN    = 4'd7;
+    localparam logic [4:0] S_FETCH     = 4'd0;
+    localparam logic [4:0] S_DECODE    = 4'd1;
+    localparam logic [4:0] S_EXEC      = 4'd2;
+    localparam logic [4:0] S_MEM       = 4'd3;
+    localparam logic [4:0] S_WB        = 4'd4;
+    localparam logic [4:0] S_HALT      = 4'd5;
+    localparam logic [4:0] S_CALL      = 4'd6;
+    localparam logic [4:0] S_RETURN    = 4'd7;
     // S_CONTAINER: multi-cycle handler for BUILD_LIST, BUILD_MAP, BUILD_TUPLE,
     // NB_SUBSCR, STORE_SUBSCR, LOAD_CONST, LOAD_GLOBAL, LOAD_NAME,
     // STORE_NAME/STORE_GLOBAL, and LFB_LFB.  Entered from S_EXEC when
     // dec_is_container is asserted; exits to S_FETCH when done.
-    localparam logic [3:0] S_CONTAINER = 4'd8;
+    localparam logic [4:0] S_CONTAINER = 4'd8;
     // S_BOOT: reset entry state when BOOT_EN=1.  Reads the boot record
     // (module code object + globals dict), latches globals_base_r /
     // cur_code_r / consts_base_r / names_base_r from the module code
     // object, then redirects fetch to the entry slot before dropping
     // into S_FETCH for normal execution.
-    localparam logic [3:0] S_BOOT      = 4'd9;
+    localparam logic [4:0] S_BOOT      = 4'd9;
     // S_TRAP_MARSHAL / S_TRAP_WAIT (Phase C, EXCORE_EN=1 only): entered
     // instead of the fatal-halt path when a recoverable trap
     // (pycore_trap_recoverable(code)) fires.  S_TRAP_MARSHAL asserts
@@ -162,18 +162,22 @@ module pycore_core #(
     // protocol) until the mailbox handshake completes; S_TRAP_WAIT then
     // waits for trap_res_valid_i and applies the result (see the
     // always_ff case below).
-    localparam logic [3:0] S_TRAP_MARSHAL = 4'd10;
-    localparam logic [3:0] S_TRAP_WAIT    = 4'd11;
+    localparam logic [4:0] S_TRAP_MARSHAL = 4'd10;
+    localparam logic [4:0] S_TRAP_WAIT    = 4'd11;
     // S_STRACC: string accelerator (P5c). Entered from S_EXEC for concat /
     // repeat / slice / CHAR_AT / ITER_NEXT / non-SHORT ordering. The core is
     // frozen and STRACC owns the dmem master until res_valid.
-    localparam logic [3:0] S_STRACC       = 4'd12;
+    localparam logic [4:0] S_STRACC       = 5'd12;
     // S_RF_SPILL / S_RF_FILL / S_RF_INIT: §6.1 ring window. Spill and fill
     // own the dmem master as a sixth mux source; init reuses the RF
-    // UNINIT-clear port in RF_INIT_CHUNK-sized bursts. 4-bit state_r is full.
-    localparam logic [3:0] S_RF_SPILL     = 4'd13;
-    localparam logic [3:0] S_RF_FILL      = 4'd14;
-    localparam logic [3:0] S_RF_INIT      = 4'd15;
+    // UNINIT-clear port in RF_INIT_CHUNK-sized bursts.
+    localparam logic [4:0] S_RF_SPILL     = 5'd13;
+    localparam logic [4:0] S_RF_FILL      = 5'd14;
+    localparam logic [4:0] S_RF_INIT      = 5'd15;
+    // S_CODE_WRITE: core owns the imem master for _bi_code_blit / _bi_code_patch
+    // (compiler_design.md R-2). Fetch is stalled (not S_FETCH) and its
+    // imem_we_o stays 0; the mux below selects.
+    localparam logic [4:0] S_CODE_WRITE   = 5'd16;
 
     // trap_res_code_i values (mirrors excore/docs/mmio_map.md RES_CODE).
     localparam logic [3:0] TRAP_RES_COMPLETED = 4'd0;
@@ -182,7 +186,7 @@ module pycore_core #(
 
     `include "pycore_cont_defs.svh"
 
-    logic [3:0] state_r;
+    logic [4:0] state_r;
 
     // Per-instruction registers.
     logic [7:0]                    cur_opcode_r;
@@ -351,18 +355,21 @@ module pycore_core #(
 
     // Simulation plusarg overrides so one compiled binary can run many
     // image fixtures.  Defaults match the module parameters; plusargs win
-    // when present (`+BOOT_EN=1`, `+HEAP_INIT_PTR=1234`, …).
+    // when present (`+BOOT_EN=1`, `+HEAP_INIT_PTR=1234`, `+CODE_RAM_INIT_SLOT=`).
     bit          boot_en_sim;
     bit          container_call_spike_en_sim;
     logic [31:0] heap_init_ptr_sim;
+    logic [31:0] code_ram_init_slot_sim;
     initial begin
         boot_en_sim = BOOT_EN;
         container_call_spike_en_sim = CONTAINER_CALL_SPIKE_EN;
         heap_init_ptr_sim = HEAP_INIT_PTR;
+        code_ram_init_slot_sim = CODE_RAM_INIT_SLOT;
         void'($value$plusargs("BOOT_EN=%d", boot_en_sim));
         void'($value$plusargs("CONTAINER_CALL_SPIKE_EN=%d",
                              container_call_spike_en_sim));
         void'($value$plusargs("HEAP_INIT_PTR=%d", heap_init_ptr_sim));
+        void'($value$plusargs("CODE_RAM_INIT_SLOT=%d", code_ram_init_slot_sim));
     end
 
     // Same plusarg as pycore_system / pycore_excore_system so CACHE_EN=0
@@ -619,6 +626,24 @@ module pycore_core #(
     assign latch_instr  = (state_r == S_FETCH) && if_instr_valid && !fetch_skip_r;
     assign fetch_stall  = (state_r != S_FETCH) || latch_instr;
 
+    // Code-RAM write path (R-2 / R-4). Floor is the reset CODE_RAM_INIT_SLOT
+    // (plusarg-overridable). Writes go through S_CODE_WRITE.
+    logic [31:0]                   code_ram_floor_r;
+    logic                          code_write_needed_r;
+    logic                          code_write_awaiting_r;
+    logic [31:0]                   code_write_slot_r;
+    logic [63:0]                   code_write_word_r;
+    logic [4:0]                    code_op_phase_r;
+    logic [31:0]                   code_idx_r;
+    logic [31:0]                   code_len_r;
+    logic [63:0]                   code_meta_lo_r;
+    logic [31:0]                   code_new_flags_r;
+
+    logic                          fetch_imem_req;
+    logic                          fetch_imem_we;
+    logic [ADDR_WIDTH-1:0]         fetch_imem_addr;
+    logic [IMEM_DATA_W-1:0]        fetch_imem_wdata;
+
     pycore_fetch #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .DATA_WIDTH(IMEM_DATA_W)
@@ -629,10 +654,11 @@ module pycore_core #(
         .flush_i(1'b0),
         .branch_taken_i(redirect_pending_r),
         .branch_target_i(redirect_tgt_r),
-        .imem_req_o(imem_req_o),
-        .imem_we_o(imem_we_o),
-        .imem_addr_o(imem_addr_o),
-        .imem_wdata_o(imem_wdata_o),
+        .code_write_i(state_r == S_CODE_WRITE),
+        .imem_req_o(fetch_imem_req),
+        .imem_we_o(fetch_imem_we),
+        .imem_addr_o(fetch_imem_addr),
+        .imem_wdata_o(fetch_imem_wdata),
         .imem_ack_i(imem_ack_i),
         .imem_rdata_i(imem_rdata_i),
         .imem_line_i(imem_line_i),
@@ -644,6 +670,21 @@ module pycore_core #(
         .mem_req_count_o(),
         .buf_hit_count_o()
     );
+
+    logic code_write_active;
+    assign code_write_active = (state_r == S_CODE_WRITE);
+    // Pulse req while the write is in flight, but drop it on the ack cycle
+    // (same shape as fetch) so L1I / pass-through RAM cannot recapture.
+    assign imem_req_o   = code_write_active
+                        ? (!code_write_awaiting_r || !imem_ack_i)
+                        : fetch_imem_req;
+    assign imem_we_o    = code_write_active ? 1'b1 : fetch_imem_we;
+    assign imem_addr_o  = code_write_active
+                        ? {code_write_slot_r[ADDR_WIDTH-4:0], 3'b000}
+                        : fetch_imem_addr;
+    assign imem_wdata_o = code_write_active
+                        ? code_write_word_r[IMEM_DATA_W-1:0]
+                        : fetch_imem_wdata;
 
     // ---------------------------------------------------------------------
     // ID: decode (pure combinational off the latched instruction + tos).
@@ -902,7 +943,7 @@ module pycore_core #(
     logic                          exec_stall;
     logic                          exec_trap;
     logic [4:0]                    exec_trap_code;
-    // Code-RAM bump cursor (slot index). Mark/release moves it (Plan 1 P8).
+    // Code-RAM bump cursor (slot index). Mark/release/alloc move it.
     logic [31:0]                   code_ram_ptr_r;
 
     // -------------------------------------------------------------------------
@@ -1293,8 +1334,8 @@ module pycore_core #(
     // ---------------------------------------------------------------------
     // CODC: combinational descriptor cache for CALL phases 3-6 and RETURN
     // phases 1-2 (memory_system_plan.md P6). Flushed on MAKE_FUNCTION,
-    // _bi_code_release, trap_res grant-back, and reset. No code-RAM writer
-    // exists yet; that flush lands with the first imem store.
+    // _bi_code_release / blit / patch / new, _bi_heap_release, trap_res
+    // grant-back, and reset.
     // ---------------------------------------------------------------------
     logic        codc_hit;
     logic        codc_lookup;
@@ -1318,7 +1359,10 @@ module pycore_core #(
          (cur_opcode_r == PY_OP_MAKE_FUNCTION)) ||
         ((state_r == S_TRAP_WAIT) && trap_res_valid_i && !trap_res_seen_r) ||
         ((state_r == S_CALL) && (call_phase_r == 5'd13) &&
-         (call_sub_r == 6'd57));
+         ((call_sub_r == 6'd56) || (call_sub_r == 6'd57) ||
+          (call_sub_r == 6'd61) || (call_sub_r == 6'd62) ||
+          (call_sub_r == 6'd63))) ||
+        (state_r == S_CODE_WRITE);
     assign codc_p_entry    = codc_payload[63:0];
     assign codc_p_consts   = codc_payload[191:64];
     assign codc_p_names    = codc_payload[319:192];
@@ -1375,7 +1419,9 @@ module pycore_core #(
          frame_init_new_frame && call_globals_override_en_r &&
          (call_globals_override_r != globals_base_r)) ||
         ((state_r == S_RETURN) && (return_phase_r == 3'd0) &&
-         frame_return_done && (frame_globals_base_out != globals_base_r));
+         frame_return_done && (frame_globals_base_out != globals_base_r)) ||
+        ((state_r == S_CALL) && (call_phase_r == 5'd13) &&
+         ((call_sub_r == 6'd56) || (call_sub_r == 6'd63)));
 
     pycore_gic u_gic (
         .clk_i(clk_i),
@@ -2051,7 +2097,7 @@ module pycore_core #(
     // state_r is the registered current state; state_next is the combinational
     // next state, computed every cycle and sampled on the next rising edge.
     // ---------------------------------------------------------------------
-    logic [3:0] state_next;
+    logic [4:0] state_next;
     // (container_done_r removed: all operations advance container_phase_r to
     // CP_DONE as the terminal marker; the always_comb checks that directly.)
 
@@ -2126,6 +2172,8 @@ module pycore_core #(
                     // run in S_RF_INIT after CALL_PHASE_DONE.
                     if (call_stracc_go_r)
                         state_next = S_STRACC;
+                    else if (code_write_needed_r)
+                        state_next = S_CODE_WRITE;
                     else if ((call_phase_r == 5'd7) && !call_sent_r &&
                              rf_spill_needed_r)
                         state_next = S_RF_SPILL;
@@ -2152,6 +2200,10 @@ module pycore_core #(
                 S_RF_INIT: begin
                     if (!rf_init_more_r)
                         state_next = S_FETCH;
+                end
+                S_CODE_WRITE: begin
+                    if (imem_ack_i)
+                        state_next = S_CALL;
                 end
                 S_CONTAINER: begin
                     // CP_DONE is a terminal marker phase used uniformly by all
@@ -2313,7 +2365,17 @@ module pycore_core #(
             return_wb_data_r     <= '0;
             // Container / heap allocator reset.
             heap_ptr_r               <= heap_init_ptr_sim;
-            code_ram_ptr_r           <= CODE_RAM_INIT_SLOT;
+            code_ram_ptr_r           <= code_ram_init_slot_sim;
+            code_ram_floor_r         <= code_ram_init_slot_sim;
+            code_write_needed_r      <= 1'b0;
+            code_write_awaiting_r    <= 1'b0;
+            code_write_slot_r        <= '0;
+            code_write_word_r        <= '0;
+            code_op_phase_r          <= '0;
+            code_idx_r               <= '0;
+            code_len_r               <= '0;
+            code_meta_lo_r           <= '0;
+            code_new_flags_r         <= '0;
             container_op_r           <= '0;
             container_phase_r        <= '0;
             container_call_pending_r <= 1'b0;
@@ -3334,6 +3396,25 @@ module pycore_core #(
                         rf_init_more_r <= 1'b0;
                     end else begin
                         rf_init_next_r <= rf_init_next_r + RF_AW'(RF_INIT_CHUNK);
+                    end
+                end
+
+                // ----------------------------------------------------------
+                // S_CODE_WRITE: one 64-bit imem store. Fetch is stalled.
+                // On ack, return to S_CALL; blit/patch inspect code_op_phase_r.
+                S_CODE_WRITE: begin
+                    if (!code_write_awaiting_r)
+                        code_write_awaiting_r <= 1'b1;
+                    if (imem_ack_i) begin
+                        code_write_awaiting_r <= 1'b0;
+                        code_write_needed_r <= 1'b0;
+                        if (call_sub_r == 6'd61) begin
+                            code_idx_r      <= code_idx_r + 32'd1;
+                            code_op_phase_r <= 5'd6;
+                        end else begin
+                            // PATCH: finish the builtin.
+                            code_op_phase_r <= 5'd7;
+                        end
                     end
                 end
 

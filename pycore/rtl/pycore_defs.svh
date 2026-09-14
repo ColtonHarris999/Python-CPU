@@ -632,6 +632,13 @@ localparam logic [31:0] PY_BI_CODE_RELEASE = 32'd15;
 // (Plan 1 P4).  The CALL/RETURN path saves the caller's globals in the
 // frame descriptor so they come back on return.
 localparam logic [31:0] PY_BI_EXEC_GLOBALS = 32'd16;
+// Runtime code-RAM writers (compiler_design.md R-5).  Alloc reserves a
+// contiguous slot range; blit/patch store 40-bit words; new fabricates a
+// CODE_OBJECT from a 9-field MUT_LIST.
+localparam logic [31:0] PY_BI_CODE_ALLOC   = 32'd17;
+localparam logic [31:0] PY_BI_CODE_BLIT    = 32'd18;
+localparam logic [31:0] PY_BI_CODE_PATCH   = 32'd19;
+localparam logic [31:0] PY_BI_CODE_NEW     = 32'd20;
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;

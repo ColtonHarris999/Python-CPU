@@ -3,7 +3,7 @@
 // Cache directed coverage (memory_system_plan.md §6): hit, cold miss,
 // capacity/conflict miss at every way, dirty eviction, fault propagation,
 // invalidate-all, flush-all, back-to-back, READ_ONLY write rejection,
-// CACHE_EN=0 combinational pass-through.
+// WRITE_INV_NO_ALLOC (L1I policy), CACHE_EN=0 combinational pass-through.
 module tb_cache;
     localparam int DATA_WIDTH = 128;
     localparam int ADDR_WIDTH = 32;
@@ -250,6 +250,100 @@ module tb_cache;
         .fault_o(cov_down_fault)
     );
 
+    // L1I policy: READ_ONLY + WRITE_INV_NO_ALLOC. A write must invalidate a
+    // hit line, forward downstream, and not serve the old data on the next
+    // read (compiler_design.md R-1).
+    logic winv_req, winv_we, winv_ack, winv_fault;
+    logic [DATA_WIDTH-1:0] winv_rdata, winv_wdata;
+    logic [ADDR_WIDTH-1:0] winv_addr;
+    logic winv_down_req, winv_down_we, winv_down_line, winv_down_ack, winv_down_last, winv_down_fault;
+    logic [DATA_WIDTH/8-1:0] winv_down_wstrb;
+    logic [ADDR_WIDTH-1:0] winv_down_addr;
+    logic [DATA_WIDTH-1:0] winv_down_wdata, winv_down_rdata;
+    logic [LINE_BYTES*8-1:0] winv_down_wline;
+    logic [31:0] winv_hits, winv_misses;
+
+    pycore_cache #(
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .DATA_WIDTH(DATA_WIDTH),
+        .SIZE_BYTES(SIZE_BYTES),
+        .LINE_BYTES(LINE_BYTES),
+        .WAYS(WAYS),
+        .READ_ONLY(1'b1),
+        .WRITE_INV_NO_ALLOC(1'b1),
+        .WRITE_BACK(1'b0),
+        .HIT_CYCLES(1),
+        .DOWN_LINE(1'b0)
+    ) dut_winv (
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .cache_en_i(1'b1),
+        .req_i(winv_req),
+        .we_i(winv_we),
+        .wstrb_i({DATA_WIDTH/8{1'b1}}),
+        .addr_i(winv_addr),
+        .wdata_i(winv_wdata),
+        .line_i(1'b0),
+        .wline_i('0),
+        .ack_o(winv_ack),
+        .rdata_o(winv_rdata),
+        .fault_o(winv_fault),
+        .rdata_line_o(),
+        .down_req_o(winv_down_req),
+        .down_we_o(winv_down_we),
+        .down_line_o(winv_down_line),
+        .down_wstrb_o(winv_down_wstrb),
+        .down_addr_o(winv_down_addr),
+        .down_wdata_o(winv_down_wdata),
+        .down_wline_o(winv_down_wline),
+        .down_ack_i(winv_down_ack),
+        .down_last_i(winv_down_last),
+        .down_rdata_i(winv_down_rdata),
+        .down_fault_i(winv_down_fault),
+        .inv_all_i(1'b0),
+        .flush_all_i(1'b0),
+        .inv_busy_o(),
+        .flush_busy_o(),
+        .inv_done_o(),
+        .flush_done_o(),
+        .idle_o(),
+        .hit_count_o(winv_hits),
+        .miss_count_o(winv_misses),
+        .writeback_count_o(),
+        .region_hit_count_o(),
+        .region_miss_count_o()
+    );
+
+    pycore_ram #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .LINE_BYTES(LINE_BYTES),
+        .RAM_BYTES(8192),
+        .T_BEAT(1),
+        .DATA_LIMIT(8192),
+        .DMEM_HEX(""),
+        .PROG_HEX(""),
+        .CODE_RAM_HEX(""),
+        .DMEM_PLUSARG(""),
+        .PROG_PLUSARG(""),
+        .CODE_RAM_PLUSARG("")
+    ) ram_winv (
+        .clk_i(clk),
+        .rst_n_i(rst_n),
+        .t_first_i(1),
+        .req_i(winv_down_req),
+        .we_i(winv_down_we),
+        .line_i(winv_down_line),
+        .wstrb_i(winv_down_wstrb),
+        .addr_i(winv_down_addr),
+        .wdata_i(winv_down_wdata),
+        .wline_i(winv_down_wline),
+        .ack_o(winv_down_ack),
+        .last_o(winv_down_last),
+        .rdata_o(winv_down_rdata),
+        .fault_o(winv_down_fault)
+    );
+
     always #5 clk = ~clk;
 
     task automatic check(input bit cond, input string msg);
@@ -304,6 +398,7 @@ module tb_cache;
         inv_all = 1'b0; flush_all = 1'b0;
         ro_req = 1'b0; ro_we = 1'b0;
         cov_req = 1'b0; cov_we = 1'b0; cov_addr = '0; cov_wdata = '0;
+        winv_req = 1'b0; winv_we = 1'b0; winv_addr = '0; winv_wdata = '0;
         #12; rst_n = 1'b1;
         @(negedge clk);
 
@@ -408,6 +503,59 @@ module tb_cache;
         transact_cov(1'b0, 32'h00, '0);
         check(cov_rdata == 128'hAB, "HIT_CYCLES=2 hit lost the line");
         check(!cov_fault, "HIT_CYCLES=2 hit faulted");
+
+        // WRITE_INV_NO_ALLOC: fill a line, overwrite it, next read must miss
+        // and return the RAM copy — not a stale hit of the pre-write value.
+        begin
+            int n;
+            @(negedge clk);
+            winv_req = 1'b1; winv_we = 1'b0; winv_addr = 32'h00; winv_wdata = '0;
+            @(negedge clk);
+            winv_req = 1'b0;
+            n = 0;
+            while (!winv_ack) begin
+                @(negedge clk);
+                n++;
+                check(n < 256, "winv cold read timeout");
+            end
+            check(!winv_fault, "winv cold read faulted");
+            @(negedge clk);
+            winv_req = 1'b1; winv_we = 1'b0; winv_addr = 32'h00;
+            @(negedge clk);
+            winv_req = 1'b0;
+            n = 0;
+            while (!winv_ack) begin
+                @(negedge clk);
+                n++;
+                check(n < 256, "winv hit read timeout");
+            end
+            check(winv_hits != 0, "winv second read should hit");
+            @(negedge clk);
+            winv_req = 1'b1; winv_we = 1'b1; winv_addr = 32'h00;
+            winv_wdata = 128'hCAFE;
+            @(negedge clk);
+            winv_req = 1'b0; winv_we = 1'b0;
+            n = 0;
+            while (!winv_ack) begin
+                @(negedge clk);
+                n++;
+                check(n < 256, "winv write timeout");
+            end
+            check(!winv_fault, "WRITE_INV write must not fault");
+            @(negedge clk);
+            winv_req = 1'b1; winv_we = 1'b0; winv_addr = 32'h00;
+            @(negedge clk);
+            winv_req = 1'b0;
+            n = 0;
+            while (!winv_ack) begin
+                @(negedge clk);
+                n++;
+                check(n < 256, "winv post-write read timeout");
+            end
+            check(!winv_fault, "winv post-write read faulted");
+            check(winv_rdata == 128'hCAFE,
+                  "WRITE_INV must forward the write; next read sees RAM");
+        end
 
         $display("PASS: pycore_cache hit/miss/evict/flush/bypass isolation test");
         $finish;
