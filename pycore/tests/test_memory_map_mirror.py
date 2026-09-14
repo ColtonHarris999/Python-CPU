@@ -105,6 +105,13 @@ SHARED_CONSTANTS = {
     "EXC_STACK_BYTES": "PYCORE_EXC_STACK_BYTES",
     "FRAME_STACK_BASE": "PYCORE_FRAME_STACK_BASE",
     "FRAME_STACK_BYTES": "PYCORE_FRAME_STACK_BYTES",
+    "RF_SPILL_BASE": "PYCORE_RF_SPILL_BASE",
+    "RF_SPILL_BYTES": "PYCORE_RF_SPILL_BYTES",
+    "RF_DEPTH": "PYCORE_RF_DEPTH",
+    "RF_RESERVE": "PYCORE_RF_RESERVE",
+    "RF_SPILL_HYST": "PYCORE_RF_SPILL_HYST",
+    "RF_INIT_CHUNK": "PYCORE_RF_INIT_CHUNK",
+    "RF_WINDOW_CAP": "PYCORE_RF_WINDOW_CAP",
     "ITER_EXHAUST_TYPE_ADDR": "PYCORE_ITER_EXHAUST_TYPE_ADDR",
     "NATIVE_METHOD_COUNT": "PYCORE_NATIVE_METHOD_COUNT",
     "NATIVE_METHOD_ENTRY_BYTES": "PYCORE_NATIVE_METHOD_ENTRY_BYTES",
@@ -179,7 +186,18 @@ class TestMemoryMapMirror(unittest.TestCase):
         # itself must already be on a line or the first object would pad.
         self.assertEqual(encoding.HEAP_BASE % encoding.LINE_BYTES, 0)
         self.assertEqual(encoding.align_line(encoding.HEAP_BASE), encoding.HEAP_BASE)
-        self.assertEqual(encoding.DMEM_BYTES, 0x100000)
+        self.assertEqual(encoding.DMEM_BYTES, 0x200000)
+        self.assertEqual(encoding.RF_SPILL_BASE, 0x100000)
+        self.assertEqual(encoding.RF_SPILL_BYTES, 0x40000)
+        self.assertEqual(encoding.RF_WINDOW_CAP, 240)
+        self.assertLess(
+            encoding.FRAME_STACK_BASE + encoding.FRAME_STACK_BYTES,
+            encoding.RF_SPILL_BASE,
+        )
+        self.assertLess(
+            encoding.RF_SPILL_BASE + encoding.RF_SPILL_BYTES,
+            encoding.DMEM_BYTES,
+        )
         self.assertEqual(encoding.CODE_ADDR_BASE, 0x01000000)
 
 

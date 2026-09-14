@@ -80,6 +80,14 @@ EXC_STACK_BYTES = 0x1000
 # Call-frame stack (mirror PYCORE_FRAME_STACK_* in pycore_defs.svh).
 FRAME_STACK_BASE = 0xF1000
 FRAME_STACK_BYTES = 0x8000
+# RF spill LIFO (mirror PYCORE_RF_SPILL_* in pycore_defs.svh).
+RF_SPILL_BASE = 0x100000
+RF_SPILL_BYTES = 0x40000
+RF_DEPTH = 256
+RF_RESERVE = 16
+RF_SPILL_HYST = 32
+RF_INIT_CHUNK = 32
+RF_WINDOW_CAP = RF_DEPTH - RF_RESERVE
 # Cache / RAM hierarchy (mirror pycore_defs.svh).
 CACHE_EN = 1
 LINE_BYTES = 64
@@ -207,7 +215,7 @@ L1D_HIT_CYCLES = 1
 # L1-present system). Local call: 8-cycle L2 hits blow tight MAX_CYCLES
 # on cold-start fixtures; L1D covers the hit path.
 L2_HIT_CYCLES = 1
-DMEM_BYTES = 256 * 4096  # PYCORE_DMEM_BLOCK_COUNT << BLOCK_SHIFT
+DMEM_BYTES = 512 * 4096  # PYCORE_DMEM_BLOCK_COUNT << BLOCK_SHIFT
 CODC_ENTRIES = 4
 CODC_WAYS = 2
 CODC_PAYLOAD_W = 576
