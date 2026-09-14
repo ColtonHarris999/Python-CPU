@@ -39,10 +39,6 @@ module pycore_core #(
     parameter int RF_DEPTH      = 256,
     parameter int STACK_BASE    = 32,
     parameter int STACK_TOP_MAX = 255,
-    parameter int STRING_MEM_BYTES = 65536,
-    parameter int STRING_MAX_LEN = 4096,
-    parameter longint unsigned STRING_RUNTIME_BASE = 64'd16384,
-    parameter string STRING_HEX = "pycore/programs/string_mem.hex",
     // First free byte of the bump-pointer heap.  A preloaded static heap
     // image sets this above the static objects so runtime allocations do
     // not overwrite them.  Default matches an empty heap.
