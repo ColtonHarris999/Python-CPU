@@ -18,7 +18,7 @@ planning/master_plan.md          timeline
         ├── architecture_plan.md   boot, code RAM writers, loader, BIOS
         ├── bytecode_support.md    remaining opcodes
         ├── builtin_support.md     remaining ROM / native names
-        ├── compile_plan.md        on-device compile() via PyCPython
+        ├── compiler_design.md    on-device compile() (active design)
         └── exceptions_plan.md     trap→raise, assert, with, subclasses
                 │
                 ▼
@@ -69,7 +69,7 @@ PyCore subset into `pycore_firmware/compiler/`. Do **not** run unmodified
 PyCPython on the hart. Do **not** port PyPy’s tokenizer — that path is
 abandoned.
 
-First success:
+Design: [`compiler_design.md`](compiler_design.md). First success:
 
 ```python
 eval(compile("1 + 2", "<s>", "eval")) == 3

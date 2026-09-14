@@ -1,7 +1,14 @@
 # Compile plan
 
+> **Superseded by [`compiler_design.md`](compiler_design.md).** That file is
+> the active, self-contained design for on-device `compile()`. It corrects
+> several constraints this document treats as live (list slicing, long-name
+> equality, `str.split`/`strip`/`replace`, the heap and static-string
+> budgets) and replaces the LL(1)/`_bi_code_emit` plan with an iterative
+> compiler and bulk `_bi_code_blit`. Kept for history.
+
 On-device `compile()`, using **PyCPython** as the host oracle and
-algorithm source. This is the only remaining compile plan.
+algorithm source.
 
 **Abandoned:** PyPy / open-source tokenizer ports, “wait for all of Plan 1
 before compile,” and running unmodified `vendor/pycpython` on the hart.

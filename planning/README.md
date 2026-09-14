@@ -9,7 +9,7 @@ opcode/type inventories live under `pycore/docs/` and `excore/docs/`.
 | [`architecture_plan.md`](architecture_plan.md) | Remaining boot / code-RAM writers (A1–A3) |
 | [`bytecode_support.md`](bytecode_support.md) | Remaining opcode work |
 | [`builtin_support.md`](builtin_support.md) | Remaining ROM / native builtins |
-| [`compile_plan.md`](compile_plan.md) | On-device `compile()` via PyCPython |
+| [`compiler_design.md`](compiler_design.md) | **On-device `compile()` — the active design.** Supersedes `compile_plan.md` |
 | [`exceptions_plan.md`](exceptions_plan.md) | Remaining exception tracks |
 | [`p5_review_followup.md`](p5_review_followup.md) | P5 leftovers: dead `STRING_HEX` plumbing, allocator-bytes orphan |
 
