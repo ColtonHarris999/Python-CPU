@@ -4073,7 +4073,12 @@
                     unique case (return_phase_r)
 
                         3'd0: begin
-                            if (!call_sent_r && !frame_busy) begin
+                            // After a spill-fill, call_sent_r is 0 again and
+                            // phase is still 0. Do not launch another frame
+                            // pop — that livelocks CALL/RETURN once the
+                            // watermark has moved (img_rf_deep_recursion).
+                            if (!call_sent_r && !frame_busy &&
+                                    !return_after_fill_r && !rf_fill_needed_r) begin
                                 frame_return_valid_r <= 1'b1;
                                 call_sent_r          <= 1'b1;
                             end
