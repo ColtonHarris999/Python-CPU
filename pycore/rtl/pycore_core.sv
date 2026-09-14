@@ -2231,7 +2231,7 @@ module pycore_core #(
             redirect_pending_r   <= 1'b0;
             redirect_tgt_r       <= 32'b0;
             cycle_count_o          <= 64'b0;
-            cur_locals_base_r      <= '0;  // base frame locals live in RF[0..31]
+            cur_locals_base_r      <= '0;  // ring: frame 0 is just a frame
             call_sent_r          <= 1'b0;
             frame_dmem_pending_r <= 1'b0;
             frame_call_valid_r   <= 1'b0;

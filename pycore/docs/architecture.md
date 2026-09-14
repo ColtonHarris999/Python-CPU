@@ -397,9 +397,10 @@ Sizes, the P5 data map, the invalidation matrix, and the P8 skip are in
   `PYCORE_CODE_ADDR_BASE = 0x01000000` so code and data do not alias in L2.
 - Data port is 128-bit, 16-byte aligned, with `wstrb[15:0]`.
 - Default map (`pycore_defs.svh`): `ADDR_WIDTH = 32`, `BLOCK_SHIFT = 12`,
-  `IMEM_BLOCK_COUNT = 16` (64 KB ROM), `DMEM_BLOCK_COUNT = 256` (1 MB).
-  Heap `0x440`–`0xEFFFF`, frames `0xF1000`–`0xF8FFF`. Out-of-range or
-  misaligned data accesses raise `MEM_FAULT` / `ADDR_ALIGN`.
+  `IMEM_BLOCK_COUNT = 16` (64 KB ROM), `DMEM_BLOCK_COUNT = 512` (2 MB).
+  Heap `0x440`–`0xEFFFF`, frames `0xF1000`–`0xF8FFF`, RF spill
+  `0x100000`–`0x13FFFF`. Out-of-range or misaligned data accesses raise
+  `MEM_FAULT` / `ADDR_ALIGN`.
 
 PTR load/store reach data memory through two internal-only opcodes
 (`PY_OP_MEM_LOAD_PTR`, `PY_OP_MEM_STORE_PTR`) that are not part of the CPython
