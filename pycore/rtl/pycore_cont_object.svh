@@ -223,7 +223,7 @@
                                     if (!container_dmem_pending_r) begin
                                         container_val_r <= container_rd_data_r;
                                         container_dmem_addr_r <= pycore_tuple_tag_addr(
-                                            names_base_r[31:0], {25'b0, container_idx_r});
+                                            names_base_r[31:0], {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         container_phase_r <= CP_NAME_TAG;
@@ -474,7 +474,7 @@
                                     if (!container_dmem_pending_r) begin
                                         container_val_r <= container_rd_data_r;
                                         container_dmem_addr_r <= pycore_tuple_tag_addr(
-                                            names_base_r[31:0], {25'b0, container_idx_r});
+                                            names_base_r[31:0], {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         container_phase_r <= CP_NAME_TAG;
@@ -1066,7 +1066,7 @@
                                     if (!container_dmem_pending_r) begin
                                         container_val_r <= container_rd_data_r;
                                         container_dmem_addr_r <= pycore_tuple_tag_addr(
-                                            names_base_r[31:0], {25'b0, container_idx_r});
+                                            names_base_r[31:0], {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         container_phase_r <= CP_NAME_TAG;
@@ -1842,7 +1842,7 @@
                                     if (!container_dmem_pending_r) begin
                                         container_val_r <= container_rd_data_r;
                                         container_dmem_addr_r <= pycore_tuple_tag_addr(
-                                            names_base_r[31:0], {25'b0, container_idx_r});
+                                            names_base_r[31:0], {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         container_phase_r <= CP_NAME_TAG;
@@ -2306,7 +2306,7 @@
                                     if (!container_dmem_pending_r) begin
                                         container_val_r <= container_rd_data_r;
                                         container_dmem_addr_r <= pycore_tuple_tag_addr(
-                                            names_base_r[31:0], {25'b0, container_idx_r});
+                                            names_base_r[31:0], {24'b0, container_idx_r});
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;
                                         container_phase_r <= CP_NAME_TAG;

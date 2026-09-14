@@ -32,13 +32,12 @@ module pycore_core #(
     parameter int ADDR_WIDTH    = PYCORE_ADDR_WIDTH,
     parameter int IMEM_DATA_W   = PYCORE_IMEM_DATA_WIDTH,
     parameter int DMEM_DATA_W   = PYCORE_DMEM_DATA_WIDTH,
-    // Deep call graphs (e.g. img_deep_callgraph) keep every live frame's
-    // locals/args resident in the RF, so depth is limited by RF_DEPTH more
-    // tightly than by the dmem frame-descriptor stack.  256 entries leaves
-    // headroom above fib(10)-class recursion.
-    parameter int RF_DEPTH      = 256,
-    parameter int STACK_BASE    = 32,
-    parameter int STACK_TOP_MAX = 255,
+    // 256-entry ring. Frame windows wrap; occupancy is (tos - wm) with
+    // empty == (tos == wm). A callee needs nlocals+stacksize simultaneously
+    // resident; overflow spills a watermark suffix to dmem (S_RF_SPILL).
+    parameter int RF_DEPTH      = PYCORE_RF_DEPTH,
+    parameter int STACK_BASE    = 0,
+    parameter int STACK_TOP_MAX = PYCORE_RF_DEPTH - 1,
     // First free byte of the bump-pointer heap.  A preloaded static heap
     // image sets this above the static objects so runtime allocations do
     // not overwrite them.  Default matches an empty heap.
@@ -130,6 +129,10 @@ module pycore_core #(
 );
 
     localparam int RF_AW = $clog2(RF_DEPTH);
+    localparam int RF_RESERVE    = PYCORE_RF_RESERVE;
+    localparam int RF_SPILL_HYST = PYCORE_RF_SPILL_HYST;
+    localparam int RF_INIT_CHUNK = PYCORE_RF_INIT_CHUNK;
+    localparam int RF_WINDOW_CAP = PYCORE_RF_WINDOW_CAP;
 
     // FSM states (4-bit to accommodate S_CONTAINER and S_BOOT).
     localparam logic [3:0] S_FETCH     = 4'd0;
@@ -165,6 +168,12 @@ module pycore_core #(
     // repeat / slice / CHAR_AT / ITER_NEXT / non-SHORT ordering. The core is
     // frozen and STRACC owns the dmem master until res_valid.
     localparam logic [3:0] S_STRACC       = 4'd12;
+    // S_RF_SPILL / S_RF_FILL / S_RF_INIT: §6.1 ring window. Spill and fill
+    // own the dmem master as a sixth mux source; init reuses the RF
+    // UNINIT-clear port in RF_INIT_CHUNK-sized bursts. 4-bit state_r is full.
+    localparam logic [3:0] S_RF_SPILL     = 4'd13;
+    localparam logic [3:0] S_RF_FILL      = 4'd14;
+    localparam logic [3:0] S_RF_INIT      = 4'd15;
 
     // trap_res_code_i values (mirrors excore/docs/mmio_map.md RES_CODE).
     localparam logic [3:0] TRAP_RES_COMPLETED = 4'd0;
@@ -188,6 +197,25 @@ module pycore_core #(
     logic [PYCORE_ENTRY_WIDTH-1:0] wb_entry_r;
     logic                          wb_we_r;
     logic [RF_AW-1:0]              tos_r;
+    // §6.1 ring window. Resident suffix is [rf_wm_r, tos_r); tos==wm is empty
+    // because spill keeps the ring from going full.
+    logic [RF_AW-1:0]              rf_wm_r;
+    logic [31:0]                   spill_sp_r;
+    logic [8:0]                    rf_spill_left_r;
+    logic [8:0]                    rf_fill_left_r;
+    logic                          rf_spill_needed_r;
+    logic                          rf_fill_needed_r;
+    logic                          rf_init_more_r;
+    logic [RF_AW-1:0]              rf_init_next_r;
+    logic                          rf_spill_dmem_pending_r;
+    logic                          rf_spill_half_r; // 0 = value beat, 1 = tag beat
+    logic [127:0]                  rf_fill_val_r;
+    logic                          rf_fill_we_r;
+    logic [RF_AW-1:0]              rf_fill_addr_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] rf_fill_data_r;
+    logic [31:0]                   rf_spill_count_r;
+    logic                          rf_spill_mem_fault_r;
+    logic                          return_after_fill_r;
 
     // Currently-executing code object (byte address into dmem; upper bits 0).
     // Latched by S_BOOT / S_CALL / S_RETURN; consumed by S_RETURN to reload
@@ -268,6 +296,7 @@ module pycore_core #(
     logic [15:0]                   call_argcount_r;    // effective/supplied argc
     logic [15:0]                   call_meta_argc_r;   // co_argcount from metadata
     logic [15:0]                   call_nlocals_r;     // callee metadata nlocals
+    logic [15:0]                   call_stacksize_r;   // callee co_stacksize
     logic [RF_AW-1:0]              call_new_locals_r;  // locals base (self or arg0)
     logic [RF_AW-1:0]              call_tos_base_r;    // tos - oparg - 2 (callable)
     // OBJECT callable address (BOUND_METHOD / TYPE); code addr for CODE_OBJECT.
@@ -393,7 +422,7 @@ module pycore_core #(
     logic [3:0]                    container_lfb_hi_r;
     logic [3:0]                    container_lfb_lo_r;
     // Element / pair counter.
-    logic [6:0]                    container_idx_r;
+    logic [7:0]                    container_idx_r;
     // Total element/pair count.
     logic [6:0]                    container_count_r;
     // Base address of the newly allocated container in heap.
@@ -774,7 +803,9 @@ module pycore_core #(
     logic [RF_AW-1:0] rs1_addr_eff;
     // S_CONTAINER and S_CALL both drive container_rf_addr_r to walk RF
     // slots without a second read port (callable / null / STORE value).
-    assign rs1_addr_eff = ((state_r == S_CONTAINER) || (state_r == S_CALL))
+    assign rs1_addr_eff = ((state_r == S_RF_SPILL))
+                          ? rf_wm_r
+                          : ((state_r == S_CONTAINER) || (state_r == S_CALL))
                           ? container_rf_addr_r
                           : ((state_r == S_STRACC) &&
                              (cur_opcode_r == PY_OP_BINARY_SLICE) &&
@@ -1176,8 +1207,8 @@ module pycore_core #(
     // (byte addresses PYCORE_FRAME_STACK_BASE .. + PYCORE_FRAME_STACK_BYTES).
     // The object heap is everything from HEAP_BASE to HEAP_LIMIT.
     // ---------------------------------------------------------------------
-    localparam int    RF_BASE_CORE          = STACK_BASE;
-    localparam int    MAX_CALL_DEPTH_CORE   = 128;
+    localparam int    RF_BASE_CORE          = 0;
+    localparam int    MAX_CALL_DEPTH_CORE   = 1024;
     localparam logic [ADDR_WIDTH-1:0] FRAME_STACK_BASE = PYCORE_FRAME_STACK_BASE;
     localparam int    FRAME_STACK_BYTES     = PYCORE_FRAME_STACK_BYTES;
 
@@ -1372,15 +1403,15 @@ module pycore_core #(
     logic [RF_AW-1:0]              rf_rd_addr_mux;
     logic [PYCORE_ENTRY_WIDTH-1:0] rf_rd_data_mux;
     logic rf_we;
-    // Priority: container_wb > return_wb > normal S_WB path.
-    // container_wb_we_r and return_wb_we_r are one-cycle pulses that fire
-    // in S_FETCH (the cycle after S_CONTAINER/S_RETURN commits).
+    // Priority: fill/spill writeback > container_wb > return_wb > normal S_WB.
     assign rf_we          = ((state_r == S_WB) && wb_we_r && !freeze_pipeline) ||
-                            return_wb_we_r || container_wb_we_r;
-    assign rf_rd_addr_mux = container_wb_we_r ? container_wb_addr_r :
+                            return_wb_we_r || container_wb_we_r || rf_fill_we_r;
+    assign rf_rd_addr_mux = rf_fill_we_r      ? rf_fill_addr_r     :
+                            container_wb_we_r ? container_wb_addr_r :
                             return_wb_we_r    ? return_wb_addr_r    :
                                                 dec_rd_sel[RF_AW-1:0];
-    assign rf_rd_data_mux = container_wb_we_r ? container_wb_data_r :
+    assign rf_rd_data_mux = rf_fill_we_r      ? rf_fill_data_r      :
+                            container_wb_we_r ? container_wb_data_r :
                             return_wb_we_r    ? return_wb_data_r    :
                                                 wb_entry_r;
     assign dbg_wb_we_o    = rf_we;
@@ -1408,24 +1439,24 @@ module pycore_core #(
         .pop_stack_i(1'b0),
         .tos_ptr_o(),
         .locals_base_o(),
-        .stack_fault_o()
+        .stack_fault_o(),
+        .resident_o()
     );
 
     // ---------------------------------------------------------------------
-    // Dmem mux: five sources share the single dmem port.
-    //   1. frame_dmem_active (S_CALL / S_RETURN): frame push/pop.
-    //   2. container_dmem_active: heap alloc / element R/W (S_CONTAINER)
+    // Dmem mux: six sources share the single dmem port.
+    //   1. rf_spill_dmem_active (S_RF_SPILL / S_RF_FILL): ring window spill.
+    //   2. frame_dmem_active (S_CALL / S_RETURN): frame push/pop.
+    //   3. container_dmem_active: heap alloc / element R/W (S_CONTAINER)
     //      AND boot-record + code-object field reads (S_BOOT, S_CALL,
     //      S_RETURN before frame_dmem_pending_r goes high).
-    //   3. stracc_dmem_active: string accelerator (S_STRACC only).
-    //   4. exc_dmem_active: exc-info stack push/pop (§5.5; step 5 opcodes).
-    //   5. ms_dmem_* (S_MEM): normal PTR load/store.
-    // Only one of container_dmem_pending_r / frame_dmem_pending_r may be
-    // high at a time (the FSM issues them sequentially); S_MEM never
-    // overlaps with 1 or 2. STRACC is frozen in S_STRACC so it cannot
-    // overlap an excore-owned window.
+    //   4. stracc_dmem_active: string accelerator (S_STRACC only).
+    //   5. exc_dmem_active: exc-info stack push/pop (§5.5; step 5 opcodes).
+    //   6. ms_dmem_* (S_MEM): normal PTR load/store.
+    // Spill/fill never overlap frame, container trap marshal, or S_MEM.
     // ---------------------------------------------------------------------
     logic frame_dmem_active;
+    logic rf_spill_dmem_active;
     logic container_dmem_active;
     logic exc_dmem_active;
     logic                  exc_push_valid;
@@ -1506,29 +1537,45 @@ module pycore_core #(
                                     (state_r == S_BOOT)      ||
                                     (state_r == S_CALL)      ||
                                     (state_r == S_RETURN));
+    assign rf_spill_dmem_active  = rf_spill_dmem_pending_r &&
+                                   ((state_r == S_RF_SPILL) || (state_r == S_RF_FILL));
     assign exc_dmem_active       = exc_dmem_req &&
                                    !frame_dmem_active && !container_dmem_active &&
-                                   !stracc_dmem_active;
+                                   !stracc_dmem_active && !rf_spill_dmem_active;
 
-    assign dmem_req_o   = frame_dmem_active     ? 1'b1 :
+    logic [31:0] rf_spill_dmem_addr;
+    assign rf_spill_dmem_addr = (state_r == S_RF_SPILL)
+        ? (spill_sp_r + (rf_spill_half_r ? 32'd16 : 32'd0))
+        : ((spill_sp_r - 32'd32) + (rf_spill_half_r ? 32'd16 : 32'd0));
+
+    assign dmem_req_o   = rf_spill_dmem_active  ? 1'b1 :
+                          frame_dmem_active     ? 1'b1 :
                           container_dmem_active ? 1'b1 :
                           stracc_dmem_active    ? 1'b1 :
                           exc_dmem_active       ? 1'b1 : ms_dmem_req;
-    assign dmem_we_o    = frame_dmem_active     ? (state_r == S_CALL) :
+    assign dmem_we_o    = rf_spill_dmem_active  ? (state_r == S_RF_SPILL) :
+                          frame_dmem_active     ? (state_r == S_CALL) :
                           container_dmem_active ? container_dmem_we_r  :
                           stracc_dmem_active    ? stracc_we           :
                           exc_dmem_active       ? exc_dmem_we         : ms_dmem_we;
     assign dmem_line_o  = stracc_dmem_active    ? stracc_line : 1'b0;
-    assign dmem_wstrb_o = frame_dmem_active     ? {DMEM_DATA_W/8{1'b1}} :
+    assign dmem_wstrb_o = rf_spill_dmem_active  ? {DMEM_DATA_W/8{1'b1}} :
+                          frame_dmem_active     ? {DMEM_DATA_W/8{1'b1}} :
                           container_dmem_active ? container_dmem_wstrb_r :
                           stracc_dmem_active    ? stracc_wstrb        :
                           exc_dmem_active       ? exc_dmem_wstrb      : ms_dmem_wstrb;
-    assign dmem_addr_o  = frame_dmem_active     ?
+    assign dmem_addr_o  = rf_spill_dmem_active  ? rf_spill_dmem_addr[ADDR_WIDTH-1:0] :
+                          frame_dmem_active     ?
                               ((state_r == S_CALL) ? frame_push_addr : frame_pop_addr) :
                           container_dmem_active ? container_dmem_addr_r :
                           stracc_dmem_active    ? stracc_addr          :
                           exc_dmem_active       ? exc_dmem_addr        : ms_dmem_addr;
-    assign dmem_wdata_o = frame_dmem_active     ? frame_push_data :
+    assign dmem_wdata_o = rf_spill_dmem_active  ? (
+                              rf_spill_half_r
+                                  ? {124'b0, pycore_get_tag(rf_rs1)}
+                                  : pycore_get_val(rf_rs1)
+                          ) :
+                          frame_dmem_active     ? frame_push_data :
                           container_dmem_active ? container_dmem_wdata_r :
                           stracc_dmem_active    ? stracc_wdata         :
                           exc_dmem_active       ? exc_dmem_wdata       : ms_dmem_wdata;
@@ -1540,6 +1587,56 @@ module pycore_core #(
     logic        freeze_pipeline;
     logic signed [9:0] next_tos;
     assign next_tos = $signed({2'b0, tos_r}) + id_tos_delta;
+
+    // Occupancy is a suffix: (tos - wm) wrapping; tos==wm means empty.
+    logic [8:0] rf_resident;
+    assign rf_resident = (tos_r == rf_wm_r) ? 9'd0 : {1'b0, (tos_r - rf_wm_r)};
+
+    logic [15:0] rf_call_need;
+    assign rf_call_need = call_nlocals_r + call_stacksize_r;
+
+    logic [16:0] rf_spill_n_comb;
+    always_comb begin
+        if ((17'(rf_resident) + 17'(rf_call_need)) > 17'(RF_DEPTH)) begin
+            rf_spill_n_comb = 17'(rf_resident) + 17'(rf_call_need)
+                            - 17'(RF_DEPTH) + 17'(RF_SPILL_HYST);
+            if (rf_spill_n_comb > 17'(rf_resident))
+                rf_spill_n_comb = 17'(rf_resident);
+        end else begin
+            rf_spill_n_comb = 17'd0;
+        end
+    end
+
+    function automatic logic rf_idx_resident(
+        input logic [RF_AW-1:0] idx,
+        input logic [RF_AW-1:0] wm,
+        input logic [RF_AW-1:0] tos
+    );
+        begin
+            if (tos == wm)
+                rf_idx_resident = 1'b0;
+            else if (tos > wm)
+                rf_idx_resident = (idx >= wm) && (idx < tos);
+            else
+                rf_idx_resident = (idx >= wm) || (idx < tos);
+        end
+    endfunction
+
+    function automatic logic [8:0] rf_fill_n_f(
+        input logic [RF_AW-1:0] locals_base,
+        input logic [RF_AW-1:0] wm,
+        input logic [RF_AW-1:0] tos
+    );
+        begin
+            if ((locals_base == wm) || rf_idx_resident(locals_base, wm, tos))
+                rf_fill_n_f = 9'd0;
+            else
+                rf_fill_n_f = {1'b0, (wm - locals_base)};
+        end
+    endfunction
+
+    logic signed [9:0] occ_delta;
+    assign occ_delta = {{7{id_tos_delta[2]}}, id_tos_delta};
 
     logic type_trap_sig;
     logic stack_fault_sig;
@@ -1575,7 +1672,10 @@ module pycore_core #(
                             return_type_trap_r;
     assign stack_fault_sig = (state_r == S_WB) && !dec_is_call && !dec_is_return &&
                               !route_container && !route_stracc &&
-                             ((next_tos < STACK_BASE) || (next_tos > STACK_TOP_MAX));
+                             (((occ_delta > 0) &&
+                               ((10'(rf_resident) + occ_delta) > 10'(RF_DEPTH))) ||
+                              ((occ_delta < 0) &&
+                               (10'(rf_resident) < -occ_delta)));
     assign div_zero_sig   = exec_in && exec_trap && (exec_trap_code == PY_TRAP_DIV_ZERO);
     assign fpu_exc_sig    = exec_in && exec_trap && (exec_trap_code == PY_TRAP_FPU_EXCEPTION);
     assign illegal_sig    = (exec_in && dec_illegal) ||
@@ -1588,8 +1688,10 @@ module pycore_core #(
                             container_mem_fault_r ||
                             imem_fault_i ||
                             ((container_dmem_active || frame_dmem_active ||
-                              exc_dmem_active || stracc_dmem_active) &&
-                             dmem_ack_i && dmem_fault_i);
+                              exc_dmem_active || stracc_dmem_active ||
+                              rf_spill_dmem_active) &&
+                             dmem_ack_i && dmem_fault_i) ||
+                            rf_spill_mem_fault_r;
     assign addr_align_sig = (exec_in && exec_trap && (exec_trap_code == PY_TRAP_ADDR_ALIGN)) ||
                             (mem_in && mem_trap && (mem_trap_code == PY_TRAP_ADDR_ALIGN));
     // CONT_LIST_APPEND raises this before any RF/heap commit (see
@@ -2019,25 +2121,37 @@ module pycore_core #(
                 end
                 S_CALL: begin
                     // Multi-phase CALL. STRACC native methods leave to
-                    // S_STRACC after the self/args RF walk; everything else
-                    // exits on CALL_PHASE_DONE.
+                    // S_STRACC after the self/args RF walk; spill runs before
+                    // the frame push (phase 7); extra UNINIT-clear chunks
+                    // run in S_RF_INIT after CALL_PHASE_DONE.
                     if (call_stracc_go_r)
                         state_next = S_STRACC;
+                    else if ((call_phase_r == 5'd7) && !call_sent_r &&
+                             rf_spill_needed_r)
+                        state_next = S_RF_SPILL;
                     else if (call_phase_r == CALL_PHASE_DONE)
                         state_next = trap_marshal_pending_r ? S_TRAP_MARSHAL
-                                                           : S_FETCH;
+                                   : (rf_init_more_r ? S_RF_INIT : S_FETCH);
                 end
                 S_RETURN: begin
-                    // Multi-phase RETURN: frame pop, then two dmem reads to
-                    // reload caller's co_consts / co_names before redirect.
-                    // A container-launched outer call resumes its paused
-                    // S_CONTAINER arm; nested ordinary calls still fetch.
-                    // Protocol and ordinary exception unwinds resume
-                    // S_CONTAINER; the latter re-enters CONT_RAISE at CP_VAL.
-                    if (return_phase_r == RET_PHASE_DONE)
+                    if (rf_fill_needed_r)
+                        state_next = S_RF_FILL;
+                    else if (return_phase_r == RET_PHASE_DONE)
                         state_next = (container_call_returning_r ||
                                       call_exc_pending_r)
                                    ? S_CONTAINER : S_FETCH;
+                end
+                S_RF_SPILL: begin
+                    if ((rf_spill_left_r == 9'd0) && !rf_spill_dmem_pending_r)
+                        state_next = S_CALL;
+                end
+                S_RF_FILL: begin
+                    if ((rf_fill_left_r == 9'd0) && !rf_spill_dmem_pending_r)
+                        state_next = S_RETURN;
+                end
+                S_RF_INIT: begin
+                    if (!rf_init_more_r)
+                        state_next = S_FETCH;
                 end
                 S_CONTAINER: begin
                     // CP_DONE is a terminal marker phase used uniformly by all
@@ -2067,7 +2181,8 @@ module pycore_core #(
                     end
                 end
                 S_BOOT: begin
-                    if (boot_phase_r == BOOT_PHASE_DONE) state_next = S_FETCH;
+                    if (boot_phase_r == BOOT_PHASE_DONE)
+                        state_next = rf_init_more_r ? S_RF_INIT : S_FETCH;
                 end
                 S_HALT: begin
                     state_next = S_HALT;
@@ -2094,12 +2209,29 @@ module pycore_core #(
             branch_tgt_r         <= 32'b0;
             wb_entry_r           <= '0;
             wb_we_r              <= 1'b0;
-            tos_r                <= STACK_BASE[RF_AW-1:0];
+            tos_r                <= '0;
+            rf_wm_r              <= '0;
+            spill_sp_r           <= PYCORE_RF_SPILL_BASE;
+            rf_spill_left_r      <= '0;
+            rf_fill_left_r       <= '0;
+            rf_spill_needed_r    <= 1'b0;
+            rf_fill_needed_r     <= 1'b0;
+            rf_init_more_r       <= 1'b0;
+            rf_init_next_r       <= '0;
+            rf_spill_dmem_pending_r <= 1'b0;
+            rf_spill_half_r      <= 1'b0;
+            rf_fill_val_r        <= '0;
+            rf_fill_we_r         <= 1'b0;
+            rf_fill_addr_r       <= '0;
+            rf_fill_data_r       <= '0;
+            rf_spill_count_r     <= '0;
+            rf_spill_mem_fault_r <= 1'b0;
+            return_after_fill_r  <= 1'b0;
             fetch_skip_r         <= 1'b0;
             redirect_pending_r   <= 1'b0;
             redirect_tgt_r       <= 32'b0;
             cycle_count_o          <= 64'b0;
-            cur_locals_base_r      <= '0;  // base frame locals live in RF[0..31]
+            cur_locals_base_r      <= '0;  // ring: frame 0 is just a frame
             call_sent_r          <= 1'b0;
             frame_dmem_pending_r <= 1'b0;
             frame_call_valid_r   <= 1'b0;
@@ -2147,6 +2279,7 @@ module pycore_core #(
             call_argcount_r      <= '0;
             call_meta_argc_r     <= '0;
             call_nlocals_r       <= '0;
+            call_stacksize_r     <= '0;
             call_new_locals_r    <= '0;
             call_tos_base_r      <= '0;
             call_obj_addr_r      <= '0;
@@ -2324,6 +2457,8 @@ module pycore_core #(
             frame_return_valid_r <= 1'b0;
             rf_set_locals_r      <= 1'b0;
             rf_init_frame_r      <= 1'b0;
+            rf_fill_we_r         <= 1'b0;
+            rf_spill_mem_fault_r <= 1'b0;
             return_wb_we_r       <= 1'b0;
             return_type_trap_r   <= 1'b0;
             container_wb_we_r     <= 1'b0;
@@ -2592,6 +2727,8 @@ module pycore_core #(
                         // Phase 0 → RF settle at callable (or KW/EX prelude).
                         call_sent_r          <= 1'b0;
                         frame_dmem_pending_r <= 1'b0;
+                        rf_spill_needed_r    <= 1'b0;
+                        rf_init_more_r       <= 1'b0;
                         call_phase_r         <= 5'd0;
                         call_sub_r           <= 6'd0;
                         call_ret_mode_r      <= 1'b0;
@@ -2636,6 +2773,8 @@ module pycore_core #(
                                  container_call_target_depth_r);
                             call_sent_r          <= 1'b0;
                             frame_dmem_pending_r <= 1'b0;
+                            rf_fill_needed_r     <= 1'b0;
+                            return_after_fill_r  <= 1'b0;
                             return_phase_r       <= 3'd0;
                             container_dmem_pending_r <= 1'b0;
                             fetch_skip_r <= 1'b1;
@@ -2943,7 +3082,8 @@ module pycore_core #(
                 //   Phase 8 : latch consts_base_r; issue co_names.
                 //   Phase 9 : latch names_base_r; issue StopIteration sidecar VAL.
                 //   Phase 10: latch sidecar VAL; issue sidecar TAG.
-                //   Phase 11: latch iter_exhaust_type_r; redirect fetch.
+                //   Phase 11: latch iter_exhaust_type_r; issue code metadata.
+                //   Phase 12: size frame 0 from nlocals (ring TOS / wm / init).
                 //   Phase 15: terminal marker → S_FETCH.
                 //
                 // Boot record layout (see pycore_defs.svh):
@@ -3090,6 +3230,35 @@ module pycore_core #(
                             if (!container_dmem_pending_r) begin
                                 iter_exhaust_type_r <= pycore_make_entry(
                                     container_rd_data_r[3:0], container_val_r);
+                                container_dmem_addr_r    <= pycore_code_field_val_addr(
+                                    cur_code_r, PYCORE_CODE_FIELD_METADATA);
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_pending_r <= 1'b1;
+                                boot_phase_r             <= 4'd12;
+                            end
+                        end
+
+                        4'd12: begin
+                            if (!container_dmem_pending_r) begin
+                                begin
+                                    logic [15:0] boot_nlocals;
+                                    boot_nlocals = pycore_code_meta_nlocals(
+                                        container_rd_data_r);
+                                    tos_r <= boot_nlocals[RF_AW-1:0];
+                                    rf_wm_r <= '0;
+                                    cur_locals_base_r <= '0;
+                                    rf_set_locals_r <= 1'b1;
+                                    rf_new_locals_r <= '0;
+                                    if (boot_nlocals != 16'd0) begin
+                                        rf_init_frame_r <= 1'b1;
+                                        rf_init_from_r <= '0;
+                                        rf_init_until_r <= boot_nlocals[RF_AW-1:0];
+                                        if (boot_nlocals > 16'(RF_INIT_CHUNK)) begin
+                                            rf_init_more_r <= 1'b1;
+                                            rf_init_next_r <= RF_AW'(RF_INIT_CHUNK);
+                                        end
+                                    end
+                                end
                                 redirect_pending_r <= 1'b1;
                                 redirect_tgt_r     <= call_entry_slot_r[31:0];
                                 boot_phase_r       <= BOOT_PHASE_DONE;
@@ -3098,6 +3267,74 @@ module pycore_core #(
 
                         default: ;
                     endcase
+                end
+
+                // ----------------------------------------------------------
+                // S_RF_SPILL: evict [wm, wm+left) to the spill LIFO, two
+                // 128-bit beats per entry (value then tag nibble at +16).
+                S_RF_SPILL: begin
+                    if (rf_spill_left_r == 9'd0) begin
+                        rf_spill_needed_r <= 1'b0;
+                        rf_spill_half_r   <= 1'b0;
+                    end else if (!rf_spill_dmem_pending_r) begin
+                        if (spill_sp_r >= (PYCORE_RF_SPILL_BASE +
+                                           PYCORE_RF_SPILL_BYTES)) begin
+                            rf_spill_mem_fault_r <= 1'b1;
+                        end else begin
+                            rf_spill_dmem_pending_r <= 1'b1;
+                        end
+                    end else if (dmem_ack_i) begin
+                        rf_spill_dmem_pending_r <= 1'b0;
+                        if (!rf_spill_half_r) begin
+                            rf_spill_half_r <= 1'b1;
+                        end else begin
+                            rf_spill_half_r <= 1'b0;
+                            rf_wm_r <= rf_wm_r + RF_AW'(1);
+                            spill_sp_r <= spill_sp_r + 32'd32;
+                            rf_spill_left_r <= rf_spill_left_r - 9'd1;
+                            rf_spill_count_r <= rf_spill_count_r + 32'd1;
+                        end
+                    end
+                end
+
+                // ----------------------------------------------------------
+                // S_RF_FILL: LIFO pop into RF[wm-1], restoring the suffix
+                // down to the returned frame's locals_base.
+                S_RF_FILL: begin
+                    if (rf_fill_left_r == 9'd0) begin
+                        rf_fill_needed_r <= 1'b0;
+                        rf_spill_half_r  <= 1'b0;
+                    end else if (!rf_spill_dmem_pending_r) begin
+                        rf_spill_dmem_pending_r <= 1'b1;
+                    end else if (dmem_ack_i) begin
+                        rf_spill_dmem_pending_r <= 1'b0;
+                        if (!rf_spill_half_r) begin
+                            rf_fill_val_r   <= dmem_rdata_i;
+                            rf_spill_half_r <= 1'b1;
+                        end else begin
+                            rf_spill_half_r <= 1'b0;
+                            rf_fill_we_r    <= 1'b1;
+                            rf_fill_addr_r  <= rf_wm_r - RF_AW'(1);
+                            rf_fill_data_r  <= {dmem_rdata_i[3:0], rf_fill_val_r};
+                            rf_wm_r         <= rf_wm_r - RF_AW'(1);
+                            spill_sp_r      <= spill_sp_r - 32'd32;
+                            rf_fill_left_r  <= rf_fill_left_r - 9'd1;
+                        end
+                    end
+                end
+
+                // ----------------------------------------------------------
+                // S_RF_INIT: extra UNINIT-clear chunks when
+                // nlocals - argcount > RF_INIT_CHUNK.
+                S_RF_INIT: begin
+                    rf_init_frame_r <= 1'b1;
+                    rf_init_from_r  <= rf_init_next_r;
+                    if ((16'(rf_init_next_r) + 16'(RF_INIT_CHUNK)) >=
+                            16'(rf_init_until_r)) begin
+                        rf_init_more_r <= 1'b0;
+                    end else begin
+                        rf_init_next_r <= rf_init_next_r + RF_AW'(RF_INIT_CHUNK);
+                    end
                 end
 
                 // ----------------------------------------------------------

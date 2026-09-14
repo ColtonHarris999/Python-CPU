@@ -8,7 +8,7 @@
 //   +HEAP_INIT_PTR= +BOOT_EN= +CHECK_ENTRY_RETURN=
 //   +EXPECTED_TAG= +EXPECTED_VALUE= +MAX_CYCLES=
 //   +EXPECT_TRAP= +EXPECTED_TRAP_CODE= +EXPECTED_TRAP_REQ_COUNT=
-//   +CONTAINER_CALL_SPIKE_EN= +STDOUT_PATH=
+//   +CHECK_RF_SPILL_COUNT= +CONTAINER_CALL_SPIKE_EN= +STDOUT_PATH=
 //   +CACHE_EN= +MEM_LATENCY=
 //
 // EXCORE_EN still selects the generate (single-core vs two-core top), so
@@ -183,6 +183,7 @@ module tb_container #(
         logic [4:0]                    expected_trap_code;
         bit                            check_entry_return;
         int                            expected_trap_req_count;
+        int                            check_rf_spill_count;
         string                         prog_hex_disp;
         string                         expected_value_s;
         int                            k;
@@ -194,6 +195,7 @@ module tb_container #(
         expected_trap_code = EXPECTED_TRAP_CODE;
         check_entry_return = CHECK_ENTRY_RETURN;
         expected_trap_req_count = EXPECTED_TRAP_REQ_COUNT;
+        check_rf_spill_count = -1;
         prog_hex_disp = PROG_HEX;
 
         void'($value$plusargs("MAX_CYCLES=%d", max_cycles));
@@ -213,6 +215,8 @@ module tb_container #(
         void'($value$plusargs("CHECK_ENTRY_RETURN=%d", check_entry_return));
         void'($value$plusargs("EXPECTED_TRAP_REQ_COUNT=%d",
                              expected_trap_req_count));
+        void'($value$plusargs("CHECK_RF_SPILL_COUNT=%d",
+                             check_rf_spill_count));
         void'($value$plusargs("PROG_HEX=%s", prog_hex_disp));
 
         begin
@@ -323,6 +327,17 @@ module tb_container #(
                  g_dut.dut.core.gic_miss_count_o,
                  g_dut.dut.core.gic_fill_count_o,
                  g_dut.dut.core.gic_flush_count_o);
+        $display("RF spill_count=%0d wm=%0d tos=%0d resident=%0d",
+                 g_dut.dut.core.rf_spill_count_r,
+                 g_dut.dut.core.rf_wm_r,
+                 g_dut.dut.core.tos_r,
+                 g_dut.dut.core.rf_resident);
+        if (check_rf_spill_count >= 0) begin
+            check(int'(g_dut.dut.core.rf_spill_count_r) == check_rf_spill_count,
+                  $sformatf("rf_spill_count mismatch: expected %0d got %0d (%s)",
+                            check_rf_spill_count,
+                            g_dut.dut.core.rf_spill_count_r, prog_hex_disp));
+        end
         $display("fetch mem_req=%0d buf_hit=%0d",
                  g_dut.dut.core.fetch.mem_req_count_r,
                  g_dut.dut.core.fetch.buf_hit_count_r);
