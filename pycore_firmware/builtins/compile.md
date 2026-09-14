@@ -1,12 +1,13 @@
 # `compile` — implementation plan
 
-Status: **blocked** (stub in `compile.py`)
-
-**Plan:** [`planning/compile_plan.md`](../../planning/compile_plan.md)
+Status: **T0 + A.** Stub in `compile.py`; subset gate and occupancy
+baseline are green. Design:
+[`planning/compiler_design.md`](../../planning/compiler_design.md).
+Living notes: [`pycore/docs/compiler.md`](../../pycore/docs/compiler.md).
 
 Host oracle: `vendor/pycpython` ([PyCPython](https://github.com/ColtonHarris999/PyCPython)).
-Firmware port: `pycore_firmware/compiler/` (not present yet). Do not run
-the vendor tree on the hart. The old PyPy tokenizer plan is abandoned.
+Firmware port: `pycore_firmware/compiler/`. Do not run the vendor tree on
+the hart.
 
 ## Goal
 
@@ -14,20 +15,19 @@ the vendor tree on the hart. The old PyPy tokenizer plan is abandoned.
 usable by `eval` / `exec`. First success:
 `eval(compile("1 + 2", "<s>", "eval")) == 3`.
 
-## Blockers
+## Current
 
-1. **No compiler on the hart.** Port a PyCore subset of PyCPython into
-   `pycore_firmware/compiler/` (LL(1), tagged-list AST, no PEG).
-2. **Code-object fabrication.** Need `_bi_code_alloc` / `_bi_code_emit` /
-   `_bi_code_new`. Fetch still hard-wires `imem_we=0`. Host
-   `HeapImageBuilder.alloc_code` is the stand-in until that lands.
-3. **`"single"` / nonzero `flags` / AST input** — out of v1 (`ValueError`).
+- **T0.** `img_str_eq_runtime_long`, `img_compile_ns_inherit`, measured ROM
+  occupancy in `test_compiler_rom_occupancy.py`.
+- **A.** `test_compiler_subset.py` is red on `xs[-1]`, `xs[1:]`, `class`,
+  closures, and an over-cap frame window. `compat.py` is the rewrite kit.
+
+## Still blocked for a working `compile()`
+
+1. **Step B.** RF ring window + locals lift.
+2. **Step C.** `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` /
+   `_bi_code_new` and the code-memory write path.
+3. **Steps E–I.** Lexer, parser, symtab, T1 codegen, assembler, ROM shim.
 
 Keyword calls (`CALL_KW`) and catchable `SyntaxError` + `e.args` already
-work on main.
-
-## Sequence
-
-F1 emit primitives → tokenizer/parser/codegen subset → ROM `compile` →
-string `exec`/`eval`. Details and banned constructs:
-[`planning/compile_plan.md`](../../planning/compile_plan.md).
+work on main. `"single"` / nonzero `flags` / AST input stay `ValueError`.
