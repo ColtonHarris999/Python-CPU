@@ -76,6 +76,16 @@ The code-RAM bump cursor `code_ram_ptr_r` starts at `CODE_RAM_INIT_SLOT`
 moves it forward; mark/release still restore it. Writes below
 `code_ram_floor_r` (the reset cursor) trap `MEM_FAULT`.
 
+The image builder reports `CODE_RAM_INIT_SLOT` in `image.meta` as
+`PYCORE_CODE_RAM_SLOT_BASE + N`, where `N` is the number of slots in
+`code_ram.hex`. Step D preloads the firmware package (every top-level `def`
+under `pycore_firmware/compiler/`, plus the `_PYC_ENTRY` trampoline) into
+that bank at elaboration. Those slots sit below the write floor, so they are
+as unwritable as ROM. Ordinary ROM images still emit `program.hex` for the
+boot image and ROM firmware; `code_ram.hex` holds only the package.
+`--code-ram` (Plan 1 P1) still relocates the *whole* user image into RAM and
+skips the package so the two preloads cannot overlap.
+
 **Excore cannot write code memory at all.** The two cores share dmem but keep
 private instruction memories, so every code-memory writer must run on-core.
 

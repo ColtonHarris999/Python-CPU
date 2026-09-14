@@ -305,10 +305,10 @@ that wants genuine mask-ROM immutability. It is a parameter change
 `pycore/tests/test_code_ram.py` already pins that the two move together. Do not
 do it now.
 
-**Required plumbing:** `CODE_RAM_INIT_SLOT` has no plusarg today
-(`HEAP_INIT_PTR` does, `pycore_core.sv:340`). Add `+CODE_RAM_INIT_SLOT=` and
-emit it into `image.meta`, so the shared `tb_container` binary is still
-compiled once (§6.5 W4).
+**Required plumbing:** `+CODE_RAM_INIT_SLOT=` is a sim plusarg
+(`pycore_core.sv`, `tb_container.sv`; shipped in step C / W-4). Step D emits
+the value into `image.meta` so the shared `tb_container` binary is still
+compiled once (§6.5 W-2).
 
 ### 4.2 Namespace — a private globals dict, via a builtin that already exists
 
