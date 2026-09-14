@@ -100,7 +100,9 @@ handoff) and it is coarse: pycore is frozen in `S_TRAP_MARSHAL` /
 | --- | :-: | :-: | :-: | :-: | :-: | :-: |
 | `trap_req` (grant to excore) | — | wb+inv | — | — | — | — |
 | `trap_res` (grant back) | — | inv | — | flush | flush | — |
-| code-RAM write (future writers) | inv | — | — | flush | — | — |
+| `_bi_code_blit` / `_bi_code_patch` write | **inv** | — | (write goes through) | **flush** | — | — |
+| `_bi_code_new` | — | — | — | **flush** | **flush** | — |
+| `_bi_heap_release` | — | — | — | **flush** | **flush** | — |
 | `MAKE_FUNCTION` / code release | — | — | — | flush | — | — |
 | `STORE_NAME` / `STORE_GLOBAL` | — | — | — | — | flush | — |
 | `globals_base_r` change (`_bi_exec_globals`) | — | — | — | — | flush | — |

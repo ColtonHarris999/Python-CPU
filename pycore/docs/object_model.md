@@ -78,14 +78,19 @@ Unicode ceiling: [`string_accel.md`](string_accel.md).
 | 12 | `HEAP_MARK` | Zero-arg; returns `heap_ptr_r` as `INT` |
 | 13 | `HEAP_RELEASE` | Restores `heap_ptr_r`. Mark must be within `[HEAP_INIT_PTR, heap_ptr_r]`, else `MEM_FAULT` |
 | 14 | `CODE_MARK` | Zero-arg; returns `code_ram_ptr_r` (a slot index) as `INT` |
-| 15 | `CODE_RELEASE` | Restores `code_ram_ptr_r`. Mark must be within `[CODE_RAM_INIT_SLOT, code_ram_ptr_r]`, else `MEM_FAULT` |
+| 15 | `CODE_RELEASE` | Restores `code_ram_ptr_r`. Mark must be within `[code_ram_floor_r, code_ram_ptr_r]`, else `MEM_FAULT` |
 | 16 | `EXEC_GLOBALS` | `_bi_exec_globals(code, dict)`: enter a `CODE_OBJECT` with `globals_base_r` pointed at a `MUT_DICT`. Wrong argc → `CALL_FILTER`; non-code / non-dict → `TYPE`. The caller's globals come back on RETURN. |
+| 17 | `CODE_ALLOC` | `_bi_code_alloc(nslots)` → `INT` base slot. Bump `code_ram_ptr_r`. `nslots <= 0` → `TYPE`; range overflow → `MEM_FAULT` |
+| 18 | `CODE_BLIT` | `_bi_code_blit(base, words)` writes a `MUT_LIST` of INTs into code RAM; returns the count |
+| 19 | `CODE_PATCH` | `_bi_code_patch(slot, word)` overwrites one slot; returns `None` |
+| 20 | `CODE_NEW` | `_bi_code_new(fields)` fabricates a `CODE_OBJECT` from a 9-field `MUT_LIST` |
 
 Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
 module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
 `bytearray` / `max` / `len` / `_bi_print` / `range` / `set` / `ord` / `chr` /
 `_bi_heap_mark` / `_bi_heap_release` / `_bi_code_mark` / `_bi_code_release` /
-`_bi_exec_globals` as
+`_bi_exec_globals` / `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` /
+`_bi_code_new` as
 `OBK_BUILTIN`
 handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
 `to_bytes` and whose `ob_flags` bit 1 (`OB_FLAG_INT_TYPE`) makes `CALL`

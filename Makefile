@@ -1117,6 +1117,32 @@ pycore-img-marks-all: \
 	pycore-img-code-release-stale-trap \
 	pycore-img-heap-mark-argc-trap
 
+# compiler_design.md step C: runtime code-RAM writers + CODE_OBJECT fabricate.
+pycore-img-code-new-call:
+	$(call PYCORE_IMAGE_RUN,code_new_call,100000)
+
+pycore-img-code-emit-then-call:
+	$(call PYCORE_IMAGE_RUN,code_emit_then_call,100000)
+
+pycore-img-code-alloc-oom-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,code_alloc_oom_trap,7,50000)
+
+pycore-img-code-write-floor-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,code_write_floor_trap,7,50000)
+
+pycore-img-code-new-badfield-trap:
+	$(call PYCORE_IMAGE_TRAP_RUN,code_new_badfield_trap,1,50000)
+
+pycore-img-code-write-all: \
+	pycore-img-code-new-call \
+	pycore-img-code-emit-then-call \
+	pycore-img-code-alloc-oom-trap \
+	pycore-img-code-write-floor-trap \
+	pycore-img-code-new-badfield-trap
+
+pycore-img-code-new-call-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,code_new_call,100000)
+
 # Plan 1 P1: the same program from ROM and from code RAM must agree.
 pycore-img-code-ram-all: \
 	pycore-img-code-ram-call-rom \
@@ -1654,6 +1680,7 @@ pycore-img-two-core: \
 	pycore-img-deep-callgraph-two-core \
 	pycore-img-locals-40-uninit-two-core \
 	pycore-img-locals-64-two-core \
+	pycore-img-code-new-call-two-core \
 	pycore-img-helper-containers-two-core \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \
@@ -1688,6 +1715,7 @@ pycore-img: \
 	pycore-img-exc-types-all \
 	pycore-img-code-ram-all \
 	pycore-img-marks-all \
+	pycore-img-code-write-all \
 	pycore-img-smoke \
 	pycore-img-call-chain \
 	pycore-img-str-consts \

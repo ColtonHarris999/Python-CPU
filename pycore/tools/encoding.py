@@ -311,6 +311,11 @@ BI_HEAP_RELEASE = 13
 BI_CODE_MARK = 14
 BI_CODE_RELEASE = 15
 BI_EXEC_GLOBALS = 16
+# Runtime code-RAM writers (compiler_design.md R-5).
+BI_CODE_ALLOC = 17
+BI_CODE_BLIT = 18
+BI_CODE_PATCH = 19
+BI_CODE_NEW = 20
 
 # Code address space (mirror pycore_defs.svh PYCORE_CODE_RAM_*).
 # The ROM holds IMEM_BLOCK_COUNT * 4096 / 8 slots; code RAM starts right after.
