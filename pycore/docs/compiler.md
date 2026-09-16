@@ -192,9 +192,9 @@ token stream (kinds, positions, payload text), not later `co_code`.
 
 `make pycore-size-report` builds `img_compile_eval_expr` and prints ROM,
 compiler code-RAM, and static heap occupancy vs hardware ceilings. Overflow
-fails the target (A8). Measured: ROM **2511 / 8192** slots; compiler
+fails the target (A8). Measured: ROM **2613 / 8192** slots; compiler
 **32483 / 32768** code-RAM slots (285 remain for compiled output); static
-heap **252736 / 981952** bytes.
+heap **253248 / 981952** bytes.
 
 ## Lifetime
 

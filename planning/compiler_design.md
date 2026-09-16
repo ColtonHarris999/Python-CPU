@@ -1033,9 +1033,9 @@ were inlined into existing `_PYC_G` functions (128-key dict cap).
 
 | Resource | Capacity | Measured | Source |
 | --- | ---: | --- | --- |
-| Code ROM | 8 192 slots | **2 511 used**, 5 681 remain (boot image + ROM builtins) | `len(program_slots)` |
+| Code ROM | 8 192 slots | **2 613 used**, 5 579 remain (boot image + ROM builtins) | `len(program_slots)` |
 | Code RAM | 32 768 slots | **compiler 32 483**, **285 remain** for compiled output | `len(code_ram_slots)` |
-| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 252 736 B**, 729 216 remain | `HEAP_INIT_PTR - HEAP_BASE` |
+| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 253 248 B**, 728 704 remain | `HEAP_INIT_PTR - HEAP_BASE` |
 | Register file | 256 entries, ring window | resident working set only; per-frame `nlocals + co_stacksize ≤ 240` | S-1, S-6 |
 | RF spill region | 256 KB / 8 192 entries | ≈ 500–1 000 typical frames before `MEM_FAULT` | S-7 |
 | Frame stack | 32 KB / 1 024 descriptors | `MAX_CALL_DEPTH_CORE` matches the region | `pycore_defs.svh` |
