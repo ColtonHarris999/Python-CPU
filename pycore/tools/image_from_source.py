@@ -1370,6 +1370,7 @@ def _pyc_entry():
     return _pyc_add(_pyc_inc(40), 1)
 """
 PACKAGE_SKIP_FILES = frozenset({"tables.py"})
+PACKAGE_TABLES_FILE = "tables.py"
 
 
 def _host_bi_print(x: object) -> None:
@@ -1557,9 +1558,9 @@ def load_rom_firmware_callables() -> dict[str, object]:
                 f"got {type(fn).__name__}"
             )
         out[dict_key] = fn
-    pkg = load_firmware_package_functions()
+    pkg = load_firmware_package_namespace()
     entry = compile_package_entry()
-    out["_PYC_G"] = dict(pkg)
+    out["_PYC_G"] = pkg
     out["_PYC_ENTRY"] = entry
     return out
 
@@ -1597,6 +1598,91 @@ def seed_firmware_function(
     if kwdefaults:
         serializer.kwdefaults_map[id(co)] = dict(kwdefaults)
     return serializer.serialize_code(co)
+
+
+def _package_dict_slots(n: int) -> int:
+    """Power-of-two dict capacity with at least one empty slot."""
+    slots = dict_min_slots(max(n, 1))
+    while n >= slots:
+        slots *= 2
+    return slots
+
+
+def load_firmware_package_tables(
+    package_dir: pathlib.Path | None = None,
+) -> dict[str, object]:
+    """Load generated ``tables.py`` names for seeding into ``_PYC_G``."""
+    root = pathlib.Path(package_dir) if package_dir is not None else FIRMWARE_COMPILER_DIR
+    path = root / PACKAGE_TABLES_FILE
+    if not path.is_file():
+        raise FileNotFoundError(f"firmware package tables missing: {path}")
+    ns: dict[str, object] = {
+        "__name__": "pycore_firmware.compiler.tables",
+    }
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), ns)
+    out: dict[str, object] = {}
+    for name, value in ns.items():
+        if name.startswith("_"):
+            continue
+        out[name] = value
+    if "TOK_NAME" not in out:
+        raise ValueError("firmware tables.py is missing TOK_NAME")
+    return out
+
+
+def serialize_package_constant(serializer: _ImageSerializer, value: object) -> Tagged:
+    """Serialize a tables.py constant (int / str / list / dict) onto the heap."""
+    heap = serializer.heap
+    if isinstance(value, bool):
+        raise ValueError("firmware package tables cannot seed bool constants")
+    if isinstance(value, int):
+        return tag_constant(value, heap)
+    if isinstance(value, str):
+        return tag_constant(value, heap)
+    if isinstance(value, list):
+        return heap.alloc_list(
+            [serialize_package_constant(serializer, item) for item in value]
+        )
+    if isinstance(value, dict):
+        pairs: list[tuple[Tagged, Tagged]] = []
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError(
+                    "firmware package table dict keys must be str, got "
+                    + type(key).__name__
+                )
+            pairs.append(
+                (
+                    tag_constant(key, heap),
+                    serialize_package_constant(serializer, item),
+                )
+            )
+        return heap.alloc_dict(pairs, slot_count=_package_dict_slots(len(pairs)))
+    raise ValueError(
+        "unsupported firmware package constant type " + type(value).__name__
+    )
+
+
+def load_firmware_package_namespace(
+    package_dir: pathlib.Path | None = None,
+) -> dict[str, object]:
+    """Tables plus top-level functions, the host picture of ``_PYC_G``.
+
+    Every package file is exec'd into **one** dict so nested host CALLs (which
+    use ``FunctionType.__globals__``) see the same names as device
+    ``_bi_exec_globals`` frames (which inherit ``globals_base_r``).
+    """
+    ns: dict[str, object] = {
+        "__name__": "pycore_firmware.compiler",
+    }
+    tables = load_firmware_package_tables(package_dir)
+    ns.update(tables)
+    for path in iter_firmware_package_sources(package_dir):
+        exec(
+            compile(path.read_text(encoding="utf-8"), str(path), "exec"),
+            ns,
+        )
+    return ns
 
 
 def iter_firmware_package_sources(
@@ -1672,11 +1758,25 @@ def seed_firmware_package(
     """
     if serializer.slot_base != 0:
         return None
+    tables = load_firmware_package_tables(package_dir)
     functions = load_firmware_package_functions(package_dir)
+    overlap = [name for name in functions if name in tables]
+    if overlap:
+        raise ValueError(
+            "firmware package function names collide with tables: "
+            + ", ".join(sorted(overlap))
+        )
     prev_bank = serializer._code_bank
     serializer._code_bank = "ram"
     try:
         pairs: list[tuple[Tagged, Tagged]] = []
+        for name, value in tables.items():
+            pairs.append(
+                (
+                    tag_constant(name, serializer.heap),
+                    serialize_package_constant(serializer, value),
+                )
+            )
         for name, func in functions.items():
             co = func.__code__
             validate_code_tree(co)
@@ -1694,7 +1794,7 @@ def seed_firmware_package(
     finally:
         serializer._code_bank = prev_bank
     pyc_g = serializer.heap.alloc_dict(
-        pairs, slot_count=dict_min_slots(max(len(pairs), 1))
+        pairs, slot_count=_package_dict_slots(len(pairs))
     )
     return pyc_g, entry_handle
 

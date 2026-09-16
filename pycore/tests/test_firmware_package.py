@@ -16,6 +16,7 @@ from image_from_source import (
     build_image_from_source_text,
     compile_package_entry,
     load_firmware_package_functions,
+    load_firmware_package_namespace,
     load_rom_firmware_callables,
     seed_firmware_package,
 )
@@ -100,6 +101,18 @@ class TestFirmwarePackageSeed(unittest.TestCase):
         self.assertIn("_PYC_ENTRY", ns)
         self.assertIn("_bi_exec_globals", ns)
         self.assertEqual(ns["_bi_exec_globals"](ns["_PYC_ENTRY"], ns["_PYC_G"]), 42)
+        g = ns["_PYC_G"]
+        self.assertIn("TOK_NAME", g)
+        self.assertEqual(g["TOK_NAME"], 1)
+        self.assertIn("_pyc_lex_main", g)
+        self.assertIn("OP3", g)
+
+    def test_package_namespace_includes_tables_and_lexer(self) -> None:
+        g = load_firmware_package_namespace()
+        self.assertEqual(g["TOK_OP"], 55)
+        self.assertIn("_pyc_lex", g)
+        self.assertIn("_pyc_lex_main", g)
+        self.assertIn("_pyc_inc", g)
 
     def test_img_pyc_package_call_host_golden(self) -> None:
         self.assertEqual(

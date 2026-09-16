@@ -1171,8 +1171,16 @@ pycore-img-pyc-package-call:
 pycore-img-pyc-package-call-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,pyc_package_call,100000)
 
+# compiler_design.md step E: firmware lexer token-count golden.
+pycore-img-lexer-count:
+	$(call PYCORE_IMAGE_RUN,lexer_count,1000000)
+
+pycore-img-lexer-count-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,lexer_count,1000000)
+
 pycore-img-package-all: \
-	pycore-img-pyc-package-call
+	pycore-img-pyc-package-call \
+	pycore-img-lexer-count
 
 pycore-img-code-new-call-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,code_new_call,100000)
@@ -1719,6 +1727,7 @@ pycore-img-two-core: \
 	pycore-img-locals-64-two-core \
 	pycore-img-code-new-call-two-core \
 	pycore-img-pyc-package-call-two-core \
+	pycore-img-lexer-count-two-core \
 	pycore-img-helper-containers-two-core \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \
