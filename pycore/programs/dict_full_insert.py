@@ -4,8 +4,16 @@
 Insert key 3 would make used+1 >= slot_count → PY_TRAP_DICT_GROW.
 """
 
-def managed_entry() -> int:
-    d = {0: 10, 1: 20}
+
+def managed_entry():
+    k0 = 0
+    v0 = 10
+    k1 = 1
+    v1 = 20
+    d = {k0: v0, k1: v1}
     d[2] = 30
-    d[3] = 40  # should trap: would fill last empty slot
+    d[3] = 40
     return 0
+
+
+managed_entry()

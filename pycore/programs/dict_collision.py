@@ -1,8 +1,18 @@
-"""Two keys that collide under hash & (slot_count-1); look up both."""
+"""Two keys that collide under hash & (slot_count-1); look up both.
 
-def managed_entry() -> int:
-    # 2 pairs → slot_count 4; 0 and 4 both hash to slot 0.
-    d = {0: 10, 4: 20}
-    a = d[0]
-    b = d[4]
-    return a + b  # 30
+2 pairs → slot_count 4; 0 and 4 both hash to slot 0. Expected: INT 30.
+"""
+
+
+def managed_entry():
+    k0 = 0
+    v0 = 10
+    k1 = 4
+    v1 = 20
+    d = {k0: v0, k1: v1}
+    a = d[k0]
+    b = d[k1]
+    return a + b
+
+
+managed_entry()
