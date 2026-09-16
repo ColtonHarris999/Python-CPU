@@ -1240,10 +1240,10 @@ pycore-img-compile-exec-roundtrip-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_exec_roundtrip,5000000)
 
 pycore-img-compile-reject-locals:
-	$(call PYCORE_IMAGE_RUN,compile_reject_locals,5000000)
+	$(call PYCORE_IMAGE_RUN,compile_reject_locals,20000000)
 
 pycore-img-compile-reject-locals-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_locals,5000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_locals,20000000)
 
 pycore-img-package-all: \
 	pycore-img-pyc-package-call \
