@@ -118,7 +118,9 @@ class TestFirmwarePackageSeed(unittest.TestCase):
         self.assertEqual(g["TOK_OP"], 55)
         self.assertIn("_pyc_lex", g)
         self.assertIn("_pyc_lex_main", g)
-        self.assertIn("_pyc_inc", g)
+        self.assertIn("_pyc_parse_main", g)
+        self.assertIn("ND", g)
+        self.assertEqual(g["ND"]["BinOp"], 14)
 
     def test_device_seed_key_count_fits_static_dict(self) -> None:
         tables = load_firmware_package_tables()

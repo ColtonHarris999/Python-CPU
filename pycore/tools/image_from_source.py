@@ -1394,6 +1394,23 @@ PACKAGE_RUNTIME_SEEDS: dict[str, object] = {
     "tk_a": None,
     "tk_b": None,
     "tk_s": None,
+    "_parse_i": 0,
+    "nd_n": 0,
+    "nd_kind": None,
+    "nd_pos": None,
+    "nd_a": None,
+    "nd_b": None,
+    "nd_c": None,
+    "nd_obj": None,
+    "kids_n": 0,
+    "kids": None,
+    "opnd_n": 0,
+    "opnd": None,
+    "ops_n": 0,
+    "ops": None,
+    "ops_obj": None,
+    "stmt_n": 0,
+    "stmts": None,
 }
 # Only these tables.py names are LOAD_GLOBAL'd by firmware today. Seeding
 # every TOK_* integer as a top-level key packed _PYC_G to 113/128 and
@@ -1411,6 +1428,12 @@ PACKAGE_TABLE_SEED_NAMES = frozenset({
     "OP2",
     "KEYWORDS",
     "OPMAP",
+    "ND",
+    "BINOPS",
+    "UNOPS",
+    "CMPOPS",
+    "PREC",
+    "RIGHTASSOC",
 })
 
 

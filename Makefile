@@ -775,7 +775,7 @@ define PYCORE_IMAGE_RUN_TWOCORE
 		+EXPECTED_TAG=$$EXPECTED_TAG \
 		+EXPECTED_VALUE=$$EXPECTED_VALUE \
 		+MAX_CYCLES=$(2) \
-		$(PYCORE_MEM_PLUSARGS)
+		$(PYCORE_MEM_PLUSARGS) $(3)
 endef
 
 # Two-core image run with console stdout golden (print / BI_PRINT).
@@ -1178,9 +1178,25 @@ pycore-img-lexer-count:
 pycore-img-lexer-count-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,lexer_count,1000000)
 
+# compiler_design.md step F: firmware T1 parser checksum golden.
+pycore-img-parser-tiny-expr:
+	$(call PYCORE_IMAGE_RUN,parser_tiny_expr,1000000)
+
+pycore-img-parser-tiny-expr-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,parser_tiny_expr,1000000)
+
+# A3: 40 nested parens. Parser must stay constant-depth (RF spill_count=0).
+pycore-img-compile-deep-nesting:
+	$(call PYCORE_IMAGE_RUN,compile_deep_nesting,2000000,+CHECK_RF_SPILL_COUNT=0)
+
+pycore-img-compile-deep-nesting-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_deep_nesting,2000000,+CHECK_RF_SPILL_COUNT=0)
+
 pycore-img-package-all: \
 	pycore-img-pyc-package-call \
-	pycore-img-lexer-count
+	pycore-img-lexer-count \
+	pycore-img-parser-tiny-expr \
+	pycore-img-compile-deep-nesting
 
 pycore-img-code-new-call-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,code_new_call,100000)
@@ -1728,6 +1744,8 @@ pycore-img-two-core: \
 	pycore-img-code-new-call-two-core \
 	pycore-img-pyc-package-call-two-core \
 	pycore-img-lexer-count-two-core \
+	pycore-img-parser-tiny-expr-two-core \
+	pycore-img-compile-deep-nesting-two-core \
 	pycore-img-helper-containers-two-core \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \
