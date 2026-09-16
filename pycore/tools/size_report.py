@@ -102,6 +102,16 @@ def format_report(report: SizeReport) -> str:
         f"compiled-output headroom: {ram.remaining} code-RAM slots "
         f"(CODE_RAM_SLOT_LIMIT={CODE_RAM_SLOT_LIMIT})"
     )
+    if ram.remaining < ram.used:
+        lines.append(
+            f"self-host: blocked (need {ram.used} output slots, "
+            f"have {ram.remaining} headroom)"
+        )
+    else:
+        lines.append(
+            f"self-host: unblocked ({ram.remaining} headroom "
+            f">= {ram.used} package)"
+        )
     if not report.ok:
         lines.append("FAIL: a region exceeds its hardware ceiling (A8)")
     return "\n".join(lines) + "\n"

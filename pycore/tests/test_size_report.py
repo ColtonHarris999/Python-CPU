@@ -42,6 +42,12 @@ class TestSizeReport(unittest.TestCase):
         self.assertIn("Code RAM (compiler)", text)
         self.assertNotIn("OVERFLOW", text)
         self.assertIn("compiled-output headroom", text)
+        self.assertIn("self-host:", text)
+        ram = self.report.regions[1]
+        if ram.remaining < ram.used:
+            self.assertIn("blocked", text)
+        else:
+            self.assertIn("unblocked", text)
 
     def test_overflow_region_is_not_ok(self) -> None:
         region = Region("toy", 5, 4, "slots")

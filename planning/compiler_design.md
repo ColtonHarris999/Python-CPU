@@ -1037,9 +1037,9 @@ cap). T4 raised `PYCORE_CODE_RAM_BLOCK_COUNT` to 128 (lever 2).
 
 | Resource | Capacity | Measured | Source |
 | --- | ---: | --- | --- |
-| Code ROM | 8 192 slots | **2 613 used**, 5 579 remain (boot image + ROM builtins) | `len(program_slots)` |
+| Code ROM | 8 192 slots | **2 627 used**, 5 565 remain (boot image + ROM builtins) | `len(program_slots)` |
 | Code RAM | 65 536 slots | **compiler 39 545**, **25 991 remain** for compiled output | `len(code_ram_slots)` |
-| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 259 776 B**, 722 176 remain | `HEAP_INIT_PTR - HEAP_BASE` |
+| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 260 608 B**, 721 344 remain | `HEAP_INIT_PTR - HEAP_BASE` |
 | Register file | 256 entries, ring window | resident working set only; per-frame `nlocals + co_stacksize ≤ 240` | S-1, S-6 |
 | RF spill region | 256 KB / 8 192 entries | ≈ 500–1 000 typical frames before `MEM_FAULT` | S-7 |
 | Frame stack | 32 KB / 1 024 descriptors | `MAX_CALL_DEPTH_CORE` matches the region | `pycore_defs.svh` |
@@ -1104,6 +1104,7 @@ parallel with B and C.
 | **O-2** | split result/scratch arenas. **Not opened** | R4 watermark golden still holds; caller mark/release is the reclaim path |
 | **Loader** | module image + relocation. **Not opened** | compiler fits (39545 / 65536); overlays only if headroom vanishes |
 | **BIOS** | ROM `bios(payload)` execs source. **Landed** | `img_bios_exec` → 3 |
+| **Self-host** | compile the compiler on device. **Blocked on size** | need 39545 output slots, have 25991 headroom |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1196,9 +1197,11 @@ In dependency order, not priority order.
 7. **BIOS.** **Landed.** ROM `bios(payload)` `exec`s a string or code
    object in the caller's globals (`img_bios_exec` → 3). Programs may
    still call `compile()` / `exec()` directly.
-8. **Self-hosting** — compile `pycore_firmware/compiler/` on device; check
-   stage-2 output is byte-identical to stage-1 for the same input. A fixpoint,
-   not a demo, and a size problem before it is anything else.
+8. **Self-hosting.** **Blocked on size.** Stage-2 would compile
+   `pycore_firmware/compiler/` on device and check byte-identical output.
+   That needs ~39 545 compiled-output slots; headroom is 25 991.
+   `make pycore-size-report` prints `self-host: blocked` until remaining
+   ≥ used (raise CODE_RAM or shrink `codegen.py`).
 
 ---
 
