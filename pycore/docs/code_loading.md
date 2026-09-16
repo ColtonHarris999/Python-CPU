@@ -182,7 +182,9 @@ _bi_code_release(cm); _bi_heap_release(hm)
 
 Releasing invalidates every handle allocated after the mark. `_bi_code_new`
 and `_bi_heap_release` flush CODC and GIC so a recycled address cannot
-alias a cached code object (`memory_hierarchy.md`).
+alias a cached code object (`memory_hierarchy.md`). Device:
+`img_compile_repeat` (R4 watermark) and `img_compile_release_realloc`
+(R7 second compile after release).
 
 **This is not garbage collection, and must not be treated as such.** Releasing
 to a mark invalidates every handle allocated after it, with no detection: a

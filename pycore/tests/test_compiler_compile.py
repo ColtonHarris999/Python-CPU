@@ -132,6 +132,25 @@ class TestCompilerCompileShim(unittest.TestCase):
             178,
         )
 
+    def test_img_compile_repeat_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_repeat.py", "managed_entry"),
+            1,
+        )
+
+    def test_img_compile_release_realloc_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(
+                PROGRAMS / "img_compile_release_realloc.py", "managed_entry"
+            ),
+            37,
+        )
+
+    def test_host_compile_twice_without_marks(self) -> None:
+        compile_fn = load_rom_firmware_callables()["compile"]
+        self.assertEqual(compile_fn("1 + 2", "<s>", "eval")(), 3)
+        self.assertEqual(compile_fn("3 + 4", "<s>", "eval")(), 7)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1283,6 +1283,20 @@ pycore-img-compile-reject-locals:
 pycore-img-compile-reject-locals-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_locals,80000000)
 
+# compiler_design.md R4 / R7: working-set watermark + release/realloc.
+# Cycle caps cover 8× (R4) and 2× (R7) compile() plus CACHE_EN=0 / LAT=30.
+pycore-img-compile-repeat:
+	$(call PYCORE_IMAGE_RUN,compile_repeat,80000000)
+
+pycore-img-compile-repeat-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_repeat,80000000)
+
+pycore-img-compile-release-realloc:
+	$(call PYCORE_IMAGE_RUN,compile_release_realloc,40000000)
+
+pycore-img-compile-release-realloc-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_release_realloc,40000000)
+
 # compiler_design.md §11.1: string-form exec/eval via _bi_code_kind.
 # Cycle caps cover CACHE_EN=0 / LAT=30 like the other compile() images.
 pycore-img-eval-str-direct:
@@ -1316,6 +1330,8 @@ pycore-img-package-all: \
 	pycore-img-compile-reject-import \
 	pycore-img-compile-exec-roundtrip \
 	pycore-img-compile-reject-locals \
+	pycore-img-compile-repeat \
+	pycore-img-compile-release-realloc \
 	pycore-img-eval-str-direct \
 	pycore-img-eval-str-long \
 	pycore-img-exec-str-direct
@@ -1880,6 +1896,8 @@ pycore-img-two-core: \
 	pycore-img-compile-reject-import-two-core \
 	pycore-img-compile-exec-roundtrip-two-core \
 	pycore-img-compile-reject-locals-two-core \
+	pycore-img-compile-repeat-two-core \
+	pycore-img-compile-release-realloc-two-core \
 	pycore-img-eval-str-direct-two-core \
 	pycore-img-eval-str-long-two-core \
 	pycore-img-exec-str-direct-two-core \

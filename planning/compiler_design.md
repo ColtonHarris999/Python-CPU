@@ -1091,6 +1091,7 @@ parallel with B and C.
 | **J** | T2 then T3. **Landed** | **`img_compile_exec_roundtrip` → 7** (A2) + host corpus |
 | **K** | W-8 size report, doc sweep (§6.6), deviation table. **Landed** | `make all-tests` green; report within budget |
 | **L** | §11.1 string-form `exec`/`eval` + `_bi_code_kind` (BI 21, `call_sub_r` 7-bit). **Landed** | `img_eval_str_direct` → 3, `img_eval_str_long` → 15, `img_exec_str_direct` → 3, `img_code_kind_tags` → 178; `img_exec_bad_arg_trap` still 6 |
+| **R4/R7** | `img_compile_repeat` + `img_compile_release_realloc`. **Landed** | watermark ≤ 400000 → 1; second compile after release → 37 |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1134,8 +1135,8 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_eval_str_direct` | **3** — `eval("1 + 2")` |
 | `img_eval_str_long` | **15** — `eval` of a 17-byte LONG_STR source |
 | `img_exec_str_direct` | **3** — `exec("x = 1 + 2")` |
-| `img_compile_repeat` | heap watermark golden (R4) |
-| `img_compile_release_realloc` | second compile after release is correct (R7) |
+| `img_compile_repeat` | **1** — heap watermark ≤ 400000 (R4) |
+| `img_compile_release_realloc` | **37** — second compile after release is correct (R7) |
 
 ---
 

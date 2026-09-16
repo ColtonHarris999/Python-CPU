@@ -125,9 +125,11 @@ is ignored. No `_busy` slot (D9; 127 of 128 `_PYC_G` keys).
 Host: `pycore/tests/test_compiler_compile.py`. Device: `img_compile_eval_expr`
 (A1 → 3), `img_compile_mode_trap` (A5 → 3), `img_compile_reject_import`
 (A4 → 1), `img_compile_exec_roundtrip` (A2 → 7),
-`img_compile_reject_locals` (A4 window cap → 1). Host `eval`/`exec` stand-ins
-call firmware-emitted code objects (`_HostEmittedCode`) with a **shared**
-globals dict; SEED_CODE images still use `types.CodeType`.
+`img_compile_reject_locals` (A4 window cap → 1), `img_compile_repeat`
+(R4 watermark ≤ 400000 → 1), `img_compile_release_realloc` (R7 → 37).
+Host `eval`/`exec` stand-ins call firmware-emitted code objects
+(`_HostEmittedCode`) with a **shared** globals dict; SEED_CODE images still
+use `types.CodeType`.
 
 ## String-form exec / eval (§11.1)
 
@@ -206,3 +208,8 @@ code = compile(src, "<s>", "exec")
 exec(code)
 _bi_code_release(cm); _bi_heap_release(hm)
 ```
+
+Device: `img_compile_repeat` compiles `"1 + 2"` eight times inside one
+mark and returns 1 when the watermark stays ≤ 400000 bytes (R4).
+`img_compile_release_realloc` compiles, releases, compiles a different
+source, and returns 37 (R7).
