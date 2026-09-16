@@ -7,6 +7,7 @@ or vendored compiler source.
 | --- | --- | --- | --- | --- | --- |
 | [PyCPython](https://github.com/ColtonHarris999/PyCPython) | PSF-2.0 (`pyproject.toml`) | `vendor/pycpython` (git submodule) | branch `claude/cpython-3-14-compile-frontend-4o4fcz` | Host `compile()` oracle and algorithm reference for the on-device compiler. Package never calls `eval` / `exec` / `compile`. | **None in the submodule.** Device-runnable code is a derived port under `pycore_firmware/compiler/`, with per-file provenance headers. |
 | CPython `Lib/tokenize.py` + `Lib/token.py` | PSF-2.0 | (not vendored) | CPython 3.14.7 | Token kinds and tokenizer state machine (indent stack, implicit joining, numbers, strings). | Ported as `pycore_firmware/compiler/lexer.py` over a `str` with SoA `tk_*` arrays. Operators stay `TOK_OP` to match `tokenize.generate_tokens`. |
+| CPython `_ast` / `ast` node types | PSF-2.0 | (not vendored) | CPython 3.14.7 | Concrete AST type names and field order for generated `ND_*`. | Host generator `pycore/tools/gen_compiler_tables.py` emits `ND` / `BINOPS` / `PREC`. Device `parser.py` is an original iterative shunting-yard, not a port of `pegen`. |
 
 CPython itself is the semantic oracle PyCPython already matches (Tier 0/1
 100% on CPython 3.14.7). PyCore does not vendor CPython C sources.

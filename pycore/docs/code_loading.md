@@ -81,7 +81,7 @@ The image builder reports `CODE_RAM_INIT_SLOT` in `image.meta` as
 `code_ram.hex`. Step D preloads the firmware package (every top-level `def`
 under `pycore_firmware/compiler/`, plus the `_PYC_ENTRY` trampoline) into
 that bank at elaboration. Step E also seeds generated `tables.py` constants
-(`TOK_*`, `KEYWORDS`, `OPMAP`, …) into `_PYC_G` next to those functions.
+(`TOK_*`, `KEYWORDS`, `OPMAP`, `ND`, …) into `_PYC_G` next to those functions.
 Those slots sit below the write floor, so they are
 as unwritable as ROM. Ordinary ROM images still emit `program.hex` for the
 boot image and ROM firmware; `code_ram.hex` holds only the package.

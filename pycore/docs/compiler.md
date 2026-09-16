@@ -1,7 +1,7 @@
 # On-device `compile()`
 
-Status: **step E landed** (`tables.py` + `lexer.py`). Next is step F
-(iterative T1 parser). Design:
+Status: **step F in progress** (iterative T1 parser + SoA AST). Next is step G
+(`symtab.py`). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` will be a resident PyCore builtin. This file records the
@@ -37,6 +37,28 @@ through `_bi_exec_globals`.
 Host: `pycore/tests/test_compiler_lexer.py` vs `tokenize.generate_tokens`.
 Device: `img_lexer_count` (token-count golden).
 
+## Parser (step F)
+
+`_pyc_parse(mode) -> int` (root node id) is an iterative shunting-yard over
+`tk_*`. Operand / operator stacks live in `_PYC_G`, so source nesting does
+not grow the live call depth. AST is SoA:
+
+```text
+nd_kind[n]                  ND_* small int (CPython ast type)
+nd_pos[n]  = line | (col << 32)
+nd_a[n], nd_b[n], nd_c[n]   child ids, kid-arena (start, count), or an int operand
+nd_obj[n]                   str / int / float / list payload, or None
+kids[]                      flat arena
+```
+
+`mode == "eval"` wraps a T1 expression in `ND_EXPRESSION`. `mode == "exec"`
+parses T1 statements (`Expr`, `Assign`, `Return`) into `ND_MODULE`. Displays,
+slices, `def`, and later tiers are `SyntaxError`.
+
+Host: `pycore/tests/test_compiler_parser.py` vs `ast.parse` (tree shape).
+Device: `img_parser_tiny_expr` (checksum), `img_compile_deep_nesting`
+(40 nested parens, RF `spill_count=0`).
+
 ## Subset (firmware compiler source)
 
 Enforced by `pycore/tests/test_compiler_subset.py` on every file under
@@ -62,7 +84,7 @@ stays constant in the source nesting.
 
 | Tier | Constructs | Status |
 | --- | --- | --- |
-| T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | next (H/I) |
+| T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | parser (F); codegen next (H/I) |
 | T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | next (J) |
 | T3 | `def`, displays, unpack, `global` | next (J) |
 | T4+ | `try`/`class`/`import`/closures | blocked on runtime |
