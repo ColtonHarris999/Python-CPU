@@ -5,9 +5,12 @@ Public ROM shim (compiler_design.md §4.2 / step I). Helpers live in
 and runs ``_pyc_codegen_main`` under ``_bi_exec_globals``.
 
 ``_PYC_ENTRY`` stays the step-D toy trampoline (``img_pyc_package_call``
-→ 42). Re-entrancy (``_busy``) is deferred: the static dict is already
-at 127 of 128 keys (D9). Nested ``if`` and bare ``raise ValueError``
-keep the ROM body on the raise-type path (no ``CALL`` to construct).
+→ 42). Re-entrancy (``_busy``) is deferred (D9): a flag set before the
+call and cleared after is worse than none, because an ordinary
+``SyntaxError`` would leave it set and poison every later ``compile()``.
+It needs ``try`` / ``finally`` here. Nested ``if`` and bare ``raise
+ValueError`` keep the ROM body on the raise-type path (no ``CALL`` to
+construct).
 """
 
 

@@ -1415,6 +1415,7 @@ PACKAGE_RUNTIME_SEEDS: dict[str, object] = {
     "ops_obj": None,
     "stmt_n": 0,
     "stmts": None,
+    "stmts_kind": None,
     "sc_n": 0,
     "sc_kind": None,
     "sc_parent": None,
@@ -1423,9 +1424,9 @@ PACKAGE_RUNTIME_SEEDS: dict[str, object] = {
     "sc_argcount": None,
     "sc_varnames": None,
 }
-# Only these tables.py names are LOAD_GLOBAL'd by firmware today. Seeding
-# every TOK_* integer as a top-level key packed _PYC_G to 113/128 and
-# LOAD_GLOBAL _pyc_inc started CALL_FILTERing (miss / non-callable).
+# Only these tables.py names are LOAD_GLOBAL'd by firmware today. The rest of
+# tables.py (every TOK_* integer, the ND_* aliases) is dead weight in the
+# image, so it is not seeded.
 PACKAGE_TABLE_SEED_NAMES = frozenset({
     "TOK_ENDMARKER",
     "TOK_NAME",
@@ -2021,16 +2022,19 @@ def seed_firmware_function(
 
 
 def _package_dict_slots(n: int) -> int:
-    """Power-of-two dict capacity. Hardware ``dict_min_slots`` tops out at 128."""
-    slots = dict_min_slots(max(n, 1))
-    while n >= slots:
-        slots *= 2
-    if slots > 128:
-        raise ValueError(
-            f"firmware package _PYC_G has {n} keys; "
-            "static dicts cannot exceed 128 slots"
-        )
-    return slots
+    """Power-of-two capacity for a package dict, sized like any namespace.
+
+    ``_PYC_G`` is a globals dict: the firmware LOAD_GLOBALs out of it on every
+    helper call and STORE_GLOBALs into it on every stage. Size it with the
+    same ``next_pow2(2 * keys)`` rule the boot globals dict uses
+    (``dict_slot_count_for_stores``) so the load factor stays at or below
+    0.5. ``dict_min_slots`` is the *runtime* BUILD_MAP sizing rule and tops
+    out at 128; it leaves a 127-key dict at 127/128, where every probe chain
+    is hundreds of slots long and the next new key needs a DICT_GROW trap.
+    Static dicts themselves have no 128-slot ceiling — ``img_locals_64`` and
+    ``img_rf_window_too_big_trap`` already ship 256- and 512-slot globals.
+    """
+    return dict_slot_count_for_stores(max(n, 1))
 
 
 def load_firmware_package_tables(

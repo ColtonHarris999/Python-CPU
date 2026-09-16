@@ -9,7 +9,13 @@ import unittest
 if sys.version_info[:2] != (3, 14):
     raise unittest.SkipTest("firmware package tests require Python 3.14")
 
-from encoding import CODE_RAM_SLOT_BASE, TAG_CODE_OBJECT, TAG_MUT_COLLEC
+from encoding import (
+    CODE_RAM_SLOT_BASE,
+    CODE_RAM_SLOT_LIMIT,
+    CODE_RAM_SLOTS,
+    TAG_CODE_OBJECT,
+    TAG_MUT_COLLEC,
+)
 from image_from_source import (
     PACKAGE_ENTRY_NAME,
     PACKAGE_RUNTIME_SEEDS,
@@ -125,7 +131,7 @@ class TestFirmwarePackageSeed(unittest.TestCase):
         self.assertIn("ND", g)
         self.assertEqual(g["ND"]["BinOp"], 14)
 
-    def test_device_seed_key_count_fits_static_dict(self) -> None:
+    def test_device_seed_dict_stays_under_half_load(self) -> None:
         tables = load_firmware_package_tables()
         missing = PACKAGE_TABLE_SEED_NAMES - set(tables)
         self.assertEqual(missing, set())
@@ -136,8 +142,40 @@ class TestFirmwarePackageSeed(unittest.TestCase):
             + len(PACKAGE_RUNTIME_SEEDS)
         )
         slots = _package_dict_slots(n)
-        self.assertLessEqual(slots, 128)
-        self.assertLess(n, slots)
+        # _PYC_G is a globals dict on the LOAD_GLOBAL path of every helper
+        # call. Keep it at or below half load so probe chains stay short and
+        # a new key never needs a DICT_GROW trap (single-core has no excore).
+        self.assertLessEqual(n * 2, slots)
+        self.assertEqual(slots & (slots - 1), 0)
+
+    def test_package_dict_slots_is_not_capped_at_128(self) -> None:
+        # Regression: the old helper refused > 128 slots, which pinned _PYC_G
+        # at 127/128. Static dicts have no such ceiling.
+        self.assertEqual(_package_dict_slots(127), 256)
+        self.assertEqual(_package_dict_slots(200), 512)
+
+    def test_compiler_leaves_room_in_code_ram_for_its_own_output(self) -> None:
+        """A8 / R3 in host form: the resident compiler must not fill code RAM.
+
+        ``_bi_code_alloc`` MEM_FAULTs once the bump cursor reaches
+        ``CODE_RAM_SLOT_LIMIT``, so whatever the preloaded compiler does not
+        occupy is the entire budget for every code object it ever emits. The
+        floor below is deliberately far under compiler_design.md §7's
+        ">= 18 000 slots free" target: it is a regression guard on the number
+        we actually measure, not agreement that the budget is met.
+        """
+        serializer = _ImageSerializer()
+        seeded = seed_firmware_package(serializer)
+        self.assertIsNotNone(seeded)
+        used = len(serializer.code_ram_slots)
+        free = CODE_RAM_SLOT_LIMIT - (CODE_RAM_SLOT_BASE + used)
+        self.assertLess(used, CODE_RAM_SLOTS, "compiler overflows the code RAM bank")
+        self.assertGreater(
+            free,
+            900,
+            f"compiler uses {used} code RAM slots, leaving {free} for compiled "
+            "output; see compiler_design.md §7 for the shrink levers",
+        )
 
     def test_img_pyc_package_call_host_golden(self) -> None:
         self.assertEqual(

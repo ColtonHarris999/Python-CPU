@@ -8,10 +8,10 @@
 # the parent's co_consts, then MAKE_FUNCTION (device: function ≡ code).
 #
 # Reuses parse scratch after G: opnd/ops/ops_obj = instructions,
-# stmts = co_consts, tk_s = co_names, tk_a = label positions, _lex_n =
-# label count, _lex_i = current scope, _lex_col = store/del flag
-# (0 load, 1 store, 2 del), _lex_line = loop depth, tk_b = break/continue
-# label pairs.
+# stmts/stmts_kind = co_consts and its per-entry constant kind, tk_s =
+# co_names, tk_a = label positions, _lex_n = label count, _lex_i = current
+# scope, _lex_col = store/del flag (0 load, 1 store, 2 del), _lex_line =
+# loop depth, tk_b = break/continue label pairs.
 
 
 def _pyc_emit(op, arg, lab):
@@ -50,8 +50,70 @@ def _pyc_emit(op, arg, lab):
     return lab
 
 
+def _pyc_const_append(kind, val):
+    global stmts, stmts_kind, stmt_n
+    cap = len(stmts)
+    while cap < stmt_n + 1:
+        extra = cap
+        if extra < 8:
+            extra = 8
+        stmts = stmts + ([0] * extra)
+        stmts_kind = stmts_kind + ([0] * extra)
+        cap = len(stmts)
+    stmts[stmt_n] = val
+    stmts_kind[stmt_n] = kind
+    idx = stmt_n
+    stmt_n = stmt_n + 1
+    return idx
+
+
+def _pyc_const_index(kind, val):
+    # ``kind`` is the parser's Constant tag (0 int, 1 float, 2 str, 3 True,
+    # 4 False, 5 None, 6 nested code object). Dedup has to compare the tag as
+    # well as the value: ``1000 == 1000.0`` is True, so a value-only pool
+    # would fold a float literal onto an int already in co_consts and the
+    # program would see the wrong type (R5, silent miscompilation).
+    i = 0
+    while i < stmt_n:
+        if stmts_kind[i] == kind:
+            if kind == 3 or kind == 4 or kind == 5:
+                return i
+            if kind < 3:
+                if stmts[i] == val:
+                    return i
+        i = i + 1
+    return _pyc_const_append(kind, val)
+
+
+def _pyc_name_index(name):
+    # co_names pool, shared by LOAD/STORE_NAME, LOAD/STORE_GLOBAL and attrs.
+    global tk_s, tk_n
+    i = 0
+    while i < tk_n:
+        if tk_s[i] == name:
+            return i
+        i = i + 1
+    cap = len(tk_s)
+    while cap < tk_n + 1:
+        extra = cap
+        if extra < 8:
+            extra = 8
+        tk_s = tk_s + ([0] * extra)
+        cap = len(tk_s)
+    tk_s[tk_n] = name
+    idx = tk_n
+    tk_n = tk_n + 1
+    return idx
+
+
+def _pyc_label():
+    # A label is an index into tk_a; _pyc_emit allocates one when op < 0.
+    return _pyc_emit(0 - 1, 0, 0 - 1)
+
+
 def _pyc_visit(nid):
-    global stmt_n, stmts, tk_n, tk_s, tk_a, tk_b, _lex_n, _lex_i, _lex_col
+    global stmt_n, stmts, stmts_kind, tk_n, tk_s, tk_a, tk_b
+    global _lex_n, _lex_i, _lex_col
     global _lex_line, opnd, ops, ops_obj, opnd_n
     kind = nd_kind[nid]
     store = _lex_col
@@ -63,26 +125,7 @@ def _pyc_visit(nid):
             _pyc_visit(kids[a + i])
             i = i + 1
         _lex_col = 0
-        val = None
-        i = 0
-        found = 0
-        while i < stmt_n:
-            if stmts[i] is val:
-                _pyc_emit(OPMAP["LOAD_CONST"], i, 0)
-                found = 1
-                break
-            i = i + 1
-        if found == 0:
-            cap = len(stmts)
-            while cap < stmt_n + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                stmts = stmts + ([0] * extra)
-                cap = len(stmts)
-            stmts[stmt_n] = val
-            _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
-            stmt_n = stmt_n + 1
+        _pyc_emit(OPMAP["LOAD_CONST"], _pyc_const_index(5, None), 0)
         _pyc_emit(OPMAP["RETURN_VALUE"], 0, 0)
         return
     if kind == ND["Expression"]:
@@ -103,26 +146,7 @@ def _pyc_visit(nid):
     if kind == ND["Return"]:
         a = nd_a[nid]
         if a < 0:
-            i = 0
-            found = 0
-            val = None
-            while i < stmt_n:
-                if stmts[i] is val:
-                    _pyc_emit(OPMAP["LOAD_CONST"], i, 0)
-                    found = 1
-                    break
-                i = i + 1
-            if found == 0:
-                cap = len(stmts)
-                while cap < stmt_n + 1:
-                    extra = cap
-                    if extra < 8:
-                        extra = 8
-                    stmts = stmts + ([0] * extra)
-                    cap = len(stmts)
-                stmts[stmt_n] = val
-                _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
-                stmt_n = stmt_n + 1
+            _pyc_emit(OPMAP["LOAD_CONST"], _pyc_const_index(5, None), 0)
         else:
             _pyc_visit(a)
         _pyc_emit(OPMAP["RETURN_VALUE"], 0, 0)
@@ -135,6 +159,7 @@ def _pyc_visit(nid):
         sv_ops_obj = ops_obj
         sv_opnd_n = opnd_n
         sv_stmts = stmts
+        sv_stmts_kind = stmts_kind
         sv_stmt_n = stmt_n
         sv_tk_s = tk_s
         sv_tk_n = tk_n
@@ -161,6 +186,7 @@ def _pyc_visit(nid):
         ops_obj = [0] * 8
         stmt_n = 0
         stmts = [0] * 8
+        stmts_kind = [0] * 8
         tk_n = 0
         tk_s = [0] * 8
         tk_a = [0] * 8
@@ -186,6 +212,7 @@ def _pyc_visit(nid):
         ops_obj = sv_ops_obj
         opnd_n = sv_opnd_n
         stmts = sv_stmts
+        stmts_kind = sv_stmts_kind
         stmt_n = sv_stmt_n
         tk_s = sv_tk_s
         tk_n = sv_tk_n
@@ -195,16 +222,7 @@ def _pyc_visit(nid):
         _lex_i = sv_lex_i
         _lex_col = sv_lex_col
         _lex_line = sv_lex_line
-        cap = len(stmts)
-        while cap < stmt_n + 1:
-            extra = cap
-            if extra < 8:
-                extra = 8
-            stmts = stmts + ([0] * extra)
-            cap = len(stmts)
-        stmts[stmt_n] = child
-        _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
-        stmt_n = stmt_n + 1
+        _pyc_emit(OPMAP["LOAD_CONST"], _pyc_const_append(6, child), 0)
         _pyc_emit(OPMAP["MAKE_FUNCTION"], 0, 0)
         name_id = _pyc_nd_new(
             ND["Name"], 1, 0, ND["Store"], 0, 0, nd_obj[nid]
@@ -215,41 +233,13 @@ def _pyc_visit(nid):
         return
     if kind == ND["Constant"]:
         val = nd_obj[nid]
-        if nd_a[nid] == 0:
+        ckind = nd_a[nid]
+        if ckind == 0:
             if val >= 0:
                 if val <= 255:
                     _pyc_emit(OPMAP["LOAD_SMALL_INT"], val, 0)
                     return
-        i = 0
-        found = 0
-        while i < stmt_n:
-            cur = stmts[i]
-            same = 0
-            if val is True or val is False or val is None:
-                if cur is val:
-                    same = 1
-            else:
-                if cur is True or cur is False or cur is None:
-                    same = 0
-                else:
-                    if cur == val:
-                        same = 1
-            if same:
-                _pyc_emit(OPMAP["LOAD_CONST"], i, 0)
-                found = 1
-                break
-            i = i + 1
-        if found == 0:
-            cap = len(stmts)
-            while cap < stmt_n + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                stmts = stmts + ([0] * extra)
-                cap = len(stmts)
-            stmts[stmt_n] = val
-            _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
-            stmt_n = stmt_n + 1
+        _pyc_emit(OPMAP["LOAD_CONST"], _pyc_const_index(ckind, val), 0)
         return
     if kind == ND["Name"]:
         name = nd_obj[nid]
@@ -274,24 +264,7 @@ def _pyc_visit(nid):
             else:
                 _pyc_emit(OPMAP["LOAD_FAST"], idx, 0)
             return
-        i = 0
-        ni = 0 - 1
-        while i < tk_n:
-            if tk_s[i] == name:
-                ni = i
-                break
-            i = i + 1
-        if ni < 0:
-            cap = len(tk_s)
-            while cap < tk_n + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                tk_s = tk_s + ([0] * extra)
-                cap = len(tk_s)
-            tk_s[tk_n] = name
-            ni = tk_n
-            tk_n = tk_n + 1
+        ni = _pyc_name_index(name)
         if sc_kind[sid] == 1:
             if store == 1:
                 _pyc_emit(OPMAP["STORE_GLOBAL"], ni, 0)
@@ -363,15 +336,7 @@ def _pyc_visit(nid):
             jump = OPMAP["POP_JUMP_IF_TRUE"]
         ks = nd_b[nid]
         n = nd_c[nid]
-        _lex_n = _lex_n + 1
-        cap = len(tk_a)
-        while cap < _lex_n + 1:
-            extra = cap
-            if extra < 8:
-                extra = 8
-            tk_a = tk_a + ([0] * extra)
-            cap = len(tk_a)
-        lab = _lex_n
+        lab = _pyc_label()
         i = 0
         while i < n:
             _pyc_visit(kids[ks + i])
@@ -391,15 +356,7 @@ def _pyc_visit(nid):
         i = 0
         lab = 0
         if n > 1:
-            _lex_n = _lex_n + 1
-            cap = len(tk_a)
-            while cap < _lex_n + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                tk_a = tk_a + ([0] * extra)
-                cap = len(tk_a)
-            lab = _lex_n
+            lab = _pyc_label()
         while i < n:
             _pyc_visit(kids[ks + i])
             opk = cops[i]
@@ -435,15 +392,7 @@ def _pyc_visit(nid):
                 _pyc_emit(OPMAP["POP_TOP"], 0, 0)
             i = i + 1
         if n > 1:
-            _lex_n = _lex_n + 1
-            cap = len(tk_a)
-            while cap < _lex_n + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                tk_a = tk_a + ([0] * extra)
-                cap = len(tk_a)
-            end = _lex_n
+            end = _pyc_label()
             _pyc_emit(OPMAP["JUMP_FORWARD"], 0, end)
             tk_a[lab] = opnd_n
             _pyc_emit(OPMAP["SWAP"], 2, 0)
@@ -457,24 +406,7 @@ def _pyc_visit(nid):
         if nd_kind[func] == ND["Attribute"]:
             _pyc_visit(nd_a[func])
             name = nd_obj[func]
-            i = 0
-            ni = 0 - 1
-            while i < tk_n:
-                if tk_s[i] == name:
-                    ni = i
-                    break
-                i = i + 1
-            if ni < 0:
-                cap = len(tk_s)
-                while cap < tk_n + 1:
-                    extra = cap
-                    if extra < 8:
-                        extra = 8
-                    tk_s = tk_s + ([0] * extra)
-                    cap = len(tk_s)
-                tk_s[tk_n] = name
-                ni = tk_n
-                tk_n = tk_n + 1
+            ni = _pyc_name_index(name)
             _pyc_emit(OPMAP["LOAD_ATTR"], ni * 2 + 1, 0)
         else:
             _pyc_visit(func)
@@ -487,24 +419,7 @@ def _pyc_visit(nid):
         return
     if kind == ND["Attribute"]:
         name = nd_obj[nid]
-        i = 0
-        ni = 0 - 1
-        while i < tk_n:
-            if tk_s[i] == name:
-                ni = i
-                break
-            i = i + 1
-        if ni < 0:
-            cap = len(tk_s)
-            while cap < tk_n + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                tk_s = tk_s + ([0] * extra)
-                cap = len(tk_s)
-            tk_s[tk_n] = name
-            ni = tk_n
-            tk_n = tk_n + 1
+        ni = _pyc_name_index(name)
         if store == 1:
             _lex_col = 0
             _pyc_visit(nd_a[nid])
@@ -576,8 +491,8 @@ def _pyc_visit(nid):
             tk_a[else_lab] = opnd_n
         return
     if kind == ND["While"]:
-        br = _pyc_emit(0 - 1, 0, 0 - 1)
-        cont = _pyc_emit(0 - 1, 0, 0 - 1)
+        br = _pyc_label()
+        cont = _pyc_label()
         _lex_line = _lex_line + 1
         if len(tk_b) < _lex_line * 2 + 2:
             tk_b = tk_b + ([0] * 8)
@@ -598,9 +513,9 @@ def _pyc_visit(nid):
         _lex_line = _lex_line - 1
         return
     if kind == ND["For"]:
-        endfor = _pyc_emit(0 - 1, 0, 0 - 1)
-        popiter = _pyc_emit(0 - 1, 0, 0 - 1)
-        cont = _pyc_emit(0 - 1, 0, 0 - 1)
+        endfor = _pyc_label()
+        popiter = _pyc_label()
+        cont = _pyc_label()
         _lex_line = _lex_line + 1
         if len(tk_b) < _lex_line * 2 + 2:
             tk_b = tk_b + ([0] * 8)
@@ -722,9 +637,25 @@ def _pyc_assemble():
             if op != OPMAP["JUMP_FORWARD"]:
                 nc = 1
             if tgt >= i:
-                ops[i] = tgt - i - 1 - nc
+                delta = tgt - i - 1 - nc
             else:
-                ops[i] = i + 1 + nc - tgt
+                delta = i + 1 + nc - tgt
+            if delta < 0:
+                # The hardware adds n_cache to every taken branch, so a
+                # conditional jump cannot name its own fall-through: the
+                # smallest reachable target is i + 2. An empty suite ("if c:
+                # pass") puts the label at i + 1, which is exactly what the
+                # jump does when it is *not* taken, so the branch is dead and
+                # only the pop survives. Without this the word would carry a
+                # negative oparg and _bi_code_blit would TYPE-trap (A4).
+                if delta != 0 - 1:
+                    _pyc_parse_error("internal: negative jump offset")
+                if op == OPMAP["POP_JUMP_IF_FALSE"] or op == OPMAP["POP_JUMP_IF_TRUE"]:
+                    opnd[i] = OPMAP["POP_TOP"]
+                    delta = 0
+                else:
+                    _pyc_parse_error("internal: negative jump offset")
+            ops[i] = delta
         i = i + 1
     depth = 0
     maxd = 0
@@ -823,8 +754,8 @@ def _pyc_assemble():
 
 
 def _pyc_codegen_main():
-    global opnd_n, opnd, ops, ops_obj, stmt_n, stmts, tk_n, tk_s, tk_a, tk_b
-    global _lex_n, _lex_i, _lex_col, _lex_line
+    global opnd_n, opnd, ops, ops_obj, stmt_n, stmts, stmts_kind
+    global tk_n, tk_s, tk_a, tk_b, _lex_n, _lex_i, _lex_col, _lex_line
     _pyc_lex(_in_src)
     root = _pyc_parse(_in_mode)
     _pyc_symtab(root)
@@ -834,6 +765,7 @@ def _pyc_codegen_main():
     ops_obj = [0] * 8
     stmt_n = 0
     stmts = [0] * 8
+    stmts_kind = [0] * 8
     tk_n = 0
     tk_s = [0] * 8
     tk_a = [0] * 8

@@ -1047,6 +1047,39 @@ counts). If the compiler overruns code RAM, the answer is in order:
 so explicitly), (3) only then consider overlays. Do **not** restart the module
 loader for this.
 
+### 7.1 Measured after step J
+
+Taken from `seed_firmware_package()` on the T1–T3 tree; pinned by
+`test_firmware_package.test_compiler_leaves_room_in_code_ram_for_its_own_output`
+and `…_stays_under_half_load`.
+
+| Resource | Capacity | Budget (§7) | **Measured** |
+| --- | ---: | ---: | ---: |
+| Code RAM, compiler | 32 768 slots | ≤ 14 000 | **31 653** |
+| Code RAM, left for compiled output | — | ≥ 18 000 | **1 115** |
+| Heap, static image | ~960 KB | — | **240 KB** |
+| `_PYC_G` keys / slots | — | — | **132 / 512** |
+
+The compiler is **2.3× over the code-RAM budget**, and the ~1 100 free slots
+are the entire allowance for every code object `compile()` ever emits — past
+that `_bi_code_alloc` is a `MEM_FAULT`. Per-file: `parser.py` 14 514,
+`codegen.py` 8 905, `lexer.py` 4 078, `symtab.py` 3 996, `compat.py` 119
+(unused by the compiler), `toy.py` 19. The measured line-to-slot ratio is
+~8, not the ~3.9 §7 assumed, because the SoA style spends instructions on
+explicit index loops.
+
+Duplicated boilerplate is worth real slots at this ratio: folding
+`codegen.py`'s three copies of the co_names scan, three copies of the
+co_consts find-or-append, and three copies of the label allocator into one
+helper each took it from 9 821 slots to 8 905 and took the free bank from
+285 slots to 1 115. The same pattern is still inlined throughout
+`parser.py`, which is where the next chunk is.
+
+Step K owns closing this. The §7 levers still apply in order, and lever (2)
+— `PYCORE_CODE_RAM_BLOCK_COUNT` 64 → 128 — is the only one that reaches
+≥ 18 000 free without deferring T3. Note that no *tier* can be deferred
+cheaply now: T1 alone is already most of `parser.py`.
+
 ---
 
 ## 8. Risks

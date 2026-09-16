@@ -314,6 +314,98 @@ class TestCompilerCodegenCorpus(unittest.TestCase):
         self.assertIsNone(co())
         self.assertEqual(co._globals["z"], 2)
 
+    def test_empty_suite_does_not_emit_a_negative_jump(self) -> None:
+        # "if c: pass" puts the jump label on the jump's own fall-through.
+        # The hardware adds n_cache to every taken branch, so the offset
+        # would have to be -1, and _bi_code_blit TYPE-traps a word whose
+        # oparg does not fit (A4: never a trap, always compile-time).
+        for src in (
+            "x = 1\nif x:\n    pass\ny = 2\n",
+            "x = 0\nif x:\n    pass\ny = 2\n",
+            "s = 0\nfor i in [1, 2]:\n    if i:\n        pass\n    s = s + i\n",
+            "def f(a):\n    if a:\n        pass\n    return 3\nz = f(1)\n",
+        ):
+            with self.subTest(src=src):
+                co = firmware_codegen(src, "exec")
+                co()
+                g = {}
+                exec(src, g)
+                for name in ("x", "y", "s", "z"):
+                    if name in g:
+                        self.assertEqual(co._globals[name], g[name])
+
+    def test_no_emitted_word_has_a_negative_oparg(self) -> None:
+        src = (
+            "x = 1\n"
+            "if x:\n"
+            "    pass\n"
+            "for i in [1, 2]:\n"
+            "    if i:\n"
+            "        pass\n"
+            "    else:\n"
+            "        x = i\n"
+        )
+        co = firmware_codegen(src, "exec")
+        pc = co._entry
+        for _ in range(1 << 12):
+            word = co._ram.words.get(pc, 0)
+            self.assertGreaterEqual(word, 0)
+            self.assertEqual(word >> 40, 0)
+            if word & 0xFF == _HOST_OP_RETURN_VALUE:
+                break
+            pc += 1
+
+    def test_int_and_float_constants_do_not_share_a_pool_slot(self) -> None:
+        # 1000 == 1000.0, so a value-only co_consts dedup folds the float
+        # onto the int and the program sees the wrong type (R5).
+        for src, want in (
+            ("x = 1000\ny = 1000.0\n", {"x": int, "y": float}),
+            ("x = 1000.0\ny = 1000\n", {"x": float, "y": int}),
+            ("x = 0.0\ny = 0\n", {"x": float, "y": int}),
+        ):
+            with self.subTest(src=src):
+                co = firmware_codegen(src, "exec")
+                co()
+                g = {}
+                exec(src, g)
+                for name, typ in want.items():
+                    self.assertIs(type(co._globals[name]), typ)
+                    self.assertIs(type(g[name]), typ)
+
+    def test_nested_code_object_is_never_a_dedup_comparison_operand(self) -> None:
+        """A def followed by a non-small-int constant must not COMPARE_OP.
+
+        MAKE_FUNCTION puts the child CODE_OBJECT into the parent's co_consts.
+        A co_consts dedup that walks the pool with ``==`` then evaluates
+        ``code_object == 'hello'``. CODE_OBJECT is neither a numeric nor a
+        string tag, so ``pycore_is_trapping_tag`` holds and the device takes
+        a fatal PY_TRAP_TYPE (pycore_tag_decode.sv:93). The pool carries a
+        kind per entry so entries of different kinds never meet ``==``.
+        """
+        src = (
+            "def f():\n"
+            "    return 1\n"
+            "x = 'hello'\n"
+            "y = 1000\n"
+            "z = 1.5\n"
+        )
+        g = load_firmware_package_namespace()
+        g["_in_src"] = src
+        g["_in_mode"] = "exec"
+        co = g["_pyc_codegen_main"]()
+        co()
+        kinds = g["stmts_kind"]
+        for i, const in enumerate(co._consts):
+            if hasattr(const, "_entry"):
+                self.assertEqual(kinds[i], 6, "code object must carry its own pool kind")
+            else:
+                self.assertNotEqual(kinds[i], 6)
+        h = {}
+        exec(src, h)
+        for name in ("x", "y", "z"):
+            self.assertEqual(co._globals[name], h[name])
+            self.assertIs(type(co._globals[name]), type(h[name]))
+
     def test_unary_plus_true_is_not_in_differential(self) -> None:
         # Pin the known deviation: firmware leaves True, CPython yields 1.
         self.assertEqual(firmware_eval("+True"), True)

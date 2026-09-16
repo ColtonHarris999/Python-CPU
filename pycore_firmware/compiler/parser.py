@@ -220,6 +220,7 @@ def _pyc_parse_number(text):
 def _pyc_parse_string(text):
     n = len(text)
     i = 0
+    raw = 0
     while i < n:
         ch = text[i]
         if ch == "'" or ch == '"':
@@ -228,6 +229,8 @@ def _pyc_parse_string(text):
             _pyc_parse_error("bytes literals are not supported")
         if ch == "f" or ch == "F" or ch == "t" or ch == "T":
             _pyc_parse_error("f-strings are not supported")
+        if ch == "r" or ch == "R":
+            raw = 1
         i = i + 1
     if i >= n:
         _pyc_parse_error("invalid string literal")
@@ -239,7 +242,15 @@ def _pyc_parse_string(text):
     end = n - qlen
     if end < start:
         _pyc_parse_error("invalid string literal")
-    return text[start:end]
+    body = text[start:end]
+    if raw == 0:
+        # v1 has no escape decoder (compiler_design.md §5.5 defers it with
+        # string_parser.py). Returning the raw slice would silently give
+        # "a\tb" two characters where CPython gives one, so reject it
+        # instead (D5). A raw literal is exact as sliced.
+        if body.find("\\") >= 0:
+            _pyc_parse_error("escape sequences in string literals are not supported")
+    return body
 
 
 def _pyc_set_store(nid):
@@ -821,6 +832,12 @@ def _pyc_parse_expr():
                 continue
             break
         if kind == TOK_OP and text == "=":
+            # Inside an open call bracket this is a keyword argument, not the
+            # end of the expression. Say so: falling through leaves the
+            # bracket unclosed and the caller reports "unmatched bracket",
+            # which points at the wrong thing (CALL_KW is a later tier).
+            if _pyc_top_tag() == 4:
+                _pyc_parse_error("keyword arguments are not supported")
             break
         if kind == TOK_NAME and text == "and":
             _pyc_reduce_while(PREC["and"], 0)

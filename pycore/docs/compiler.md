@@ -1,7 +1,9 @@
 # On-device `compile()`
 
-Status: **step J landed** (T2/T3; A2
-`img_compile_exec_roundtrip` → 7). Next is step K (W-8 size report).
+Status: **step J landed, T3 partial** (A2 `img_compile_exec_roundtrip` → 7;
+`def` defaults / `*args` / `**kwargs` / keyword calls are still
+`SyntaxError` — see "Grammar tiers"). Next is step K (W-8 size report),
+which also owns the code-RAM overrun measured in `compiler_design.md` §7.1.
 Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
@@ -20,6 +22,16 @@ The public builtin is a ROM shim: it stores `_in_src` / `_in_file` /
 `_in_mode` on `_PYC_G` and runs `_pyc_codegen_main` through
 `_bi_exec_globals`. `_PYC_ENTRY` stays the step-D toy trampoline (42).
 Helpers live in that private dict, not in the boot builtins namespace.
+
+`_PYC_G` is sized by `dict_slot_count_for_stores` — the same
+`next_pow2(2 * keys)` rule the boot globals dict uses — so it sits at 132
+keys in 512 slots. It is on the `LOAD_GLOBAL` path of every helper call, and
+at the old 127/128 it was both past the hardware's 2/3 grow threshold (so
+the next new key would need a `DICT_GROW` trap, fatal on the single-core
+image) and deep into linear-probe chains. Static dicts have no 128-slot
+ceiling; `img_locals_64` and `img_rf_window_too_big_trap` already ship 256-
+and 512-slot globals. It costs ~66 KB more static heap than the old packed
+dict, out of ~960 KB.
 
 ## Lexer (step E)
 
@@ -58,7 +70,15 @@ kids[]                      flat arena
 parses T1–T3 statements (`if`/`while`/`for`, `break`/`continue`/`pass`,
 augassign, `del`, displays, unpack, `def` with positional args, `global`)
 into `ND_MODULE`. Slices, `while`/`for`-`else`, defaults/`*args`/`**kwargs`,
-and later tiers are `SyntaxError`.
+keyword arguments at a call site, semicolon-separated simple statements,
+conditional expressions, and later tiers are `SyntaxError`.
+
+String literals are sliced out of the source verbatim, so a **non-raw**
+literal containing a backslash is a `SyntaxError`: v1 has no escape decoder
+(it arrives with the `string_parser.py` port), and returning the raw slice
+would silently give `"a\tb"` two characters where CPython gives one (D5 —
+what the machine cannot do is a compile-time error, never a wrong answer).
+`r"..."` needs no decoding and is exact as sliced.
 
 Host: `pycore/tests/test_compiler_parser.py` vs `ast.parse` (tree shape).
 Device: `img_parser_tiny_expr` (checksum), `img_compile_deep_nesting`
@@ -112,6 +132,30 @@ tables are empty `()`. `del` of a module/global name is `SyntaxError`
 (no `DELETE_NAME` / `DELETE_GLOBAL` on this target). Loop labels reuse
 `_lex_line` (depth) and `tk_b` (break/continue pairs).
 
+Two invariants the pools carry, both of which a naive implementation gets
+wrong silently:
+
+- **`co_consts` dedup compares the parser's constant kind, not just the
+  value.** `1000 == 1000.0` is True, so a value-only pool folds a float
+  literal onto an int already in the pool and the program sees the wrong
+  type. The kind also keeps a nested `CODE_OBJECT` (kind 6, from
+  `MAKE_FUNCTION`) out of the `==` scan entirely: `CODE_OBJECT` is neither
+  a numeric nor a string tag, so `pycore_is_trapping_tag` holds and
+  `COMPARE_OP` against one is a fatal `PY_TRAP_TYPE`
+  (`pycore_tag_decode.sv:93`).
+- **A conditional jump cannot name its own fall-through.** The hardware
+  adds `n_cache` to every taken branch, so the nearest reachable target is
+  `i + 2` and an empty suite (`if c: pass`) would need an offset of -1.
+  Assemble rewrites that jump to the `POP_TOP` it is equivalent to; any
+  other negative offset is an internal error, never a word handed to
+  `_bi_code_blit` (which TYPE-traps an oparg that does not fit).
+
+Stack depth is a **linear** walk over the instruction list clamped at zero,
+not the CFG walk §5.5 step 3 describes. It is exact for every T1–T3 shape
+the codegen emits (the deepest point is always on the fall-through path),
+but the clamp means a future emit pattern could under-report `co_stacksize`
+without failing anything. Replace it with the real walk before T4.
+
 Host: `pycore/tests/test_compiler_codegen.py` result differential vs CPython
 `eval`/`exec`. Device: `img_codegen_t1_expr` (assembled `"1 + 2"` returns 3),
 `img_compile_exec_roundtrip` (A2 → 7).
@@ -121,7 +165,11 @@ Host: `pycore/tests/test_compiler_codegen.py` result differential vs CPython
 `compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1)`
 is seeded in `ROM_FIRMWARE_BUILTINS`. `"single"` / unknown mode / nonzero
 `flags` / `optimize` not in `{0, -1}` raise `ValueError`. `dont_inherit`
-is ignored. No `_busy` slot (D9; 127 of 128 `_PYC_G` keys).
+is ignored. There is no `_busy` re-entrancy slot (D9): `_PYC_G` has room
+for one now, but a guard that is set before the call and cleared after is
+worse than none — an ordinary `SyntaxError` would leave it set and poison
+every later `compile()`. It needs `try` / `finally` in the ROM shim, which
+is step K work, not a key-count problem.
 
 Host: `pycore/tests/test_compiler_compile.py`. Device: `img_compile_eval_expr`
 (A1 → 3), `img_compile_mode_trap` (A5 → 3), `img_compile_reject_import`
@@ -144,6 +192,9 @@ Allowed (and previously thought banned): `str.split` / `strip` / `replace`
 and friends, identifiers longer than 15 bytes, `try`/`except`/`finally`.
 
 String slicing is native. List/tuple slicing is not — use `copy_range`.
+`compat.py` is rewrite guidance: the T1–T3 compiler indexes SoA arrays and
+calls none of its three helpers today, so they cost 119 code-RAM slots and
+three `_PYC_G` keys for nothing. Drop the file, or start using it.
 
 ## Frame-depth invariant
 
@@ -159,6 +210,13 @@ stays constant in the source nesting.
 | T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | parser + codegen (J, landed) |
 | T3 | `def` (positional args + indented / one-line suite), `global`, displays, unpack | parser slice in G; codegen (J, landed) |
 | T4+ | `try`/`class`/`import`/closures | blocked on runtime |
+
+**T3 is narrower here than in `compiler_design.md` §5.6**, which lists
+`def` with default / kw-only / `*args` / `**kwargs`. Only positional
+parameters are implemented; defaults and star-args are a `SyntaxError`, and
+so is a keyword argument at a call site, even though `CALL_KW` and the
+metadata bits for both are in the emit allowlist and the `_bi_code_new`
+field contract. Closing that gap is the rest of J.
 
 ## Deviations from CPython (D1–D9)
 
