@@ -1,6 +1,6 @@
 # On-device `compile()`
 
-Status: **step E in progress** (`tables.py` + `lexer.py`). Next is step F
+Status: **step E landed** (`tables.py` + `lexer.py`). Next is step F
 (iterative T1 parser). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
