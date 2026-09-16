@@ -19,6 +19,8 @@ PROGRAMS = pathlib.Path(__file__).resolve().parents[1] / "programs"
 PARSER_EVAL_CORPUS = [
     "1",
     "1 + 2",
+    "0x1f",
+    "1_000",
     "1 + 2 * 3",
     "(1 + 2) * 3",
     "1 - 2 - 3",

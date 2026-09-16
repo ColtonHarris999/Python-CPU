@@ -136,6 +136,41 @@ def _pyc_pos_of(nid):
     return line, col
 
 
+def _pyc_digit_val(ch, base):
+    digits = "0123456789abcdefABCDEF"
+    d = digits.find(ch)
+    if d < 0:
+        return -1
+    if d >= 16:
+        d = d - 6
+    if d >= base:
+        return -1
+    return d
+
+
+def _pyc_parse_int_base(text, start, base):
+    n = len(text)
+    i = start
+    if i >= n:
+        _pyc_parse_error("invalid number")
+    val = 0
+    saw = 0
+    while i < n:
+        ch = text[i]
+        if ch == "_":
+            i = i + 1
+            continue
+        d = _pyc_digit_val(ch, base)
+        if d < 0:
+            _pyc_parse_error("invalid number")
+        val = val * base + d
+        saw = 1
+        i = i + 1
+    if saw == 0:
+        _pyc_parse_error("invalid number")
+    return val
+
+
 def _pyc_parse_number(text):
     n = len(text)
     if n < 1:
@@ -154,15 +189,12 @@ def _pyc_parse_number(text):
         i = i + 1
     if n >= 2 and text[0] == "0":
         ch = text[1]
-        if (
-            ch == "x"
-            or ch == "X"
-            or ch == "o"
-            or ch == "O"
-            or ch == "b"
-            or ch == "B"
-        ):
-            return int(text, 0)
+        if ch == "x" or ch == "X":
+            return _pyc_parse_int_base(text, 2, 16)
+        if ch == "o" or ch == "O":
+            return _pyc_parse_int_base(text, 2, 8)
+        if ch == "b" or ch == "B":
+            return _pyc_parse_int_base(text, 2, 2)
         if ch == "e" or ch == "E" or ch == ".":
             return float(text)
         if ch >= "0" and ch <= "9":
@@ -171,7 +203,7 @@ def _pyc_parse_number(text):
             )
     if has_dot or has_exp:
         return float(text)
-    return int(text, 0)
+    return _pyc_parse_int_base(text, 0, 10)
 
 
 def _pyc_parse_string(text):
