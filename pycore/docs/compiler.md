@@ -1,7 +1,7 @@
 # On-device `compile()`
 
-Status: **step F landed** (iterative T1 parser + SoA AST). **Step G in
-progress** (`symtab.py`). Design:
+Status: **step G landed** (iterative symbol table). Next is step H
+(`codegen.py` T1 + `assemble.py`). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` will be a resident PyCore builtin. This file records the

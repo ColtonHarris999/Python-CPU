@@ -1084,7 +1084,7 @@ parallel with B and C.
 | **D** | W-1, W-2, W-6: seed a two-function toy package into `_PYC_G` and call one from the other. **Landed** | `img_pyc_package_call` |
 | **E** | `tables.py` + `lexer.py`. **Landed** | Host: token stream vs CPython `tokenize` on a small corpus. Device: `img_lexer_count` |
 | **F** | `parser.py` T1 expressions (iterative) + SoA AST. **Landed** | Host: shape round-trip vs `ast.parse`. Device: `img_parser_tiny_expr`, `img_compile_deep_nesting` |
-| **G** | `symtab.py` | Host locals-vs-globals corpus; closures raise cleanly |
+| **G** | `symtab.py`. **Landed** | Host locals-vs-globals corpus; closures raise cleanly. Device: `img_symtab_locals`, `img_symtab_closure` |
 | **H** | `codegen.py` T1 (recursive port, per §5.2 Rule 2) + `assemble.py` + W-3 | Host result differential vs CPython for T1 |
 | **I** | Wire `compile.py` shim; ship it | **`img_compile_eval_expr` → 3** (A1) |
 | **J** | T2 then T3 | `img_compile_exec_roundtrip` (A2) + host corpus |
