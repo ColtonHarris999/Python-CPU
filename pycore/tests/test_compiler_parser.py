@@ -81,6 +81,15 @@ PARSER_EXEC_CORPUS = [
     "1 + 2\n",
     "x = 1\ny = 2\n",
     "f(1)\n",
+    "def f():\n    return 1\n",
+    "def f(a, b):\n    return a + b\n",
+    "def f(): return 1\n",
+    "def f(a,):\n    x = a\n    return x\n",
+    "global x\n",
+    "global x, y\n",
+    "def f():\n    global x\n    x = 1\n    return x\n",
+    "def outer(x):\n    def inner(y):\n        return y\n    return inner\n",
+    "x = 1\ndef f(a):\n    return a + x\ny = 2\n",
 ]
 
 
@@ -132,6 +141,12 @@ def firmware_shape(g: dict, nid: int) -> tuple:
     if name == "Call":
         args = [firmware_shape(g, kids[b + i]) for i in range(c)]
         return ("Call", firmware_shape(g, a), args)
+    if name == "FunctionDef":
+        params = [firmware_shape(g, kids[a + i]) for i in range(b)]
+        body = [firmware_shape(g, kids[a + b + i]) for i in range(c)]
+        return ("FunctionDef", obj, params, body)
+    if name == "Global":
+        return ("Global", list(obj))
     raise AssertionError(f"unhandled firmware node {name}")
 
 
@@ -199,6 +214,18 @@ def cpython_shape(node: ast.AST) -> tuple:
             cpython_shape(node.func),
             [cpython_shape(a) for a in node.args],
         )
+    if isinstance(node, ast.FunctionDef):
+        if node.decorator_list or node.args.defaults or node.args.kwonlyargs:
+            raise AssertionError("G corpus is positional def only")
+        if node.args.vararg is not None or node.args.kwarg is not None:
+            raise AssertionError("G corpus is positional def only")
+        params = [
+            ("Name", arg.arg, "Store") for arg in node.args.args
+        ]
+        body = [cpython_shape(s) for s in node.body]
+        return ("FunctionDef", node.name, params, body)
+    if isinstance(node, ast.Global):
+        return ("Global", list(node.names))
     raise AssertionError(f"unhandled CPython node {type(node).__name__}")
 
 
@@ -242,9 +269,29 @@ class TestCompilerParserCorpus(unittest.TestCase):
         with self.assertRaises(SyntaxError):
             _host_exec_globals(g["_pyc_parse_main"], g)
 
-    def test_unsupported_def(self) -> None:
+    def test_function_def_shape(self) -> None:
+        src = "def f(a, b):\n    x = a + b\n    return x\n"
+        got, _, _ = firmware_parse(src, "exec")
+        want = cpython_shape(ast.parse(src, mode="exec"))
+        self.assertEqual(got, want)
+
+    def test_unsupported_class(self) -> None:
         g = load_firmware_package_namespace()
-        g["_in_src"] = "def f():\n    return 1\n"
+        g["_in_src"] = "class C:\n    x = 1\n"
+        g["_in_mode"] = "exec"
+        with self.assertRaises(SyntaxError):
+            _host_exec_globals(g["_pyc_parse_main"], g)
+
+    def test_unsupported_async_def(self) -> None:
+        g = load_firmware_package_namespace()
+        g["_in_src"] = "async def f():\n    return 1\n"
+        g["_in_mode"] = "exec"
+        with self.assertRaises(SyntaxError):
+            _host_exec_globals(g["_pyc_parse_main"], g)
+
+    def test_unsupported_default_arg(self) -> None:
+        g = load_firmware_package_namespace()
+        g["_in_src"] = "def f(a=1):\n    return a\n"
         g["_in_mode"] = "exec"
         with self.assertRaises(SyntaxError):
             _host_exec_globals(g["_pyc_parse_main"], g)

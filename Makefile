@@ -1192,11 +1192,27 @@ pycore-img-compile-deep-nesting:
 pycore-img-compile-deep-nesting-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_deep_nesting,2000000,+CHECK_RF_SPILL_COUNT=0)
 
+# compiler_design.md step G: firmware symbol table locals/checksum golden.
+pycore-img-symtab-locals:
+	$(call PYCORE_IMAGE_RUN,symtab_locals,1000000)
+
+pycore-img-symtab-locals-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,symtab_locals,1000000)
+
+# Closures must raise SyntaxError (device try/except returns 1).
+pycore-img-symtab-closure:
+	$(call PYCORE_IMAGE_RUN,symtab_closure,1000000)
+
+pycore-img-symtab-closure-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,symtab_closure,1000000)
+
 pycore-img-package-all: \
 	pycore-img-pyc-package-call \
 	pycore-img-lexer-count \
 	pycore-img-parser-tiny-expr \
-	pycore-img-compile-deep-nesting
+	pycore-img-compile-deep-nesting \
+	pycore-img-symtab-locals \
+	pycore-img-symtab-closure
 
 pycore-img-code-new-call-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,code_new_call,100000)
@@ -1746,6 +1762,8 @@ pycore-img-two-core: \
 	pycore-img-lexer-count-two-core \
 	pycore-img-parser-tiny-expr-two-core \
 	pycore-img-compile-deep-nesting-two-core \
+	pycore-img-symtab-locals-two-core \
+	pycore-img-symtab-closure-two-core \
 	pycore-img-helper-containers-two-core \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \

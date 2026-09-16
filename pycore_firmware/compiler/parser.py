@@ -1,6 +1,11 @@
-# Firmware T1 parser (compiler_design.md §5.5 / step F).
+# Firmware T1 parser (compiler_design.md §5.5 / step F) plus the minimal
+# T3 `def` / `global` / INDENT suite that step G's symbol table needs.
 # Iterative shunting-yard over tk_* arrays into SoA nd_* / kids.
 # Node kinds are CPython 3.14 ast type integers from generated ND.
+#
+# FunctionDef packing: nd_obj=name, nd_a=kids start, nd_b=nargs, nd_c=n_body.
+# kids[nd_a : nd_a+nd_b] are Name(Store) params; then n_body statements.
+# Global packing: nd_obj=list of name strings, nd_a=count.
 #
 # Operator-stack tags (LOAD_CONST, not _PYC_G names):
 #   1 BinOp   2 UnaryOp   3 (     4 call   5 [     6 Compare   7 BoolOp
@@ -688,11 +693,169 @@ def _pyc_parse_return():
     return _pyc_nd_new(ND["Return"], line, col, value, 0, 0, 0)
 
 
+def _pyc_parse_global():
+    line = _pyc_tok_line()
+    col = _pyc_tok_col()
+    _pyc_tok_advance()
+    names = [0] * 8
+    nn = 0
+    if _pyc_tok_kind() != TOK_NAME:
+        _pyc_parse_error("expected name after global")
+    while 1:
+        if _pyc_tok_kind() != TOK_NAME:
+            _pyc_parse_error("expected name")
+        n = _pyc_tok_text()
+        if n in KEYWORDS:
+            _pyc_parse_error("invalid global name")
+        cap = len(names)
+        while cap < nn + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            names = names + ([0] * extra)
+            cap = len(names)
+        names[nn] = n
+        nn = nn + 1
+        _pyc_tok_advance()
+        if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ",":
+            _pyc_tok_advance()
+            continue
+        break
+    out = [0] * nn
+    i = 0
+    while i < nn:
+        out[i] = names[i]
+        i = i + 1
+    return _pyc_nd_new(ND["Global"], line, col, nn, 0, 0, out)
+
+
+def _pyc_parse_suite():
+    body = [0] * 8
+    bn = 0
+    if _pyc_tok_kind() == TOK_NEWLINE:
+        _pyc_tok_advance()
+        if _pyc_tok_kind() != TOK_INDENT:
+            _pyc_parse_error("expected an indented block")
+        _pyc_tok_advance()
+        while 1:
+            _pyc_skip_newlines()
+            kind = _pyc_tok_kind()
+            if kind == TOK_DEDENT:
+                _pyc_tok_advance()
+                break
+            if kind == TOK_ENDMARKER:
+                _pyc_parse_error("expected an indented block")
+            stmt = _pyc_parse_stmt()
+            cap = len(body)
+            while cap < bn + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                body = body + ([0] * extra)
+                cap = len(body)
+            body[bn] = stmt
+            bn = bn + 1
+            kind = _pyc_tok_kind()
+            if nd_kind[stmt] == ND["FunctionDef"]:
+                continue
+            if kind == TOK_NEWLINE:
+                _pyc_tok_advance()
+                continue
+            if kind == TOK_DEDENT:
+                continue
+            if kind == TOK_ENDMARKER:
+                _pyc_parse_error("expected an indented block")
+            _pyc_parse_error("unexpected input after statement")
+        if bn < 1:
+            _pyc_parse_error("expected an indented block")
+        out = [0] * bn
+        i = 0
+        while i < bn:
+            out[i] = body[i]
+            i = i + 1
+        return out
+    stmt = _pyc_parse_stmt()
+    out = [0] * 1
+    out[0] = stmt
+    return out
+
+
+def _pyc_parse_function_def():
+    line = _pyc_tok_line()
+    col = _pyc_tok_col()
+    _pyc_tok_advance()
+    if _pyc_tok_kind() != TOK_NAME:
+        _pyc_parse_error("expected function name")
+    name = _pyc_tok_text()
+    if name in KEYWORDS:
+        _pyc_parse_error("invalid function name")
+    _pyc_tok_advance()
+    if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "("):
+        _pyc_parse_error("expected '('")
+    _pyc_tok_advance()
+    args = [0] * 8
+    nargs = 0
+    if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ")"):
+        while 1:
+            if _pyc_tok_kind() != TOK_NAME:
+                _pyc_parse_error("unsupported function argument")
+            aname = _pyc_tok_text()
+            if aname in KEYWORDS:
+                _pyc_parse_error("invalid argument name")
+            aline = _pyc_tok_line()
+            acol = _pyc_tok_col()
+            _pyc_tok_advance()
+            if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "=":
+                _pyc_parse_error("default arguments are not supported")
+            nid = _pyc_nd_new(
+                ND["Name"], aline, acol, ND["Store"], 0, 0, aname
+            )
+            cap = len(args)
+            while cap < nargs + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                args = args + ([0] * extra)
+                cap = len(args)
+            args[nargs] = nid
+            nargs = nargs + 1
+            if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ",":
+                _pyc_tok_advance()
+                if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ")":
+                    break
+                continue
+            break
+    if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ")"):
+        _pyc_parse_error("expected ')'")
+    _pyc_tok_advance()
+    if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+        _pyc_parse_error("expected ':'")
+    _pyc_tok_advance()
+    body = _pyc_parse_suite()
+    nbody = len(body)
+    ks = kids_n
+    i = 0
+    while i < nargs:
+        _pyc_kids_append(args[i])
+        i = i + 1
+    i = 0
+    while i < nbody:
+        _pyc_kids_append(body[i])
+        i = i + 1
+    return _pyc_nd_new(
+        ND["FunctionDef"], line, col, ks, nargs, nbody, name
+    )
+
+
 def _pyc_parse_stmt():
     kind = _pyc_tok_kind()
     text = _pyc_tok_text()
     if kind == TOK_NAME and text == "return":
         return _pyc_parse_return()
+    if kind == TOK_NAME and text == "def":
+        return _pyc_parse_function_def()
+    if kind == TOK_NAME and text == "global":
+        return _pyc_parse_global()
     if kind == TOK_NAME and text in KEYWORDS:
         if (
             text != "True"
@@ -765,6 +928,8 @@ def _pyc_parse(mode):
             stmts[stmt_n] = stmt
             stmt_n = stmt_n + 1
             kind = _pyc_tok_kind()
+            if nd_kind[stmt] == ND["FunctionDef"]:
+                continue
             if kind == TOK_NEWLINE:
                 _pyc_tok_advance()
                 continue

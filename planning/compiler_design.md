@@ -592,8 +592,8 @@ with `opnd_stack` / `op_stack` in `_PYC_G`. Grammar tiers in §5.6.
 One pass. For each function scope: parameters and every `STORE` target become
 locals; anything else is global. `global x` forces global. A name that is local
 to an enclosing function and read in a nested one is a **closure** →
-`SyntaxError("closures are not supported on this target")`. Enforces C1
-(`> 32` locals → `SyntaxError`).
+`SyntaxError("closures are not supported on this target")`. Enforces D6
+(`nlocals > 240` → `SyntaxError`; stacksize is the assembler's job).
 
 **Codegen** — `_pyc_codegen(root, scope) -> int` (instruction count).
 Explicit `(node, phase)` work stack. Emits only names in the generated
@@ -1120,6 +1120,8 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_lexer_count` | token-count golden |
 | `img_parser_tiny_expr` | node-count / checksum golden |
 | `img_compile_deep_nesting` | 40 nested parens compile without a trap (A3) |
+| `img_symtab_locals` | locals-vs-globals checksum (G) |
+| `img_symtab_closure` | 1 — nested load of an enclosing local is `SyntaxError` (G) |
 | `img_compile_eval_expr` | **3** (A1) |
 | `img_compile_exec_roundtrip` | globals match host CPython (A2) |
 | `img_compile_reject_import` | `SyntaxError` (A4) |

@@ -26,7 +26,7 @@ On-device `compile()`: `planning/compile_plan.md` and `vendor/pycpython`
 | Path | Role |
 | --- | --- |
 | `builtins/` | Pure-Python miss-path / ROM builtins + `builtins.md` inventory |
-| `compiler/` | On-device `compile()` package. Step D seeds helpers into `_PYC_G`; step E adds `lexer.py` and generated `TOK_*` / `OP3` / `OP2` tables; step F adds iterative `parser.py` and generated `ND_*` / `BINOPS` / `PREC`. `tables.py` is generated from `pycore/targets/pycore.json` (`pycore/tools/gen_compiler_tables.py`). |
+| `compiler/` | On-device `compile()` package. Step D seeds helpers into `_PYC_G`; step E adds `lexer.py` and generated `TOK_*` / `OP3` / `OP2` tables; step F adds iterative `parser.py` and generated `ND_*` / `BINOPS` / `PREC`; step G adds iterative `symtab.py` (module + function scope, closures → `SyntaxError`). `tables.py` is generated from `pycore/targets/pycore.json` (`pycore/tools/gen_compiler_tables.py`). |
 
 Image tests compile these modules via `ROM_FIRMWARE_BUILTINS` in
 `pycore/tools/image_from_source.py` and seed them into the boot-record
@@ -40,5 +40,5 @@ builder serializes every top-level `def` under `compiler/` (except generated
 `KEYWORDS`, …) into the same dict, builds one `MUT_DICT` bound as `_PYC_G`,
 and binds a 0-arg trampoline as `_PYC_ENTRY`. User programs enter the package
 with `_bi_exec_globals(_PYC_ENTRY, _PYC_G)` or call a named helper such as
-`_pyc_lex_main` / `_pyc_parse_main` the same way.
+`_pyc_lex_main` / `_pyc_parse_main` / `_pyc_symtab_main` the same way.
 

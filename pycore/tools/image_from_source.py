@@ -1411,6 +1411,13 @@ PACKAGE_RUNTIME_SEEDS: dict[str, object] = {
     "ops_obj": None,
     "stmt_n": 0,
     "stmts": None,
+    "sc_n": 0,
+    "sc_kind": None,
+    "sc_parent": None,
+    "sc_node": None,
+    "sc_nlocals": None,
+    "sc_argcount": None,
+    "sc_varnames": None,
 }
 # Only these tables.py names are LOAD_GLOBAL'd by firmware today. Seeding
 # every TOK_* integer as a top-level key packed _PYC_G to 113/128 and

@@ -1,7 +1,7 @@
 # On-device `compile()`
 
-Status: **step F landed** (iterative T1 parser + SoA AST). Next is step G
-(`symtab.py`). Design:
+Status: **step F landed** (iterative T1 parser + SoA AST). **Step G in
+progress** (`symtab.py`). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` will be a resident PyCore builtin. This file records the
@@ -52,12 +52,38 @@ kids[]                      flat arena
 ```
 
 `mode == "eval"` wraps a T1 expression in `ND_EXPRESSION`. `mode == "exec"`
-parses T1 statements (`Expr`, `Assign`, `Return`) into `ND_MODULE`. Displays,
-slices, `def`, and later tiers are `SyntaxError`.
+parses T1 statements (`Expr`, `Assign`, `Return`) plus the G-slice of T3
+(`def` with positional args, `global`) into `ND_MODULE`. Displays, slices,
+and later tiers are `SyntaxError`.
 
 Host: `pycore/tests/test_compiler_parser.py` vs `ast.parse` (tree shape).
 Device: `img_parser_tiny_expr` (checksum), `img_compile_deep_nesting`
 (40 nested parens, RF `spill_count=0`).
+
+## Symbol table (step G)
+
+`_pyc_symtab(root) -> int` (scope count) is an iterative walk of `nd_*`.
+Scope tables live in `_PYC_G`:
+
+```text
+sc_kind[s]      0 = Module/Expression (no FAST), 1 = function
+sc_parent[s]    -1 at the root
+sc_node[s]      Module / FunctionDef node id
+sc_nlocals[s]
+sc_argcount[s]
+sc_varnames[s]  list of local names (params first, then STORE targets)
+```
+
+Parameters and every `STORE` target in a function become locals;
+`global x` forces global. Module / eval names are never FAST. A name
+that is local to an enclosing function and read in a nested one is a
+closure → `SyntaxError("closures are not supported on this target")`.
+`nlocals > 240` (`RF_WINDOW_CAP`, D6 / §6.1 S-6) is a `SyntaxError`;
+stacksize is checked later by the assembler. The stale “> 32 locals”
+cap in the original G contract does not apply after step B.
+
+Host: `pycore/tests/test_compiler_symtab.py` vs CPython `co_varnames`.
+Device: `img_symtab_locals` (checksum), `img_symtab_closure` (returns 1).
 
 ## Subset (firmware compiler source)
 
@@ -86,7 +112,7 @@ stays constant in the source nesting.
 | --- | --- | --- |
 | T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | parser (F); codegen next (H/I) |
 | T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | next (J) |
-| T3 | `def`, displays, unpack, `global` | next (J) |
+| T3 | `def` (positional args + indented / one-line suite), `global` | parser slice in G (full T3 in J) |
 | T4+ | `try`/`class`/`import`/closures | blocked on runtime |
 
 ## Deviations from CPython (D1–D9)
