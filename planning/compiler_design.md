@@ -1122,6 +1122,7 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_compile_deep_nesting` | 40 nested parens compile without a trap (A3) |
 | `img_symtab_locals` | locals-vs-globals checksum (G) |
 | `img_symtab_closure` | 1 — nested load of an enclosing local is `SyntaxError` (G) |
+| `img_codegen_t1_expr` | **3** — assemble+call of `"1 + 2"` (H; A1 early, without the compile shim) |
 | `img_compile_eval_expr` | **3** (A1) |
 | `img_compile_exec_roundtrip` | globals match host CPython (A2) |
 | `img_compile_reject_import` | `SyntaxError` (A4) |

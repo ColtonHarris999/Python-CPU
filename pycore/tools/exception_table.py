@@ -100,6 +100,48 @@ def entries_to_slots(
     return converted
 
 
+def _encode_varint(value: int) -> bytes:
+    if value < 0:
+        raise ValueError("exception-table varint must be non-negative")
+    # Parse shifts left as continuation bytes arrive, so the first byte is
+    # the most-significant 6-bit chunk (CPython 3.14 / PyCPython assemble.py).
+    chunks: list[int] = []
+    chunks.append(value & 0x3F)
+    value >>= 6
+    while value:
+        chunks.append(value & 0x3F)
+        value >>= 6
+    chunks.reverse()
+    out = bytearray()
+    last = len(chunks) - 1
+    i = 0
+    while i < last:
+        out.append(0x40 | chunks[i])
+        i += 1
+    out.append(chunks[last])
+    return bytes(out)
+
+
+def encode_exception_table(
+    entries: Iterable[ExceptionTableEntry],
+) -> bytes:
+    """Encode entries as CPython 3.14 6-bit exception-table varints (W-3)."""
+
+    out = bytearray()
+    for entry in entries:
+        if entry.start & 1 or entry.end & 1 or entry.target & 1:
+            raise ValueError("exception table byte offsets must be even")
+        if entry.end < entry.start:
+            raise ValueError("exception table end precedes start")
+        start = _encode_varint(entry.start >> 1)
+        out.append(start[0] | 0x80)
+        out += start[1:]
+        out += _encode_varint((entry.end - entry.start) >> 1)
+        out += _encode_varint(entry.target >> 1)
+        out += _encode_varint((entry.depth << 1) | int(bool(entry.lasti)))
+    return bytes(out)
+
+
 def parse_exception_table_slots(
     source: bytes | bytearray | memoryview | _HasExceptionTable,
     code_entry_slot: int,

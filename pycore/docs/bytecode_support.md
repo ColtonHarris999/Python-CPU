@@ -184,7 +184,10 @@ this milestone:
   CPython's full locals→globals→builtins chain.
 9. **Image fidelity scope.** Images preserve the `compile()` object graph and
   bytecode-unit order, including `CACHE` and `EXTENDED_ARG`, but use PyCore's
-   tagged 128-bit-slot layout rather than CPython C structs.
+   tagged 128-bit-slot layout rather than CPython C structs. The on-device
+   firmware compiler (step H) is the other direction: it **emits no `CACHE`**
+   and does not fold constants (D1/D2). Differentials compare results, never
+   `co_code`.
 10. **No value-stack-overflow detection.** Pushing opcodes (`COPY`,
   `LOAD_FAST`, `LOAD_SMALL_INT`, `PUSH_NULL`, etc.) advance `tos_index`
    without a capacity check; an over-deep stack silently overruns RF slots

@@ -1206,13 +1206,21 @@ pycore-img-symtab-closure:
 pycore-img-symtab-closure-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,symtab_closure,1000000)
 
+# compiler_design.md step H: T1 codegen assemble+call of "1 + 2" → 3.
+pycore-img-codegen-t1-expr:
+	$(call PYCORE_IMAGE_RUN,codegen_t1_expr,2000000)
+
+pycore-img-codegen-t1-expr-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,codegen_t1_expr,2000000)
+
 pycore-img-package-all: \
 	pycore-img-pyc-package-call \
 	pycore-img-lexer-count \
 	pycore-img-parser-tiny-expr \
 	pycore-img-compile-deep-nesting \
 	pycore-img-symtab-locals \
-	pycore-img-symtab-closure
+	pycore-img-symtab-closure \
+	pycore-img-codegen-t1-expr
 
 pycore-img-code-new-call-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,code_new_call,100000)
@@ -1764,6 +1772,7 @@ pycore-img-two-core: \
 	pycore-img-compile-deep-nesting-two-core \
 	pycore-img-symtab-locals-two-core \
 	pycore-img-symtab-closure-two-core \
+	pycore-img-codegen-t1-expr-two-core \
 	pycore-img-helper-containers-two-core \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \

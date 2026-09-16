@@ -62,6 +62,32 @@ def f():
     def test_empty_table(self) -> None:
         code = _function_code("def f(): return 1")
         self.assertEqual(exception_table.parse_exception_table(code), [])
+        self.assertEqual(exception_table.encode_exception_table([]), b"")
+
+    def test_encode_roundtrip_matches_cpython_bytes(self) -> None:
+        sources = [
+            "def f(): return [x for x in range(3)]",
+            "def f():\n    try:\n        return 1\n    except TypeError:\n        return 2\n",
+            """\
+def f():
+    try:
+        try:
+            raise StopIteration
+        except StopIteration:
+            return 1
+    except StopIteration:
+        return 2
+""",
+        ]
+        for src in sources:
+            with self.subTest(src=src):
+                code = _function_code(src)
+                raw = bytes(code.co_exceptiontable)
+                parsed = exception_table.parse_exception_table(raw)
+                self.assertEqual(
+                    exception_table.encode_exception_table(parsed),
+                    raw,
+                )
 
     def test_slot_conversion_uses_relative_ranges_and_absolute_target(self) -> None:
         code = _function_code("def f(): return [x for x in range(3)]")

@@ -1,7 +1,7 @@
 # On-device `compile()`
 
-Status: **step G landed** (iterative symbol table). Next is step H
-(`codegen.py` T1 + `assemble.py`). Design:
+Status: **step H in progress** (T1 codegen + assemble + W-3). Next is step I
+(`compile()` shim). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` will be a resident PyCore builtin. This file records the
@@ -85,6 +85,26 @@ cap in the original G contract does not apply after step B.
 Host: `pycore/tests/test_compiler_symtab.py` vs CPython `co_varnames`.
 Device: `img_symtab_locals` (checksum), `img_symtab_closure` (returns 1).
 
+## Codegen + assemble (step H)
+
+`_pyc_codegen_main() -> CODE_OBJECT` lexes, parses, builds the symbol table,
+then recursively visits `nd_*` (Rule 2) into instruction words and assembles
+them with `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_new`. T1 only:
+literals, names, ALU, unary, compare/chains, `is`/`in`, `not`/`and`/`or`,
+call, subscript, attribute, expression statements, assignment, `return`.
+Nested `def` is a `SyntaxError` (`def codegen is not in T1`); that is J/T3.
+
+No `CACHE` (D1). No constant folding (D2): CPython emits `LOAD_SMALL_INT 3`
+for `1 + 2`; firmware emits `LOAD_SMALL_INT 1; LOAD_SMALL_INT 2; BINARY_OP +`.
+Both evaluate to 3. Jump args compensate for the hardware `n_cache` addend
+(`JUMP_FORWARD=0`, `POP_JUMP_*=1`). Unary `+` visits the operand only
+(CPython's `CALL_INTRINSIC_1` 5 is not in the device allowlist). Exception
+tables are empty `()` in T1; the host encoder is `encode_exception_table`
+(W-3).
+
+Host: `pycore/tests/test_compiler_codegen.py` result differential vs CPython
+`eval`/`exec`. Device: `img_codegen_t1_expr` (assembled `"1 + 2"` returns 3).
+
 ## Subset (firmware compiler source)
 
 Enforced by `pycore/tests/test_compiler_subset.py` on every file under
@@ -110,7 +130,7 @@ stays constant in the source nesting.
 
 | Tier | Constructs | Status |
 | --- | --- | --- |
-| T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | parser (F); codegen next (H/I) |
+| T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | parser (F); codegen (H); `compile()` shim next (I) |
 | T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | next (J) |
 | T3 | `def` (positional args + indented / one-line suite), `global` | parser slice in G (full T3 in J) |
 | T4+ | `try`/`class`/`import`/closures | blocked on runtime |

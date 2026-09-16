@@ -120,6 +120,7 @@ class TestFirmwarePackageSeed(unittest.TestCase):
         self.assertIn("_pyc_lex_main", g)
         self.assertIn("_pyc_parse_main", g)
         self.assertIn("_pyc_symtab_main", g)
+        self.assertIn("_pyc_codegen_main", g)
         self.assertIn("ND", g)
         self.assertEqual(g["ND"]["BinOp"], 14)
 

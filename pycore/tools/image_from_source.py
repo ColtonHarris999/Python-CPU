@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins as _builtins_mod
 import dis
 import inspect
 import opcode as _opcode_module
+import operator as _operator
 import pathlib
 import sys
 import types
@@ -1474,25 +1476,115 @@ def _host_exec_globals(code: object, g: object) -> object:
     return eval(code, g)
 
 
-# CPython 3.14 opcodes used by the host code-RAM interpreter (W-5).
+# CPython 3.14 opcodes used by the host code-RAM interpreter (W-5 / T1).
 _HOST_OP_CACHE = 0
+_HOST_OP_POP_TOP = 31
+_HOST_OP_PUSH_NULL = 33
 _HOST_OP_RETURN_VALUE = 35
+_HOST_OP_STORE_SUBSCR = 38
+_HOST_OP_TO_BOOL = 39
+_HOST_OP_UNARY_INVERT = 40
+_HOST_OP_UNARY_NEGATIVE = 41
+_HOST_OP_UNARY_NOT = 42
+_HOST_OP_BINARY_OP = 44
+_HOST_OP_CALL = 52
+_HOST_OP_COMPARE_OP = 56
+_HOST_OP_CONTAINS_OP = 57
+_HOST_OP_COPY = 59
+_HOST_OP_IS_OP = 74
+_HOST_OP_JUMP_BACKWARD = 75
+_HOST_OP_JUMP_FORWARD = 77
+_HOST_OP_LOAD_ATTR = 80
+_HOST_OP_LOAD_CONST = 82
+_HOST_OP_LOAD_FAST = 84
+_HOST_OP_LOAD_GLOBAL = 92
+_HOST_OP_LOAD_NAME = 93
 _HOST_OP_LOAD_SMALL_INT = 94
+_HOST_OP_POP_JUMP_IF_FALSE = 100
+_HOST_OP_POP_JUMP_IF_TRUE = 103
 _HOST_OP_RESUME = 128
+_HOST_OP_STORE_ATTR = 110
+_HOST_OP_STORE_FAST = 112
+_HOST_OP_STORE_GLOBAL = 115
+_HOST_OP_STORE_NAME = 116
+_HOST_OP_SWAP = 117
+_HOST_NULL = object()
+_HOST_UNBOUND = object()
+_HOST_BINARY_OPS = {
+    0: _operator.add,
+    1: _operator.and_,
+    2: _operator.floordiv,
+    3: _operator.lshift,
+    5: _operator.mul,
+    6: _operator.mod,
+    7: _operator.or_,
+    8: _operator.pow,
+    9: _operator.rshift,
+    10: _operator.sub,
+    11: _operator.truediv,
+    12: _operator.xor,
+}
+_HOST_COMPARE_OPS = {
+    0: _operator.lt,
+    1: _operator.le,
+    2: _operator.eq,
+    3: _operator.ne,
+    4: _operator.gt,
+    5: _operator.ge,
+}
+
+
+def _host_jump_n_cache(opcode: int) -> int:
+    if opcode == _HOST_OP_JUMP_FORWARD:
+        return 0
+    if opcode in (
+        _HOST_OP_JUMP_BACKWARD,
+        _HOST_OP_POP_JUMP_IF_FALSE,
+        _HOST_OP_POP_JUMP_IF_TRUE,
+    ):
+        return 1
+    return 0
 
 
 class _HostEmittedCode:
     """Callable stand-in for a ``CODE_OBJECT`` built by ``_bi_code_new``."""
 
-    def __init__(self, ram: "_HostCodeRam", entry_slot: int) -> None:
+    def __init__(
+        self,
+        ram: "_HostCodeRam",
+        entry_slot: int,
+        consts: tuple[object, ...] = (),
+        names: tuple[object, ...] = (),
+        varnames: tuple[object, ...] = (),
+        argcount: int = 0,
+        nlocals: int = 0,
+    ) -> None:
         self._ram = ram
         self._entry = entry_slot
+        self._consts = consts
+        self._names = names
+        self._varnames = varnames
+        self._argcount = argcount
+        self._nlocals = nlocals
+        self._globals: dict[str, object] = {}
+
+    def _lookup(self, name: str) -> object:
+        if name in self._globals:
+            return self._globals[name]
+        if hasattr(_builtins_mod, name):
+            return getattr(_builtins_mod, name)
+        raise NameError(name)
 
     def __call__(self, *args: object) -> object:
-        if args:
+        if len(args) != self._argcount:
             raise TypeError("_HostEmittedCode() takes no arguments")
         pc = self._entry
         stack: list[object] = []
+        locals_: list[object] = [_HOST_UNBOUND] * self._nlocals
+        i = 0
+        while i < self._argcount:
+            locals_[i] = args[i]
+            i += 1
         # Bound the walk so a missing RETURN cannot hang the host golden.
         for _ in range(1 << 16):
             word = self._ram.words.get(pc, 0)
@@ -1503,6 +1595,134 @@ class _HostEmittedCode:
                 continue
             if opcode == _HOST_OP_LOAD_SMALL_INT:
                 stack.append(oparg)
+                continue
+            if opcode == _HOST_OP_LOAD_CONST:
+                stack.append(self._consts[oparg])
+                continue
+            if opcode == _HOST_OP_LOAD_NAME:
+                stack.append(self._lookup(str(self._names[oparg])))
+                continue
+            if opcode == _HOST_OP_STORE_NAME:
+                self._globals[str(self._names[oparg])] = stack.pop()
+                continue
+            if opcode == _HOST_OP_LOAD_GLOBAL:
+                stack.append(self._lookup(str(self._names[oparg >> 1])))
+                if oparg & 1:
+                    stack.append(_HOST_NULL)
+                continue
+            if opcode == _HOST_OP_STORE_GLOBAL:
+                self._globals[str(self._names[oparg])] = stack.pop()
+                continue
+            if opcode == _HOST_OP_LOAD_FAST:
+                val = locals_[oparg]
+                if val is _HOST_UNBOUND:
+                    raise UnboundLocalError(str(self._varnames[oparg]))
+                stack.append(val)
+                continue
+            if opcode == _HOST_OP_STORE_FAST:
+                locals_[oparg] = stack.pop()
+                continue
+            if opcode == _HOST_OP_PUSH_NULL:
+                stack.append(_HOST_NULL)
+                continue
+            if opcode == _HOST_OP_POP_TOP:
+                stack.pop()
+                continue
+            if opcode == _HOST_OP_COPY:
+                stack.append(stack[-oparg])
+                continue
+            if opcode == _HOST_OP_SWAP:
+                stack[-1], stack[-oparg] = stack[-oparg], stack[-1]
+                continue
+            if opcode == _HOST_OP_TO_BOOL:
+                stack.append(bool(stack.pop()))
+                continue
+            if opcode == _HOST_OP_UNARY_NOT:
+                stack.append(not stack.pop())
+                continue
+            if opcode == _HOST_OP_UNARY_NEGATIVE:
+                stack.append(-stack.pop())  # type: ignore[operator]
+                continue
+            if opcode == _HOST_OP_UNARY_INVERT:
+                stack.append(~stack.pop())  # type: ignore[operator]
+                continue
+            if opcode == _HOST_OP_BINARY_OP:
+                rhs = stack.pop()
+                lhs = stack.pop()
+                if oparg == NBARG_SUBSCR:
+                    stack.append(lhs[rhs])  # type: ignore[index]
+                else:
+                    stack.append(_HOST_BINARY_OPS[oparg](lhs, rhs))
+                continue
+            if opcode == _HOST_OP_COMPARE_OP:
+                rhs = stack.pop()
+                lhs = stack.pop()
+                stack.append(_HOST_COMPARE_OPS[oparg >> 5](lhs, rhs))
+                continue
+            if opcode == _HOST_OP_IS_OP:
+                rhs = stack.pop()
+                lhs = stack.pop()
+                same = lhs is rhs
+                if oparg:
+                    same = not same
+                stack.append(same)
+                continue
+            if opcode == _HOST_OP_CONTAINS_OP:
+                container = stack.pop()
+                query = stack.pop()
+                found = query in container  # type: ignore[operator]
+                if oparg:
+                    found = not found
+                stack.append(found)
+                continue
+            if opcode == _HOST_OP_LOAD_ATTR:
+                obj = stack.pop()
+                stack.append(getattr(obj, str(self._names[oparg >> 1])))
+                if oparg & 1:
+                    stack.append(_HOST_NULL)
+                continue
+            if opcode == _HOST_OP_STORE_ATTR:
+                obj = stack.pop()
+                val = stack.pop()
+                setattr(obj, str(self._names[oparg]), val)
+                continue
+            if opcode == _HOST_OP_STORE_SUBSCR:
+                idx = stack.pop()
+                obj = stack.pop()
+                val = stack.pop()
+                obj[idx] = val  # type: ignore[index]
+                continue
+            if opcode == _HOST_OP_CALL:
+                call_args: list[object] = []
+                narg = 0
+                while narg < oparg:
+                    call_args.append(stack.pop())
+                    narg += 1
+                call_args.reverse()
+                self_or_null = stack.pop()
+                fn = stack.pop()
+                if not callable(fn):
+                    raise TypeError("host code-RAM interpreter: CALL of non-callable")
+                if self_or_null is _HOST_NULL:
+                    stack.append(fn(*call_args))
+                else:
+                    stack.append(fn(self_or_null, *call_args))
+                continue
+            if opcode == _HOST_OP_JUMP_FORWARD:
+                pc = pc + _host_jump_n_cache(opcode) + oparg
+                continue
+            if opcode == _HOST_OP_JUMP_BACKWARD:
+                pc = pc + _host_jump_n_cache(opcode) - oparg
+                continue
+            if opcode == _HOST_OP_POP_JUMP_IF_FALSE:
+                val = stack.pop()
+                if not val:
+                    pc = pc + _host_jump_n_cache(opcode) + oparg
+                continue
+            if opcode == _HOST_OP_POP_JUMP_IF_TRUE:
+                val = stack.pop()
+                if val:
+                    pc = pc + _host_jump_n_cache(opcode) + oparg
                 continue
             if opcode == _HOST_OP_RETURN_VALUE:
                 return stack.pop() if stack else None
@@ -1583,7 +1803,18 @@ class _HostCodeRam:
             raise TypeError("_bi_code_new() co_exceptiontable must be a tuple")
         if not isinstance(fields[8], int) or isinstance(fields[8], bool):
             raise TypeError("_bi_code_new() flags must be int")
-        return _HostEmittedCode(self, entry)
+        meta = int(fields[3])
+        argcount = meta & 0xFFFF
+        nlocals = (meta >> 16) & 0xFFFF
+        return _HostEmittedCode(
+            self,
+            entry,
+            consts=fields[1],
+            names=fields[2],
+            varnames=fields[5],
+            argcount=argcount,
+            nlocals=nlocals,
+        )
 
 
 def load_rom_firmware_callables() -> dict[str, object]:
@@ -1763,6 +1994,15 @@ def load_firmware_package_namespace(
     for name, value in PACKAGE_RUNTIME_SEEDS.items():
         if name not in ns:
             ns[name] = value
+    # Host-only: firmware LOAD_GLOBAL of the writers misses `_PYC_G` on
+    # device and hits the boot builtins dict. eval() of package functions
+    # has no such fallback, so inject a private code-RAM stand-in here.
+    # These names are not PACKAGE_RUNTIME_SEEDS (device key budget).
+    ram = _HostCodeRam()
+    ns["_bi_code_alloc"] = ram.alloc
+    ns["_bi_code_blit"] = ram.blit
+    ns["_bi_code_patch"] = ram.patch
+    ns["_bi_code_new"] = ram.new
     return ns
 
 
