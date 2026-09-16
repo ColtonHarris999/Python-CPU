@@ -2643,11 +2643,15 @@ define PYCORE_CONTAINER_BOOT_RUN
 		$(2) $(PYCORE_MEM_PLUSARGS)
 endef
 
+# Remaining BOOT_EN=0 list/tuple hex is RF-ring-fragile (oob-write TYPE
+# instead of MEM_FAULT; tuple_index returned 60 not 40). Image-boot of the
+# same programs; expected values unchanged. tuple_empty / list_oom stay hex:
+# empty `()` is LOAD_CONST, and list_oom needs HEAP_INIT_PTR near the limit.
 pycore-container-build-index:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_build_index.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=99,pycore_container_build_index)
+	$(call PYCORE_IMAGE_RUN_SRC,container_list_build_index,list_build_index.py,50000)
 
 pycore-container-store-subscr:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_store_subscr.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=42,pycore_container_store_subscr)
+	$(call PYCORE_IMAGE_RUN_SRC,container_list_store_subscr,list_store_subscr.py,50000)
 
 # Dict BUILD_MAP hex fixtures (BOOT_EN=0) TYPE-trap after RF-ring TOS pair
 # addressing. Same programs image-boot with BOOT_EN=1 (expected 42 / 99 /
@@ -2659,7 +2663,7 @@ pycore-container-dict-store:
 	$(call PYCORE_IMAGE_RUN_SRC,container_dict_store,dict_store_subscr.py,50000)
 
 pycore-container-list-empty:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_empty.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=1,pycore_container_list_empty)
+	$(call PYCORE_IMAGE_RUN_SRC,container_list_empty,list_empty.py,50000)
 
 pycore-container-dict-multi-pair:
 	$(call PYCORE_IMAGE_RUN_SRC,container_dict_multi_pair,dict_multi_pair.py,50000)
@@ -2679,10 +2683,10 @@ pycore-container-dict-empty:
 	$(call PYCORE_IMAGE_RUN_SRC,container_dict_empty,dict_empty.py,50000)
 
 pycore-container-list-nested:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_nested.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=7,pycore_container_list_nested)
+	$(call PYCORE_IMAGE_RUN_SRC,container_list_nested,list_nested.py,50000)
 
 pycore-container-tuple-index:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_index.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=40,pycore_container_tuple_index)
+	$(call PYCORE_IMAGE_RUN_SRC,container_tuple_index,tuple_index.py,50000)
 
 pycore-container-tuple-empty:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_empty.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=9,pycore_container_tuple_empty)
@@ -2692,10 +2696,10 @@ pycore-container-tuple-empty:
 # boot programs run through tb_container with BOOT_EN=1.
 
 pycore-container-list-oob-read:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_read.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7,pycore_container_list_oob_read)
+	$(call PYCORE_IMAGE_TRAP_RUN_SRC,container_list_oob_read,list_oob_read.py,7,50000)
 
 pycore-container-list-oob-write:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_write.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7,pycore_container_list_oob_write)
+	$(call PYCORE_IMAGE_TRAP_RUN_SRC,container_list_oob_write,list_oob_write.py,7,50000)
 
 pycore-container-dict-missing-key:
 	$(call PYCORE_IMAGE_TRAP_RUN_SRC,container_dict_missing_key,dict_missing_key.py,7,50000)
@@ -2705,7 +2709,7 @@ pycore-container-dict-missing-key:
 # is available through image-boot fixtures.
 
 pycore-container-tuple-store-trap:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/tuple_store_trap.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=1,pycore_container_tuple_store_trap)
+	$(call PYCORE_IMAGE_TRAP_RUN_SRC,container_tuple_store_trap,tuple_store_trap.py,1,50000)
 
 pycore-container-dict-full-insert:
 	# Load ≥ 2/3 / last-slot insert → PY_TRAP_DICT_GROW (11), not MEM_FAULT.

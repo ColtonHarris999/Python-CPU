@@ -1,8 +1,12 @@
 """STORE_SUBSCR on tuple → TYPE trap."""
 
-def managed_entry() -> int:
+
+def managed_entry():
     a = 1
     b = 2
     t = (a, b)
-    t[0] = 9  # type: ignore
+    t[0] = 9
     return 0
+
+
+managed_entry()
