@@ -1389,6 +1389,23 @@ PACKAGE_RUNTIME_SEEDS: dict[str, object] = {
     "tk_b": None,
     "tk_s": None,
 }
+# Only these tables.py names are LOAD_GLOBAL'd by firmware today. Seeding
+# every TOK_* integer as a top-level key packed _PYC_G to 113/128 and
+# LOAD_GLOBAL _pyc_inc started CALL_FILTERing (miss / non-callable).
+PACKAGE_TABLE_SEED_NAMES = frozenset({
+    "TOK_ENDMARKER",
+    "TOK_NAME",
+    "TOK_NUMBER",
+    "TOK_STRING",
+    "TOK_NEWLINE",
+    "TOK_INDENT",
+    "TOK_DEDENT",
+    "TOK_OP",
+    "OP3",
+    "OP2",
+    "KEYWORDS",
+    "OPMAP",
+})
 
 
 def _host_bi_print(x: object) -> None:
@@ -1619,12 +1636,15 @@ def seed_firmware_function(
 
 
 def _package_dict_slots(n: int) -> int:
-    """Power-of-two dict capacity with load kept under the 2/3 grow threshold."""
+    """Power-of-two dict capacity. Hardware ``dict_min_slots`` tops out at 128."""
     slots = dict_min_slots(max(n, 1))
     while n >= slots:
         slots *= 2
-    while n * 3 >= slots * 2:
-        slots *= 2
+    if slots > 128:
+        raise ValueError(
+            f"firmware package _PYC_G has {n} keys; "
+            "static dicts cannot exceed 128 slots"
+        )
     return slots
 
 
@@ -1784,6 +1804,12 @@ def seed_firmware_package(
     if serializer.slot_base != 0:
         return None
     tables = load_firmware_package_tables(package_dir)
+    missing = sorted(name for name in PACKAGE_TABLE_SEED_NAMES if name not in tables)
+    if missing:
+        raise ValueError(
+            "firmware tables.py missing seed names: " + ", ".join(missing)
+        )
+    tables = {name: tables[name] for name in sorted(PACKAGE_TABLE_SEED_NAMES)}
     functions = load_firmware_package_functions(package_dir)
     overlap = [name for name in functions if name in tables]
     if overlap:

@@ -12,11 +12,15 @@ if sys.version_info[:2] != (3, 14):
 from encoding import CODE_RAM_SLOT_BASE, TAG_CODE_OBJECT, TAG_MUT_COLLEC
 from image_from_source import (
     PACKAGE_ENTRY_NAME,
+    PACKAGE_RUNTIME_SEEDS,
+    PACKAGE_TABLE_SEED_NAMES,
     _ImageSerializer,
+    _package_dict_slots,
     build_image_from_source_text,
     compile_package_entry,
     load_firmware_package_functions,
     load_firmware_package_namespace,
+    load_firmware_package_tables,
     load_rom_firmware_callables,
     seed_firmware_package,
 )
@@ -115,6 +119,20 @@ class TestFirmwarePackageSeed(unittest.TestCase):
         self.assertIn("_pyc_lex", g)
         self.assertIn("_pyc_lex_main", g)
         self.assertIn("_pyc_inc", g)
+
+    def test_device_seed_key_count_fits_static_dict(self) -> None:
+        tables = load_firmware_package_tables()
+        missing = PACKAGE_TABLE_SEED_NAMES - set(tables)
+        self.assertEqual(missing, set())
+        functions = load_firmware_package_functions()
+        n = (
+            len(PACKAGE_TABLE_SEED_NAMES)
+            + len(functions)
+            + len(PACKAGE_RUNTIME_SEEDS)
+        )
+        slots = _package_dict_slots(n)
+        self.assertLessEqual(slots, 128)
+        self.assertLess(n, slots)
 
     def test_img_pyc_package_call_host_golden(self) -> None:
         self.assertEqual(
