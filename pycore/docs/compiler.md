@@ -1,7 +1,7 @@
 # On-device `compile()`
 
-Status: **step H in progress** (T1 codegen + assemble + W-3). Next is step I
-(`compile()` shim). Design:
+Status: **step H landed** (T1 codegen + assemble + W-3). Next is step I
+(`compile()` shim; `img_compile_eval_expr` → 3). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` will be a resident PyCore builtin. This file records the
