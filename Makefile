@@ -94,7 +94,7 @@ EXCORE_RTL_SRCS := \
 
 .PHONY: help lint-file pycore-preprocess run-file pycore-run-file all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-type-pairs \
-	pycore-python-tests pycore-mem pycore-cache-lru pycore-cache pycore-ram \
+	pycore-python-tests pycore-size-report pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib \
 	pycore-regfile \
 	pycore-codc \
@@ -366,7 +366,7 @@ pycore-sim-img-twocore: $(PYCORE_SIM_TWOCORE_BIN)
 # gates: a cache that changes a retired result, or a master that assumed
 # 1-cycle memory, fails them.
 all-tests:
-	$(MAKE) pycore-python-tests pycore-rtl-unit excore-asm-tests
+	$(MAKE) pycore-python-tests pycore-size-report pycore-rtl-unit excore-asm-tests
 	$(MAKE) pycore-sim-img pycore-sim-img-twocore excore-cpu-test
 	$(MAKE) -j$(TEST_JOBS) pycore-container pycore-img \
 		pycore-excore-system pycore-img-two-core
@@ -646,6 +646,10 @@ pycore-img-allocator-bytes:
 
 pycore-python-tests:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
+
+# compiler_design.md W-8 / A8: ROM, code-RAM package, and heap vs ceilings.
+pycore-size-report:
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) pycore/tools/size_report.py
 
 # ---- CPython image-boot differential tests ---------------------------------
 # Positive tests use run_image_test.py so EXPECTED_TAG / EXPECTED_VALUE are
