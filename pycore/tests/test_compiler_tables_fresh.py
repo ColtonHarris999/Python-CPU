@@ -48,6 +48,12 @@ class TestCompilerTablesFresh(unittest.TestCase):
         self.assertEqual(ns["TOK_NEWLINE"], 4)
         self.assertIn("...", ns["OP3"])
         self.assertIn("==", ns["OP2"])
+        self.assertEqual(ns["ND"]["BinOp"], ns["ND_BINOP"])
+        self.assertEqual(ns["BINOPS"]["+"], ns["ND_ADD"])
+        self.assertEqual(ns["CMPOPS"]["<="], ns["ND_LTE"])
+        self.assertEqual(ns["PREC"]["**"], 12)
+        self.assertEqual(ns["RIGHTASSOC"]["**"], 1)
+        self.assertIn("Not", ns["ND"])
 
 
 if __name__ == "__main__":
