@@ -5,6 +5,8 @@ How bytecode gets into memory and becomes executable. Companion to
 
 Status: **code ROM + code RAM + fetch mux + runtime writers shipped.**
 `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new` write
+code RAM; `_bi_code_kind` returns the raw 4-bit tag as `INT` for ROM
+`exec`/`eval` string dispatch.
 code RAM and fabricate `CODE_OBJECT` handles (`compiler_design.md` step C).
 The module image format and loader are not implemented yet; §4 records the
 intended design so the region layout is not re-litigated when it lands.
@@ -68,6 +70,7 @@ The banks, fetch path, and on-core writers are in:
 | --- | --- | --- |
 | Image preload (`CODE_RAM_HEX`) | **shipped** | `$readmemh` at elaboration; test-only |
 | `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new` | **shipped** | bump-reserve, multi-word blit, one-slot patch, fabricate `CODE_OBJECT` |
+| `_bi_code_kind` | **shipped** | 1-arg; returns the raw 4-bit tag as `INT` (ROM `exec`/`eval` string dispatch) |
 | `_bi_load_module` | later | copies a module image's text section into RAM |
 
 The code-RAM bump cursor `code_ram_ptr_r` starts at `CODE_RAM_INIT_SLOT`

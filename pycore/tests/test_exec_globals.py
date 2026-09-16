@@ -62,6 +62,8 @@ class TestExecGlobalsIds(unittest.TestCase):
         self.assertEqual(fn.__defaults__, (None,))
         image_from_source.validate_code_tree(fn.__code__)
         self.assertIn("_bi_exec_globals", fn.__code__.co_names)
+        self.assertIn("_bi_code_kind", fn.__code__.co_names)
+        self.assertIn("compile", fn.__code__.co_names)
 
     def test_firmware_eval_signature(self):
         path = image_from_source.FIRMWARE_BUILTINS_DIR / "eval.py"
@@ -72,6 +74,8 @@ class TestExecGlobalsIds(unittest.TestCase):
         self.assertEqual(fn.__defaults__, (None,))
         image_from_source.validate_code_tree(fn.__code__)
         self.assertIn("_bi_exec_globals", fn.__code__.co_names)
+        self.assertIn("_bi_code_kind", fn.__code__.co_names)
+        self.assertIn("compile", fn.__code__.co_names)
 
 
 if __name__ == "__main__":

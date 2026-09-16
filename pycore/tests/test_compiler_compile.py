@@ -108,6 +108,30 @@ class TestCompilerCompileShim(unittest.TestCase):
             1,
         )
 
+    def test_img_eval_str_direct_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_eval_str_direct.py", "managed_entry"),
+            3,
+        )
+
+    def test_img_eval_str_long_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_eval_str_long.py", "managed_entry"),
+            15,
+        )
+
+    def test_img_exec_str_direct_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_exec_str_direct.py", "managed_entry"),
+            3,
+        )
+
+    def test_img_code_kind_tags_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_code_kind_tags.py", "managed_entry"),
+            178,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

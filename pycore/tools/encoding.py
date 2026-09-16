@@ -316,6 +316,7 @@ BI_CODE_ALLOC = 17
 BI_CODE_BLIT = 18
 BI_CODE_PATCH = 19
 BI_CODE_NEW = 20
+BI_CODE_KIND = 21
 
 # Code address space (mirror pycore_defs.svh PYCORE_CODE_RAM_*).
 # The ROM holds IMEM_BLOCK_COUNT * 4096 / 8 slots; code RAM starts right after.

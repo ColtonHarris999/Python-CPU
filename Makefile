@@ -1186,12 +1186,17 @@ pycore-img-code-write-floor-trap:
 pycore-img-code-new-badfield-trap:
 	$(call PYCORE_IMAGE_TRAP_RUN,code_new_badfield_trap,1,50000)
 
+# compiler_design.md §11.1: raw 4-bit tag as INT (INT/SHORT_STR/LONG_STR).
+pycore-img-code-kind-tags:
+	$(call PYCORE_IMAGE_RUN,code_kind_tags,50000)
+
 pycore-img-code-write-all: \
 	pycore-img-code-new-call \
 	pycore-img-code-emit-then-call \
 	pycore-img-code-alloc-oom-trap \
 	pycore-img-code-write-floor-trap \
-	pycore-img-code-new-badfield-trap
+	pycore-img-code-new-badfield-trap \
+	pycore-img-code-kind-tags
 
 # compiler_design.md step D: seed a two-function package into _PYC_G and
 # call one from the other via _bi_exec_globals.
@@ -1278,6 +1283,26 @@ pycore-img-compile-reject-locals:
 pycore-img-compile-reject-locals-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_locals,80000000)
 
+# compiler_design.md §11.1: string-form exec/eval via _bi_code_kind.
+# Cycle caps cover CACHE_EN=0 / LAT=30 like the other compile() images.
+pycore-img-eval-str-direct:
+	$(call PYCORE_IMAGE_RUN,eval_str_direct,8000000)
+
+pycore-img-eval-str-direct-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,eval_str_direct,8000000)
+
+pycore-img-eval-str-long:
+	$(call PYCORE_IMAGE_RUN,eval_str_long,8000000)
+
+pycore-img-eval-str-long-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,eval_str_long,8000000)
+
+pycore-img-exec-str-direct:
+	$(call PYCORE_IMAGE_RUN,exec_str_direct,8000000)
+
+pycore-img-exec-str-direct-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,exec_str_direct,8000000)
+
 pycore-img-package-all: \
 	pycore-img-pyc-package-call \
 	pycore-img-lexer-count \
@@ -1290,10 +1315,16 @@ pycore-img-package-all: \
 	pycore-img-compile-mode-trap \
 	pycore-img-compile-reject-import \
 	pycore-img-compile-exec-roundtrip \
-	pycore-img-compile-reject-locals
+	pycore-img-compile-reject-locals \
+	pycore-img-eval-str-direct \
+	pycore-img-eval-str-long \
+	pycore-img-exec-str-direct
 
 pycore-img-code-new-call-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,code_new_call,100000)
+
+pycore-img-code-kind-tags-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,code_kind_tags,50000)
 
 # Plan 1 P1: the same program from ROM and from code RAM must agree.
 pycore-img-code-ram-all: \
@@ -1836,6 +1867,7 @@ pycore-img-two-core: \
 	pycore-img-locals-40-uninit-two-core \
 	pycore-img-locals-64-two-core \
 	pycore-img-code-new-call-two-core \
+	pycore-img-code-kind-tags-two-core \
 	pycore-img-pyc-package-call-two-core \
 	pycore-img-lexer-count-two-core \
 	pycore-img-parser-tiny-expr-two-core \
@@ -1848,6 +1880,9 @@ pycore-img-two-core: \
 	pycore-img-compile-reject-import-two-core \
 	pycore-img-compile-exec-roundtrip-two-core \
 	pycore-img-compile-reject-locals-two-core \
+	pycore-img-eval-str-direct-two-core \
+	pycore-img-eval-str-long-two-core \
+	pycore-img-exec-str-direct-two-core \
 	pycore-img-helper-containers-two-core \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \

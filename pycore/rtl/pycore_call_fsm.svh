@@ -583,6 +583,7 @@
 //   sub54-57: heap/code mark and release
 //   sub58-59: EXEC_GLOBALS - type-check args, join phase 3 as a 0-arg call
 //   sub60-63: CODE_ALLOC / BLIT / PATCH / NEW (compiler_design.md R-5)
+//   sub64: CODE_KIND (compiler_design.md §11.1) — 7-bit call_sub_r
 //   else: marshal PY_TRAP_BUILTIN_CALL
                         // --------------------------------------------------
                         4'd13: begin
@@ -767,6 +768,16 @@
                                                     {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 6'd63;
                                                 code_op_phase_r <= 5'd0;
+                                            end
+                                        end else if (call_entry_slot_r[31:0] ==
+                                                     PY_BI_CODE_KIND) begin
+                                            // 1-arg: return the raw 4-bit tag.
+                                            if (cur_arg_r[15:0] != 16'd1) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd1);
+                                                call_sub_r <= 7'd64;
                                             end
                                         end else if (EXCORE_EN &&
                                             pycore_trap_recoverable(PY_TRAP_BUILTIN_CALL)) begin
@@ -2210,6 +2221,19 @@
                                         end
                                         default: call_filter_trap_r <= 1'b1;
                                     endcase
+                                end
+                                // 64: _bi_code_kind(x) -> INT (raw 4-bit tag)
+                                7'd64: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {1'b0, tos_r} - 9'd3);
+                                    container_wb_data_r <= pycore_make_entry(
+                                        PY_TAG_INT,
+                                        {{124{1'b0}}, cont_rf_rs1_tag});
+                                    tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
+                                    fetch_skip_r <= 1'b1;
+                                    call_phase_r <= CALL_PHASE_DONE;
+                                    call_sub_r   <= 6'd0;
                                 end
                                 default: call_filter_trap_r <= 1'b1;
                             endcase

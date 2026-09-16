@@ -318,7 +318,8 @@ module pycore_core #(
     logic [15:0]                   call_defaults_len_r;
     logic [15:0]                   call_min_argc_r;
     // Defaults-fill / TYPE-setup sub-phase (used under call_phase 8–14).
-    logic [5:0]                    call_sub_r;
+    // 7 bits: phase-13 CODE_KIND is sub 64 (6'd64 wraps).
+    logic [6:0]                    call_sub_r;
     // Self entry while unwrapping BOUND_METHOD / installing TYPE instance.
     logic [3:0]                    call_self_tag_r;
     logic [127:0]                  call_self_val_r;

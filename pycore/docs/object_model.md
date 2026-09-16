@@ -84,13 +84,14 @@ Unicode ceiling: [`string_accel.md`](string_accel.md).
 | 18 | `CODE_BLIT` | `_bi_code_blit(base, words)` writes a `MUT_LIST` of INTs into code RAM; returns the count |
 | 19 | `CODE_PATCH` | `_bi_code_patch(slot, word)` overwrites one slot; returns `None` |
 | 20 | `CODE_NEW` | `_bi_code_new(fields)` fabricates a `CODE_OBJECT` from a 9-field `MUT_LIST` |
+| 21 | `CODE_KIND` | `_bi_code_kind(x)` returns the raw 4-bit tag as `INT`. Wrong argc → `CALL_FILTER` |
 
 Image boot writes a third boot-record pair at `BOOT_RECORD_ADDR+64`: the
 module **builtins** dict (`MUT_DICT`). The seeded builtins dict holds
 `bytearray` / `max` / `len` / `_bi_print` / `range` / `set` / `ord` / `chr` /
 `_bi_heap_mark` / `_bi_heap_release` / `_bi_code_mark` / `_bi_code_release` /
 `_bi_exec_globals` / `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` /
-`_bi_code_new` as
+`_bi_code_new` / `_bi_code_kind` as
 `OBK_BUILTIN`
 handles, `int` as an `OBK_TYPE` whose `tp_dict` contains `from_bytes` /
 `to_bytes` and whose `ob_flags` bit 1 (`OB_FLAG_INT_TYPE`) makes `CALL`

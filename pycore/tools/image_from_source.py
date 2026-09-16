@@ -25,6 +25,7 @@ from encoding import (
     BI_CHR,
     BI_CODE_ALLOC,
     BI_CODE_BLIT,
+    BI_CODE_KIND,
     BI_CODE_MARK,
     BI_CODE_NEW,
     BI_CODE_PATCH,
@@ -47,7 +48,21 @@ from encoding import (
     OB_FLAG_EXC_TYPE,
     OB_FLAG_INT_TYPE,
     OB_FLAG_STR_TYPE,
+    SHORT_STR_MAX_BYTES,
+    TAG_BOOL,
+    TAG_BYTES,
+    TAG_CODE_OBJECT,
+    TAG_COMPLEX,
+    TAG_CONTROL,
+    TAG_FLOAT,
+    TAG_FROZENSET,
     TAG_INT,
+    TAG_LONG_STR,
+    TAG_MUT_COLLEC,
+    TAG_OBJECT,
+    TAG_RANGE,
+    TAG_SHORT_STR,
+    TAG_TUPLE,
     VAL_MASK,
     dict_slot_count_for_stores,
     format_imem_slot,
@@ -1927,6 +1942,37 @@ class _HostCodeRam:
         )
 
 
+def _host_code_kind(obj: object) -> int:
+    """Return the PyCore 4-bit tag of *obj* as an INT (device ``_bi_code_kind``)."""
+    if isinstance(obj, str):
+        if len(obj.encode("utf-8")) <= SHORT_STR_MAX_BYTES:
+            return TAG_SHORT_STR
+        return TAG_LONG_STR
+    if isinstance(obj, bool):
+        return TAG_BOOL
+    if isinstance(obj, int):
+        return TAG_INT
+    if isinstance(obj, float):
+        return TAG_FLOAT
+    if isinstance(obj, complex):
+        return TAG_COMPLEX
+    if isinstance(obj, tuple):
+        return TAG_TUPLE
+    if isinstance(obj, (bytes, bytearray)):
+        return TAG_BYTES
+    if isinstance(obj, frozenset):
+        return TAG_FROZENSET
+    if isinstance(obj, range):
+        return TAG_RANGE
+    if isinstance(obj, (list, dict, set)):
+        return TAG_MUT_COLLEC
+    if isinstance(obj, (types.CodeType, _HostEmittedCode)):
+        return TAG_CODE_OBJECT
+    if obj is None:
+        return TAG_CONTROL
+    return TAG_OBJECT
+
+
 def load_rom_firmware_callables() -> dict[str, object]:
     """Load ROM firmware bodies as host callables for golden / unit tests.
 
@@ -1940,11 +1986,13 @@ def load_rom_firmware_callables() -> dict[str, object]:
     their device semantics are not reproducible by running the same source.
     Native code-RAM writers (``_bi_code_alloc`` / blit / patch / new) are
     injected the same way as ``_bi_print`` — they are not ROM bodies.
+    ``_bi_code_kind`` is the tag probe ROM ``exec`` / ``eval`` LOAD_GLOBAL.
     ``_bi_exec_globals``, ``_PYC_G``, and ``_PYC_ENTRY`` mirror the step-D
     package seed in the boot builtins dict. ROM ``compile`` LOAD_GLOBALs
     those names (user globals miss, then boot builtins); the host has no
     such fallback, so ``compile.__globals__`` is patched after the package
-    namespace exists.
+    namespace exists. ROM ``exec`` / ``eval`` similarly LOAD_GLOBAL
+    ``compile`` and ``_bi_code_kind``.
     """
     ram = _HostCodeRam()
     out: dict[str, object] = {
@@ -1953,6 +2001,7 @@ def load_rom_firmware_callables() -> dict[str, object]:
         "_bi_code_blit": ram.blit,
         "_bi_code_patch": ram.patch,
         "_bi_code_new": ram.new,
+        "_bi_code_kind": _host_code_kind,
         "_bi_exec_globals": _host_exec_globals,
     }
     for dict_key, stem, func_name in ROM_FIRMWARE_BUILTINS:
@@ -1963,6 +2012,7 @@ def load_rom_firmware_callables() -> dict[str, object]:
             "__name__": f"pycore_firmware.builtins.{stem}",
             "_bi_print": _host_bi_print,
             "_bi_exec_globals": _host_exec_globals,
+            "_bi_code_kind": _host_code_kind,
             "len": len,
             "range": range,
         }
@@ -1982,6 +2032,12 @@ def load_rom_firmware_callables() -> dict[str, object]:
     if isinstance(compile_fn, types.FunctionType):
         compile_fn.__globals__["_PYC_G"] = pkg
         compile_fn.__globals__["_bi_exec_globals"] = _host_exec_globals
+    for name in ("exec", "eval"):
+        fn = out.get(name)
+        if isinstance(fn, types.FunctionType):
+            fn.__globals__["_bi_code_kind"] = _host_code_kind
+            if isinstance(compile_fn, types.FunctionType):
+                fn.__globals__["compile"] = compile_fn
     return out
 
 
@@ -2336,6 +2392,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
       _bi_exec_globals → OBK_BUILTIN (Plan 1 P4)
       _bi_code_alloc / _bi_code_blit / _bi_code_patch / _bi_code_new
         → OBK_BUILTIN (compiler_design.md R-5)
+      _bi_code_kind → OBK_BUILTIN (compiler_design.md §11.1)
       int → OBK_TYPE (OB_FLAG_INT_TYPE) whose tp_dict holds from_bytes / to_bytes;
         CALL converts INT/BOOL/FLOAT (trunc toward 0)/decimal SHORT_STR
         instead of INSTANCE construction
@@ -2427,6 +2484,10 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (
             tag_constant("_bi_code_new", string_heap),
             heap.alloc_builtin(BI_CODE_NEW),
+        ),
+        (
+            tag_constant("_bi_code_kind", string_heap),
+            heap.alloc_builtin(BI_CODE_KIND),
         ),
         (tag_constant("int", string_heap), int_type),
         (tag_constant("str", string_heap), str_type),

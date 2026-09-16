@@ -639,6 +639,9 @@ localparam logic [31:0] PY_BI_CODE_ALLOC   = 32'd17;
 localparam logic [31:0] PY_BI_CODE_BLIT    = 32'd18;
 localparam logic [31:0] PY_BI_CODE_PATCH   = 32'd19;
 localparam logic [31:0] PY_BI_CODE_NEW     = 32'd20;
+// Raw 4-bit tag as INT (compiler_design.md §11.1).  Lets ROM exec/eval
+// dispatch SHORT_STR / LONG_STR onto compile() without __class__.
+localparam logic [31:0] PY_BI_CODE_KIND    = 32'd21;
 
 localparam logic [4:0] PY_ALU_ADD       = 5'd0;
 localparam logic [4:0] PY_ALU_SUB       = 5'd1;

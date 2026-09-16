@@ -48,6 +48,6 @@ the step-D toy that returns 42). It stores `_in_src` / `_in_file` /
 | `img_compile_reject_locals` | **1** (`SyntaxError` on 241 locals) |
 
 `img_compile_repeat` and `img_compile_release_realloc` are later steps.
-String-form `eval("1+2")` still needs `_bi_code_kind` (§11).
-`make pycore-size-report` is the W-8 occupancy gate (A8). Re-entrancy
-(`_busy`, D9) is deferred: `_PYC_G` is 127 of 128 static keys.
+String-form `eval("1+2")` / `exec("x = 1")` dispatch via `_bi_code_kind`
+(§11.1). `make pycore-size-report` is the W-8 occupancy gate (A8).
+Re-entrancy (`_busy`, D9) is deferred: `_PYC_G` is 127 of 128 static keys.

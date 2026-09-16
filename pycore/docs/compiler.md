@@ -1,6 +1,7 @@
 # On-device `compile()`
 
-Status: **Landed** (step K: W-8 size report, §6.6 doc sweep, D1–D9). Design:
+Status: **Landed** through step K; §11.1 string-form `exec`/`eval` via
+`_bi_code_kind`. Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` is a resident PyCore builtin. This file records the
@@ -127,6 +128,17 @@ Host: `pycore/tests/test_compiler_compile.py`. Device: `img_compile_eval_expr`
 `img_compile_reject_locals` (A4 window cap → 1). Host `eval`/`exec` stand-ins
 call firmware-emitted code objects (`_HostEmittedCode`) with a **shared**
 globals dict; SEED_CODE images still use `types.CodeType`.
+
+## String-form exec / eval (§11.1)
+
+`_bi_code_kind(x)` (`PY_BI_CODE_KIND = 21`) returns the raw 4-bit tag as
+`INT`. ROM `exec` / `eval` compile SHORT_STR (7) and LONG_STR (8) via
+`compile(source, "<string>", mode)`, then call the code object as before.
+`call_sub_r` is 7 bits so sub 64 does not wrap. Wrong argc is `CALL_FILTER`.
+Non-string / non-code still traps on `code()` (`img_exec_bad_arg_trap` → 6).
+
+Device: `img_code_kind_tags` (178), `img_eval_str_direct` (3),
+`img_eval_str_long` (15), `img_exec_str_direct` (3).
 
 ## Subset (firmware compiler source)
 

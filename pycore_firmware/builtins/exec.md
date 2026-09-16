@@ -1,13 +1,15 @@
 # `exec` — implementation plan
 
-Status: **in ROM** for code objects; string form **blocked** on `compile()`.
+Status: **in ROM** for code objects and string form (`_bi_code_kind` +
+ROM `compile()`, compiler_design.md §11.1).
 
-**Plan:** [`planning/compile_plan.md`](../../planning/compile_plan.md)
-(string form) and [`planning/builtin_support.md`](../../planning/builtin_support.md).
+**Plan:** [`planning/compiler_design.md`](../../planning/compiler_design.md)
+§11.1 and [`planning/builtin_support.md`](../../planning/builtin_support.md).
 
 `exec(code_object)` needs **no further hardware**: `CALL` on a
 `CODE_OBJECT` already works, and `STORE_NAME` / `LOAD_NAME` already
-target the module globals dict.
+target the module globals dict. String form probes the argument tag
+and compiles SHORT_STR / LONG_STR source.
 
 ## Goal
 
@@ -18,12 +20,16 @@ for side effects (returns `None`). `locals=` is deferred.
 
 `exec(code)` calls the object and returns `None`. `exec(code, globals)`
 switches `globals_base_r` via `_bi_exec_globals` and restores on return.
+`exec("x = 1")` is `exec(compile(source, "<string>", "exec"))` after a
+`_bi_code_kind` probe (tag 7 or 8). Non-string / non-code still
+CALL_FILTER-traps on `code()` (`img_exec_bad_arg_trap` → trap 6).
 
 Host CPython code objects are not callable; `run_image_test.py` injects a
 stand-in. The device runs `exec.py`.
 
-## Remaining
+## Coverage
 
-String form is `exec(compile(source, filename, "exec"))` after T2/T3
-(step J). Auto str-vs-code dispatch still needs `_bi_code_kind`.
-v1 can stay the explicit `compile` wrap.
+| Image | Expect |
+| --- | --- |
+| `img_exec_str_direct` | **3** (`exec("x = 1 + 2")`) |
+| `img_exec_bad_arg_trap` | **6** (`CALL_FILTER` on `exec(5)`) |

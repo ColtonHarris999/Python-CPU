@@ -68,9 +68,9 @@ The work is done when all of these are true.
 | A7 | Host differential: for every corpus program, the firmware compiler's **result** equals CPython's | `test_compiler_differential.py` |
 | A8 | Image build fails, loudly, if the compiler overflows code RAM / heap | `make pycore-size-report` |
 
-Explicitly **not** in scope: BIOS, module loader / relocation, string-form
-`exec`/`eval` dispatch, self-hosting, garbage collection, `import`, closures,
-generators, runtime `class`. §11 says where each of those goes afterwards.
+Explicitly **not** in scope: BIOS, module loader / relocation, self-hosting,
+garbage collection, `import`, closures, generators, runtime `class`. §11
+says where each of those goes afterwards. String-form `exec`/`eval` is §11.1.
 
 ---
 
@@ -929,6 +929,7 @@ bits [63:40] must be zero
 | 18 | `_bi_code_blit(base, words)` → `INT` | 2 | walk the `MUT_LIST`: read `length`, `ob_item`, then per element read val/tag at `ob_item + i*32` / `+16`, require `INT`, write the low 40 bits to code slot `base + i`. Return the count. Do **not** mask a malformed word — trap it. | non-`INT` base or non-`LIST` words → `TYPE`; any element not `INT` → `TYPE`; `word[63:40] != 0` → `TYPE`; range violation (R-4) → `MEM_FAULT` |
 | 19 | `_bi_code_patch(slot, word)` → `None` | 2 | single-slot overwrite; same checks as blit | as above |
 | 20 | `_bi_code_new(fields)` → `CODE_OBJECT` | 1 | `fields` is a `MUT_LIST` of exactly 9 tagged entries (table below). Allocate `CODE_OBJECT_BYTES = 256` from `heap_ptr_r`, write the 8 fields at the tuple-element stride, fold `fields[8]` flags into the metadata word, return a `PY_TAG_CODE_OBJECT` handle. | length ≠ 9, or any field tag wrong → `TYPE`; `entry_slot` outside `[code_ram_floor_r, code_ram_ptr_r)` → `MEM_FAULT`; heap OOM → `MEM_FAULT` |
+| 21 | `_bi_code_kind(x)` → `INT` | 1 | Return the argument's raw 4-bit tag as an `INT`. ROM `exec`/`eval` compile when the tag is SHORT_STR (7) or LONG_STR (8). `call_sub_r` is 7 bits (sub 64). | argc ≠ 1 → `CALL_FILTER` |
 
 `_bi_code_new` field contract — matches `encoding.py:262-271` and
 `architecture.md` "Image boot and code objects":
@@ -989,7 +990,7 @@ this work must close, not as new scope.
 | --- | --- |
 | `pycore/docs/compiler.md` | **new** — pipeline, SoA IR, frame-depth invariant, tiers, D1–D9 |
 | `pycore/docs/code_loading.md` | §2 writers now shipped; §1 corrected (`pycore_code_mem.sv` is not the live path); §5 gains the compile lifetime pattern |
-| `pycore/docs/object_model.md` | new `BI_*` ids 17–20 |
+| `pycore/docs/object_model.md` | new `BI_*` ids 17–21 |
 | `pycore/docs/memory_hierarchy.md` | invalidation matrix rows from §6.4; RF spill traffic is an ordinary dmem master (S-8) |
 | `pycore/docs/architecture.md` | "Register file and frames" — ring window, spill/fill, new depth and window limits; retire the `RF[0..31]` / `RF[32..95]` split |
 | `pycore/rtl/attic/README.md` | note that `pycore_frame_buffer.sv` was superseded by §6.1 and why |
@@ -1018,7 +1019,7 @@ this work must close, not as new scope.
 | Trap → Python exception (exceptions T6) | Syntax errors are already real `raise`s |
 | `open` / stdin / console RX | Source is already a heap string |
 | Garbage collection | §5.7 policy + caller-driven marks |
-| `_bi_code_kind` / string-form `exec`/`eval` | v1 is `eval(compile(...))`; §11 |
+| `_bi_code_kind` / string-form `exec`/`eval` | **Landed** §11.1 (`img_eval_str_direct`) |
 
 ---
 
@@ -1089,6 +1090,7 @@ parallel with B and C.
 | **I** | Wire `compile.py` shim; ship it. **Landed** | **`img_compile_eval_expr` → 3** (A1) |
 | **J** | T2 then T3. **Landed** | **`img_compile_exec_roundtrip` → 7** (A2) + host corpus |
 | **K** | W-8 size report, doc sweep (§6.6), deviation table. **Landed** | `make all-tests` green; report within budget |
+| **L** | §11.1 string-form `exec`/`eval` + `_bi_code_kind` (BI 21, `call_sub_r` 7-bit). **Landed** | `img_eval_str_direct` → 3, `img_eval_str_long` → 15, `img_exec_str_direct` → 3, `img_code_kind_tags` → 178; `img_exec_bad_arg_trap` still 6 |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1128,6 +1130,10 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_compile_reject_import` | `SyntaxError` (A4) |
 | `img_compile_reject_locals` | `SyntaxError` on a function whose window exceeds the §6.1 S-6 cap (D6) |
 | `img_compile_mode_trap` | `ValueError` for `"single"` / `flags != 0` (A5) |
+| `img_code_kind_tags` | **178** — `_bi_code_kind` INT/SHORT_STR/LONG_STR packed (§11.1) |
+| `img_eval_str_direct` | **3** — `eval("1 + 2")` |
+| `img_eval_str_long` | **15** — `eval` of a 17-byte LONG_STR source |
+| `img_exec_str_direct` | **3** — `exec("x = 1 + 2")` |
 | `img_compile_repeat` | heap watermark golden (R4) |
 | `img_compile_release_realloc` | second compile after release is correct (R7) |
 
@@ -1137,8 +1143,9 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 
 In dependency order, not priority order.
 
-1. **String-form `exec` / `eval`.** Needs `_bi_code_kind` (or `__class__` on
-   native tags) to dispatch str vs `CODE_OBJECT`. Thin wrapper over `compile`.
+1. **String-form `exec` / `eval`.** **Landed.** `_bi_code_kind` (BI 21)
+   returns the raw 4-bit tag; ROM `exec`/`eval` compile SHORT_STR / LONG_STR
+   via `compile(source, "<string>", mode)`.
 2. **T4 grammar** — `try`/`except`/`finally`, `raise`, comprehensions. The
    runtime already supports all of it; this is codegen work only.
 3. **Constant folding** (`ast_preprocess.py` port) — smaller output, closer to

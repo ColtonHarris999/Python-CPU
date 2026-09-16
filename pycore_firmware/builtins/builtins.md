@@ -63,8 +63,8 @@ These limit every firmware builtin:
 | `dir` | Return a list of valid attribute names for an object or the local scope. | in progress | Instance `__dict__` keys only; no-arg / MRO names blocked. |
 | `divmod` | Return the pair (quotient, remainder) of integer division. | in ROM | `(a // b, a % b)`. |
 | `enumerate` | Return an enumerate object yielding (index, item) pairs. | in ROM | Returns a **list** of pairs (no YIELD). LIST grow needs excore. |
-| `eval` | Evaluate a Python expression from a string or code object. | in ROM | Code-object form (`"eval"` mode returns the expression value). String form is `eval(compile(...))`; no auto str dispatch. |
-| `exec` | Execute Python statements from a string or code object. | in ROM | Code-object form: `code()` then `None`. Module-mode `STORE_NAME`/`LOAD_NAME` hit the boot globals dict, so this is module-scope `exec`. String form is `exec(compile(...))`; no auto str dispatch. Non-code arg → `CALL_FILTER`. |
+| `eval` | Evaluate a Python expression from a string or code object. | in ROM | Code-object form (`"eval"` mode returns the expression value). String form probes `_bi_code_kind` and compiles SHORT_STR / LONG_STR (`img_eval_str_direct`). |
+| `exec` | Execute Python statements from a string or code object. | in ROM | Code-object form: `code()` then `None`. Module-mode `STORE_NAME`/`LOAD_NAME` hit the boot globals dict, so this is module-scope `exec`. String form probes `_bi_code_kind` and compiles (`img_exec_str_direct`). Non-code arg → `CALL_FILTER`. |
 | `filter` | Construct an iterator of items for which a function returns true. | in ROM | Returns a **list**; `function is None` uses TO_BOOL. LIST grow → excore. |
 | `float` | Convert a string or number to floating point. | in progress | `x * 1.0` for numerics; `_parse_float_string` helper; no auto str dispatch. |
 | `format` | Convert a value to a formatted representation ("format_spec"). | in progress | Empty spec → INT/BOOL/None stringify; non-empty specs blocked (`FORMAT_WITH_SPEC`). |
@@ -213,7 +213,7 @@ Audit of **blocked** / partially-blocked names against
 | `LOAD_SUPER_ATTR` + descriptors | `super`, `property`, `classmethod` (see `super.md`, `property.md`) |
 | `COMPARE_OP` string ordering | `sorted` / `min` / `max` on str |
 | `FORMAT_*` / `BUILD_STRING` | Richer `format` / `str` / `print` |
-| Host `compile` / eval of source | string-form `eval` / `exec` auto-dispatch (`_bi_code_kind`, §11); `compile()` itself is in ROM |
+| Host `compile` / eval of source | **Done** — string-form `eval` / `exec` via `_bi_code_kind` (§11.1); `compile()` itself is in ROM |
 | I/O device | `open`, `input`, `print` (native `BI_PRINT` trap path; see `open.md`) |
 | Async opcodes | `aiter`, `anext` |
 | Buffer / frozenset / slice kinds | `memoryview`, `bytes`/`bytearray` payload, `frozenset`, `slice` |
