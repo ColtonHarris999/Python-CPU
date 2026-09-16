@@ -1097,6 +1097,7 @@ parallel with B and C.
 | **R4/R7** | `img_compile_repeat` + `img_compile_release_realloc`. **Landed** | watermark ≤ 400000 → 1; second compile after release → 37 |
 | **T4** | §11.2 try/except/else/finally, raise, comprehensions, string slices; CODE_RAM 65536. **Landed** | `img_compile_try_except` → 7; `img_compile_try_else` → 3; `img_compile_try_finally` → 12; `img_compile_raise` → 7; `img_compile_str_slice` → 1; `img_compile_list_comp` (two-core) → 15 |
 | **Fold** | §11.3 constant folding of int ALU / str Add. **Landed** | Host: `1+2` is one `LOAD_SMALL_INT`; `1+x` still `BINARY_OP` |
+| **Closures** | §11.4 blocked on OBJ_CLOSURE RTL. **Pinned** | `img_compile_reject_closure` → 1 |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1148,6 +1149,7 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_compile_raise` | **7** — T4 `raise TypeError` / `except as e` |
 | `img_compile_str_slice` | **1** — T4 `'abcdef'[1:4] == "bcd"` |
 | `img_compile_list_comp` | **15** — T4 `[x for x in [1,2,3,4,5]]` (two-core; `LIST_APPEND` grow) |
+| `img_compile_reject_closure` | **1** — nested enclosing load is `SyntaxError` (§11.4) |
 
 ---
 
@@ -1168,8 +1170,12 @@ In dependency order, not priority order.
    plus str `+`, rewrite to `Constant` before emit (`ast_preprocess` subset
    inlined in `_pyc_codegen_main`; no new `_PYC_G` key). `/ // % ** << >>`
    stay unfolded.
-4. **Closures** (`MAKE_CELL` / `LOAD_DEREF` / cells) — the first genuine
-   runtime gap, and the one that unblocks the most idiomatic Python.
+4. **Closures.** **Blocked on RTL.** `pycore.json` `OBJ_CLOSURE` needs heap
+   cell boxes (`MAKE_CELL`, `LOAD_DEREF`, `STORE_DEREF`, `COPY_FREE_VARS`,
+   `LOAD_CLOSURE`). `MAKE_FUNCTION` is still function ≡ code object (no
+   `__closure__` tuple). `PY_OBK_*` has no CELL kind. Until that lands,
+   D6 keeps nested loads of enclosing locals a `SyntaxError`
+   (`img_compile_reject_closure` → 1; `img_symtab_closure` → 1).
 5. **Split result/scratch heap arenas** (O-2) — only if §5.7's leak bites.
 6. **Module loader + relocation** (`code_loading.md` §4) — only when the
    compiler no longer fits the boot image.

@@ -56,6 +56,7 @@ the step-D toy that returns 42). It stores `_in_src` / `_in_file` /
 | `img_compile_raise` | **7** (T4) |
 | `img_compile_str_slice` | **1** (T4) |
 | `img_compile_list_comp` | **15** (T4, two-core) |
+| `img_compile_reject_closure` | **1** (§11.4 nested enclosing load) |
 
 String-form `eval("1+2")` / `exec("x = 1")` dispatch via `_bi_code_kind`
 (§11.1). `make pycore-size-report` is the W-8 occupancy gate (A8).

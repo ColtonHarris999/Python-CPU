@@ -174,6 +174,14 @@ before the visit: int `+ - * & | ^`, unary `- ~`, str `+`. Nested
 `1 + 2 * 3` becomes one `LOAD_SMALL_INT 7`. Names stay unfolded (`1 + x`
 still `BINARY_OP`). `/ // % ** << >>` are left as BinOp.
 
+## Closures (§11.4)
+
+Blocked on RTL. `OBJ_CLOSURE` (`MAKE_CELL` / `LOAD_DEREF` / `STORE_DEREF` /
+`COPY_FREE_VARS` / `LOAD_CLOSURE`) needs heap cell boxes; `MAKE_FUNCTION`
+is still function ≡ code object. Nested load of an enclosing local stays
+`SyntaxError` (D6). Device: `img_symtab_closure` (1),
+`img_compile_reject_closure` (1).
+
 ## Subset (firmware compiler source)
 
 Enforced by `pycore/tests/test_compiler_subset.py` on every file under

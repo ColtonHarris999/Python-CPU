@@ -1270,6 +1270,12 @@ pycore-img-compile-reject-import:
 pycore-img-compile-reject-import-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_import,4000000)
 
+pycore-img-compile-reject-closure:
+	$(call PYCORE_IMAGE_RUN,compile_reject_closure,8000000)
+
+pycore-img-compile-reject-closure-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_closure,8000000)
+
 # compiler_design.md step J: T2/T3 A2 round-trip + A4 locals cap.
 pycore-img-compile-exec-roundtrip:
 	$(call PYCORE_IMAGE_RUN,compile_exec_roundtrip,40000000)
@@ -1363,6 +1369,7 @@ pycore-img-package-all: \
 	pycore-img-compile-eval-expr \
 	pycore-img-compile-mode-trap \
 	pycore-img-compile-reject-import \
+	pycore-img-compile-reject-closure \
 	pycore-img-compile-exec-roundtrip \
 	pycore-img-compile-reject-locals \
 	pycore-img-compile-repeat \
@@ -1934,6 +1941,7 @@ pycore-img-two-core: \
 	pycore-img-compile-eval-expr-two-core \
 	pycore-img-compile-mode-trap-two-core \
 	pycore-img-compile-reject-import-two-core \
+	pycore-img-compile-reject-closure-two-core \
 	pycore-img-compile-exec-roundtrip-two-core \
 	pycore-img-compile-reject-locals-two-core \
 	pycore-img-compile-repeat-two-core \

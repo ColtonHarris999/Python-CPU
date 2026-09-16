@@ -174,10 +174,12 @@ this milestone:
    both dicts traps `PY_TRAP_MEM_FAULT`. See
    `planning/old/implemented/builtins_bytecode_support_plan.md`.
 7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
-  the stack and `CALL` treats that handle as the function. Defaults are folded
-  at image-build time; return annotations are stripped; closures and generic
-  `__call__` objects remain out of scope. `OBK_BUILTIN` / `BI_*` ids use the CALL FSM fast path
-  (e.g. `BI_LEN` header reads) instead of a Python frame.
+  the stack and `CALL` treats that handle as the function (function ≡ code).
+  Defaults are folded at image-build time; return annotations are stripped.
+  Closures need `OBJ_CLOSURE` cell boxes (§11.4); until then the firmware
+  compiler raises `SyntaxError` (`img_compile_reject_closure`). Generic
+  `__call__` objects remain out of scope. `OBK_BUILTIN` / `BI_*` ids use the
+  CALL FSM fast path (e.g. `BI_LEN` header reads) instead of a Python frame.
 8. `LOAD_NAME` **module-scope behavior.** Hardware uses the same
   globals-then-builtins path as `LOAD_GLOBAL` (without the NULL push). That
   matches image-boot module programs and builtin resolution, but not
