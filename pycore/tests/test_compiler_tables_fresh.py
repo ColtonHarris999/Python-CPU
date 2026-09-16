@@ -43,6 +43,11 @@ class TestCompilerTablesFresh(unittest.TestCase):
         keywords = ns["KEYWORDS"]
         self.assertIn("def", keywords)
         self.assertEqual(keywords["def"], 1)
+        self.assertEqual(ns["TOK_NAME"], 1)
+        self.assertEqual(ns["TOK_OP"], 55)
+        self.assertEqual(ns["TOK_NEWLINE"], 4)
+        self.assertIn("...", ns["OP3"])
+        self.assertIn("==", ns["OP2"])
 
 
 if __name__ == "__main__":
