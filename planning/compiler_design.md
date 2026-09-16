@@ -1101,6 +1101,8 @@ parallel with B and C.
 | **T4** | §11.2 try/except/else/finally, raise, comprehensions, string slices; CODE_RAM 65536. **Landed** | `img_compile_try_except` → 7; `img_compile_try_else` → 3; `img_compile_try_finally` → 12; `img_compile_raise` → 7; `img_compile_str_slice` → 1; `img_compile_list_comp` (two-core) → 15 |
 | **Fold** | §11.3 constant folding of int ALU / str Add. **Landed** | Host: `1+2` is one `LOAD_SMALL_INT`; `1+x` still `BINARY_OP` |
 | **Closures** | §11.4 blocked on OBJ_CLOSURE RTL. **Pinned** | `img_compile_reject_closure` → 1 |
+| **O-2** | split result/scratch arenas. **Not opened** | R4 watermark golden still holds; caller mark/release is the reclaim path |
+| **Loader** | module image + relocation. **Not opened** | compiler fits (39545 / 65536); overlays only if headroom vanishes |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1184,8 +1186,11 @@ In dependency order, not priority order.
    mark/release (`img_compile_release_realloc` → 37) already reclaims.
    A downward result cursor is an allocator change; do not add it while
    the watermark golden holds.
-6. **Module loader + relocation** (`code_loading.md` §4) — only when the
-   compiler no longer fits the boot image.
+6. **Module loader + relocation.** **Not opened.** The compiler still fits
+   the boot image (39 545 of 65 536 code-RAM slots, 25 991 remain).
+   `code_loading.md` §4 stays the recorded format; do not restart the
+   loader for occupancy (lever 3 is overlays, only after shrinking
+   `codegen.py`).
 7. **BIOS** — a ROM program that initialises and `exec`s a payload.
 8. **Self-hosting** — compile `pycore_firmware/compiler/` on device; check
    stage-2 output is byte-identical to stage-1 for the same input. A fixpoint,

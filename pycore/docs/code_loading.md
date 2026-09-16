@@ -119,8 +119,9 @@ about the emitted slots.
 ## 4. Planned: module images and relocation
 
 Not implemented. Recorded here because §1's layout was chosen for it.
-This is **after** first `compile()` — see
-[`planning/architecture_plan.md`](../../planning/architecture_plan.md).
+§11.6 stays closed while the compiler package fits code RAM (39 545 of
+65 536 slots after §11.3). Open this only when occupancy forces overlays
+(`compiler_design.md` §7 lever 3), not for its own sake.
 
 A module is **not** just code: it is code slots plus a dmem object graph
 (`co_consts`, `co_names`, nested code objects, strings). Loading one means
