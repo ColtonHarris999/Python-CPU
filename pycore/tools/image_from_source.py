@@ -426,6 +426,10 @@ class _ImageSerializer:
         self.defaults_map: dict[int, tuple] = defaults_map or {}
         self.kwdefaults_map: dict[int, dict] = kwdefaults_map or {}
         self.type_refs: dict[str, Tagged] = type_refs if type_refs is not None else {}
+        # ``code_handles`` is keyed by ``id(co)``. Keep every serialized code
+        # object (and its function) alive so CPython cannot recycle those ids
+        # onto a later firmware/user code object.
+        self._keep_alive: list[object] = []
 
     def _append_code_units(self, units: list[str]) -> int:
         """Append transcoded slots to the active bank; return entry_slot."""
@@ -454,6 +458,7 @@ class _ImageSerializer:
         return CODE_RAM_SLOT_BASE + len(self.code_ram_slots)
 
     def serialize_code(self, co: types.CodeType) -> Tagged:
+        self._keep_alive.append(co)
         co_id = id(co)
         existing = self.code_handles.get(co_id)
         if existing is not None:
@@ -463,6 +468,7 @@ class _ImageSerializer:
         # Rewrite to BINARY_SLICE before consts are serialized (slice objects
         # cannot be tagged). Identity stays `co_id` so defaults_map keys hold.
         folded = fold_slice_constants_one(co)
+        self._keep_alive.append(folded)
 
         # A parent co_consts tuple can point at nested code-object handles only
         # after those code objects have been serialized into dmem.
@@ -1811,6 +1817,7 @@ def seed_firmware_package(
         )
     tables = {name: tables[name] for name in sorted(PACKAGE_TABLE_SEED_NAMES)}
     functions = load_firmware_package_functions(package_dir)
+    serializer._keep_alive.extend(functions.values())
     overlap = [name for name in functions if name in tables]
     if overlap:
         raise ValueError(
@@ -1854,6 +1861,7 @@ def seed_firmware_package(
                 )
             )
         entry = compile_package_entry()
+        serializer._keep_alive.append(entry)
         validate_code_tree(entry.__code__)
         entry_handle = serializer.serialize_code(entry.__code__)
     finally:
