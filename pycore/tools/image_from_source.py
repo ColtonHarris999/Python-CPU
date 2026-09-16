@@ -1371,6 +1371,24 @@ def _pyc_entry():
 """
 PACKAGE_SKIP_FILES = frozenset({"tables.py"})
 PACKAGE_TABLES_FILE = "tables.py"
+# Names STORE_GLOBAL / STORE_SUBSCR into ``_PYC_G`` at compile/lex time.
+# Pre-seed them so those writes are updates, not new-key inserts (DICT_GROW
+# is an excore trap on the single-core image binary).
+PACKAGE_RUNTIME_SEEDS: dict[str, object] = {
+    "_in_src": "",
+    "_in_file": "",
+    "_in_mode": "",
+    "_lex_src": "",
+    "_lex_n": 0,
+    "_lex_i": 0,
+    "_lex_line": 0,
+    "_lex_col": 0,
+    "_lex_line_start": 0,
+    "tk_n": 0,
+    "tk_a": None,
+    "tk_b": None,
+    "tk_s": None,
+}
 
 
 def _host_bi_print(x: object) -> None:
@@ -1601,9 +1619,11 @@ def seed_firmware_function(
 
 
 def _package_dict_slots(n: int) -> int:
-    """Power-of-two dict capacity with at least one empty slot."""
+    """Power-of-two dict capacity with load kept under the 2/3 grow threshold."""
     slots = dict_min_slots(max(n, 1))
     while n >= slots:
+        slots *= 2
+    while n * 3 >= slots * 2:
         slots *= 2
     return slots
 
@@ -1635,6 +1655,8 @@ def serialize_package_constant(serializer: _ImageSerializer, value: object) -> T
     heap = serializer.heap
     if isinstance(value, bool):
         raise ValueError("firmware package tables cannot seed bool constants")
+    if value is None:
+        return make_none()
     if isinstance(value, int):
         return tag_constant(value, heap)
     if isinstance(value, str):
@@ -1682,6 +1704,9 @@ def load_firmware_package_namespace(
             compile(path.read_text(encoding="utf-8"), str(path), "exec"),
             ns,
         )
+    for name, value in PACKAGE_RUNTIME_SEEDS.items():
+        if name not in ns:
+            ns[name] = value
     return ns
 
 
@@ -1766,6 +1791,13 @@ def seed_firmware_package(
             "firmware package function names collide with tables: "
             + ", ".join(sorted(overlap))
         )
+    occupied = set(tables) | set(functions)
+    runtime_overlap = [name for name in PACKAGE_RUNTIME_SEEDS if name in occupied]
+    if runtime_overlap:
+        raise ValueError(
+            "firmware package runtime slot names collide: "
+            + ", ".join(sorted(runtime_overlap))
+        )
     prev_bank = serializer._code_bank
     serializer._code_bank = "ram"
     try:
@@ -1788,6 +1820,13 @@ def seed_firmware_package(
                 serializer.kwdefaults_map[id(co)] = dict(kwdefaults)
             handle = serializer.serialize_code(co)
             pairs.append((tag_constant(name, serializer.heap), handle))
+        for name, value in PACKAGE_RUNTIME_SEEDS.items():
+            pairs.append(
+                (
+                    tag_constant(name, serializer.heap),
+                    serialize_package_constant(serializer, value),
+                )
+            )
         entry = compile_package_entry()
         validate_code_tree(entry.__code__)
         entry_handle = serializer.serialize_code(entry.__code__)

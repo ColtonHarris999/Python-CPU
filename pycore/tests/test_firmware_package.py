@@ -106,6 +106,8 @@ class TestFirmwarePackageSeed(unittest.TestCase):
         self.assertEqual(g["TOK_NAME"], 1)
         self.assertIn("_pyc_lex_main", g)
         self.assertIn("OP3", g)
+        self.assertIn("_in_src", g)
+        self.assertEqual(g["_in_src"], "")
 
     def test_package_namespace_includes_tables_and_lexer(self) -> None:
         g = load_firmware_package_namespace()
