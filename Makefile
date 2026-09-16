@@ -1202,53 +1202,56 @@ pycore-img-pyc-package-call-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,pyc_package_call,100000)
 
 # compiler_design.md step E: firmware lexer token-count golden.
+# Cycle caps cover cache-transparency (CACHE_EN=0) and mem-latency-sweep
+# (LAT=30). Cached LAT=4 is much cheaper (lexer 137k, locals 657k, deep
+# nesting 1.05M, exec round-trip 3.06M, reject-locals 6.4M).
 pycore-img-lexer-count:
-	$(call PYCORE_IMAGE_RUN,lexer_count,1000000)
+	$(call PYCORE_IMAGE_RUN,lexer_count,4000000)
 
 pycore-img-lexer-count-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,lexer_count,1000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,lexer_count,4000000)
 
 # compiler_design.md step F: firmware T1 parser checksum golden.
 pycore-img-parser-tiny-expr:
-	$(call PYCORE_IMAGE_RUN,parser_tiny_expr,1000000)
+	$(call PYCORE_IMAGE_RUN,parser_tiny_expr,4000000)
 
 pycore-img-parser-tiny-expr-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,parser_tiny_expr,1000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,parser_tiny_expr,4000000)
 
 # A3: 40 nested parens. Parser must stay constant-depth (RF spill_count=0).
 pycore-img-compile-deep-nesting:
-	$(call PYCORE_IMAGE_RUN,compile_deep_nesting,2000000,+CHECK_RF_SPILL_COUNT=0)
+	$(call PYCORE_IMAGE_RUN,compile_deep_nesting,20000000,+CHECK_RF_SPILL_COUNT=0)
 
 pycore-img-compile-deep-nesting-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_deep_nesting,2000000,+CHECK_RF_SPILL_COUNT=0)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_deep_nesting,20000000,+CHECK_RF_SPILL_COUNT=0)
 
 # compiler_design.md step G: firmware symbol table locals/checksum golden.
 pycore-img-symtab-locals:
-	$(call PYCORE_IMAGE_RUN,symtab_locals,1000000)
+	$(call PYCORE_IMAGE_RUN,symtab_locals,16000000)
 
 pycore-img-symtab-locals-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,symtab_locals,1000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,symtab_locals,16000000)
 
 # Closures must raise SyntaxError (device try/except returns 1).
 pycore-img-symtab-closure:
-	$(call PYCORE_IMAGE_RUN,symtab_closure,1000000)
+	$(call PYCORE_IMAGE_RUN,symtab_closure,16000000)
 
 pycore-img-symtab-closure-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,symtab_closure,1000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,symtab_closure,16000000)
 
 # compiler_design.md step H: T1 codegen assemble+call of "1 + 2" → 3.
 pycore-img-codegen-t1-expr:
-	$(call PYCORE_IMAGE_RUN,codegen_t1_expr,2000000)
+	$(call PYCORE_IMAGE_RUN,codegen_t1_expr,8000000)
 
 pycore-img-codegen-t1-expr-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,codegen_t1_expr,2000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,codegen_t1_expr,8000000)
 
 # compiler_design.md step I: ROM compile() shim. A1 / A5 / A4.
 pycore-img-compile-eval-expr:
-	$(call PYCORE_IMAGE_RUN,compile_eval_expr,2000000)
+	$(call PYCORE_IMAGE_RUN,compile_eval_expr,8000000)
 
 pycore-img-compile-eval-expr-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_eval_expr,2000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_eval_expr,8000000)
 
 pycore-img-compile-mode-trap:
 	$(call PYCORE_IMAGE_RUN,compile_mode_trap,1000000)
@@ -1257,23 +1260,23 @@ pycore-img-compile-mode-trap-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_mode_trap,1000000)
 
 pycore-img-compile-reject-import:
-	$(call PYCORE_IMAGE_RUN,compile_reject_import,1000000)
+	$(call PYCORE_IMAGE_RUN,compile_reject_import,4000000)
 
 pycore-img-compile-reject-import-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_import,1000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_import,4000000)
 
 # compiler_design.md step J: T2/T3 A2 round-trip + A4 locals cap.
 pycore-img-compile-exec-roundtrip:
-	$(call PYCORE_IMAGE_RUN,compile_exec_roundtrip,5000000)
+	$(call PYCORE_IMAGE_RUN,compile_exec_roundtrip,40000000)
 
 pycore-img-compile-exec-roundtrip-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_exec_roundtrip,5000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_exec_roundtrip,40000000)
 
 pycore-img-compile-reject-locals:
-	$(call PYCORE_IMAGE_RUN,compile_reject_locals,20000000)
+	$(call PYCORE_IMAGE_RUN,compile_reject_locals,80000000)
 
 pycore-img-compile-reject-locals-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_locals,20000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_locals,80000000)
 
 pycore-img-package-all: \
 	pycore-img-pyc-package-call \
