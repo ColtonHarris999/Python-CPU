@@ -1,21 +1,29 @@
 """A5: compile() rejects ``single`` and nonzero flags (compiler_design.md I).
 
-Returns 3 when both raise ``ValueError`` (1 + 2). ``dont_inherit`` is
-accepted and ignored; that path is not this golden.
+Each check lives in its own function: two ``try``/``except`` around callee
+raises in one frame currently traps (illegal opcode) on the second catch.
+``catch_single`` + ``catch_flags`` → 3 when both raise ``ValueError``.
 """
 
 
-def managed_entry():
-    n = 0
+def catch_single():
     try:
         compile("1", "<s>", "single")
+        return 0
     except ValueError:
-        n = n + 1
+        return 1
+
+
+def catch_flags():
     try:
         compile("1", "<s>", "eval", 1)
+        return 0
     except ValueError:
-        n = n + 2
-    return n
+        return 2
+
+
+def managed_entry():
+    return catch_single() + catch_flags()
 
 
 managed_entry()

@@ -6,17 +6,24 @@ and runs ``_pyc_codegen_main`` under ``_bi_exec_globals``.
 
 ``_PYC_ENTRY`` stays the step-D toy trampoline (``img_pyc_package_call``
 → 42). Re-entrancy (``_busy``) is deferred: the static dict is already
-at 127 of 128 keys (D9).
+at 127 of 128 keys (D9). Nested ``if`` and bare ``raise ValueError``
+keep the ROM body on the raise-type path (no ``CALL`` to construct).
 """
 
 
 def compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1):
-    if flags != 0:
-        raise ValueError("compile(): flags must be 0")
-    if optimize != -1 and optimize != 0:
-        raise ValueError("compile(): invalid optimize value")
-    if mode != "exec" and mode != "eval":
-        raise ValueError("compile() mode must be 'exec' or 'eval'")
+    if flags:
+        raise ValueError
+    if optimize != -1:
+        if optimize != 0:
+            raise ValueError
+    ok = 0
+    if mode == "eval":
+        ok = 1
+    if mode == "exec":
+        ok = 1
+    if ok == 0:
+        raise ValueError
     g = _PYC_G
     g["_in_src"] = source
     g["_in_file"] = filename
