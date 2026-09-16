@@ -136,11 +136,64 @@ def _pyc_sy_push_children(nid):
         _pyc_sy_work_push(b, 0)
         _pyc_sy_work_push(a, 0)
         return
+    if kind == ND["If"]:
+        i = nd_obj[nid]
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[b + c + i], 0)
+        i = c
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[b + i], 0)
+        _pyc_sy_work_push(a, 0)
+        return
+    if kind == ND["While"]:
+        i = c
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[b + i], 0)
+        _pyc_sy_work_push(a, 0)
+        return
+    if kind == ND["For"]:
+        nbody = nd_obj[nid]
+        i = nbody
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[c + i], 0)
+        _pyc_sy_work_push(b, 0)
+        _pyc_sy_work_push(a, 0)
+        return
+    if kind == ND["AugAssign"]:
+        _pyc_sy_work_push(c, 0)
+        _pyc_sy_work_push(a, 0)
+        return
+    if kind == ND["Delete"]:
+        i = b
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[a + i], 0)
+        return
+    if kind == ND["List"] or kind == ND["Tuple"] or kind == ND["Set"]:
+        i = b
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[a + i], 0)
+        return
+    if kind == ND["Dict"]:
+        n = b * 2
+        i = n
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[a + i], 0)
+        return
     if (
         kind == ND["Name"]
         or kind == ND["Constant"]
         or kind == ND["Global"]
         or kind == ND["FunctionDef"]
+        or kind == ND["Pass"]
+        or kind == ND["Break"]
+        or kind == ND["Continue"]
     ):
         return
     _pyc_parse_error("unsupported node in symbol table")
@@ -261,7 +314,7 @@ def _pyc_symtab(root):
         if kind == name_k:
             name = nd_obj[nid]
             ctx = nd_a[nid]
-            if ctx == store_k:
+            if ctx == store_k or ctx == ND["Del"]:
                 if _pyc_sy_names_has(gdecl[cur], gdecl_n[cur], name) == 0:
                     if sc_kind[cur] == 1:
                         names, n = _pyc_sy_names_add(

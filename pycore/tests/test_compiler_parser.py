@@ -66,6 +66,20 @@ PARSER_EVAL_CORPUS = [
     "a[b][c]",
     "f()()",
     "a.b(c)",
+    "[]",
+    "[1]",
+    "[1, 2]",
+    "[1, 2,]",
+    "()",
+    "(1,)",
+    "(1, 2)",
+    "{}",
+    "{1: 2}",
+    "{1: 2, 3: 4}",
+    "{1}",
+    "{1, 2}",
+    "[a, b]",
+    "(a, b)",
 ]
 
 
@@ -90,6 +104,20 @@ PARSER_EXEC_CORPUS = [
     "def f():\n    global x\n    x = 1\n    return x\n",
     "def outer(x):\n    def inner(y):\n        return y\n    return inner\n",
     "x = 1\ndef f(a):\n    return a + x\ny = 2\n",
+    "if x:\n    y = 1\n",
+    "if x:\n    y = 1\nelse:\n    y = 2\n",
+    "if x:\n    y = 1\nelif z:\n    y = 2\nelse:\n    y = 3\n",
+    "while x:\n    y = 1\n    break\n",
+    "for i in xs:\n    y = i\n    continue\n",
+    "for a, b in xs:\n    y = a\n",
+    "pass\n",
+    "x += 1\n",
+    "del x\n",
+    "xs = [1, 2, 3]\n",
+    "t = (1, 2)\n",
+    "d = {1: 2}\n",
+    "s = {1, 2}\n",
+    "a, b = 1, 2\n",
 ]
 
 
@@ -147,6 +175,45 @@ def firmware_shape(g: dict, nid: int) -> tuple:
         return ("FunctionDef", obj, params, body)
     if name == "Global":
         return ("Global", list(obj))
+    if name == "If":
+        body = [firmware_shape(g, kids[b + i]) for i in range(c)]
+        orelse = [firmware_shape(g, kids[b + c + i]) for i in range(obj)]
+        return ("If", firmware_shape(g, a), body, orelse)
+    if name == "While":
+        body = [firmware_shape(g, kids[b + i]) for i in range(c)]
+        return ("While", firmware_shape(g, a), body)
+    if name == "For":
+        body = [firmware_shape(g, kids[c + i]) for i in range(obj)]
+        return ("For", firmware_shape(g, a), firmware_shape(g, b), body)
+    if name == "Pass":
+        return ("Pass",)
+    if name == "Break":
+        return ("Break",)
+    if name == "Continue":
+        return ("Continue",)
+    if name == "AugAssign":
+        return (
+            "AugAssign",
+            firmware_shape(g, a),
+            names[b],
+            firmware_shape(g, c),
+        )
+    if name == "Delete":
+        ts = [firmware_shape(g, kids[a + i]) for i in range(b)]
+        return ("Delete", ts)
+    if name == "List":
+        elts = [firmware_shape(g, kids[a + i]) for i in range(b)]
+        return ("List", elts, names[c])
+    if name == "Tuple":
+        elts = [firmware_shape(g, kids[a + i]) for i in range(b)]
+        return ("Tuple", elts, names[c])
+    if name == "Set":
+        elts = [firmware_shape(g, kids[a + i]) for i in range(b)]
+        return ("Set", elts)
+    if name == "Dict":
+        keys = [firmware_shape(g, kids[a + i * 2]) for i in range(b)]
+        vals = [firmware_shape(g, kids[a + i * 2 + 1]) for i in range(b)]
+        return ("Dict", keys, vals)
     raise AssertionError(f"unhandled firmware node {name}")
 
 
@@ -226,6 +293,65 @@ def cpython_shape(node: ast.AST) -> tuple:
         return ("FunctionDef", node.name, params, body)
     if isinstance(node, ast.Global):
         return ("Global", list(node.names))
+    if isinstance(node, ast.If):
+        return (
+            "If",
+            cpython_shape(node.test),
+            [cpython_shape(s) for s in node.body],
+            [cpython_shape(s) for s in node.orelse],
+        )
+    if isinstance(node, ast.While):
+        if node.orelse:
+            raise AssertionError("T2 corpus has no while-else")
+        return (
+            "While",
+            cpython_shape(node.test),
+            [cpython_shape(s) for s in node.body],
+        )
+    if isinstance(node, ast.For):
+        if node.orelse:
+            raise AssertionError("T2 corpus has no for-else")
+        return (
+            "For",
+            cpython_shape(node.target),
+            cpython_shape(node.iter),
+            [cpython_shape(s) for s in node.body],
+        )
+    if isinstance(node, ast.Pass):
+        return ("Pass",)
+    if isinstance(node, ast.Break):
+        return ("Break",)
+    if isinstance(node, ast.Continue):
+        return ("Continue",)
+    if isinstance(node, ast.AugAssign):
+        return (
+            "AugAssign",
+            cpython_shape(node.target),
+            type(node.op).__name__,
+            cpython_shape(node.value),
+        )
+    if isinstance(node, ast.Delete):
+        return ("Delete", [cpython_shape(t) for t in node.targets])
+    if isinstance(node, ast.List):
+        return (
+            "List",
+            [cpython_shape(e) for e in node.elts],
+            type(node.ctx).__name__,
+        )
+    if isinstance(node, ast.Tuple):
+        return (
+            "Tuple",
+            [cpython_shape(e) for e in node.elts],
+            type(node.ctx).__name__,
+        )
+    if isinstance(node, ast.Set):
+        return ("Set", [cpython_shape(e) for e in node.elts])
+    if isinstance(node, ast.Dict):
+        return (
+            "Dict",
+            [cpython_shape(k) for k in node.keys],
+            [cpython_shape(v) for v in node.values],
+        )
     raise AssertionError(f"unhandled CPython node {type(node).__name__}")
 
 
@@ -262,12 +388,11 @@ class TestCompilerParserCorpus(unittest.TestCase):
         _, n, _ = firmware_parse(src, "eval")
         self.assertEqual(n, 2)
 
-    def test_unsupported_list_display(self) -> None:
-        g = load_firmware_package_namespace()
-        g["_in_src"] = "[1]"
-        g["_in_mode"] = "eval"
-        with self.assertRaises(SyntaxError):
-            _host_exec_globals(g["_pyc_parse_main"], g)
+    def test_list_display_shape(self) -> None:
+        src = "[1, 2]"
+        got, _, _ = firmware_parse(src, "eval")
+        want = cpython_shape(ast.parse(src, mode="eval"))
+        self.assertEqual(got, want)
 
     def test_function_def_shape(self) -> None:
         src = "def f(a, b):\n    x = a + b\n    return x\n"

@@ -143,7 +143,7 @@ def host_entry_result_from_text(
         g = namespace if globals is None else globals
         if callable(code) and not isinstance(code, types.CodeType):
             if hasattr(code, "_globals"):
-                code._globals = dict(g)
+                code._globals = g
             code()
             return None
         exec(code, g)
@@ -153,7 +153,7 @@ def host_entry_result_from_text(
         g = namespace if globals is None else globals
         if callable(code) and not isinstance(code, types.CodeType):
             if hasattr(code, "_globals"):
-                code._globals = dict(g)
+                code._globals = g
             return code()
         return eval(code, g)
 

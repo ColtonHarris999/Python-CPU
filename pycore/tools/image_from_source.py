@@ -1480,6 +1480,12 @@ def _host_exec_globals(code: object, g: object) -> object:
 
 # CPython 3.14 opcodes used by the host code-RAM interpreter (W-5 / T1).
 _HOST_OP_CACHE = 0
+_HOST_OP_DELETE_SUBSCR = 8
+_HOST_OP_END_FOR = 9
+_HOST_OP_GET_ITER = 16
+_HOST_OP_MAKE_FUNCTION = 23
+_HOST_OP_NOP = 27
+_HOST_OP_POP_ITER = 30
 _HOST_OP_POP_TOP = 31
 _HOST_OP_PUSH_NULL = 33
 _HOST_OP_RETURN_VALUE = 35
@@ -1489,10 +1495,17 @@ _HOST_OP_UNARY_INVERT = 40
 _HOST_OP_UNARY_NEGATIVE = 41
 _HOST_OP_UNARY_NOT = 42
 _HOST_OP_BINARY_OP = 44
+_HOST_OP_BUILD_LIST = 46
+_HOST_OP_BUILD_MAP = 47
+_HOST_OP_BUILD_SET = 48
+_HOST_OP_BUILD_TUPLE = 51
 _HOST_OP_CALL = 52
 _HOST_OP_COMPARE_OP = 56
 _HOST_OP_CONTAINS_OP = 57
 _HOST_OP_COPY = 59
+_HOST_OP_DELETE_ATTR = 61
+_HOST_OP_DELETE_FAST = 63
+_HOST_OP_FOR_ITER = 70
 _HOST_OP_IS_OP = 74
 _HOST_OP_JUMP_BACKWARD = 75
 _HOST_OP_JUMP_FORWARD = 77
@@ -1510,6 +1523,7 @@ _HOST_OP_STORE_FAST = 112
 _HOST_OP_STORE_GLOBAL = 115
 _HOST_OP_STORE_NAME = 116
 _HOST_OP_SWAP = 117
+_HOST_OP_UNPACK_SEQUENCE = 119
 _HOST_NULL = object()
 _HOST_UNBOUND = object()
 _HOST_BINARY_OPS = {
@@ -1525,6 +1539,18 @@ _HOST_BINARY_OPS = {
     10: _operator.sub,
     11: _operator.truediv,
     12: _operator.xor,
+    13: _operator.iadd,
+    14: _operator.iand,
+    15: _operator.ifloordiv,
+    16: _operator.ilshift,
+    18: _operator.imul,
+    19: _operator.imod,
+    20: _operator.ior,
+    21: _operator.ipow,
+    22: _operator.irshift,
+    23: _operator.isub,
+    24: _operator.itruediv,
+    25: _operator.ixor,
 }
 _HOST_COMPARE_OPS = {
     0: _operator.lt,
@@ -1543,6 +1569,7 @@ def _host_jump_n_cache(opcode: int) -> int:
         _HOST_OP_JUMP_BACKWARD,
         _HOST_OP_POP_JUMP_IF_FALSE,
         _HOST_OP_POP_JUMP_IF_TRUE,
+        _HOST_OP_FOR_ITER,
     ):
         return 1
     return 0
@@ -1728,6 +1755,87 @@ class _HostEmittedCode:
                 continue
             if opcode == _HOST_OP_RETURN_VALUE:
                 return stack.pop() if stack else None
+            if opcode == _HOST_OP_NOP:
+                continue
+            if opcode == _HOST_OP_GET_ITER:
+                stack.append(iter(stack.pop()))
+                continue
+            if opcode == _HOST_OP_FOR_ITER:
+                it = stack[-1]
+                try:
+                    stack.append(next(it))
+                except StopIteration:
+                    # Device skips END_FOR: pc+1+n_cache+arg+1 → POP_ITER.
+                    pc = pc + _host_jump_n_cache(opcode) + oparg + 1
+                continue
+            if opcode == _HOST_OP_END_FOR:
+                stack.pop()
+                continue
+            if opcode == _HOST_OP_POP_ITER:
+                stack.pop()
+                continue
+            if opcode == _HOST_OP_BUILD_LIST:
+                items: list[object] = []
+                narg = 0
+                while narg < oparg:
+                    items.append(stack.pop())
+                    narg += 1
+                items.reverse()
+                stack.append(items)
+                continue
+            if opcode == _HOST_OP_BUILD_TUPLE:
+                items = []
+                narg = 0
+                while narg < oparg:
+                    items.append(stack.pop())
+                    narg += 1
+                items.reverse()
+                stack.append(tuple(items))
+                continue
+            if opcode == _HOST_OP_BUILD_SET:
+                items = []
+                narg = 0
+                while narg < oparg:
+                    items.append(stack.pop())
+                    narg += 1
+                items.reverse()
+                stack.append(set(items))
+                continue
+            if opcode == _HOST_OP_BUILD_MAP:
+                pairs: list[tuple[object, object]] = []
+                narg = 0
+                while narg < oparg:
+                    val = stack.pop()
+                    key = stack.pop()
+                    pairs.append((key, val))
+                    narg += 1
+                pairs.reverse()
+                stack.append(dict(pairs))
+                continue
+            if opcode == _HOST_OP_MAKE_FUNCTION:
+                fn = stack[-1]
+                if hasattr(fn, "_globals"):
+                    fn._globals = self._globals
+                continue
+            if opcode == _HOST_OP_UNPACK_SEQUENCE:
+                seq = stack.pop()
+                i = oparg
+                while i > 0:
+                    i -= 1
+                    stack.append(seq[i])  # type: ignore[index]
+                continue
+            if opcode == _HOST_OP_DELETE_FAST:
+                locals_[oparg] = _HOST_UNBOUND
+                continue
+            if opcode == _HOST_OP_DELETE_ATTR:
+                obj = stack.pop()
+                delattr(obj, str(self._names[oparg]))
+                continue
+            if opcode == _HOST_OP_DELETE_SUBSCR:
+                idx = stack.pop()
+                obj = stack.pop()
+                del obj[idx]  # type: ignore[misc]
+                continue
             raise RuntimeError(
                 f"host code-RAM interpreter: unsupported opcode {opcode}"
             )

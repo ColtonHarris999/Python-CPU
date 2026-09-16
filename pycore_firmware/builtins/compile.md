@@ -1,8 +1,9 @@
 # `compile` — shipped subset
 
-Status: **in ROM** (compiler_design.md step I). T1 expressions and
-statements only. `"single"` / nonzero `flags` / invalid `optimize` →
-`ValueError`. Nested `def` is still T1-out (`SyntaxError`).
+Status: **in ROM** (compiler_design.md step J). T1–T3 expressions and
+statements (`if`/`while`/`for`, `def` positional, displays, unpack).
+`"single"` / nonzero `flags` / invalid `optimize` → `ValueError`.
+Defaults / `*args` / `**kwargs` / nested closures remain `SyntaxError`.
 
 **Design:** [`planning/compiler_design.md`](../../planning/compiler_design.md)
 §4.2. Pipeline notes: [`pycore/docs/compiler.md`](../../pycore/docs/compiler.md).
@@ -43,7 +44,8 @@ the step-D toy that returns 42). It stores `_in_src` / `_in_file` /
 | `img_compile_eval_expr` | **3** (A1) |
 | `img_compile_mode_trap` | **3** (`"single"` + `flags=1`) |
 | `img_compile_reject_import` | **1** (`SyntaxError` on `import`) |
+| `img_compile_exec_roundtrip` | **7** (A2) |
+| `img_compile_reject_locals` | **1** (`SyntaxError` on 241 locals) |
 
-T2/T3 (`img_compile_exec_roundtrip`), `img_compile_reject_locals`,
-`img_compile_repeat`, and `img_compile_release_realloc` are later steps.
+`img_compile_repeat` and `img_compile_release_realloc` are later steps.
 String-form `eval("1+2")` still needs `_bi_code_kind` (§11).

@@ -1,7 +1,6 @@
 # On-device `compile()`
 
-Status: **step I landed** (ROM `compile()` shim; A1
-`img_compile_eval_expr` → 3). Next is step J (T2/T3;
+Status: **step J** (T2/T3; A2
 `img_compile_exec_roundtrip`). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
@@ -54,9 +53,10 @@ nd_obj[n]                   str / int / float / list payload, or None
 kids[]                      flat arena
 ```
 
-`mode == "eval"` wraps a T1 expression in `ND_EXPRESSION`. `mode == "exec"`
-parses T1 statements (`Expr`, `Assign`, `Return`) plus the G-slice of T3
-(`def` with positional args, `global`) into `ND_MODULE`. Displays, slices,
+`mode == "eval"` wraps a T1–T3 expression in `ND_EXPRESSION`. `mode == "exec"`
+parses T1–T3 statements (`if`/`while`/`for`, `break`/`continue`/`pass`,
+augassign, `del`, displays, unpack, `def` with positional args, `global`)
+into `ND_MODULE`. Slices, `while`/`for`-`else`, defaults/`*args`/`**kwargs`,
 and later tiers are `SyntaxError`.
 
 Host: `pycore/tests/test_compiler_parser.py` vs `ast.parse` (tree shape).
@@ -92,21 +92,26 @@ Device: `img_symtab_locals` (checksum), `img_symtab_closure` (returns 1).
 
 `_pyc_codegen_main() -> CODE_OBJECT` lexes, parses, builds the symbol table,
 then recursively visits `nd_*` (Rule 2) into instruction words and assembles
-them with `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_new`. T1 only:
+them with `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_new`. T1–T3:
 literals, names, ALU, unary, compare/chains, `is`/`in`, `not`/`and`/`or`,
-call, subscript, attribute, expression statements, assignment, `return`.
-Nested `def` is a `SyntaxError` (`def codegen is not in T1`); that is J/T3.
+call, subscript, attribute, expression statements, assignment, `return`,
+`if`/`elif`/`else`, `while`/`for`, `break`/`continue`/`pass`, augassign,
+`del`, list/tuple/dict/set displays, unpack, `def` (positional; nested
+assemble into the parent's `co_consts` then `MAKE_FUNCTION`).
 
 No `CACHE` (D1). No constant folding (D2): CPython emits `LOAD_SMALL_INT 3`
 for `1 + 2`; firmware emits `LOAD_SMALL_INT 1; LOAD_SMALL_INT 2; BINARY_OP +`.
-Both evaluate to 3. Jump args compensate for the hardware `n_cache` addend
-(`JUMP_FORWARD=0`, `POP_JUMP_*=1`). Unary `+` visits the operand only
+List displays emit `BUILD_LIST n`, never `LIST_EXTEND`. Jump args compensate
+for the hardware `n_cache` addend (`JUMP_FORWARD=0`, `POP_JUMP_*` /
+`JUMP_BACKWARD` / `FOR_ITER`=1). Unary `+` visits the operand only
 (CPython's `CALL_INTRINSIC_1` 5 is not in the device allowlist). Exception
-tables are empty `()` in T1; the host encoder is `encode_exception_table`
-(W-3).
+tables are empty `()`. `del` of a module/global name is `SyntaxError`
+(no `DELETE_NAME` / `DELETE_GLOBAL` on this target). Loop labels reuse
+`_lex_line` (depth) and `tk_b` (break/continue pairs).
 
 Host: `pycore/tests/test_compiler_codegen.py` result differential vs CPython
-`eval`/`exec`. Device: `img_codegen_t1_expr` (assembled `"1 + 2"` returns 3).
+`eval`/`exec`. Device: `img_codegen_t1_expr` (assembled `"1 + 2"` returns 3),
+`img_compile_exec_roundtrip` (A2 → 7).
 
 ## Compile shim (step I)
 
@@ -117,8 +122,10 @@ is ignored. No `_busy` slot (D9; 127 of 128 `_PYC_G` keys).
 
 Host: `pycore/tests/test_compiler_compile.py`. Device: `img_compile_eval_expr`
 (A1 → 3), `img_compile_mode_trap` (A5 → 3), `img_compile_reject_import`
-(A4 → 1). Host `eval`/`exec` stand-ins call firmware-emitted code objects
-(`_HostEmittedCode`); SEED_CODE images still use `types.CodeType`.
+(A4 → 1), `img_compile_exec_roundtrip` (A2 → 7),
+`img_compile_reject_locals` (A4 window cap → 1). Host `eval`/`exec` stand-ins
+call firmware-emitted code objects (`_HostEmittedCode`) with a **shared**
+globals dict; SEED_CODE images still use `types.CodeType`.
 
 ## Subset (firmware compiler source)
 
@@ -146,8 +153,8 @@ stays constant in the source nesting.
 | Tier | Constructs | Status |
 | --- | --- | --- |
 | T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | parser (F); codegen (H); `compile()` shim (I) |
-| T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | next (J) |
-| T3 | `def` (positional args + indented / one-line suite), `global` | parser slice in G (full T3 in J) |
+| T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | parser + codegen (J) |
+| T3 | `def` (positional args + indented / one-line suite), `global`, displays, unpack | parser slice in G; codegen (J) |
 | T4+ | `try`/`class`/`import`/closures | blocked on runtime |
 
 ## Deviations from CPython (D1–D9)

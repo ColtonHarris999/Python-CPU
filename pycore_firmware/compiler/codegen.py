@@ -1,14 +1,17 @@
-# Firmware T1 codegen + assembler (compiler_design.md §5.5 / step H).
+# Firmware T1–T3 codegen + assembler (compiler_design.md §5.5 / steps H, J).
 # Recursive visit of nd_* (Rule 2) into ins words in opnd/ops, then
 # _bi_code_alloc / blit / new. No CACHE. Jump args compensate for the
-# hardware n_cache addend (POP_JUMP=1, JUMP_FORWARD=0).
+# hardware n_cache addend (POP_JUMP/JUMP_BACKWARD/FOR_ITER=1, JUMP_FORWARD=0).
 #
 # Instruction shapes follow CPython 3.14 / PyCPython codegen.py (PSF-2.0);
-# rewritten over the SoA AST. Nested def is J/T3 — SyntaxError in T1.
+# rewritten over the SoA AST. Nested def is assembled depth-first into
+# the parent's co_consts, then MAKE_FUNCTION (device: function ≡ code).
 #
 # Reuses parse scratch after G: opnd/ops/ops_obj = instructions,
 # stmts = co_consts, tk_s = co_names, tk_a = label positions, _lex_n =
-# label count, _lex_i = current scope, _lex_col = store flag.
+# label count, _lex_i = current scope, _lex_col = store/del flag
+# (0 load, 1 store, 2 del), _lex_line = loop depth, tk_b = break/continue
+# label pairs.
 
 
 def _pyc_emit(op, arg, lab):
@@ -35,7 +38,8 @@ def _pyc_emit(op, arg, lab):
 
 
 def _pyc_visit(nid):
-    global stmt_n, stmts, tk_n, tk_s, tk_a, _lex_n, _lex_i, _lex_col
+    global stmt_n, stmts, tk_n, tk_s, tk_a, tk_b, _lex_n, _lex_i, _lex_col
+    global _lex_line, opnd, ops, ops_obj, opnd_n
     kind = nd_kind[nid]
     store = _lex_col
     if kind == ND["Module"]:
@@ -113,7 +117,138 @@ def _pyc_visit(nid):
     if kind == ND["Global"]:
         return
     if kind == ND["FunctionDef"]:
-        _pyc_parse_error("def codegen is not in T1")
+        sv_opnd = opnd
+        sv_ops = ops
+        sv_ops_obj = ops_obj
+        sv_opnd_n = opnd_n
+        sv_stmts = stmts
+        sv_stmt_n = stmt_n
+        sv_tk_s = tk_s
+        sv_tk_n = tk_n
+        sv_tk_a = tk_a
+        sv_tk_b = tk_b
+        sv_lex_n = _lex_n
+        sv_lex_i = _lex_i
+        sv_lex_col = _lex_col
+        sv_lex_line = _lex_line
+        sid = 0
+        i = 0
+        found = 0
+        while i < sc_n:
+            if sc_node[i] == nid:
+                sid = i
+                found = 1
+                break
+            i = i + 1
+        if found == 0:
+            _pyc_parse_error("function scope missing")
+        opnd_n = 0
+        opnd = [0] * 8
+        ops = [0] * 8
+        ops_obj = [0] * 8
+        stmt_n = 0
+        stmts = [0] * 8
+        tk_n = 0
+        tk_s = [0] * 8
+        tk_a = [0] * 8
+        tk_b = [0] * 8
+        _lex_n = 0
+        _lex_i = sid
+        _lex_col = 0
+        _lex_line = 0
+        _pyc_emit(OPMAP["RESUME"], 0, 0)
+        ks = nd_a[nid]
+        nargs = nd_b[nid]
+        nbody = nd_c[nid]
+        i = 0
+        while i < nbody:
+            _pyc_visit(kids[ks + nargs + i])
+            i = i + 1
+        val = None
+        i = 0
+        found = 0
+        while i < stmt_n:
+            if stmts[i] is val:
+                _pyc_emit(OPMAP["LOAD_CONST"], i, 0)
+                found = 1
+                break
+            i = i + 1
+        if found == 0:
+            cap = len(stmts)
+            while cap < stmt_n + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                stmts = stmts + ([0] * extra)
+                cap = len(stmts)
+            stmts[stmt_n] = val
+            _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
+            stmt_n = stmt_n + 1
+        _pyc_emit(OPMAP["RETURN_VALUE"], 0, 0)
+        child = _pyc_assemble()
+        opnd = sv_opnd
+        ops = sv_ops
+        ops_obj = sv_ops_obj
+        opnd_n = sv_opnd_n
+        stmts = sv_stmts
+        stmt_n = sv_stmt_n
+        tk_s = sv_tk_s
+        tk_n = sv_tk_n
+        tk_a = sv_tk_a
+        tk_b = sv_tk_b
+        _lex_n = sv_lex_n
+        _lex_i = sv_lex_i
+        _lex_col = sv_lex_col
+        _lex_line = sv_lex_line
+        cap = len(stmts)
+        while cap < stmt_n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            stmts = stmts + ([0] * extra)
+            cap = len(stmts)
+        stmts[stmt_n] = child
+        _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
+        stmt_n = stmt_n + 1
+        _pyc_emit(OPMAP["MAKE_FUNCTION"], 0, 0)
+        name = nd_obj[nid]
+        local = 0
+        idx = 0
+        if sc_kind[_lex_i] == 1:
+            names = sc_varnames[_lex_i]
+            nloc = sc_nlocals[_lex_i]
+            i = 0
+            while i < nloc:
+                if names[i] == name:
+                    local = 1
+                    idx = i
+                    break
+                i = i + 1
+        if local:
+            _pyc_emit(OPMAP["STORE_FAST"], idx, 0)
+            return
+        i = 0
+        ni = 0 - 1
+        while i < tk_n:
+            if tk_s[i] == name:
+                ni = i
+                break
+            i = i + 1
+        if ni < 0:
+            cap = len(tk_s)
+            while cap < tk_n + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                tk_s = tk_s + ([0] * extra)
+                cap = len(tk_s)
+            tk_s[tk_n] = name
+            ni = tk_n
+            tk_n = tk_n + 1
+        if sc_kind[_lex_i] == 1:
+            _pyc_emit(OPMAP["STORE_GLOBAL"], ni, 0)
+            return
+        _pyc_emit(OPMAP["STORE_NAME"], ni, 0)
         return
     if kind == ND["Constant"]:
         val = nd_obj[nid]
@@ -169,8 +304,10 @@ def _pyc_visit(nid):
                     break
                 i = i + 1
         if local:
-            if store:
+            if store == 1:
                 _pyc_emit(OPMAP["STORE_FAST"], idx, 0)
+            elif store == 2:
+                _pyc_emit(OPMAP["DELETE_FAST"], idx, 0)
             else:
                 _pyc_emit(OPMAP["LOAD_FAST"], idx, 0)
             return
@@ -193,13 +330,17 @@ def _pyc_visit(nid):
             ni = tk_n
             tk_n = tk_n + 1
         if sc_kind[sid] == 1:
-            if store:
+            if store == 1:
                 _pyc_emit(OPMAP["STORE_GLOBAL"], ni, 0)
+            elif store == 2:
+                _pyc_parse_error("del of a global name is not supported")
             else:
                 _pyc_emit(OPMAP["LOAD_GLOBAL"], ni * 2, 0)
             return
-        if store:
+        if store == 1:
             _pyc_emit(OPMAP["STORE_NAME"], ni, 0)
+        elif store == 2:
+            _pyc_parse_error("del of a global name is not supported")
         else:
             _pyc_emit(OPMAP["LOAD_NAME"], ni, 0)
         return
@@ -401,26 +542,276 @@ def _pyc_visit(nid):
             tk_s[tk_n] = name
             ni = tk_n
             tk_n = tk_n + 1
-        if store:
+        if store == 1:
             _lex_col = 0
             _pyc_visit(nd_a[nid])
             _lex_col = 1
             _pyc_emit(OPMAP["STORE_ATTR"], ni, 0)
             return
+        if store == 2:
+            _lex_col = 0
+            _pyc_visit(nd_a[nid])
+            _lex_col = 2
+            _pyc_emit(OPMAP["DELETE_ATTR"], ni, 0)
+            return
         _pyc_visit(nd_a[nid])
         _pyc_emit(OPMAP["LOAD_ATTR"], ni * 2, 0)
         return
     if kind == ND["Subscript"]:
-        if store:
+        if store == 1:
             _lex_col = 0
             _pyc_visit(nd_a[nid])
             _pyc_visit(nd_b[nid])
             _lex_col = 1
             _pyc_emit(OPMAP["STORE_SUBSCR"], 0, 0)
             return
+        if store == 2:
+            _lex_col = 0
+            _pyc_visit(nd_a[nid])
+            _pyc_visit(nd_b[nid])
+            _lex_col = 2
+            _pyc_emit(OPMAP["DELETE_SUBSCR"], 0, 0)
+            return
         _pyc_visit(nd_a[nid])
         _pyc_visit(nd_b[nid])
         _pyc_emit(OPMAP["BINARY_OP"], 26, 0)
+        return
+    if kind == ND["Pass"]:
+        return
+    if kind == ND["Break"]:
+        if _lex_line < 1:
+            _pyc_parse_error("'break' outside loop")
+        br = tk_b[_lex_line * 2]
+        _pyc_emit(OPMAP["JUMP_FORWARD"], 0, br)
+        return
+    if kind == ND["Continue"]:
+        if _lex_line < 1:
+            _pyc_parse_error("'continue' not properly in loop")
+        cont = tk_b[_lex_line * 2 + 1]
+        _pyc_emit(OPMAP["JUMP_BACKWARD"], 0, cont)
+        return
+    if kind == ND["If"]:
+        _lex_n = _lex_n + 1
+        cap = len(tk_a)
+        while cap < _lex_n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            tk_a = tk_a + ([0] * extra)
+            cap = len(tk_a)
+        else_lab = _lex_n
+        _pyc_visit(nd_a[nid])
+        _pyc_emit(OPMAP["TO_BOOL"], 0, 0)
+        _pyc_emit(OPMAP["POP_JUMP_IF_FALSE"], 0, else_lab)
+        ks = nd_b[nid]
+        nbody = nd_c[nid]
+        norelse = nd_obj[nid]
+        i = 0
+        while i < nbody:
+            _pyc_visit(kids[ks + i])
+            i = i + 1
+        if norelse:
+            _lex_n = _lex_n + 1
+            cap = len(tk_a)
+            while cap < _lex_n + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                tk_a = tk_a + ([0] * extra)
+                cap = len(tk_a)
+            end_lab = _lex_n
+            _pyc_emit(OPMAP["JUMP_FORWARD"], 0, end_lab)
+            tk_a[else_lab] = opnd_n
+            i = 0
+            while i < norelse:
+                _pyc_visit(kids[ks + nbody + i])
+                i = i + 1
+            tk_a[end_lab] = opnd_n
+        else:
+            tk_a[else_lab] = opnd_n
+        return
+    if kind == ND["While"]:
+        _lex_n = _lex_n + 1
+        cap = len(tk_a)
+        while cap < _lex_n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            tk_a = tk_a + ([0] * extra)
+            cap = len(tk_a)
+        br = _lex_n
+        _lex_n = _lex_n + 1
+        cap = len(tk_a)
+        while cap < _lex_n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            tk_a = tk_a + ([0] * extra)
+            cap = len(tk_a)
+        cont = _lex_n
+        _lex_line = _lex_line + 1
+        cap = len(tk_b)
+        while cap < _lex_line * 2 + 2:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            tk_b = tk_b + ([0] * extra)
+            cap = len(tk_b)
+        tk_b[_lex_line * 2] = br
+        tk_b[_lex_line * 2 + 1] = cont
+        tk_a[cont] = opnd_n
+        _pyc_visit(nd_a[nid])
+        _pyc_emit(OPMAP["TO_BOOL"], 0, 0)
+        _pyc_emit(OPMAP["POP_JUMP_IF_FALSE"], 0, br)
+        ks = nd_b[nid]
+        nbody = nd_c[nid]
+        i = 0
+        while i < nbody:
+            _pyc_visit(kids[ks + i])
+            i = i + 1
+        _pyc_emit(OPMAP["JUMP_BACKWARD"], 0, cont)
+        tk_a[br] = opnd_n
+        _lex_line = _lex_line - 1
+        return
+    if kind == ND["For"]:
+        _lex_n = _lex_n + 1
+        cap = len(tk_a)
+        while cap < _lex_n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            tk_a = tk_a + ([0] * extra)
+            cap = len(tk_a)
+        endfor = _lex_n
+        _lex_n = _lex_n + 1
+        cap = len(tk_a)
+        while cap < _lex_n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            tk_a = tk_a + ([0] * extra)
+            cap = len(tk_a)
+        popiter = _lex_n
+        _lex_n = _lex_n + 1
+        cap = len(tk_a)
+        while cap < _lex_n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            tk_a = tk_a + ([0] * extra)
+            cap = len(tk_a)
+        cont = _lex_n
+        _lex_line = _lex_line + 1
+        cap = len(tk_b)
+        while cap < _lex_line * 2 + 2:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            tk_b = tk_b + ([0] * extra)
+            cap = len(tk_b)
+        tk_b[_lex_line * 2] = popiter
+        tk_b[_lex_line * 2 + 1] = cont
+        _pyc_visit(nd_b[nid])
+        _pyc_emit(OPMAP["GET_ITER"], 0, 0)
+        tk_a[cont] = opnd_n
+        _pyc_emit(OPMAP["FOR_ITER"], 0, endfor)
+        _lex_col = 1
+        _pyc_visit(nd_a[nid])
+        _lex_col = 0
+        ks = nd_c[nid]
+        nbody = nd_obj[nid]
+        i = 0
+        while i < nbody:
+            _pyc_visit(kids[ks + i])
+            i = i + 1
+        _pyc_emit(OPMAP["JUMP_BACKWARD"], 0, cont)
+        tk_a[endfor] = opnd_n
+        _pyc_emit(OPMAP["END_FOR"], 0, 0)
+        tk_a[popiter] = opnd_n
+        _pyc_emit(OPMAP["POP_ITER"], 0, 0)
+        _lex_line = _lex_line - 1
+        return
+    if kind == ND["AugAssign"]:
+        if nd_kind[nd_a[nid]] != ND["Name"]:
+            _pyc_parse_error("unsupported augmented assignment target")
+        _lex_col = 0
+        _pyc_visit(nd_a[nid])
+        _pyc_visit(nd_c[nid])
+        opk = nd_b[nid]
+        barg = 13
+        if opk == ND["Add"]:
+            barg = 13
+        elif opk == ND["BitAnd"]:
+            barg = 14
+        elif opk == ND["FloorDiv"]:
+            barg = 15
+        elif opk == ND["LShift"]:
+            barg = 16
+        elif opk == ND["Mult"]:
+            barg = 18
+        elif opk == ND["Mod"]:
+            barg = 19
+        elif opk == ND["BitOr"]:
+            barg = 20
+        elif opk == ND["Pow"]:
+            barg = 21
+        elif opk == ND["RShift"]:
+            barg = 22
+        elif opk == ND["Sub"]:
+            barg = 23
+        elif opk == ND["Div"]:
+            barg = 24
+        elif opk == ND["BitXor"]:
+            barg = 25
+        else:
+            _pyc_parse_error("unsupported augmented op")
+        _pyc_emit(OPMAP["BINARY_OP"], barg, 0)
+        _lex_col = 1
+        _pyc_visit(nd_a[nid])
+        _lex_col = 0
+        return
+    if kind == ND["Delete"]:
+        ks = nd_a[nid]
+        n = nd_b[nid]
+        i = 0
+        while i < n:
+            _lex_col = 2
+            _pyc_visit(kids[ks + i])
+            i = i + 1
+        _lex_col = 0
+        return
+    if kind == ND["List"] or kind == ND["Tuple"] or kind == ND["Set"]:
+        n = nd_b[nid]
+        ks = nd_a[nid]
+        if store == 1:
+            _pyc_emit(OPMAP["UNPACK_SEQUENCE"], n, 0)
+            i = 0
+            while i < n:
+                _lex_col = 1
+                _pyc_visit(kids[ks + i])
+                i = i + 1
+            _lex_col = 1
+            return
+        i = 0
+        while i < n:
+            _lex_col = 0
+            _pyc_visit(kids[ks + i])
+            i = i + 1
+        if kind == ND["List"]:
+            _pyc_emit(OPMAP["BUILD_LIST"], n, 0)
+        elif kind == ND["Tuple"]:
+            _pyc_emit(OPMAP["BUILD_TUPLE"], n, 0)
+        else:
+            _pyc_emit(OPMAP["BUILD_SET"], n, 0)
+        return
+    if kind == ND["Dict"]:
+        n = nd_b[nid]
+        ks = nd_a[nid]
+        i = 0
+        while i < n * 2:
+            _pyc_visit(kids[ks + i])
+            i = i + 1
+        _pyc_emit(OPMAP["BUILD_MAP"], n, 0)
         return
     _pyc_parse_error("unsupported node in codegen")
 
@@ -455,6 +846,7 @@ def _pyc_assemble():
             or op == OPMAP["LOAD_FAST"]
             or op == OPMAP["PUSH_NULL"]
             or op == OPMAP["COPY"]
+            or op == OPMAP["FOR_ITER"]
         ):
             d = 1
         elif op == OPMAP["LOAD_ATTR"]:
@@ -472,14 +864,27 @@ def _pyc_assemble():
             or op == OPMAP["IS_OP"]
             or op == OPMAP["CONTAINS_OP"]
             or op == OPMAP["RETURN_VALUE"]
+            or op == OPMAP["END_FOR"]
+            or op == OPMAP["POP_ITER"]
+            or op == OPMAP["DELETE_ATTR"]
         ):
             d = 0 - 1
-        elif op == OPMAP["STORE_ATTR"]:
+        elif op == OPMAP["STORE_ATTR"] or op == OPMAP["DELETE_SUBSCR"]:
             d = 0 - 2
         elif op == OPMAP["STORE_SUBSCR"]:
             d = 0 - 3
         elif op == OPMAP["CALL"]:
             d = 0 - (arg + 1)
+        elif (
+            op == OPMAP["BUILD_LIST"]
+            or op == OPMAP["BUILD_TUPLE"]
+            or op == OPMAP["BUILD_SET"]
+        ):
+            d = 1 - arg
+        elif op == OPMAP["BUILD_MAP"]:
+            d = 1 - (arg * 2)
+        elif op == OPMAP["UNPACK_SEQUENCE"]:
+            d = arg - 1
         depth = depth + d
         if depth < 0:
             depth = 0
@@ -518,8 +923,8 @@ def _pyc_assemble():
 
 
 def _pyc_codegen_main():
-    global opnd_n, opnd, ops, ops_obj, stmt_n, stmts, tk_n, tk_s, tk_a
-    global _lex_n, _lex_i, _lex_col
+    global opnd_n, opnd, ops, ops_obj, stmt_n, stmts, tk_n, tk_s, tk_a, tk_b
+    global _lex_n, _lex_i, _lex_col, _lex_line
     _pyc_lex(_in_src)
     root = _pyc_parse(_in_mode)
     _pyc_symtab(root)
@@ -532,9 +937,11 @@ def _pyc_codegen_main():
     tk_n = 0
     tk_s = [0] * 8
     tk_a = [0] * 8
+    tk_b = [0] * 8
     _lex_n = 0
     _lex_i = 0
     _lex_col = 0
+    _lex_line = 0
     _pyc_emit(OPMAP["RESUME"], 0, 0)
     _pyc_visit(root)
     return _pyc_assemble()

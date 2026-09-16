@@ -1,9 +1,10 @@
-"""Host T1 result differential vs CPython (compiler_design.md H).
+"""Host T1–T3 result differential vs CPython (compiler_design.md H, J).
 
 Firmware ``_pyc_codegen_main`` must evaluate to the same result as CPython
 ``eval`` / ``exec``. Differentials never compare ``co_code`` (D1 / D2): no
 CACHE, no constant folding. Unary ``+True`` is excluded (CPython emits
-CALL_INTRINSIC_1 5; the device only allows intrinsic 6).
+CALL_INTRINSIC_1 5; the device only allows intrinsic 6). List displays emit
+``BUILD_LIST n``, not CPython's ``LIST_EXTEND``.
 """
 
 from __future__ import annotations
@@ -145,6 +146,13 @@ EVAL_NAMES = [
     "f(a < b, c)",
     "x",
     "abs(-3)",
+    "[]",
+    "[1, 2, 3]",
+    "(1, 2)",
+    "(1,)",
+    "()",
+    "{1: 2}",
+    "{1, 2}",
 ]
 
 
@@ -165,6 +173,30 @@ EXEC_CASES = [
     ("x = 1 + 2\n", None, {"x": 3}),
     ("x = 1\ny = x + 2\n", None, {"x": 1, "y": 3}),
     ("1 + 2\n", None, {}),
+    ("s = 0\ni = 0\nwhile i < 3:\n    s = s + i\n    i = i + 1\n", None, {"s": 3, "i": 3}),
+    ("x = 1\nif x:\n    y = 2\nelse:\n    y = 0\n", None, {"x": 1, "y": 2}),
+    ("x = 0\nif x:\n    y = 2\nelse:\n    y = 3\n", None, {"x": 0, "y": 3}),
+    ("xs = [1, 2]\ns = 0\nfor i in xs:\n    s = s + i\n", None, {"s": 3}),
+    ("x = 1\nx += 2\n", None, {"x": 3}),
+    ("a, b = 1, 2\n", None, {"a": 1, "b": 2}),
+    ("t = (1, 2)\n", None, {"t": (1, 2)}),
+    ("d = {1: 2}\n", None, {"d": {1: 2}}),
+    ("s = {1, 2}\n", None, {"s": {1, 2}}),
+    ("def f():\n    return 1\nx = f()\n", None, {"x": 1}),
+    ("def add(a, b):\n    return a + b\nx = add(2, 3)\n", None, {"x": 5}),
+    (
+        "def f(n):\n    s = 0\n    i = 0\n    while i < n:\n        s = s + i\n"
+        "        i = i + 1\n    return s\nx = f(4)\n",
+        None,
+        {"x": 6},
+    ),
+    (
+        "n = 3\ns = 0\ni = 0\nwhile i < n:\n    s = s + i\n    i = i + 1\n"
+        "if s == 3:\n    s = s + 1\nelse:\n    s = 0\nxs = [1, 2]\n"
+        "for x in xs:\n    s = s + x\ny = s\n",
+        None,
+        {"y": 7},
+    ),
 ]
 
 
@@ -254,10 +286,33 @@ class TestCompilerCodegenCorpus(unittest.TestCase):
         self.assertIn(_HOST_OP_BINARY_OP, ops)
         self.assertEqual(ops.count(_HOST_OP_LOAD_SMALL_INT), 2)
 
-    def test_def_codegen_is_not_t1(self) -> None:
-        with self.assertRaises(SyntaxError) as cm:
-            firmware_codegen("def f():\n    return 1\n", "exec")
-        self.assertEqual(str(cm.exception), "def codegen is not in T1")
+    def test_def_compiles_and_returns(self) -> None:
+        co = firmware_codegen("def f():\n    return 1\n", "exec")
+        self.assertIsNone(co())
+        self.assertEqual(co._globals["f"](), 1)
+
+    def test_for_break_continue(self) -> None:
+        src = (
+            "s = 0\n"
+            "for i in [1, 2, 3, 4]:\n"
+            "    if i == 2:\n"
+            "        continue\n"
+            "    if i == 4:\n"
+            "        break\n"
+            "    s = s + i\n"
+        )
+        co = firmware_codegen(src, "exec")
+        self.assertIsNone(co())
+        g = {}
+        exec(src, g)
+        self.assertEqual(co._globals["s"], g["s"])
+        self.assertEqual(co._globals["s"], 4)
+
+    def test_del_fast(self) -> None:
+        src = "def f():\n    x = 1\n    y = 2\n    del x\n    return y\nz = f()\n"
+        co = firmware_codegen(src, "exec")
+        self.assertIsNone(co())
+        self.assertEqual(co._globals["z"], 2)
 
     def test_unary_plus_true_is_not_in_differential(self) -> None:
         # Pin the known deviation: firmware leaves True, CPython yields 1.

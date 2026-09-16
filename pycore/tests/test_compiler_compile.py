@@ -92,6 +92,22 @@ class TestCompilerCompileShim(unittest.TestCase):
             1,
         )
 
+    def test_img_compile_exec_roundtrip_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(
+                PROGRAMS / "img_compile_exec_roundtrip.py", "managed_entry"
+            ),
+            7,
+        )
+
+    def test_img_compile_reject_locals_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(
+                PROGRAMS / "img_compile_reject_locals.py", "managed_entry"
+            ),
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,16 +1,22 @@
-# Firmware T1 parser (compiler_design.md §5.5 / step F) plus the minimal
-# T3 `def` / `global` / INDENT suite that step G's symbol table needs.
+# Firmware T1–T3 parser (compiler_design.md §5.5 / steps F, J).
 # Iterative shunting-yard over tk_* arrays into SoA nd_* / kids.
 # Node kinds are CPython 3.14 ast type integers from generated ND.
 #
 # FunctionDef packing: nd_obj=name, nd_a=kids start, nd_b=nargs, nd_c=n_body.
-# kids[nd_a : nd_a+nd_b] are Name(Store) params; then n_body statements.
+# If packing: nd_a=test, nd_b=kids start, nd_c=n_body, nd_obj=n_orelse.
+# While packing: nd_a=test, nd_b=kids start, nd_c=n_body.
+# For packing: nd_a=target, nd_b=iter, nd_c=kids start, nd_obj=n_body.
+# AugAssign: nd_a=target, nd_b=op kind, nd_c=value.
+# Delete: nd_a=kids start, nd_b=n_targets.
+# List/Tuple/Set: nd_a=kids start, nd_b=n, nd_c=ctx.
+# Dict: nd_a=kids start, nd_b=n_pairs (key/value interleaved).
 # Global packing: nd_obj=list of name strings, nd_a=count.
 #
 # Operator-stack tags (LOAD_CONST, not _PYC_G names):
-#   1 BinOp   2 UnaryOp   3 (     4 call   5 [     6 Compare   7 BoolOp
-# Call / BoolOp / Compare keep children on the operand stack and only write
-# the kids arena when the node is reduced, so nesting cannot overlap ranges.
+#   1 BinOp  2 UnaryOp  3 (  4 call  5 [subscr]  6 Compare  7 BoolOp
+#   8 list   9 tuple   10 dict/set
+# Call / BoolOp / Compare / displays keep children on the operand stack and
+# only write the kids arena when the node is reduced.
 
 
 def _pyc_parse_error(msg):
@@ -238,12 +244,23 @@ def _pyc_parse_string(text):
 
 def _pyc_set_store(nid):
     kind = nd_kind[nid]
-    store = ND["Store"]
+    ctx = ND["Store"]
+    if _lex_i == 0 - 2:
+        ctx = ND["Del"]
     if kind == ND["Name"]:
-        nd_a[nid] = store
+        nd_a[nid] = ctx
         return
     if kind == ND["Attribute"] or kind == ND["Subscript"]:
-        nd_c[nid] = store
+        nd_c[nid] = ctx
+        return
+    if kind == ND["Tuple"] or kind == ND["List"]:
+        nd_c[nid] = ctx
+        n = nd_b[nid]
+        ks = nd_a[nid]
+        i = 0
+        while i < n:
+            _pyc_set_store(kids[ks + i])
+            i = i + 1
         return
     _pyc_parse_error("cannot assign to this expression")
 
@@ -475,7 +492,9 @@ def _pyc_parse_expr():
                 continue
             if kind == TOK_OP:
                 if text == "(":
-                    _pyc_ops_push(3, 0, 0, 0)
+                    line = _pyc_tok_line()
+                    col = _pyc_tok_col()
+                    _pyc_ops_push(3, 0, 0, line | (col << 32))
                     _pyc_tok_advance()
                     want = 1
                     continue
@@ -487,10 +506,32 @@ def _pyc_parse_expr():
                     want = 1
                     continue
                 if text == "[":
-                    _pyc_parse_error("list displays are not supported")
+                    line = _pyc_tok_line()
+                    col = _pyc_tok_col()
+                    _pyc_ops_push(8, 0, 0, line | (col << 32))
+                    _pyc_tok_advance()
+                    want = 1
+                    continue
                 if text == "{":
-                    _pyc_parse_error("dict/set displays are not supported")
-            _pyc_parse_error("expected expression")
+                    line = _pyc_tok_line()
+                    col = _pyc_tok_col()
+                    _pyc_ops_push(10, 0, 0, line | (col << 32))
+                    _pyc_tok_advance()
+                    want = 1
+                    continue
+                if (
+                    text == ")"
+                    or text == "]"
+                    or text == "}"
+                    or text == ","
+                    or text == ":"
+                    or text == "="
+                ):
+                    pass
+                else:
+                    _pyc_parse_error("expected expression")
+            else:
+                _pyc_parse_error("expected expression")
         if kind == TOK_OP and text == "(":
             func = _pyc_opnd_pop()
             _pyc_ops_push(4, func, 0, 0)
@@ -525,18 +566,46 @@ def _pyc_parse_expr():
         if kind == TOK_OP and text == ")":
             while ops_n > start_ops:
                 tag = _pyc_top_tag()
-                if tag == 3 or tag == 4:
+                if tag == 3 or tag == 4 or tag == 9:
                     break
-                if tag == 5:
+                if tag == 5 or tag == 8:
                     _pyc_parse_error("unmatched ']'")
+                if tag == 10:
+                    _pyc_parse_error("unmatched '}'")
                 _pyc_reduce_one()
             if ops_n <= start_ops:
                 break
             tag = _pyc_top_tag()
             if tag == 3:
                 if want:
-                    _pyc_parse_error("empty parentheses")
+                    tag, a, b, extra = _pyc_ops_pop()
+                    line = extra & 4294967295
+                    col = extra >> 32
+                    nid = _pyc_nd_new(
+                        ND["Tuple"], line, col, kids_n, 0, ND["Load"], 0
+                    )
+                    _pyc_opnd_push(nid)
+                else:
+                    _pyc_ops_pop()
+                _pyc_tok_advance()
+                want = 0
+                continue
+            if tag == 9:
+                packed = ops[ops_n - 1]
+                nargs = (packed >> 8) & 16777215
+                extra = ops_obj[ops_n - 1]
                 _pyc_ops_pop()
+                if want:
+                    n = nargs
+                else:
+                    n = nargs + 1
+                ks = _pyc_flush_n(n)
+                line = extra & 4294967295
+                col = extra >> 32
+                nid = _pyc_nd_new(
+                    ND["Tuple"], line, col, ks, n, ND["Load"], 0
+                )
+                _pyc_opnd_push(nid)
                 _pyc_tok_advance()
                 want = 0
                 continue
@@ -548,12 +617,36 @@ def _pyc_parse_expr():
         if kind == TOK_OP and text == "]":
             while ops_n > start_ops:
                 tag = _pyc_top_tag()
-                if tag == 5:
+                if tag == 5 or tag == 8:
                     break
-                if tag == 3 or tag == 4:
+                if tag == 3 or tag == 4 or tag == 9:
                     _pyc_parse_error("unmatched bracket")
+                if tag == 10:
+                    _pyc_parse_error("unmatched '}'")
                 _pyc_reduce_one()
-            if ops_n <= start_ops or _pyc_top_tag() != 5:
+            if ops_n <= start_ops:
+                _pyc_parse_error("unmatched ']'")
+            tag = _pyc_top_tag()
+            if tag == 8:
+                packed = ops[ops_n - 1]
+                nargs = (packed >> 8) & 16777215
+                extra = ops_obj[ops_n - 1]
+                _pyc_ops_pop()
+                if want:
+                    n = nargs
+                else:
+                    n = nargs + 1
+                ks = _pyc_flush_n(n)
+                line = extra & 4294967295
+                col = extra >> 32
+                nid = _pyc_nd_new(
+                    ND["List"], line, col, ks, n, ND["Load"], 0
+                )
+                _pyc_opnd_push(nid)
+                _pyc_tok_advance()
+                want = 0
+                continue
+            if tag != 5:
                 _pyc_parse_error("unmatched ']'")
             _pyc_ops_pop()
             if want:
@@ -568,32 +661,165 @@ def _pyc_parse_expr():
             _pyc_tok_advance()
             want = 0
             continue
+        if kind == TOK_OP and text == "}":
+            while ops_n > start_ops:
+                tag = _pyc_top_tag()
+                if tag == 10:
+                    break
+                if tag == 3 or tag == 4 or tag == 9:
+                    _pyc_parse_error("unmatched '}'")
+                if tag == 5 or tag == 8:
+                    _pyc_parse_error("unmatched ']'")
+                _pyc_reduce_one()
+            if ops_n <= start_ops or _pyc_top_tag() != 10:
+                _pyc_parse_error("unmatched '}'")
+            packed = ops[ops_n - 1]
+            nargs = (packed >> 8) & 16777215
+            kind_ds = packed >> 32
+            extra = ops_obj[ops_n - 1]
+            _pyc_ops_pop()
+            if want:
+                n = nargs
+            else:
+                n = nargs + 1
+            line = extra & 4294967295
+            col = extra >> 32
+            if kind_ds == 0:
+                if n == 0:
+                    nid = _pyc_nd_new(
+                        ND["Dict"], line, col, kids_n, 0, 0, 0
+                    )
+                    _pyc_opnd_push(nid)
+                else:
+                    ks = _pyc_flush_n(n)
+                    nid = _pyc_nd_new(
+                        ND["Set"], line, col, ks, n, ND["Load"], 0
+                    )
+                    _pyc_opnd_push(nid)
+            elif kind_ds == 1:
+                if want:
+                    _pyc_parse_error("expected value in dict display")
+                n_ops = (nargs + 1) * 2
+                ks = _pyc_flush_n(n_ops)
+                n_pairs = nargs + 1
+                nid = _pyc_nd_new(
+                    ND["Dict"], line, col, ks, n_pairs, 0, 0
+                )
+                _pyc_opnd_push(nid)
+            elif kind_ds == 3:
+                if want == 0:
+                    _pyc_parse_error("expected ':' in dict display")
+                n_ops = nargs * 2
+                ks = _pyc_flush_n(n_ops)
+                nid = _pyc_nd_new(
+                    ND["Dict"], line, col, ks, nargs, 0, 0
+                )
+                _pyc_opnd_push(nid)
+            else:
+                ks = _pyc_flush_n(n)
+                nid = _pyc_nd_new(
+                    ND["Set"], line, col, ks, n, ND["Load"], 0
+                )
+                _pyc_opnd_push(nid)
+            _pyc_tok_advance()
+            want = 0
+            continue
         if kind == TOK_OP and text == ",":
             while ops_n > start_ops:
                 tag = _pyc_top_tag()
-                if tag == 3 or tag == 4 or tag == 5:
+                if (
+                    tag == 3
+                    or tag == 4
+                    or tag == 5
+                    or tag == 8
+                    or tag == 9
+                    or tag == 10
+                ):
                     break
                 _pyc_reduce_one()
-            tag = _pyc_top_tag()
-            if tag != 4:
-                _pyc_parse_error("tuple displays are not supported")
             if want:
-                _pyc_parse_error("expected argument")
-            packed = ops[ops_n - 1]
-            func = (packed >> 8) & 16777215
-            nargs = (packed >> 32) + 1
-            ops[ops_n - 1] = 4 | (func << 8) | (nargs << 32)
-            _pyc_tok_advance()
-            kind2 = _pyc_tok_kind()
-            text2 = _pyc_tok_text()
-            if kind2 == TOK_OP and text2 == ")":
-                _pyc_close_call(1)
-                want = 0
+                _pyc_parse_error("expected expression")
+            tag = _pyc_top_tag()
+            if tag == 4:
+                packed = ops[ops_n - 1]
+                func = (packed >> 8) & 16777215
+                nargs = (packed >> 32) + 1
+                ops[ops_n - 1] = 4 | (func << 8) | (nargs << 32)
+                _pyc_tok_advance()
+                kind2 = _pyc_tok_kind()
+                text2 = _pyc_tok_text()
+                if kind2 == TOK_OP and text2 == ")":
+                    _pyc_close_call(1)
+                    want = 0
+                    continue
+                want = 1
                 continue
+            if tag == 3:
+                extra = ops_obj[ops_n - 1]
+                ops[ops_n - 1] = 9 | (1 << 8)
+                ops_obj[ops_n - 1] = extra
+                _pyc_tok_advance()
+                want = 1
+                continue
+            if tag == 8 or tag == 9:
+                packed = ops[ops_n - 1]
+                extra = ops_obj[ops_n - 1]
+                nargs = ((packed >> 8) & 16777215) + 1
+                ops[ops_n - 1] = tag | (nargs << 8)
+                ops_obj[ops_n - 1] = extra
+                _pyc_tok_advance()
+                want = 1
+                continue
+            if tag == 10:
+                packed = ops[ops_n - 1]
+                extra = ops_obj[ops_n - 1]
+                nargs = ((packed >> 8) & 16777215) + 1
+                kind_ds = packed >> 32
+                if kind_ds == 1:
+                    kind_ds = 3
+                elif kind_ds == 0:
+                    kind_ds = 2
+                ops[ops_n - 1] = 10 | (nargs << 8) | (kind_ds << 32)
+                ops_obj[ops_n - 1] = extra
+                _pyc_tok_advance()
+                want = 1
+                continue
+            extra = _pyc_tok_line() | (_pyc_tok_col() << 32)
+            _pyc_ops_push(9, 1, 0, extra)
+            _pyc_tok_advance()
             want = 1
             continue
         if kind == TOK_OP and text == ":":
-            _pyc_parse_error("slices are not supported")
+            while ops_n > start_ops:
+                tag = _pyc_top_tag()
+                if tag == 10:
+                    break
+                if tag == 5:
+                    _pyc_parse_error("slices are not supported")
+                if (
+                    tag == 3
+                    or tag == 4
+                    or tag == 8
+                    or tag == 9
+                ):
+                    break
+                _pyc_reduce_one()
+            tag = _pyc_top_tag()
+            if tag == 10:
+                if want:
+                    _pyc_parse_error("expected key")
+                packed = ops[ops_n - 1]
+                extra = ops_obj[ops_n - 1]
+                nargs = (packed >> 8) & 16777215
+                kind_ds = packed >> 32
+                if kind_ds == 2:
+                    _pyc_parse_error("invalid dict display")
+                ops[ops_n - 1] = 10 | (nargs << 8) | (1 << 32)
+                ops_obj[ops_n - 1] = extra
+                _pyc_tok_advance()
+                want = 1
+                continue
+            break
         if kind == TOK_OP and text == "=":
             break
         if kind == TOK_NAME and text == "and":
@@ -662,10 +888,31 @@ def _pyc_parse_expr():
             continue
         break
     if want:
-        _pyc_parse_error("unexpected end of expression")
+        tag = _pyc_top_tag()
+        if tag != 9:
+            if tag != 8:
+                _pyc_parse_error("unexpected end of expression")
     while ops_n > start_ops:
         tag = _pyc_top_tag()
-        if tag == 3 or tag == 4 or tag == 5:
+        if tag == 9:
+            packed = ops[ops_n - 1]
+            nargs = (packed >> 8) & 16777215
+            extra = ops_obj[ops_n - 1]
+            _pyc_ops_pop()
+            if want:
+                n = nargs
+            else:
+                n = nargs + 1
+            ks = _pyc_flush_n(n)
+            line = extra & 4294967295
+            col = extra >> 32
+            nid = _pyc_nd_new(
+                ND["Tuple"], line, col, ks, n, ND["Load"], 0
+            )
+            _pyc_opnd_push(nid)
+            want = 0
+            continue
+        if tag == 3 or tag == 4 or tag == 5 or tag == 8 or tag == 10:
             _pyc_parse_error("unmatched bracket")
         _pyc_reduce_one()
     if opnd_n != start_opnd + 1:
@@ -758,6 +1005,12 @@ def _pyc_parse_suite():
             kind = _pyc_tok_kind()
             if nd_kind[stmt] == ND["FunctionDef"]:
                 continue
+            if nd_kind[stmt] == ND["If"]:
+                continue
+            if nd_kind[stmt] == ND["While"]:
+                continue
+            if nd_kind[stmt] == ND["For"]:
+                continue
             if kind == TOK_NEWLINE:
                 _pyc_tok_advance()
                 continue
@@ -848,6 +1101,7 @@ def _pyc_parse_function_def():
 
 
 def _pyc_parse_stmt():
+    global _lex_i
     kind = _pyc_tok_kind()
     text = _pyc_tok_text()
     if kind == TOK_NAME and text == "return":
@@ -856,6 +1110,196 @@ def _pyc_parse_stmt():
         return _pyc_parse_function_def()
     if kind == TOK_NAME and text == "global":
         return _pyc_parse_global()
+    if kind == TOK_NAME and text == "pass":
+        line = _pyc_tok_line()
+        col = _pyc_tok_col()
+        _pyc_tok_advance()
+        return _pyc_nd_new(ND["Pass"], line, col, 0, 0, 0, 0)
+    if kind == TOK_NAME and text == "break":
+        line = _pyc_tok_line()
+        col = _pyc_tok_col()
+        _pyc_tok_advance()
+        return _pyc_nd_new(ND["Break"], line, col, 0, 0, 0, 0)
+    if kind == TOK_NAME and text == "continue":
+        line = _pyc_tok_line()
+        col = _pyc_tok_col()
+        _pyc_tok_advance()
+        return _pyc_nd_new(ND["Continue"], line, col, 0, 0, 0, 0)
+    if kind == TOK_NAME and text == "del":
+        line = _pyc_tok_line()
+        col = _pyc_tok_col()
+        _pyc_tok_advance()
+        target = _pyc_parse_expr()
+        saved = _lex_i
+        _lex_i = 0 - 2
+        _pyc_set_store(target)
+        _lex_i = saved
+        if nd_kind[target] == ND["Tuple"]:
+            return _pyc_nd_new(
+                ND["Delete"], line, col, nd_a[target], nd_b[target], 0, 0
+            )
+        ks = kids_n
+        _pyc_kids_append(target)
+        return _pyc_nd_new(ND["Delete"], line, col, ks, 1, 0, 0)
+    if kind == TOK_NAME and text == "if":
+        tests = [0] * 8
+        bodies = [0] * 8
+        lines = [0] * 8
+        cols = [0] * 8
+        ncl = 0
+        while 1:
+            line = _pyc_tok_line()
+            col = _pyc_tok_col()
+            _pyc_tok_advance()
+            test = _pyc_parse_expr()
+            if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+                _pyc_parse_error("expected ':'")
+            _pyc_tok_advance()
+            body = _pyc_parse_suite()
+            cap = len(tests)
+            while cap < ncl + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                tests = tests + ([0] * extra)
+                bodies = bodies + ([0] * extra)
+                lines = lines + ([0] * extra)
+                cols = cols + ([0] * extra)
+                cap = len(tests)
+            tests[ncl] = test
+            bodies[ncl] = body
+            lines[ncl] = line
+            cols[ncl] = col
+            ncl = ncl + 1
+            _pyc_skip_newlines()
+            if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "elif":
+                continue
+            break
+        orelse = [0] * 0
+        if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "else":
+            _pyc_tok_advance()
+            if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+                _pyc_parse_error("expected ':'")
+            _pyc_tok_advance()
+            orelse = _pyc_parse_suite()
+        i = ncl
+        while i > 0:
+            i = i - 1
+            body = bodies[i]
+            nbody = len(body)
+            norelse = len(orelse)
+            ks = kids_n
+            j = 0
+            while j < nbody:
+                _pyc_kids_append(body[j])
+                j = j + 1
+            j = 0
+            while j < norelse:
+                _pyc_kids_append(orelse[j])
+                j = j + 1
+            nid = _pyc_nd_new(
+                ND["If"],
+                lines[i],
+                cols[i],
+                tests[i],
+                ks,
+                nbody,
+                norelse,
+            )
+            if i == 0:
+                return nid
+            orelse = [0] * 1
+            orelse[0] = nid
+        _pyc_parse_error("internal if")
+    if kind == TOK_NAME and text == "while":
+        line = _pyc_tok_line()
+        col = _pyc_tok_col()
+        _pyc_tok_advance()
+        test = _pyc_parse_expr()
+        if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+            _pyc_parse_error("expected ':'")
+        _pyc_tok_advance()
+        body = _pyc_parse_suite()
+        _pyc_skip_newlines()
+        if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "else":
+            _pyc_parse_error("while-else is not supported")
+        nbody = len(body)
+        ks = kids_n
+        i = 0
+        while i < nbody:
+            _pyc_kids_append(body[i])
+            i = i + 1
+        return _pyc_nd_new(ND["While"], line, col, test, ks, nbody, 0)
+    if kind == TOK_NAME and text == "for":
+        line = _pyc_tok_line()
+        col = _pyc_tok_col()
+        _pyc_tok_advance()
+        if _pyc_tok_kind() != TOK_NAME:
+            _pyc_parse_error("unsupported for-target")
+        tname = _pyc_tok_text()
+        if tname in KEYWORDS:
+            _pyc_parse_error("invalid for-target")
+        tline = _pyc_tok_line()
+        tcol = _pyc_tok_col()
+        _pyc_tok_advance()
+        tnodes = [0] * 8
+        nt = 0
+        tnodes[0] = _pyc_nd_new(
+            ND["Name"], tline, tcol, ND["Store"], 0, 0, tname
+        )
+        nt = 1
+        while _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ",":
+            _pyc_tok_advance()
+            if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "in":
+                break
+            if _pyc_tok_kind() != TOK_NAME:
+                _pyc_parse_error("unsupported for-target")
+            tname = _pyc_tok_text()
+            if tname in KEYWORDS:
+                _pyc_parse_error("invalid for-target")
+            tline = _pyc_tok_line()
+            tcol = _pyc_tok_col()
+            _pyc_tok_advance()
+            cap = len(tnodes)
+            while cap < nt + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                tnodes = tnodes + ([0] * extra)
+                cap = len(tnodes)
+            tnodes[nt] = _pyc_nd_new(
+                ND["Name"], tline, tcol, ND["Store"], 0, 0, tname
+            )
+            nt = nt + 1
+        if nt == 1:
+            target = tnodes[0]
+        else:
+            ks = kids_n
+            i = 0
+            while i < nt:
+                _pyc_kids_append(tnodes[i])
+                i = i + 1
+            target = _pyc_nd_new(
+                ND["Tuple"], line, col, ks, nt, ND["Store"], 0
+            )
+        if not (_pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "in"):
+            _pyc_parse_error("expected 'in'")
+        _pyc_tok_advance()
+        it = _pyc_parse_expr()
+        if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+            _pyc_parse_error("expected ':'")
+        _pyc_tok_advance()
+        body = _pyc_parse_suite()
+        _pyc_skip_newlines()
+        if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "else":
+            _pyc_parse_error("for-else is not supported")
+        nbody = len(body)
+        ks = kids_n
+        i = 0
+        while i < nbody:
+            _pyc_kids_append(body[i])
+            i = i + 1
+        return _pyc_nd_new(ND["For"], line, col, target, it, ks, nbody)
     if kind == TOK_NAME and text in KEYWORDS:
         if (
             text != "True"
@@ -873,6 +1317,20 @@ def _pyc_parse_stmt():
         rhs = _pyc_parse_expr()
         line, col = _pyc_pos_of(value)
         return _pyc_nd_new(ND["Assign"], line, col, value, 0, rhs, 0)
+    if kind == TOK_OP:
+        n = len(text)
+        if n >= 2:
+            last = text[n - 1]
+            op = text[0 : n - 1]
+            if last == "=":
+                if op in BINOPS:
+                    _pyc_tok_advance()
+                    _pyc_set_store(value)
+                    rhs = _pyc_parse_expr()
+                    line, col = _pyc_pos_of(value)
+                    return _pyc_nd_new(
+                        ND["AugAssign"], line, col, value, BINOPS[op], rhs, 0
+                    )
     line, col = _pyc_pos_of(value)
     return _pyc_nd_new(ND["Expr"], line, col, value, 0, 0, 0)
 
@@ -929,6 +1387,12 @@ def _pyc_parse(mode):
             stmt_n = stmt_n + 1
             kind = _pyc_tok_kind()
             if nd_kind[stmt] == ND["FunctionDef"]:
+                continue
+            if nd_kind[stmt] == ND["If"]:
+                continue
+            if nd_kind[stmt] == ND["While"]:
+                continue
+            if nd_kind[stmt] == ND["For"]:
                 continue
             if kind == TOK_NEWLINE:
                 _pyc_tok_advance()
