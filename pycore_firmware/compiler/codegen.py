@@ -15,7 +15,19 @@
 
 
 def _pyc_emit(op, arg, lab):
-    global opnd, opnd_n, ops, ops_obj
+    global opnd, opnd_n, ops, ops_obj, tk_a, _lex_n
+    if lab < 0:
+        _lex_n = _lex_n + 1
+        cap = len(tk_a)
+        while cap < _lex_n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            tk_a = tk_a + ([0] * extra)
+            cap = len(tk_a)
+        lab = _lex_n
+    if op < 0:
+        return lab
     cap = len(opnd)
     while cap < opnd_n + 1:
         extra = cap
@@ -35,6 +47,7 @@ def _pyc_emit(op, arg, lab):
     ops[opnd_n] = arg
     ops_obj[opnd_n] = lab
     opnd_n = opnd_n + 1
+    return lab
 
 
 def _pyc_visit(nid):
@@ -164,26 +177,8 @@ def _pyc_visit(nid):
         while i < nbody:
             _pyc_visit(kids[ks + nargs + i])
             i = i + 1
-        val = None
-        i = 0
-        found = 0
-        while i < stmt_n:
-            if stmts[i] is val:
-                _pyc_emit(OPMAP["LOAD_CONST"], i, 0)
-                found = 1
-                break
-            i = i + 1
-        if found == 0:
-            cap = len(stmts)
-            while cap < stmt_n + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                stmts = stmts + ([0] * extra)
-                cap = len(stmts)
-            stmts[stmt_n] = val
-            _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
-            stmt_n = stmt_n + 1
+        none_id = _pyc_nd_new(ND["Constant"], 1, 0, 5, 0, 0, None)
+        _pyc_visit(none_id)
         _pyc_emit(OPMAP["RETURN_VALUE"], 0, 0)
         child = _pyc_assemble()
         opnd = sv_opnd
@@ -211,44 +206,12 @@ def _pyc_visit(nid):
         _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
         stmt_n = stmt_n + 1
         _pyc_emit(OPMAP["MAKE_FUNCTION"], 0, 0)
-        name = nd_obj[nid]
-        local = 0
-        idx = 0
-        if sc_kind[_lex_i] == 1:
-            names = sc_varnames[_lex_i]
-            nloc = sc_nlocals[_lex_i]
-            i = 0
-            while i < nloc:
-                if names[i] == name:
-                    local = 1
-                    idx = i
-                    break
-                i = i + 1
-        if local:
-            _pyc_emit(OPMAP["STORE_FAST"], idx, 0)
-            return
-        i = 0
-        ni = 0 - 1
-        while i < tk_n:
-            if tk_s[i] == name:
-                ni = i
-                break
-            i = i + 1
-        if ni < 0:
-            cap = len(tk_s)
-            while cap < tk_n + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                tk_s = tk_s + ([0] * extra)
-                cap = len(tk_s)
-            tk_s[tk_n] = name
-            ni = tk_n
-            tk_n = tk_n + 1
-        if sc_kind[_lex_i] == 1:
-            _pyc_emit(OPMAP["STORE_GLOBAL"], ni, 0)
-            return
-        _pyc_emit(OPMAP["STORE_NAME"], ni, 0)
+        name_id = _pyc_nd_new(
+            ND["Name"], 1, 0, ND["Store"], 0, 0, nd_obj[nid]
+        )
+        _lex_col = 1
+        _pyc_visit(name_id)
+        _lex_col = 0
         return
     if kind == ND["Constant"]:
         val = nd_obj[nid]
@@ -591,18 +554,9 @@ def _pyc_visit(nid):
         _pyc_emit(OPMAP["JUMP_BACKWARD"], 0, cont)
         return
     if kind == ND["If"]:
-        _lex_n = _lex_n + 1
-        cap = len(tk_a)
-        while cap < _lex_n + 1:
-            extra = cap
-            if extra < 8:
-                extra = 8
-            tk_a = tk_a + ([0] * extra)
-            cap = len(tk_a)
-        else_lab = _lex_n
         _pyc_visit(nd_a[nid])
         _pyc_emit(OPMAP["TO_BOOL"], 0, 0)
-        _pyc_emit(OPMAP["POP_JUMP_IF_FALSE"], 0, else_lab)
+        else_lab = _pyc_emit(OPMAP["POP_JUMP_IF_FALSE"], 0, 0 - 1)
         ks = nd_b[nid]
         nbody = nd_c[nid]
         norelse = nd_obj[nid]
@@ -611,16 +565,7 @@ def _pyc_visit(nid):
             _pyc_visit(kids[ks + i])
             i = i + 1
         if norelse:
-            _lex_n = _lex_n + 1
-            cap = len(tk_a)
-            while cap < _lex_n + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                tk_a = tk_a + ([0] * extra)
-                cap = len(tk_a)
-            end_lab = _lex_n
-            _pyc_emit(OPMAP["JUMP_FORWARD"], 0, end_lab)
+            end_lab = _pyc_emit(OPMAP["JUMP_FORWARD"], 0, 0 - 1)
             tk_a[else_lab] = opnd_n
             i = 0
             while i < norelse:
@@ -631,32 +576,11 @@ def _pyc_visit(nid):
             tk_a[else_lab] = opnd_n
         return
     if kind == ND["While"]:
-        _lex_n = _lex_n + 1
-        cap = len(tk_a)
-        while cap < _lex_n + 1:
-            extra = cap
-            if extra < 8:
-                extra = 8
-            tk_a = tk_a + ([0] * extra)
-            cap = len(tk_a)
-        br = _lex_n
-        _lex_n = _lex_n + 1
-        cap = len(tk_a)
-        while cap < _lex_n + 1:
-            extra = cap
-            if extra < 8:
-                extra = 8
-            tk_a = tk_a + ([0] * extra)
-            cap = len(tk_a)
-        cont = _lex_n
+        br = _pyc_emit(0 - 1, 0, 0 - 1)
+        cont = _pyc_emit(0 - 1, 0, 0 - 1)
         _lex_line = _lex_line + 1
-        cap = len(tk_b)
-        while cap < _lex_line * 2 + 2:
-            extra = cap
-            if extra < 8:
-                extra = 8
-            tk_b = tk_b + ([0] * extra)
-            cap = len(tk_b)
+        if len(tk_b) < _lex_line * 2 + 2:
+            tk_b = tk_b + ([0] * 8)
         tk_b[_lex_line * 2] = br
         tk_b[_lex_line * 2 + 1] = cont
         tk_a[cont] = opnd_n
@@ -674,41 +598,12 @@ def _pyc_visit(nid):
         _lex_line = _lex_line - 1
         return
     if kind == ND["For"]:
-        _lex_n = _lex_n + 1
-        cap = len(tk_a)
-        while cap < _lex_n + 1:
-            extra = cap
-            if extra < 8:
-                extra = 8
-            tk_a = tk_a + ([0] * extra)
-            cap = len(tk_a)
-        endfor = _lex_n
-        _lex_n = _lex_n + 1
-        cap = len(tk_a)
-        while cap < _lex_n + 1:
-            extra = cap
-            if extra < 8:
-                extra = 8
-            tk_a = tk_a + ([0] * extra)
-            cap = len(tk_a)
-        popiter = _lex_n
-        _lex_n = _lex_n + 1
-        cap = len(tk_a)
-        while cap < _lex_n + 1:
-            extra = cap
-            if extra < 8:
-                extra = 8
-            tk_a = tk_a + ([0] * extra)
-            cap = len(tk_a)
-        cont = _lex_n
+        endfor = _pyc_emit(0 - 1, 0, 0 - 1)
+        popiter = _pyc_emit(0 - 1, 0, 0 - 1)
+        cont = _pyc_emit(0 - 1, 0, 0 - 1)
         _lex_line = _lex_line + 1
-        cap = len(tk_b)
-        while cap < _lex_line * 2 + 2:
-            extra = cap
-            if extra < 8:
-                extra = 8
-            tk_b = tk_b + ([0] * extra)
-            cap = len(tk_b)
+        if len(tk_b) < _lex_line * 2 + 2:
+            tk_b = tk_b + ([0] * 8)
         tk_b[_lex_line * 2] = popiter
         tk_b[_lex_line * 2 + 1] = cont
         _pyc_visit(nd_b[nid])
