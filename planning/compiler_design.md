@@ -1017,8 +1017,8 @@ this work must close, not as new scope.
 | Growing `RF_DEPTH` | §6.1 adds spill/fill instead; the RF stays 256 entries and the flop count does not move |
 | A dedicated stack cache between the RF and dmem | §6.1 S-8: L1D already hits 95–99.6% on the frame region, and per-slot residency costs ~170 Kbit of tables (`attic/pycore_frame_buffer.sv`) |
 | LL(1) table generator + grammar tables | Precedence climbing needs neither |
-| Module image format / `_bi_load_module` / relocation | The compiler is in the boot image; its output is a handle |
-| BIOS | Programs call `compile()` directly |
+| Module image format / `_bi_load_module` / relocation | Compiler still fits (39545 / 65536); §11.6 not opened |
+| BIOS | ROM `bios(payload)` execs a payload; programs may still `compile()` directly |
 | Trap → Python exception (exceptions T6) | Syntax errors are already real `raise`s |
 | `open` / stdin / console RX | Source is already a heap string |
 | Garbage collection | §5.7 policy + caller-driven marks |
@@ -1103,6 +1103,7 @@ parallel with B and C.
 | **Closures** | §11.4 blocked on OBJ_CLOSURE RTL. **Pinned** | `img_compile_reject_closure` → 1 |
 | **O-2** | split result/scratch arenas. **Not opened** | R4 watermark golden still holds; caller mark/release is the reclaim path |
 | **Loader** | module image + relocation. **Not opened** | compiler fits (39545 / 65536); overlays only if headroom vanishes |
+| **BIOS** | ROM `bios(payload)` execs source. **Landed** | `img_bios_exec` → 3 |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1155,6 +1156,7 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_compile_str_slice` | **1** — T4 `'abcdef'[1:4] == "bcd"` |
 | `img_compile_list_comp` | **15** — T4 `[x for x in [1,2,3,4,5]]` (two-core; `LIST_APPEND` grow) |
 | `img_compile_reject_closure` | **1** — nested enclosing load is `SyntaxError` (§11.4) |
+| `img_bios_exec` | **3** — ROM `bios("x = 1 + 2")` (§11.7) |
 
 ---
 
@@ -1191,7 +1193,9 @@ In dependency order, not priority order.
    `code_loading.md` §4 stays the recorded format; do not restart the
    loader for occupancy (lever 3 is overlays, only after shrinking
    `codegen.py`).
-7. **BIOS** — a ROM program that initialises and `exec`s a payload.
+7. **BIOS.** **Landed.** ROM `bios(payload)` `exec`s a string or code
+   object in the caller's globals (`img_bios_exec` → 3). Programs may
+   still call `compile()` / `exec()` directly.
 8. **Self-hosting** — compile `pycore_firmware/compiler/` on device; check
    stage-2 output is byte-identical to stage-1 for the same input. A fixpoint,
    not a demo, and a size problem before it is anything else.

@@ -72,6 +72,7 @@ class RomFirmwareSeedTest(unittest.TestCase):
         self.assertIn("compile", keys)
         self.assertIn("eval", keys)
         self.assertIn("exec", keys)
+        self.assertIn("bios", keys)
         self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 31)
 
     def test_seed_firmware_function_returns_code_object(self) -> None:

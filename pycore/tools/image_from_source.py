@@ -1351,6 +1351,8 @@ ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
     ("eval", "eval", "eval"),
     # compiler_design.md I — compile() shim around _pyc_codegen_main
     ("compile", "compile", "compile"),
+    # compiler_design.md §11.7 — ROM BIOS execs a payload
+    ("bios", "bios", "bios"),
 )
 
 # Native LOAD_ATTR methods. Seeded into the exc-arena sidecar, not the public
@@ -2494,7 +2496,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
       str → OBK_TYPE (OB_FLAG_STR_TYPE); CALL stringifies STR/INT/BOOL/None
       Wave A exception types → OBK_TYPE with documented tp_base + OB_FLAG_EXC_TYPE
         (includes SyntaxError so Plan 1 P7 tests still LOAD_GLOBAL)
-      ROM_FIRMWARE_BUILTINS (incl. print, exec, eval, compile) → CODE_OBJECT handles
+      ROM_FIRMWARE_BUILTINS (incl. print, exec, eval, compile, bios) → CODE_OBJECT handles
       _PYC_G → MUT_DICT (compiler package namespace, compiler_design.md W-1)
       _PYC_ENTRY → CODE_OBJECT (0-arg trampoline in code RAM)
 

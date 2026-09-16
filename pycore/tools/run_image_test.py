@@ -159,6 +159,9 @@ def host_entry_result_from_text(
 
     namespace["exec"] = _host_exec
     namespace["eval"] = _host_eval
+    bios_fn = namespace.get("bios")
+    if callable(bios_fn):
+        bios_fn.__globals__["exec"] = _host_exec
 
     # Wire SEED_TYPE / SEED_TYPE_METHOD / SEED_INSTANCE after defs exist.
     methods_by_type: dict[str, list] = {}

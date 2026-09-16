@@ -1358,6 +1358,12 @@ pycore-img-exec-str-direct:
 pycore-img-exec-str-direct-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,exec_str_direct,8000000)
 
+pycore-img-bios-exec:
+	$(call PYCORE_IMAGE_RUN,bios_exec,40000000)
+
+pycore-img-bios-exec-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,bios_exec,40000000)
+
 pycore-img-package-all: \
 	pycore-img-pyc-package-call \
 	pycore-img-lexer-count \
@@ -1381,7 +1387,8 @@ pycore-img-package-all: \
 	pycore-img-compile-str-slice \
 	pycore-img-eval-str-direct \
 	pycore-img-eval-str-long \
-	pycore-img-exec-str-direct
+	pycore-img-exec-str-direct \
+	pycore-img-bios-exec
 
 pycore-img-code-new-call-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,code_new_call,100000)
@@ -1955,6 +1962,7 @@ pycore-img-two-core: \
 	pycore-img-eval-str-direct-two-core \
 	pycore-img-eval-str-long-two-core \
 	pycore-img-exec-str-direct-two-core \
+	pycore-img-bios-exec-two-core \
 	pycore-img-helper-containers-two-core \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \

@@ -182,6 +182,11 @@ is still function ≡ code object. Nested load of an enclosing local stays
 `SyntaxError` (D6). Device: `img_symtab_closure` (1),
 `img_compile_reject_closure` (1).
 
+## BIOS (§11.7)
+
+ROM `bios(payload)` `exec`s a string or code object in the caller's
+globals. Device: `img_bios_exec` (3).
+
 ## Subset (firmware compiler source)
 
 Enforced by `pycore/tests/test_compiler_subset.py` on every file under

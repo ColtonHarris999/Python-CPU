@@ -134,6 +134,12 @@ class TestCompilerCompileShim(unittest.TestCase):
             3,
         )
 
+    def test_img_bios_exec_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_bios_exec.py", "managed_entry"),
+            3,
+        )
+
     def test_img_code_kind_tags_host_golden(self) -> None:
         self.assertEqual(
             host_entry_result(PROGRAMS / "img_code_kind_tags.py", "managed_entry"),

@@ -36,7 +36,7 @@ through `load_rom_firmware_callables()` so firmware semantics (e.g.
 `reversed` → list) match hardware.
 
 The compiler package is **not** listed in that builtins dict (except the
-public `compile` shim). The image builder serializes every top-level `def`
+public `compile` shim and the §11.7 `bios` payload exec). The image builder serializes every top-level `def`
 under `compiler/` (except generated `tables.py`) into code RAM, copies
 `tables.py` constants (`TOK_*`, `OPMAP`, `KEYWORDS`, …) into the same dict,
 builds one `MUT_DICT` bound as `_PYC_G`, and binds a 0-arg trampoline as
