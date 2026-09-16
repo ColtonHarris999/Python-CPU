@@ -1,9 +1,11 @@
 # `compile` — shipped subset
 
-Status: **in ROM** (compiler_design.md step K, landed). T1–T3 expressions and
-statements (`if`/`while`/`for`, `def` positional, displays, unpack).
-`"single"` / nonzero `flags` / invalid `optimize` → `ValueError`.
-Defaults / `*args` / `**kwargs` / nested closures remain `SyntaxError`.
+Status: **in ROM** (compiler_design.md T4 / §11.2, landed). T1–T4
+expressions and statements (`if`/`while`/`for`, `def` positional,
+displays, unpack, `try`/`except`/`else`/`finally`, `raise`,
+comprehensions, string slices). `"single"` / nonzero `flags` /
+invalid `optimize` → `ValueError`. Defaults / `*args` / `**kwargs` /
+nested closures remain `SyntaxError`.
 
 **Design:** [`planning/compiler_design.md`](../../planning/compiler_design.md)
 §4.2. Pipeline notes: [`pycore/docs/compiler.md`](../../pycore/docs/compiler.md).
@@ -48,6 +50,12 @@ the step-D toy that returns 42). It stores `_in_src` / `_in_file` /
 | `img_compile_reject_locals` | **1** (`SyntaxError` on 241 locals) |
 | `img_compile_repeat` | **1** (R4 watermark ≤ 400000) |
 | `img_compile_release_realloc` | **37** (R7 second compile after release) |
+| `img_compile_try_except` | **7** (T4) |
+| `img_compile_try_else` | **3** (T4) |
+| `img_compile_try_finally` | **12** (T4) |
+| `img_compile_raise` | **7** (T4) |
+| `img_compile_str_slice` | **1** (T4) |
+| `img_compile_list_comp` | **15** (T4, two-core) |
 
 String-form `eval("1+2")` / `exec("x = 1")` dispatch via `_bi_code_kind`
 (§11.1). `make pycore-size-report` is the W-8 occupancy gate (A8).

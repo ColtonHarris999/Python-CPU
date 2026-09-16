@@ -1,7 +1,7 @@
 # On-device `compile()`
 
-Status: **Landed** through step K; §11.1 string-form `exec`/`eval` via
-`_bi_code_kind`. Design:
+Status: **Landed** through T4 (§11.2 try/raise/comprehensions/string
+slices) plus §11.1 string-form `exec`/`eval` via `_bi_code_kind`. Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` is a resident PyCore builtin. This file records the
@@ -11,7 +11,7 @@ pipeline, subset, and the deviations from CPython that tests pin.
 
 ```text
 source ─► lexer ─► iterative parser ─► SoA AST ─► symtab
-       ─► codegen T1–T3 (no CACHE) ─► assemble
+       ─► codegen T1–T4 (no CACHE) ─► assemble
        ─► _bi_code_alloc / blit / patch / new ─► existing exec/eval
 ```
 
@@ -53,11 +53,13 @@ nd_obj[n]                   str / int / float / list payload, or None
 kids[]                      flat arena
 ```
 
-`mode == "eval"` wraps a T1–T3 expression in `ND_EXPRESSION`. `mode == "exec"`
-parses T1–T3 statements (`if`/`while`/`for`, `break`/`continue`/`pass`,
-augassign, `del`, displays, unpack, `def` with positional args, `global`)
-into `ND_MODULE`. Slices, `while`/`for`-`else`, defaults/`*args`/`**kwargs`,
-and later tiers are `SyntaxError`.
+`mode == "eval"` wraps a T1–T4 expression in `ND_EXPRESSION`. `mode == "exec"`
+parses T1–T4 statements (`if`/`while`/`for`, `break`/`continue`/`pass`,
+augassign, `del`, displays, unpack, `def` with positional args, `global`,
+`try`/`except`/`else`/`finally`, `raise`, single-generator
+list/set/dict comprehensions, string slices) into `ND_MODULE`. Slice
+step, generator expressions, `raise from`, `except*`, `while`/`for`-`else`,
+defaults/`*args`/`**kwargs`, and T5 are `SyntaxError`.
 
 Host: `pycore/tests/test_compiler_parser.py` vs `ast.parse` (tree shape).
 Device: `img_parser_tiny_expr` (checksum), `img_compile_deep_nesting`
@@ -92,12 +94,14 @@ Device: `img_symtab_locals` (checksum), `img_symtab_closure` (returns 1).
 
 `_pyc_codegen_main() -> CODE_OBJECT` lexes, parses, builds the symbol table,
 then recursively visits `nd_*` (Rule 2) into instruction words and assembles
-them with `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_new`. T1–T3:
+them with `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_new`. T1–T4:
 literals, names, ALU, unary, compare/chains, `is`/`in`, `not`/`and`/`or`,
 call, subscript, attribute, expression statements, assignment, `return`,
 `if`/`elif`/`else`, `while`/`for`, `break`/`continue`/`pass`, augassign,
 `del`, list/tuple/dict/set displays, unpack, `def` (positional; nested
-assemble into the parent's `co_consts` then `MAKE_FUNCTION`).
+assemble into the parent's `co_consts` then `MAKE_FUNCTION`),
+`try`/`except`/`else`/`finally`, `raise`, comprehensions (`LIST_APPEND` /
+`SET_ADD`/`MAP_ADD` oparg 2), string `BINARY_SLICE`.
 
 No `CACHE` (D1). No constant folding (D2): CPython emits `LOAD_SMALL_INT 3`
 for `1 + 2`; firmware emits `LOAD_SMALL_INT 1; LOAD_SMALL_INT 2; BINARY_OP +`.
@@ -107,9 +111,12 @@ List displays emit `BUILD_LIST n`, never `LIST_EXTEND`. Assemble builds
 for the hardware `n_cache` addend (`JUMP_FORWARD=0`, `POP_JUMP_*` /
 `JUMP_BACKWARD` / `FOR_ITER`=1). Unary `+` visits the operand only
 (CPython's `CALL_INTRINSIC_1` 5 is not in the device allowlist). Exception
-tables are empty `()`. `del` of a module/global name is `SyntaxError`
+tables are a TUPLE of INT varints (CPython 6-bit layout; first start byte
+`| 128`); entries are appended onto `kids[]` with `tk_b[0]` as the start
+index. `del` of a module/global name is `SyntaxError`
 (no `DELETE_NAME` / `DELETE_GLOBAL` on this target). Loop labels reuse
-`_lex_line` (depth) and `tk_b` (break/continue pairs).
+`_lex_line` (depth) and `tk_b` (break/continue pairs). Slice store/del
+is `SyntaxError`. `except as e` leaves `e` bound (no `DELETE_NAME`).
 
 Host: `pycore/tests/test_compiler_codegen.py` result differential vs CPython
 `eval`/`exec`. Device: `img_codegen_t1_expr` (assembled `"1 + 2"` returns 3),
@@ -126,7 +133,8 @@ Host: `pycore/tests/test_compiler_compile.py`. Device: `img_compile_eval_expr`
 (A1 → 3), `img_compile_mode_trap` (A5 → 3), `img_compile_reject_import`
 (A4 → 1), `img_compile_exec_roundtrip` (A2 → 7),
 `img_compile_reject_locals` (A4 window cap → 1), `img_compile_repeat`
-(R4 watermark ≤ 400000 → 1), `img_compile_release_realloc` (R7 → 37).
+(R4 watermark ≤ 400000 → 1), `img_compile_release_realloc` (R7 → 37),
+T4 images in §11.2 below.
 Host `eval`/`exec` stand-ins call firmware-emitted code objects
 (`_HostEmittedCode`) with a **shared** globals dict; SEED_CODE images still
 use `types.CodeType`.
@@ -141,6 +149,22 @@ Non-string / non-code still traps on `code()` (`img_exec_bad_arg_trap` → 6).
 
 Device: `img_code_kind_tags` (178), `img_eval_str_direct` (3),
 `img_eval_str_long` (15), `img_exec_str_direct` (3).
+
+## T4 grammar (§11.2)
+
+Parser + codegen for `try`/`except`/`else`/`finally`, `raise`,
+single-generator list/set/dict comprehensions, and string slices. Runtime
+already had `RAISE_VARARGS` 0/1, `PUSH_EXC_INFO`, `CHECK_EXC_MATCH`,
+`POP_EXCEPT`, `RERAISE`, `LIST_APPEND`/`SET_ADD`/`MAP_ADD`, and string
+`BINARY_SLICE`. CODE_RAM is 65 536 slots (lever 2).
+
+Limits: no slice step, no generator expressions, no `except*` / `raise from`,
+no `DELETE_NAME` after `except as`, unmatched-except + finally may skip
+the finally, comps leak the loop var via `STORE_NAME`/`STORE_FAST`.
+
+Device: `img_compile_try_except` (7), `img_compile_try_else` (3),
+`img_compile_try_finally` (12), `img_compile_raise` (7),
+`img_compile_str_slice` (1), `img_compile_list_comp` (15, two-core).
 
 ## Subset (firmware compiler source)
 
@@ -170,7 +194,8 @@ stays constant in the source nesting.
 | T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | parser (F); codegen (H); `compile()` shim (I) |
 | T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | parser + codegen (J, landed) |
 | T3 | `def` (positional args + indented / one-line suite), `global`, displays, unpack | parser slice in G; codegen (J, landed) |
-| T4+ | `try`/`class`/`import`/closures | blocked on runtime |
+| T4 | `try`/`except`/`else`/`finally`, `raise`, comprehensions, string slices | parser + codegen (§11.2, landed) |
+| T5 | `class`, decorators, `import`, `lambda`, f-strings, `with`, `assert` | blocked on runtime (§11) |
 
 ## Deviations from CPython (D1–D9)
 
@@ -194,9 +219,9 @@ token stream (kinds, positions, payload text), not later `co_code`.
 
 `make pycore-size-report` builds `img_compile_eval_expr` and prints ROM,
 compiler code-RAM, and static heap occupancy vs hardware ceilings. Overflow
-fails the target (A8). Measured: ROM **2613 / 8192** slots; compiler
-**32483 / 32768** code-RAM slots (285 remain for compiled output); static
-heap **253248 / 981952** bytes.
+fails the target (A8). Measured after T4: ROM **2613 / 8192** slots;
+compiler **38645 / 65536** code-RAM slots (26891 remain for compiled
+output); static heap **258752 / 981952** bytes.
 
 ## Lifetime
 

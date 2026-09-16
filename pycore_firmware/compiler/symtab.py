@@ -186,6 +186,62 @@ def _pyc_sy_push_children(nid):
             i = i - 1
             _pyc_sy_work_push(kids[a + i], 0)
         return
+    if kind == ND["Slice"]:
+        if c >= 0:
+            _pyc_sy_work_push(c, 0)
+        if b >= 0:
+            _pyc_sy_work_push(b, 0)
+        if a >= 0:
+            _pyc_sy_work_push(a, 0)
+        return
+    if kind == ND["ListComp"] or kind == ND["SetComp"]:
+        _pyc_sy_work_push(c, 0)
+        _pyc_sy_work_push(b, 0)
+        _pyc_sy_work_push(a, 0)
+        return
+    if kind == ND["DictComp"]:
+        _pyc_sy_work_push(nd_obj[nid], 0)
+        _pyc_sy_work_push(c, 0)
+        _pyc_sy_work_push(b, 0)
+        _pyc_sy_work_push(a, 0)
+        return
+    if kind == ND["Raise"]:
+        if a >= 0:
+            _pyc_sy_work_push(a, 0)
+        return
+    if kind == ND["Try"]:
+        norelse = nd_obj[nid] & 65535
+        nfinal = nd_obj[nid] >> 16
+        base = a + b + c
+        i = nfinal
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[base + norelse + i], 0)
+        i = norelse
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[base + i], 0)
+        i = c
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[a + b + i], 0)
+        i = b
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[a + i], 0)
+        return
+    if kind == ND["ExceptHandler"]:
+        i = c
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[b + i], 0)
+        if a >= 0:
+            _pyc_sy_work_push(a, 0)
+        obj = nd_obj[nid]
+        if obj != 0:
+            hid = _pyc_nd_new(ND["Name"], 1, 0, ND["Store"], 0, 0, obj)
+            _pyc_sy_work_push(hid, 0)
+        return
     if (
         kind == ND["Name"]
         or kind == ND["Constant"]

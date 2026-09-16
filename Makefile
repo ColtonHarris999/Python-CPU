@@ -1297,6 +1297,41 @@ pycore-img-compile-release-realloc:
 pycore-img-compile-release-realloc-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_release_realloc,40000000)
 
+# compiler_design.md §11.2 T4: try/except/finally, raise, comps, string slices.
+# Cycle caps cover compile() plus CACHE_EN=0 / LAT=30.
+pycore-img-compile-try-except:
+	$(call PYCORE_IMAGE_RUN,compile_try_except,40000000)
+
+pycore-img-compile-try-except-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_try_except,40000000)
+
+pycore-img-compile-try-else:
+	$(call PYCORE_IMAGE_RUN,compile_try_else,40000000)
+
+pycore-img-compile-try-else-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_try_else,40000000)
+
+pycore-img-compile-try-finally:
+	$(call PYCORE_IMAGE_RUN,compile_try_finally,40000000)
+
+pycore-img-compile-try-finally-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_try_finally,40000000)
+
+pycore-img-compile-raise:
+	$(call PYCORE_IMAGE_RUN,compile_raise,40000000)
+
+pycore-img-compile-raise-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_raise,40000000)
+
+pycore-img-compile-str-slice:
+	$(call PYCORE_IMAGE_RUN,compile_str_slice,8000000)
+
+pycore-img-compile-str-slice-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_str_slice,8000000)
+
+pycore-img-compile-list-comp-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_list_comp,40000000)
+
 # compiler_design.md §11.1: string-form exec/eval via _bi_code_kind.
 # Cycle caps cover CACHE_EN=0 / LAT=30 like the other compile() images.
 pycore-img-eval-str-direct:
@@ -1332,6 +1367,11 @@ pycore-img-package-all: \
 	pycore-img-compile-reject-locals \
 	pycore-img-compile-repeat \
 	pycore-img-compile-release-realloc \
+	pycore-img-compile-try-except \
+	pycore-img-compile-try-else \
+	pycore-img-compile-try-finally \
+	pycore-img-compile-raise \
+	pycore-img-compile-str-slice \
 	pycore-img-eval-str-direct \
 	pycore-img-eval-str-long \
 	pycore-img-exec-str-direct
@@ -1898,6 +1938,12 @@ pycore-img-two-core: \
 	pycore-img-compile-reject-locals-two-core \
 	pycore-img-compile-repeat-two-core \
 	pycore-img-compile-release-realloc-two-core \
+	pycore-img-compile-try-except-two-core \
+	pycore-img-compile-try-else-two-core \
+	pycore-img-compile-try-finally-two-core \
+	pycore-img-compile-raise-two-core \
+	pycore-img-compile-str-slice-two-core \
+	pycore-img-compile-list-comp-two-core \
 	pycore-img-eval-str-direct-two-core \
 	pycore-img-eval-str-long-two-core \
 	pycore-img-exec-str-direct-two-core \

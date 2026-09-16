@@ -1495,13 +1495,18 @@ def _host_exec_globals(code: object, g: object) -> object:
 
 # CPython 3.14 opcodes used by the host code-RAM interpreter (W-5 / T1).
 _HOST_OP_CACHE = 0
+_HOST_OP_BINARY_SLICE = 1
+_HOST_OP_CHECK_EXC_MATCH = 6
 _HOST_OP_DELETE_SUBSCR = 8
 _HOST_OP_END_FOR = 9
 _HOST_OP_GET_ITER = 16
 _HOST_OP_MAKE_FUNCTION = 23
 _HOST_OP_NOP = 27
+_HOST_OP_NOT_TAKEN = 28
+_HOST_OP_POP_EXCEPT = 29
 _HOST_OP_POP_ITER = 30
 _HOST_OP_POP_TOP = 31
+_HOST_OP_PUSH_EXC_INFO = 32
 _HOST_OP_PUSH_NULL = 33
 _HOST_OP_RETURN_VALUE = 35
 _HOST_OP_STORE_SUBSCR = 38
@@ -1524,14 +1529,19 @@ _HOST_OP_FOR_ITER = 70
 _HOST_OP_IS_OP = 74
 _HOST_OP_JUMP_BACKWARD = 75
 _HOST_OP_JUMP_FORWARD = 77
+_HOST_OP_LIST_APPEND = 78
 _HOST_OP_LOAD_ATTR = 80
 _HOST_OP_LOAD_CONST = 82
 _HOST_OP_LOAD_FAST = 84
 _HOST_OP_LOAD_GLOBAL = 92
 _HOST_OP_LOAD_NAME = 93
 _HOST_OP_LOAD_SMALL_INT = 94
+_HOST_OP_MAP_ADD = 98
 _HOST_OP_POP_JUMP_IF_FALSE = 100
 _HOST_OP_POP_JUMP_IF_TRUE = 103
+_HOST_OP_RAISE_VARARGS = 104
+_HOST_OP_RERAISE = 105
+_HOST_OP_SET_ADD = 107
 _HOST_OP_RESUME = 128
 _HOST_OP_STORE_ATTR = 110
 _HOST_OP_STORE_FAST = 112
@@ -1602,6 +1612,7 @@ class _HostEmittedCode:
         varnames: tuple[object, ...] = (),
         argcount: int = 0,
         nlocals: int = 0,
+        exctable: tuple[object, ...] = (),
     ) -> None:
         self._ram = ram
         self._entry = entry_slot
@@ -1610,7 +1621,10 @@ class _HostEmittedCode:
         self._varnames = varnames
         self._argcount = argcount
         self._nlocals = nlocals
+        self._exctable = tuple(int(b) for b in exctable)
         self._globals: dict[str, object] = {}
+        self._exc: object | None = None
+        self._prev_exc: object | None = None
 
     def _lookup(self, name: str) -> object:
         if name in self._globals:
@@ -1618,6 +1632,19 @@ class _HostEmittedCode:
         if hasattr(_builtins_mod, name):
             return getattr(_builtins_mod, name)
         raise NameError(name)
+
+    def _raise_to_handler(self, exc: BaseException, raise_pc: int) -> int:
+        """Walk the CPython-format exception table; return handler pc."""
+        from exception_table import parse_exception_table
+
+        rel = raise_pc - self._entry
+        byte_off = rel * 2
+        entries = parse_exception_table(bytes(self._exctable))
+        for entry in entries:
+            if entry.start <= byte_off < entry.end:
+                self._exc = exc
+                return self._entry + (entry.target >> 1)
+        raise exc
 
     def __call__(self, *args: object) -> object:
         if len(args) != self._argcount:
@@ -1851,6 +1878,73 @@ class _HostEmittedCode:
                 obj = stack.pop()
                 del obj[idx]  # type: ignore[misc]
                 continue
+            if opcode in (_HOST_OP_NOP, _HOST_OP_NOT_TAKEN):
+                continue
+            if opcode == _HOST_OP_BINARY_SLICE:
+                stop = stack.pop()
+                start = stack.pop()
+                subj = stack.pop()
+                stack.append(subj[start:stop])  # type: ignore[index]
+                continue
+            if opcode == _HOST_OP_LIST_APPEND:
+                val = stack.pop()
+                lst = stack[-oparg]
+                lst.append(val)  # type: ignore[union-attr]
+                continue
+            if opcode == _HOST_OP_SET_ADD:
+                val = stack.pop()
+                st = stack[-oparg]
+                st.add(val)  # type: ignore[union-attr]
+                continue
+            if opcode == _HOST_OP_MAP_ADD:
+                val = stack.pop()
+                key = stack.pop()
+                mp = stack[-oparg]
+                mp[key] = val  # type: ignore[index]
+                continue
+            if opcode == _HOST_OP_PUSH_EXC_INFO:
+                stack.append(self._prev_exc)
+                stack.append(self._exc)
+                self._prev_exc = self._exc
+                continue
+            if opcode == _HOST_OP_CHECK_EXC_MATCH:
+                typ = stack.pop()
+                exc = stack[-1]
+                stack.append(isinstance(exc, typ))  # type: ignore[arg-type]
+                continue
+            if opcode == _HOST_OP_POP_EXCEPT:
+                stack.pop()
+                self._exc = self._prev_exc
+                self._prev_exc = None
+                continue
+            if opcode == _HOST_OP_RAISE_VARARGS:
+                if oparg == 0:
+                    if self._exc is None:
+                        raise RuntimeError("bare raise with no active exception")
+                    exc = self._exc
+                    if not isinstance(exc, BaseException):
+                        raise TypeError("active exception is not an exception")
+                    pc = self._raise_to_handler(exc, pc - 1)
+                    continue
+                obj = stack.pop()
+                if isinstance(obj, type) and issubclass(obj, BaseException):
+                    exc = obj()
+                elif isinstance(obj, BaseException):
+                    exc = obj
+                else:
+                    raise TypeError("exceptions must derive from BaseException")
+                pc = self._raise_to_handler(exc, pc - 1)
+                continue
+            if opcode == _HOST_OP_RERAISE:
+                obj = stack[-1]
+                if isinstance(obj, type) and issubclass(obj, BaseException):
+                    exc = obj()
+                elif isinstance(obj, BaseException):
+                    exc = obj
+                else:
+                    raise TypeError("exceptions must derive from BaseException")
+                pc = self._raise_to_handler(exc, pc - 1)
+                continue
             raise RuntimeError(
                 f"host code-RAM interpreter: unsupported opcode {opcode}"
             )
@@ -1939,6 +2033,7 @@ class _HostCodeRam:
             varnames=fields[5],
             argcount=argcount,
             nlocals=nlocals,
+            exctable=fields[7],
         )
 
 

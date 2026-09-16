@@ -80,6 +80,13 @@ PARSER_EVAL_CORPUS = [
     "{1, 2}",
     "[a, b]",
     "(a, b)",
+    "a[1:4]",
+    "a[1:]",
+    "a[:4]",
+    "a[:]",
+    "[x for x in xs]",
+    "{x for x in xs}",
+    "{x: x for x in xs}",
 ]
 
 
@@ -118,6 +125,11 @@ PARSER_EXEC_CORPUS = [
     "d = {1: 2}\n",
     "s = {1, 2}\n",
     "a, b = 1, 2\n",
+    "raise TypeError\n",
+    "try:\n    x = 1\nexcept TypeError:\n    x = 2\n",
+    "try:\n    x = 1\nexcept TypeError as e:\n    x = 2\nelse:\n    x = 3\n",
+    "try:\n    x = 1\nfinally:\n    x = 2\n",
+    "try:\n    x = 1\nexcept (TypeError, ValueError):\n    x = 2\n",
 ]
 
 
@@ -214,6 +226,50 @@ def firmware_shape(g: dict, nid: int) -> tuple:
         keys = [firmware_shape(g, kids[a + i * 2]) for i in range(b)]
         vals = [firmware_shape(g, kids[a + i * 2 + 1]) for i in range(b)]
         return ("Dict", keys, vals)
+    if name == "Slice":
+        lo = None if a < 0 else firmware_shape(g, a)
+        hi = None if b < 0 else firmware_shape(g, b)
+        st = None if c < 0 else firmware_shape(g, c)
+        return ("Slice", lo, hi, st)
+    if name == "ListComp":
+        return (
+            "ListComp",
+            firmware_shape(g, a),
+            firmware_shape(g, b),
+            firmware_shape(g, c),
+        )
+    if name == "SetComp":
+        return (
+            "SetComp",
+            firmware_shape(g, a),
+            firmware_shape(g, b),
+            firmware_shape(g, c),
+        )
+    if name == "DictComp":
+        return (
+            "DictComp",
+            firmware_shape(g, a),
+            firmware_shape(g, b),
+            firmware_shape(g, c),
+            firmware_shape(g, obj),
+        )
+    if name == "Raise":
+        exc = None if a < 0 else firmware_shape(g, a)
+        return ("Raise", exc)
+    if name == "ExceptHandler":
+        typ = None if a < 0 else firmware_shape(g, a)
+        body = [firmware_shape(g, kids[b + i]) for i in range(c)]
+        return ("ExceptHandler", typ, obj or None, body)
+    if name == "Try":
+        norelse = obj & 65535
+        nfinal = obj >> 16
+        body = [firmware_shape(g, kids[a + i]) for i in range(b)]
+        handlers = [firmware_shape(g, kids[a + b + i]) for i in range(c)]
+        orelse = [firmware_shape(g, kids[a + b + c + i]) for i in range(norelse)]
+        final = [
+            firmware_shape(g, kids[a + b + c + norelse + i]) for i in range(nfinal)
+        ]
+        return ("Try", body, handlers, orelse, final)
     raise AssertionError(f"unhandled firmware node {name}")
 
 
@@ -351,6 +407,59 @@ def cpython_shape(node: ast.AST) -> tuple:
             "Dict",
             [cpython_shape(k) for k in node.keys],
             [cpython_shape(v) for v in node.values],
+        )
+    if isinstance(node, ast.Slice):
+        lo = None if node.lower is None else cpython_shape(node.lower)
+        hi = None if node.upper is None else cpython_shape(node.upper)
+        st = None if node.step is None else cpython_shape(node.step)
+        return ("Slice", lo, hi, st)
+    if isinstance(node, ast.ListComp):
+        if len(node.generators) != 1 or node.generators[0].ifs:
+            raise AssertionError("T4 corpus is one generator, no ifs")
+        gen = node.generators[0]
+        return (
+            "ListComp",
+            cpython_shape(node.elt),
+            cpython_shape(gen.target),
+            cpython_shape(gen.iter),
+        )
+    if isinstance(node, ast.SetComp):
+        if len(node.generators) != 1 or node.generators[0].ifs:
+            raise AssertionError("T4 corpus is one generator, no ifs")
+        gen = node.generators[0]
+        return (
+            "SetComp",
+            cpython_shape(node.elt),
+            cpython_shape(gen.target),
+            cpython_shape(gen.iter),
+        )
+    if isinstance(node, ast.DictComp):
+        if len(node.generators) != 1 or node.generators[0].ifs:
+            raise AssertionError("T4 corpus is one generator, no ifs")
+        gen = node.generators[0]
+        return (
+            "DictComp",
+            cpython_shape(node.key),
+            cpython_shape(node.value),
+            cpython_shape(gen.target),
+            cpython_shape(gen.iter),
+        )
+    if isinstance(node, ast.Raise):
+        if node.cause is not None:
+            raise AssertionError("T4 corpus has no raise-from")
+        exc = None if node.exc is None else cpython_shape(node.exc)
+        return ("Raise", exc)
+    if isinstance(node, ast.ExceptHandler):
+        typ = None if node.type is None else cpython_shape(node.type)
+        body = [cpython_shape(s) for s in node.body]
+        return ("ExceptHandler", typ, node.name, body)
+    if isinstance(node, ast.Try):
+        return (
+            "Try",
+            [cpython_shape(s) for s in node.body],
+            [cpython_shape(h) for h in node.handlers],
+            [cpython_shape(s) for s in node.orelse],
+            [cpython_shape(s) for s in node.finalbody],
         )
     raise AssertionError(f"unhandled CPython node {type(node).__name__}")
 

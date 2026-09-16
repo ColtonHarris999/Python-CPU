@@ -151,6 +151,42 @@ class TestCompilerCompileShim(unittest.TestCase):
         self.assertEqual(compile_fn("1 + 2", "<s>", "eval")(), 3)
         self.assertEqual(compile_fn("3 + 4", "<s>", "eval")(), 7)
 
+    def test_img_compile_try_except_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_try_except.py", "managed_entry"),
+            7,
+        )
+
+    def test_img_compile_try_else_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_try_else.py", "managed_entry"),
+            3,
+        )
+
+    def test_img_compile_try_finally_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_try_finally.py", "managed_entry"),
+            12,
+        )
+
+    def test_img_compile_raise_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_raise.py", "managed_entry"),
+            7,
+        )
+
+    def test_img_compile_str_slice_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_str_slice.py", "managed_entry"),
+            1,
+        )
+
+    def test_img_compile_list_comp_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_list_comp.py", "managed_entry"),
+            15,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

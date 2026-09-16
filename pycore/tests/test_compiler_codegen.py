@@ -164,6 +164,9 @@ EVAL_OBJECTS = [
     "0 not in ys",
     "a.add(2)",
     "s",
+    "s[1:4]",
+    "s[1:]",
+    "s[:2]",
 ]
 
 
@@ -196,6 +199,26 @@ EXEC_CASES = [
         "for x in xs:\n    s = s + x\ny = s\n",
         None,
         {"y": 7},
+    ),
+    (
+        "try:\n    raise TypeError\nexcept TypeError:\n    x = 7\n",
+        None,
+        {"x": 7},
+    ),
+    (
+        "x = 0\ntry:\n    x = 1\nexcept TypeError:\n    x = 2\nelse:\n    x = 3\n",
+        None,
+        {"x": 3},
+    ),
+    (
+        "x = 0\ntry:\n    x = 1\nfinally:\n    x = x + 10\n",
+        None,
+        {"x": 11},
+    ),
+    (
+        "xs = [x for x in [1, 2, 3]]\n",
+        None,
+        {"xs": [1, 2, 3]},
     ),
 ]
 
@@ -325,6 +348,17 @@ class TestCompilerCodegenCorpus(unittest.TestCase):
             3,
         )
         self.assertEqual(firmware_eval("1 + 2"), 3)
+
+    def test_eval_listcomp_match_cpython(self) -> None:
+        env = {"xs": [1, 2, 3]}
+        src = "[x for x in xs]"
+        self.assertEqual(firmware_eval(src, env), eval(src, dict(env)))
+
+    def test_eval_str_slice_match_cpython(self) -> None:
+        env = {"s": "abcdef"}
+        for src in ("s[1:4]", "s[1:]", "s[:2]", "s[:]"):
+            with self.subTest(src=src):
+                self.assertEqual(firmware_eval(src, env), eval(src, dict(env)))
 
 
 if __name__ == "__main__":

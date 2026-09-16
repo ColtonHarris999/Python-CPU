@@ -1,4 +1,4 @@
-# Firmware T1–T3 codegen + assembler (compiler_design.md §5.5 / steps H, J).
+# Firmware T1–T4 codegen + assembler (compiler_design.md §5.5 / steps H, J, T4).
 # Recursive visit of nd_* (Rule 2) into ins words in opnd/ops, then
 # _bi_code_alloc / blit / new. No CACHE. Jump args compensate for the
 # hardware n_cache addend (POP_JUMP/JUMP_BACKWARD/FOR_ITER=1, JUMP_FORWARD=0).
@@ -52,7 +52,7 @@ def _pyc_emit(op, arg, lab):
 
 def _pyc_visit(nid):
     global stmt_n, stmts, tk_n, tk_s, tk_a, tk_b, _lex_n, _lex_i, _lex_col
-    global _lex_line, opnd, ops, ops_obj, opnd_n
+    global _lex_line, opnd, ops, ops_obj, opnd_n, kids_n
     kind = nd_kind[nid]
     store = _lex_col
     if kind == ND["Module"]:
@@ -144,6 +144,7 @@ def _pyc_visit(nid):
         sv_lex_i = _lex_i
         sv_lex_col = _lex_col
         sv_lex_line = _lex_line
+        sv_kids_n = kids_n
         sid = 0
         i = 0
         found = 0
@@ -165,6 +166,7 @@ def _pyc_visit(nid):
         tk_s = [0] * 8
         tk_a = [0] * 8
         tk_b = [0] * 8
+        tk_b[0] = kids_n
         _lex_n = 0
         _lex_i = sid
         _lex_col = 0
@@ -195,6 +197,7 @@ def _pyc_visit(nid):
         _lex_i = sv_lex_i
         _lex_col = sv_lex_col
         _lex_line = sv_lex_line
+        kids_n = sv_kids_n
         cap = len(stmts)
         while cap < stmt_n + 1:
             extra = cap
@@ -521,6 +524,25 @@ def _pyc_visit(nid):
         _pyc_emit(OPMAP["LOAD_ATTR"], ni * 2, 0)
         return
     if kind == ND["Subscript"]:
+        slc = nd_b[nid]
+        if nd_kind[slc] == ND["Slice"]:
+            if store != 0:
+                _pyc_parse_error("slice assignment is not supported")
+            _pyc_visit(nd_a[nid])
+            lo = nd_a[slc]
+            hi = nd_b[slc]
+            if lo < 0:
+                none_id = _pyc_nd_new(ND["Constant"], 1, 0, 5, 0, 0, None)
+                _pyc_visit(none_id)
+            else:
+                _pyc_visit(lo)
+            if hi < 0:
+                none_id = _pyc_nd_new(ND["Constant"], 1, 0, 5, 0, 0, None)
+                _pyc_visit(none_id)
+            else:
+                _pyc_visit(hi)
+            _pyc_emit(OPMAP["BINARY_SLICE"], 0, 0)
+            return
         if store == 1:
             _lex_col = 0
             _pyc_visit(nd_a[nid])
@@ -538,6 +560,9 @@ def _pyc_visit(nid):
         _pyc_visit(nd_a[nid])
         _pyc_visit(nd_b[nid])
         _pyc_emit(OPMAP["BINARY_OP"], 26, 0)
+        return
+    if kind == ND["Slice"]:
+        _pyc_parse_error("slice outside subscript")
         return
     if kind == ND["Pass"]:
         return
@@ -708,6 +733,136 @@ def _pyc_visit(nid):
             i = i + 1
         _pyc_emit(OPMAP["BUILD_MAP"], n, 0)
         return
+    if kind == ND["Raise"]:
+        a = nd_a[nid]
+        if a < 0:
+            _pyc_emit(OPMAP["RAISE_VARARGS"], 0, 0)
+        else:
+            _pyc_visit(a)
+            _pyc_emit(OPMAP["RAISE_VARARGS"], 1, 0)
+        return
+    if kind == ND["ListComp"] or kind == ND["SetComp"] or kind == ND["DictComp"]:
+        if kind == ND["DictComp"]:
+            _pyc_visit(nd_obj[nid])
+        else:
+            _pyc_visit(nd_c[nid])
+        _pyc_emit(OPMAP["GET_ITER"], 0, 0)
+        if kind == ND["ListComp"]:
+            _pyc_emit(OPMAP["BUILD_LIST"], 0, 0)
+        elif kind == ND["SetComp"]:
+            _pyc_emit(OPMAP["BUILD_SET"], 0, 0)
+        else:
+            _pyc_emit(OPMAP["BUILD_MAP"], 0, 0)
+        _pyc_emit(OPMAP["SWAP"], 2, 0)
+        endfor = _pyc_emit(0 - 1, 0, 0 - 1)
+        cont = _pyc_emit(0 - 1, 0, 0 - 1)
+        tk_a[cont] = opnd_n
+        _pyc_emit(OPMAP["FOR_ITER"], 0, endfor)
+        _lex_col = 1
+        if kind == ND["DictComp"]:
+            _pyc_visit(nd_c[nid])
+        else:
+            _pyc_visit(nd_b[nid])
+        _lex_col = 0
+        if kind == ND["DictComp"]:
+            _pyc_visit(nd_a[nid])
+            _pyc_visit(nd_b[nid])
+            _pyc_emit(OPMAP["MAP_ADD"], 2, 0)
+        elif kind == ND["ListComp"]:
+            _pyc_visit(nd_a[nid])
+            _pyc_emit(OPMAP["LIST_APPEND"], 2, 0)
+        else:
+            _pyc_visit(nd_a[nid])
+            _pyc_emit(OPMAP["SET_ADD"], 2, 0)
+        _pyc_emit(OPMAP["JUMP_BACKWARD"], 0, cont)
+        tk_a[endfor] = opnd_n
+        _pyc_emit(OPMAP["END_FOR"], 0, 0)
+        _pyc_emit(OPMAP["POP_ITER"], 0, 0)
+        return
+    if kind == ND["Try"]:
+        nbody = nd_b[nid]
+        nh = nd_c[nid]
+        norelse = nd_obj[nid] & 65535
+        nfinal = nd_obj[nid] >> 16
+        ks = nd_a[nid]
+        else_lab = _pyc_emit(0 - 1, 0, 0 - 1)
+        done_lab = _pyc_emit(0 - 1, 0, 0 - 1)
+        try_start = opnd_n
+        i = 0
+        while i < nbody:
+            _pyc_visit(kids[ks + i])
+            i = i + 1
+        try_end = opnd_n
+        _pyc_emit(OPMAP["JUMP_FORWARD"], 0, else_lab)
+        handler = opnd_n
+        _pyc_emit(OPMAP["PUSH_EXC_INFO"], 0, 0)
+        if nh < 1:
+            i = 0
+            while i < nfinal:
+                _pyc_visit(kids[ks + nbody + nh + norelse + i])
+                i = i + 1
+            _pyc_emit(OPMAP["RERAISE"], 0, 0)
+        else:
+            hi = 0
+            while hi < nh:
+                h = kids[ks + nbody + hi]
+                typ = nd_a[h]
+                miss = 0
+                if typ >= 0:
+                    _pyc_visit(typ)
+                    _pyc_emit(OPMAP["CHECK_EXC_MATCH"], 0, 0)
+                    miss = _pyc_emit(OPMAP["POP_JUMP_IF_FALSE"], 0, 0 - 1)
+                hname = nd_obj[h]
+                if hname != 0:
+                    name_id = _pyc_nd_new(
+                        ND["Name"], 1, 0, ND["Store"], 0, 0, hname
+                    )
+                    _lex_col = 1
+                    _pyc_visit(name_id)
+                    _lex_col = 0
+                else:
+                    _pyc_emit(OPMAP["POP_TOP"], 0, 0)
+                hks = nd_b[h]
+                hn = nd_c[h]
+                j = 0
+                while j < hn:
+                    _pyc_visit(kids[hks + j])
+                    j = j + 1
+                _pyc_emit(OPMAP["POP_EXCEPT"], 0, 0)
+                i = 0
+                while i < nfinal:
+                    _pyc_visit(kids[ks + nbody + nh + norelse + i])
+                    i = i + 1
+                _pyc_emit(OPMAP["JUMP_FORWARD"], 0, done_lab)
+                if typ >= 0:
+                    tk_a[miss] = opnd_n
+                hi = hi + 1
+            _pyc_emit(OPMAP["RERAISE"], 0, 0)
+        cleanup = opnd_n
+        _pyc_emit(OPMAP["COPY"], 3, 0)
+        _pyc_emit(OPMAP["POP_EXCEPT"], 0, 0)
+        _pyc_emit(OPMAP["RERAISE"], 1, 0)
+        tk_a[else_lab] = opnd_n
+        i = 0
+        while i < norelse:
+            _pyc_visit(kids[ks + nbody + nh + i])
+            i = i + 1
+        i = 0
+        while i < nfinal:
+            _pyc_visit(kids[ks + nbody + nh + norelse + i])
+            i = i + 1
+        tk_a[done_lab] = opnd_n
+        _pyc_kids_append(try_start)
+        _pyc_kids_append(try_end)
+        _pyc_kids_append(handler)
+        _pyc_kids_append(0)
+        _pyc_kids_append(0)
+        _pyc_kids_append(handler)
+        _pyc_kids_append(cleanup)
+        _pyc_kids_append(cleanup)
+        _pyc_kids_append(1)
+        _pyc_kids_append(1)
+        return
     _pyc_parse_error("unsupported node in codegen")
 
 
@@ -780,6 +935,21 @@ def _pyc_assemble():
             d = 1 - (arg * 2)
         elif op == OPMAP["UNPACK_SEQUENCE"]:
             d = arg - 1
+        elif op == OPMAP["BINARY_SLICE"]:
+            d = 0 - 2
+        elif (
+            op == OPMAP["LIST_APPEND"]
+            or op == OPMAP["SET_ADD"]
+            or op == OPMAP["POP_EXCEPT"]
+        ):
+            d = 0 - 1
+        elif op == OPMAP["MAP_ADD"]:
+            d = 0 - 2
+        elif op == OPMAP["RAISE_VARARGS"]:
+            if arg == 1:
+                d = 0 - 1
+        elif op == OPMAP["PUSH_EXC_INFO"] or op == OPMAP["COPY"]:
+            d = 1
         depth = depth + d
         if depth < 0:
             depth = 0
@@ -817,8 +987,53 @@ def _pyc_assemble():
     meta = (maxd << 32) | (nloc << 16) | sc_argcount[_lex_i]
     base = _bi_code_alloc(opnd_n)
     _bi_code_blit(base, words)
+    exctable = ()
+    ei = tk_b[0]
+    while ei + 4 < kids_n:
+        start = kids[ei]
+        end = kids[ei + 1]
+        target = kids[ei + 2]
+        depthv = kids[ei + 3]
+        lasti = kids[ei + 4]
+        fields = [0] * 4
+        fields[0] = start
+        fields[1] = end - start
+        fields[2] = target
+        fields[3] = (depthv << 1) | lasti
+        fi = 0
+        while fi < 4:
+            val = fields[fi]
+            chunks = [0] * 8
+            cn = 0
+            chunks[0] = val & 63
+            val = val >> 6
+            cn = 1
+            while val:
+                cap = len(chunks)
+                while cap < cn + 1:
+                    extra = cap
+                    if extra < 8:
+                        extra = 8
+                    chunks = chunks + ([0] * extra)
+                    cap = len(chunks)
+                chunks[cn] = val & 63
+                val = val >> 6
+                cn = cn + 1
+            # reverse: last written is MSB
+            ri = cn
+            while ri > 0:
+                ri = ri - 1
+                b = chunks[ri]
+                if ri != 0:
+                    b = b | 64
+                if fi == 0:
+                    if ri == cn - 1:
+                        b = b | 128
+                exctable = exctable + (b,)
+            fi = fi + 1
+        ei = ei + 5
     return _bi_code_new(
-        [base, consts, names, meta, (), varnames, {}, (), 0]
+        [base, consts, names, meta, (), varnames, {}, exctable, 0]
     )
 
 
@@ -838,6 +1053,7 @@ def _pyc_codegen_main():
     tk_s = [0] * 8
     tk_a = [0] * 8
     tk_b = [0] * 8
+    tk_b[0] = kids_n
     _lex_n = 0
     _lex_i = 0
     _lex_col = 0

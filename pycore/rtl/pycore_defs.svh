@@ -3676,7 +3676,7 @@ endfunction
 // to a byte address with `pc << 3`.  Two regions share that space:
 //
 //   slot 0x0000 .. 0x1FFF   CODE ROM  pycore_imem      READ_ONLY, image-loaded
-//   slot 0x2000 .. 0x9FFF   CODE RAM  pycore_code_ram  writable, loadable
+//   slot 0x2000 .. 0x11FFF  CODE RAM  pycore_code_ram  writable, loadable
 //
 // PYCORE_CODE_RAM_SLOT_BASE equals the ROM's slot count
 // (PYCORE_IMEM_BLOCK_COUNT * 4096 / 8), so `entry_slot` semantics do not
@@ -3684,9 +3684,9 @@ endfunction
 // genuinely read-only, which is what keeps a bad loader from corrupting the
 // boot image.  Sizing rationale is in pycore/docs/code_loading.md.
 // -------------------------------------------------------------------------
-localparam int PYCORE_CODE_RAM_BLOCK_COUNT = 64;   // 64 * 4 KB = 256 KB
+localparam int PYCORE_CODE_RAM_BLOCK_COUNT = 128;  // 128 * 4 KB = 512 KB
 localparam logic [31:0] PYCORE_CODE_RAM_SLOT_BASE = 32'h0000_2000;
-localparam logic [31:0] PYCORE_CODE_RAM_SLOTS     = 32'h0000_8000;  // 32768
+localparam logic [31:0] PYCORE_CODE_RAM_SLOTS     = 32'h0001_0000;  // 65536
 localparam logic [31:0] PYCORE_CODE_RAM_SLOT_LIMIT =
     PYCORE_CODE_RAM_SLOT_BASE + PYCORE_CODE_RAM_SLOTS;
 // Byte address of the first code-RAM slot (slot index << 3).

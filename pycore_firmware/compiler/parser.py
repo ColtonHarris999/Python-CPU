@@ -1,4 +1,4 @@
-# Firmware T1–T3 parser (compiler_design.md §5.5 / steps F, J).
+# Firmware T1–T4 parser (compiler_design.md §5.5 / steps F, J, T4).
 # Iterative shunting-yard over tk_* arrays into SoA nd_* / kids.
 # Node kinds are CPython 3.14 ast type integers from generated ND.
 #
@@ -11,6 +11,15 @@
 # List/Tuple/Set: nd_a=kids start, nd_b=n, nd_c=ctx.
 # Dict: nd_a=kids start, nd_b=n_pairs (key/value interleaved).
 # Global packing: nd_obj=list of name strings, nd_a=count.
+# Slice: nd_a=lower (-1 none), nd_b=upper (-1 none), nd_c=step (-1 none).
+# ListComp/SetComp: nd_a=elt, nd_b=target, nd_c=iter.
+# DictComp: nd_a=key, nd_b=value, nd_c=target, nd_obj=iter.
+# Raise: nd_a=exc (-1 bare).
+# Try: kids=body,handlers,orelse,final; nd_a=start, nd_b=n_body,
+#   nd_c=n_handlers, nd_obj=n_orelse | (n_final << 16).
+# ExceptHandler: nd_a=type (-1 bare), nd_b=body start, nd_c=n_body,
+#   nd_obj=name string or 0.
+# Subscript tag 5 extra: 0=index, -1=slice lower none, else lower+1.
 #
 # Operator-stack tags (LOAD_CONST, not _PYC_G names):
 #   1 BinOp  2 UnaryOp  3 (  4 call  5 [subscr]  6 Compare  7 BoolOp
@@ -625,7 +634,7 @@ def _pyc_parse_expr():
                     _pyc_parse_error("unmatched '}'")
                 _pyc_reduce_one()
             if ops_n <= start_ops:
-                _pyc_parse_error("unmatched ']'")
+                break
             tag = _pyc_top_tag()
             if tag == 8:
                 packed = ops[ops_n - 1]
@@ -648,10 +657,33 @@ def _pyc_parse_expr():
                 continue
             if tag != 5:
                 _pyc_parse_error("unmatched ']'")
+            extra = ops_obj[ops_n - 1]
             _pyc_ops_pop()
-            if want:
-                _pyc_parse_error("expected subscript")
-            slc = _pyc_opnd_pop()
+            if extra == 0:
+                if want:
+                    _pyc_parse_error("expected subscript")
+                slc = _pyc_opnd_pop()
+            else:
+                if want:
+                    upper = 0 - 1
+                else:
+                    upper = _pyc_opnd_pop()
+                if extra == 0 - 1:
+                    lower = 0 - 1
+                else:
+                    lower = extra - 1
+                value = _pyc_opnd_pop()
+                line, col = _pyc_pos_of(value)
+                slc = _pyc_nd_new(
+                    ND["Slice"], line, col, lower, upper, 0 - 1, 0
+                )
+                nid = _pyc_nd_new(
+                    ND["Subscript"], line, col, value, slc, ND["Load"], 0
+                )
+                _pyc_opnd_push(nid)
+                _pyc_tok_advance()
+                want = 0
+                continue
             value = _pyc_opnd_pop()
             line, col = _pyc_pos_of(value)
             nid = _pyc_nd_new(
@@ -671,7 +703,9 @@ def _pyc_parse_expr():
                 if tag == 5 or tag == 8:
                     _pyc_parse_error("unmatched ']'")
                 _pyc_reduce_one()
-            if ops_n <= start_ops or _pyc_top_tag() != 10:
+            if ops_n <= start_ops:
+                break
+            if _pyc_top_tag() != 10:
                 _pyc_parse_error("unmatched '}'")
             packed = ops[ops_n - 1]
             nargs = (packed >> 8) & 16777215
@@ -795,7 +829,7 @@ def _pyc_parse_expr():
                 if tag == 10:
                     break
                 if tag == 5:
-                    _pyc_parse_error("slices are not supported")
+                    break
                 if (
                     tag == 3
                     or tag == 4
@@ -805,6 +839,17 @@ def _pyc_parse_expr():
                     break
                 _pyc_reduce_one()
             tag = _pyc_top_tag()
+            if tag == 5:
+                extra = ops_obj[ops_n - 1]
+                if extra != 0:
+                    _pyc_parse_error("slice step is not supported")
+                if want:
+                    ops_obj[ops_n - 1] = 0 - 1
+                else:
+                    ops_obj[ops_n - 1] = _pyc_opnd_pop() + 1
+                _pyc_tok_advance()
+                want = 1
+                continue
             if tag == 10:
                 if want:
                     _pyc_parse_error("expected key")
@@ -885,6 +930,84 @@ def _pyc_parse_expr():
             _pyc_ops_push(1, BINOPS[text], prec, 0)
             _pyc_tok_advance()
             want = 1
+            continue
+        if kind == TOK_NAME and text == "for":
+            tag = _pyc_top_tag()
+            if tag == 3 or tag == 9:
+                _pyc_parse_error("generator expressions are not supported")
+            if tag != 8:
+                if tag != 10:
+                    _pyc_parse_error("unexpected 'for'")
+            if want:
+                _pyc_parse_error("expected expression")
+            packed = ops[ops_n - 1]
+            extra = ops_obj[ops_n - 1]
+            nargs = (packed >> 8) & 16777215
+            kind_ds = packed >> 32
+            if nargs != 0:
+                _pyc_parse_error("comprehension with commas is not supported")
+            if tag == 10:
+                if kind_ds == 1:
+                    val = _pyc_opnd_pop()
+                    key = _pyc_opnd_pop()
+                    elt = 0
+                else:
+                    if kind_ds == 3:
+                        _pyc_parse_error("invalid dict comprehension")
+                    val = 0
+                    key = 0
+                    elt = _pyc_opnd_pop()
+            else:
+                val = 0
+                key = 0
+                elt = _pyc_opnd_pop()
+            _pyc_tok_advance()
+            if _pyc_tok_kind() != TOK_NAME:
+                _pyc_parse_error("unsupported comprehension target")
+            tname = _pyc_tok_text()
+            if tname in KEYWORDS:
+                _pyc_parse_error("invalid comprehension target")
+            tline = _pyc_tok_line()
+            tcol = _pyc_tok_col()
+            _pyc_tok_advance()
+            target = _pyc_nd_new(
+                ND["Name"], tline, tcol, ND["Store"], 0, 0, tname
+            )
+            if not (_pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "in"):
+                _pyc_parse_error("expected 'in'")
+            _pyc_tok_advance()
+            it = _pyc_parse_expr()
+            if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "if":
+                _pyc_parse_error("comprehension if is not supported")
+            if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "for":
+                _pyc_parse_error("nested comprehension is not supported")
+            _pyc_ops_pop()
+            line = extra & 4294967295
+            col = extra >> 32
+            if tag == 8:
+                nid = _pyc_nd_new(
+                    ND["ListComp"], line, col, elt, target, it, 0
+                )
+            elif tag == 10:
+                if kind_ds == 1:
+                    nid = _pyc_nd_new(
+                        ND["DictComp"], line, col, key, val, target, it
+                    )
+                else:
+                    nid = _pyc_nd_new(
+                        ND["SetComp"], line, col, elt, target, it, 0
+                    )
+            else:
+                _pyc_parse_error("unexpected 'for'")
+            _pyc_opnd_push(nid)
+            if tag == 8:
+                if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "]"):
+                    _pyc_parse_error("expected ']'")
+            else:
+                if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "}"):
+                    _pyc_parse_error("expected '}'")
+            _pyc_tok_advance()
+            want = 0
             continue
         break
     if want:
@@ -1010,6 +1133,8 @@ def _pyc_parse_suite():
             if nd_kind[stmt] == ND["While"]:
                 continue
             if nd_kind[stmt] == ND["For"]:
+                continue
+            if nd_kind[stmt] == ND["Try"]:
                 continue
             if kind == TOK_NEWLINE:
                 _pyc_tok_advance()
@@ -1302,6 +1427,122 @@ def _pyc_parse_stmt():
             _pyc_kids_append(body[i])
             i = i + 1
         return _pyc_nd_new(ND["For"], line, col, target, it, ks, nbody)
+    if kind == TOK_NAME and text == "raise":
+        line = _pyc_tok_line()
+        col = _pyc_tok_col()
+        _pyc_tok_advance()
+        kind = _pyc_tok_kind()
+        if (
+            kind == TOK_NEWLINE
+            or kind == TOK_ENDMARKER
+            or kind == TOK_DEDENT
+        ):
+            return _pyc_nd_new(ND["Raise"], line, col, 0 - 1, 0, 0, 0)
+        exc = _pyc_parse_expr()
+        if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "from":
+            _pyc_parse_error("raise-from is not supported")
+        return _pyc_nd_new(ND["Raise"], line, col, exc, 0, 0, 0)
+    if kind == TOK_NAME and text == "try":
+        line = _pyc_tok_line()
+        col = _pyc_tok_col()
+        _pyc_tok_advance()
+        if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+            _pyc_parse_error("expected ':'")
+        _pyc_tok_advance()
+        body = _pyc_parse_suite()
+        handlers = [0] * 8
+        nh = 0
+        while 1:
+            _pyc_skip_newlines()
+            if not (_pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "except"):
+                break
+            hline = _pyc_tok_line()
+            hcol = _pyc_tok_col()
+            _pyc_tok_advance()
+            typ = 0 - 1
+            hname = 0
+            if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+                if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "*":
+                    _pyc_parse_error("except* is not supported")
+                typ = _pyc_parse_expr()
+                if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "as":
+                    _pyc_tok_advance()
+                    if _pyc_tok_kind() != TOK_NAME:
+                        _pyc_parse_error("expected name after as")
+                    hname = _pyc_tok_text()
+                    if hname in KEYWORDS:
+                        _pyc_parse_error("invalid except name")
+                    _pyc_tok_advance()
+            if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+                _pyc_parse_error("expected ':'")
+            _pyc_tok_advance()
+            hbody = _pyc_parse_suite()
+            nbody = len(hbody)
+            hks = kids_n
+            j = 0
+            while j < nbody:
+                _pyc_kids_append(hbody[j])
+                j = j + 1
+            hid = _pyc_nd_new(
+                ND["ExceptHandler"], hline, hcol, typ, hks, nbody, hname
+            )
+            cap = len(handlers)
+            while cap < nh + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                handlers = handlers + ([0] * extra)
+                cap = len(handlers)
+            handlers[nh] = hid
+            nh = nh + 1
+        orelse = [0] * 0
+        _pyc_skip_newlines()
+        if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "else":
+            _pyc_tok_advance()
+            if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+                _pyc_parse_error("expected ':'")
+            _pyc_tok_advance()
+            orelse = _pyc_parse_suite()
+        finalbody = [0] * 0
+        _pyc_skip_newlines()
+        if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "finally":
+            _pyc_tok_advance()
+            if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+                _pyc_parse_error("expected ':'")
+            _pyc_tok_advance()
+            finalbody = _pyc_parse_suite()
+        if nh < 1:
+            if len(finalbody) < 1:
+                _pyc_parse_error("expected 'except' or 'finally'")
+        nbody = len(body)
+        norelse = len(orelse)
+        nfinal = len(finalbody)
+        ks = kids_n
+        j = 0
+        while j < nbody:
+            _pyc_kids_append(body[j])
+            j = j + 1
+        j = 0
+        while j < nh:
+            _pyc_kids_append(handlers[j])
+            j = j + 1
+        j = 0
+        while j < norelse:
+            _pyc_kids_append(orelse[j])
+            j = j + 1
+        j = 0
+        while j < nfinal:
+            _pyc_kids_append(finalbody[j])
+            j = j + 1
+        return _pyc_nd_new(
+            ND["Try"],
+            line,
+            col,
+            ks,
+            nbody,
+            nh,
+            norelse | (nfinal << 16),
+        )
     if kind == TOK_NAME and text in KEYWORDS:
         if (
             text != "True"
@@ -1395,6 +1636,8 @@ def _pyc_parse(mode):
             if nd_kind[stmt] == ND["While"]:
                 continue
             if nd_kind[stmt] == ND["For"]:
+                continue
+            if nd_kind[stmt] == ND["Try"]:
                 continue
             if kind == TOK_NEWLINE:
                 _pyc_tok_advance()

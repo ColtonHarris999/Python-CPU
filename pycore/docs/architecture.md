@@ -956,7 +956,7 @@ never alias dmem:
 
 ```text
 slot 0x0000 .. 0x1FFF   CODE ROM   pycore_ram       READ_ONLY    64 KB
-slot 0x2000 .. 0xA1FF   CODE RAM   pycore_ram       writable    256 KB
+slot 0x2000 .. 0x11FFF  CODE RAM   pycore_ram       writable    512 KB
 ```
 
 The live path is `pycore_mem_hier` → `pycore_ram.sv`. `pycore_code_mem.sv`

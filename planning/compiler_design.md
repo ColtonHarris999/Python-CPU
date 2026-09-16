@@ -628,7 +628,7 @@ depth-first and land in the parent's `co_consts` before the parent is built.
 | **T1** | literals, names, `+ - * / // % ** & \| ^ << >> ~`, unary, comparisons incl. chains, `is`, `in`, `not`, `and`, `or`, calls, subscript, attribute, expression statements, assignment, `return` | v1 (A1) |
 | **T2** | `if`/`elif`/`else`, `while`, `for`, `break`, `continue`, `pass`, augmented assignment, `del` | v1 (A2) |
 | **T3** | `def` with positional / default / kw-only / `*args` / `**kwargs`, tuple unpacking, list / tuple / dict / set displays, `global` | v1 (A2) |
-| T4 | `try`/`except`/`else`/`finally`, `raise`, comprehensions, string slicing | next |
+| T4 | `try`/`except`/`else`/`finally`, `raise`, comprehensions, string slicing | **landed** (§11.2) |
 | T5 | `class`, decorators, `import`, `lambda`, f-strings, `with`, `assert` | blocked on runtime tracks (§11) |
 
 **No constant folding in v1.** CPython emits `LOAD_SMALL_INT 3` for `1 + 2`;
@@ -1028,25 +1028,27 @@ this work must close, not as new scope.
 Measured by `make pycore-size-report` on `img_compile_eval_expr` (W-8 / A8).
 The line-to-slot ratio from `vendor/pycpython` (≈ 3.9 units/line) was a
 planning estimate; **A8 fails on hardware ceilings**, not on that estimate.
-The compiler package used most of the 32 768-slot code-RAM bank because T1–T3
-were inlined into existing `_PYC_G` functions (128-key dict cap).
+The compiler package used most of the original 32 768-slot code-RAM bank
+because T1–T3 were inlined into existing `_PYC_G` functions (128-key dict
+cap). T4 raised `PYCORE_CODE_RAM_BLOCK_COUNT` to 128 (lever 2).
 
 | Resource | Capacity | Measured | Source |
 | --- | ---: | --- | --- |
 | Code ROM | 8 192 slots | **2 613 used**, 5 579 remain (boot image + ROM builtins) | `len(program_slots)` |
-| Code RAM | 32 768 slots | **compiler 32 483**, **285 remain** for compiled output | `len(code_ram_slots)` |
-| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 253 248 B**, 728 704 remain | `HEAP_INIT_PTR - HEAP_BASE` |
+| Code RAM | 65 536 slots | **compiler 38 645**, **26 891 remain** for compiled output | `len(code_ram_slots)` |
+| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 258 752 B**, 723 200 remain | `HEAP_INIT_PTR - HEAP_BASE` |
 | Register file | 256 entries, ring window | resident working set only; per-frame `nlocals + co_stacksize ≤ 240` | S-1, S-6 |
 | RF spill region | 256 KB / 8 192 entries | ≈ 500–1 000 typical frames before `MEM_FAULT` | S-7 |
 | Frame stack | 32 KB / 1 024 descriptors | `MAX_CALL_DEPTH_CORE` matches the region | `pycore_defs.svh` |
 | `int` | signed 64-bit, wraps | line numbers, offsets, packed fields all fit | `architecture.md` |
 
 The planning figure “compiler ≤ 14 000 slots, leave ≥ 18 000 for output”
-was ±30% from the PyCPython audit. After T1–T3 the package is 32 483 slots.
-If compiled-output headroom (285) is too small, the levers in order are:
-(1) shrink `codegen.py`, (2) raise `PYCORE_CODE_RAM_BLOCK_COUNT`
-(`code_loading.md` §1.2), (3) only then overlays. Do **not** restart the
-module loader for occupancy alone.
+was ±30% from the PyCPython audit. After T1–T3 the package was 32 483 of
+32 768 slots (285 remain). T4 took lever 2:
+`PYCORE_CODE_RAM_BLOCK_COUNT` 64 → 128 (`code_loading.md` §1.2). Remaining
+levers if compiled-output headroom is still too small: (1) shrink
+`codegen.py`, (3) overlays. Do **not** restart the module loader for
+occupancy alone.
 
 ---
 
@@ -1092,6 +1094,7 @@ parallel with B and C.
 | **K** | W-8 size report, doc sweep (§6.6), deviation table. **Landed** | `make all-tests` green; report within budget |
 | **L** | §11.1 string-form `exec`/`eval` + `_bi_code_kind` (BI 21, `call_sub_r` 7-bit). **Landed** | `img_eval_str_direct` → 3, `img_eval_str_long` → 15, `img_exec_str_direct` → 3, `img_code_kind_tags` → 178; `img_exec_bad_arg_trap` still 6 |
 | **R4/R7** | `img_compile_repeat` + `img_compile_release_realloc`. **Landed** | watermark ≤ 400000 → 1; second compile after release → 37 |
+| **T4** | §11.2 try/except/else/finally, raise, comprehensions, string slices; CODE_RAM 65536. **Landed** | `img_compile_try_except` → 7; `img_compile_try_else` → 3; `img_compile_try_finally` → 12; `img_compile_raise` → 7; `img_compile_str_slice` → 1; `img_compile_list_comp` (two-core) → 15 |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1137,6 +1140,12 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_exec_str_direct` | **3** — `exec("x = 1 + 2")` |
 | `img_compile_repeat` | **1** — heap watermark ≤ 400000 (R4) |
 | `img_compile_release_realloc` | **37** — second compile after release is correct (R7) |
+| `img_compile_try_except` | **7** — T4 `try`/`except TypeError` |
+| `img_compile_try_else` | **3** — T4 `try`/`except`/`else` |
+| `img_compile_try_finally` | **12** — T4 `try`/`finally` (`x=1; x=x+1; x=x+10`) |
+| `img_compile_raise` | **7** — T4 `raise TypeError` / `except as e` |
+| `img_compile_str_slice` | **1** — T4 `'abcdef'[1:4] == "bcd"` |
+| `img_compile_list_comp` | **15** — T4 `[x for x in [1,2,3,4,5]]` (two-core; `LIST_APPEND` grow) |
 
 ---
 
@@ -1147,8 +1156,12 @@ In dependency order, not priority order.
 1. **String-form `exec` / `eval`.** **Landed.** `_bi_code_kind` (BI 21)
    returns the raw 4-bit tag; ROM `exec`/`eval` compile SHORT_STR / LONG_STR
    via `compile(source, "<string>", mode)`.
-2. **T4 grammar** — `try`/`except`/`finally`, `raise`, comprehensions. The
-   runtime already supports all of it; this is codegen work only.
+2. **T4 grammar.** **Landed.** `try`/`except`/`else`/`finally`, `raise`,
+   single-generator list/set/dict comprehensions, string `BINARY_SLICE`.
+   CODE_RAM raised to 65 536 slots (lever 2). Limits: no slice step,
+   no generator expressions, no `except*`, no `raise from`, no
+   `DELETE_NAME` after `except as`, unmatched-except + finally may skip
+   the finally, comps leak the loop var.
 3. **Constant folding** (`ast_preprocess.py` port) — smaller output, closer to
    CPython's `co_code`.
 4. **Closures** (`MAKE_CELL` / `LOAD_DEREF` / cells) — the first genuine

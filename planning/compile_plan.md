@@ -124,7 +124,8 @@ Codegen tiers:
 | T1 | literals, names, arith, `return` | first `eval(compile(...))` |
 | T2 | `if` / `while` / `for` / `and` / `or` | after H |
 | T3 | `def` (no closures), displays, unpack | after T2 |
-| T4+ | `class` / `import` / closures / `with` / `assert` | wait on runtime |
+| T4 | `try` / `except` / `else` / `finally` / `raise` / comprehensions / string slices | landed (§11.2) |
+| T5 | `class` / `import` / closures / `with` / `assert` | wait on runtime |
 
 Differentials by **program results**, never `co_code` identity. Firmware
 emits no `CACHE`.

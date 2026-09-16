@@ -18,7 +18,7 @@ The PC is a **slot index**, not a byte address; fetch converts it with
 
 ```text
 slot 0x0000 .. 0x1FFF   CODE ROM   pycore_ram (code half)  READ_ONLY, $readmemh      64 KB /  8192 slots
-slot 0x2000 .. 0xA1FF   CODE RAM   pycore_ram (code half)  writable                 256 KB / 32768 slots
+slot 0x2000 .. 0x11FFF  CODE RAM   pycore_ram (code half)  writable                 512 KB / 65536 slots
 ```
 
 `PYCORE_CODE_RAM_SLOT_BASE` (`0x2000`) is exactly the ROM's slot count
@@ -55,7 +55,8 @@ Unmodified [PyCPython](https://github.com/ColtonHarris999/PyCPython) (the host
 `compile()` oracle at `vendor/pycpython`) is about 1 MB of Python and does
 not fit. A PyCore-subset firmware compiler still wants on the order of
 10 000–30 000 code slots. Today's entire ROM is 8192 slots and already holds
-the boot image and ROM firmware, so code RAM is sized at 32 768 slots (256 KB).
+the boot image and ROM firmware, so code RAM is sized at 65 536 slots (512 KB)
+after T4 (lever 2 in `compiler_design.md` §7).
 
 `PYCORE_CODE_RAM_BLOCK_COUNT` is a parameter. If that is too much area for a
 real target, the answer is not a smaller compiler but **overlays**: the loader
