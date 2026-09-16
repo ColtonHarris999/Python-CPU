@@ -195,20 +195,20 @@ def _pyc_parse_number(text):
     if n >= 2 and text[0] == "0":
         ch = text[1]
         if ch == "x" or ch == "X":
-            return _pyc_parse_int_base(text, 2, 16)
+            return [_pyc_parse_int_base(text, 2, 16), 0]
         if ch == "o" or ch == "O":
-            return _pyc_parse_int_base(text, 2, 8)
+            return [_pyc_parse_int_base(text, 2, 8), 0]
         if ch == "b" or ch == "B":
-            return _pyc_parse_int_base(text, 2, 2)
+            return [_pyc_parse_int_base(text, 2, 2), 0]
         if ch == "e" or ch == "E" or ch == ".":
-            return float(text)
+            return [float(text), 1]
         if ch >= "0" and ch <= "9":
             _pyc_parse_error(
                 "leading zeros in decimal integer literals are not permitted"
             )
     if has_dot or has_exp:
-        return float(text)
-    return _pyc_parse_int_base(text, 0, 10)
+        return [float(text), 1]
+    return [_pyc_parse_int_base(text, 0, 10), 0]
 
 
 def _pyc_parse_string(text):
@@ -415,8 +415,8 @@ def _pyc_parse_expr():
             if kind == TOK_NUMBER:
                 line = _pyc_tok_line()
                 col = _pyc_tok_col()
-                val = _pyc_parse_number(text)
-                nid = _pyc_nd_new(ND["Constant"], line, col, 0, 0, 0, val)
+                pair = _pyc_parse_number(text)
+                nid = _pyc_nd_new(ND["Constant"], line, col, pair[1], 0, 0, pair[0])
                 _pyc_opnd_push(nid)
                 _pyc_tok_advance()
                 want = 0
@@ -425,7 +425,7 @@ def _pyc_parse_expr():
                 line = _pyc_tok_line()
                 col = _pyc_tok_col()
                 val = _pyc_parse_string(text)
-                nid = _pyc_nd_new(ND["Constant"], line, col, 0, 0, 0, val)
+                nid = _pyc_nd_new(ND["Constant"], line, col, 2, 0, 0, val)
                 _pyc_opnd_push(nid)
                 _pyc_tok_advance()
                 want = 0
@@ -434,7 +434,7 @@ def _pyc_parse_expr():
                 if text == "True":
                     line = _pyc_tok_line()
                     col = _pyc_tok_col()
-                    nid = _pyc_nd_new(ND["Constant"], line, col, 0, 0, 0, True)
+                    nid = _pyc_nd_new(ND["Constant"], line, col, 3, 0, 0, True)
                     _pyc_opnd_push(nid)
                     _pyc_tok_advance()
                     want = 0
@@ -442,7 +442,7 @@ def _pyc_parse_expr():
                 if text == "False":
                     line = _pyc_tok_line()
                     col = _pyc_tok_col()
-                    nid = _pyc_nd_new(ND["Constant"], line, col, 0, 0, 0, False)
+                    nid = _pyc_nd_new(ND["Constant"], line, col, 4, 0, 0, False)
                     _pyc_opnd_push(nid)
                     _pyc_tok_advance()
                     want = 0
@@ -450,7 +450,7 @@ def _pyc_parse_expr():
                 if text == "None":
                     line = _pyc_tok_line()
                     col = _pyc_tok_col()
-                    nid = _pyc_nd_new(ND["Constant"], line, col, 0, 0, 0, None)
+                    nid = _pyc_nd_new(ND["Constant"], line, col, 5, 0, 0, None)
                     _pyc_opnd_push(nid)
                     _pyc_tok_advance()
                     want = 0

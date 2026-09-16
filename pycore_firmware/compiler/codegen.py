@@ -117,9 +117,9 @@ def _pyc_visit(nid):
         return
     if kind == ND["Constant"]:
         val = nd_obj[nid]
-        if isinstance(val, int):
-            if val is not True and val is not False:
-                if val >= 0 and val <= 255:
+        if nd_a[nid] == 0:
+            if val >= 0:
+                if val <= 255:
                     _pyc_emit(OPMAP["LOAD_SMALL_INT"], val, 0)
                     return
         i = 0
@@ -496,10 +496,19 @@ def _pyc_assemble():
     while i < opnd_n:
         words[i] = (ops[i] << 8) | (opnd[i] & 255)
         i = i + 1
-    consts = tuple(copy_range(stmts, 0, stmt_n))
-    names = tuple(copy_range(tk_s, 0, tk_n))
+    if stmt_n == 0:
+        consts = ()
+    else:
+        consts = tuple(copy_range(stmts, 0, stmt_n))
+    if tk_n == 0:
+        names = ()
+    else:
+        names = tuple(copy_range(tk_s, 0, tk_n))
     vn = sc_varnames[_lex_i]
-    varnames = tuple(copy_range(vn, 0, nloc))
+    if nloc == 0:
+        varnames = ()
+    else:
+        varnames = tuple(copy_range(vn, 0, nloc))
     meta = (maxd << 32) | (nloc << 16) | sc_argcount[_lex_i]
     base = _bi_code_alloc(opnd_n)
     _bi_code_blit(base, words)
