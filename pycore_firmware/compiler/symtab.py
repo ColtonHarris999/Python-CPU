@@ -238,9 +238,11 @@ def _pyc_sy_push_children(nid):
         if a >= 0:
             _pyc_sy_work_push(a, 0)
         obj = nd_obj[nid]
-        if obj != 0:
-            hid = _pyc_nd_new(ND["Name"], 1, 0, ND["Store"], 0, 0, obj)
-            _pyc_sy_work_push(hid, 0)
+        # Bare except uses ""; a name is a str. Mixed-tag != TYPE-traps.
+        if obj == "":
+            return
+        hid = _pyc_nd_new(ND["Name"], 1, 0, ND["Store"], 0, 0, obj)
+        _pyc_sy_work_push(hid, 0)
         return
     if (
         kind == ND["Name"]

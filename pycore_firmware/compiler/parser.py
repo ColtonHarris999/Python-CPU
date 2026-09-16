@@ -18,7 +18,7 @@
 # Try: kids=body,handlers,orelse,final; nd_a=start, nd_b=n_body,
 #   nd_c=n_handlers, nd_obj=n_orelse | (n_final << 16).
 # ExceptHandler: nd_a=type (-1 bare), nd_b=body start, nd_c=n_body,
-#   nd_obj=name string or 0.
+#   nd_obj=name string or "".
 # Subscript tag 5 extra: 0=index, -1=slice lower none, else lower+1.
 #
 # Operator-stack tags (LOAD_CONST, not _PYC_G names):
@@ -1460,7 +1460,7 @@ def _pyc_parse_stmt():
             hcol = _pyc_tok_col()
             _pyc_tok_advance()
             typ = 0 - 1
-            hname = 0
+            hname = ""
             if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
                 if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "*":
                     _pyc_parse_error("except* is not supported")

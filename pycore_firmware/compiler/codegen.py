@@ -815,15 +815,16 @@ def _pyc_visit(nid):
                     _pyc_emit(OPMAP["CHECK_EXC_MATCH"], 0, 0)
                     miss = _pyc_emit(OPMAP["POP_JUMP_IF_FALSE"], 0, 0 - 1)
                 hname = nd_obj[h]
-                if hname != 0:
+                # Bare except uses ""; a name is a str. Mixed-tag != TYPE-traps.
+                if hname == "":
+                    _pyc_emit(OPMAP["POP_TOP"], 0, 0)
+                else:
                     name_id = _pyc_nd_new(
                         ND["Name"], 1, 0, ND["Store"], 0, 0, hname
                     )
                     _lex_col = 1
                     _pyc_visit(name_id)
                     _lex_col = 0
-                else:
-                    _pyc_emit(OPMAP["POP_TOP"], 0, 0)
                 hks = nd_b[h]
                 hn = nd_c[h]
                 j = 0
