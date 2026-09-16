@@ -838,6 +838,32 @@ define PYCORE_IMAGE_TRAP_RUN
 		$(PYCORE_MEM_PLUSARGS)
 endef
 
+# Same trap flow as PYCORE_IMAGE_TRAP_RUN for sources that are not img_*.py.
+define PYCORE_IMAGE_TRAP_RUN_SRC
+	$(PYTHON) tools/ensure_sim.py img
+	mkdir -p $(BUILD_DIR)/$(1)
+	$(PYTHON) pycore/tools/image_from_source.py \
+		--source pycore/programs/$(2) \
+		--program-hex $(BUILD_DIR)/$(1)/program.hex \
+		--dmem-hex $(BUILD_DIR)/$(1)/dmem.hex \
+		--meta $(BUILD_DIR)/$(1)/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+	test -n "$$HEAP_INIT_PTR" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
+	$(PYCORE_SIM_IMG_BIN) \
+		+PROG_HEX=$(BUILD_DIR)/$(1)/program.hex \
+		+DMEM_HEX=$(BUILD_DIR)/$(1)/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/$(1)/code_ram.hex \
+		+BOOT_EN=1 \
+		+CHECK_ENTRY_RETURN=0 \
+		+EXPECT_TRAP=1 \
+		+EXPECTED_TRAP_CODE=$(3) \
+		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
+		+MAX_CYCLES=$(4) \
+		$(PYCORE_MEM_PLUSARGS)
+endef
+
 pycore-img-smoke:
 	$(call PYCORE_IMAGE_RUN,smoke,50000)
 
@@ -2623,23 +2649,26 @@ pycore-container-build-index:
 pycore-container-store-subscr:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_store_subscr.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=42,pycore_container_store_subscr)
 
+# Dict BUILD_MAP hex fixtures (BOOT_EN=0) TYPE-trap after RF-ring TOS pair
+# addressing. Same programs image-boot with BOOT_EN=1 (expected 42 / 99 /
+# 100 / 30 / 20 / 2; missing-key MEM_FAULT 7; full-insert DICT_GROW 11).
 pycore-container-dict-lookup:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_build_lookup.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=42,pycore_container_dict_lookup)
+	$(call PYCORE_IMAGE_RUN_SRC,container_dict_lookup,dict_build_lookup.py,50000)
 
 pycore-container-dict-store:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_store_subscr.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=99,pycore_container_dict_store)
+	$(call PYCORE_IMAGE_RUN_SRC,container_dict_store,dict_store_subscr.py,50000)
 
 pycore-container-list-empty:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_empty.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=1,pycore_container_list_empty)
 
 pycore-container-dict-multi-pair:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_multi_pair.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=100,pycore_container_dict_multi_pair)
+	$(call PYCORE_IMAGE_RUN_SRC,container_dict_multi_pair,dict_multi_pair.py,50000)
 
 pycore-container-dict-collision:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_collision.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=30,pycore_container_dict_collision)
+	$(call PYCORE_IMAGE_RUN_SRC,container_dict_collision,dict_collision.py,50000)
 
 pycore-container-dict-insert-new-key:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_insert_new_key.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=20,pycore_container_dict_insert_new_key)
+	$(call PYCORE_IMAGE_RUN_SRC,container_dict_insert_new_key,dict_insert_new_key.py,50000)
 
 # pycore-container-dict-bool-key / dict-str-key / dict-str-key-long removed:
 # their hex fixtures still use the pre-3.14 inline 3-slot LOAD_CONST
@@ -2647,7 +2676,7 @@ pycore-container-dict-insert-new-key:
 # under img_str_consts.py and img_containers.py.
 
 pycore-container-dict-empty:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_empty.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=2,pycore_container_dict_empty)
+	$(call PYCORE_IMAGE_RUN_SRC,container_dict_empty,dict_empty.py,50000)
 
 pycore-container-list-nested:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_nested.hex,+EXPECTED_TAG=1 +EXPECTED_VALUE=7,pycore_container_list_nested)
@@ -2669,7 +2698,7 @@ pycore-container-list-oob-write:
 	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oob_write.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7,pycore_container_list_oob_write)
 
 pycore-container-dict-missing-key:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_missing_key.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7,pycore_container_dict_missing_key)
+	$(call PYCORE_IMAGE_TRAP_RUN_SRC,container_dict_missing_key,dict_missing_key.py,7,50000)
 
 # pycore-container-list-float-key removed: hex uses pre-3.14 inline
 # 3-slot LOAD_CONST for the float key.  Equivalent type-trap coverage
@@ -2680,7 +2709,7 @@ pycore-container-tuple-store-trap:
 
 pycore-container-dict-full-insert:
 	# Load ≥ 2/3 / last-slot insert → PY_TRAP_DICT_GROW (11), not MEM_FAULT.
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/dict_full_insert.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=11 +MAX_CYCLES=20000,pycore_container_dict_full_insert)
+	$(call PYCORE_IMAGE_TRAP_RUN_SRC,container_dict_full_insert,dict_full_insert.py,11,50000)
 
 # HEAP_INIT_PTR = HEAP_LIMIT-100 so BUILD_LIST 3 (112 bytes) exceeds
 # PYCORE_HEAP_LIMIT (0xF0000; exc-info arena begins there).
