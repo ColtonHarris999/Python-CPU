@@ -955,11 +955,11 @@ namespace the xbar adds `PYCORE_CODE_ADDR_BASE = 0x01000000` so those bytes
 never alias dmem:
 
 ```text
-slot 0x0000 .. 0x1FFF   CODE ROM   pycore_imem      READ_ONLY    64 KB
-slot 0x2000 .. 0xA1FF   CODE RAM   pycore_code_ram  writable    256 KB
+slot 0x0000 .. 0x1FFF   CODE ROM   pycore_ram       READ_ONLY    64 KB
+slot 0x2000 .. 0xA1FF   CODE RAM   pycore_ram       writable    256 KB
 ```
 
-`pycore_code_mem.sv` muxes the two and is a drop-in replacement for
-`pycore_imem`. Full details, sizing rationale, and the planned module/loader
-format are in [`code_loading.md`](code_loading.md). Hierarchy, port contract
-and invalidation: [`memory_hierarchy.md`](memory_hierarchy.md).
+The live path is `pycore_mem_hier` → `pycore_ram.sv`. `pycore_code_mem.sv`
+is compiled but not instantiated. Full details, sizing rationale, and the
+planned module/loader format are in [`code_loading.md`](code_loading.md).
+Hierarchy, port contract and invalidation: [`memory_hierarchy.md`](memory_hierarchy.md).

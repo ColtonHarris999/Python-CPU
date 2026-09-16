@@ -91,6 +91,10 @@ Host gate `test_compiler_subset.py` must reject these.
 | decorators / `lambda` | `def` |
 | names > 15 bytes as dict keys (v1) | SHORT_STR names; intern later |
 
+`str.split` / `strip` / `replace` and identifiers longer than 15 bytes are
+**allowed** on this target (`compiler_design.md` §2.1 / §5.1). The host
+subset gate no longer rejects them. Rows above are historical.
+
 PEG is banned (`MAX_CALL_DEPTH_CORE = 128`; vendor raises recursion limit
 to 12 000). Device parser is **LL(1)** + generated tables, not
 `generated_parser.py` / `pegen.py`.

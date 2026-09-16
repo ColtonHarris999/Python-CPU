@@ -73,11 +73,12 @@ Dict/set probes issue tier 3 at `CP_DICT_CHK_VAL` when meta matches
 
 `COMPARE_OP` `==`/`!=` on strings: identical handles compare equal; mixed
 SHORT/LONG is always false (canonical invariant). Same-tag SHORT_STR also
-has lexicographic ordering. **LONG_STR ordering still TYPE-traps.**
-`COMPARE_OP` equality of two distinct LONG objects with matching meta is
-not the dict-probe path — interned constants that share a handle compare
-equal (`img_str_eq`); a runtime concat vs an interned copy of the same
-text does not, unless they happen to be the same object.
+has lexicographic ordering. Same-tag `LONG_STR` `==`/`!=` of distinct
+objects with matching `(hash, nbytes, nchars, kind)` issues STRACC
+`SA_CMP`, so a runtime concat vs an interned copy of the same text
+compares equal. `LONG_STR` ordering (`<`/`<=`/`>`/`>=`) takes the same
+`SA_CMP` path (`stracc_cmp` in `pycore_core.sv`); it is **not** a TYPE
+trap. Mixed-tag ordering still TYPE-traps.
 
 Dict hash for LONG_STR is the cached content hash in `value[95:64]`, not
 `addr XOR len`.

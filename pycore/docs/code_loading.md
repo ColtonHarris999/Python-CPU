@@ -15,8 +15,8 @@ The PC is a **slot index**, not a byte address; fetch converts it with
 `pc << 3` because every code word is 8 bytes. Two banks share that space:
 
 ```text
-slot 0x0000 .. 0x1FFF   CODE ROM   pycore_imem      READ_ONLY, $readmemh      64 KB /  8192 slots
-slot 0x2000 .. 0xA1FF   CODE RAM   pycore_code_ram  writable                 256 KB / 32768 slots
+slot 0x0000 .. 0x1FFF   CODE ROM   pycore_ram (code half)  READ_ONLY, $readmemh      64 KB /  8192 slots
+slot 0x2000 .. 0xA1FF   CODE RAM   pycore_ram (code half)  writable                 256 KB / 32768 slots
 ```
 
 `PYCORE_CODE_RAM_SLOT_BASE` (`0x2000`) is exactly the ROM's slot count
@@ -26,11 +26,10 @@ large entry slot. `pycore/tests/test_code_ram.py` pins that relationship, along
 with the tooling mirrors in `encoding.py`, so the two copies of the geometry
 cannot drift.
 
-`pycore_code_mem.sv` is the region mux and is a drop-in replacement for
-`pycore_imem`, so both tops (`pycore_system.sv`, `pycore_excore_system.sv`)
-changed only the module name plus a `CODE_RAM_HEX` parameter. Both banks are the
-same `pycore_mem_bank`, so read latency and the ack handshake are identical
-whichever region is selected and fetch needed no new stall state.
+The live fetch/write path is `pycore_mem_hier` → `pycore_ram.sv` (both
+`pycore_system.sv` and `pycore_excore_system.sv`). `pycore_code_mem.sv` /
+`pycore_code_ram.sv` remain in `PYCORE_RTL_SRCS` but are **not instantiated**;
+they are the Plan-1 mux study. Do not treat them as the fetch path.
 
 A request at or beyond `PYCORE_CODE_RAM_SLOT_LIMIT` has no bank to answer it, so
 the mux synthesises `fault_o` **and still acks** — a silent wrap or a hang would
@@ -167,6 +166,20 @@ primitives make lifetimes reclaimable when they nest:
 A release validates that the mark lies inside its region and at or below the
 current cursor; a stale or out-of-region mark raises `PY_TRAP_MEM_FAULT` rather
 than "un-freeing" memory that was never allocated.
+
+**Compile lifetime.** `compile()` does not mark/release internally. The
+caller owns the bump cursors:
+
+```python
+hm = _bi_heap_mark(); cm = _bi_code_mark()
+code = compile(src, "<s>", "exec")
+exec(code)
+_bi_code_release(cm); _bi_heap_release(hm)
+```
+
+Releasing invalidates every handle allocated after the mark. `_bi_code_new`
+and `_bi_heap_release` flush CODC and GIC so a recycled address cannot
+alias a cached code object (`memory_hierarchy.md`).
 
 **This is not garbage collection, and must not be treated as such.** Releasing
 to a mark invalidates every handle allocated after it, with no detection: a

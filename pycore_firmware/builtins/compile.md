@@ -1,6 +1,6 @@
 # `compile` — shipped subset
 
-Status: **in ROM** (compiler_design.md step J, landed). T1–T3 expressions and
+Status: **in ROM** (compiler_design.md step J, landed; K size report). T1–T3 expressions and
 statements (`if`/`while`/`for`, `def` positional, displays, unpack).
 `"single"` / nonzero `flags` / invalid `optimize` → `ValueError`.
 Defaults / `*args` / `**kwargs` / nested closures remain `SyntaxError`.
@@ -49,3 +49,5 @@ the step-D toy that returns 42). It stores `_in_src` / `_in_file` /
 
 `img_compile_repeat` and `img_compile_release_realloc` are later steps.
 String-form `eval("1+2")` still needs `_bi_code_kind` (§11).
+`make pycore-size-report` is the W-8 occupancy gate (A8). Re-entrancy
+(`_busy`, D9) is deferred: `_PYC_G` is 127 of 128 static keys.

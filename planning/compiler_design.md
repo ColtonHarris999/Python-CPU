@@ -679,7 +679,7 @@ Number these and pin them in `pycore/docs/compiler.md` (new) and
 | D6 | A frame window (`nlocals + co_stacksize`) over the cap in §6.1 S-6, or a closure, is a `SyntaxError` | The irreducible limit surfaced at compile time instead of as a fatal `CALL_FILTER`. Recursion depth is **not** a compile-time error — deep recursion is a runtime `MEM_FAULT` when the spill region is exhausted, which is CPython's `RecursionError` in kind. |
 | D7 | `"single"` mode and `flags != 0` raise `ValueError` | Matches the stub contract in `compile.md`. |
 | D8 | `filename` is stored, never opened | No filesystem. |
-| D9 | `compile()` is not re-entrant | §4.2; clean error, not corruption. |
+| D9 | `compile()` is not re-entrant | `_busy` is deferred (127 of 128 `_PYC_G` keys). Nested `compile()` would clobber `_in_*` and scratch, not raise a clean error. |
 
 ---
 
@@ -1024,28 +1024,28 @@ this work must close, not as new scope.
 
 ## 7. Budgets
 
-Measure before you build. The line-to-slot ratio below is derived from the
-repository's own audit of `vendor/pycpython` (29 548 lines → ~116 000 logical
-code units ≈ **3.9 units/line**; regenerate with
-`pycore/tools/measure_pycpython_opcodes.py`). Treat it as ±30%.
+Measured by `make pycore-size-report` on `img_compile_eval_expr` (W-8 / A8).
+The line-to-slot ratio from `vendor/pycpython` (≈ 3.9 units/line) was a
+planning estimate; **A8 fails on hardware ceilings**, not on that estimate.
+The compiler package used most of the 32 768-slot code-RAM bank because T1–T3
+were inlined into existing `_PYC_G` functions (128-key dict cap).
 
-| Resource | Capacity | Budget for this work | Source |
+| Resource | Capacity | Measured | Source |
 | --- | ---: | --- | --- |
-| Code ROM | 8 192 slots | unchanged: boot image + ~33 existing builtins (~2 000 slots today, estimated) | `PYCORE_IMEM_BLOCK_COUNT = 16` |
-| Code RAM | 32 768 slots | **compiler ≤ 14 000 slots** (≈ 3 500 source lines), leaving ≥ 18 000 for compiled output | `PYCORE_CODE_RAM_BLOCK_COUNT = 64`, `pycore_defs.svh:3661` |
-| Heap | ~960 KB (`0x440`–`0xF0000`) | static image + `_PYC_G`; peak working set for a 4 KB source ≈ 250 KB (tokens 96 B each, nodes 192 B each) | `pycore_defs.svh:3098-3099` |
-| Register file | 256 entries, ring window | after §6.1: resident working set only; per-frame `nlocals + co_stacksize ≤ ~240` | S-1, S-6 |
-| RF spill region | 256 KB / 8 192 entries (new) | ≈ 500–1 000 typical frames before `MEM_FAULT` | S-7 |
-| Frame stack | 32 KB / 1 024 descriptors | the binding depth limit after S-5 raises `MAX_CALL_DEPTH_CORE` to match it | `pycore_defs.svh:3100-3101` |
+| Code ROM | 8 192 slots | **2 511 used**, 5 681 remain (boot image + ROM builtins) | `len(program_slots)` |
+| Code RAM | 32 768 slots | **compiler 32 483**, **285 remain** for compiled output | `len(code_ram_slots)` |
+| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 252 736 B**, 729 216 remain | `HEAP_INIT_PTR - HEAP_BASE` |
+| Register file | 256 entries, ring window | resident working set only; per-frame `nlocals + co_stacksize ≤ 240` | S-1, S-6 |
+| RF spill region | 256 KB / 8 192 entries | ≈ 500–1 000 typical frames before `MEM_FAULT` | S-7 |
+| Frame stack | 32 KB / 1 024 descriptors | `MAX_CALL_DEPTH_CORE` matches the region | `pycore_defs.svh` |
 | `int` | signed 64-bit, wraps | line numbers, offsets, packed fields all fit | `architecture.md` |
 
-**First task of the implementation is to replace the estimates in this table
-with measurements** (build one image, read `image.meta` and the hex line
-counts). If the compiler overruns code RAM, the answer is in order:
-(1) shrink `codegen.py` by deferring a tier, (2) raise
-`PYCORE_CODE_RAM_BLOCK_COUNT` (it is a parameter, `code_loading.md` §1.2 says
-so explicitly), (3) only then consider overlays. Do **not** restart the module
-loader for this.
+The planning figure “compiler ≤ 14 000 slots, leave ≥ 18 000 for output”
+was ±30% from the PyCPython audit. After T1–T3 the package is 32 483 slots.
+If compiled-output headroom (285) is too small, the levers in order are:
+(1) shrink `codegen.py`, (2) raise `PYCORE_CODE_RAM_BLOCK_COUNT`
+(`code_loading.md` §1.2), (3) only then overlays. Do **not** restart the
+module loader for occupancy alone.
 
 ---
 

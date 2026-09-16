@@ -1,8 +1,6 @@
 # On-device `compile()`
 
-Status: **step J landed** (T2/T3; A2
-`img_compile_exec_roundtrip` → 7). Next is step K (W-8 size report).
-Design:
+Status: **step K** (W-8 size report, §6.6 doc sweep). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` is a resident PyCore builtin. This file records the
@@ -162,10 +160,29 @@ stays constant in the source nesting.
 
 ## Deviations from CPython (D1–D9)
 
-See `compiler_design.md` §5.8. Differentials compare **program results**,
-never `co_code` identity (no `CACHE`, no constant folding in v1). The lexer
-differential compares the token stream (kinds, positions, payload text),
-not later `co_code`.
+Pinned here and in `bytecode_support.md`. Differentials compare **program
+results**, never `co_code` identity. The lexer differential compares the
+token stream (kinds, positions, payload text), not later `co_code`.
+
+| # | Deviation | Consequence |
+| --- | --- | --- |
+| D1 | No `CACHE` padding is emitted | `co_code` differs from CPython; results must match |
+| D2 | No constant folding in v1 | More instructions, same result (`1+2` stays three ops) |
+| D3 | `LOAD_GLOBAL` oparg is CPython 3.14 `namei = oparg >> 1`, bit 0 = push `NULL` | Must match hardware |
+| D4 | `COMPARE_OP` uses CPython 3.14 packed oparg (selector in bits 7:5) | Must match hardware |
+| D5 | Constructs the machine cannot execute are compile-time `SyntaxError` | A4; never an illegal-opcode trap |
+| D6 | Frame window `nlocals + co_stacksize > 240`, or a closure, is `SyntaxError` | Cap is compile-time, not `CALL_FILTER`. Recursion depth is runtime `MEM_FAULT` |
+| D7 | `"single"` mode and `flags != 0` raise `ValueError` | Same as invalid `optimize` |
+| D8 | `filename` is stored, never opened | No filesystem |
+| D9 | `compile()` is not re-entrant | `_busy` is deferred (127 of 128 `_PYC_G` keys). Nested `compile()` would clobber `_in_*` and scratch |
+
+## Size report (W-8)
+
+`make pycore-size-report` builds `img_compile_eval_expr` and prints ROM,
+compiler code-RAM, and static heap occupancy vs hardware ceilings. Overflow
+fails the target (A8). Measured: ROM **2511 / 8192** slots; compiler
+**32483 / 32768** code-RAM slots (285 remain for compiled output); static
+heap **252736 / 981952** bytes.
 
 ## Lifetime
 

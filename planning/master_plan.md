@@ -54,28 +54,28 @@ Do not duplicate opcode tables or type lists in planning files. Point at
 
 Order is “what unblocks the next product step,” not calendar estimates.
 
-### 1. Code-RAM writers (architecture + compile)
+### 1. Code-RAM writers — **landed** (architecture + compile step C)
 
-Nothing writes code RAM at runtime (`imem_we` is still 0). Add
-`_bi_code_alloc` / `_bi_code_emit` / `_bi_code_new` and host stand-ins.
-This is the only RTL gate for `compile()`. Details:
-[`compile_plan.md`](compile_plan.md) F1 and [`architecture_plan.md`](architecture_plan.md).
+`_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new` write
+code RAM and fabricate `CODE_OBJECT` handles. Host stand-ins live in
+`load_rom_firmware_callables()`. Details: [`compiler_design.md`](compiler_design.md)
+step C and [`architecture_plan.md`](architecture_plan.md).
 
-### 2. On-device `compile()` (compile plan)
+### 2. On-device `compile()` — **T1–T3 landed** (steps D–J)
 
 Vendor [PyCPython](https://github.com/ColtonHarris999/PyCPython) at
-`vendor/pycpython` is the **host oracle** and algorithm source. Port a
-PyCore subset into `pycore_firmware/compiler/`. Do **not** run unmodified
-PyCPython on the hart. Do **not** port PyPy’s tokenizer — that path is
-abandoned.
-
-Design: [`compiler_design.md`](compiler_design.md). First success:
+`vendor/pycpython` is the **host oracle** and algorithm source. The
+PyCore-subset port is `pycore_firmware/compiler/`. Do **not** run unmodified
+PyCPython on the hart.
 
 ```python
-eval(compile("1 + 2", "<s>", "eval")) == 3
+eval(compile("1 + 2", "<s>", "eval")) == 3          # A1
+exec(compile(src, "<s>", "exec"))  # globals match    # A2 → 7
 ```
 
-No BIOS, no module loader, no self-host required for that.
+Design: [`compiler_design.md`](compiler_design.md). Occupancy:
+`make pycore-size-report` (step K). No BIOS, no module loader, no self-host
+required for that.
 
 ### 3. Language leftovers in parallel
 
@@ -92,8 +92,8 @@ this CPU”:
 ### 4. Later (after first compile is green)
 
 - String-form `exec` / `eval` (thin dispatch over `compile`).
-- Size-report the firmware compiler; overlay via the module loader if it
-  does not fit ROM.
+- Overlays via the module loader if compiled-output headroom (285 code-RAM
+  slots today) is too tight; `make pycore-size-report` is the occupancy gate.
 - Self-host: compile the compiler on device.
 - BIOS that boots and `exec`s a payload.
 

@@ -27,7 +27,7 @@ the host oracle only.
 | Path | Role |
 | --- | --- |
 | `builtins/` | Pure-Python miss-path / ROM builtins + `builtins.md` inventory |
-| `compiler/` | On-device `compile()` package. Step D seeds helpers into `_PYC_G`; step E adds `lexer.py` and generated `TOK_*` / `OP3` / `OP2` tables; step F adds iterative `parser.py` and generated `ND_*` / `BINOPS` / `PREC`; step G adds iterative `symtab.py` (module + function scope, closures → `SyntaxError`); step H adds recursive T1 `codegen.py` (assemble via `_bi_code_*`, no `CACHE`). Step I seeds ROM `compile()` which stores `_in_*` and runs `_pyc_codegen_main` via `_bi_exec_globals`. `tables.py` is generated from `pycore/targets/pycore.json` (`pycore/tools/gen_compiler_tables.py`). |
+| `compiler/` | On-device `compile()` package (T1–T3 landed). Helpers live in `_PYC_G` (code RAM); the public ROM shim is `builtins/compile.py`. `tables.py` is generated from `pycore/targets/pycore.json` (`pycore/tools/gen_compiler_tables.py`). Occupancy: `make pycore-size-report`. |
 
 Image tests compile these modules via `ROM_FIRMWARE_BUILTINS` in
 `pycore/tools/image_from_source.py` and seed them into the boot-record
