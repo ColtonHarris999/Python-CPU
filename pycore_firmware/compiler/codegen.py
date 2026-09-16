@@ -796,19 +796,24 @@ def _pyc_assemble():
     while i < opnd_n:
         words[i] = (ops[i] << 8) | (opnd[i] & 255)
         i = i + 1
-    if stmt_n == 0:
-        consts = ()
-    else:
-        consts = tuple(copy_range(stmts, 0, stmt_n))
-    if tk_n == 0:
-        names = ()
-    else:
-        names = tuple(copy_range(tk_s, 0, tk_n))
+    # tuple(list) is LIST_EXTEND on device (trap 10). Concat of 1-tuples
+    # is BUILD_TUPLE 1 + BINARY_OP add, which the subset already runs.
+    consts = ()
+    i = 0
+    while i < stmt_n:
+        consts = consts + (stmts[i],)
+        i = i + 1
+    names = ()
+    i = 0
+    while i < tk_n:
+        names = names + (tk_s[i],)
+        i = i + 1
     vn = sc_varnames[_lex_i]
-    if nloc == 0:
-        varnames = ()
-    else:
-        varnames = tuple(copy_range(vn, 0, nloc))
+    varnames = ()
+    i = 0
+    while i < nloc:
+        varnames = varnames + (vn[i],)
+        i = i + 1
     meta = (maxd << 32) | (nloc << 16) | sc_argcount[_lex_i]
     base = _bi_code_alloc(opnd_n)
     _bi_code_blit(base, words)
