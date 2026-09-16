@@ -1,7 +1,8 @@
 # On-device `compile()`
 
-Status: **step J** (T2/T3; A2
-`img_compile_exec_roundtrip`). Design:
+Status: **step J landed** (T2/T3; A2
+`img_compile_exec_roundtrip` → 7). Next is step K (W-8 size report).
+Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` is a resident PyCore builtin. This file records the
@@ -101,7 +102,9 @@ assemble into the parent's `co_consts` then `MAKE_FUNCTION`).
 
 No `CACHE` (D1). No constant folding (D2): CPython emits `LOAD_SMALL_INT 3`
 for `1 + 2`; firmware emits `LOAD_SMALL_INT 1; LOAD_SMALL_INT 2; BINARY_OP +`.
-List displays emit `BUILD_LIST n`, never `LIST_EXTEND`. Jump args compensate
+List displays emit `BUILD_LIST n`, never `LIST_EXTEND`. Assemble builds
+`co_consts` / `co_names` / `co_varnames` by concatenating 1-tuples
+(device `tuple(list)` is LIST_EXTEND, trap 10). Jump args compensate
 for the hardware `n_cache` addend (`JUMP_FORWARD=0`, `POP_JUMP_*` /
 `JUMP_BACKWARD` / `FOR_ITER`=1). Unary `+` visits the operand only
 (CPython's `CALL_INTRINSIC_1` 5 is not in the device allowlist). Exception
@@ -153,8 +156,8 @@ stays constant in the source nesting.
 | Tier | Constructs | Status |
 | --- | --- | --- |
 | T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | parser (F); codegen (H); `compile()` shim (I) |
-| T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | parser + codegen (J) |
-| T3 | `def` (positional args + indented / one-line suite), `global`, displays, unpack | parser slice in G; codegen (J) |
+| T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | parser + codegen (J, landed) |
+| T3 | `def` (positional args + indented / one-line suite), `global`, displays, unpack | parser slice in G; codegen (J, landed) |
 | T4+ | `try`/`class`/`import`/closures | blocked on runtime |
 
 ## Deviations from CPython (D1–D9)
