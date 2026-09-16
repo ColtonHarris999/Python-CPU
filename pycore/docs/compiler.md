@@ -253,4 +253,5 @@ _bi_code_release(cm); _bi_heap_release(hm)
 Device: `img_compile_repeat` compiles `"1 + 2"` eight times inside one
 mark and returns 1 when the watermark stays ≤ 400000 bytes (R4).
 `img_compile_release_realloc` compiles, releases, compiles a different
-source, and returns 37 (R7).
+source, and returns 37 (R7). O-2 (split result/scratch arenas) stays
+closed while that watermark golden holds (§11.5).

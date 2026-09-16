@@ -663,6 +663,9 @@ compiler could take.
 **Future O-2 (not now):** a second bump cursor allocating results downward from
 `HEAP_LIMIT`, so scratch (upward) can be released independently. That is a real
 allocator change; open it only if the working-set leak actually bites.
+§11.5 stays closed: R4 `img_compile_repeat` (watermark ≤ 400000 → 1) is the
+gate, and the caller mark/release pattern (`img_compile_release_realloc`)
+already reclaims.
 
 ### 5.8 Documented deviations from CPython's compiler
 
@@ -1176,7 +1179,11 @@ In dependency order, not priority order.
    `__closure__` tuple). `PY_OBK_*` has no CELL kind. Until that lands,
    D6 keeps nested loads of enclosing locals a `SyntaxError`
    (`img_compile_reject_closure` → 1; `img_symtab_closure` → 1).
-5. **Split result/scratch heap arenas** (O-2) — only if §5.7's leak bites.
+5. **Split result/scratch heap arenas (O-2).** **Not opened.** R4
+   `img_compile_repeat` is the bite test (≤ 400000 → 1). Caller
+   mark/release (`img_compile_release_realloc` → 37) already reclaims.
+   A downward result cursor is an allocator change; do not add it while
+   the watermark golden holds.
 6. **Module loader + relocation** (`code_loading.md` §4) — only when the
    compiler no longer fits the boot image.
 7. **BIOS** — a ROM program that initialises and `exec`s a payload.
