@@ -1072,6 +1072,8 @@ def _pyc_parse_function_def():
                 cap = len(args)
             args[nargs] = nid
             nargs = nargs + 1
+            if nargs > 240:
+                _pyc_parse_error("too many locals")
             if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ",":
                 _pyc_tok_advance()
                 if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ")":
