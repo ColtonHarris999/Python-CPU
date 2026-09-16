@@ -1,10 +1,11 @@
-"""Host T1–T3 result differential vs CPython (compiler_design.md H, J).
+"""Host T1–T4 result differential vs CPython (compiler_design.md H, J, T4).
 
 Firmware ``_pyc_codegen_main`` must evaluate to the same result as CPython
-``eval`` / ``exec``. Differentials never compare ``co_code`` (D1 / D2): no
-CACHE, no constant folding. Unary ``+True`` is excluded (CPython emits
-CALL_INTRINSIC_1 5; the device only allows intrinsic 6). List displays emit
-``BUILD_LIST n``, not CPython's ``LIST_EXTEND``.
+``eval`` / ``exec``. Differentials never compare ``co_code`` (D1): no
+CACHE. Constant folding (§11.3) rewrites int BinOp/UnaryOp and str Add.
+Unary ``+True`` is excluded (CPython emits CALL_INTRINSIC_1 5; the device
+only allows intrinsic 6). List displays emit ``BUILD_LIST n``, not
+CPython's ``LIST_EXTEND``.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ if sys.version_info[:2] != (3, 14):
 from image_from_source import (
     _HOST_OP_BINARY_OP,
     _HOST_OP_CACHE,
+    _HOST_OP_LOAD_CONST,
     _HOST_OP_LOAD_SMALL_INT,
     _HOST_OP_RETURN_VALUE,
     load_firmware_package_namespace,
@@ -302,12 +304,32 @@ class TestCompilerCodegenCorpus(unittest.TestCase):
         self.assertIsNone(co())
         self.assertEqual(xs[0], 1)
 
-    def test_no_constant_folding_on_one_plus_two(self) -> None:
+    def test_constant_folding_on_one_plus_two(self) -> None:
+        # Rewrites the former D2 pin: 1+2 is now LOAD_SMALL_INT 3 (no BINARY_OP).
         co = firmware_codegen("1 + 2", "eval")
         ops = emitted_opcodes(co)
         self.assertNotIn(_HOST_OP_CACHE, ops)
-        self.assertIn(_HOST_OP_BINARY_OP, ops)
-        self.assertEqual(ops.count(_HOST_OP_LOAD_SMALL_INT), 2)
+        self.assertNotIn(_HOST_OP_BINARY_OP, ops)
+        self.assertEqual(ops.count(_HOST_OP_LOAD_SMALL_INT), 1)
+        self.assertEqual(co(), 3)
+
+    def test_constant_folding_nested_and_names_untouched(self) -> None:
+        co = firmware_codegen("1 + 2 * 3", "eval")
+        ops = emitted_opcodes(co)
+        self.assertNotIn(_HOST_OP_BINARY_OP, ops)
+        self.assertEqual(co(), 7)
+        co2 = firmware_codegen("1 + x", "eval")
+        ops2 = emitted_opcodes(co2)
+        self.assertIn(_HOST_OP_BINARY_OP, ops2)
+        co2._globals["x"] = 10
+        self.assertEqual(co2(), 11)
+
+    def test_constant_folding_str_add(self) -> None:
+        co = firmware_codegen("'ab' + 'cd'", "eval")
+        ops = emitted_opcodes(co)
+        self.assertNotIn(_HOST_OP_BINARY_OP, ops)
+        self.assertIn(_HOST_OP_LOAD_CONST, ops)
+        self.assertEqual(co(), "abcd")
 
     def test_def_compiles_and_returns(self) -> None:
         co = firmware_codegen("def f():\n    return 1\n", "exec")

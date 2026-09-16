@@ -631,11 +631,11 @@ depth-first and land in the parent's `co_consts` before the parent is built.
 | T4 | `try`/`except`/`else`/`finally`, `raise`, comprehensions, string slicing | **landed** (§11.2) |
 | T5 | `class`, decorators, `import`, `lambda`, f-strings, `with`, `assert` | blocked on runtime tracks (§11) |
 
-**No constant folding in v1.** CPython emits `LOAD_SMALL_INT 3` for `1 + 2`;
-the firmware compiler emits `LOAD_SMALL_INT 1; LOAD_SMALL_INT 2; BINARY_OP +`.
-Both evaluate to 3, which is what A1 checks. This is why **every differential
-compares program results, never `co_code`** (§5.8 D1). Fold later by porting
-`ast_preprocess.py`, if the size report wants the smaller output.
+**Constant folding (§11.3).** Int `+ - * & | ^` and unary `- ~`, plus
+str `+`, fold to a `Constant` before emit. CPython still emits
+`LOAD_SMALL_INT 3` for `1 + 2`; firmware now does too for that case.
+`/` `//` `%` `**` `<<` `>>` stay unfolded (div0 / float / overflow).
+Differentials still compare **program results**, never `co_code` (§5.8 D1).
 
 ### 5.7 Lifetime and the heap
 
@@ -672,7 +672,7 @@ Number these and pin them in `pycore/docs/compiler.md` (new) and
 | # | Deviation | Consequence |
 | --- | --- | --- |
 | D1 | No `CACHE` padding is emitted | `co_code` differs from CPython; **results** must match. Never assert `co_code` identity. |
-| D2 | No constant folding in v1 | Same. More instructions, same result. |
+| D2 | Constant folding of int `+ - * & | ^` / unary `- ~` / str `+` | `1+2` is one `LOAD_SMALL_INT`; `/ // % ** << >>` stay unfolded. Results still match. |
 | D3 | `LOAD_GLOBAL` oparg is CPython 3.14's `namei = oparg >> 1`, bit 0 = push `NULL` | Must match hardware exactly. |
 | D4 | `COMPARE_OP` uses CPython 3.14's packed oparg (selector in bits 7:5) | Must match hardware exactly. |
 | D5 | Constructs the machine cannot execute are compile-time `SyntaxError` | Strictly better than CPython here; A4. |
@@ -1035,8 +1035,8 @@ cap). T4 raised `PYCORE_CODE_RAM_BLOCK_COUNT` to 128 (lever 2).
 | Resource | Capacity | Measured | Source |
 | --- | ---: | --- | --- |
 | Code ROM | 8 192 slots | **2 613 used**, 5 579 remain (boot image + ROM builtins) | `len(program_slots)` |
-| Code RAM | 65 536 slots | **compiler 38 645**, **26 891 remain** for compiled output | `len(code_ram_slots)` |
-| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 258 752 B**, 723 200 remain | `HEAP_INIT_PTR - HEAP_BASE` |
+| Code RAM | 65 536 slots | **compiler 39 545**, **25 991 remain** for compiled output | `len(code_ram_slots)` |
+| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 259 776 B**, 722 176 remain | `HEAP_INIT_PTR - HEAP_BASE` |
 | Register file | 256 entries, ring window | resident working set only; per-frame `nlocals + co_stacksize ≤ 240` | S-1, S-6 |
 | RF spill region | 256 KB / 8 192 entries | ≈ 500–1 000 typical frames before `MEM_FAULT` | S-7 |
 | Frame stack | 32 KB / 1 024 descriptors | `MAX_CALL_DEPTH_CORE` matches the region | `pycore_defs.svh` |
@@ -1045,7 +1045,8 @@ cap). T4 raised `PYCORE_CODE_RAM_BLOCK_COUNT` to 128 (lever 2).
 The planning figure “compiler ≤ 14 000 slots, leave ≥ 18 000 for output”
 was ±30% from the PyCPython audit. After T1–T3 the package was 32 483 of
 32 768 slots (285 remain). T4 took lever 2:
-`PYCORE_CODE_RAM_BLOCK_COUNT` 64 → 128 (`code_loading.md` §1.2). Remaining
+`PYCORE_CODE_RAM_BLOCK_COUNT` 64 → 128 (`code_loading.md` §1.2). After
+§11.3 folding the package is 39 545 slots (25 991 remain). Remaining
 levers if compiled-output headroom is still too small: (1) shrink
 `codegen.py`, (3) overlays. Do **not** restart the module loader for
 occupancy alone.
@@ -1095,6 +1096,7 @@ parallel with B and C.
 | **L** | §11.1 string-form `exec`/`eval` + `_bi_code_kind` (BI 21, `call_sub_r` 7-bit). **Landed** | `img_eval_str_direct` → 3, `img_eval_str_long` → 15, `img_exec_str_direct` → 3, `img_code_kind_tags` → 178; `img_exec_bad_arg_trap` still 6 |
 | **R4/R7** | `img_compile_repeat` + `img_compile_release_realloc`. **Landed** | watermark ≤ 400000 → 1; second compile after release → 37 |
 | **T4** | §11.2 try/except/else/finally, raise, comprehensions, string slices; CODE_RAM 65536. **Landed** | `img_compile_try_except` → 7; `img_compile_try_else` → 3; `img_compile_try_finally` → 12; `img_compile_raise` → 7; `img_compile_str_slice` → 1; `img_compile_list_comp` (two-core) → 15 |
+| **Fold** | §11.3 constant folding of int ALU / str Add. **Landed** | Host: `1+2` is one `LOAD_SMALL_INT`; `1+x` still `BINARY_OP` |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1162,8 +1164,10 @@ In dependency order, not priority order.
    no generator expressions, no `except*`, no `raise from`, no
    `DELETE_NAME` after `except as`, unmatched-except + finally may skip
    the finally, comps leak the loop var.
-3. **Constant folding** (`ast_preprocess.py` port) — smaller output, closer to
-   CPython's `co_code`.
+3. **Constant folding.** **Landed.** Int `+ - * & | ^` and unary `- ~`,
+   plus str `+`, rewrite to `Constant` before emit (`ast_preprocess` subset
+   inlined in `_pyc_codegen_main`; no new `_PYC_G` key). `/ // % ** << >>`
+   stay unfolded.
 4. **Closures** (`MAKE_CELL` / `LOAD_DEREF` / cells) — the first genuine
    runtime gap, and the one that unblocks the most idiomatic Python.
 5. **Split result/scratch heap arenas** (O-2) — only if §5.7's leak bites.

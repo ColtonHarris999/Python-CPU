@@ -186,7 +186,8 @@ this milestone:
   bytecode-unit order, including `CACHE` and `EXTENDED_ARG`, but use PyCore's
    tagged 128-bit-slot layout rather than CPython C structs. The on-device
    firmware compiler (step H) is the other direction: it **emits no `CACHE`**
-   and does not fold constants (D1/D2). Differentials compare results, never
+   (D1). Constant folding (§11.3) covers int `+ - * & | ^` / unary `- ~` /
+   str `+`; `/ // % ** << >>` stay unfolded (D2). Differentials compare results, never
    `co_code`.
 10. **No value-stack-overflow detection.** Pushing opcodes (`COPY`,
   `LOAD_FAST`, `LOAD_SMALL_INT`, `PUSH_NULL`, etc.) advance `tos_index`
@@ -290,7 +291,7 @@ second producer of bytecode, distinct from host `image_from_source.py`.
 | # | Deviation |
 | --- | --- |
 | D1 | No `CACHE` padding. Differentials compare results, never `co_code`. |
-| D2 | No constant folding. |
+| D2 | Int `+ - * & | ^` / unary `- ~` / str `+` fold; `/ // % ** << >>` do not. |
 | D3 | `LOAD_GLOBAL` oparg is `namei = oparg >> 1`; bit 0 pushes `NULL`. |
 | D4 | `COMPARE_OP` packed selector in bits 7:5. |
 | D5 | Unexecutable constructs are compile-time `SyntaxError`. |

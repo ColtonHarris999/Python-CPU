@@ -103,8 +103,9 @@ assemble into the parent's `co_consts` then `MAKE_FUNCTION`),
 `try`/`except`/`else`/`finally`, `raise`, comprehensions (`LIST_APPEND` /
 `SET_ADD`/`MAP_ADD` oparg 2), string `BINARY_SLICE`.
 
-No `CACHE` (D1). No constant folding (D2): CPython emits `LOAD_SMALL_INT 3`
-for `1 + 2`; firmware emits `LOAD_SMALL_INT 1; LOAD_SMALL_INT 2; BINARY_OP +`.
+No `CACHE` (D1). Constant folding (§11.3 / D2): int `+ - * & | ^` and
+unary `- ~`, plus str `+`, rewrite to `Constant` so `1 + 2` is
+`LOAD_SMALL_INT 3`. `/ // % ** << >>` stay as BinOp.
 List displays emit `BUILD_LIST n`, never `LIST_EXTEND`. Assemble builds
 `co_consts` / `co_names` / `co_varnames` by concatenating 1-tuples
 (device `tuple(list)` is LIST_EXTEND, trap 10). Jump args compensate
@@ -166,6 +167,13 @@ Device: `img_compile_try_except` (7), `img_compile_try_else` (3),
 `img_compile_try_finally` (12), `img_compile_raise` (7),
 `img_compile_str_slice` (1), `img_compile_list_comp` (15, two-core).
 
+## Constant folding (§11.3)
+
+`_pyc_codegen_main` rewrites `BinOp`/`UnaryOp` of `Constant` kids in place
+before the visit: int `+ - * & | ^`, unary `- ~`, str `+`. Nested
+`1 + 2 * 3` becomes one `LOAD_SMALL_INT 7`. Names stay unfolded (`1 + x`
+still `BINARY_OP`). `/ // % ** << >>` are left as BinOp.
+
 ## Subset (firmware compiler source)
 
 Enforced by `pycore/tests/test_compiler_subset.py` on every file under
@@ -206,7 +214,7 @@ token stream (kinds, positions, payload text), not later `co_code`.
 | # | Deviation | Consequence |
 | --- | --- | --- |
 | D1 | No `CACHE` padding is emitted | `co_code` differs from CPython; results must match |
-| D2 | No constant folding in v1 | More instructions, same result (`1+2` stays three ops) |
+| D2 | Int `+ - * & | ^` / unary `- ~` / str `+` fold; `/ // % ** << >>` do not | `1+2` is one `LOAD_SMALL_INT`; mixed names still emit `BINARY_OP` |
 | D3 | `LOAD_GLOBAL` oparg is CPython 3.14 `namei = oparg >> 1`, bit 0 = push `NULL` | Must match hardware |
 | D4 | `COMPARE_OP` uses CPython 3.14 packed oparg (selector in bits 7:5) | Must match hardware |
 | D5 | Constructs the machine cannot execute are compile-time `SyntaxError` | A4; never an illegal-opcode trap |
@@ -219,9 +227,9 @@ token stream (kinds, positions, payload text), not later `co_code`.
 
 `make pycore-size-report` builds `img_compile_eval_expr` and prints ROM,
 compiler code-RAM, and static heap occupancy vs hardware ceilings. Overflow
-fails the target (A8). Measured after T4: ROM **2613 / 8192** slots;
-compiler **38645 / 65536** code-RAM slots (26891 remain for compiled
-output); static heap **258752 / 981952** bytes.
+fails the target (A8). Measured after §11.3: ROM **2613 / 8192** slots;
+compiler **39545 / 65536** code-RAM slots (25991 remain for compiled
+output); static heap **259776 / 981952** bytes.
 
 ## Lifetime
 

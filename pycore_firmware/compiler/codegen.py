@@ -1,7 +1,9 @@
 # Firmware T1–T4 codegen + assembler (compiler_design.md §5.5 / steps H, J, T4).
 # Recursive visit of nd_* (Rule 2) into ins words in opnd/ops, then
-# _bi_code_alloc / blit / new. No CACHE. Jump args compensate for the
-# hardware n_cache addend (POP_JUMP/JUMP_BACKWARD/FOR_ITER=1, JUMP_FORWARD=0).
+# _bi_code_alloc / blit / new. No CACHE. Constant folding (§11.3) rewrites
+# int BinOp/UnaryOp and str Add in place before the visit. Jump args
+# compensate for the hardware n_cache addend (POP_JUMP/JUMP_BACKWARD/
+# FOR_ITER=1, JUMP_FORWARD=0).
 #
 # Instruction shapes follow CPython 3.14 / PyCPython codegen.py (PSF-2.0);
 # rewritten over the SoA AST. Nested def is assembled depth-first into
@@ -1043,6 +1045,90 @@ def _pyc_codegen_main():
     _pyc_lex(_in_src)
     root = _pyc_parse(_in_mode)
     _pyc_symtab(root)
+    # §11.3 constant folding: bottom-up rewrite of Constant BinOp / UnaryOp.
+    # Int + - * & | ^ and unary - ~ ; str Add. Skip / // % ** << >> (div0,
+    # float, shift/pow overflow). Nested if only — no extra _PYC_G helper.
+    folded = 1
+    while folded:
+        folded = 0
+        i = 0
+        while i < nd_n:
+            k = nd_kind[i]
+            if k == ND["BinOp"]:
+                L = nd_a[i]
+                R = nd_c[i]
+                if nd_kind[L] == ND["Constant"]:
+                    if nd_kind[R] == ND["Constant"]:
+                        opk = nd_b[i]
+                        ok = 0
+                        res = 0
+                        tag = 0
+                        if nd_a[L] == 0:
+                            if nd_a[R] == 0:
+                                lv = nd_obj[L]
+                                rv = nd_obj[R]
+                                if opk == ND["Add"]:
+                                    res = lv + rv
+                                    ok = 1
+                                elif opk == ND["Sub"]:
+                                    res = lv - rv
+                                    ok = 1
+                                elif opk == ND["Mult"]:
+                                    res = lv * rv
+                                    ok = 1
+                                elif opk == ND["BitAnd"]:
+                                    res = lv & rv
+                                    ok = 1
+                                elif opk == ND["BitOr"]:
+                                    res = lv | rv
+                                    ok = 1
+                                elif opk == ND["BitXor"]:
+                                    res = lv ^ rv
+                                    ok = 1
+                                tag = 0
+                        if ok == 0:
+                            if nd_a[L] == 2:
+                                if nd_a[R] == 2:
+                                    if opk == ND["Add"]:
+                                        res = nd_obj[L] + nd_obj[R]
+                                        ok = 1
+                                        tag = 2
+                        if ok:
+                            nd_kind[i] = ND["Constant"]
+                            nd_a[i] = tag
+                            nd_b[i] = 0
+                            nd_c[i] = 0
+                            nd_obj[i] = res
+                            folded = 1
+            elif k == ND["UnaryOp"]:
+                kid = nd_b[i]
+                if nd_kind[kid] == ND["Constant"]:
+                    u = nd_a[i]
+                    if u == ND["UAdd"]:
+                        nd_kind[i] = ND["Constant"]
+                        nd_a[i] = nd_a[kid]
+                        nd_b[i] = 0
+                        nd_c[i] = 0
+                        nd_obj[i] = nd_obj[kid]
+                        folded = 1
+                    elif nd_a[kid] == 0:
+                        lv = nd_obj[kid]
+                        ok = 0
+                        res = 0
+                        if u == ND["USub"]:
+                            res = -lv
+                            ok = 1
+                        elif u == ND["Invert"]:
+                            res = ~lv
+                            ok = 1
+                        if ok:
+                            nd_kind[i] = ND["Constant"]
+                            nd_a[i] = 0
+                            nd_b[i] = 0
+                            nd_c[i] = 0
+                            nd_obj[i] = res
+                            folded = 1
+            i = i + 1
     opnd_n = 0
     opnd = [0] * 8
     ops = [0] * 8
