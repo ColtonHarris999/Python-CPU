@@ -1,6 +1,6 @@
 # On-device `compile()`
 
-Status: **step F in progress** (iterative T1 parser + SoA AST). Next is step G
+Status: **step F landed** (iterative T1 parser + SoA AST). Next is step G
 (`symtab.py`). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
