@@ -1,33 +1,49 @@
-# `compile` — implementation plan
+# `compile` — shipped subset
 
-Status: **blocked** (stub in `compile.py`)
+Status: **in ROM** (compiler_design.md step I). T1 expressions and
+statements only. `"single"` / nonzero `flags` / invalid `optimize` →
+`ValueError`. Nested `def` is still T1-out (`SyntaxError`).
 
-**Plan:** [`planning/compile_plan.md`](../../planning/compile_plan.md)
-
-Host oracle: `vendor/pycpython` ([PyCPython](https://github.com/ColtonHarris999/PyCPython)).
-Firmware port: `pycore_firmware/compiler/` (not present yet). Do not run
-the vendor tree on the hart. The old PyPy tokenizer plan is abandoned.
+**Design:** [`planning/compiler_design.md`](../../planning/compiler_design.md)
+§4.2. Pipeline notes: [`pycore/docs/compiler.md`](../../pycore/docs/compiler.md).
 
 ## Goal
 
 `compile(source, filename, mode)` with `flags==0` returns a code object
-usable by `eval` / `exec`. First success:
+usable by `eval` / `exec`. First success (A1):
 `eval(compile("1 + 2", "<s>", "eval")) == 3`.
 
-## Blockers
+## API
 
-1. **No compiler on the hart.** Port a PyCore subset of PyCPython into
-   `pycore_firmware/compiler/` (LL(1), tagged-list AST, no PEG).
-2. **Code-object fabrication.** Need `_bi_code_alloc` / `_bi_code_emit` /
-   `_bi_code_new`. Fetch still hard-wires `imem_we=0`. Host
-   `HeapImageBuilder.alloc_code` is the stand-in until that lands.
-3. **`"single"` / nonzero `flags` / AST input** — out of v1 (`ValueError`).
+```python
+compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1)
+```
 
-Keyword calls (`CALL_KW`) and catchable `SyntaxError` + `e.args` already
-work on main.
+| Argument | v1 |
+| --- | --- |
+| `source` | `str` |
+| `filename` | stored on `_PYC_G["_in_file"]`, not opened |
+| `mode` | `"eval"` or `"exec"` |
+| `flags` | must be `0` |
+| `dont_inherit` | accepted and ignored |
+| `optimize` | `0` or `-1` |
 
-## Sequence
+`"single"`, any other mode, `flags != 0`, and `optimize` not in `{0, -1}`
+raise `ValueError`. Re-entrancy (`_busy`, D9) is deferred: `_PYC_G` is
+already at 127 of 128 static keys.
 
-F1 emit primitives → tokenizer/parser/codegen subset → ROM `compile` →
-string `exec`/`eval`. Details and banned constructs:
-[`planning/compile_plan.md`](../../planning/compile_plan.md).
+The shim does **not** go through `_PYC_ENTRY` (that trampoline is still
+the step-D toy that returns 42). It stores `_in_src` / `_in_file` /
+`_in_mode` and runs `_pyc_codegen_main` via `_bi_exec_globals`.
+
+## Coverage
+
+| Image | Expect |
+| --- | --- |
+| `img_compile_eval_expr` | **3** (A1) |
+| `img_compile_mode_trap` | **3** (`"single"` + `flags=1`) |
+| `img_compile_reject_import` | **1** (`SyntaxError` on `import`) |
+
+T2/T3 (`img_compile_exec_roundtrip`), `img_compile_reject_locals`,
+`img_compile_repeat`, and `img_compile_release_realloc` are later steps.
+String-form `eval("1+2")` still needs `_bi_code_kind` (§11).

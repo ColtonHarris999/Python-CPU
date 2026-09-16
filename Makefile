@@ -1213,6 +1213,25 @@ pycore-img-codegen-t1-expr:
 pycore-img-codegen-t1-expr-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,codegen_t1_expr,2000000)
 
+# compiler_design.md step I: ROM compile() shim. A1 / A5 / A4.
+pycore-img-compile-eval-expr:
+	$(call PYCORE_IMAGE_RUN,compile_eval_expr,2000000)
+
+pycore-img-compile-eval-expr-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_eval_expr,2000000)
+
+pycore-img-compile-mode-trap:
+	$(call PYCORE_IMAGE_RUN,compile_mode_trap,1000000)
+
+pycore-img-compile-mode-trap-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_mode_trap,1000000)
+
+pycore-img-compile-reject-import:
+	$(call PYCORE_IMAGE_RUN,compile_reject_import,1000000)
+
+pycore-img-compile-reject-import-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_import,1000000)
+
 pycore-img-package-all: \
 	pycore-img-pyc-package-call \
 	pycore-img-lexer-count \
@@ -1220,7 +1239,10 @@ pycore-img-package-all: \
 	pycore-img-compile-deep-nesting \
 	pycore-img-symtab-locals \
 	pycore-img-symtab-closure \
-	pycore-img-codegen-t1-expr
+	pycore-img-codegen-t1-expr \
+	pycore-img-compile-eval-expr \
+	pycore-img-compile-mode-trap \
+	pycore-img-compile-reject-import
 
 pycore-img-code-new-call-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,code_new_call,100000)
@@ -1773,6 +1795,9 @@ pycore-img-two-core: \
 	pycore-img-symtab-locals-two-core \
 	pycore-img-symtab-closure-two-core \
 	pycore-img-codegen-t1-expr-two-core \
+	pycore-img-compile-eval-expr-two-core \
+	pycore-img-compile-mode-trap-two-core \
+	pycore-img-compile-reject-import-two-core \
 	pycore-img-helper-containers-two-core \
 	pycore-img-algo-sort-two-core \
 	pycore-img-bitwise-calls-two-core \

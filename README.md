@@ -76,18 +76,21 @@ Types: 64-bit `int`, `bool`, `float`, `None`, `str`, `list`, `tuple`, `dict`,
 **Boot builtins:** `len`, `range`, `ord`, `chr`, `int`, `str`, `print`, `min`/`max`,
 `sum`, `sorted`, `map`/`zip`/`enumerate`/`filter`/`reversed` (these return
 **lists**), `list`/`dict`/`tuple`/`set`, `abs`/`all`/`any`, `bin`/`hex`/`oct`,
-`hasattr`/`getattr`/`isinstance`, `exec`/`eval` on a code object.
+`hasattr`/`getattr`/`isinstance`, `exec`/`eval` on a code object, `compile()`
+(T1 source → code object).
 Methods: `list.append/pop/extend/clear`, `set.add/update`,
 `str.join/startswith/endswith/find`, `dict.get/keys/items/values/update/pop`.
 
 **No:** `import`, generators/`async`, `match`, `assert`, `with`, closures,
-runtime `class`, `super()`, `compile()`, string-form `exec`/`eval`, files,
+runtime `class`, `super()`, string-form `exec`/`eval`, files,
 slice assignment, list/tuple slicing, format-spec f-strings, `STR * INT`,
 negative indices. String slice step other than `None`/1 is still rejected.
 
-Host `compile()` for images is still CPython. [PyCPython](https://github.com/ColtonHarris999/PyCPython)
-is vendored at `vendor/pycpython` as the oracle / algorithm source for the
-future ROM compiler (`git submodule update --init`).
+Host `compile()` for images is still CPython. ROM `compile()` is the T1
+firmware shim (`eval(compile("1 + 2", "<s>", "eval"))` → 3).
+[PyCPython](https://github.com/ColtonHarris999/PyCPython)
+is vendored at `vendor/pycpython` as the oracle / algorithm source
+(`git submodule update --init`). T2/T3 are next.
 
 **Ceilings:** missing dict keys and unbound locals still halt with a hardware
 trap rather than a catchable Python exception. `int` is 64-bit, not

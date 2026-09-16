@@ -69,7 +69,10 @@ class RomFirmwareSeedTest(unittest.TestCase):
         self.assertTrue(WAVE3_NAMES.issubset(keys), keys)
         self.assertTrue(WAVE4_ATTR_NAMES.issubset(keys), keys)
         self.assertTrue(WAVE4_PRINT_NAMES.issubset(keys), keys)
-        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 28)
+        self.assertIn("compile", keys)
+        self.assertIn("eval", keys)
+        self.assertIn("exec", keys)
+        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 31)
 
     def test_seed_firmware_function_returns_code_object(self) -> None:
         serializer = image_from_source._ImageSerializer()
@@ -107,7 +110,7 @@ class RomFirmwareSeedTest(unittest.TestCase):
             len(result.code_handles),
             2 + len(image_from_source.ROM_FIRMWARE_BUILTINS),
         )
-        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 28)
+        self.assertGreaterEqual(len(image_from_source.ROM_FIRMWARE_BUILTINS), 31)
         self.assertGreater(len(result.program_slots), 0)
 
     def test_print_seed_has_kwdefaults_and_varargs(self) -> None:

@@ -137,12 +137,25 @@ def host_entry_result_from_text(
     # CPython code objects are not callable. Binding `namespace` as the payload
     # globals reproduces the device, where a module-mode code object's
     # STORE_NAME / LOAD_NAME hit the one boot-record globals dict.
+    # Firmware compile() returns a callable _HostEmittedCode, not a
+    # types.CodeType; SEED_CODE images still use real CodeType.
     def _host_exec(code, globals=None):
-        exec(code, namespace if globals is None else globals)
+        g = namespace if globals is None else globals
+        if callable(code) and not isinstance(code, types.CodeType):
+            if hasattr(code, "_globals"):
+                code._globals = dict(g)
+            code()
+            return None
+        exec(code, g)
         return None
 
     def _host_eval(code, globals=None):
-        return eval(code, namespace if globals is None else globals)
+        g = namespace if globals is None else globals
+        if callable(code) and not isinstance(code, types.CodeType):
+            if hasattr(code, "_globals"):
+                code._globals = dict(g)
+            return code()
+        return eval(code, g)
 
     namespace["exec"] = _host_exec
     namespace["eval"] = _host_eval

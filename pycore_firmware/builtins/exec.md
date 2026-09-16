@@ -24,5 +24,6 @@ stand-in. The device runs `exec.py`.
 
 ## Remaining
 
-String form waits on ROM `compile()`. v1 can stay
-`exec(compile(source, filename, "exec"))`.
+String form is `exec(compile(source, filename, "exec"))` after T2/T3
+(step J). Auto str-vs-code dispatch still needs `_bi_code_kind`.
+v1 can stay the explicit `compile` wrap.

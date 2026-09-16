@@ -1334,6 +1334,8 @@ ROM_FIRMWARE_BUILTINS: tuple[tuple[str, str, str], ...] = (
     # Plan 1 P3 — exec/eval on precompiled CODE_OBJECTs (no new hardware)
     ("exec", "exec", "exec"),
     ("eval", "eval", "eval"),
+    # compiler_design.md I — compile() shim around _pyc_codegen_main
+    ("compile", "compile", "compile"),
 )
 
 # Native LOAD_ATTR methods. Seeded into the exc-arena sidecar, not the public
@@ -1831,7 +1833,10 @@ def load_rom_firmware_callables() -> dict[str, object]:
     Native code-RAM writers (``_bi_code_alloc`` / blit / patch / new) are
     injected the same way as ``_bi_print`` — they are not ROM bodies.
     ``_bi_exec_globals``, ``_PYC_G``, and ``_PYC_ENTRY`` mirror the step-D
-    package seed in the boot builtins dict.
+    package seed in the boot builtins dict. ROM ``compile`` LOAD_GLOBALs
+    those names (user globals miss, then boot builtins); the host has no
+    such fallback, so ``compile.__globals__`` is patched after the package
+    namespace exists.
     """
     ram = _HostCodeRam()
     out: dict[str, object] = {
@@ -1849,6 +1854,7 @@ def load_rom_firmware_callables() -> dict[str, object]:
         ns: dict[str, object] = {
             "__name__": f"pycore_firmware.builtins.{stem}",
             "_bi_print": _host_bi_print,
+            "_bi_exec_globals": _host_exec_globals,
             "len": len,
             "range": range,
         }
@@ -1864,6 +1870,10 @@ def load_rom_firmware_callables() -> dict[str, object]:
     entry = compile_package_entry()
     out["_PYC_G"] = pkg
     out["_PYC_ENTRY"] = entry
+    compile_fn = out.get("compile")
+    if isinstance(compile_fn, types.FunctionType):
+        compile_fn.__globals__["_PYC_G"] = pkg
+        compile_fn.__globals__["_bi_exec_globals"] = _host_exec_globals
     return out
 
 
@@ -2224,7 +2234,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
       str → OBK_TYPE (OB_FLAG_STR_TYPE); CALL stringifies STR/INT/BOOL/None
       Wave A exception types → OBK_TYPE with documented tp_base + OB_FLAG_EXC_TYPE
         (includes SyntaxError so Plan 1 P7 tests still LOAD_GLOBAL)
-      ROM_FIRMWARE_BUILTINS (incl. print) → CODE_OBJECT handles
+      ROM_FIRMWARE_BUILTINS (incl. print, exec, eval, compile) → CODE_OBJECT handles
       _PYC_G → MUT_DICT (compiler package namespace, compiler_design.md W-1)
       _PYC_ENTRY → CODE_OBJECT (0-arg trampoline in code RAM)
 

@@ -8,8 +8,8 @@ and restores the caller's globals on return.
 A distinct ``locals=`` mapping is deferred; a third positional argument is
 a CALL_FILTER trap because this body only takes two formals.
 
-The string form (``exec("x = 1")``) needs runtime ``compile()``;
-see ``planning/compile_plan.md``.
+The string form (``exec("x = 1")``) is ``exec(compile(source, filename, "exec"))``
+once T2/T3 land (step J). Auto str-vs-code dispatch needs ``_bi_code_kind``.
 
 Host note: CPython code objects are not callable, so ``run_image_test.py``
 overrides this body with a stand-in bound to the test program's globals. The

@@ -104,6 +104,7 @@ class TestFirmwarePackageSeed(unittest.TestCase):
         self.assertIn("_PYC_G", ns)
         self.assertIn("_PYC_ENTRY", ns)
         self.assertIn("_bi_exec_globals", ns)
+        self.assertIn("compile", ns)
         self.assertEqual(ns["_bi_exec_globals"](ns["_PYC_ENTRY"], ns["_PYC_G"]), 42)
         g = ns["_PYC_G"]
         self.assertIn("TOK_NAME", g)

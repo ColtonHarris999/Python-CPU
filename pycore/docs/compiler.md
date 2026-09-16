@@ -1,10 +1,10 @@
 # On-device `compile()`
 
-Status: **step H landed** (T1 codegen + assemble + W-3). Next is step I
-(`compile()` shim; `img_compile_eval_expr` → 3). Design:
+Status: **step I in progress** (ROM `compile()` shim; A1
+`img_compile_eval_expr` → 3). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
-`compile()` will be a resident PyCore builtin. This file records the
+`compile()` is a resident PyCore builtin. This file records the
 pipeline, subset, and the deviations from CPython that tests pin.
 
 ## Pipeline
@@ -15,7 +15,9 @@ source ─► lexer ─► iterative parser ─► SoA AST ─► symtab
        ─► _bi_code_alloc / blit / patch / new ─► existing exec/eval
 ```
 
-The public builtin is a shim around `_bi_exec_globals(_PYC_ENTRY, _PYC_G)`.
+The public builtin is a ROM shim: it stores `_in_src` / `_in_file` /
+`_in_mode` on `_PYC_G` and runs `_pyc_codegen_main` through
+`_bi_exec_globals`. `_PYC_ENTRY` stays the step-D toy trampoline (42).
 Helpers live in that private dict, not in the boot builtins namespace.
 
 ## Lexer (step E)
@@ -105,6 +107,18 @@ tables are empty `()` in T1; the host encoder is `encode_exception_table`
 Host: `pycore/tests/test_compiler_codegen.py` result differential vs CPython
 `eval`/`exec`. Device: `img_codegen_t1_expr` (assembled `"1 + 2"` returns 3).
 
+## Compile shim (step I)
+
+`compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1)`
+is seeded in `ROM_FIRMWARE_BUILTINS`. `"single"` / unknown mode / nonzero
+`flags` / `optimize` not in `{0, -1}` raise `ValueError`. `dont_inherit`
+is ignored. No `_busy` slot (D9; 127 of 128 `_PYC_G` keys).
+
+Host: `pycore/tests/test_compiler_compile.py`. Device: `img_compile_eval_expr`
+(A1 → 3), `img_compile_mode_trap` (A5 → 3), `img_compile_reject_import`
+(A4 → 1). Host `eval`/`exec` stand-ins call firmware-emitted code objects
+(`_HostEmittedCode`); SEED_CODE images still use `types.CodeType`.
+
 ## Subset (firmware compiler source)
 
 Enforced by `pycore/tests/test_compiler_subset.py` on every file under
@@ -130,7 +144,7 @@ stays constant in the source nesting.
 
 | Tier | Constructs | Status |
 | --- | --- | --- |
-| T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | parser (F); codegen (H); `compile()` shim next (I) |
+| T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | parser (F); codegen (H); `compile()` shim (I) |
 | T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | next (J) |
 | T3 | `def` (positional args + indented / one-line suite), `global` | parser slice in G (full T3 in J) |
 | T4+ | `try`/`class`/`import`/closures | blocked on runtime |

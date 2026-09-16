@@ -56,15 +56,15 @@ These limit every firmware builtin:
 | `callable` | Return True if the object appears callable. | in progress | Heuristic via `__call__` in `__dict__`; no tag probe for `CODE_OBJECT`. |
 | `chr` | Return the Unicode character for an integer code point. | native | `BI_CHR` (id 11): INT → one-character SHORT_STR, 1–4 UTF-8 bytes inline. Rejects > U+10FFFF, negatives, and lone surrogates → TYPE trap (CPython allows surrogates). |
 | `classmethod` | Transform a method into a class method. | blocked | No classmethod kind; image folding rejects `@classmethod`. |
-| `compile` | Compile source into a code object usable by exec/eval. | blocked | See `compile.md`. |
+| `compile` | Compile source into a code object usable by exec/eval. | in ROM | T1 shim; see `compile.md`. `"single"` / `flags != 0` → `ValueError`. |
 | `complex` | Create a complex number from real/imag or a string. | blocked | COMPLEX ALU tag exists; no runtime constructor. |
 | `delattr` | Delete a named attribute from an object. | in ROM | `del obj.__dict__[name]` (instance dict only; no MRO). |
 | `dict` | Create a new dictionary. | in ROM | From iterable of pairs via `UNPACK_SEQUENCE` + `STORE_SUBSCR`. No kwargs ctor. |
 | `dir` | Return a list of valid attribute names for an object or the local scope. | in progress | Instance `__dict__` keys only; no-arg / MRO names blocked. |
 | `divmod` | Return the pair (quotient, remainder) of integer division. | in ROM | `(a // b, a % b)`. |
 | `enumerate` | Return an enumerate object yielding (index, item) pairs. | in ROM | Returns a **list** of pairs (no YIELD). LIST grow needs excore. |
-| `eval` | Evaluate a Python expression from a string or code object. | in ROM | Code-object form only (`"eval"` mode returns the expression value). String form needs ROM `compile`. |
-| `exec` | Execute Python statements from a string or code object. | in ROM | Code-object form only: `code()` then `None`. Module-mode `STORE_NAME`/`LOAD_NAME` hit the boot globals dict, so this is module-scope `exec`. String form needs ROM `compile`. Non-code arg → `CALL_FILTER`. |
+| `eval` | Evaluate a Python expression from a string or code object. | in ROM | Code-object form (`"eval"` mode returns the expression value). String form is `eval(compile(...))`; no auto str dispatch. |
+| `exec` | Execute Python statements from a string or code object. | in ROM | Code-object form: `code()` then `None`. Module-mode `STORE_NAME`/`LOAD_NAME` hit the boot globals dict, so this is module-scope `exec`. String form is `exec(compile(...))`; no auto str dispatch. Non-code arg → `CALL_FILTER`. |
 | `filter` | Construct an iterator of items for which a function returns true. | in ROM | Returns a **list**; `function is None` uses TO_BOOL. LIST grow → excore. |
 | `float` | Convert a string or number to floating point. | in progress | `x * 1.0` for numerics; `_parse_float_string` helper; no auto str dispatch. |
 | `format` | Convert a value to a formatted representation ("format_spec"). | in progress | Empty spec → INT/BOOL/None stringify; non-empty specs blocked (`FORMAT_WITH_SPEC`). |
@@ -133,11 +133,11 @@ pycore_firmware/builtins/builtins.md    # this inventory
 | --- | --- |
 | Python modules | 73 |
 | Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`; `ord` / `chr` now shipped notes) |
-| Status: in ROM | 30 (incl. `print`, `exec`, `eval`) |
+| Status: in ROM | 31 (incl. `print`, `exec`, `eval`, `compile`) |
 | Status: native | 4 (`ord`, `chr`, `int` CALL convert, `str` CALL convert) |
 | Status: implemented | 5 (`len` miss path, `list_append`, `max` notes, `range` list form, `set` Python form) |
 | Status: in progress | 9 |
-| Status: blocked | 26 |
+| Status: blocked | 25 |
 
 ### In ROM (seeded as CODE_OBJECT in boot builtins dict)
 
@@ -147,6 +147,7 @@ Wave 3: `bin`, `dict`, `divmod`, `filter`, `hex`, `list`, `min`, `oct`,
 Wave 4B: `delattr`, `getattr`, `hasattr`, `isinstance`, `issubclass`,
 `setattr`  
 `exec`, `eval` (precompiled `CODE_OBJECT` forms)  
+`compile` (T1 shim; `eval(compile("1 + 2", "<s>", "eval"))` → 3) 
 
 Coverage: `img_firmware_rom_subset`, `img_firmware_iterators`,
 `img_firmware_wave3a`, `img_firmware_wave3_strings`, `img_firmware_wave3_pow`,
@@ -191,7 +192,7 @@ form; `BI_SET` owns dict)
 ### Blocked (stub + notes/plans)
 
 `aiter`, `anext`, `ascii`, `breakpoint`, `bytearray`, `bytes`,
-`classmethod`, `compile`, `complex`, `frozenset`,
+`classmethod`, `complex`, `frozenset`,
 `globals`, `hash`, `help`, `id`, `input`, `locals`, `memoryview`,
 `object`, `open`, `property`, `slice`, `staticmethod`,
 `super`, `from_bytes`, `to_bytes`
@@ -212,7 +213,7 @@ Audit of **blocked** / partially-blocked names against
 | `LOAD_SUPER_ATTR` + descriptors | `super`, `property`, `classmethod` (see `super.md`, `property.md`) |
 | `COMPARE_OP` string ordering | `sorted` / `min` / `max` on str |
 | `FORMAT_*` / `BUILD_STRING` | Richer `format` / `str` / `print` |
-| Host `compile` / eval of source | `compile`, `eval`, `exec` (see `compile.md`, `eval.md`, `exec.md`) |
+| Host `compile` / eval of source | string-form `eval` / `exec` auto-dispatch (`_bi_code_kind`, §11); `compile()` itself is in ROM |
 | I/O device | `open`, `input`, `print` (native `BI_PRINT` trap path; see `open.md`) |
 | Async opcodes | `aiter`, `anext` |
 | Buffer / frozenset / slice kinds | `memoryview`, `bytes`/`bytearray` payload, `frozenset`, `slice` |
