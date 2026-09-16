@@ -1088,7 +1088,7 @@ parallel with B and C.
 | **H** | `codegen.py` T1 (recursive port, per §5.2 Rule 2) + `assemble.py` + W-3. **Landed** | Host result differential vs CPython for T1 |
 | **I** | Wire `compile.py` shim; ship it. **Landed** | **`img_compile_eval_expr` → 3** (A1) |
 | **J** | T2 then T3. **Landed** | **`img_compile_exec_roundtrip` → 7** (A2) + host corpus |
-| **K** | W-8 size report, doc sweep (§6.6), deviation table | `make all-tests` green; report within budget |
+| **K** | W-8 size report, doc sweep (§6.6), deviation table. **Landed** | `make all-tests` green; report within budget |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use

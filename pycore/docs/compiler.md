@@ -1,6 +1,6 @@
 # On-device `compile()`
 
-Status: **step K** (W-8 size report, §6.6 doc sweep). Design:
+Status: **Landed** (step K: W-8 size report, §6.6 doc sweep, D1–D9). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` is a resident PyCore builtin. This file records the

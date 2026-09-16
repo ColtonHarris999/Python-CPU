@@ -1,6 +1,6 @@
 # `compile` — shipped subset
 
-Status: **in ROM** (compiler_design.md step J, landed; K size report). T1–T3 expressions and
+Status: **in ROM** (compiler_design.md step K, landed). T1–T3 expressions and
 statements (`if`/`while`/`for`, `def` positional, displays, unpack).
 `"single"` / nonzero `flags` / invalid `optimize` → `ValueError`.
 Defaults / `*args` / `**kwargs` / nested closures remain `SyntaxError`.
