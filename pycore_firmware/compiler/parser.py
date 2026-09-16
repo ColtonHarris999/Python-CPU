@@ -788,6 +788,9 @@ def _pyc_ast_checksum():
         cs = cs * 131 + nd_a[i]
         cs = cs * 131 + nd_b[i]
         cs = cs * 131 + nd_c[i]
+        if cs < 0:
+            cs = 0 - cs
+        cs = cs & 2147483647
         i = i + 1
     return cs
 
