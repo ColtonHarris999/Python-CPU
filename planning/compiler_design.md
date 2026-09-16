@@ -1086,7 +1086,7 @@ parallel with B and C.
 | **F** | `parser.py` T1 expressions (iterative) + SoA AST. **Landed** | Host: shape round-trip vs `ast.parse`. Device: `img_parser_tiny_expr`, `img_compile_deep_nesting` |
 | **G** | `symtab.py`. **Landed** | Host locals-vs-globals corpus; closures raise cleanly. Device: `img_symtab_locals`, `img_symtab_closure` |
 | **H** | `codegen.py` T1 (recursive port, per §5.2 Rule 2) + `assemble.py` + W-3. **Landed** | Host result differential vs CPython for T1 |
-| **I** | Wire `compile.py` shim; ship it. **In progress** | **`img_compile_eval_expr` → 3** (A1) |
+| **I** | Wire `compile.py` shim; ship it. **Landed** | **`img_compile_eval_expr` → 3** (A1) |
 | **J** | T2 then T3 | `img_compile_exec_roundtrip` (A2) + host corpus |
 | **K** | W-8 size report, doc sweep (§6.6), deviation table | `make all-tests` green; report within budget |
 

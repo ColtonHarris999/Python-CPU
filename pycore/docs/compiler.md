@@ -1,7 +1,8 @@
 # On-device `compile()`
 
-Status: **step I in progress** (ROM `compile()` shim; A1
-`img_compile_eval_expr` → 3). Design:
+Status: **step I landed** (ROM `compile()` shim; A1
+`img_compile_eval_expr` → 3). Next is step J (T2/T3;
+`img_compile_exec_roundtrip`). Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` is a resident PyCore builtin. This file records the
