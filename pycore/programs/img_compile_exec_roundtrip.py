@@ -3,6 +3,9 @@
 Module-level ``y`` is stored by the compiled program and read back here.
 Host ``exec`` stand-in shares the live globals dict so STORE_NAME is visible.
 Expected result: 7.
+
+Single-core dicts cannot grow (PY_TRAP_DICT_GROW). Pre-bind every name
+the compiled program STOREs so exec overwrites existing module keys.
 """
 
 SRC = """\
@@ -23,6 +26,14 @@ for x in xs:
     s = add(s, x)
 y = s
 """
+
+add = None
+n = None
+s = None
+i = None
+xs = None
+x = None
+y = None
 
 
 def managed_entry():
