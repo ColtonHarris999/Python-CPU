@@ -65,8 +65,8 @@ EXTRA_NOTES = {
         "logical-opcode tables."
     ),
     "MAKE_FUNCTION": (
-        "Function value is the CODE_OBJECT handle. Defaults, annotations, and "
-        "closures are not applied at runtime."
+        "Function value is the CODE_OBJECT handle unless SET_FUNCTION_ATTRIBUTE "
+        "flag 8 wraps it in OBK_FUNCTION. Defaults and annotations are not applied."
     ),
     "CALL": (
         "INT/STR conversion ceilings; builtin positional arity; no "

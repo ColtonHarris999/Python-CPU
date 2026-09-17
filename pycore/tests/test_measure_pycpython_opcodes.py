@@ -92,14 +92,16 @@ class TestPyCPythonMix(unittest.TestCase):
             "IMPORT_NAME",
             "IMPORT_FROM",
             "LOAD_LOCALS",
-            "MAKE_CELL",
-            "LOAD_DEREF",
             "YIELD_VALUE",
             "JUMP_BACKWARD_NO_INTERRUPT",
         ):
             self.assertIn(name, un, name)
 
-    def test_three_buckets_cover_every_opcode(self):
+    def test_closure_opcodes_are_full(self):
+        for name in ("MAKE_CELL", "LOAD_DEREF", "STORE_DEREF", "COPY_FREE_VARS"):
+            self.assertEqual(self.report.stats[name].bucket, "full", name)
+
+    def test_three_buckets_cover_every_opcode(self) -> None:
         classified = (
             set(self.report.buckets["full"])
             | set(self.report.buckets["partial"])
