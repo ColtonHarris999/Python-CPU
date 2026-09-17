@@ -22,9 +22,12 @@ on:
 permissions:
   contents: read
 
+# PR updates cancel the previous run for that PR. Push and workflow_dispatch
+# on main must not: the post-merge run of 4d62c75 was cancelled in three
+# seconds when a second refs/heads/main event shared this group.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
