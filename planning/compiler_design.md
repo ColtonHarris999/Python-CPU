@@ -665,7 +665,7 @@ compiler could take.
 **Future O-2 (not now):** a second bump cursor allocating results downward from
 `HEAP_LIMIT`, so scratch (upward) can be released independently. That is a real
 allocator change; open it only if the working-set leak actually bites.
-§11.5 stays closed: R4 `img_compile_repeat` (watermark ≤ 400000 → 1) is the
+§11.6 stays closed: R4 `img_compile_repeat` (watermark ≤ 400000 → 1) is the
 gate, and the caller mark/release pattern (`img_compile_release_realloc`)
 already reclaims.
 
@@ -1019,7 +1019,7 @@ this work must close, not as new scope.
 | Growing `RF_DEPTH` | §6.1 adds spill/fill instead; the RF stays 256 entries and the flop count does not move |
 | A dedicated stack cache between the RF and dmem | §6.1 S-8: L1D already hits 95–99.6% on the frame region, and per-slot residency costs ~170 Kbit of tables (`attic/pycore_frame_buffer.sv`) |
 | LL(1) table generator + grammar tables | Precedence climbing needs neither |
-| Module image format / `_bi_load_module` / relocation | Compiler still fits (41218 / 65536); §11.6 not opened |
+| Module image format / `_bi_load_module` / relocation | Compiler still fits (45995 / 65536); §11.7 not opened |
 | BIOS | ROM `bios(payload)` execs a payload; programs may still `compile()` directly |
 | Trap → Python exception (exceptions T6) | Syntax errors are already real `raise`s |
 | `open` / stdin / console RX | Source is already a heap string |
@@ -1040,8 +1040,8 @@ cap). T4 raised `PYCORE_CODE_RAM_BLOCK_COUNT` to 128 (lever 2).
 | Resource | Capacity | Measured | Source |
 | --- | ---: | --- | --- |
 | Code ROM | 8 192 slots | **2 627 used**, 5 565 remain (boot image + ROM builtins) | `len(program_slots)` |
-| Code RAM | 65 536 slots | **compiler 39 547**, **25 989 remain** for compiled output | `len(code_ram_slots)` |
-| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 260 608 B**, 721 344 remain | `HEAP_INIT_PTR - HEAP_BASE` |
+| Code RAM | 65 536 slots | **compiler 45 995**, **19 541 remain** for compiled output | `len(code_ram_slots)` |
+| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 266 624 B**, 715 328 remain | `HEAP_INIT_PTR - HEAP_BASE` |
 | Register file | 256 entries, ring window | resident working set only; per-frame `nlocals + co_stacksize ≤ 240` | S-1, S-6 |
 | RF spill region | 256 KB / 8 192 entries | ≈ 500–1 000 typical frames before `MEM_FAULT` | S-7 |
 | Frame stack | 32 KB / 1 024 descriptors | `MAX_CALL_DEPTH_CORE` matches the region | `pycore_defs.svh` |
@@ -1051,10 +1051,10 @@ The planning figure “compiler ≤ 14 000 slots, leave ≥ 18 000 for output”
 was ±30% from the PyCPython audit. After T1–T3 the package was 32 483 of
 32 768 slots (285 remain). T4 took lever 2:
 `PYCORE_CODE_RAM_BLOCK_COUNT` 64 → 128 (`code_loading.md` §1.2). After
-§11.3 folding the package is 39 547 slots (25 989 remain). Remaining
-levers if compiled-output headroom is still too small: (1) shrink
-`codegen.py`, (3) overlays. Do **not** restart the module loader for
-occupancy alone.
+§11.3 folding the package was 39 547 slots; after §11.5 T5 it is
+45 995 slots (19 541 remain). Remaining levers if compiled-output
+headroom is still too small: (1) shrink `codegen.py`, (3) overlays.
+Do **not** restart the module loader for occupancy alone.
 
 ---
 
@@ -1105,9 +1105,9 @@ parallel with B and C.
 | **Closures** | §11.4 cells + `OBK_FUNCTION`. **Landed** | `img_compile_reject_closure` → 1; `img_compile_closure` → 7 |
 | **T5** | lambda, decorators, assert, simple f-strings. **Landed** | `img_compile_lambda` → 7; `img_compile_assert` → 1; `img_compile_decorator` → 7; `img_compile_fstring` → 1. `class`/`import`/`with` stay A4 `SyntaxError` |
 | **O-2** | split result/scratch arenas. **Not opened** | R4 watermark golden still holds; caller mark/release is the reclaim path |
-| **Loader** | module image + relocation. **Not opened** | compiler fits (41218 / 65536); overlays only if headroom vanishes |
+| **Loader** | module image + relocation. **Not opened** | compiler fits (45995 / 65536); overlays only if headroom vanishes |
 | **BIOS** | ROM `bios(payload)` execs source. **Landed** | `img_bios_exec` → 3 |
-| **Self-host** | compile the compiler on device. **Blocked on size** | need 41218 output slots, have 24318 headroom |
+| **Self-host** | compile the compiler on device. **Blocked on size** | need 45995 output slots, have 19541 headroom |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1213,7 +1213,7 @@ In dependency order, not priority order.
    A downward result cursor is an allocator change; do not add it while
    the watermark golden holds.
 7. **Module loader + relocation.** **Not opened.** The compiler still fits
-   the boot image (41 218 of 65 536 code-RAM slots, 24 318 remain).
+   the boot image (45 995 of 65 536 code-RAM slots, 19 541 remain).
    `code_loading.md` §4 stays the recorded format; do not restart the
    loader for occupancy (lever 3 is overlays, only after shrinking
    `codegen.py`).
@@ -1222,7 +1222,7 @@ In dependency order, not priority order.
    still call `compile()` / `exec()` directly.
 9. **Self-hosting.** **Blocked on size.** Stage-2 would compile
    `pycore_firmware/compiler/` on device and check byte-identical output.
-   That needs ~41 218 compiled-output slots; headroom is 24 318.
+   That needs ~45 995 compiled-output slots; headroom is 19 541.
    `make pycore-size-report` prints `self-host: blocked` until remaining
    ≥ used (raise CODE_RAM or shrink `codegen.py`).
 

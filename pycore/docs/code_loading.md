@@ -119,8 +119,8 @@ about the emitted slots.
 ## 4. Planned: module images and relocation
 
 Not implemented. Recorded here because §1's layout was chosen for it.
-§11.6 stays closed while the compiler package fits code RAM (39 547 of
-65 536 slots after §11.3). Open this only when occupancy forces overlays
+§11.7 stays closed while the compiler package fits code RAM (45 995 of
+65 536 slots after §11.5). Open this only when occupancy forces overlays
 (`compiler_design.md` §7 lever 3), not for its own sake.
 
 A module is **not** just code: it is code slots plus a dmem object graph

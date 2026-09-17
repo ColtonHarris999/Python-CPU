@@ -193,7 +193,7 @@ closure tuple into the last n locals; `SET_FUNCTION_ATTRIBUTE 8` allocates
 load of an enclosing local compiles. Device: `img_symtab_closure` (1),
 `img_compile_reject_closure` (1), `img_compile_closure` (7).
 
-## T5 grammar
+## T5 grammar (§11.5)
 
 Landed subset: `lambda`, decorators, `assert`, simple f-strings.
 Lexer emits `FSTRING_START`/`MIDDLE`/`END` (kinds 59/60/61; not seeded
@@ -207,7 +207,7 @@ t-strings. `class`, `import`, and `with` stay compile-time `SyntaxError`.
 Device: `img_compile_lambda` (7), `img_compile_assert` (1),
 `img_compile_decorator` (7), `img_compile_fstring` (1).
 
-## BIOS (§11.7)
+## BIOS (§11.8)
 
 ROM `bios(payload)` `exec`s a string or code object in the caller's
 globals. Device: `img_bios_exec` (3).
@@ -241,7 +241,7 @@ stays constant in the source nesting.
 | T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | parser + codegen (J, landed) |
 | T3 | `def` (positional args + indented / one-line suite), `global`, displays, unpack | parser slice in G; codegen (J, landed) |
 | T4 | `try`/`except`/`else`/`finally`, `raise`, comprehensions, string slices | parser + codegen (§11.2, landed) |
-| T5 | `lambda`, decorators, `assert`, simple f-strings. `class`/`import`/`with` stay `SyntaxError` | parser + codegen (landed) |
+| T5 | `lambda`, decorators, `assert`, simple f-strings. `class`/`import`/`with` stay `SyntaxError` | parser + codegen (§11.5, landed) |
 
 ## Deviations from CPython (D1–D9)
 
@@ -265,9 +265,9 @@ token stream (kinds, positions, payload text), not later `co_code`.
 
 `make pycore-size-report` builds `img_compile_eval_expr` and prints ROM,
 compiler code-RAM, and static heap occupancy vs hardware ceilings. Overflow
-fails the target (A8). Measured after §11.4: ROM **2627 / 8192** slots;
-compiler **41218 / 65536** code-RAM slots (24318 remain for compiled
-output); static heap **261888 / 981952** bytes. Self-host is blocked
+fails the target (A8). Measured after §11.5: ROM **2627 / 8192** slots;
+compiler **45995 / 65536** code-RAM slots (19541 remain for compiled
+output); static heap **266624 / 981952** bytes. Self-host is blocked
 until remaining ≥ used (`self-host:` line in the report).
 
 ## Lifetime
@@ -285,4 +285,4 @@ Device: `img_compile_repeat` compiles `"1 + 2"` eight times inside one
 mark and returns 1 when the watermark stays ≤ 400000 bytes (R4).
 `img_compile_release_realloc` compiles, releases, compiles a different
 source, and returns 37 (R7). O-2 (split result/scratch arenas) stays
-closed while that watermark golden holds (§11.5).
+closed while that watermark golden holds (§11.6).
