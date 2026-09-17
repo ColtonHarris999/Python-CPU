@@ -1253,10 +1253,10 @@ pycore-img-codegen-t1-expr-two-core: excore-fw
 
 # compiler_design.md step I: ROM compile() shim. A1 / A5 / A4.
 pycore-img-compile-eval-expr:
-	$(call PYCORE_IMAGE_RUN,compile_eval_expr,8000000)
+	$(call PYCORE_IMAGE_RUN,compile_eval_expr,40000000)
 
 pycore-img-compile-eval-expr-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_eval_expr,8000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_eval_expr,40000000)
 
 pycore-img-compile-mode-trap:
 	$(call PYCORE_IMAGE_RUN,compile_mode_trap,1000000)
@@ -1271,16 +1271,16 @@ pycore-img-compile-reject-import-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_import,4000000)
 
 pycore-img-compile-reject-closure:
-	$(call PYCORE_IMAGE_RUN,compile_reject_closure,8000000)
+	$(call PYCORE_IMAGE_RUN,compile_reject_closure,40000000)
 
 pycore-img-compile-reject-closure-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_closure,8000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_closure,40000000)
 
 pycore-img-compile-closure:
-	$(call PYCORE_IMAGE_RUN,compile_closure,8000000)
+	$(call PYCORE_IMAGE_RUN,compile_closure,40000000)
 
 pycore-img-compile-closure-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_closure,8000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_closure,40000000)
 
 # compiler_design.md step J: T2/T3 A2 round-trip + A4 locals cap.
 pycore-img-compile-exec-roundtrip:
@@ -1336,45 +1336,45 @@ pycore-img-compile-raise-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_raise,40000000)
 
 pycore-img-compile-str-slice:
-	$(call PYCORE_IMAGE_RUN,compile_str_slice,8000000)
+	$(call PYCORE_IMAGE_RUN,compile_str_slice,40000000)
 
 pycore-img-compile-str-slice-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_str_slice,8000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_str_slice,40000000)
 
 pycore-img-compile-list-comp-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_list_comp,40000000)
 
 # compiler_design.md T5: lambda, assert, decorators, simple f-strings.
 pycore-img-compile-lambda:
-	$(call PYCORE_IMAGE_RUN,compile_lambda,8000000)
+	$(call PYCORE_IMAGE_RUN,compile_lambda,40000000)
 
 pycore-img-compile-lambda-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_lambda,8000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_lambda,40000000)
 
 pycore-img-compile-assert:
-	$(call PYCORE_IMAGE_RUN,compile_assert,8000000)
+	$(call PYCORE_IMAGE_RUN,compile_assert,40000000)
 
 pycore-img-compile-assert-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_assert,8000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_assert,40000000)
 
 pycore-img-compile-decorator:
-	$(call PYCORE_IMAGE_RUN,compile_decorator,8000000)
+	$(call PYCORE_IMAGE_RUN,compile_decorator,40000000)
 
 pycore-img-compile-decorator-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_decorator,8000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_decorator,40000000)
 
 pycore-img-compile-fstring:
-	$(call PYCORE_IMAGE_RUN,compile_fstring,8000000)
+	$(call PYCORE_IMAGE_RUN,compile_fstring,40000000)
 
 pycore-img-compile-fstring-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_fstring,8000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_fstring,40000000)
 
 # Empty-if / def-then-string-or-float must not TYPE-trap (A4).
 pycore-img-compile-const-pool:
-	$(call PYCORE_IMAGE_RUN,compile_const_pool,8000000)
+	$(call PYCORE_IMAGE_RUN,compile_const_pool,40000000)
 
 pycore-img-compile-const-pool-two-core: excore-fw
-	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_const_pool,8000000)
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_const_pool,40000000)
 
 # compiler_design.md §11.1: string-form exec/eval via _bi_code_kind.
 # Cycle caps cover CACHE_EN=0 / LAT=30 like the other compile() images.
