@@ -163,6 +163,8 @@ localparam logic [31:0] PY_OBK_BOUND_METHOD = 32'd3;
 localparam logic [31:0] PY_OBK_BUILTIN      = 32'd4;
 localparam logic [31:0] PY_OBK_BYTEARRAY    = 32'd5;  // legacy; prefer MUT_BYTEARRAY
 localparam logic [31:0] PY_OBK_EXCEPTION    = 32'd6;
+localparam logic [31:0] PY_OBK_CELL         = 32'd7;  // field0 = contents
+localparam logic [31:0] PY_OBK_FUNCTION     = 32'd8;  // field0 = code, field1 = closure tuple
 
 // OBK_TYPE ob_flags bit 0: seeded exception type so CALL can allocate
 // OBK_EXCEPTION without walking tp_base (exceptions plan §2.4 / Track 2).
@@ -731,8 +733,10 @@ localparam logic [7:0] PY_OP_COMPARE_OP       = 8'd56;
 // DICT_MERGE / DICT_UPDATE / MAP_ADD — CPython 3.14.6 opmap.
 localparam logic [7:0] PY_OP_DICT_MERGE       = 8'd66;
 localparam logic [7:0] PY_OP_DICT_UPDATE      = 8'd67;
+localparam logic [7:0] PY_OP_MAKE_CELL        = 8'd97;
 localparam logic [7:0] PY_OP_MAP_ADD          = 8'd98;
 localparam logic [7:0] PY_OP_COPY             = 8'd59;
+localparam logic [7:0] PY_OP_COPY_FREE_VARS   = 8'd60;
 localparam logic [7:0] PY_OP_DELETE_FAST      = 8'd63;
 localparam logic [7:0] PY_OP_EXTENDED_ARG     = 8'd69;
 localparam logic [7:0] PY_OP_FOR_ITER         = 8'd70;
@@ -740,6 +744,7 @@ localparam logic [7:0] PY_OP_IS_OP            = 8'd74;
 localparam logic [7:0] PY_OP_JUMP_BACKWARD    = 8'd75;
 localparam logic [7:0] PY_OP_JUMP_FORWARD     = 8'd77;
 localparam logic [7:0] PY_OP_LOAD_CONST       = 8'd82;
+localparam logic [7:0] PY_OP_LOAD_DEREF       = 8'd83;
 localparam logic [7:0] PY_OP_LOAD_FAST        = 8'd84;
 localparam logic [7:0] PY_OP_LOAD_FAST_AND_CLEAR = 8'd85;
 localparam logic [7:0] PY_OP_LOAD_FAST_BORROW = 8'd86;
@@ -758,6 +763,7 @@ localparam logic [7:0] PY_OP_POP_JUMP_IF_TRUE     = 8'd103;
 //   -> 104
 localparam logic [7:0] PY_OP_RAISE_VARARGS   = 8'd104;
 localparam logic [7:0] PY_OP_SET_ADD          = 8'd107;
+localparam logic [7:0] PY_OP_SET_FUNCTION_ATTRIBUTE = 8'd108;
 localparam logic [7:0] PY_OP_SET_UPDATE       = 8'd109;
 localparam logic [7:0] PY_OP_STORE_FAST       = 8'd112;
 localparam logic [7:0] PY_OP_STORE_FAST_LOAD_FAST  = 8'd113;
@@ -800,6 +806,7 @@ localparam logic [7:0] PY_OP_CONTAINS_OP      = 8'd57;
 // STORE_ATTR / DELETE_ATTR: namei = oparg (no low-bit encoding).
 localparam logic [7:0] PY_OP_LOAD_ATTR        = 8'd80;
 localparam logic [7:0] PY_OP_STORE_ATTR       = 8'd110;
+localparam logic [7:0] PY_OP_STORE_DEREF      = 8'd111;
 localparam logic [7:0] PY_OP_DELETE_ATTR      = 8'd61;
 
 // -------------------------------------------------------------------------
@@ -886,7 +893,8 @@ localparam logic [7:0] PY_OP_DELETE_ATTR      = 8'd61;
 //   Non-method calls require CONTROL with ctl_id == PY_CTL_NULL.
 //
 // MAKE_FUNCTION: (codeobj -- func), oparg unused/None, stack effect 0.
-//   Interim model: function ≡ code object handle (no defaults/closures).
+//   Identity: TOS stays a CODE_OBJECT. Closures wrap via
+//   SET_FUNCTION_ATTRIBUTE 8 (tuple, code -- func) into OBK_FUNCTION.
 //
 // COMPARE_OP: comparison selector is oparg >> 5  (3.13+ packed encoding).
 //   Probe: < →2, <= →42, == →72, != →103, > →132, >= →172  (>>5 → 0..5)
@@ -3599,6 +3607,8 @@ endfunction
 //   OBK_BUILTIN      field0=builtin_id (INT), field1=bound_self
 //   OBK_BYTEARRAY    field0=length, field1=buf_addr, field2=capacity
 //   OBK_EXCEPTION    field0=exc_type, field1=args
+//   OBK_CELL         field0=contents
+//   OBK_FUNCTION     field0=code (CODE_OBJECT), field1=closure (TUPLE of cells)
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_OBJ_HDR_BYTES        = 32'd32;
 localparam logic [31:0] PYCORE_OBJ_INSTANCE_BYTES   = 32'd64;   // hdr + 1 field
@@ -3607,6 +3617,8 @@ localparam logic [31:0] PYCORE_OBJ_BOUND_METHOD_BYTES = 32'd96; // hdr + 2
 localparam logic [31:0] PYCORE_OBJ_BUILTIN_BYTES    = 32'd96;
 localparam logic [31:0] PYCORE_OBJ_BYTEARRAY_BYTES  = 32'd128;  // hdr + 3
 localparam logic [31:0] PYCORE_OBJ_EXCEPTION_BYTES  = 32'd96;
+localparam logic [31:0] PYCORE_OBJ_CELL_BYTES       = 32'd64;   // hdr + 1 field
+localparam logic [31:0] PYCORE_OBJ_FUNCTION_BYTES   = 32'd96;   // hdr + 2 fields
 
 function automatic logic [PYCORE_VAL_WIDTH-1:0] pycore_pack_ob_head(
     input logic [31:0] kind,

@@ -1,8 +1,6 @@
-"""§11.4: nested load of an enclosing local is compile() SyntaxError.
+"""§11.4: nested load of an enclosing local compiles and runs.
 
-OBJ_CLOSURE RTL (MAKE_CELL / LOAD_DEREF / cells) is not on this target;
-D6 keeps closures a compile-time error rather than an illegal-opcode trap.
-Returns 1 when compile() raises.
+compile()+exec of a nested function that reads an outer local returns 1.
 """
 
 SRC = """\
@@ -10,16 +8,14 @@ def outer():
     x = 1
     def inner():
         return x
-    return inner
+    return inner()
 """
 
 
 def managed_entry():
-    try:
-        compile(SRC, "<s>", "exec")
-    except SyntaxError:
-        return 1
-    return 0
+    ns = {}
+    exec(compile(SRC, "<s>", "exec"), ns)
+    return ns["outer"]()
 
 
 managed_entry()

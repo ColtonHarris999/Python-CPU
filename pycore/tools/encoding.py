@@ -285,6 +285,8 @@ OBK_BOUND_METHOD = 3
 OBK_BUILTIN = 4
 OBK_BYTEARRAY = 5
 OBK_EXCEPTION = 6
+OBK_CELL = 7
+OBK_FUNCTION = 8
 
 # OBK_TYPE ob_flags bit 0: seeded exception type (CALL → OBK_EXCEPTION, Track 2).
 OB_FLAG_EXC_TYPE = 1
@@ -332,6 +334,8 @@ OBJ_BOUND_METHOD_BYTES = 96
 OBJ_BUILTIN_BYTES = 96
 OBJ_BYTEARRAY_BYTES = 128
 OBJ_EXCEPTION_BYTES = 96
+OBJ_CELL_BYTES = 64
+OBJ_FUNCTION_BYTES = 96
 
 
 def pack_ob_head(kind: int, flags: int = 0, type_addr: int = 0) -> int:

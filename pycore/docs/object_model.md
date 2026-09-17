@@ -40,6 +40,8 @@ Field *i* lives at `pycore_tuple_val_addr(obj, i+1)`. Call sites use
 | `BUILTIN` | 4 | `builtin_id` (INT) | `bound_self` | — | 96 B |
 | `BYTEARRAY` | 5 | legacy OBJECT kind; prefer `MUT_BYTEARRAY` | | | |
 | `EXCEPTION` | 6 | `exc_type` | `args` (TUPLE) | — | 96 B |
+| `CELL` | 7 | contents | — | — | 64 B |
+| `FUNCTION` | 8 | code (`CODE_OBJECT`) | closure (`TUPLE` of cells) | — | 96 B |
 
 `range` values use the dedicated `PY_TAG_RANGE` tag (not an OBJECT kind).
 

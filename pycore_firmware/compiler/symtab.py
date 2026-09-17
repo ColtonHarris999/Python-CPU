@@ -1,12 +1,13 @@
-# Firmware symbol table (compiler_design.md §5.5 / step G).
+# Firmware symbol table (compiler_design.md §5.5 / step G / §11.4).
 # Iterative walk of nd_* / kids into per-scope locals. Scope rules follow
-# CPython / PyCPython (module + function, `global`); closures are computed
-# only so we can raise, never so we can emit MAKE_CELL.
+# CPython / PyCPython (module + function, `global`). Closures: a load of an
+# enclosing function local is a freevar of the nested scope (and of every
+# intervening function) and a cellvar of the definer. Freevars are appended
+# onto sc_varnames; sc_nlocals is nlocalsplus; sc_kind = 1 | (n_free << 8).
+# Cellvars stay in-place among the original locals (MAKE_CELL wraps that slot).
 #
 # Scope 0 is the Module / Expression: every name is global (not FAST).
 # Function scope: parameters and STORE targets are locals unless `global`.
-# A load of an enclosing function local is
-# SyntaxError("closures are not supported on this target").
 # nlocals > 240 (RF_WINDOW_CAP, §6.1 S-6) is a SyntaxError; stacksize is H.
 
 
@@ -274,6 +275,8 @@ def _pyc_symtab(root):
     gdecl_n = [0] * cap
     uses = [0] * cap
     uses_n = [0] * cap
+    sc_free = [0] * cap
+    sc_free_n = [0] * cap
     opnd_n = 0
     stmts = [0] * 8
     stmt_n = 0
@@ -282,6 +285,8 @@ def _pyc_symtab(root):
     gdecl_n[sid0] = 0
     uses[sid0] = [0] * 8
     uses_n[sid0] = 0
+    sc_free[sid0] = [0] * 8
+    sc_free_n[sid0] = 0
     stmts[0] = sid0
     stmt_n = 1
     _pyc_sy_work_push(root, 0)
@@ -302,30 +307,6 @@ def _pyc_symtab(root):
             nloc = sc_nlocals[cur]
             if nloc > 240:
                 _pyc_parse_error("too many locals")
-            i = 0
-            un = uses_n[cur]
-            while i < un:
-                name = uses[cur][i]
-                if _pyc_sy_names_has(sc_varnames[cur], nloc, name):
-                    i = i + 1
-                    continue
-                if _pyc_sy_names_has(gdecl[cur], gdecl_n[cur], name):
-                    i = i + 1
-                    continue
-                p = sc_parent[cur]
-                while p >= 0:
-                    if sc_kind[p] == 1:
-                        if _pyc_sy_names_has(
-                            sc_varnames[p], sc_nlocals[p], name
-                        ):
-                            if _pyc_sy_names_has(
-                                gdecl[p], gdecl_n[p], name
-                            ) == 0:
-                                _pyc_parse_error(
-                                    "closures are not supported on this target"
-                                )
-                    p = sc_parent[p]
-                i = i + 1
             stmt_n = stmt_n - 1
             continue
         if kind == fn_k:
@@ -341,6 +322,16 @@ def _pyc_symtab(root):
             gdecl_n[sid] = 0
             uses[sid] = [0] * 8
             uses_n[sid] = 0
+            capf = len(sc_free)
+            while capf < sid + 1:
+                extra = capf
+                if extra < 8:
+                    extra = 8
+                sc_free = sc_free + ([0] * extra)
+                sc_free_n = sc_free_n + ([0] * extra)
+                capf = len(sc_free)
+            sc_free[sid] = [0] * 8
+            sc_free_n[sid] = 0
             nargs = nd_b[nid]
             nbody = nd_c[nid]
             ks = nd_a[nid]
@@ -408,6 +399,76 @@ def _pyc_symtab(root):
                 i = i + 1
             continue
         _pyc_sy_push_children(nid)
+    i = 0
+    while i < sc_n:
+        if sc_kind[i] != 1:
+            i = i + 1
+            continue
+        nloc = sc_nlocals[i]
+        un = uses_n[i]
+        ui = 0
+        while ui < un:
+            name = uses[i][ui]
+            if _pyc_sy_names_has(sc_varnames[i], nloc, name):
+                ui = ui + 1
+                continue
+            if _pyc_sy_names_has(gdecl[i], gdecl_n[i], name):
+                ui = ui + 1
+                continue
+            p = sc_parent[i]
+            found_def = 0
+            def_p = 0 - 1
+            while p >= 0:
+                if sc_kind[p] == 1:
+                    if _pyc_sy_names_has(
+                        sc_varnames[p], sc_nlocals[p], name
+                    ):
+                        if _pyc_sy_names_has(
+                            gdecl[p], gdecl_n[p], name
+                        ) == 0:
+                            found_def = 1
+                            def_p = p
+                            break
+                p = sc_parent[p]
+            if found_def:
+                xs, n = _pyc_sy_names_add(sc_free[i], sc_free_n[i], name)
+                sc_free[i] = xs
+                sc_free_n[i] = n
+                q = sc_parent[i]
+                while q != def_p:
+                    if q < 0:
+                        break
+                    if sc_kind[q] == 1:
+                        if _pyc_sy_names_has(
+                            sc_varnames[q], sc_nlocals[q], name
+                        ) == 0:
+                            if _pyc_sy_names_has(
+                                gdecl[q], gdecl_n[q], name
+                            ) == 0:
+                                xs, n = _pyc_sy_names_add(
+                                    sc_free[q], sc_free_n[q], name
+                                )
+                                sc_free[q] = xs
+                                sc_free_n[q] = n
+                    q = sc_parent[q]
+            ui = ui + 1
+        i = i + 1
+    i = 0
+    while i < sc_n:
+        if sc_kind[i] == 1:
+            fn = sc_free_n[i]
+            j = 0
+            while j < fn:
+                names, n = _pyc_sy_names_add(
+                    sc_varnames[i], sc_nlocals[i], sc_free[i][j]
+                )
+                sc_varnames[i] = names
+                sc_nlocals[i] = n
+                j = j + 1
+            if sc_nlocals[i] > 240:
+                _pyc_parse_error("too many locals")
+            sc_kind[i] = 1 + (fn << 8)
+        i = i + 1
     return sc_n
 
 

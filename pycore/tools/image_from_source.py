@@ -1525,6 +1525,7 @@ _HOST_OP_CALL = 52
 _HOST_OP_COMPARE_OP = 56
 _HOST_OP_CONTAINS_OP = 57
 _HOST_OP_COPY = 59
+_HOST_OP_COPY_FREE_VARS = 60
 _HOST_OP_DELETE_ATTR = 61
 _HOST_OP_DELETE_FAST = 63
 _HOST_OP_FOR_ITER = 70
@@ -1534,18 +1535,22 @@ _HOST_OP_JUMP_FORWARD = 77
 _HOST_OP_LIST_APPEND = 78
 _HOST_OP_LOAD_ATTR = 80
 _HOST_OP_LOAD_CONST = 82
+_HOST_OP_LOAD_DEREF = 83
 _HOST_OP_LOAD_FAST = 84
 _HOST_OP_LOAD_GLOBAL = 92
 _HOST_OP_LOAD_NAME = 93
 _HOST_OP_LOAD_SMALL_INT = 94
+_HOST_OP_MAKE_CELL = 97
 _HOST_OP_MAP_ADD = 98
 _HOST_OP_POP_JUMP_IF_FALSE = 100
 _HOST_OP_POP_JUMP_IF_TRUE = 103
 _HOST_OP_RAISE_VARARGS = 104
 _HOST_OP_RERAISE = 105
 _HOST_OP_SET_ADD = 107
+_HOST_OP_SET_FUNCTION_ATTRIBUTE = 108
 _HOST_OP_RESUME = 128
 _HOST_OP_STORE_ATTR = 110
+_HOST_OP_STORE_DEREF = 111
 _HOST_OP_STORE_FAST = 112
 _HOST_OP_STORE_GLOBAL = 115
 _HOST_OP_STORE_NAME = 116
@@ -1553,6 +1558,34 @@ _HOST_OP_SWAP = 117
 _HOST_OP_UNPACK_SEQUENCE = 119
 _HOST_NULL = object()
 _HOST_UNBOUND = object()
+
+
+class _HostFunction:
+    """Callable wrapper: firmware code object plus a closure tuple of cells."""
+
+    def __init__(self, code: object, closure: object = ()) -> None:
+        self._code = code
+        if closure is None:
+            self._closure: tuple[object, ...] = ()
+        else:
+            self._closure = tuple(closure)  # type: ignore[arg-type]
+        self._globals = getattr(code, "_globals", {})
+
+    def __call__(self, *args: object) -> object:
+        code = self._code
+        if hasattr(code, "_globals"):
+            code._globals = self._globals
+        stack = getattr(code, "_closure_stack", None)
+        if stack is None:
+            code._closure_stack = []
+            stack = code._closure_stack
+        stack.append(self._closure)
+        try:
+            return code(*args)  # type: ignore[operator]
+        finally:
+            stack.pop()
+
+
 _HOST_BINARY_OPS = {
     0: _operator.add,
     1: _operator.and_,
@@ -1860,6 +1893,38 @@ class _HostEmittedCode:
                 fn = stack[-1]
                 if hasattr(fn, "_globals"):
                     fn._globals = self._globals
+                continue
+            if opcode == _HOST_OP_SET_FUNCTION_ATTRIBUTE:
+                if oparg != 8:
+                    raise TypeError(
+                        "host code-RAM interpreter: SET_FUNCTION_ATTRIBUTE "
+                        f"flag {oparg} is not supported"
+                    )
+                func = stack.pop()
+                cells = stack.pop()
+                stack.append(_HostFunction(func, cells))
+                continue
+            if opcode == _HOST_OP_MAKE_CELL:
+                locals_[oparg] = [locals_[oparg]]
+                continue
+            if opcode == _HOST_OP_LOAD_DEREF:
+                cell = locals_[oparg]
+                val = cell[0]  # type: ignore[index]
+                if val is _HOST_UNBOUND:
+                    raise UnboundLocalError(str(self._varnames[oparg]))
+                stack.append(val)
+                continue
+            if opcode == _HOST_OP_STORE_DEREF:
+                locals_[oparg][0] = stack.pop()  # type: ignore[index]
+                continue
+            if opcode == _HOST_OP_COPY_FREE_VARS:
+                if oparg:
+                    cstack = getattr(self, "_closure_stack", [])
+                    cells = cstack[-1] if cstack else ()
+                    i = 0
+                    while i < oparg:
+                        locals_[self._nlocals - oparg + i] = cells[i]
+                        i += 1
                 continue
             if opcode == _HOST_OP_UNPACK_SEQUENCE:
                 seq = stack.pop()

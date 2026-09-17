@@ -1237,7 +1237,7 @@ pycore-img-symtab-locals:
 pycore-img-symtab-locals-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,symtab_locals,16000000)
 
-# Closures must raise SyntaxError (device try/except returns 1).
+# Closures must record a freevar (device try/except unused; returns 1).
 pycore-img-symtab-closure:
 	$(call PYCORE_IMAGE_RUN,symtab_closure,16000000)
 
@@ -1275,6 +1275,12 @@ pycore-img-compile-reject-closure:
 
 pycore-img-compile-reject-closure-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_reject_closure,8000000)
+
+pycore-img-compile-closure:
+	$(call PYCORE_IMAGE_RUN,compile_closure,8000000)
+
+pycore-img-compile-closure-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_closure,8000000)
 
 # compiler_design.md step J: T2/T3 A2 round-trip + A4 locals cap.
 pycore-img-compile-exec-roundtrip:
@@ -1376,6 +1382,7 @@ pycore-img-package-all: \
 	pycore-img-compile-mode-trap \
 	pycore-img-compile-reject-import \
 	pycore-img-compile-reject-closure \
+	pycore-img-compile-closure \
 	pycore-img-compile-exec-roundtrip \
 	pycore-img-compile-reject-locals \
 	pycore-img-compile-repeat \
@@ -1949,6 +1956,7 @@ pycore-img-two-core: \
 	pycore-img-compile-mode-trap-two-core \
 	pycore-img-compile-reject-import-two-core \
 	pycore-img-compile-reject-closure-two-core \
+	pycore-img-compile-closure-two-core \
 	pycore-img-compile-exec-roundtrip-two-core \
 	pycore-img-compile-reject-locals-two-core \
 	pycore-img-compile-repeat-two-core \

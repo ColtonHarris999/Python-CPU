@@ -136,7 +136,7 @@
     },
     "OBJ_CLOSURE": {
       "distance": 2,
-      "needs_subsystem": "heap cell boxes for free vars",
+      "needs_subsystem": "heap cell boxes + OBK_FUNCTION (landed §11.4)",
       "members": [
         "MAKE_CELL",
         "LOAD_DEREF",
@@ -1733,7 +1733,67 @@
     "MAKE_FUNCTION": {
       "support": "partial",
       "hw_class": "OBJECT",
-      "fold": "BAR"
+      "fold": "BAR",
+      "note": "identity (function \u2261 code). Closures wrap via SET_FUNCTION_ATTRIBUTE 8 \u2192 OBK_FUNCTION."
+    },
+    "SET_FUNCTION_ATTRIBUTE": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_CALL",
+      "note": "flag 8 (closure) only: (tuple, code -- OBK_FUNCTION). Other flags TYPE-trap.",
+      "supported_opargs": [8]
+    },
+    "MAKE_CELL": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_CLOSURE",
+      "note": "wrap RF[locals+i] in OBK_CELL; write handle back. Stack effect 0."
+    },
+    "LOAD_DEREF": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_CLOSURE",
+      "pushes": 1,
+      "note": "push cell[i] field0; UNINIT contents \u2192 MEM_FAULT"
+    },
+    "STORE_DEREF": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_CLOSURE",
+      "pops": 1,
+      "note": "pop TOS into cell[i] field0"
+    },
+    "COPY_FREE_VARS": {
+      "support": "execute",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_CLOSURE",
+      "note": "copy n cells from CALL-latched closure tuple into last n locals. First callee insn."
+    },
+    "LOAD_CLOSURE": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_CLOSURE",
+      "note": "specialized 261 in 3.14; firmware emits LOAD_FAST of the cell slot instead"
+    },
+    "DELETE_DEREF": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_CLOSURE",
+      "note": "v1: del of a closed-over name is SyntaxError"
+    },
+    "LOAD_FROM_DICT_OR_DEREF": {
+      "support": "trap",
+      "hw_class": "OBJECT",
+      "fold": "BAR",
+      "obj_group": "OBJ_CLOSURE",
+      "note": "class-body / annotation path; out of v1"
     },
     "BUILD_LIST": {
       "support": "execute",

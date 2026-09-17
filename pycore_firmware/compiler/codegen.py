@@ -7,7 +7,8 @@
 #
 # Instruction shapes follow CPython 3.14 / PyCPython codegen.py (PSF-2.0);
 # rewritten over the SoA AST. Nested def is assembled depth-first into
-# the parent's co_consts, then MAKE_FUNCTION (device: function ≡ code).
+# the parent's co_consts, then MAKE_FUNCTION. Freevars: COPY_FREE_VARS,
+# LOAD_FAST of cell slots, BUILD_TUPLE, SET_FUNCTION_ATTRIBUTE 8.
 #
 # Reuses parse scratch after G: opnd/ops/ops_obj = instructions,
 # stmts = co_consts, tk_s = co_names, tk_a = label positions, _lex_n =
@@ -173,6 +174,40 @@ def _pyc_visit(nid):
         _lex_i = sid
         _lex_col = 0
         _lex_line = 0
+        n_free = sc_kind[sid] >> 8
+        if n_free > 0:
+            _pyc_emit(OPMAP["COPY_FREE_VARS"], n_free, 0)
+        n_fast = sc_nlocals[sid] - n_free
+        ci = 0
+        while ci < n_fast:
+            cname = sc_varnames[sid][ci]
+            is_cell = 0
+            di = 0
+            while di < sc_n:
+                if di != sid:
+                    if (sc_kind[di] & 255) == 1:
+                        p = sc_parent[di]
+                        hit = 0
+                        while p >= 0:
+                            if p == sid:
+                                hit = 1
+                                break
+                            p = sc_parent[p]
+                        if hit:
+                            nf = sc_kind[di] >> 8
+                            nl = sc_nlocals[di]
+                            j = nl - nf
+                            while j < nl:
+                                if sc_varnames[di][j] == cname:
+                                    is_cell = 1
+                                    break
+                                j = j + 1
+                if is_cell:
+                    break
+                di = di + 1
+            if is_cell:
+                _pyc_emit(OPMAP["MAKE_CELL"], ci, 0)
+            ci = ci + 1
         _pyc_emit(OPMAP["RESUME"], 0, 0)
         ks = nd_a[nid]
         nargs = nd_b[nid]
@@ -208,9 +243,31 @@ def _pyc_visit(nid):
             stmts = stmts + ([0] * extra)
             cap = len(stmts)
         stmts[stmt_n] = child
+        n_free_c = sc_kind[sid] >> 8
+        if n_free_c > 0:
+            nloc_c = sc_nlocals[sid]
+            fi = nloc_c - n_free_c
+            while fi < nloc_c:
+                fname = sc_varnames[sid][fi]
+                pnames = sc_varnames[_lex_i]
+                pn = sc_nlocals[_lex_i]
+                pj = 0
+                found = 0
+                while pj < pn:
+                    if pnames[pj] == fname:
+                        _pyc_emit(OPMAP["LOAD_FAST"], pj, 0)
+                        found = 1
+                        break
+                    pj = pj + 1
+                if found == 0:
+                    _pyc_parse_error("freevar missing in enclosing scope")
+                fi = fi + 1
+            _pyc_emit(OPMAP["BUILD_TUPLE"], n_free_c, 0)
         _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
         stmt_n = stmt_n + 1
         _pyc_emit(OPMAP["MAKE_FUNCTION"], 0, 0)
+        if n_free_c > 0:
+            _pyc_emit(OPMAP["SET_FUNCTION_ATTRIBUTE"], 8, 0)
         name_id = _pyc_nd_new(
             ND["Name"], 1, 0, ND["Store"], 0, 0, nd_obj[nid]
         )
@@ -261,7 +318,7 @@ def _pyc_visit(nid):
         sid = _lex_i
         local = 0
         idx = 0
-        if sc_kind[sid] == 1:
+        if (sc_kind[sid] & 255) == 1:
             names = sc_varnames[sid]
             nloc = sc_nlocals[sid]
             i = 0
@@ -272,12 +329,49 @@ def _pyc_visit(nid):
                     break
                 i = i + 1
         if local:
-            if store == 1:
-                _pyc_emit(OPMAP["STORE_FAST"], idx, 0)
-            elif store == 2:
-                _pyc_emit(OPMAP["DELETE_FAST"], idx, 0)
+            n_free = sc_kind[sid] >> 8
+            n_fast = sc_nlocals[sid] - n_free
+            deref = 0
+            if idx >= n_fast:
+                deref = 1
             else:
-                _pyc_emit(OPMAP["LOAD_FAST"], idx, 0)
+                di = 0
+                while di < sc_n:
+                    if di != sid:
+                        if (sc_kind[di] & 255) == 1:
+                            p = sc_parent[di]
+                            hit = 0
+                            while p >= 0:
+                                if p == sid:
+                                    hit = 1
+                                    break
+                                p = sc_parent[p]
+                            if hit:
+                                nf = sc_kind[di] >> 8
+                                nl = sc_nlocals[di]
+                                j = nl - nf
+                                while j < nl:
+                                    if sc_varnames[di][j] == name:
+                                        deref = 1
+                                        break
+                                    j = j + 1
+                    if deref:
+                        break
+                    di = di + 1
+            if deref:
+                if store == 1:
+                    _pyc_emit(OPMAP["STORE_DEREF"], idx, 0)
+                elif store == 2:
+                    _pyc_parse_error("cannot delete closed-over name")
+                else:
+                    _pyc_emit(OPMAP["LOAD_DEREF"], idx, 0)
+            else:
+                if store == 1:
+                    _pyc_emit(OPMAP["STORE_FAST"], idx, 0)
+                elif store == 2:
+                    _pyc_emit(OPMAP["DELETE_FAST"], idx, 0)
+                else:
+                    _pyc_emit(OPMAP["LOAD_FAST"], idx, 0)
             return
         i = 0
         ni = 0 - 1
@@ -297,7 +391,7 @@ def _pyc_visit(nid):
             tk_s[tk_n] = name
             ni = tk_n
             tk_n = tk_n + 1
-        if sc_kind[sid] == 1:
+        if (sc_kind[sid] & 255) == 1:
             if store == 1:
                 _pyc_emit(OPMAP["STORE_GLOBAL"], ni, 0)
             elif store == 2:
@@ -897,6 +991,7 @@ def _pyc_assemble():
             or op == OPMAP["LOAD_NAME"]
             or op == OPMAP["LOAD_GLOBAL"]
             or op == OPMAP["LOAD_FAST"]
+            or op == OPMAP["LOAD_DEREF"]
             or op == OPMAP["PUSH_NULL"]
             or op == OPMAP["COPY"]
             or op == OPMAP["FOR_ITER"]
@@ -909,6 +1004,7 @@ def _pyc_assemble():
             op == OPMAP["STORE_NAME"]
             or op == OPMAP["STORE_GLOBAL"]
             or op == OPMAP["STORE_FAST"]
+            or op == OPMAP["STORE_DEREF"]
             or op == OPMAP["POP_TOP"]
             or op == OPMAP["POP_JUMP_IF_FALSE"]
             or op == OPMAP["POP_JUMP_IF_TRUE"]
@@ -926,6 +1022,8 @@ def _pyc_assemble():
             d = 0 - 2
         elif op == OPMAP["STORE_SUBSCR"]:
             d = 0 - 3
+        elif op == OPMAP["SET_FUNCTION_ATTRIBUTE"]:
+            d = 0 - 1
         elif op == OPMAP["CALL"]:
             d = 0 - (arg + 1)
         elif (

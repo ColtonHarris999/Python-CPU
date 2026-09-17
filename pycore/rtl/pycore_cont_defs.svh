@@ -62,6 +62,11 @@
     // BINARY_OP add: LIST+LIST or TUPLE+TUPLE. Allocates a new sequence.
     // Mixed kinds (list+tuple) stay on the ALU and TYPE-trap.
     localparam logic [5:0] CONT_SEQ_CONCAT    = 6'd50;
+    localparam logic [5:0] CONT_MAKE_CELL     = 6'd51; // wrap local i in OBK_CELL
+    localparam logic [5:0] CONT_LOAD_DEREF    = 6'd52; // push cell[i].contents
+    localparam logic [5:0] CONT_STORE_DEREF   = 6'd53; // pop into cell[i].contents
+    localparam logic [5:0] CONT_COPY_FREE     = 6'd54; // closure tuple → last n locals
+    localparam logic [5:0] CONT_SET_FUNC_ATTR = 6'd55; // flag 8: (tuple, code -- func)
 
     // Container phases (stored in container_phase_r, 6-bit).
     //

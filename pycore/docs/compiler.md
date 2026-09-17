@@ -82,8 +82,10 @@ sc_varnames[s]  list of local names (params first, then STORE targets)
 Parameters and every `STORE` target in a function become locals;
 `global x` forces global. Module / eval names are never FAST. A name
 that is local to an enclosing function and read in a nested one is a
-closure → `SyntaxError("closures are not supported on this target")`.
-`nlocals > 240` (`RF_WINDOW_CAP`, D6 / §6.1 S-6) is a `SyntaxError`;
+freevar of the nested scope (and of intervening functions) and a cellvar
+of the definer. Freevars are appended onto `sc_varnames`; `sc_nlocals` is
+nlocalsplus; `sc_kind = 1 | (n_free << 8)`. `nlocals > 240`
+(`RF_WINDOW_CAP`, D6 / §6.1 S-6) is a `SyntaxError`;
 stacksize is checked later by the assembler. The stale “> 32 locals”
 cap in the original G contract does not apply after step B.
 
@@ -99,7 +101,8 @@ literals, names, ALU, unary, compare/chains, `is`/`in`, `not`/`and`/`or`,
 call, subscript, attribute, expression statements, assignment, `return`,
 `if`/`elif`/`else`, `while`/`for`, `break`/`continue`/`pass`, augassign,
 `del`, list/tuple/dict/set displays, unpack, `def` (positional; nested
-assemble into the parent's `co_consts` then `MAKE_FUNCTION`),
+assemble into the parent's `co_consts` then `MAKE_FUNCTION`; freevars
+emit `COPY_FREE_VARS` / `MAKE_CELL` / `SET_FUNCTION_ATTRIBUTE 8`),
 `try`/`except`/`else`/`finally`, `raise`, comprehensions (`LIST_APPEND` /
 `SET_ADD`/`MAP_ADD` oparg 2), string `BINARY_SLICE`.
 
@@ -176,11 +179,12 @@ still `BINARY_OP`). `/ // % ** << >>` are left as BinOp.
 
 ## Closures (§11.4)
 
-Blocked on RTL. `OBJ_CLOSURE` (`MAKE_CELL` / `LOAD_DEREF` / `STORE_DEREF` /
-`COPY_FREE_VARS` / `LOAD_CLOSURE`) needs heap cell boxes; `MAKE_FUNCTION`
-is still function ≡ code object. Nested load of an enclosing local stays
-`SyntaxError` (D6). Device: `img_symtab_closure` (1),
-`img_compile_reject_closure` (1).
+Landed. `MAKE_CELL` wraps a local slot in `OBK_CELL`; `LOAD_DEREF` /
+`STORE_DEREF` go through field0; `COPY_FREE_VARS` copies the CALL-latched
+closure tuple into the last n locals; `SET_FUNCTION_ATTRIBUTE 8` allocates
+`OBK_FUNCTION` (code + closure). `MAKE_FUNCTION` stays identity. Nested
+load of an enclosing local compiles. Device: `img_symtab_closure` (1),
+`img_compile_reject_closure` (1), `img_compile_closure` (7).
 
 ## BIOS (§11.7)
 
@@ -231,7 +235,7 @@ token stream (kinds, positions, payload text), not later `co_code`.
 | D3 | `LOAD_GLOBAL` oparg is CPython 3.14 `namei = oparg >> 1`, bit 0 = push `NULL` | Must match hardware |
 | D4 | `COMPARE_OP` uses CPython 3.14 packed oparg (selector in bits 7:5) | Must match hardware |
 | D5 | Constructs the machine cannot execute are compile-time `SyntaxError` | A4; never an illegal-opcode trap |
-| D6 | Frame window `nlocals + co_stacksize > 240`, or a closure, is `SyntaxError` | Cap is compile-time, not `CALL_FILTER`. Recursion depth is runtime `MEM_FAULT` |
+| D6 | Frame window `nlocals + co_stacksize > 240` is `SyntaxError` | Cap is compile-time, not `CALL_FILTER`. Recursion depth is runtime `MEM_FAULT`. Closures are §11.4. |
 | D7 | `"single"` mode and `flags != 0` raise `ValueError` | Same as invalid `optimize` |
 | D8 | `filename` is stored, never opened | No filesystem |
 | D9 | `compile()` is not re-entrant | `_busy` is deferred (127 of 128 `_PYC_G` keys). Nested `compile()` would clobber `_in_*` and scratch |
@@ -240,9 +244,9 @@ token stream (kinds, positions, payload text), not later `co_code`.
 
 `make pycore-size-report` builds `img_compile_eval_expr` and prints ROM,
 compiler code-RAM, and static heap occupancy vs hardware ceilings. Overflow
-fails the target (A8). Measured after §11.7: ROM **2627 / 8192** slots;
-compiler **39547 / 65536** code-RAM slots (25989 remain for compiled
-output); static heap **260608 / 981952** bytes. Self-host is blocked
+fails the target (A8). Measured after §11.4: ROM **2627 / 8192** slots;
+compiler **41218 / 65536** code-RAM slots (24318 remain for compiled
+output); static heap **261888 / 981952** bytes. Self-host is blocked
 until remaining ≥ used (`self-host:` line in the report).
 
 ## Lifetime

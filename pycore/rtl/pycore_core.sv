@@ -226,6 +226,10 @@ module pycore_core #(
     // consts/names before the caller resumes fetching.  Also pushed into the
     // frame descriptor on CALL and restored on RETURN.
     logic [31:0]                   cur_code_r;
+    // Closure tuple VAL {size[63:0], addr[63:0]} latched at CALL of an
+    // OBK_FUNCTION; COPY_FREE_VARS consumes it at callee start. Zero when
+    // the callable was a bare CODE_OBJECT. Not saved in the frame descriptor.
+    logic [127:0]                  cur_closure_r;
     // Cached tuple handle (VAL field) of co_consts / co_names for the running
     // code object.  {size[63:0], addr[63:0]} — bounds check uses size, element
     // reads use addr via pycore_tuple_val_addr / pycore_tuple_tag_addr.
@@ -1931,6 +1935,10 @@ module pycore_core #(
     assign cont_rs2_tag   = pycore_get_tag(rs2_r);
     assign cont_rf_rs1_val = pycore_get_val(rf_rs1);
     assign cont_rf_rs1_tag = pycore_get_tag(rf_rs1);
+    logic [63:0]  cont_closure_size;
+    logic [31:0]  cont_closure_addr;
+    assign cont_closure_size = pycore_tuple_size(cur_closure_r);
+    assign cont_closure_addr = cur_closure_r[31:0];
     // Contamination bits on the MUT_COLLEC handle operands (value[123]).
     // Contamination bit is only meaningful on MUT_COLLEC (and reserved
     // FROZENSET) handles. Reading value[123] on a TUPLE would alias size bits.
@@ -2115,6 +2123,7 @@ module pycore_core #(
     localparam logic [4:0] CALL_PHASE_STRACC_SELF = 5'd20;
     localparam logic [4:0] CALL_PHASE_STRACC_ARG0 = 5'd21;
     localparam logic [4:0] CALL_PHASE_STRACC_ARG1 = 5'd22;
+    localparam logic [4:0] CALL_PHASE_FUNCTION    = 5'd23;
     localparam logic [2:0] RET_PHASE_DONE  = 3'd7;
     localparam logic [3:0] BOOT_PHASE_DONE = 4'd15;
     // call_mode_r encodings
@@ -2298,6 +2307,7 @@ module pycore_core #(
             return_wb_addr_r     <= '0;
             // Arch regs for image boot.
             cur_code_r           <= '0;
+            cur_closure_r        <= '0;
             consts_base_r        <= '0;
             names_base_r         <= '0;
             globals_base_r       <= '0;
@@ -2758,6 +2768,17 @@ module pycore_core #(
                                 container_op_r <= CONT_POP_EXCEPT;
                             end else if (cur_opcode_r == PY_OP_RERAISE) begin
                                 container_op_r <= CONT_RERAISE;
+                            end else if (cur_opcode_r == PY_OP_MAKE_CELL) begin
+                                container_op_r <= CONT_MAKE_CELL;
+                            end else if (cur_opcode_r == PY_OP_LOAD_DEREF) begin
+                                container_op_r <= CONT_LOAD_DEREF;
+                            end else if (cur_opcode_r == PY_OP_STORE_DEREF) begin
+                                container_op_r <= CONT_STORE_DEREF;
+                            end else if (cur_opcode_r == PY_OP_COPY_FREE_VARS) begin
+                                container_op_r <= CONT_COPY_FREE;
+                            end else if (cur_opcode_r ==
+                                         PY_OP_SET_FUNCTION_ATTRIBUTE) begin
+                                container_op_r <= CONT_SET_FUNC_ATTR;
                             end
                         end
                         // state_next = S_MEM or S_CONTAINER (from always_comb)
@@ -3123,6 +3144,9 @@ module pycore_core #(
 
                             // Handler opcodes (§7.3 / §7.6)
                             `include "pycore_cont_exc.svh"
+
+                            // Closures: MAKE_CELL / DEREF / COPY_FREE_VARS / SFA 8
+                            `include "pycore_cont_closure.svh"
 
                             default: ;
 

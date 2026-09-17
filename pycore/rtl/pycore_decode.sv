@@ -466,6 +466,24 @@ module pycore_decode (
                 mem_op_o  = PY_MEM_STORE_PTR;
             end
 
+            // Closures (§11.4): cell boxes + function+closure.
+            PY_OP_MAKE_CELL, PY_OP_LOAD_DEREF: begin
+                rs1_sel_o = locals_base_i + arg_i[7:0];
+                is_container_o = 1'b1;
+            end
+            PY_OP_STORE_DEREF: begin
+                rs1_sel_o = tos_index_i - 8'd1;
+                is_container_o = 1'b1;
+            end
+            PY_OP_COPY_FREE_VARS: begin
+                is_container_o = 1'b1;
+            end
+            PY_OP_SET_FUNCTION_ATTRIBUTE: begin
+                rs1_sel_o = tos_index_i - 8'd1; // code / function
+                rs2_sel_o = tos_index_i - 8'd2; // closure tuple
+                is_container_o = 1'b1;
+            end
+
             default: begin
                 illegal_opcode_o = 1'b1;
                 alu_op_o = PY_ALU_ILLEGAL;

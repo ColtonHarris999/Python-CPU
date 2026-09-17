@@ -100,6 +100,12 @@ class TestCompilerCompileShim(unittest.TestCase):
             1,
         )
 
+    def test_img_compile_closure_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_closure.py", "managed_entry"),
+            7,
+        )
+
     def test_img_compile_exec_roundtrip_host_golden(self) -> None:
         self.assertEqual(
             host_entry_result(

@@ -24,11 +24,11 @@ as `trap` / `INTERNAL` strip). Recompute after changing `opcodes`:
 
 | `support` | Count | Meaning for the analyzer |
 | --- | --- | --- |
-| `execute` | 65 | hardware runs the documented subset |
+| `execute` | 70 | hardware runs the documented subset |
 | `partial` | 8 | runs, with a named ceiling (`message` / `supported_opargs`) |
 | `strip` | 1 | `RESUME` (control marker) |
 | `reject` | 3 | image tooling / decode refuse |
-| `trap` | 10 | listed but not implemented (explicit OBJ_EXC / assert / with / except* rows) |
+| `trap` | 13 | listed but not implemented (OBJ_EXC / assert / with / except* / leftover OBJ_CLOSURE) |
 
 `partial` today includes `RAISE_VARARGS` (oparg 0/1; oparg 2 remains out). Object-protocol
 opcodes are suppressed in the default analyzer view (`fit=infeasible`);
@@ -64,7 +64,12 @@ JSON `plan_track` on an opcode names the exceptions-plan track that lifts it
 | `STORE_NAME`                            | Stores TOS into a module/global name.                                                       | Updates the current frame's globals dict, popping one value.                                                                                                                                                                                                                                                                                                                                                                                    |
 | `STORE_GLOBAL`                          | Stores TOS into a global name.                                                              | Same hardware path as `STORE_NAME`.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `PUSH_NULL`                             | Pushes CPython's non-method call sentinel.                                                  | Writes CONTROL+NULL (`PY_CTL_NULL`) to TOS.                                                                                                                                                                                                                                                                                                                                                                                               |
-| `MAKE_FUNCTION`                         | Builds a function object from a code object.                                                | Interim model: function is the `CODE_OBJECT` handle itself; defaults/kwdefaults are folded at image-build; return annotations (PEP 649 `SET_FUNCTION_ATTRIBUTE` 16) are stripped; closures are rejected.                                                                                                                                                                                                                                                                                                                                     |
+| `MAKE_FUNCTION`                         | Builds a function object from a code object.                                                | Identity: function is the `CODE_OBJECT` handle itself. Nested functions with freevars then `SET_FUNCTION_ATTRIBUTE 8` → `OBK_FUNCTION`. Defaults/kwdefaults are folded at image-build; return annotations (PEP 649 `SET_FUNCTION_ATTRIBUTE` 16) are stripped. Other SFA flags TYPE-trap.                                                                                                                                                                                                                                                                                                                                     |
+| `MAKE_CELL`                             | Wrap local `oparg` in an `OBK_CELL`.                                                        | Allocates 64 B; field0 = previous slot contents; writes the OBJECT handle back to `locals+i`. Stack effect 0. Arg cellvars wrap the argument slot in place. |
+| `LOAD_DEREF`                            | Push cell `oparg` contents.                                                                 | OBJECT+CELL; UNINIT contents → `MEM_FAULT`. `oparg` is a localsplus index. |
+| `STORE_DEREF`                           | Pop TOS into cell `oparg`.                                                                  | Writes field0 of the CELL at `locals+i`. |
+| `COPY_FREE_VARS`                        | Copy n cells from the CALL-latched closure tuple into the last n locals.                    | First callee insn. `oparg==0` is a no-op. Size mismatch → `TYPE`. |
+| `SET_FUNCTION_ATTRIBUTE`                | Attach a function attribute (CPython 3.14 flag in `oparg`).                                 | Flag 8 only: `(tuple, code -- OBK_FUNCTION)`. Allocates 96 B (`field0`=code, `field1`=closure tuple). Other flags TYPE-trap. |
 | `CALL`                                  | Invokes a callable with positional arguments.                                               | Supports CPython 3.14 non-method layout `callable, NULL, args...`; validates callable tag and argcount, pushes/pops hardware frames. Seeded exception `OBK_TYPE` handles (flagged in `ob_flags`) construct `OBK_EXCEPTION`: argc 0 uses empty args, argc 1 allocates a one-element tuple, argc >1 → `TYPE`; ordinary user types retain INSTANCE construction. Seeded `int` (`OB_FLAG_INT_TYPE`) converts instead of constructing: argc 0 → `0`; argc 1 `INT`/`BOOL` identity, `FLOAT` truncate-toward-zero (NaN/Inf/overflow → `TYPE`), or decimal `SHORT_STR` (optional leading `+/-`, ASCII digits only); argc >1 (`base=`) and other tags → `TYPE`. `BI_MAX` is 2-arg `INT`/`BOOL`/`FLOAT` (mixed real-numeric; returns the original winning entry, first on tie). Seeded `str` (`OB_FLAG_STR_TYPE`) stringifies instead of constructing: argc 0 → `""`; argc 1 `SHORT_STR`/`LONG_STR` identity, `INT` decimal `SHORT_STR` (≤15 chars), `BOOL`/`None` literals; argc >1 / other tags → `TYPE`. `CODE_OBJECT` callees with `CO_VARKEYWORDS` still enter the binder so an (empty) `**kwargs` dict local is installed. ROM `min` is `*args` (`min(a,b,c,…)` plus `min(iterable)`). `OBK_BUILTIN` / `BI_LEN` covers LIST/TUPLE/DICT/SET/STR/inline RANGE plus INSTANCE `__len__` via own `tp_dict` (miss → `ATTR_ERROR`). `BI_ORD` / `BI_CHR` convert between a one-character `SHORT_STR` and its `INT` code point in one cycle (inline payload, no `string_mem` access); `chr` rejects > U+10FFFF, negatives, and lone surrogates with `TYPE`. Layer D: `img_builtin_ord*`, `img_builtin_chr*`, `img_builtin_int*`, `img_builtin_int_float`, `img_builtin_max_float`, `img_jaro_window`, `img_builtin_str*`, `img_raise_typeerror_call`, `img_firmware_min_varargs`. |
 | `CALL_KW`                               | Keyword / mixed calls (`f(1, b=2)`).                                                         | `CODE_OBJECT` binder uses `co_varnames` + `kwonlyargcount` + `co_posonlyargcount` + `co_defaults` / `co_kwdefaults`; `CO_VARARGS` packs extras into `*args`; `CO_VARKEYWORDS` packs leftovers into `**kwargs` (pre-sized dict). Posonly name as keyword → leftover / trap. Unexpected/duplicate kw → `CALL_FILTER` (duplicate still traps with varkw). `OBK_BUILTIN` / TYPE kwargs → `CALL_FILTER` (use firmware `CODE_OBJECT`). Layer D: `img_call_kw`, `img_varargs_*`, `img_varkw_*`, `img_posonly_*`, `img_print_sep_end`. |
 | `CALL_FUNCTION_EX`                      | `f(*args)` / `f(*args, **kwargs)`.                                                          | Args: LIST or TUPLE (expand onto stack, then CALL/binder). Kwargs absent = NULL sentinel; present = `MUT_DICT` (order-sidecar bind; remaining kw-only filled from `co_kwdefaults`; leftovers packed when callee has `CO_VARKEYWORDS`). Layer D: `img_call_function_ex`, `img_call_function_ex_kw`, `img_varargs_ex_kw`, `img_varkw_call_ex`, `img_print_star_kw`. |
@@ -174,10 +179,11 @@ this milestone:
    both dicts traps `PY_TRAP_MEM_FAULT`. See
    `planning/old/implemented/builtins_bytecode_support_plan.md`.
 7. **Function object model.** `MAKE_FUNCTION` leaves a `CODE_OBJECT` handle on
-  the stack and `CALL` treats that handle as the function (function ≡ code).
-  Defaults are folded at image-build time; return annotations are stripped.
-  Closures need `OBJ_CLOSURE` cell boxes (§11.4); until then the firmware
-  compiler raises `SyntaxError` (`img_compile_reject_closure`). Generic
+  the stack (identity). A nested function with freevars then
+  `SET_FUNCTION_ATTRIBUTE 8`, which allocates `OBK_FUNCTION` (field0=code,
+  field1=closure tuple of `OBK_CELL`s). `CALL` of `OBK_FUNCTION` joins the
+  code-object path and latches the tuple for `COPY_FREE_VARS`. Defaults are
+  folded at image-build time; return annotations are stripped. Generic
   `__call__` objects remain out of scope. `OBK_BUILTIN` / `BI_*` ids use the
   CALL FSM fast path (e.g. `BI_LEN` header reads) instead of a Python frame.
 8. `LOAD_NAME` **module-scope behavior.** Hardware uses the same
@@ -297,7 +303,7 @@ second producer of bytecode, distinct from host `image_from_source.py`.
 | D3 | `LOAD_GLOBAL` oparg is `namei = oparg >> 1`; bit 0 pushes `NULL`. |
 | D4 | `COMPARE_OP` packed selector in bits 7:5. |
 | D5 | Unexecutable constructs are compile-time `SyntaxError`. |
-| D6 | Frame window `nlocals + co_stacksize > 240`, or a closure, is `SyntaxError`. |
+| D6 | Frame window `nlocals + co_stacksize > 240` is `SyntaxError`. Closures are §11.4. |
 | D7 | `"single"` / `flags != 0` → `ValueError`. |
 | D8 | `filename` is stored, never opened. |
 | D9 | `compile()` is not re-entrant (`_busy` deferred; 127/128 `_PYC_G` keys). |

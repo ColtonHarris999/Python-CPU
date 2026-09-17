@@ -336,6 +336,47 @@ class TestCompilerCodegenCorpus(unittest.TestCase):
         self.assertIsNone(co())
         self.assertEqual(co._globals["f"](), 1)
 
+    def test_closure_load_enclosing_local(self) -> None:
+        src = (
+            "def outer():\n"
+            "    x = 1\n"
+            "    def inner():\n"
+            "        return x\n"
+            "    return inner()\n"
+            "z = outer()\n"
+        )
+        co = firmware_codegen(src, "exec")
+        self.assertIsNone(co())
+        self.assertEqual(co._globals["z"], 1)
+
+    def test_closure_enclosing_param_and_store(self) -> None:
+        src = (
+            "def outer(x):\n"
+            "    def inner():\n"
+            "        return x\n"
+            "    x = x + 4\n"
+            "    return inner()\n"
+            "z = outer(3)\n"
+        )
+        co = firmware_codegen(src, "exec")
+        self.assertIsNone(co())
+        self.assertEqual(co._globals["z"], 7)
+
+    def test_closure_passthrough_mid(self) -> None:
+        src = (
+            "def outer():\n"
+            "    x = 3\n"
+            "    def mid():\n"
+            "        def inner():\n"
+            "            return x\n"
+            "        return inner()\n"
+            "    return mid()\n"
+            "z = outer()\n"
+        )
+        co = firmware_codegen(src, "exec")
+        self.assertIsNone(co())
+        self.assertEqual(co._globals["z"], 3)
+
     def test_for_break_continue(self) -> None:
         src = (
             "s = 0\n"

@@ -21,6 +21,7 @@
 //   17 : EX_KW — NULL → args-only; DICT → kwargs; pop → 18
 //   18 : EX_ARGS — latch LIST/TUPLE args; expand or join CALL → 0/19
 //   19 : EX_EXPAND — push args elements onto stack → join CALL
+//   23 : OBK_FUNCTION unwrap (code + closure tuple) → join 2
                 // ----------------------------------------------------------
                 // S_CALL: generalized CPython CALL (free / method / BM / TYPE).
                 //
@@ -64,7 +65,8 @@
                         end
 
                         5'd1: begin
-                            // Callable: CODE_OBJECT or OBJECT (BM / TYPE).
+                            // Callable: CODE_OBJECT or OBJECT (BM / TYPE / FUNCTION).
+                            cur_closure_r <= '0;
                             if (cont_rf_rs1_tag == PY_TAG_CODE_OBJECT) begin
                                 call_code_addr_r    <= cont_rf_rs1_val[31:0];
                                 if (pycore_is_stracc_method_code(
@@ -445,6 +447,15 @@
                                         call_sub_r               <= 6'd0;
                                         call_phase_r             <= 4'd13;
                                     end
+                                end else if (pycore_ob_kind(container_rd_data_r) ==
+                                             PY_OBK_FUNCTION) begin
+                                    container_dmem_addr_r <=
+                                        pycore_obj_field_val_addr(
+                                            call_obj_addr_r, 32'd0);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    call_sub_r               <= 6'd0;
+                                    call_phase_r             <= CALL_PHASE_FUNCTION;
                                 end else begin
                                     call_filter_trap_r <= 1'b1;
                                 end
@@ -4539,6 +4550,53 @@
                             stracc_finishing_r <= 1'b0;
                             call_stracc_go_r   <= 1'b1;
                             call_phase_r       <= CALL_PHASE_DONE;
+                        end
+
+                        // OBK_FUNCTION: field0 = code, field1 = closure tuple,
+                        // then join the CODE_OBJECT sentinel check (phase 2).
+                        CALL_PHASE_FUNCTION: begin
+                            if (!container_dmem_pending_r) begin
+                                if (call_sub_r == 6'd0) begin
+                                    call_code_addr_r <= container_rd_data_r[31:0];
+                                    container_dmem_addr_r <=
+                                        pycore_obj_field_tag_addr(
+                                            call_obj_addr_r, 32'd0);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    call_sub_r               <= 6'd1;
+                                end else if (call_sub_r == 6'd1) begin
+                                    if (container_rd_data_r[3:0] !=
+                                            PY_TAG_CODE_OBJECT) begin
+                                        call_filter_trap_r <= 1'b1;
+                                    end else begin
+                                        container_dmem_addr_r <=
+                                            pycore_obj_field_val_addr(
+                                                call_obj_addr_r, 32'd1);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        call_sub_r               <= 6'd2;
+                                    end
+                                end else if (call_sub_r == 6'd2) begin
+                                    cur_closure_r <= container_rd_data_r;
+                                    container_dmem_addr_r <=
+                                        pycore_obj_field_tag_addr(
+                                            call_obj_addr_r, 32'd1);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    call_sub_r               <= 6'd3;
+                                end else begin
+                                    if (container_rd_data_r[3:0] !=
+                                            PY_TAG_TUPLE) begin
+                                        call_filter_trap_r <= 1'b1;
+                                    end else begin
+                                        container_rf_addr_r <= RF_AW'(
+                                            {1'b0, tos_r} -
+                                            {1'b0, cur_arg_r[7:0]} - 9'd1);
+                                        call_phase_r        <= 5'd2;
+                                        call_sub_r          <= 6'd0;
+                                    end
+                                end
+                            end
                         end
 
                         default: ;

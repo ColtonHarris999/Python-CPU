@@ -408,7 +408,7 @@ every file in the tree and the `co_*` fields of every compiled function.
 | `xs[-1]`, `xs[i:-1]` on list/tuple | `xs[len(xs)-1]` | C3 |
 | slice assignment | store loop | `STORE_SLICE` deferred |
 | `class`, inheritance, `__slots__` | SoA arrays + functions (§5.2) | `LOAD_BUILD_CLASS` deferred |
-| nested `def` closing over an outer local | explicit parameter, or `_PYC_G` state | `MAKE_CELL` deferred |
+| nested `def` closing over an outer local | explicit parameter, or `_PYC_G` state | firmware compiler source stays cell-free (subset gate); user programs use §11.4 |
 | `import` | one flattened package seeded into `_PYC_G` | no module objects |
 | generators, `yield`, `async` | return a list | deferred |
 | `with`, `assert`, `match` | `try/finally`, `if not x: raise` | deferred |
@@ -535,7 +535,7 @@ in `pycore_firmware/compiler/` with provenance headers and a
 | `unparse.py` | 514 | **never** | Error-message pretty printer, 15 `LOAD_DEREF`. Use plain messages. |
 | `tokenizer.py` | 2 018 | **reference** | Byte-oriented, uses classes / namedtuple / generators / `warnings`. Port the *state machine and token kinds* into `lexer.py` over a `str`, using the native `str` methods from §2.1. Keep it as the **host token-stream oracle**. |
 | `codegen.py` | 3 966 (207 methods) | **reference, tier-limited** | The spec for "what CPython emits". Port only T1–T3 (§5.6) as flat functions over the SoA AST. Do not port pattern matching, async, generators, `class`, `import`, `with`, `finally`-in-codegen until the runtime exists. |
-| `symtable.py` | 1 243 | **reference, subset** | Module + function scope, `global`. Drop PEP 695, type params, annotations, async, comprehension cells. Closures: **compute** them so you can raise a clear `SyntaxError`; never emit `MAKE_CELL`. |
+| `symtable.py` | 1 243 | **reference, subset** | Module + function scope, `global`. Drop PEP 695, type params, annotations, async, comprehension cells. Closures: compute freevars / cellvars and emit `MAKE_CELL` / `LOAD_DEREF` / `COPY_FREE_VARS` (§11.4). |
 | `flowgraph.py` | 1 974 | **selective** | Take jump sizing / `EXTENDED_ARG` reservation and the stack-depth walk. Skip every optimisation that assumes CPython's inline-cache layout. |
 | `assemble.py` | 426 | **closest port** | Exception-table 6-bit varints, jump offsets, `co_stacksize`. Replace `build_code` / `marshal.loads` with `_bi_code_new`. Its varint writer is also the source for the host-side `encode_exception_table` (§6.5 W3). |
 | `instrseq.py` | 79 | **port, flattened** | `Instruction`/`InstructionSequence` classes become the `ins_*` arrays. |
@@ -589,11 +589,13 @@ with `opnd_stack` / `op_stack` in `_PYC_G`. Grammar tiers in §5.6.
 `mode == "exec"` parses a statement list into `ND_MODULE`.
 
 **Symbol table** — `_pyc_symtab(root) -> int` (scope count).
-One pass. For each function scope: parameters and every `STORE` target become
+Two walks. For each function scope: parameters and every `STORE` target become
 locals; anything else is global. `global x` forces global. A name that is local
-to an enclosing function and read in a nested one is a **closure** →
-`SyntaxError("closures are not supported on this target")`. Enforces D6
-(`nlocals > 240` → `SyntaxError`; stacksize is the assembler's job).
+to an enclosing function and read in a nested one is a **freevar** of the
+nested (and intervening) scopes and a **cellvar** of the definer; freevars
+are appended onto `sc_varnames` and `sc_kind = 1 | (n_free << 8)` (§11.4).
+Enforces D6 (`nlocals > 240` → `SyntaxError`; stacksize is the assembler's
+job). `del` of a closed-over name is still `SyntaxError` (no `DELETE_DEREF`).
 
 **Codegen** — `_pyc_codegen(root, scope) -> int` (instruction count).
 Explicit `(node, phase)` work stack. Emits only names in the generated
@@ -679,7 +681,7 @@ Number these and pin them in `pycore/docs/compiler.md` (new) and
 | D3 | `LOAD_GLOBAL` oparg is CPython 3.14's `namei = oparg >> 1`, bit 0 = push `NULL` | Must match hardware exactly. |
 | D4 | `COMPARE_OP` uses CPython 3.14's packed oparg (selector in bits 7:5) | Must match hardware exactly. |
 | D5 | Constructs the machine cannot execute are compile-time `SyntaxError` | Strictly better than CPython here; A4. |
-| D6 | A frame window (`nlocals + co_stacksize`) over the cap in §6.1 S-6, or a closure, is a `SyntaxError` | The irreducible limit surfaced at compile time instead of as a fatal `CALL_FILTER`. Recursion depth is **not** a compile-time error — deep recursion is a runtime `MEM_FAULT` when the spill region is exhausted, which is CPython's `RecursionError` in kind. |
+| D6 | A frame window (`nlocals + co_stacksize`) over the cap in §6.1 S-6 is a `SyntaxError` | The irreducible limit surfaced at compile time instead of as a fatal `CALL_FILTER`. Recursion depth is **not** a compile-time error — deep recursion is a runtime `MEM_FAULT` when the spill region is exhausted, which is CPython's `RecursionError` in kind. Closures are §11.4 (`MAKE_CELL` / `LOAD_DEREF` / `COPY_FREE_VARS`). |
 | D7 | `"single"` mode and `flags != 0` raise `ValueError` | Matches the stub contract in `compile.md`. |
 | D8 | `filename` is stored, never opened | No filesystem. |
 | D9 | `compile()` is not re-entrant | `_busy` is deferred (127 of 128 `_PYC_G` keys). Nested `compile()` would clobber `_in_*` and scratch, not raise a clean error. |
@@ -1017,7 +1019,7 @@ this work must close, not as new scope.
 | Growing `RF_DEPTH` | §6.1 adds spill/fill instead; the RF stays 256 entries and the flop count does not move |
 | A dedicated stack cache between the RF and dmem | §6.1 S-8: L1D already hits 95–99.6% on the frame region, and per-slot residency costs ~170 Kbit of tables (`attic/pycore_frame_buffer.sv`) |
 | LL(1) table generator + grammar tables | Precedence climbing needs neither |
-| Module image format / `_bi_load_module` / relocation | Compiler still fits (39547 / 65536); §11.6 not opened |
+| Module image format / `_bi_load_module` / relocation | Compiler still fits (41218 / 65536); §11.6 not opened |
 | BIOS | ROM `bios(payload)` execs a payload; programs may still `compile()` directly |
 | Trap → Python exception (exceptions T6) | Syntax errors are already real `raise`s |
 | `open` / stdin / console RX | Source is already a heap string |
@@ -1091,7 +1093,7 @@ parallel with B and C.
 | **D** | W-1, W-2, W-6: seed a two-function toy package into `_PYC_G` and call one from the other. **Landed** | `img_pyc_package_call` |
 | **E** | `tables.py` + `lexer.py`. **Landed** | Host: token stream vs CPython `tokenize` on a small corpus. Device: `img_lexer_count` |
 | **F** | `parser.py` T1 expressions (iterative) + SoA AST. **Landed** | Host: shape round-trip vs `ast.parse`. Device: `img_parser_tiny_expr`, `img_compile_deep_nesting` |
-| **G** | `symtab.py`. **Landed** | Host locals-vs-globals corpus; closures raise cleanly. Device: `img_symtab_locals`, `img_symtab_closure` |
+| **G** | `symtab.py`. **Landed** | Host locals-vs-globals corpus; nested enclosing loads are freevars. Device: `img_symtab_locals`, `img_symtab_closure` |
 | **H** | `codegen.py` T1 (recursive port, per §5.2 Rule 2) + `assemble.py` + W-3. **Landed** | Host result differential vs CPython for T1 |
 | **I** | Wire `compile.py` shim; ship it. **Landed** | **`img_compile_eval_expr` → 3** (A1) |
 | **J** | T2 then T3. **Landed** | **`img_compile_exec_roundtrip` → 7** (A2) + host corpus |
@@ -1100,11 +1102,11 @@ parallel with B and C.
 | **R4/R7** | `img_compile_repeat` + `img_compile_release_realloc`. **Landed** | watermark ≤ 400000 → 1; second compile after release → 37 |
 | **T4** | §11.2 try/except/else/finally, raise, comprehensions, string slices; CODE_RAM 65536. **Landed** | `img_compile_try_except` → 7; `img_compile_try_else` → 3; `img_compile_try_finally` → 12; `img_compile_raise` → 7; `img_compile_str_slice` → 1; `img_compile_list_comp` (two-core) → 15 |
 | **Fold** | §11.3 constant folding of int ALU / str Add. **Landed** | Host: `1+2` is one `LOAD_SMALL_INT`; `1+x` still `BINARY_OP` |
-| **Closures** | §11.4 blocked on OBJ_CLOSURE RTL. **Pinned** | `img_compile_reject_closure` → 1 |
+| **Closures** | §11.4 cells + `OBK_FUNCTION`. **Landed** | `img_compile_reject_closure` → 1; `img_compile_closure` → 7 |
 | **O-2** | split result/scratch arenas. **Not opened** | R4 watermark golden still holds; caller mark/release is the reclaim path |
-| **Loader** | module image + relocation. **Not opened** | compiler fits (39547 / 65536); overlays only if headroom vanishes |
+| **Loader** | module image + relocation. **Not opened** | compiler fits (41218 / 65536); overlays only if headroom vanishes |
 | **BIOS** | ROM `bios(payload)` execs source. **Landed** | `img_bios_exec` → 3 |
-| **Self-host** | compile the compiler on device. **Blocked on size** | need 39547 output slots, have 25989 headroom |
+| **Self-host** | compile the compiler on device. **Blocked on size** | need 41218 output slots, have 24318 headroom |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1137,7 +1139,7 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_parser_tiny_expr` | node-count / checksum golden |
 | `img_compile_deep_nesting` | 40 nested parens compile without a trap (A3) |
 | `img_symtab_locals` | locals-vs-globals checksum (G) |
-| `img_symtab_closure` | 1 — nested load of an enclosing local is `SyntaxError` (G) |
+| `img_symtab_closure` | 1 — nested load of an enclosing local is a freevar (§11.4) |
 | `img_codegen_t1_expr` | **3** — assemble+call of `"1 + 2"` (H; A1 early, without the compile shim) |
 | `img_compile_eval_expr` | **3** (A1) |
 | `img_compile_exec_roundtrip` | globals match host CPython (A2) |
@@ -1156,7 +1158,8 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_compile_raise` | **7** — T4 `raise TypeError` / `except as e` |
 | `img_compile_str_slice` | **1** — T4 `'abcdef'[1:4] == "bcd"` |
 | `img_compile_list_comp` | **15** — T4 `[x for x in [1,2,3,4,5]]` (two-core; `LIST_APPEND` grow) |
-| `img_compile_reject_closure` | **1** — nested enclosing load is `SyntaxError` (§11.4) |
+| `img_compile_reject_closure` | **1** — nested enclosing load compiles and returns 1 (§11.4) |
+| `img_compile_closure` | **7** — `outer(3)` then inner `STORE_DEREF` `x = x + 4` (§11.4) |
 | `img_bios_exec` | **3** — ROM `bios("x = 1 + 2")` (§11.7) |
 
 ---
@@ -1178,19 +1181,23 @@ In dependency order, not priority order.
    plus str `+`, rewrite to `Constant` before emit (`ast_preprocess` subset
    inlined in `_pyc_codegen_main`; no new `_PYC_G` key). `/ // % ** << >>`
    stay unfolded.
-4. **Closures.** **Blocked on RTL.** `pycore.json` `OBJ_CLOSURE` needs heap
-   cell boxes (`MAKE_CELL`, `LOAD_DEREF`, `STORE_DEREF`, `COPY_FREE_VARS`,
-   `LOAD_CLOSURE`). `MAKE_FUNCTION` is still function ≡ code object (no
-   `__closure__` tuple). `PY_OBK_*` has no CELL kind. Until that lands,
-   D6 keeps nested loads of enclosing locals a `SyntaxError`
-   (`img_compile_reject_closure` → 1; `img_symtab_closure` → 1).
+4. **Closures.** **Landed.** `PY_OBK_CELL` / `PY_OBK_FUNCTION`;
+   `MAKE_CELL` wraps a local in a 64 B cell; `LOAD_DEREF` / `STORE_DEREF`
+   go through field0; `COPY_FREE_VARS` copies the CALL-latched closure
+   tuple into the last n locals; `SET_FUNCTION_ATTRIBUTE` flag 8 allocates
+   a 96 B `OBK_FUNCTION` (code + closure tuple). `MAKE_FUNCTION` stays
+   identity. `LOAD_CLOSURE` (261), `DELETE_DEREF`, and
+   `LOAD_FROM_DICT_OR_DEREF` stay out of v1 (`del` of a closed-over name
+   is `SyntaxError`; other SFA flags TYPE-trap). Device:
+   `img_symtab_closure` → 1; `img_compile_reject_closure` → 1;
+   `img_compile_closure` → 7.
 5. **Split result/scratch heap arenas (O-2).** **Not opened.** R4
    `img_compile_repeat` is the bite test (≤ 400000 → 1). Caller
    mark/release (`img_compile_release_realloc` → 37) already reclaims.
    A downward result cursor is an allocator change; do not add it while
    the watermark golden holds.
 6. **Module loader + relocation.** **Not opened.** The compiler still fits
-   the boot image (39 547 of 65 536 code-RAM slots, 25 989 remain).
+   the boot image (41 218 of 65 536 code-RAM slots, 24 318 remain).
    `code_loading.md` §4 stays the recorded format; do not restart the
    loader for occupancy (lever 3 is overlays, only after shrinking
    `codegen.py`).
@@ -1199,7 +1206,7 @@ In dependency order, not priority order.
    still call `compile()` / `exec()` directly.
 8. **Self-hosting.** **Blocked on size.** Stage-2 would compile
    `pycore_firmware/compiler/` on device and check byte-identical output.
-   That needs ~39 547 compiled-output slots; headroom is 25 989.
+   That needs ~41 218 compiled-output slots; headroom is 24 318.
    `make pycore-size-report` prints `self-host: blocked` until remaining
    ≥ used (raise CODE_RAM or shrink `codegen.py`).
 
@@ -1241,11 +1248,13 @@ expected content, not a second source of truth.
 `POP_JUMP_IF_NONE` · `POP_JUMP_IF_NOT_NONE` · `NOT_TAKEN` · `GET_ITER` ·
 `FOR_ITER` · `END_FOR` · `POP_ITER` · `BUILD_LIST` · `BUILD_TUPLE` ·
 `BUILD_MAP` · `BUILD_SET` · `BUILD_STRING` · `LIST_APPEND` · `LIST_EXTEND` ·
-`SET_ADD` · `MAP_ADD` · `UNPACK_SEQUENCE` · `UNPACK_EX` · `MAKE_FUNCTION`
+`SET_ADD` · `MAP_ADD` · `UNPACK_SEQUENCE` · `UNPACK_EX` · `MAKE_FUNCTION` ·
+`MAKE_CELL` · `LOAD_DEREF` · `STORE_DEREF` · `COPY_FREE_VARS` ·
+`SET_FUNCTION_ATTRIBUTE`
 
 **Never emit:** `CACHE` · `LOAD_BUILD_CLASS` · `IMPORT_NAME` · `IMPORT_FROM` ·
-`YIELD_VALUE` · `SEND` · `GET_AWAITABLE` · `LOAD_DEREF` · `STORE_DEREF` ·
-`MAKE_CELL` · `LOAD_CLOSURE` · `LOAD_SPECIAL` · `SETUP_*` ·
+`YIELD_VALUE` · `SEND` · `GET_AWAITABLE` · `LOAD_CLOSURE` · `DELETE_DEREF` ·
+`LOAD_FROM_DICT_OR_DEREF` · `LOAD_SPECIAL` · `SETUP_*` ·
 `FORMAT_WITH_SPEC` · `STORE_SLICE` · `LOAD_COMMON_CONSTANT` · `MATCH_*` ·
 `LOAD_SUPER_ATTR` · `CALL_INTRINSIC_2`.
 
@@ -1261,7 +1270,8 @@ expected content, not a second source of truth.
 | Slot / metadata / tag encoding | `pycore/tools/encoding.py` |
 | Exception-table varints | `pycore/tools/exception_table.py` |
 | Machine catalog (opcodes, exceptions) | `pycore/targets/pycore.json` |
-| CALL FSM / `BI_*` dispatch | `pycore/rtl/pycore_call_fsm.svh` (phase 13) |
+| CALL FSM / `BI_*` dispatch | `pycore/rtl/pycore_call_fsm.svh` (phase 13; `CALL_PHASE_FUNCTION` 23 unwraps `OBK_FUNCTION`) |
+| Closure cells / `OBK_FUNCTION` | `pycore/rtl/pycore_cont_closure.svh` |
 | Register file (ring window, S-1/S-6) | `pycore/rtl/pycore_regfile.sv` |
 | Frame descriptors (spill/fill quantities) | `pycore/rtl/pycore_frame.sv` |
 | Shelved ring-plus-spill prototype — read, do not build | `pycore/rtl/attic/pycore_frame_buffer.sv` |

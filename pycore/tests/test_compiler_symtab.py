@@ -1,8 +1,8 @@
 """Host locals-vs-globals corpus (compiler_design.md G).
 
 Firmware ``_pyc_symtab`` locals must match CPython ``co_varnames`` for
-each function. Closures raise
-``SyntaxError("closures are not supported on this target")``.
+each function. Nested loads of enclosing locals become freevars (appended
+to ``sc_varnames``; ``sc_kind = 1 | (n_free << 8)``).
 """
 
 from __future__ import annotations
@@ -20,7 +20,12 @@ from run_image_test import host_entry_result
 
 PROGRAMS = pathlib.Path(__file__).resolve().parents[1] / "programs"
 
-CLOSURE_MSG = "closures are not supported on this target"
+CLOSURE_SRC = (
+    "def outer():\n    x = 1\n    def inner():\n        return x\n    return inner\n"
+)
+CLOSURE_PARAM_SRC = (
+    "def outer(x):\n    def inner():\n        return x\n    return inner\n"
+)
 
 SYMTAB_LOCALS_SRC = """\
 x = 1
@@ -64,7 +69,7 @@ def firmware_function_scopes(g: dict) -> list[tuple[str, tuple[str, ...], int, i
     out = []
     i = 0
     while i < g["sc_n"]:
-        if g["sc_kind"][i] == 1:
+        if (g["sc_kind"][i] & 255) == 1:
             nloc = g["sc_nlocals"][i]
             names = g["sc_varnames"][i]
             varnames = tuple(names[j] for j in range(nloc))
@@ -115,16 +120,24 @@ class TestCompilerSymtabCorpus(unittest.TestCase):
         self.assertEqual(firmware_function_scopes(g), [])
 
     def test_closure_load_enclosing_local(self) -> None:
-        src = "def outer():\n    x = 1\n    def inner():\n        return x\n    return inner\n"
-        with self.assertRaises(SyntaxError) as cm:
-            firmware_symtab(src, "exec")
-        self.assertEqual(str(cm.exception), CLOSURE_MSG)
+        g = firmware_symtab(CLOSURE_SRC, "exec")
+        scopes = firmware_function_scopes(g)
+        self.assertEqual(scopes[0][0], "outer")
+        self.assertIn("x", scopes[0][1])
+        self.assertEqual(scopes[1][0], "inner")
+        inner_sid = 2
+        self.assertGreaterEqual(g["sc_kind"][inner_sid] >> 8, 1)
+        nloc = g["sc_nlocals"][inner_sid]
+        self.assertEqual(g["sc_varnames"][inner_sid][nloc - 1], "x")
 
     def test_closure_enclosing_param(self) -> None:
-        src = "def outer(x):\n    def inner():\n        return x\n    return inner\n"
-        with self.assertRaises(SyntaxError) as cm:
-            firmware_symtab(src, "exec")
-        self.assertEqual(str(cm.exception), CLOSURE_MSG)
+        g = firmware_symtab(CLOSURE_PARAM_SRC, "exec")
+        scopes = firmware_function_scopes(g)
+        self.assertEqual(scopes[0][1][0], "x")
+        inner_sid = 2
+        self.assertGreaterEqual(g["sc_kind"][inner_sid] >> 8, 1)
+        nloc = g["sc_nlocals"][inner_sid]
+        self.assertEqual(g["sc_varnames"][inner_sid][nloc - 1], "x")
 
     def test_nested_def_without_closure_ok(self) -> None:
         src = "def outer(x):\n    def inner(y):\n        return y\n    return inner\n"
