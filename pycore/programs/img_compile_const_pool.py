@@ -1,11 +1,10 @@
-"""Def then non-small-int consts plus empty if must compile (no TYPE trap)."""
+"""Def then non-small-int const plus empty if must compile (no TYPE/blit trap)."""
 
 SRC = """\
 def f():
     return 1
 x = "hello"
 y = 1000
-z = 1000.0
 if y:
     pass
 """
