@@ -161,13 +161,14 @@ jobs:
   # MEM_LATENCY sweep. A cache that changes a retired result, or a master
   # that assumed single-cycle memory, fails only here -- the L2-to-RAM
   # writeback bug fixed in #101 was invisible precisely because CI never ran
-  # a second configuration.
+  # a second configuration. T5 compile() goldens at CACHE_EN=0 / LAT=30
+  # push the job past 90 minutes (one compile_closure is ~8.5M cycles).
   gates:
     name: gates
     needs: changes
     if: needs.changes.outputs.hw == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - run: make docker-gates TEST_JOBS=2
