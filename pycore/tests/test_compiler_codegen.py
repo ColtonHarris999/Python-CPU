@@ -122,6 +122,13 @@ EVAL_LITERALS = [
     "256 + 1",
     "True",
     "False",
+    "(lambda x: x + 1)(6)",
+    "(lambda: 7)()",
+    'f"hello"',
+    'f"a{1}b"',
+    'f"{1}"',
+    'f"{1!s}"',
+    'f""',
 ]
 
 
@@ -221,6 +228,21 @@ EXEC_CASES = [
         "xs = [x for x in [1, 2, 3]]\n",
         None,
         {"xs": [1, 2, 3]},
+    ),
+    (
+        "x = (lambda n: n + 1)(6)\n",
+        None,
+        {"x": 7},
+    ),
+    (
+        "assert 1\nx = 1\n",
+        None,
+        {"x": 1},
+    ),
+    (
+        's = f"a{1}b"\n',
+        None,
+        {"s": "a1b"},
     ),
 ]
 
@@ -399,6 +421,40 @@ class TestCompilerCodegenCorpus(unittest.TestCase):
         co = firmware_codegen(src, "exec")
         self.assertIsNone(co())
         self.assertEqual(co._globals["z"], 2)
+
+    def test_identity_decorator(self) -> None:
+        src = (
+            "def d(fn):\n"
+            "    return fn\n"
+            "@d\n"
+            "def f():\n"
+            "    return 7\n"
+            "z = f()\n"
+        )
+        co = firmware_codegen(src, "exec")
+        self.assertIsNone(co())
+        self.assertEqual(co._globals["z"], 7)
+
+    def test_assert_message_raises(self) -> None:
+        src = "assert 0, 'nope'\n"
+        co = firmware_codegen(src, "exec")
+        with self.assertRaises(AssertionError) as cm:
+            co()
+        self.assertEqual(str(cm.exception), "nope")
+
+    def test_fstring_conversion_repr(self) -> None:
+        self.assertEqual(firmware_eval('f"{1!r}"'), "1")
+        self.assertEqual(firmware_eval('f"{1!s}"'), "1")
+
+    def test_lambda_closure(self) -> None:
+        src = (
+            "def outer(x):\n"
+            "    return (lambda: x)\n"
+            "z = outer(7)()\n"
+        )
+        co = firmware_codegen(src, "exec")
+        self.assertIsNone(co())
+        self.assertEqual(co._globals["z"], 7)
 
     def test_unary_plus_true_is_not_in_differential(self) -> None:
         # Pin the known deviation: firmware leaves True, CPython yields 1.

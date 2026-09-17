@@ -1,11 +1,12 @@
 # `compile` — shipped subset
 
-Status: **in ROM** (compiler_design.md T4 / §11.2, landed). T1–T4
-expressions and statements (`if`/`while`/`for`, `def` positional,
-displays, unpack, `try`/`except`/`else`/`finally`, `raise`,
-comprehensions, string slices). `"single"` / nonzero `flags` /
-invalid `optimize` → `ValueError`. Defaults / `*args` / `**kwargs` /
-nested closures remain `SyntaxError`.
+Status: **in ROM** (compiler_design.md T5, landed). T1–T5
+expressions and statements (`if`/`while`/`for`, `def` positional with
+decorators, `lambda`, `assert`, simple f-strings, displays, unpack,
+`try`/`except`/`else`/`finally`, `raise`, comprehensions, string slices).
+`"single"` / nonzero `flags` / invalid `optimize` → `ValueError`.
+Defaults / `*args` / `**kwargs` / `class` / `import` / `with` remain
+`SyntaxError`.
 
 **Design:** [`planning/compiler_design.md`](../../planning/compiler_design.md)
 §4.2. Pipeline notes: [`pycore/docs/compiler.md`](../../pycore/docs/compiler.md).
@@ -58,6 +59,10 @@ the step-D toy that returns 42). It stores `_in_src` / `_in_file` /
 | `img_compile_list_comp` | **15** (T4, two-core) |
 | `img_compile_reject_closure` | **1** (§11.4 nested enclosing load compiles) |
 | `img_compile_closure` | **7** (§11.4 param cell + `STORE_DEREF`) |
+| `img_compile_lambda` | **7** (T5) |
+| `img_compile_assert` | **1** (T5) |
+| `img_compile_decorator` | **7** (T5 identity decorator) |
+| `img_compile_fstring` | **1** (T5 `f"a{1}b"`) |
 
 String-form `eval("1+2")` / `exec("x = 1")` dispatch via `_bi_code_kind`
 (§11.1). `make pycore-size-report` is the W-8 occupancy gate (A8).

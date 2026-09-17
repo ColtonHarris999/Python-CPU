@@ -631,7 +631,7 @@ depth-first and land in the parent's `co_consts` before the parent is built.
 | **T2** | `if`/`elif`/`else`, `while`, `for`, `break`, `continue`, `pass`, augmented assignment, `del` | v1 (A2) |
 | **T3** | `def` with positional / default / kw-only / `*args` / `**kwargs`, tuple unpacking, list / tuple / dict / set displays, `global` | v1 (A2) |
 | T4 | `try`/`except`/`else`/`finally`, `raise`, comprehensions, string slicing | **landed** (§11.2) |
-| T5 | `class`, decorators, `import`, `lambda`, f-strings, `with`, `assert` | blocked on runtime tracks (§11) |
+| T5 | `lambda`, decorators, `assert`, simple f-strings (`FORMAT_SIMPLE` / `BUILD_STRING` / `CONVERT_VALUE`). `class` / `import` / `with` stay `SyntaxError` | **landed** |
 
 **Constant folding (§11.3).** Int `+ - * & | ^` and unary `- ~`, plus
 str `+`, fold to a `Constant` before emit. CPython still emits
@@ -1103,6 +1103,7 @@ parallel with B and C.
 | **T4** | §11.2 try/except/else/finally, raise, comprehensions, string slices; CODE_RAM 65536. **Landed** | `img_compile_try_except` → 7; `img_compile_try_else` → 3; `img_compile_try_finally` → 12; `img_compile_raise` → 7; `img_compile_str_slice` → 1; `img_compile_list_comp` (two-core) → 15 |
 | **Fold** | §11.3 constant folding of int ALU / str Add. **Landed** | Host: `1+2` is one `LOAD_SMALL_INT`; `1+x` still `BINARY_OP` |
 | **Closures** | §11.4 cells + `OBK_FUNCTION`. **Landed** | `img_compile_reject_closure` → 1; `img_compile_closure` → 7 |
+| **T5** | lambda, decorators, assert, simple f-strings. **Landed** | `img_compile_lambda` → 7; `img_compile_assert` → 1; `img_compile_decorator` → 7; `img_compile_fstring` → 1. `class`/`import`/`with` stay A4 `SyntaxError` |
 | **O-2** | split result/scratch arenas. **Not opened** | R4 watermark golden still holds; caller mark/release is the reclaim path |
 | **Loader** | module image + relocation. **Not opened** | compiler fits (41218 / 65536); overlays only if headroom vanishes |
 | **BIOS** | ROM `bios(payload)` execs source. **Landed** | `img_bios_exec` → 3 |
@@ -1160,6 +1161,10 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_compile_list_comp` | **15** — T4 `[x for x in [1,2,3,4,5]]` (two-core; `LIST_APPEND` grow) |
 | `img_compile_reject_closure` | **1** — nested enclosing load compiles and returns 1 (§11.4) |
 | `img_compile_closure` | **7** — `outer(3)` then inner `STORE_DEREF` `x = x + 4` (§11.4) |
+| `img_compile_lambda` | **7** — T5 `(lambda x: x + 1)(6)` |
+| `img_compile_assert` | **1** — T5 `assert 1` |
+| `img_compile_decorator` | **7** — T5 identity decorator |
+| `img_compile_fstring` | **1** — T5 `f"a{1}b" == "a1b"` |
 | `img_bios_exec` | **3** — ROM `bios("x = 1 + 2")` (§11.7) |
 
 ---
@@ -1191,20 +1196,31 @@ In dependency order, not priority order.
    is `SyntaxError`; other SFA flags TYPE-trap). Device:
    `img_symtab_closure` → 1; `img_compile_reject_closure` → 1;
    `img_compile_closure` → 7.
-5. **Split result/scratch heap arenas (O-2).** **Not opened.** R4
+5. **T5 grammar.** **Landed** (runtime-capable subset). `lambda` (same
+   packing as `FunctionDef`, name `"<lambda>"`, no enclosing `STORE_NAME`);
+   decorators (`nd_b = nargs | (ndec << 16)`, kids `[decs][args][body]`,
+   `CALL 0` without `PUSH_NULL`); `assert` rewritten to
+   `LOAD_NAME`/`LOAD_GLOBAL AssertionError` + `RAISE_VARARGS` 1 (no
+   `LOAD_COMMON_CONSTANT`); simple f-strings (`FSTRING_*` 59/60/61,
+   `FORMAT_SIMPLE` / `BUILD_STRING` / `CONVERT_VALUE` `!s`/`!r`/`!a`).
+   Nested f-strings, format specs, `f"{x=}"`, t-strings, `class`,
+   `import`, and `with` stay `SyntaxError`. Device:
+   `img_compile_lambda` → 7; `img_compile_assert` → 1;
+   `img_compile_decorator` → 7; `img_compile_fstring` → 1.
+6. **Split result/scratch heap arenas (O-2).** **Not opened.** R4
    `img_compile_repeat` is the bite test (≤ 400000 → 1). Caller
    mark/release (`img_compile_release_realloc` → 37) already reclaims.
    A downward result cursor is an allocator change; do not add it while
    the watermark golden holds.
-6. **Module loader + relocation.** **Not opened.** The compiler still fits
+7. **Module loader + relocation.** **Not opened.** The compiler still fits
    the boot image (41 218 of 65 536 code-RAM slots, 24 318 remain).
    `code_loading.md` §4 stays the recorded format; do not restart the
    loader for occupancy (lever 3 is overlays, only after shrinking
    `codegen.py`).
-7. **BIOS.** **Landed.** ROM `bios(payload)` `exec`s a string or code
+8. **BIOS.** **Landed.** ROM `bios(payload)` `exec`s a string or code
    object in the caller's globals (`img_bios_exec` → 3). Programs may
    still call `compile()` / `exec()` directly.
-8. **Self-hosting.** **Blocked on size.** Stage-2 would compile
+9. **Self-hosting.** **Blocked on size.** Stage-2 would compile
    `pycore_firmware/compiler/` on device and check byte-identical output.
    That needs ~41 218 compiled-output slots; headroom is 24 318.
    `make pycore-size-report` prints `self-host: blocked` until remaining

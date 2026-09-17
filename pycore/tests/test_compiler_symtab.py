@@ -52,6 +52,7 @@ SYMTAB_CORPUS = [
     "def f(a):\n    a[0] = 1\n    return a\n",
     "def f(): return 1\n",
     "def f(a,):\n    x = a\n    return x\n",
+    "x = (lambda n: n + 1)\n",
 ]
 
 

@@ -1,7 +1,7 @@
 # On-device `compile()`
 
-Status: **Landed** through T4 (§11.2 try/raise/comprehensions/string
-slices) plus §11.1 string-form `exec`/`eval` via `_bi_code_kind`. Design:
+Status: **Landed** through T5 (`lambda`, decorators, `assert`, simple
+f-strings) plus T4 and §11.4 closures. Design:
 [`planning/compiler_design.md`](../../planning/compiler_design.md).
 
 `compile()` is a resident PyCore builtin. This file records the
@@ -53,13 +53,15 @@ nd_obj[n]                   str / int / float / list payload, or None
 kids[]                      flat arena
 ```
 
-`mode == "eval"` wraps a T1–T4 expression in `ND_EXPRESSION`. `mode == "exec"`
-parses T1–T4 statements (`if`/`while`/`for`, `break`/`continue`/`pass`,
-augassign, `del`, displays, unpack, `def` with positional args, `global`,
-`try`/`except`/`else`/`finally`, `raise`, single-generator
+`mode == "eval"` wraps a T1–T5 expression in `ND_EXPRESSION`. `mode == "exec"`
+parses T1–T5 statements (`if`/`while`/`for`, `break`/`continue`/`pass`,
+augassign, `del`, displays, unpack, `def` with positional args and
+decorators, `global`, `try`/`except`/`else`/`finally`, `raise`, `assert`,
+`lambda`, simple f-strings, single-generator
 list/set/dict comprehensions, string slices) into `ND_MODULE`. Slice
 step, generator expressions, `raise from`, `except*`, `while`/`for`-`else`,
-defaults/`*args`/`**kwargs`, and T5 are `SyntaxError`.
+defaults/`*args`/`**kwargs`, nested f-strings, format specs, `f"{x=}"`,
+and `class`/`import`/`with` are `SyntaxError`.
 
 Host: `pycore/tests/test_compiler_parser.py` vs `ast.parse` (tree shape).
 Device: `img_parser_tiny_expr` (checksum), `img_compile_deep_nesting`
@@ -96,13 +98,16 @@ Device: `img_symtab_locals` (checksum), `img_symtab_closure` (returns 1).
 
 `_pyc_codegen_main() -> CODE_OBJECT` lexes, parses, builds the symbol table,
 then recursively visits `nd_*` (Rule 2) into instruction words and assembles
-them with `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_new`. T1–T4:
+them with `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_new`. T1–T5:
 literals, names, ALU, unary, compare/chains, `is`/`in`, `not`/`and`/`or`,
 call, subscript, attribute, expression statements, assignment, `return`,
 `if`/`elif`/`else`, `while`/`for`, `break`/`continue`/`pass`, augassign,
 `del`, list/tuple/dict/set displays, unpack, `def` (positional; nested
 assemble into the parent's `co_consts` then `MAKE_FUNCTION`; freevars
-emit `COPY_FREE_VARS` / `MAKE_CELL` / `SET_FUNCTION_ATTRIBUTE 8`),
+emit `COPY_FREE_VARS` / `MAKE_CELL` / `SET_FUNCTION_ATTRIBUTE 8`;
+decorators `CALL 0` without `PUSH_NULL`), `lambda`, `assert` (load
+`AssertionError` + `RAISE_VARARGS` 1), simple f-strings (`FORMAT_SIMPLE` /
+`BUILD_STRING` / `CONVERT_VALUE`),
 `try`/`except`/`else`/`finally`, `raise`, comprehensions (`LIST_APPEND` /
 `SET_ADD`/`MAP_ADD` oparg 2), string `BINARY_SLICE`.
 
@@ -125,6 +130,8 @@ is `SyntaxError`. `except as e` leaves `e` bound (no `DELETE_NAME`).
 Host: `pycore/tests/test_compiler_codegen.py` result differential vs CPython
 `eval`/`exec`. Device: `img_codegen_t1_expr` (assembled `"1 + 2"` returns 3),
 `img_compile_exec_roundtrip` (A2 → 7).
+
+## Compile shim (step I)
 
 ## Compile shim (step I)
 
@@ -186,6 +193,20 @@ closure tuple into the last n locals; `SET_FUNCTION_ATTRIBUTE 8` allocates
 load of an enclosing local compiles. Device: `img_symtab_closure` (1),
 `img_compile_reject_closure` (1), `img_compile_closure` (7).
 
+## T5 grammar
+
+Landed subset: `lambda`, decorators, `assert`, simple f-strings.
+Lexer emits `FSTRING_START`/`MIDDLE`/`END` (kinds 59/60/61; not seeded
+as `TOK_*` names). Assert loads seeded `AssertionError` rather than
+`LOAD_COMMON_CONSTANT`. Decorator application is `CALL 0` with the
+function in the self_or_null slot (no `PUSH_NULL`). F-string limits:
+`FORMAT_SIMPLE` / `BUILD_STRING` (SHORT_STR total ≤15) / `CONVERT_VALUE`
+opargs 1/2/3; no format spec, no `f"{x=}"`, no nested f-strings, no
+t-strings. `class`, `import`, and `with` stay compile-time `SyntaxError`.
+
+Device: `img_compile_lambda` (7), `img_compile_assert` (1),
+`img_compile_decorator` (7), `img_compile_fstring` (1).
+
 ## BIOS (§11.7)
 
 ROM `bios(payload)` `exec`s a string or code object in the caller's
@@ -220,7 +241,7 @@ stays constant in the source nesting.
 | T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | parser + codegen (J, landed) |
 | T3 | `def` (positional args + indented / one-line suite), `global`, displays, unpack | parser slice in G; codegen (J, landed) |
 | T4 | `try`/`except`/`else`/`finally`, `raise`, comprehensions, string slices | parser + codegen (§11.2, landed) |
-| T5 | `class`, decorators, `import`, `lambda`, f-strings, `with`, `assert` | blocked on runtime (§11) |
+| T5 | `lambda`, decorators, `assert`, simple f-strings. `class`/`import`/`with` stay `SyntaxError` | parser + codegen (landed) |
 
 ## Deviations from CPython (D1–D9)
 
