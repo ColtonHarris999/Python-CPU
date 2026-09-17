@@ -456,6 +456,75 @@ class TestCompilerCodegenCorpus(unittest.TestCase):
         self.assertIsNone(co())
         self.assertEqual(co._globals["z"], 7)
 
+    def test_empty_suite_does_not_emit_a_negative_jump(self) -> None:
+        for src in (
+            "x = 1\nif x:\n    pass\ny = 2\n",
+            "x = 0\nif x:\n    pass\ny = 2\n",
+            "s = 0\nfor i in [1, 2]:\n    if i:\n        pass\n    s = s + i\n",
+            "def f(a):\n    if a:\n        pass\n    return 3\nz = f(1)\n",
+        ):
+            with self.subTest(src=src):
+                co = firmware_codegen(src, "exec")
+                co()
+                g = {}
+                exec(src, g)
+                for name in ("x", "y", "s", "z"):
+                    if name in g:
+                        self.assertEqual(co._globals[name], g[name])
+
+    def test_no_emitted_word_has_a_negative_oparg(self) -> None:
+        src = (
+            "x = 1\n"
+            "if x:\n"
+            "    pass\n"
+            "for i in [1, 2]:\n"
+            "    if i:\n"
+            "        pass\n"
+            "    else:\n"
+            "        x = i\n"
+        )
+        co = firmware_codegen(src, "exec")
+        pc = co._entry
+        for _ in range(1 << 12):
+            word = co._ram.words.get(pc, 0)
+            self.assertGreaterEqual(word, 0)
+            self.assertEqual(word >> 40, 0)
+            if word & 0xFF == _HOST_OP_RETURN_VALUE:
+                break
+            pc += 1
+
+    def test_int_and_float_constants_do_not_share_a_pool_slot(self) -> None:
+        for src, want in (
+            ("x = 1000\ny = 1000.0\n", {"x": int, "y": float}),
+            ("x = 1000.0\ny = 1000\n", {"x": float, "y": int}),
+            ("x = 0.0\ny = 0\n", {"x": float, "y": int}),
+        ):
+            with self.subTest(src=src):
+                co = firmware_codegen(src, "exec")
+                co()
+                g = {}
+                exec(src, g)
+                for name, typ in want.items():
+                    self.assertIs(type(co._globals[name]), typ)
+                    self.assertIs(type(g[name]), typ)
+
+    def test_nested_code_object_is_never_a_dedup_comparison_operand(self) -> None:
+        src = (
+            "def f():\n"
+            "    return 1\n"
+            "x = 'hello'\n"
+            "y = 1000\n"
+            "z = 1.5\n"
+        )
+        co = firmware_codegen(src, "exec")
+        co()
+        h = {}
+        exec(src, h)
+        for name in ("x", "y", "z"):
+            self.assertEqual(co._globals[name], h[name])
+            self.assertIs(type(co._globals[name]), type(h[name]))
+        self.assertEqual(co._globals["f"](), 1)
+
     def test_unary_plus_true_is_not_in_differential(self) -> None:
         # Pin the known deviation: firmware leaves True, CPython yields 1.
         self.assertEqual(firmware_eval("+True"), True)

@@ -1369,6 +1369,13 @@ pycore-img-compile-fstring:
 pycore-img-compile-fstring-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_fstring,8000000)
 
+# Empty-if / def-then-string-or-float must not TYPE-trap (A4).
+pycore-img-compile-const-pool:
+	$(call PYCORE_IMAGE_RUN,compile_const_pool,8000000)
+
+pycore-img-compile-const-pool-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_const_pool,8000000)
+
 # compiler_design.md §11.1: string-form exec/eval via _bi_code_kind.
 # Cycle caps cover CACHE_EN=0 / LAT=30 like the other compile() images.
 pycore-img-eval-str-direct:
@@ -1421,6 +1428,7 @@ pycore-img-package-all: \
 	pycore-img-compile-assert \
 	pycore-img-compile-decorator \
 	pycore-img-compile-fstring \
+	pycore-img-compile-const-pool \
 	pycore-img-eval-str-direct \
 	pycore-img-eval-str-long \
 	pycore-img-exec-str-direct \
@@ -2000,6 +2008,7 @@ pycore-img-two-core: \
 	pycore-img-compile-assert-two-core \
 	pycore-img-compile-decorator-two-core \
 	pycore-img-compile-fstring-two-core \
+	pycore-img-compile-const-pool-two-core \
 	pycore-img-eval-str-direct-two-core \
 	pycore-img-eval-str-long-two-core \
 	pycore-img-exec-str-direct-two-core \

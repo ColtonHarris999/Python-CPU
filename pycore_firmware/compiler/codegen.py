@@ -299,21 +299,13 @@ def _pyc_visit(nid):
                 if val <= 255:
                     _pyc_emit(OPMAP["LOAD_SMALL_INT"], val, 0)
                     return
+        # Identity-only pool lookup. ``==`` would COMPARE_OP a nested
+        # CODE_OBJECT against a later string/float (device TYPE trap) and
+        # would fold 1000 onto 1000.0. Duplicate values get extra slots.
         i = 0
         found = 0
         while i < stmt_n:
-            cur = stmts[i]
-            same = 0
-            if val is True or val is False or val is None:
-                if cur is val:
-                    same = 1
-            else:
-                if cur is True or cur is False or cur is None:
-                    same = 0
-                else:
-                    if cur == val:
-                        same = 1
-            if same:
+            if stmts[i] is val:
                 _pyc_emit(OPMAP["LOAD_CONST"], i, 0)
                 found = 1
                 break
@@ -985,7 +977,7 @@ def _pyc_visit(nid):
             i = 0
             found = 0
             while i < stmt_n:
-                if stmts[i] == val:
+                if stmts[i] is val:
                     _pyc_emit(OPMAP["LOAD_CONST"], i, 0)
                     found = 1
                     break
@@ -1056,9 +1048,23 @@ def _pyc_assemble():
             if op != OPMAP["JUMP_FORWARD"]:
                 nc = 1
             if tgt >= i:
-                ops[i] = tgt - i - 1 - nc
+                delta = tgt - i - 1 - nc
             else:
-                ops[i] = i + 1 + nc - tgt
+                delta = i + 1 + nc - tgt
+            if delta < 0:
+                # Hardware adds n_cache to every taken branch, so a
+                # conditional jump cannot name its own fall-through. Empty
+                # suite ("if c: pass") puts the label at i+1; the branch is
+                # dead and only the pop survives. Else _bi_code_blit
+                # TYPE-traps a negative oparg (A4).
+                if delta != 0 - 1:
+                    _pyc_parse_error("internal: negative jump offset")
+                if op == OPMAP["POP_JUMP_IF_FALSE"] or op == OPMAP["POP_JUMP_IF_TRUE"]:
+                    opnd[i] = OPMAP["POP_TOP"]
+                    delta = 0
+                else:
+                    _pyc_parse_error("internal: negative jump offset")
+            ops[i] = delta
         i = i + 1
     depth = 0
     maxd = 0

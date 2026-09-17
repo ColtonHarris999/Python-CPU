@@ -589,6 +589,30 @@ class TestCompilerParserCorpus(unittest.TestCase):
         with self.assertRaises(SyntaxError):
             _host_exec_globals(g["_pyc_parse_main"], g)
 
+    def test_string_escape_is_rejected_not_silently_kept(self) -> None:
+        for src in (r"x = 'a\tb'" + "\n", r'x = "q\\"' + "\n", r"x = '''a\nb'''" + "\n"):
+            with self.subTest(src=src):
+                g = load_firmware_package_namespace()
+                g["_in_src"] = src
+                g["_in_mode"] = "exec"
+                with self.assertRaises(SyntaxError):
+                    _host_exec_globals(g["_pyc_parse_main"], g)
+
+    def test_raw_string_keeps_backslashes(self) -> None:
+        g = load_firmware_package_namespace()
+        g["_in_src"] = r"x = r'a\tb'" + "\n"
+        g["_in_mode"] = "exec"
+        _host_exec_globals(g["_pyc_parse_main"], g)
+        self.assertIn(r"a\tb", g["nd_obj"])
+
+    def test_keyword_arguments_are_rejected(self) -> None:
+        g = load_firmware_package_namespace()
+        g["_in_src"] = "f(a=1)\n"
+        g["_in_mode"] = "eval"
+        with self.assertRaises(SyntaxError) as cm:
+            _host_exec_globals(g["_pyc_parse_main"], g)
+        self.assertIn("keyword arguments", str(cm.exception))
+
     def test_img_parser_tiny_expr_host_golden(self) -> None:
         self.assertEqual(
             host_entry_result(PROGRAMS / "img_parser_tiny_expr.py", "managed_entry"),

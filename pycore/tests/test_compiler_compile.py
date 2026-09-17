@@ -231,6 +231,12 @@ class TestCompilerCompileShim(unittest.TestCase):
             1,
         )
 
+    def test_img_compile_const_pool_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_const_pool.py", "managed_entry"),
+            7,
+        )
+
     def test_class_and_with_remain_syntax_error(self) -> None:
         compile_fn = load_rom_firmware_callables()["compile"]
         with self.assertRaises(SyntaxError):
