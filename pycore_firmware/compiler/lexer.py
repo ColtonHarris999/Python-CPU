@@ -323,7 +323,7 @@ def _pyc_lex_read_number():
 
 
 def _pyc_lex_read_name():
-    global _lex_i, _lex_col, _lex_src, _lex_n, _lex_line
+    global _lex_i, _lex_col, _lex_src, _lex_n, _lex_line, stmt_n, sc_n
     src = _lex_src
     n = _lex_n
     i = _lex_i
@@ -340,8 +340,44 @@ def _pyc_lex_read_name():
         q = src[i]
         if q == "'" or q == '"':
             if _pyc_prefix_letters(text):
-                if _pyc_prefix_has_ft(text):
-                    _pyc_lex_error("f-strings are not supported")
+                has_t = 0
+                has_f = 0
+                has_b = 0
+                has_u = 0
+                pi = 0
+                pn = len(text)
+                while pi < pn:
+                    pch = text[pi]
+                    if pch == "t" or pch == "T":
+                        has_t = 1
+                    elif pch == "f" or pch == "F":
+                        has_f = 1
+                    elif pch == "b" or pch == "B":
+                        has_b = 1
+                    elif pch == "u" or pch == "U":
+                        has_u = 1
+                    pi = pi + 1
+                if has_t:
+                    _pyc_lex_error("t-strings are not supported")
+                if has_f:
+                    if has_b:
+                        _pyc_lex_error("invalid string prefix")
+                    if has_u:
+                        _pyc_lex_error("invalid string prefix")
+                    if stmt_n == 2:
+                        _pyc_lex_error("nested f-strings are not supported")
+                    qlen = 1
+                    if i + 2 < n and src[i + 1] == q and src[i + 2] == q:
+                        qlen = 3
+                    i = i + qlen
+                    _lex_col = _lex_col + qlen
+                    _lex_i = i
+                    _pyc_lex_emit(
+                        59, start_line, start_col, start, i, src[start:i]
+                    )
+                    stmt_n = 1
+                    sc_n = qlen | (ord(q) << 8)
+                    return
                 if _pyc_str_prefix_ok(text) == 0:
                     _pyc_lex_error("invalid string prefix")
                 qlen = 1
@@ -354,7 +390,7 @@ def _pyc_lex_read_name():
 
 def _pyc_lex(src):
     global _lex_src, _lex_n, _lex_i, _lex_line, _lex_col, _lex_line_start
-    global tk_a, tk_b, tk_s, tk_n
+    global tk_a, tk_b, tk_s, tk_n, stmt_n, sc_n
     _lex_src = src
     _lex_n = len(src)
     _lex_i = 0
@@ -362,6 +398,8 @@ def _pyc_lex(src):
     _lex_col = 0
     _lex_line_start = 0
     tk_n = 0
+    stmt_n = 0
+    sc_n = 0
     cap = _lex_n // 4
     if cap < 8:
         cap = 8
@@ -377,6 +415,8 @@ def _pyc_lex(src):
     while 1:
         i = _lex_i
         if i >= n:
+            if stmt_n != 0:
+                _pyc_lex_error("unterminated f-string literal")
             if paren > 0:
                 _pyc_lex_error("unexpected EOF in multi-line statement")
             if need_nl:
@@ -397,8 +437,109 @@ def _pyc_lex(src):
                     TOK_DEDENT, _lex_line, _lex_col, i, i, 0
                 )
             _pyc_lex_emit(TOK_ENDMARKER, _lex_line, _lex_col, i, i, 0)
+            stmt_n = 0
+            sc_n = 0
             return tk_n
         src = _lex_src
+        if stmt_n == 1:
+            qlen = sc_n & 255
+            quote = chr((sc_n >> 8) & 255)
+            start = i
+            start_line = _lex_line
+            start_col = _lex_col
+            line = _lex_line
+            col = _lex_col
+            while i < n:
+                ch = src[i]
+                if qlen == 1 and ch == "\n":
+                    _pyc_lex_error("unterminated f-string literal")
+                if ch == quote:
+                    closed = 0
+                    if qlen == 1:
+                        closed = 1
+                    elif i + 2 < n:
+                        if src[i + 1] == quote:
+                            if src[i + 2] == quote:
+                                closed = 1
+                    if closed:
+                        if i > start:
+                            _pyc_lex_emit(
+                                60,
+                                start_line,
+                                start_col,
+                                start,
+                                i,
+                                src[start:i],
+                            )
+                        _pyc_lex_emit(
+                            61, line, col, i, i + qlen, src[i : i + qlen]
+                        )
+                        i = i + qlen
+                        col = col + qlen
+                        _lex_i = i
+                        _lex_line = line
+                        _lex_col = col
+                        stmt_n = 0
+                        need_nl = 1
+                        break
+                if ch == "{":
+                    if i + 1 < n:
+                        if src[i + 1] == "{":
+                            mid = src[start:i] + "{"
+                            _pyc_lex_emit(
+                                60, start_line, start_col, start, i + 1, mid
+                            )
+                            i = i + 2
+                            col = col + 2
+                            start = i
+                            start_line = line
+                            start_col = col
+                            continue
+                    if i > start:
+                        _pyc_lex_emit(
+                            60,
+                            start_line,
+                            start_col,
+                            start,
+                            i,
+                            src[start:i],
+                        )
+                    _pyc_lex_emit(TOK_OP, line, col, i, i + 1, "{")
+                    i = i + 1
+                    col = col + 1
+                    paren = paren + 1
+                    _lex_i = i
+                    _lex_line = line
+                    _lex_col = col
+                    stmt_n = 2
+                    need_nl = 1
+                    break
+                if ch == "}":
+                    if i + 1 < n:
+                        if src[i + 1] == "}":
+                            mid = src[start:i] + "}"
+                            _pyc_lex_emit(
+                                60, start_line, start_col, start, i + 1, mid
+                            )
+                            i = i + 2
+                            col = col + 2
+                            start = i
+                            start_line = line
+                            start_col = col
+                            continue
+                    _pyc_lex_error("f-string: single '}' is not allowed")
+                if ch == "\n":
+                    i = i + 1
+                    line = line + 1
+                    col = 0
+                    _lex_line_start = i
+                else:
+                    i = i + 1
+                    col = col + 1
+            if stmt_n == 1:
+                if i >= n:
+                    _pyc_lex_error("unterminated f-string literal")
+            continue
         if atbol:
             atbol = 0
             j = i
@@ -500,6 +641,8 @@ def _pyc_lex(src):
             continue
         if _pyc_id_start(ch):
             _pyc_lex_read_name()
+            if stmt_n == 1:
+                sc_n = sc_n | (paren << 16)
             need_nl = 1
             continue
         oplen = _pyc_lex_op_len()
@@ -509,6 +652,11 @@ def _pyc_lex(src):
         elif text == ")" or text == "]" or text == "}":
             if paren > 0:
                 paren = paren - 1
+            if stmt_n == 2:
+                if text == "}":
+                    pb = (sc_n >> 16) & 255
+                    if paren == pb:
+                        stmt_n = 1
         _pyc_lex_emit(TOK_OP, _lex_line, _lex_col, i, i + oplen, text)
         _lex_i = i + oplen
         _lex_col = _lex_col + oplen

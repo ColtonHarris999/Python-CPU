@@ -1,8 +1,14 @@
-# Firmware T1–T4 parser (compiler_design.md §5.5 / steps F, J, T4).
+# Firmware T1–T5 parser (compiler_design.md §5.5 / steps F, J, T4, T5).
 # Iterative shunting-yard over tk_* arrays into SoA nd_* / kids.
 # Node kinds are CPython 3.14 ast type integers from generated ND.
 #
-# FunctionDef packing: nd_obj=name, nd_a=kids start, nd_b=nargs, nd_c=n_body.
+# FunctionDef packing: nd_obj=name, nd_a=kids start,
+#   nd_b=nargs | (ndec << 16), nd_c=n_body; kids [decs][args][body].
+# Lambda packing: like FunctionDef with nd_obj="<lambda>", ndec=0,
+#   nd_c=1, kids [args][body_expr].
+# Assert packing: nd_a=test, nd_b=msg (-1 none).
+# JoinedStr packing: nd_a=kids start, nd_b=n.
+# FormattedValue packing: nd_a=value, nd_b=conversion (-1 / 115 / 114 / 97).
 # If packing: nd_a=test, nd_b=kids start, nd_c=n_body, nd_obj=n_orelse.
 # While packing: nd_a=test, nd_b=kids start, nd_c=n_body.
 # For packing: nd_a=target, nd_b=iter, nd_c=kids start, nd_obj=n_body.
@@ -426,7 +432,7 @@ def _pyc_close_call(want):
 
 
 def _pyc_parse_expr():
-    global opnd_n, ops_n
+    global opnd_n, ops_n, _lex_col
     want = 1
     start_opnd = opnd_n
     start_ops = ops_n
@@ -454,6 +460,140 @@ def _pyc_parse_expr():
                 nid = _pyc_nd_new(ND["Constant"], line, col, 2, 0, 0, val)
                 _pyc_opnd_push(nid)
                 _pyc_tok_advance()
+                want = 0
+                continue
+            if kind == 59:
+                line = _pyc_tok_line()
+                col = _pyc_tok_col()
+                start_text = text
+                raw = 0
+                si = 0
+                sn = len(start_text)
+                while si < sn:
+                    sch = start_text[si]
+                    if sch == "'" or sch == '"':
+                        break
+                    if sch == "r" or sch == "R":
+                        raw = 1
+                    si = si + 1
+                _pyc_tok_advance()
+                parts = [0] * 8
+                np = 0
+                while 1:
+                    kind = _pyc_tok_kind()
+                    text = _pyc_tok_text()
+                    if kind == 61:
+                        break
+                    if kind == TOK_ENDMARKER:
+                        _pyc_parse_error("unterminated f-string")
+                    if kind == 60:
+                        mid = text
+                        if raw == 0:
+                            out = ""
+                            ui = 0
+                            un = len(mid)
+                            while ui < un:
+                                mch = mid[ui]
+                                if mch == "\\":
+                                    if ui + 1 >= un:
+                                        out = out + mch
+                                        ui = ui + 1
+                                        continue
+                                    nch = mid[ui + 1]
+                                    if nch == "n":
+                                        out = out + "\n"
+                                    elif nch == "t":
+                                        out = out + "\t"
+                                    elif nch == "r":
+                                        out = out + "\r"
+                                    elif nch == "\\":
+                                        out = out + "\\"
+                                    elif nch == "'":
+                                        out = out + "'"
+                                    elif nch == '"':
+                                        out = out + '"'
+                                    else:
+                                        out = out + mch
+                                        out = out + nch
+                                    ui = ui + 2
+                                    continue
+                                out = out + mch
+                                ui = ui + 1
+                            mid = out
+                        mline = _pyc_tok_line()
+                        mcol = _pyc_tok_col()
+                        cid = _pyc_nd_new(
+                            ND["Constant"], mline, mcol, 2, 0, 0, mid
+                        )
+                        cap = len(parts)
+                        while cap < np + 1:
+                            extra = cap
+                            if extra < 8:
+                                extra = 8
+                            parts = parts + ([0] * extra)
+                            cap = len(parts)
+                        parts[np] = cid
+                        np = np + 1
+                        _pyc_tok_advance()
+                        continue
+                    if kind == TOK_OP and text == "{":
+                        fline = _pyc_tok_line()
+                        fcol = _pyc_tok_col()
+                        _pyc_tok_advance()
+                        saved_col = _lex_col
+                        _lex_col = 1
+                        fval = _pyc_parse_expr()
+                        _lex_col = saved_col
+                        conv = 0 - 1
+                        kind = _pyc_tok_kind()
+                        text = _pyc_tok_text()
+                        if kind == TOK_OP and text == "!":
+                            _pyc_tok_advance()
+                            if _pyc_tok_kind() != TOK_NAME:
+                                _pyc_parse_error("invalid f-string conversion")
+                            cname = _pyc_tok_text()
+                            if cname == "s":
+                                conv = 115
+                            elif cname == "r":
+                                conv = 114
+                            elif cname == "a":
+                                conv = 97
+                            else:
+                                _pyc_parse_error("invalid f-string conversion")
+                            _pyc_tok_advance()
+                            kind = _pyc_tok_kind()
+                            text = _pyc_tok_text()
+                        if kind == TOK_OP and text == "=":
+                            _pyc_parse_error("f-string debug is not supported")
+                        if kind == TOK_OP and text == ":":
+                            _pyc_parse_error("f-string format spec is not supported")
+                        if not (kind == TOK_OP and text == "}"):
+                            _pyc_parse_error("expected '}' in f-string")
+                        _pyc_tok_advance()
+                        fid = _pyc_nd_new(
+                            ND["FormattedValue"], fline, fcol, fval, conv, 0, 0
+                        )
+                        cap = len(parts)
+                        while cap < np + 1:
+                            extra = cap
+                            if extra < 8:
+                                extra = 8
+                            parts = parts + ([0] * extra)
+                            cap = len(parts)
+                        parts[np] = fid
+                        np = np + 1
+                        continue
+                    _pyc_parse_error("unexpected token in f-string")
+                if kind != 61:
+                    _pyc_parse_error("unterminated f-string")
+                _pyc_tok_advance()
+                ks = kids_n
+                i = 0
+                while i < np:
+                    _pyc_kids_append(parts[i])
+                    i = i + 1
+                nid = _pyc_nd_new(ND["JoinedStr"], line, col, ks, np, 0, 0)
+                _pyc_opnd_push(nid)
                 want = 0
                 continue
             if kind == TOK_NAME:
@@ -487,6 +627,60 @@ def _pyc_parse_expr():
                     _pyc_ops_push(2, ND["Not"], PREC["not"], line | (col << 32))
                     _pyc_tok_advance()
                     want = 1
+                    continue
+                if text == "lambda":
+                    line = _pyc_tok_line()
+                    col = _pyc_tok_col()
+                    _pyc_tok_advance()
+                    args = [0] * 8
+                    nargs = 0
+                    if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+                        while 1:
+                            if _pyc_tok_kind() != TOK_NAME:
+                                _pyc_parse_error("unsupported lambda argument")
+                            aname = _pyc_tok_text()
+                            if aname in KEYWORDS:
+                                _pyc_parse_error("invalid argument name")
+                            aline = _pyc_tok_line()
+                            acol = _pyc_tok_col()
+                            _pyc_tok_advance()
+                            if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "=":
+                                _pyc_parse_error("default arguments are not supported")
+                            aid = _pyc_nd_new(
+                                ND["Name"], aline, acol, ND["Store"], 0, 0, aname
+                            )
+                            cap = len(args)
+                            while cap < nargs + 1:
+                                extra = cap
+                                if extra < 8:
+                                    extra = 8
+                                args = args + ([0] * extra)
+                                cap = len(args)
+                            args[nargs] = aid
+                            nargs = nargs + 1
+                            if nargs > 240:
+                                _pyc_parse_error("too many locals")
+                            if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ",":
+                                _pyc_tok_advance()
+                                if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":":
+                                    break
+                                continue
+                            break
+                    if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+                        _pyc_parse_error("expected ':'")
+                    _pyc_tok_advance()
+                    body = _pyc_parse_expr()
+                    ks = kids_n
+                    i = 0
+                    while i < nargs:
+                        _pyc_kids_append(args[i])
+                        i = i + 1
+                    _pyc_kids_append(body)
+                    nid = _pyc_nd_new(
+                        ND["Lambda"], line, col, ks, nargs, 1, "<lambda>"
+                    )
+                    _pyc_opnd_push(nid)
+                    want = 0
                     continue
                 if text in KEYWORDS:
                     _pyc_parse_error("unsupported expression keyword '" + text + "'")
@@ -818,6 +1012,8 @@ def _pyc_parse_expr():
                 _pyc_tok_advance()
                 want = 1
                 continue
+            if _lex_col == 2:
+                break
             extra = _pyc_tok_line() | (_pyc_tok_col() << 32)
             _pyc_ops_push(9, 1, 0, extra)
             _pyc_tok_advance()
@@ -1228,13 +1424,49 @@ def _pyc_parse_function_def():
 
 
 def _pyc_parse_stmt():
-    global _lex_i
+    global _lex_i, _lex_col
     kind = _pyc_tok_kind()
     text = _pyc_tok_text()
     if kind == TOK_NAME and text == "return":
         return _pyc_parse_return()
     if kind == TOK_NAME and text == "def":
         return _pyc_parse_function_def()
+    if kind == TOK_OP and text == "@":
+        decs = [0] * 8
+        ndec = 0
+        while kind == TOK_OP and text == "@":
+            _pyc_tok_advance()
+            dec = _pyc_parse_expr()
+            cap = len(decs)
+            while cap < ndec + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                decs = decs + ([0] * extra)
+                cap = len(decs)
+            decs[ndec] = dec
+            ndec = ndec + 1
+            _pyc_skip_newlines()
+            kind = _pyc_tok_kind()
+            text = _pyc_tok_text()
+        if not (kind == TOK_NAME and text == "def"):
+            _pyc_parse_error("expected 'def' after decorator")
+        fn = _pyc_parse_function_def()
+        nargs = nd_b[fn]
+        nbody = nd_c[fn]
+        old_ks = nd_a[fn]
+        new_ks = kids_n
+        i = 0
+        while i < ndec:
+            _pyc_kids_append(decs[i])
+            i = i + 1
+        i = 0
+        while i < nargs + nbody:
+            _pyc_kids_append(kids[old_ks + i])
+            i = i + 1
+        nd_a[fn] = new_ks
+        nd_b[fn] = nargs | (ndec << 16)
+        return fn
     if kind == TOK_NAME and text == "global":
         return _pyc_parse_global()
     if kind == TOK_NAME and text == "pass":
@@ -1543,6 +1775,19 @@ def _pyc_parse_stmt():
             nh,
             norelse | (nfinal << 16),
         )
+    if kind == TOK_NAME and text == "assert":
+        line = _pyc_tok_line()
+        col = _pyc_tok_col()
+        _pyc_tok_advance()
+        saved_col = _lex_col
+        _lex_col = 2
+        test = _pyc_parse_expr()
+        _lex_col = saved_col
+        msg = 0 - 1
+        if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ",":
+            _pyc_tok_advance()
+            msg = _pyc_parse_expr()
+        return _pyc_nd_new(ND["Assert"], line, col, test, msg, 0, 0)
     if kind == TOK_NAME and text in KEYWORDS:
         if (
             text != "True"
@@ -1581,7 +1826,9 @@ def _pyc_parse_stmt():
 def _pyc_parse(mode):
     global _parse_i, nd_kind, nd_pos, nd_a, nd_b, nd_c, nd_obj, nd_n
     global kids, kids_n, opnd, opnd_n, ops, ops_obj, ops_n, stmts, stmt_n
+    global _lex_col
     _parse_i = 0
+    _lex_col = 0
     cap = tk_n
     if cap < 8:
         cap = 8

@@ -1501,6 +1501,7 @@ _HOST_OP_BINARY_SLICE = 1
 _HOST_OP_CHECK_EXC_MATCH = 6
 _HOST_OP_DELETE_SUBSCR = 8
 _HOST_OP_END_FOR = 9
+_HOST_OP_FORMAT_SIMPLE = 12
 _HOST_OP_GET_ITER = 16
 _HOST_OP_MAKE_FUNCTION = 23
 _HOST_OP_NOP = 27
@@ -1520,10 +1521,12 @@ _HOST_OP_BINARY_OP = 44
 _HOST_OP_BUILD_LIST = 46
 _HOST_OP_BUILD_MAP = 47
 _HOST_OP_BUILD_SET = 48
+_HOST_OP_BUILD_STRING = 50
 _HOST_OP_BUILD_TUPLE = 51
 _HOST_OP_CALL = 52
 _HOST_OP_COMPARE_OP = 56
 _HOST_OP_CONTAINS_OP = 57
+_HOST_OP_CONVERT_VALUE = 58
 _HOST_OP_COPY = 59
 _HOST_OP_COPY_FREE_VARS = 60
 _HOST_OP_DELETE_ATTR = 61
@@ -1888,6 +1891,36 @@ class _HostEmittedCode:
                     narg += 1
                 pairs.reverse()
                 stack.append(dict(pairs))
+                continue
+            if opcode == _HOST_OP_BUILD_STRING:
+                pieces: list[object] = []
+                narg = 0
+                while narg < oparg:
+                    pieces.append(stack.pop())
+                    narg += 1
+                pieces.reverse()
+                out = ""
+                i = 0
+                while i < len(pieces):
+                    out = out + str(pieces[i])
+                    i += 1
+                stack.append(out)
+                continue
+            if opcode == _HOST_OP_FORMAT_SIMPLE:
+                stack.append(format(stack.pop(), ""))
+                continue
+            if opcode == _HOST_OP_CONVERT_VALUE:
+                val = stack.pop()
+                if oparg == 1:
+                    stack.append(str(val))
+                elif oparg == 2:
+                    stack.append(repr(val))
+                elif oparg == 3:
+                    stack.append(ascii(val))
+                else:
+                    raise RuntimeError(
+                        f"host code-RAM interpreter: CONVERT_VALUE oparg {oparg}"
+                    )
                 continue
             if opcode == _HOST_OP_MAKE_FUNCTION:
                 fn = stack[-1]

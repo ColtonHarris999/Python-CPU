@@ -1344,6 +1344,31 @@ pycore-img-compile-str-slice-two-core: excore-fw
 pycore-img-compile-list-comp-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_list_comp,40000000)
 
+# compiler_design.md T5: lambda, assert, decorators, simple f-strings.
+pycore-img-compile-lambda:
+	$(call PYCORE_IMAGE_RUN,compile_lambda,8000000)
+
+pycore-img-compile-lambda-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_lambda,8000000)
+
+pycore-img-compile-assert:
+	$(call PYCORE_IMAGE_RUN,compile_assert,8000000)
+
+pycore-img-compile-assert-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_assert,8000000)
+
+pycore-img-compile-decorator:
+	$(call PYCORE_IMAGE_RUN,compile_decorator,8000000)
+
+pycore-img-compile-decorator-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_decorator,8000000)
+
+pycore-img-compile-fstring:
+	$(call PYCORE_IMAGE_RUN,compile_fstring,8000000)
+
+pycore-img-compile-fstring-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_fstring,8000000)
+
 # compiler_design.md §11.1: string-form exec/eval via _bi_code_kind.
 # Cycle caps cover CACHE_EN=0 / LAT=30 like the other compile() images.
 pycore-img-eval-str-direct:
@@ -1392,6 +1417,10 @@ pycore-img-package-all: \
 	pycore-img-compile-try-finally \
 	pycore-img-compile-raise \
 	pycore-img-compile-str-slice \
+	pycore-img-compile-lambda \
+	pycore-img-compile-assert \
+	pycore-img-compile-decorator \
+	pycore-img-compile-fstring \
 	pycore-img-eval-str-direct \
 	pycore-img-eval-str-long \
 	pycore-img-exec-str-direct \
@@ -1967,6 +1996,10 @@ pycore-img-two-core: \
 	pycore-img-compile-raise-two-core \
 	pycore-img-compile-str-slice-two-core \
 	pycore-img-compile-list-comp-two-core \
+	pycore-img-compile-lambda-two-core \
+	pycore-img-compile-assert-two-core \
+	pycore-img-compile-decorator-two-core \
+	pycore-img-compile-fstring-two-core \
 	pycore-img-eval-str-direct-two-core \
 	pycore-img-eval-str-long-two-core \
 	pycore-img-exec-str-direct-two-core \

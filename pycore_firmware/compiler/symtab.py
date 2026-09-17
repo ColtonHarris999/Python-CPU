@@ -210,6 +210,20 @@ def _pyc_sy_push_children(nid):
         if a >= 0:
             _pyc_sy_work_push(a, 0)
         return
+    if kind == ND["Assert"]:
+        if b >= 0:
+            _pyc_sy_work_push(b, 0)
+        _pyc_sy_work_push(a, 0)
+        return
+    if kind == ND["JoinedStr"]:
+        i = b
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[a + i], 0)
+        return
+    if kind == ND["FormattedValue"]:
+        _pyc_sy_work_push(a, 0)
+        return
     if kind == ND["Try"]:
         norelse = nd_obj[nid] & 65535
         nfinal = nd_obj[nid] >> 16
@@ -293,6 +307,7 @@ def _pyc_symtab(root):
     load_k = ND["Load"]
     store_k = ND["Store"]
     fn_k = ND["FunctionDef"]
+    lam_k = ND["Lambda"]
     name_k = ND["Name"]
     glob_k = ND["Global"]
     while opnd_n > 0:
@@ -303,20 +318,33 @@ def _pyc_symtab(root):
         cur = stmts[stmt_n - 1]
         if phase == 1:
             if kind != fn_k:
-                continue
+                if kind != lam_k:
+                    continue
             nloc = sc_nlocals[cur]
             if nloc > 240:
                 _pyc_parse_error("too many locals")
             stmt_n = stmt_n - 1
             continue
-        if kind == fn_k:
-            fname = nd_obj[nid]
-            if sc_kind[cur] == 1:
-                names, n = _pyc_sy_names_add(
-                    sc_varnames[cur], sc_nlocals[cur], fname
-                )
-                sc_varnames[cur] = names
-                sc_nlocals[cur] = n
+        if kind == fn_k or kind == lam_k:
+            nargs = nd_b[nid] & 65535
+            ndec = nd_b[nid] >> 16
+            nbody = nd_c[nid]
+            ks = nd_a[nid]
+            if phase == 0:
+                if kind == fn_k:
+                    fname = nd_obj[nid]
+                    if sc_kind[cur] == 1:
+                        names, n = _pyc_sy_names_add(
+                            sc_varnames[cur], sc_nlocals[cur], fname
+                        )
+                        sc_varnames[cur] = names
+                        sc_nlocals[cur] = n
+                _pyc_sy_work_push(nid, 2)
+                j = ndec
+                while j > 0:
+                    j = j - 1
+                    _pyc_sy_work_push(kids[ks + j], 0)
+                continue
             sid = _pyc_sy_new_scope(1, cur, nid)
             gdecl[sid] = [0] * 8
             gdecl_n[sid] = 0
@@ -332,13 +360,10 @@ def _pyc_symtab(root):
                 capf = len(sc_free)
             sc_free[sid] = [0] * 8
             sc_free_n[sid] = 0
-            nargs = nd_b[nid]
-            nbody = nd_c[nid]
-            ks = nd_a[nid]
             sc_argcount[sid] = nargs
             j = 0
             while j < nargs:
-                arg_nid = kids[ks + j]
+                arg_nid = kids[ks + ndec + j]
                 names, n = _pyc_sy_names_add(
                     sc_varnames[sid], sc_nlocals[sid], nd_obj[arg_nid]
                 )
@@ -358,7 +383,7 @@ def _pyc_symtab(root):
             j = nbody
             while j > 0:
                 j = j - 1
-                _pyc_sy_work_push(kids[ks + nargs + j], 0)
+                _pyc_sy_work_push(kids[ks + ndec + nargs + j], 0)
             continue
         if kind == name_k:
             name = nd_obj[nid]

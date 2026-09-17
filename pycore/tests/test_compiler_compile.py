@@ -207,6 +207,37 @@ class TestCompilerCompileShim(unittest.TestCase):
             15,
         )
 
+    def test_img_compile_lambda_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_lambda.py", "managed_entry"),
+            7,
+        )
+
+    def test_img_compile_assert_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_assert.py", "managed_entry"),
+            1,
+        )
+
+    def test_img_compile_decorator_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_decorator.py", "managed_entry"),
+            7,
+        )
+
+    def test_img_compile_fstring_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_fstring.py", "managed_entry"),
+            1,
+        )
+
+    def test_class_and_with_remain_syntax_error(self) -> None:
+        compile_fn = load_rom_firmware_callables()["compile"]
+        with self.assertRaises(SyntaxError):
+            compile_fn("class C:\n    x = 1\n", "<s>", "exec")
+        with self.assertRaises(SyntaxError):
+            compile_fn("with x:\n    y = 1\n", "<s>", "exec")
+
 
 if __name__ == "__main__":
     unittest.main()

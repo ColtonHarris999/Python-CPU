@@ -87,6 +87,16 @@ PARSER_EVAL_CORPUS = [
     "[x for x in xs]",
     "{x for x in xs}",
     "{x: x for x in xs}",
+    "lambda x: x + 1",
+    "lambda: 1",
+    "lambda x, y: x + y",
+    'f"hello"',
+    'f"a{x}b"',
+    'f"{x}"',
+    'f"{x!s}"',
+    'f"{x!r}"',
+    'f"a{1}b"',
+    'f""',
 ]
 
 
@@ -130,6 +140,10 @@ PARSER_EXEC_CORPUS = [
     "try:\n    x = 1\nexcept TypeError as e:\n    x = 2\nelse:\n    x = 3\n",
     "try:\n    x = 1\nfinally:\n    x = 2\n",
     "try:\n    x = 1\nexcept (TypeError, ValueError):\n    x = 2\n",
+    "assert x\n",
+    "assert x, y\n",
+    "@d\ndef f():\n    return 1\n",
+    "@d1\n@d2\ndef f(a):\n    return a\n",
 ]
 
 
@@ -182,9 +196,23 @@ def firmware_shape(g: dict, nid: int) -> tuple:
         args = [firmware_shape(g, kids[b + i]) for i in range(c)]
         return ("Call", firmware_shape(g, a), args)
     if name == "FunctionDef":
+        nargs = b & 65535
+        ndec = b >> 16
+        decs = [firmware_shape(g, kids[a + i]) for i in range(ndec)]
+        params = [firmware_shape(g, kids[a + ndec + i]) for i in range(nargs)]
+        body = [firmware_shape(g, kids[a + ndec + nargs + i]) for i in range(c)]
+        return ("FunctionDef", obj, params, body, decs)
+    if name == "Lambda":
         params = [firmware_shape(g, kids[a + i]) for i in range(b)]
-        body = [firmware_shape(g, kids[a + b + i]) for i in range(c)]
-        return ("FunctionDef", obj, params, body)
+        return ("Lambda", params, firmware_shape(g, kids[a + b]))
+    if name == "Assert":
+        msg = None if b < 0 else firmware_shape(g, b)
+        return ("Assert", firmware_shape(g, a), msg)
+    if name == "JoinedStr":
+        vals = [firmware_shape(g, kids[a + i]) for i in range(b)]
+        return ("JoinedStr", vals)
+    if name == "FormattedValue":
+        return ("FormattedValue", firmware_shape(g, a), b)
     if name == "Global":
         return ("Global", list(obj))
     if name == "If":
@@ -338,7 +366,7 @@ def cpython_shape(node: ast.AST) -> tuple:
             [cpython_shape(a) for a in node.args],
         )
     if isinstance(node, ast.FunctionDef):
-        if node.decorator_list or node.args.defaults or node.args.kwonlyargs:
+        if node.args.defaults or node.args.kwonlyargs:
             raise AssertionError("G corpus is positional def only")
         if node.args.vararg is not None or node.args.kwarg is not None:
             raise AssertionError("G corpus is positional def only")
@@ -346,7 +374,24 @@ def cpython_shape(node: ast.AST) -> tuple:
             ("Name", arg.arg, "Store") for arg in node.args.args
         ]
         body = [cpython_shape(s) for s in node.body]
-        return ("FunctionDef", node.name, params, body)
+        decs = [cpython_shape(d) for d in node.decorator_list]
+        return ("FunctionDef", node.name, params, body, decs)
+    if isinstance(node, ast.Lambda):
+        if node.args.defaults or node.args.kwonlyargs:
+            raise AssertionError("T5 lambda is positional only")
+        if node.args.vararg is not None or node.args.kwarg is not None:
+            raise AssertionError("T5 lambda is positional only")
+        params = [("Name", arg.arg, "Store") for arg in node.args.args]
+        return ("Lambda", params, cpython_shape(node.body))
+    if isinstance(node, ast.Assert):
+        msg = None if node.msg is None else cpython_shape(node.msg)
+        return ("Assert", cpython_shape(node.test), msg)
+    if isinstance(node, ast.JoinedStr):
+        return ("JoinedStr", [cpython_shape(v) for v in node.values])
+    if isinstance(node, ast.FormattedValue):
+        if node.format_spec is not None:
+            raise AssertionError("T5 f-strings have no format spec")
+        return ("FormattedValue", cpython_shape(node.value), node.conversion)
     if isinstance(node, ast.Global):
         return ("Global", list(node.names))
     if isinstance(node, ast.If):
@@ -520,6 +565,20 @@ class TestCompilerParserCorpus(unittest.TestCase):
         g = load_firmware_package_namespace()
         g["_in_src"] = "async def f():\n    return 1\n"
         g["_in_mode"] = "exec"
+        with self.assertRaises(SyntaxError):
+            _host_exec_globals(g["_pyc_parse_main"], g)
+
+    def test_unsupported_with(self) -> None:
+        g = load_firmware_package_namespace()
+        g["_in_src"] = "with x:\n    y = 1\n"
+        g["_in_mode"] = "exec"
+        with self.assertRaises(SyntaxError):
+            _host_exec_globals(g["_pyc_parse_main"], g)
+
+    def test_fstring_format_spec_rejected(self) -> None:
+        g = load_firmware_package_namespace()
+        g["_in_src"] = 'f"{x:02d}"'
+        g["_in_mode"] = "eval"
         with self.assertRaises(SyntaxError):
             _host_exec_globals(g["_pyc_parse_main"], g)
 

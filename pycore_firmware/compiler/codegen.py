@@ -1,4 +1,4 @@
-# Firmware T1–T4 codegen + assembler (compiler_design.md §5.5 / steps H, J, T4).
+# Firmware T1–T5 codegen + assembler (compiler_design.md §5.5 / steps H, J, T4, T5).
 # Recursive visit of nd_* (Rule 2) into ins words in opnd/ops, then
 # _bi_code_alloc / blit / new. No CACHE. Constant folding (§11.3) rewrites
 # int BinOp/UnaryOp and str Add in place before the visit. Jump args
@@ -132,7 +132,7 @@ def _pyc_visit(nid):
         return
     if kind == ND["Global"]:
         return
-    if kind == ND["FunctionDef"]:
+    if kind == ND["FunctionDef"] or kind == ND["Lambda"]:
         sv_opnd = opnd
         sv_ops = ops
         sv_ops_obj = ops_obj
@@ -148,6 +148,9 @@ def _pyc_visit(nid):
         sv_lex_col = _lex_col
         sv_lex_line = _lex_line
         sv_kids_n = kids_n
+        is_lam = 0
+        if kind == ND["Lambda"]:
+            is_lam = 1
         sid = 0
         i = 0
         found = 0
@@ -210,15 +213,20 @@ def _pyc_visit(nid):
             ci = ci + 1
         _pyc_emit(OPMAP["RESUME"], 0, 0)
         ks = nd_a[nid]
-        nargs = nd_b[nid]
+        nargs = nd_b[nid] & 65535
+        ndec = nd_b[nid] >> 16
         nbody = nd_c[nid]
-        i = 0
-        while i < nbody:
-            _pyc_visit(kids[ks + nargs + i])
-            i = i + 1
-        none_id = _pyc_nd_new(ND["Constant"], 1, 0, 5, 0, 0, None)
-        _pyc_visit(none_id)
-        _pyc_emit(OPMAP["RETURN_VALUE"], 0, 0)
+        if is_lam:
+            _pyc_visit(kids[ks + ndec + nargs])
+            _pyc_emit(OPMAP["RETURN_VALUE"], 0, 0)
+        else:
+            i = 0
+            while i < nbody:
+                _pyc_visit(kids[ks + ndec + nargs + i])
+                i = i + 1
+            none_id = _pyc_nd_new(ND["Constant"], 1, 0, 5, 0, 0, None)
+            _pyc_visit(none_id)
+            _pyc_emit(OPMAP["RETURN_VALUE"], 0, 0)
         child = _pyc_assemble()
         opnd = sv_opnd
         ops = sv_ops
@@ -235,6 +243,10 @@ def _pyc_visit(nid):
         _lex_col = sv_lex_col
         _lex_line = sv_lex_line
         kids_n = sv_kids_n
+        di = 0
+        while di < ndec:
+            _pyc_visit(kids[ks + di])
+            di = di + 1
         cap = len(stmts)
         while cap < stmt_n + 1:
             extra = cap
@@ -268,12 +280,17 @@ def _pyc_visit(nid):
         _pyc_emit(OPMAP["MAKE_FUNCTION"], 0, 0)
         if n_free_c > 0:
             _pyc_emit(OPMAP["SET_FUNCTION_ATTRIBUTE"], 8, 0)
-        name_id = _pyc_nd_new(
-            ND["Name"], 1, 0, ND["Store"], 0, 0, nd_obj[nid]
-        )
-        _lex_col = 1
-        _pyc_visit(name_id)
-        _lex_col = 0
+        i = 0
+        while i < ndec:
+            _pyc_emit(OPMAP["CALL"], 0, 0)
+            i = i + 1
+        if is_lam == 0:
+            name_id = _pyc_nd_new(
+                ND["Name"], 1, 0, ND["Store"], 0, 0, nd_obj[nid]
+            )
+            _lex_col = 1
+            _pyc_visit(name_id)
+            _lex_col = 0
         return
     if kind == ND["Constant"]:
         val = nd_obj[nid]
@@ -960,6 +977,71 @@ def _pyc_visit(nid):
         _pyc_kids_append(1)
         _pyc_kids_append(1)
         return
+    if kind == ND["JoinedStr"]:
+        n = nd_b[nid]
+        ks = nd_a[nid]
+        if n == 0:
+            val = ""
+            i = 0
+            found = 0
+            while i < stmt_n:
+                if stmts[i] == val:
+                    _pyc_emit(OPMAP["LOAD_CONST"], i, 0)
+                    found = 1
+                    break
+                i = i + 1
+            if found == 0:
+                cap = len(stmts)
+                while cap < stmt_n + 1:
+                    extra = cap
+                    if extra < 8:
+                        extra = 8
+                    stmts = stmts + ([0] * extra)
+                    cap = len(stmts)
+                stmts[stmt_n] = val
+                _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
+                stmt_n = stmt_n + 1
+            return
+        if n == 1:
+            kid = kids[ks]
+            if nd_kind[kid] == ND["Constant"]:
+                _pyc_visit(kid)
+                return
+            _pyc_visit(kid)
+            return
+        i = 0
+        while i < n:
+            _pyc_visit(kids[ks + i])
+            i = i + 1
+        _pyc_emit(OPMAP["BUILD_STRING"], n, 0)
+        return
+    if kind == ND["FormattedValue"]:
+        _pyc_visit(nd_a[nid])
+        conv = nd_b[nid]
+        if conv == 115:
+            _pyc_emit(OPMAP["CONVERT_VALUE"], 1, 0)
+        elif conv == 114:
+            _pyc_emit(OPMAP["CONVERT_VALUE"], 2, 0)
+        elif conv == 97:
+            _pyc_emit(OPMAP["CONVERT_VALUE"], 3, 0)
+        _pyc_emit(OPMAP["FORMAT_SIMPLE"], 0, 0)
+        return
+    if kind == ND["Assert"]:
+        _pyc_visit(nd_a[nid])
+        _pyc_emit(OPMAP["TO_BOOL"], 0, 0)
+        end_lab = _pyc_emit(OPMAP["POP_JUMP_IF_TRUE"], 0, 0 - 1)
+        name_id = _pyc_nd_new(
+            ND["Name"], 1, 0, ND["Load"], 0, 0, "AssertionError"
+        )
+        _lex_col = 0
+        _pyc_visit(name_id)
+        msg = nd_b[nid]
+        if msg >= 0:
+            _pyc_visit(msg)
+            _pyc_emit(OPMAP["CALL"], 0, 0)
+        _pyc_emit(OPMAP["RAISE_VARARGS"], 1, 0)
+        tk_a[end_lab] = opnd_n
+        return
     _pyc_parse_error("unsupported node in codegen")
 
 
@@ -1030,6 +1112,7 @@ def _pyc_assemble():
             op == OPMAP["BUILD_LIST"]
             or op == OPMAP["BUILD_TUPLE"]
             or op == OPMAP["BUILD_SET"]
+            or op == OPMAP["BUILD_STRING"]
         ):
             d = 1 - arg
         elif op == OPMAP["BUILD_MAP"]:

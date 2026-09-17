@@ -59,6 +59,15 @@ LEXER_CORPUS = [
     "2j\n",
     '"hi\\n"\n',
     "def f():\n    x=1",
+    'f"hello"\n',
+    'f"a{x}b"\n',
+    'f"{x}"\n',
+    'f"{x!s}"\n',
+    "f'hi'\n",
+    'rf"a{x}"\n',
+    'f"""a{x}b"""\n',
+    'f""\n',
+    'f"a{x}{y}b"\n',
 ]
 
 
@@ -97,7 +106,15 @@ def cpython_tokens(src: str) -> list[tuple[int, int, int, int, int, str | None]]
         start = _offset(starts, tok.start, n)
         end = _offset(starts, tok.end, n)
         text: str | None
-        if tok.type in (tokenize.NAME, tokenize.NUMBER, tokenize.STRING, tokenize.OP):
+        if tok.type in (
+            tokenize.NAME,
+            tokenize.NUMBER,
+            tokenize.STRING,
+            tokenize.OP,
+            tokenize.FSTRING_START,
+            tokenize.FSTRING_MIDDLE,
+            tokenize.FSTRING_END,
+        ):
             text = tok.string
         else:
             text = None
@@ -123,7 +140,15 @@ def firmware_tokens(src: str) -> list[tuple[int, int, int, int, int, object]]:
         start = packed_b & ((1 << 32) - 1)
         end = packed_b >> 32
         text = tk_s[i]
-        if kind not in (tokenize.NAME, tokenize.NUMBER, tokenize.STRING, tokenize.OP):
+        if kind not in (
+            tokenize.NAME,
+            tokenize.NUMBER,
+            tokenize.STRING,
+            tokenize.OP,
+            tokenize.FSTRING_START,
+            tokenize.FSTRING_MIDDLE,
+            tokenize.FSTRING_END,
+        ):
             text = None
         elif text == 0:
             text = None
@@ -151,6 +176,18 @@ class TestCompilerLexerCorpus(unittest.TestCase):
     def test_unterminated_string_raises(self) -> None:
         g = load_firmware_package_namespace()
         g["_in_src"] = "'unterminated\n"
+        with self.assertRaises(SyntaxError):
+            _host_exec_globals(g["_pyc_lex_main"], g)
+
+    def test_tstring_raises(self) -> None:
+        g = load_firmware_package_namespace()
+        g["_in_src"] = 't"hi"\n'
+        with self.assertRaises(SyntaxError):
+            _host_exec_globals(g["_pyc_lex_main"], g)
+
+    def test_nested_fstring_raises(self) -> None:
+        g = load_firmware_package_namespace()
+        g["_in_src"] = "f\"{f'{x}'}\"\n"
         with self.assertRaises(SyntaxError):
             _host_exec_globals(g["_pyc_lex_main"], g)
 
