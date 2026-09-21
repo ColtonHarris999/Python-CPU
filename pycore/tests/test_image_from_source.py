@@ -1235,5 +1235,92 @@ class SliceConstFoldTest(unittest.TestCase):
         self.assertIn("slice step", str(ctx.exception))
 
 
+class SupportedOpnameGateTest(unittest.TestCase):
+    """The image builder's opcode gate must agree with the machine catalog.
+
+    A4 says a construct the machine cannot execute is a *build-time* error,
+    never a runtime illegal-opcode trap. The gate used to accept any opname
+    starting with ``JUMP_``, which let ``JUMP_BACKWARD_NO_INTERRUPT`` --
+    marked ``reject`` in ``pycore/targets/pycore.json``, and emitted by
+    CPython on a ``try``/``finally`` cleanup edge -- through to hardware.
+    """
+
+    @staticmethod
+    def _catalog_opcodes() -> dict:
+        import json
+        import pathlib as _pathlib
+
+        path = (
+            _pathlib.Path(__file__).resolve().parents[1]
+            / "targets"
+            / "pycore.json"
+        )
+        return json.loads(path.read_text(encoding="utf-8"))["opcodes"]
+
+    def test_rejected_opcodes_are_not_accepted_by_the_gate(self) -> None:
+        catalog = self._catalog_opcodes()
+        rejected = [
+            name
+            for name, spec in catalog.items()
+            if isinstance(spec, dict) and spec.get("support") == "reject"
+        ]
+        self.assertIn("JUMP_BACKWARD_NO_INTERRUPT", rejected)
+        for name in rejected:
+            with self.subTest(opname=name):
+                self.assertFalse(
+                    image_from_source._is_supported_opname(name),
+                    f"{name} is 'reject' in the catalog but the gate allows it",
+                )
+
+    def test_unknown_opcodes_are_not_accepted_by_the_gate(self) -> None:
+        for name in (
+            "JUMP_IF_TRUE",
+            "JUMP_IF_FALSE",
+            "LOAD_FAST_SOMETHING_NEW",
+            "POP_JUMP_IF_MADE_UP",
+        ):
+            with self.subTest(opname=name):
+                self.assertFalse(image_from_source._is_supported_opname(name))
+
+    def test_every_gate_family_member_is_executable_on_the_target(self) -> None:
+        catalog = self._catalog_opcodes()
+        for name in image_from_source._SUPPORTED_OP_FAMILIES:
+            with self.subTest(opname=name):
+                spec = catalog.get(name)
+                self.assertIsNotNone(spec, f"{name} is not in the catalog")
+                self.assertEqual(spec.get("support"), "execute")
+
+    def test_back_to_back_try_blocks_are_rejected_at_build_time(self) -> None:
+        """The concrete shape that slipped through.
+
+        Two sequential ``try`` blocks in one function make CPython emit
+        ``JUMP_BACKWARD_NO_INTERRUPT`` on the cleanup edge. Before the gate
+        was tightened this built clean and trapped on hardware.
+        """
+        module = _compile_module(
+            "def f(g):\n"
+            "    out = 0\n"
+            "    try:\n"
+            "        g()\n"
+            "    except SyntaxError:\n"
+            "        out += 1\n"
+            "    try:\n"
+            "        g()\n"
+            "    except ValueError:\n"
+            "        out += 4\n"
+            "    return out\n"
+        )
+        emitted = {
+            ins.opname
+            for co in image_from_source.iter_code_objects(module)
+            for ins in dis.get_instructions(co)
+        }
+        if "JUMP_BACKWARD_NO_INTERRUPT" not in emitted:
+            self.skipTest("this CPython does not emit the opcode here")
+        with self.assertRaises(ValueError) as ctx:
+            image_from_source.validate_code_tree(module)
+        self.assertIn("JUMP_BACKWARD_NO_INTERRUPT", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

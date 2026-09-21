@@ -5,6 +5,10 @@
 # intervening function) and a cellvar of the definer. Freevars are appended
 # onto sc_varnames; sc_nlocals is nlocalsplus; sc_kind = 1 | (n_free << 8).
 # Cellvars stay in-place among the original locals (MAKE_CELL wraps that slot).
+# Parameter metadata rides on the scope, not the node: sc_argcount is
+# co_argcount (positional only), sc_kwonly is co_kwonlyargcount, sc_flags is
+# has_varargs | (has_varkw << 1), and sc_defaults / sc_kwdefaults are the
+# literal default values the assembler hands to _bi_code_new fields 4 and 6.
 #
 # Scope 0 is the Module / Expression: every name is global (not FAST).
 # Function scope: parameters and STORE targets are locals unless `global`.
@@ -34,7 +38,7 @@ def _pyc_sy_work_push(nid, phase):
 
 def _pyc_sy_new_scope(kind, parent, nid):
     global sc_n, sc_kind, sc_parent, sc_node, sc_nlocals, sc_argcount
-    global sc_varnames
+    global sc_varnames, sc_kwonly, sc_flags, sc_defaults, sc_kwdefaults
     cap = len(sc_kind)
     while cap < sc_n + 1:
         extra = cap
@@ -46,6 +50,10 @@ def _pyc_sy_new_scope(kind, parent, nid):
         sc_nlocals = sc_nlocals + ([0] * extra)
         sc_argcount = sc_argcount + ([0] * extra)
         sc_varnames = sc_varnames + ([0] * extra)
+        sc_kwonly = sc_kwonly + ([0] * extra)
+        sc_flags = sc_flags + ([0] * extra)
+        sc_defaults = sc_defaults + ([0] * extra)
+        sc_kwdefaults = sc_kwdefaults + ([0] * extra)
         cap = len(sc_kind)
     sid = sc_n
     sc_kind[sid] = kind
@@ -54,6 +62,10 @@ def _pyc_sy_new_scope(kind, parent, nid):
     sc_nlocals[sid] = 0
     sc_argcount[sid] = 0
     sc_varnames[sid] = [0] * 8
+    sc_kwonly[sid] = 0
+    sc_flags[sid] = 0
+    sc_defaults[sid] = []
+    sc_kwdefaults[sid] = {}
     sc_n = sc_n + 1
     return sid
 
@@ -97,7 +109,10 @@ def _pyc_sy_push_children(nid):
         return
     if kind == ND["Assign"]:
         _pyc_sy_work_push(c, 0)
-        _pyc_sy_work_push(a, 0)
+        i = b
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[a + i], 0)
         return
     if kind == ND["Return"]:
         if a >= 0:
@@ -124,7 +139,7 @@ def _pyc_sy_push_children(nid):
         _pyc_sy_work_push(a, 0)
         return
     if kind == ND["Call"]:
-        i = c
+        i = c & 65535
         while i > 0:
             i = i - 1
             _pyc_sy_work_push(kids[b + i], 0)
@@ -134,6 +149,11 @@ def _pyc_sy_push_children(nid):
         _pyc_sy_work_push(a, 0)
         return
     if kind == ND["Subscript"]:
+        _pyc_sy_work_push(b, 0)
+        _pyc_sy_work_push(a, 0)
+        return
+    if kind == ND["IfExp"]:
+        _pyc_sy_work_push(c, 0)
         _pyc_sy_work_push(b, 0)
         _pyc_sy_work_push(a, 0)
         return
@@ -195,14 +215,17 @@ def _pyc_sy_push_children(nid):
         if a >= 0:
             _pyc_sy_work_push(a, 0)
         return
-    if kind == ND["ListComp"] or kind == ND["SetComp"]:
-        _pyc_sy_work_push(c, 0)
-        _pyc_sy_work_push(b, 0)
-        _pyc_sy_work_push(a, 0)
-        return
-    if kind == ND["DictComp"]:
-        _pyc_sy_work_push(nd_obj[nid], 0)
-        _pyc_sy_work_push(c, 0)
+    if (
+        kind == ND["ListComp"]
+        or kind == ND["SetComp"]
+        or kind == ND["DictComp"]
+    ):
+        # c is a kids index: [iter, cond] (+[value] for a DictComp).
+        if kind == ND["DictComp"]:
+            _pyc_sy_work_push(kids[c + 2], 0)
+        if kids[c + 1] >= 0:
+            _pyc_sy_work_push(kids[c + 1], 0)
+        _pyc_sy_work_push(kids[c], 0)
         _pyc_sy_work_push(b, 0)
         _pyc_sy_work_push(a, 0)
         return
@@ -275,6 +298,7 @@ def _pyc_sy_push_children(nid):
 def _pyc_symtab(root):
     global sc_n, sc_kind, sc_parent, sc_node, sc_nlocals, sc_argcount
     global sc_varnames, opnd, opnd_n, ops, stmts, stmt_n
+    global sc_kwonly, sc_flags, sc_defaults, sc_kwdefaults
     cap = nd_n
     if cap < 8:
         cap = 8
@@ -284,6 +308,10 @@ def _pyc_symtab(root):
     sc_nlocals = [0] * cap
     sc_argcount = [0] * cap
     sc_varnames = [0] * cap
+    sc_kwonly = [0] * cap
+    sc_flags = [0] * cap
+    sc_defaults = [0] * cap
+    sc_kwdefaults = [0] * cap
     sc_n = 0
     gdecl = [0] * cap
     gdecl_n = [0] * cap
@@ -327,12 +355,13 @@ def _pyc_symtab(root):
             continue
         if kind == fn_k or kind == lam_k:
             nargs = nd_b[nid] & 65535
-            ndec = nd_b[nid] >> 16
+            ndec = (nd_b[nid] >> 16) & 65535
+            params = nd_b[nid] >> 32
             nbody = nd_c[nid]
             ks = nd_a[nid]
             if phase == 0:
                 if kind == fn_k:
-                    fname = nd_obj[nid]
+                    fname = nd_obj[nid][0]
                     if sc_kind[cur] == 1:
                         names, n = _pyc_sy_names_add(
                             sc_varnames[cur], sc_nlocals[cur], fname
@@ -360,7 +389,13 @@ def _pyc_symtab(root):
                 capf = len(sc_free)
             sc_free[sid] = [0] * 8
             sc_free_n[sid] = 0
-            sc_argcount[sid] = nargs
+            # co_argcount is the positional count; nargs is nlocalsplus
+            # for the parameters (positional + kw-only + *args + **kwargs).
+            sc_argcount[sid] = params & 65535
+            sc_kwonly[sid] = (params >> 16) & 4095
+            sc_flags[sid] = (params >> 28) & 3
+            sc_defaults[sid] = nd_obj[nid][1]
+            sc_kwdefaults[sid] = nd_obj[nid][2]
             j = 0
             while j < nargs:
                 arg_nid = kids[ks + ndec + j]

@@ -53,6 +53,32 @@ def _pyc_emit(op, arg, lab):
     return lab
 
 
+def _pyc_const_push(val):
+    """Append ``val`` to the constant pool and emit LOAD_CONST for it.
+
+    Identity pooling only, for the same reason the Constant visit uses it:
+    ``==`` would COMPARE_OP a nested CODE_OBJECT against a later string on
+    device (TYPE trap) and would fold 1000 onto 1000.0.
+    """
+    global stmts, stmt_n
+    i = 0
+    while i < stmt_n:
+        if stmts[i] is val:
+            _pyc_emit(OPMAP["LOAD_CONST"], i, 0)
+            return
+        i = i + 1
+    cap = len(stmts)
+    while cap < stmt_n + 1:
+        extra = cap
+        if extra < 8:
+            extra = 8
+        stmts = stmts + ([0] * extra)
+        cap = len(stmts)
+    stmts[stmt_n] = val
+    _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
+    stmt_n = stmt_n + 1
+
+
 def _pyc_visit(nid):
     global stmt_n, stmts, tk_n, tk_s, tk_a, tk_b, _lex_n, _lex_i, _lex_col
     global _lex_line, opnd, ops, ops_obj, opnd_n, kids_n
@@ -97,11 +123,18 @@ def _pyc_visit(nid):
         _pyc_emit(OPMAP["POP_TOP"], 0, 0)
         return
     if kind == ND["Assign"]:
+        ks = nd_a[nid]
+        nt = nd_b[nid]
         _lex_col = 0
         _pyc_visit(nd_c[nid])
-        _lex_col = 1
-        _pyc_visit(nd_a[nid])
-        _lex_col = 0
+        i = 0
+        while i < nt:
+            if i + 1 < nt:
+                _pyc_emit(OPMAP["COPY"], 1, 0)
+            _lex_col = 1
+            _pyc_visit(kids[ks + i])
+            _lex_col = 0
+            i = i + 1
         return
     if kind == ND["Return"]:
         a = nd_a[nid]
@@ -214,7 +247,7 @@ def _pyc_visit(nid):
         _pyc_emit(OPMAP["RESUME"], 0, 0)
         ks = nd_a[nid]
         nargs = nd_b[nid] & 65535
-        ndec = nd_b[nid] >> 16
+        ndec = (nd_b[nid] >> 16) & 65535
         nbody = nd_c[nid]
         if is_lam:
             _pyc_visit(kids[ks + ndec + nargs])
@@ -286,7 +319,7 @@ def _pyc_visit(nid):
             i = i + 1
         if is_lam == 0:
             name_id = _pyc_nd_new(
-                ND["Name"], 1, 0, ND["Store"], 0, 0, nd_obj[nid]
+                ND["Name"], 1, 0, ND["Store"], 0, 0, nd_obj[nid][0]
             )
             _lex_col = 1
             _pyc_visit(name_id)
@@ -299,28 +332,7 @@ def _pyc_visit(nid):
                 if val <= 255:
                     _pyc_emit(OPMAP["LOAD_SMALL_INT"], val, 0)
                     return
-        # Identity-only pool lookup. ``==`` would COMPARE_OP a nested
-        # CODE_OBJECT against a later string/float (device TYPE trap) and
-        # would fold 1000 onto 1000.0. Duplicate values get extra slots.
-        i = 0
-        found = 0
-        while i < stmt_n:
-            if stmts[i] is val:
-                _pyc_emit(OPMAP["LOAD_CONST"], i, 0)
-                found = 1
-                break
-            i = i + 1
-        if found == 0:
-            cap = len(stmts)
-            while cap < stmt_n + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                stmts = stmts + ([0] * extra)
-                cap = len(stmts)
-            stmts[stmt_n] = val
-            _pyc_emit(OPMAP["LOAD_CONST"], stmt_n, 0)
-            stmt_n = stmt_n + 1
+        _pyc_const_push(val)
         return
     if kind == ND["Name"]:
         name = nd_obj[nid]
@@ -561,7 +573,8 @@ def _pyc_visit(nid):
     if kind == ND["Call"]:
         func = nd_a[nid]
         ks = nd_b[nid]
-        n = nd_c[nid]
+        n = nd_c[nid] & 65535
+        nkw = nd_c[nid] >> 16
         if nd_kind[func] == ND["Attribute"]:
             _pyc_visit(nd_a[func])
             name = nd_obj[func]
@@ -591,7 +604,19 @@ def _pyc_visit(nid):
         while i < n:
             _pyc_visit(kids[ks + i])
             i = i + 1
-        _pyc_emit(OPMAP["CALL"], n, 0)
+        if nkw == 0:
+            _pyc_emit(OPMAP["CALL"], n, 0)
+            return
+        # CPython 3.14: the keyword names ride in co_consts as a tuple and
+        # CALL_KW's oparg is the *total* argument count, positional included.
+        kwnames = nd_obj[nid]
+        kwt = ()
+        i = 0
+        while i < nkw:
+            kwt = kwt + (kwnames[i],)
+            i = i + 1
+        _pyc_const_push(kwt)
+        _pyc_emit(OPMAP["CALL_KW"], n, 0)
         return
     if kind == ND["Attribute"]:
         name = nd_obj[nid]
@@ -682,6 +707,18 @@ def _pyc_visit(nid):
             _pyc_parse_error("'continue' not properly in loop")
         cont = tk_b[_lex_line * 2 + 1]
         _pyc_emit(OPMAP["JUMP_BACKWARD"], 0, cont)
+        return
+    if kind == ND["IfExp"]:
+        # body if test else orelse -- same jump shape as the If statement,
+        # but every arm leaves exactly one value on the stack.
+        _pyc_visit(nd_a[nid])
+        _pyc_emit(OPMAP["TO_BOOL"], 0, 0)
+        else_lab = _pyc_emit(OPMAP["POP_JUMP_IF_FALSE"], 0, 0 - 1)
+        _pyc_visit(nd_b[nid])
+        end_lab = _pyc_emit(OPMAP["JUMP_FORWARD"], 0, 0 - 1)
+        tk_a[else_lab] = opnd_n
+        _pyc_visit(nd_c[nid])
+        tk_a[end_lab] = opnd_n
         return
     if kind == ND["If"]:
         _pyc_visit(nd_a[nid])
@@ -847,10 +884,8 @@ def _pyc_visit(nid):
             _pyc_emit(OPMAP["RAISE_VARARGS"], 1, 0)
         return
     if kind == ND["ListComp"] or kind == ND["SetComp"] or kind == ND["DictComp"]:
-        if kind == ND["DictComp"]:
-            _pyc_visit(nd_obj[nid])
-        else:
-            _pyc_visit(nd_c[nid])
+        ks = nd_c[nid]
+        _pyc_visit(kids[ks])
         _pyc_emit(OPMAP["GET_ITER"], 0, 0)
         if kind == ND["ListComp"]:
             _pyc_emit(OPMAP["BUILD_LIST"], 0, 0)
@@ -864,14 +899,18 @@ def _pyc_visit(nid):
         tk_a[cont] = opnd_n
         _pyc_emit(OPMAP["FOR_ITER"], 0, endfor)
         _lex_col = 1
-        if kind == ND["DictComp"]:
-            _pyc_visit(nd_c[nid])
-        else:
-            _pyc_visit(nd_b[nid])
+        _pyc_visit(nd_b[nid])
         _lex_col = 0
+        cond = kids[ks + 1]
+        skip = 0 - 1
+        if cond >= 0:
+            skip = _pyc_emit(0 - 1, 0, 0 - 1)
+            _pyc_visit(cond)
+            _pyc_emit(OPMAP["TO_BOOL"], 0, 0)
+            _pyc_emit(OPMAP["POP_JUMP_IF_FALSE"], 0, skip)
         if kind == ND["DictComp"]:
             _pyc_visit(nd_a[nid])
-            _pyc_visit(nd_b[nid])
+            _pyc_visit(kids[ks + 2])
             _pyc_emit(OPMAP["MAP_ADD"], 2, 0)
         elif kind == ND["ListComp"]:
             _pyc_visit(nd_a[nid])
@@ -879,6 +918,8 @@ def _pyc_visit(nid):
         else:
             _pyc_visit(nd_a[nid])
             _pyc_emit(OPMAP["SET_ADD"], 2, 0)
+        if cond >= 0:
+            tk_a[skip] = opnd_n
         _pyc_emit(OPMAP["JUMP_BACKWARD"], 0, cont)
         tk_a[endfor] = opnd_n
         _pyc_emit(OPMAP["END_FOR"], 0, 0)
@@ -1114,6 +1155,9 @@ def _pyc_assemble():
             d = 0 - 1
         elif op == OPMAP["CALL"]:
             d = 0 - (arg + 1)
+        elif op == OPMAP["CALL_KW"]:
+            # [callable, self/NULL, arg0..argN-1, kwnames] -> [result]
+            d = 0 - (arg + 2)
         elif (
             op == OPMAP["BUILD_LIST"]
             or op == OPMAP["BUILD_TUPLE"]
@@ -1174,7 +1218,12 @@ def _pyc_assemble():
     while i < nloc:
         varnames = varnames + (vn[i],)
         i = i + 1
-    meta = (maxd << 32) | (nloc << 16) | sc_argcount[_lex_i]
+    meta = (
+        (sc_kwonly[_lex_i] << 48)
+        | (maxd << 32)
+        | (nloc << 16)
+        | sc_argcount[_lex_i]
+    )
     base = _bi_code_alloc(opnd_n)
     _bi_code_blit(base, words)
     exctable = ()
@@ -1222,8 +1271,27 @@ def _pyc_assemble():
                 exctable = exctable + (b,)
             fi = fi + 1
         ei = ei + 5
+    # Defaults live on the code object, not on a function object: PyCore
+    # implements SET_FUNCTION_ATTRIBUTE 8 (closure) only, so CPython's
+    # flags 1/2 have no encoding (compiler_design.md D10).
+    dl = sc_defaults[_lex_i]
+    dflt = ()
+    i = 0
+    while i < len(dl):
+        dflt = dflt + (dl[i],)
+        i = i + 1
     return _bi_code_new(
-        [base, consts, names, meta, (), varnames, {}, exctable, 0]
+        [
+            base,
+            consts,
+            names,
+            meta,
+            dflt,
+            varnames,
+            sc_kwdefaults[_lex_i],
+            exctable,
+            sc_flags[_lex_i],
+        ]
     )
 
 

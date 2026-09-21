@@ -23,7 +23,8 @@ def managed_entry():
     while i < g["sc_n"]:
         if (g["sc_kind"][i] & 255) == 1:
             nid = g["sc_node"][i]
-            if g["nd_obj"][nid] == "inner":
+            # FunctionDef nd_obj is [name, defaults, kwdefaults].
+            if g["nd_obj"][nid][0] == "inner":
                 n_free = g["sc_kind"][i] >> 8
                 nloc = g["sc_nlocals"][i]
                 names = g["sc_varnames"][i]
