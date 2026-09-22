@@ -55,13 +55,49 @@ kids[]                      flat arena
 
 `mode == "eval"` wraps a T1–T5 expression in `ND_EXPRESSION`. `mode == "exec"`
 parses T1–T5 statements (`if`/`while`/`for`, `break`/`continue`/`pass`,
-augassign, `del`, displays, unpack, `def` with positional args and
-decorators, `global`, `try`/`except`/`else`/`finally`, `raise`, `assert`,
-`lambda`, simple f-strings, single-generator
-list/set/dict comprehensions, string slices) into `ND_MODULE`. Slice
-step, generator expressions, `raise from`, `except*`, `while`/`for`-`else`,
-defaults/`*args`/`**kwargs`, nested f-strings, format specs, `f"{x=}"`,
-and `class`/`import`/`with` are `SyntaxError`.
+augassign, `del`, displays, unpack, `def` with the full parameter grammar
+and decorators, `global`, `try`/`except`/`else`/`finally`, `raise`,
+`assert`, `lambda`, simple f-strings, single-generator list/set/dict
+comprehensions, string slices) into `ND_MODULE`. Chained assignment
+(`x = y = expr`), `;`-separated simple statements, and conditional
+expressions (`a if c else b`) are all in. Slice step, generator
+expressions, `raise from`, `except*`, `while`/`for`-`else`, a second
+comprehension `for` or `if`, positional-only `/`, annotations, nested
+f-strings, format specs, `f"{x=}"`, and `class`/`import`/`with` are
+`SyntaxError`.
+
+**Packed node fields must fit a wrapping signed int64** (§7). The firmware
+runs on arbitrary-precision ints under host CPython, so a field that spills
+past bit 62 passes every host test and is silently truncated on hardware.
+`_pyc_ops_push` rejects an over-wide operator-stack field outright, and
+`test_compiler_parser.py::test_packed_node_fields_fit_a_wrapping_int64`
+sweeps the corpus for node and token arrays.
+
+Packings that carry more than one field:
+
+```text
+FunctionDef / Lambda
+  nd_b   = nargs | (ndec << 16) | (params << 32)          # 62 bits
+  params = nposargs | (nkwonly << 16)
+           | (has_varargs << 28) | (has_varkw << 29)
+  nd_obj = [name, defaults list, kwdefaults dict]
+Call
+  nd_c   = nargs | (nkw << 16)
+  nd_obj = keyword name list when nkw != 0, else 0
+Assign
+  nd_a   = kids start of targets, nd_b = n_targets, nd_c = value
+ListComp / SetComp / DictComp
+  nd_a   = elt (key), nd_b = target,
+  nd_c   = kids index of [iter, cond] (+[value] for DictComp);
+           cond is -1 with no `if` filter
+IfExp
+  nd_a = test, nd_b = body, nd_c = orelse
+```
+
+The operator stack gains tag 11 for a pending conditional expression;
+`_lex_col` selects the expression mode while parsing (0 normal, 1 f-string
+interior, 2 no top-level tuple, 3 comprehension iterable or filter, which
+is `or_test` only so `if` and `,` end it).
 
 Host: `pycore/tests/test_compiler_parser.py` vs `ast.parse` (tree shape).
 Device: `img_parser_tiny_expr` (checksum), `img_compile_deep_nesting`
@@ -77,9 +113,16 @@ sc_kind[s]      0 = Module/Expression (no FAST), 1 = function
 sc_parent[s]    -1 at the root
 sc_node[s]      Module / FunctionDef node id
 sc_nlocals[s]
-sc_argcount[s]
+sc_argcount[s]   co_argcount: positional parameters only
+sc_kwonly[s]     co_kwonlyargcount
+sc_flags[s]      has_varargs | (has_varkw << 1)  -> _bi_code_new field 8
+sc_defaults[s]   literal positional defaults     -> field 4
+sc_kwdefaults[s] literal keyword-only defaults   -> field 6
 sc_varnames[s]  list of local names (params first, then STORE targets)
 ```
+
+Parameter slots follow CPython's `co_varnames` order: positional, then
+keyword-only, then `*args`, then `**kwargs`.
 
 Parameters and every `STORE` target in a function become locals;
 `global x` forces global. Module / eval names are never FAST. A name
@@ -102,14 +145,20 @@ them with `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_new`. T1–T5:
 literals, names, ALU, unary, compare/chains, `is`/`in`, `not`/`and`/`or`,
 call, subscript, attribute, expression statements, assignment, `return`,
 `if`/`elif`/`else`, `while`/`for`, `break`/`continue`/`pass`, augassign,
-`del`, list/tuple/dict/set displays, unpack, `def` (positional; nested
+`del`, list/tuple/dict/set displays, unpack, `def` (defaults / `*args` /
+keyword-only / `**kwargs`; nested
 assemble into the parent's `co_consts` then `MAKE_FUNCTION`; freevars
 emit `COPY_FREE_VARS` / `MAKE_CELL` / `SET_FUNCTION_ATTRIBUTE 8`;
 decorators `CALL 0` without `PUSH_NULL`), `lambda`, `assert` (load
 `AssertionError` + `RAISE_VARARGS` 1), simple f-strings (`FORMAT_SIMPLE` /
 `BUILD_STRING` / `CONVERT_VALUE`),
 `try`/`except`/`else`/`finally`, `raise`, comprehensions (`LIST_APPEND` /
-`SET_ADD`/`MAP_ADD` oparg 2), string `BINARY_SLICE`.
+`SET_ADD`/`MAP_ADD` oparg 2, with an arbitrary element expression and an
+optional `if` filter guarded by `TO_BOOL` + `POP_JUMP_IF_FALSE`), string
+`BINARY_SLICE`, keyword call sites (`CALL_KW`, oparg = *total* argument
+count, names in a `co_consts` tuple), chained assignment (`COPY 1` before
+every store but the last), and conditional expressions (the `If` statement's
+jump shape, one value per arm).
 
 No `CACHE` (D1). Constant folding (§11.3 / D2): int `+ - * & | ^` and
 unary `- ~`, plus str `+`, rewrite to `Constant` so `1 + 2` is
@@ -133,12 +182,14 @@ Host: `pycore/tests/test_compiler_codegen.py` result differential vs CPython
 
 ## Compile shim (step I)
 
-## Compile shim (step I)
-
 `compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1)`
 is seeded in `ROM_FIRMWARE_BUILTINS`. `"single"` / unknown mode / nonzero
 `flags` / `optimize` not in `{0, -1}` raise `ValueError`. `dont_inherit`
-is ignored. No `_busy` slot (D9; 127 of 128 `_PYC_G` keys).
+is ignored. `_PYC_G["_busy"]` guards re-entry (D9): entering while another
+compile is active is a `ValueError`, and `finally` clears the flag so a
+`SyntaxError` does not poison the next call. Nothing reaches it today --
+`exec(compile(src))` is sequential and the compiler never calls `compile`
+-- so `img_compile_reentrant` pins the parts that can go wrong.
 
 Host: `pycore/tests/test_compiler_compile.py`. Device: `img_compile_eval_expr`
 (A1 → 3), `img_compile_mode_trap` (A5 → 3), `img_compile_reject_import`
@@ -149,6 +200,37 @@ T4 images in §11.2 below.
 Host `eval`/`exec` stand-ins call firmware-emitted code objects
 (`_HostEmittedCode`) with a **shared** globals dict; SEED_CODE images still
 use `types.CodeType`.
+
+## Running several programs (the point of all this)
+
+`img_startup_multiprogram` is the end-to-end shape: a launcher holds a table
+of program sources, compiles each at run time, and runs it in its own
+globals dict, so the programs cannot see or clobber each other's names.
+
+```python
+def launch(source, slot):
+    ns = {"out": 0, "n": 0, "i": 0, "scale": 0, "slot": slot}
+    try:
+        exec(compile(source, "<prog>", "exec"), ns)
+    except TypeError:
+        return -1
+    return ns["out"]
+```
+
+`exec(code, ns)` routes through `_bi_exec_globals`, which switches
+`globals_base_r` for that frame and restores it on return — the same
+mechanism the compiler itself runs under (`compiler_design.md` §4.2), and
+the reason a program's names never reach the launcher. A program that
+raises unwinds into the launcher's `except`, so one failure does not stop
+the rest.
+
+Single-core dicts cannot grow, so a program's namespace must be pre-bound
+with every name it stores. On two-core, `PY_TRAP_DICT_GROW` is a recoverable
+excore round trip and the dict grows on demand.
+
+Lifetime is caller-driven (§5.7): `compile()` does not release, so a
+launcher that runs many programs should bracket them with
+`_bi_heap_mark` / `_bi_heap_release` (`img_compile_release_realloc`).
 
 ## String-form exec / eval (§11.1)
 
@@ -243,7 +325,7 @@ stays constant in the source nesting.
 | T4 | `try`/`except`/`else`/`finally`, `raise`, comprehensions, string slices | parser + codegen (§11.2, landed) |
 | T5 | `lambda`, decorators, `assert`, simple f-strings. `class`/`import`/`with` stay `SyntaxError` | parser + codegen (§11.5, landed) |
 
-## Deviations from CPython (D1–D9)
+## Deviations from CPython (D1–D13)
 
 Pinned here and in `bytecode_support.md`. Differentials compare **program
 results**, never `co_code` identity. The lexer differential compares the
@@ -259,7 +341,11 @@ token stream (kinds, positions, payload text), not later `co_code`.
 | D6 | Frame window `nlocals + co_stacksize > 240` is `SyntaxError` | Cap is compile-time, not `CALL_FILTER`. Recursion depth is runtime `MEM_FAULT`. Closures are §11.4. |
 | D7 | `"single"` mode and `flags != 0` raise `ValueError` | Same as invalid `optimize` |
 | D8 | `filename` is stored, never opened | No filesystem |
-| D9 | `compile()` is not re-entrant | `_busy` is deferred (127 of 128 `_PYC_G` keys). Nested `compile()` would clobber `_in_*` and scratch |
+| D9 | `compile()` is not re-entrant | Guarded by `_PYC_G["_busy"]`: entry while active is a `ValueError`, not a clobbered `_in_*`. No path reaches it today |
+| D10 | A `def` default must be a literal | Defaults ride on the **code object** (`_bi_code_new` fields 4 and 6), not on a function object: `SET_FUNCTION_ATTRIBUTE` 1/2 are not implemented, so there is no def-time evaluation to hang a non-constant default on. `def f(a=b)` is a `SyntaxError` |
+| D11 | `del name` at module scope is a `SyntaxError` | `DELETE_NAME` / `DELETE_GLOBAL` are not in `pycore/targets/pycore.json`. `del` of a local (`DELETE_FAST`) and `del xs[i]` (`DELETE_SUBSCR`) work |
+| D12 | One `for` and at most one `if` per comprehension | A second generator clause or filter is a `SyntaxError`, not a silent mis-parse |
+| D13 | Two sequential `try` blocks in one function are a build-time error for *host*-compiled images | CPython emits `JUMP_BACKWARD_NO_INTERRUPT` there and this target rejects it. Split them into separate functions. The firmware compiler never emits it |
 
 ## Size report (W-8)
 

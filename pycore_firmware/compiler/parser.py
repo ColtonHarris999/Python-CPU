@@ -3,33 +3,45 @@
 # Node kinds are CPython 3.14 ast type integers from generated ND.
 #
 # FunctionDef packing: nd_obj=name, nd_a=kids start,
-#   nd_b=nargs | (ndec << 16), nd_c=n_body; kids [decs][args][body].
+#   nd_b=nargs | (ndec << 16) | (params << 32), nd_c=n_body;
+#   kids [decs][args][body]. params packs
+#   nposargs | (nkwonly << 16) | (has_varargs << 28) | (has_varkw << 29);
+#   every packed field must stay under bit 63 (wrapping int64).
+#   nd_obj=[name, defaults list, kwdefaults dict].
 # Lambda packing: like FunctionDef with nd_obj="<lambda>", ndec=0,
 #   nd_c=1, kids [args][body_expr].
+# IfExp packing: nd_a=test, nd_b=body, nd_c=orelse.
 # Assert packing: nd_a=test, nd_b=msg (-1 none).
 # JoinedStr packing: nd_a=kids start, nd_b=n.
 # FormattedValue packing: nd_a=value, nd_b=conversion (-1 / 115 / 114 / 97).
 # If packing: nd_a=test, nd_b=kids start, nd_c=n_body, nd_obj=n_orelse.
 # While packing: nd_a=test, nd_b=kids start, nd_c=n_body.
 # For packing: nd_a=target, nd_b=iter, nd_c=kids start, nd_obj=n_body.
+# Assign: nd_a=kids start of targets, nd_b=n_targets, nd_c=value.
 # AugAssign: nd_a=target, nd_b=op kind, nd_c=value.
 # Delete: nd_a=kids start, nd_b=n_targets.
 # List/Tuple/Set: nd_a=kids start, nd_b=n, nd_c=ctx.
 # Dict: nd_a=kids start, nd_b=n_pairs (key/value interleaved).
 # Global packing: nd_obj=list of name strings, nd_a=count.
 # Slice: nd_a=lower (-1 none), nd_b=upper (-1 none), nd_c=step (-1 none).
-# ListComp/SetComp: nd_a=elt, nd_b=target, nd_c=iter.
-# DictComp: nd_a=key, nd_b=value, nd_c=target, nd_obj=iter.
+# ListComp/SetComp/DictComp: nd_a=elt (key for DictComp), nd_b=target,
+#   nd_c=kids index of [iter, cond] (+[value] for DictComp);
+#   cond is -1 when the comprehension has no `if` filter.
 # Raise: nd_a=exc (-1 bare).
 # Try: kids=body,handlers,orelse,final; nd_a=start, nd_b=n_body,
 #   nd_c=n_handlers, nd_obj=n_orelse | (n_final << 16).
 # ExceptHandler: nd_a=type (-1 bare), nd_b=body start, nd_c=n_body,
 #   nd_obj=name string or "".
+# Call: nd_a=func, nd_b=kids start, nd_c=nargs | (nkw << 16),
+#   nd_obj=keyword name list when nkw != 0 (CALL_KW), else 0.
 # Subscript tag 5 extra: 0=index, -1=slice lower none, else lower+1.
 #
 # Operator-stack tags (LOAD_CONST, not _PYC_G names):
 #   1 BinOp  2 UnaryOp  3 (  4 call  5 [subscr]  6 Compare  7 BoolOp
-#   8 list   9 tuple   10 dict/set
+#   8 list   9 tuple   10 dict/set  11 conditional expression
+# _lex_col selects the expression mode while parsing: 0 normal,
+# 1 f-string interior, 2 no top-level tuple, 3 comprehension iterable or
+# filter (or_test only: no tuple and no conditional expression).
 # Call / BoolOp / Compare / displays keep children on the operand stack and
 # only write the kids arena when the node is reduced.
 
@@ -98,7 +110,15 @@ def _pyc_opnd_pop():
 
 
 def _pyc_ops_push(tag, a, b, extra):
+    # ops entries pack tag[7:0] | a[31:8] | b[61:32]. A device int is a
+    # wrapping signed 64-bit value, so a b that needs bit 32 or above is
+    # silently truncated on hardware while the host keeps it -- a source of
+    # host-passes / device-miscompiles. Fail loudly instead.
     global ops, ops_obj, ops_n
+    if a >= 16777216:
+        _pyc_parse_error("internal: operator stack operand overflow")
+    if b >= 1073741824:
+        _pyc_parse_error("internal: operator stack field overflow")
     cap = len(ops)
     while cap < ops_n + 1:
         more = cap
@@ -337,6 +357,18 @@ def _pyc_reduce_one():
         nid = _pyc_nd_new(ND["BoolOp"], line, col, a, ks, n_val, 0)
         _pyc_opnd_push(nid)
         return
+    if tag == 11:
+        # a is the marker state: 0 = still in the test, 1 = past `else`.
+        if a != 1:
+            _pyc_parse_error("expected 'else' in conditional expression")
+        orelse = _pyc_opnd_pop()
+        test = _pyc_opnd_pop()
+        body = _pyc_opnd_pop()
+        line = extra & 4294967295
+        col = extra >> 32
+        nid = _pyc_nd_new(ND["IfExp"], line, col, test, body, orelse, 0)
+        _pyc_opnd_push(nid)
+        return
     _pyc_parse_error("internal parser reduce")
 
 
@@ -424,9 +456,16 @@ def _pyc_consume_cmp():
 
 
 def _pyc_close_call(want):
-    tag, func, nargs, extra = _pyc_ops_pop()
+    # b packs nargs | (nkw << 10) | (kw_start << 20): the comma count, how
+    # many of the arguments were `name=value`, and the index of the first
+    # such. Ten bits each keeps the whole ops entry under bit 62 -- see
+    # _pyc_ops_push. extra is the keyword names in source order, or 0.
+    tag, func, packed_b, extra = _pyc_ops_pop()
     if tag != 4:
         _pyc_parse_error("unmatched ')'")
+    nargs = packed_b & 1023
+    nkw = (packed_b >> 10) & 1023
+    kw_start = (packed_b >> 20) & 1023
     if want:
         if nargs == 0:
             n = 0
@@ -434,9 +473,21 @@ def _pyc_close_call(want):
             n = nargs
     else:
         n = nargs + 1
+    if nkw:
+        # CALL_KW takes the keyword values as the last nkw stack entries, so
+        # `f(a=1, 2)` has no encoding. CPython rejects it the same way.
+        if kw_start + nkw != n:
+            _pyc_parse_error("positional argument follows keyword argument")
+    else:
+        extra = 0
     ks = _pyc_flush_n(n)
     line, col = _pyc_pos_of(func)
-    nid = _pyc_nd_new(ND["Call"], line, col, func, ks, n, 0)
+    # nd_c packs n | (nkw << 16) so codegen can branch on an int rather than
+    # comparing nd_obj against 0 -- a list-vs-int COMPARE_OP is a device TYPE
+    # trap, which is how the except-as name sentinel bug bit before (4c36be2).
+    nid = _pyc_nd_new(
+        ND["Call"], line, col, func, ks, n | (nkw << 16), extra
+    )
     _pyc_opnd_push(nid)
     _pyc_tok_advance()
 
@@ -642,40 +693,8 @@ def _pyc_parse_expr():
                     line = _pyc_tok_line()
                     col = _pyc_tok_col()
                     _pyc_tok_advance()
-                    args = [0] * 8
-                    nargs = 0
-                    if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
-                        while 1:
-                            if _pyc_tok_kind() != TOK_NAME:
-                                _pyc_parse_error("unsupported lambda argument")
-                            aname = _pyc_tok_text()
-                            if aname in KEYWORDS:
-                                _pyc_parse_error("invalid argument name")
-                            aline = _pyc_tok_line()
-                            acol = _pyc_tok_col()
-                            _pyc_tok_advance()
-                            if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "=":
-                                _pyc_parse_error("default arguments are not supported")
-                            aid = _pyc_nd_new(
-                                ND["Name"], aline, acol, ND["Store"], 0, 0, aname
-                            )
-                            cap = len(args)
-                            while cap < nargs + 1:
-                                extra = cap
-                                if extra < 8:
-                                    extra = 8
-                                args = args + ([0] * extra)
-                                cap = len(args)
-                            args[nargs] = aid
-                            nargs = nargs + 1
-                            if nargs > 240:
-                                _pyc_parse_error("too many locals")
-                            if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ",":
-                                _pyc_tok_advance()
-                                if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":":
-                                    break
-                                continue
-                            break
+                    args, packed, defaults, kwdefaults = _pyc_parse_params(":")
+                    nargs = len(args)
                     if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
                         _pyc_parse_error("expected ':'")
                     _pyc_tok_advance()
@@ -687,7 +706,13 @@ def _pyc_parse_expr():
                         i = i + 1
                     _pyc_kids_append(body)
                     nid = _pyc_nd_new(
-                        ND["Lambda"], line, col, ks, nargs, 1, "<lambda>"
+                        ND["Lambda"],
+                        line,
+                        col,
+                        ks,
+                        nargs | (packed << 32),
+                        1,
+                        ["<lambda>", defaults, kwdefaults],
                     )
                     _pyc_opnd_push(nid)
                     want = 0
@@ -981,8 +1006,12 @@ def _pyc_parse_expr():
             if tag == 4:
                 packed = ops[ops_n - 1]
                 func = (packed >> 8) & 16777215
-                nargs = (packed >> 32) + 1
-                ops[ops_n - 1] = 4 | (func << 8) | (nargs << 32)
+                packed_b = packed >> 32
+                nargs = (packed_b & 1023) + 1
+                if nargs >= 1024:
+                    _pyc_parse_error("too many call arguments")
+                packed_b = nargs | ((packed_b >> 10) << 10)
+                ops[ops_n - 1] = 4 | (func << 8) | (packed_b << 32)
                 _pyc_tok_advance()
                 kind2 = _pyc_tok_kind()
                 text2 = _pyc_tok_text()
@@ -1023,6 +1052,8 @@ def _pyc_parse_expr():
                 want = 1
                 continue
             if _lex_col == 2:
+                break
+            if _lex_col == 3:
                 break
             extra = _pyc_tok_line() | (_pyc_tok_col() << 32)
             _pyc_ops_push(9, 1, 0, extra)
@@ -1076,7 +1107,45 @@ def _pyc_parse_expr():
             # of the expression. Falling through leaves the bracket unclosed
             # and the caller reports "unmatched bracket".
             if _pyc_top_tag() == 4:
-                _pyc_parse_error("keyword arguments are not supported")
+                if want:
+                    _pyc_parse_error("expected keyword name")
+                kwname = _pyc_opnd_pop()
+                if nd_kind[kwname] != ND["Name"]:
+                    _pyc_parse_error("keyword argument name must be an identifier")
+                if nd_a[kwname] != ND["Load"]:
+                    _pyc_parse_error("keyword argument name must be an identifier")
+                packed = ops[ops_n - 1]
+                fn = (packed >> 8) & 16777215
+                packed_b = packed >> 32
+                nargs = packed_b & 1023
+                nkw = (packed_b >> 10) & 1023
+                kw_start = (packed_b >> 20) & 1023
+                if nkw == 0:
+                    kw_start = nargs
+                elif kw_start + nkw != nargs:
+                    _pyc_parse_error("positional argument follows keyword argument")
+                if nkw + 1 >= 1024:
+                    _pyc_parse_error("too many keyword arguments")
+                names = ops_obj[ops_n - 1]
+                if nkw == 0:
+                    names = []
+                kn = nd_obj[kwname]
+                j = 0
+                while j < nkw:
+                    if names[j] == kn:
+                        _pyc_parse_error("duplicate keyword argument")
+                    j = j + 1
+                names = names + [kn]
+                nkw = nkw + 1
+                ops[ops_n - 1] = (
+                    4
+                    | (fn << 8)
+                    | ((nargs | (nkw << 10) | (kw_start << 20)) << 32)
+                )
+                ops_obj[ops_n - 1] = names
+                _pyc_tok_advance()
+                want = 1
+                continue
             break
         if kind == TOK_NAME and text == "and":
             _pyc_reduce_while(PREC["and"], 0)
@@ -1142,7 +1211,81 @@ def _pyc_parse_expr():
             _pyc_tok_advance()
             want = 1
             continue
+        if kind == TOK_NAME and text == "if":
+            # Conditional expression. Lower precedence than every operator,
+            # so reduce down to the nearest bracket -- and to an enclosing
+            # ternary, which makes `a if b else c if d else e` right
+            # associative, matching CPython. Mode 3 (a comprehension
+            # iterable or filter) parses `or_test` only, so `if` ends it.
+            if want:
+                _pyc_parse_error("expected expression")
+            if _lex_col == 3:
+                break
+            while ops_n > start_ops:
+                tag = _pyc_top_tag()
+                if (
+                    tag == 3
+                    or tag == 4
+                    or tag == 5
+                    or tag == 8
+                    or tag == 9
+                    or tag == 10
+                    or tag == 11
+                ):
+                    break
+                _pyc_reduce_one()
+            extra = _pyc_tok_line() | (_pyc_tok_col() << 32)
+            _pyc_ops_push(11, 0, 0, extra)
+            _pyc_tok_advance()
+            want = 1
+            continue
+        if kind == TOK_NAME and text == "else":
+            if want:
+                _pyc_parse_error("expected expression")
+            while ops_n > start_ops:
+                tag = _pyc_top_tag()
+                if (
+                    tag == 3
+                    or tag == 4
+                    or tag == 5
+                    or tag == 8
+                    or tag == 9
+                    or tag == 10
+                    or tag == 11
+                ):
+                    break
+                _pyc_reduce_one()
+            if _pyc_top_tag() != 11:
+                break
+            packed = ops[ops_n - 1]
+            if (packed >> 8) & 16777215:
+                _pyc_parse_error("duplicate 'else' in conditional expression")
+            ops[ops_n - 1] = 11 | (1 << 8)
+            _pyc_tok_advance()
+            want = 1
+            continue
         if kind == TOK_NAME and text == "for":
+            # The element expression is still on the operator stack, e.g.
+            # `[x * 2 for ...]` leaves a pending BinOp. Reduce down to the
+            # opening bracket first, exactly like the `,` handler does.
+            while ops_n > start_ops:
+                tag = _pyc_top_tag()
+                if (
+                    tag == 3
+                    or tag == 4
+                    or tag == 5
+                    or tag == 8
+                    or tag == 9
+                    or tag == 10
+                ):
+                    break
+                _pyc_reduce_one()
+            if ops_n <= start_ops:
+                # The opening bracket belongs to an enclosing parse, so this
+                # `for` is not ours -- a second generator clause, whose outer
+                # comprehension reports it. Popping here would underflow the
+                # operand stack and surface as an internal error.
+                break
             tag = _pyc_top_tag()
             if tag == 3 or tag == 9:
                 _pyc_parse_error("generator expressions are not supported")
@@ -1187,26 +1330,41 @@ def _pyc_parse_expr():
             if not (_pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "in"):
                 _pyc_parse_error("expected 'in'")
             _pyc_tok_advance()
+            saved_col = _lex_col
+            _lex_col = 3
             it = _pyc_parse_expr()
+            cond = 0 - 1
             if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "if":
-                _pyc_parse_error("comprehension if is not supported")
+                _pyc_tok_advance()
+                cond = _pyc_parse_expr()
+                if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "if":
+                    _pyc_parse_error("multiple comprehension ifs are not supported")
+            _lex_col = saved_col
             if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "for":
                 _pyc_parse_error("nested comprehension is not supported")
             _pyc_ops_pop()
             line = extra & 4294967295
             col = extra >> 32
+            # Uniform layout for all three comprehensions: nd_c is a kids
+            # index holding [iter, cond] (cond -1 when there is no filter),
+            # plus [value] for a DictComp. That keeps every node field an
+            # int and leaves nd_obj free.
+            ks = kids_n
+            _pyc_kids_append(it)
+            _pyc_kids_append(cond)
             if tag == 8:
                 nid = _pyc_nd_new(
-                    ND["ListComp"], line, col, elt, target, it, 0
+                    ND["ListComp"], line, col, elt, target, ks, 0
                 )
             elif tag == 10:
                 if kind_ds == 1:
+                    _pyc_kids_append(val)
                     nid = _pyc_nd_new(
-                        ND["DictComp"], line, col, key, val, target, it
+                        ND["DictComp"], line, col, key, target, ks, 0
                     )
                 else:
                     nid = _pyc_nd_new(
-                        ND["SetComp"], line, col, elt, target, it, 0
+                        ND["SetComp"], line, col, elt, target, ks, 0
                     )
             else:
                 _pyc_parse_error("unexpected 'for'")
@@ -1347,6 +1505,9 @@ def _pyc_parse_suite():
                 continue
             if nd_kind[stmt] == ND["Try"]:
                 continue
+            if kind == TOK_OP and _pyc_tok_text() == ";":
+                _pyc_tok_advance()
+                continue
             if kind == TOK_NEWLINE:
                 _pyc_tok_advance()
                 continue
@@ -1369,6 +1530,216 @@ def _pyc_parse_suite():
     return out
 
 
+def _pyc_const_of(nid):
+    """(ok, value) for a literal default: Constant, or unary -/+/~ on one."""
+    k = nd_kind[nid]
+    if k == ND["Constant"]:
+        return 1, nd_obj[nid]
+    if k == ND["UnaryOp"]:
+        kid = nd_b[nid]
+        if nd_kind[kid] == ND["Constant"]:
+            u = nd_a[nid]
+            if u == ND["UAdd"]:
+                return 1, nd_obj[kid]
+            if nd_a[kid] == 0:
+                if u == ND["USub"]:
+                    return 1, 0 - nd_obj[kid]
+                if u == ND["Invert"]:
+                    return 1, ~nd_obj[kid]
+            if nd_a[kid] == 1:
+                if u == ND["USub"]:
+                    return 1, 0 - nd_obj[kid]
+    return 0, 0
+
+
+def _pyc_parse_params(closer):
+    global _lex_col
+    """Parse a def/lambda parameter list, stopping before ``closer``.
+
+    Returns ``(args, packed, defaults, kwdefaults)`` where ``args`` holds the
+    parameter Name nodes in CPython co_varnames order (positional, kw-only,
+    ``*args``, ``**kwargs``) and ``packed`` is
+    ``nposargs | (nkwonly << 16) | (has_va << 28) | (has_kw << 29)``.
+
+    The field widths matter: ``packed`` is shifted 32 bits further into
+    ``nd_b``, and a device ``int`` is a *wrapping* signed 64-bit value
+    (compiler_design.md 7), so anything at or above bit 63 is silently lost
+    on hardware while the host keeps it. 30 bits here keeps nd_b at 62.
+
+    Defaults are baked into the code object (``_bi_code_new`` fields 4 and 6),
+    not evaluated at def time: PyCore has no SET_FUNCTION_ATTRIBUTE 1/2, so a
+    non-literal default has no encoding and is a SyntaxError (D10).
+    """
+    pos = [0] * 8
+    npos = 0
+    kwo = [0] * 8
+    nkwo = 0
+    va = 0 - 1
+    kw = 0 - 1
+    defaults = []
+    kwdefaults = {}
+    seen_star = 0
+    if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == closer:
+        return [], 0, defaults, kwdefaults
+    while 1:
+        kind = _pyc_tok_kind()
+        text = _pyc_tok_text()
+        if kind == TOK_OP and text == "/":
+            _pyc_parse_error("positional-only marker '/' is not supported")
+        star = 0
+        if kind == TOK_OP and text == "*":
+            star = 1
+            _pyc_tok_advance()
+            kind = _pyc_tok_kind()
+            text = _pyc_tok_text()
+            if kind == TOK_OP and text == ",":
+                # bare '*': everything after it is keyword-only
+                if seen_star:
+                    _pyc_parse_error("duplicate '*' in parameter list")
+                seen_star = 1
+                _pyc_tok_advance()
+                continue
+        elif kind == TOK_OP and text == "**":
+            star = 2
+            _pyc_tok_advance()
+            kind = _pyc_tok_kind()
+            text = _pyc_tok_text()
+        if kind != TOK_NAME:
+            _pyc_parse_error("unsupported function argument")
+        if text in KEYWORDS:
+            _pyc_parse_error("invalid argument name")
+        aline = _pyc_tok_line()
+        acol = _pyc_tok_col()
+        _pyc_tok_advance()
+        if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":":
+            if closer != ":":
+                _pyc_parse_error("parameter annotations are not supported")
+        aid = _pyc_nd_new(ND["Name"], aline, acol, ND["Store"], 0, 0, text)
+        has_def = 0
+        dval = 0
+        if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "=":
+            if star:
+                _pyc_parse_error("'*' parameter cannot have a default")
+            _pyc_tok_advance()
+            saved_col = _lex_col
+            _lex_col = 2
+            dnode = _pyc_parse_expr()
+            _lex_col = saved_col
+            ok, dval = _pyc_const_of(dnode)
+            if ok == 0:
+                _pyc_parse_error("default argument must be a literal")
+            has_def = 1
+        if star == 1:
+            if seen_star:
+                _pyc_parse_error("duplicate '*' in parameter list")
+            if va >= 0:
+                _pyc_parse_error("duplicate '*' in parameter list")
+            seen_star = 1
+            va = aid
+        elif star == 2:
+            if kw >= 0:
+                _pyc_parse_error("duplicate '**' in parameter list")
+            kw = aid
+        elif seen_star:
+            if kw >= 0:
+                _pyc_parse_error("parameter follows '**' argument")
+            cap = len(kwo)
+            while cap < nkwo + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                kwo = kwo + ([0] * extra)
+                cap = len(kwo)
+            kwo[nkwo] = aid
+            nkwo = nkwo + 1
+            if has_def:
+                kwdefaults[text] = dval
+        else:
+            if kw >= 0:
+                _pyc_parse_error("parameter follows '**' argument")
+            if has_def == 0:
+                if len(defaults):
+                    _pyc_parse_error(
+                        "parameter without a default follows one with a default"
+                    )
+            else:
+                defaults = defaults + [dval]
+            cap = len(pos)
+            while cap < npos + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                pos = pos + ([0] * extra)
+                cap = len(pos)
+            pos[npos] = aid
+            npos = npos + 1
+        if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ",":
+            _pyc_tok_advance()
+            if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == closer:
+                break
+            continue
+        break
+    args = [0] * 8
+    n = 0
+    i = 0
+    while i < npos:
+        cap = len(args)
+        while cap < n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            args = args + ([0] * extra)
+            cap = len(args)
+        args[n] = pos[i]
+        n = n + 1
+        i = i + 1
+    i = 0
+    while i < nkwo:
+        cap = len(args)
+        while cap < n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            args = args + ([0] * extra)
+            cap = len(args)
+        args[n] = kwo[i]
+        n = n + 1
+        i = i + 1
+    has_va = 0
+    if va >= 0:
+        has_va = 1
+        cap = len(args)
+        while cap < n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            args = args + ([0] * extra)
+            cap = len(args)
+        args[n] = va
+        n = n + 1
+    has_kw = 0
+    if kw >= 0:
+        has_kw = 1
+        cap = len(args)
+        while cap < n + 1:
+            extra = cap
+            if extra < 8:
+                extra = 8
+            args = args + ([0] * extra)
+            cap = len(args)
+        args[n] = kw
+        n = n + 1
+    if n > 240:
+        _pyc_parse_error("too many locals")
+    out = [0] * n
+    i = 0
+    while i < n:
+        out[i] = args[i]
+        i = i + 1
+    packed = npos | (nkwo << 16) | (has_va << 28) | (has_kw << 29)
+    return out, packed, defaults, kwdefaults
+
+
 def _pyc_parse_function_def():
     line = _pyc_tok_line()
     col = _pyc_tok_col()
@@ -1382,43 +1753,13 @@ def _pyc_parse_function_def():
     if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "("):
         _pyc_parse_error("expected '('")
     _pyc_tok_advance()
-    args = [0] * 8
-    nargs = 0
-    if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ")"):
-        while 1:
-            if _pyc_tok_kind() != TOK_NAME:
-                _pyc_parse_error("unsupported function argument")
-            aname = _pyc_tok_text()
-            if aname in KEYWORDS:
-                _pyc_parse_error("invalid argument name")
-            aline = _pyc_tok_line()
-            acol = _pyc_tok_col()
-            _pyc_tok_advance()
-            if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "=":
-                _pyc_parse_error("default arguments are not supported")
-            nid = _pyc_nd_new(
-                ND["Name"], aline, acol, ND["Store"], 0, 0, aname
-            )
-            cap = len(args)
-            while cap < nargs + 1:
-                extra = cap
-                if extra < 8:
-                    extra = 8
-                args = args + ([0] * extra)
-                cap = len(args)
-            args[nargs] = nid
-            nargs = nargs + 1
-            if nargs > 240:
-                _pyc_parse_error("too many locals")
-            if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ",":
-                _pyc_tok_advance()
-                if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ")":
-                    break
-                continue
-            break
+    args, packed, defaults, kwdefaults = _pyc_parse_params(")")
+    nargs = len(args)
     if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ")"):
         _pyc_parse_error("expected ')'")
     _pyc_tok_advance()
+    if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "->":
+        _pyc_parse_error("return annotations are not supported")
     if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
         _pyc_parse_error("expected ':'")
     _pyc_tok_advance()
@@ -1434,7 +1775,13 @@ def _pyc_parse_function_def():
         _pyc_kids_append(body[i])
         i = i + 1
     return _pyc_nd_new(
-        ND["FunctionDef"], line, col, ks, nargs, nbody, name
+        ND["FunctionDef"],
+        line,
+        col,
+        ks,
+        nargs | (packed << 32),
+        nbody,
+        [name, defaults, kwdefaults],
     )
 
 
@@ -1467,7 +1814,8 @@ def _pyc_parse_stmt():
         if not (kind == TOK_NAME and text == "def"):
             _pyc_parse_error("expected 'def' after decorator")
         fn = _pyc_parse_function_def()
-        nargs = nd_b[fn]
+        packed = nd_b[fn]
+        nargs = packed & 65535
         nbody = nd_c[fn]
         old_ks = nd_a[fn]
         new_ks = kids_n
@@ -1480,7 +1828,8 @@ def _pyc_parse_stmt():
             _pyc_kids_append(kids[old_ks + i])
             i = i + 1
         nd_a[fn] = new_ks
-        nd_b[fn] = nargs | (ndec << 16)
+        # keep the params packing in bits [.. :32]; only ndec changes.
+        nd_b[fn] = nargs | (ndec << 16) | ((packed >> 32) << 32)
         return fn
     if kind == TOK_NAME and text == "global":
         return _pyc_parse_global()
@@ -1803,6 +2152,8 @@ def _pyc_parse_stmt():
             _pyc_tok_advance()
             msg = _pyc_parse_expr()
         return _pyc_nd_new(ND["Assert"], line, col, test, msg, 0, 0)
+    if kind == TOK_NAME and text == "from":
+        _pyc_parse_error("import is not supported")
     if kind == TOK_NAME and text in KEYWORDS:
         if (
             text != "True"
@@ -1815,11 +2166,31 @@ def _pyc_parse_stmt():
     kind = _pyc_tok_kind()
     text = _pyc_tok_text()
     if kind == TOK_OP and text == "=":
-        _pyc_tok_advance()
-        _pyc_set_store(value)
-        rhs = _pyc_parse_expr()
-        line, col = _pyc_pos_of(value)
-        return _pyc_nd_new(ND["Assign"], line, col, value, 0, rhs, 0)
+        # Chained targets: `x = y = expr` stores the one value into each
+        # target left to right, which is what CPython's COPY 1 + STORE does.
+        targets = [0] * 4
+        nt = 0
+        rhs = value
+        while _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "=":
+            _pyc_tok_advance()
+            _pyc_set_store(rhs)
+            cap = len(targets)
+            while cap < nt + 1:
+                more = cap
+                if more < 4:
+                    more = 4
+                targets = targets + ([0] * more)
+                cap = len(targets)
+            targets[nt] = rhs
+            nt = nt + 1
+            rhs = _pyc_parse_expr()
+        line, col = _pyc_pos_of(targets[0])
+        ks = kids_n
+        i = 0
+        while i < nt:
+            _pyc_kids_append(targets[i])
+            i = i + 1
+        return _pyc_nd_new(ND["Assign"], line, col, ks, nt, rhs, 0)
     if kind == TOK_OP:
         n = len(text)
         if n >= 2:
@@ -1900,6 +2271,9 @@ def _pyc_parse(mode):
             if nd_kind[stmt] == ND["For"]:
                 continue
             if nd_kind[stmt] == ND["Try"]:
+                continue
+            if kind == TOK_OP and _pyc_tok_text() == ";":
+                _pyc_tok_advance()
                 continue
             if kind == TOK_NEWLINE:
                 _pyc_tok_advance()

@@ -291,7 +291,7 @@ Real `try/finally` / `with` in CPython 3.14 use exception tables + `RERAISE`,
 not `SETUP_*`. Image tooling must keep rejecting the pseudo-ops if they ever
 appear.
 
-## Firmware compiler deviations (D1–D9)
+## Firmware compiler deviations (D1–D13)
 
 The on-device compiler (`pycore_firmware/compiler/`, `compiler.md`) is a
 second producer of bytecode, distinct from host `image_from_source.py`.
@@ -306,7 +306,11 @@ second producer of bytecode, distinct from host `image_from_source.py`.
 | D6 | Frame window `nlocals + co_stacksize > 240` is `SyntaxError`. Closures are §11.4. |
 | D7 | `"single"` / `flags != 0` → `ValueError`. |
 | D8 | `filename` is stored, never opened. |
-| D9 | `compile()` is not re-entrant (`_busy` deferred; 127/128 `_PYC_G` keys). |
+| D9 | `compile()` is not re-entrant; `_PYC_G["_busy"]` makes entry-while-active a `ValueError`. |
+| D10 | A `def` / `lambda` default must be a literal: defaults ride on the code object (`_bi_code_new` fields 4 and 6), and `SET_FUNCTION_ATTRIBUTE` 1/2 are not implemented. |
+| D11 | `del name` at module scope is `SyntaxError` — `DELETE_NAME` / `DELETE_GLOBAL` are not on this target. `DELETE_FAST` / `DELETE_SUBSCR` work. |
+| D12 | One `for` and at most one `if` per comprehension. |
+| D13 | Two sequential `try` blocks in one host-compiled function emit `JUMP_BACKWARD_NO_INTERRUPT` (catalog `reject`) and are refused by `validate_code_object`. |
 
 ## Deferred container opcodes
 

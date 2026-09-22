@@ -27,16 +27,22 @@ Shipped and regression-tested:
   is readable (F4).
 - ROM builtins (`print`, `min`/`sorted`/`map`/`zip`/…), native `ord`/`chr`/`int`/`str`/`len`.
 - List/tuple sequence repeat (`[1,2] * 3`) and concat (`[1,2] + [3]`). Writable code RAM + `exec`/`eval` on
-  precompiled code objects.
+  precompiled code objects or source strings.
+- **On-device `compile()`** (`planning/compiler_design.md`): a compiler
+  written in the PyCore subset, resident in code RAM at reset, reached
+  through four code-write builtins. Closures, `lambda`, decorators,
+  `assert`, and simple f-strings are in; so is the full `def` parameter
+  grammar. ROM `bios(payload)` execs a source string.
 
 Still open (see `planning/master_plan.md`):
 
-- Runtime code-RAM writers and on-device `compile()` via PyCPython
-  (`planning/compile_plan.md`). The hart does **not** run unmodified
-  `vendor/pycpython`.
-- BIOS / module loader (after first `compile()`).
-- `assert`, `with`, `import`, generators, `except*`, trap→Python-exception (T6),
-  list/tuple slicing, negative indices.
+- Module loader / relocation, and self-hosting (the compiler does not yet
+  fit in its own compiled-output headroom — `make pycore-size-report`).
+- `with`, `import`, generators, `except*`, runtime `class`,
+  trap→Python-exception, list/tuple slicing, negative indices,
+  `del` of a module-level name.
+- Garbage collection: `compile()` leaks its working set; the caller
+  reclaims with `_bi_heap_mark` / `_bi_heap_release`.
 
 ## Try a Python file
 
@@ -76,19 +82,24 @@ Types: 64-bit `int`, `bool`, `float`, `None`, `str`, `list`, `tuple`, `dict`,
 **Boot builtins:** `len`, `range`, `ord`, `chr`, `int`, `str`, `print`, `min`/`max`,
 `sum`, `sorted`, `map`/`zip`/`enumerate`/`filter`/`reversed` (these return
 **lists**), `list`/`dict`/`tuple`/`set`, `abs`/`all`/`any`, `bin`/`hex`/`oct`,
-`hasattr`/`getattr`/`isinstance`, `exec`/`eval` on a code object, `compile()`
-(T1 source → code object).
+`hasattr`/`getattr`/`isinstance`, `exec`/`eval` on a code object **or a
+source string**, `compile()` (T1–T5 source → code object), `bios(payload)`.
 Methods: `list.append/pop/extend/clear`, `set.add/update`,
 `str.join/startswith/endswith/find`, `dict.get/keys/items/values/update/pop`.
 
-**No:** `import`, generators/`async`, `match`, `assert`, `with`, closures,
-runtime `class`, `super()`, string-form `exec`/`eval`, files,
+**No:** `import`, generators/`async`, `match`, `with`,
+runtime `class`, `super()`, files,
 slice assignment, list/tuple slicing, format-spec f-strings, `STR * INT`,
 negative indices. String slice step other than `None`/1 is still rejected.
 
-Host `compile()` for images is still CPython. ROM `compile()` ships T1–T3
-(`eval(compile("1 + 2", "<s>", "eval"))` → 3;
-`exec(compile(src, "<s>", "exec"))` A2 → 7).
+Host `compile()` for images is still CPython. ROM `compile()` ships T1–T5
+plus closures: `eval(compile("1 + 2", "<s>", "eval"))` → 3,
+`exec(compile(src, "<s>", "exec"))` A2 → 7, `def` with defaults /
+`*args` / keyword-only / `**kwargs`, keyword call sites, conditional
+expressions, chained assignment, and comprehensions with an element
+expression and an `if` filter. `del` of a module-level name, annotations,
+and non-literal defaults are compile-time `SyntaxError` (see
+`pycore/docs/compiler.md` D1–D12).
 [PyCPython](https://github.com/ColtonHarris999/PyCPython)
 is vendored at `vendor/pycpython` as the oracle / algorithm source
 (`git submodule update --init`). Occupancy: `make pycore-size-report`.

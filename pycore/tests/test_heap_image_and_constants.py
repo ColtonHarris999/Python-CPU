@@ -400,5 +400,49 @@ class TestLineAlignedHeapAlloc(unittest.TestCase):
         self.assertEqual(addr % encoding.LINE_BYTES, 0)
 
 
+class StaticDictSlotsTest(unittest.TestCase):
+    """Image-time dict sizing (compiler_design.md 11.8).
+
+    ``dict_min_slots`` must stay an exact mirror of the RTL function, which
+    saturates at 128 because its oparg is 7 bits. ``static_dict_slots`` is
+    the image-time sizing that is *not* bound by that, so a statically
+    built table keeps its headroom instead of degrading to a near-full open
+    addressing table as the compiler grows.
+    """
+
+    def test_dict_min_slots_still_mirrors_the_rtl_saturation(self) -> None:
+        self.assertEqual(heap_image.dict_min_slots(2), 4)
+        self.assertEqual(heap_image.dict_min_slots(32), 64)
+        self.assertEqual(heap_image.dict_min_slots(33), 128)
+        self.assertEqual(heap_image.dict_min_slots(127), 128)
+
+    def test_static_dict_slots_holds_load_at_or_under_half(self) -> None:
+        for n in (0, 1, 2, 3, 7, 32, 64, 127, 128, 200, 500, 1000):
+            slots = heap_image.static_dict_slots(n)
+            self.assertEqual(slots & (slots - 1), 0, f"{slots} not a power of 2")
+            self.assertGreaterEqual(slots, 4)
+            self.assertLessEqual(n * 2, slots, f"{n} keys in {slots} slots")
+
+    def test_static_dict_slots_grows_past_the_hardware_ceiling(self) -> None:
+        self.assertGreater(heap_image.static_dict_slots(127), 128)
+
+    def test_a_large_static_dict_allocates_and_reads_back(self) -> None:
+        builder = heap_image.HeapImageBuilder()
+        pairs = [
+            (
+                encoding.tag_constant(f"k{i:04d}", builder),
+                (encoding.TAG_INT, encoding.int_value(i)),
+            )
+            for i in range(200)
+        ]
+        handle = builder.alloc_dict(
+            pairs, slot_count=heap_image.static_dict_slots(len(pairs))
+        )
+        obj = heap_image.mut_addr(handle[1])
+        header = builder.words[obj]
+        self.assertEqual(header >> 64, 512)
+        self.assertEqual(header & ((1 << 64) - 1), 200)
+
+
 if __name__ == "__main__":
     unittest.main()

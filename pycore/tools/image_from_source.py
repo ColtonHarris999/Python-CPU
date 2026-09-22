@@ -73,7 +73,12 @@ from encoding import (
     range_fits_inline,
     tag_constant,
 )
-from heap_image import HeapImageBuilder, Tagged, dict_min_slots
+from heap_image import (
+    HeapImageBuilder,
+    Tagged,
+    dict_min_slots,
+    static_dict_slots,
+)
 
 
 REQUIRED_PY = (3, 14)
@@ -296,12 +301,31 @@ def iter_raw_instructions(co: types.CodeType) -> Iterable[RawInstruction]:
         extended = 0
 
 
+# Named explicitly rather than matched by prefix. `startswith("JUMP_")`
+# waved through JUMP_BACKWARD_NO_INTERRUPT, which pycore.json marks
+# `reject`: CPython emits it on a try/finally cleanup edge, the image built
+# clean, and the program took a runtime PY_TRAP_ILLEGAL_OPCODE -- exactly
+# the failure A4 exists to turn into a build-time error.
+_SUPPORTED_OP_FAMILIES = frozenset(
+    {
+        "LOAD_FAST",
+        "LOAD_FAST_AND_CLEAR",
+        "LOAD_FAST_BORROW",
+        "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
+        "LOAD_FAST_CHECK",
+        "LOAD_FAST_LOAD_FAST",
+        "JUMP_BACKWARD",
+        "JUMP_FORWARD",
+        "POP_JUMP_IF_FALSE",
+        "POP_JUMP_IF_NONE",
+        "POP_JUMP_IF_NOT_NONE",
+        "POP_JUMP_IF_TRUE",
+    }
+)
+
+
 def _is_supported_opname(opname: str) -> bool:
-    if opname.startswith("LOAD_FAST"):
-        return True
-    if opname.startswith("JUMP_"):
-        return True
-    if opname.startswith("POP_JUMP_"):
+    if opname in _SUPPORTED_OP_FAMILIES:
         return True
     return opname in SUPPORTED_OPS
 
@@ -1439,10 +1463,21 @@ PACKAGE_RUNTIME_SEEDS: dict[str, object] = {
     "sc_nlocals": None,
     "sc_argcount": None,
     "sc_varnames": None,
+    "sc_kwonly": None,
+    "sc_flags": None,
+    "sc_defaults": None,
+    "sc_kwdefaults": None,
+    # compile() re-entrancy guard (compiler_design.md D9). The argument
+    # slots above are module state, so a nested compile() would clobber the
+    # outer one's source mid-parse; this turns that into a clean ValueError.
+    "_busy": 0,
 }
-# Only these tables.py names are LOAD_GLOBAL'd by firmware today. Seeding
-# every TOK_* integer as a top-level key packed _PYC_G to 113/128 and
-# LOAD_GLOBAL _pyc_inc started CALL_FILTERing (miss / non-callable).
+# Only these tables.py names are LOAD_GLOBAL'd by firmware today; the rest
+# of tables.py would be payload with no reader. Seeding every TOK_* integer
+# once pushed _PYC_G to 113 of 128 keys and LOAD_GLOBAL started missing --
+# at the time the table could not grow past 128 slots, so that was 88% load
+# on an open-addressing table. _package_dict_slots now holds it at or under
+# 50%, so the list is short for the payload reason, not that one.
 PACKAGE_TABLE_SEED_NAMES = frozenset({
     "TOK_ENDMARKER",
     "TOK_NAME",
@@ -1524,6 +1559,7 @@ _HOST_OP_BUILD_SET = 48
 _HOST_OP_BUILD_STRING = 50
 _HOST_OP_BUILD_TUPLE = 51
 _HOST_OP_CALL = 52
+_HOST_OP_CALL_KW = 55
 _HOST_OP_COMPARE_OP = 56
 _HOST_OP_CONTAINS_OP = 57
 _HOST_OP_CONVERT_VALUE = 58
@@ -1651,6 +1687,11 @@ class _HostEmittedCode:
         argcount: int = 0,
         nlocals: int = 0,
         exctable: tuple[object, ...] = (),
+        kwonlyargcount: int = 0,
+        varargs: bool = False,
+        varkeywords: bool = False,
+        defaults: tuple[object, ...] = (),
+        kwdefaults: dict[str, object] | None = None,
     ) -> None:
         self._ram = ram
         self._entry = entry_slot
@@ -1660,9 +1701,75 @@ class _HostEmittedCode:
         self._argcount = argcount
         self._nlocals = nlocals
         self._exctable = tuple(int(b) for b in exctable)
+        self._kwonlyargcount = kwonlyargcount
+        self._varargs = varargs
+        self._varkeywords = varkeywords
+        self._defaults = tuple(defaults)
+        self._kwdefaults = dict(kwdefaults or {})
         self._globals: dict[str, object] = {}
         self._exc: object | None = None
         self._prev_exc: object | None = None
+
+    def _bind_args(
+        self, args: tuple[object, ...], kwargs: dict[str, object]
+    ) -> list[object]:
+        """Mirror of the CALL FSM's argument binding (pycore_call_fsm.svh).
+
+        Slot order in ``co_varnames`` follows CPython: positional args,
+        kw-only args, then ``*args`` and ``**kwargs`` if present. Defaults
+        and kw-defaults ride on the *code object* here, not on a function
+        object -- PyCore has no SET_FUNCTION_ATTRIBUTE 1/2.
+        """
+        nargs = self._argcount
+        nkwonly = self._kwonlyargcount
+        locals_: list[object] = [_HOST_UNBOUND] * self._nlocals
+        if len(args) > nargs and not self._varargs:
+            raise TypeError(
+                f"takes {nargs} positional arguments but {len(args)} were given"
+            )
+        for i in range(min(len(args), nargs)):
+            locals_[i] = args[i]
+        star = nargs + nkwonly
+        if self._varargs:
+            locals_[star] = tuple(args[nargs:])
+            star += 1
+        elif args[nargs:]:  # pragma: no cover - guarded above
+            raise TypeError("too many positional arguments")
+        leftover: dict[str, object] = {}
+        for key, value in kwargs.items():
+            try:
+                slot = self._varnames.index(key)
+            except ValueError:
+                slot = -1
+            if 0 <= slot < nargs + nkwonly:
+                if locals_[slot] is not _HOST_UNBOUND:
+                    raise TypeError(f"got multiple values for argument {key!r}")
+                locals_[slot] = value
+            elif self._varkeywords:
+                leftover[key] = value
+            else:
+                raise TypeError(f"got an unexpected keyword argument {key!r}")
+        if self._varkeywords:
+            locals_[star] = leftover
+        ndefaults = len(self._defaults)
+        for i in range(nargs):
+            if locals_[i] is _HOST_UNBOUND:
+                di = i - (nargs - ndefaults)
+                if di < 0:
+                    raise TypeError(
+                        f"missing required positional argument "
+                        f"{self._varnames[i]!r}"
+                    )
+                locals_[i] = self._defaults[di]
+        for i in range(nargs, nargs + nkwonly):
+            if locals_[i] is _HOST_UNBOUND:
+                name = str(self._varnames[i])
+                if name not in self._kwdefaults:
+                    raise TypeError(
+                        f"missing required keyword-only argument {name!r}"
+                    )
+                locals_[i] = self._kwdefaults[name]
+        return locals_
 
     def _lookup(self, name: str) -> object:
         if name in self._globals:
@@ -1684,16 +1791,10 @@ class _HostEmittedCode:
                 return self._entry + (entry.target >> 1)
         raise exc
 
-    def __call__(self, *args: object) -> object:
-        if len(args) != self._argcount:
-            raise TypeError("_HostEmittedCode() takes no arguments")
+    def __call__(self, *args: object, **kwargs: object) -> object:
         pc = self._entry
         stack: list[object] = []
-        locals_: list[object] = [_HOST_UNBOUND] * self._nlocals
-        i = 0
-        while i < self._argcount:
-            locals_[i] = args[i]
-            i += 1
+        locals_ = self._bind_args(args, kwargs)
         # Bound the walk so a missing RETURN cannot hang the host golden.
         for _ in range(1 << 16):
             word = self._ram.words.get(pc, 0)
@@ -1816,6 +1917,34 @@ class _HostEmittedCode:
                     stack.append(fn(*call_args))
                 else:
                     stack.append(fn(self_or_null, *call_args))
+                continue
+            if opcode == _HOST_OP_CALL_KW:
+                kwnames = stack.pop()
+                nkw = len(kwnames)
+                npos = oparg - nkw
+                kw_vals: list[object] = []
+                narg = 0
+                while narg < nkw:
+                    kw_vals.append(stack.pop())
+                    narg += 1
+                kw_vals.reverse()
+                call_args = []
+                narg = 0
+                while narg < npos:
+                    call_args.append(stack.pop())
+                    narg += 1
+                call_args.reverse()
+                self_or_null = stack.pop()
+                fn = stack.pop()
+                if not callable(fn):
+                    raise TypeError(
+                        "host code-RAM interpreter: CALL_KW of non-callable"
+                    )
+                kwargs = {str(k): v for k, v in zip(kwnames, kw_vals)}
+                if self_or_null is _HOST_NULL:
+                    stack.append(fn(*call_args, **kwargs))
+                else:
+                    stack.append(fn(self_or_null, *call_args, **kwargs))
                 continue
             if opcode == _HOST_OP_JUMP_FORWARD:
                 pc = pc + _host_jump_n_cache(opcode) + oparg
@@ -2125,6 +2254,8 @@ class _HostCodeRam:
         meta = int(fields[3])
         argcount = meta & 0xFFFF
         nlocals = (meta >> 16) & 0xFFFF
+        kwonlyargcount = (meta >> 48) & 0xFFFF
+        flags = int(fields[8])
         return _HostEmittedCode(
             self,
             entry,
@@ -2134,6 +2265,11 @@ class _HostCodeRam:
             argcount=argcount,
             nlocals=nlocals,
             exctable=fields[7],
+            kwonlyargcount=kwonlyargcount,
+            varargs=bool(flags & 1),
+            varkeywords=bool(flags & 2),
+            defaults=fields[4],
+            kwdefaults=fields[6],
         )
 
 
@@ -2272,16 +2408,16 @@ def seed_firmware_function(
 
 
 def _package_dict_slots(n: int) -> int:
-    """Power-of-two dict capacity. Hardware ``dict_min_slots`` tops out at 128."""
-    slots = dict_min_slots(max(n, 1))
-    while n >= slots:
-        slots *= 2
-    if slots > 128:
-        raise ValueError(
-            f"firmware package _PYC_G has {n} keys; "
-            "static dicts cannot exceed 128 slots"
-        )
-    return slots
+    """Slot count for ``_PYC_G`` and the boot builtins dict.
+
+    ``static_dict_slots`` keeps the load factor at or below 50%, which is the
+    policy ``pycore_dict_min_slots`` states but cannot hold past 128 slots
+    (its oparg is 7 bits). Image-time tables are not hardware-sized, so they
+    are not subject to that ceiling: the compiler package can grow past 128
+    helpers without the boot image silently degrading into a near-full open
+    addressing table.
+    """
+    return static_dict_slots(n)
 
 
 def load_firmware_package_tables(
@@ -2697,7 +2833,7 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         pyc_g, pyc_entry = package
         pairs.append((tag_constant("_PYC_G", string_heap), pyc_g))
         pairs.append((tag_constant("_PYC_ENTRY", string_heap), pyc_entry))
-    return heap.alloc_dict(pairs, slot_count=dict_min_slots(len(pairs)))
+    return heap.alloc_dict(pairs, slot_count=_package_dict_slots(len(pairs)))
 
 
 def build_image_from_code(

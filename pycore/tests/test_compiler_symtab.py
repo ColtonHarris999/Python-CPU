@@ -75,7 +75,8 @@ def firmware_function_scopes(g: dict) -> list[tuple[str, tuple[str, ...], int, i
             names = g["sc_varnames"][i]
             varnames = tuple(names[j] for j in range(nloc))
             nid = g["sc_node"][i]
-            fname = g["nd_obj"][nid]
+            # FunctionDef / Lambda nd_obj is [name, defaults, kwdefaults].
+            fname = g["nd_obj"][nid][0]
             out.append((fname, varnames, nloc, g["sc_argcount"][i]))
         i += 1
     return out

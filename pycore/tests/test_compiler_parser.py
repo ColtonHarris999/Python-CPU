@@ -60,6 +60,14 @@ PARSER_EVAL_CORPUS = [
     "x",
     "f(a < b, c)",
     "a and (b and c)",
+    "a if b else c",
+    "a if b else c if d else e",
+    "(a if b else c) + 1",
+    "1 + (a if b else c)",
+    "[a if b else c, d]",
+    "f(a if b else c)",
+    "not a if b else c",
+    "[x if x else 0 for x in xs]",
     "(a and b) and c",
     "not not a",
     "+a",
@@ -87,9 +95,24 @@ PARSER_EVAL_CORPUS = [
     "[x for x in xs]",
     "{x for x in xs}",
     "{x: x for x in xs}",
+    "[x * 2 for x in xs]",
+    "[f(x) + 1 for x in xs]",
+    "[x for x in xs if x]",
+    "[x + 1 for x in xs if x > 0]",
+    "{x * 2 for x in xs}",
+    "{x for x in xs if x}",
+    "{x: x * 2 for x in xs}",
+    "{x: x for x in xs if x}",
     "lambda x: x + 1",
     "lambda: 1",
     "lambda x, y: x + y",
+    "lambda x, y=2: x + y",
+    "lambda *a: a",
+    "lambda **k: k",
+    "lambda a, *, b=1: b",
+    "f(a=1)",
+    "f(1, a=2)",
+    "f(g(x=1), y=2)",
     'f"hello"',
     'f"a{x}b"',
     'f"{x}"',
@@ -111,6 +134,10 @@ PARSER_EXEC_CORPUS = [
     "return\n",
     "1 + 2\n",
     "x = 1\ny = 2\n",
+    "x = y = 1\n",
+    "x = y = z = 1 + 2\n",
+    "a.b = c[0] = 1\n",
+    "x = 1 if y else 2\n",
     "f(1)\n",
     "def f():\n    return 1\n",
     "def f(a, b):\n    return a + b\n",
@@ -144,7 +171,70 @@ PARSER_EXEC_CORPUS = [
     "assert x, y\n",
     "@d\ndef f():\n    return 1\n",
     "@d1\n@d2\ndef f(a):\n    return a\n",
+    # T3 parameter and call forms (compiler_design.md 5.6).
+    "def f(a, b=2):\n    return a\n",
+    "def f(a=1, b='s', c=None, d=True, e=-1):\n    return a\n",
+    "def f(*a):\n    return a\n",
+    "def f(**k):\n    return k\n",
+    "def f(a, *b):\n    return a\n",
+    "def f(a, *, b):\n    return b\n",
+    "def f(a, *, b=3):\n    return b\n",
+    "def f(a, b=2, *c, d=4, **e):\n    return a\n",
+    "f(a=1)\n",
+    "f(1, a=2)\n",
+    "f(1, 2, a=3, b=4)\n",
 ]
+
+
+
+def _fw_sig(b: int, obj: object) -> tuple:
+    """Firmware signature: (nposargs, nkwonly, varargs, varkw, defaults, kwdefaults).
+
+    ``nd_b`` packs ``nargs | (ndec << 16) | (params << 32)`` and ``params``
+    packs ``nposargs | (nkwonly << 16) | (has_varargs << 28) | (has_varkw << 29)``
+    (compiler_design.md T3). ``nd_obj`` is ``[name, defaults, kwdefaults]``.
+    """
+    params = b >> 32
+    return (
+        params & 65535,
+        (params >> 16) & 4095,
+        bool((params >> 28) & 1),
+        bool((params >> 29) & 1),
+        tuple(obj[1]),
+        dict(obj[2]),
+    )
+
+
+def _cp_param_args(args: ast.arguments) -> list:
+    """CPython parameters in co_varnames order: pos, kw-only, *args, **kwargs."""
+    out = list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs)
+    if args.vararg is not None:
+        out.append(args.vararg)
+    if args.kwarg is not None:
+        out.append(args.kwarg)
+    return out
+
+
+def _cp_sig(args: ast.arguments) -> tuple:
+    defaults = tuple(_literal(d) for d in args.defaults)
+    kwdefaults = {
+        arg.arg: _literal(default)
+        for arg, default in zip(args.kwonlyargs, args.kw_defaults)
+        if default is not None
+    }
+    return (
+        len(args.posonlyargs) + len(args.args),
+        len(args.kwonlyargs),
+        args.vararg is not None,
+        args.kwarg is not None,
+        defaults,
+        kwdefaults,
+    )
+
+
+def _literal(node: ast.AST) -> object:
+    """Default values are baked into the code object, so they must be literal."""
+    return ast.literal_eval(node)
 
 
 def _kind_names(g: dict) -> dict[int, str]:
@@ -169,7 +259,15 @@ def firmware_shape(g: dict, nid: int) -> tuple:
     if name == "Expr":
         return ("Expr", firmware_shape(g, a))
     if name == "Assign":
-        return ("Assign", [firmware_shape(g, a)], firmware_shape(g, c))
+        targets = [firmware_shape(g, kids[a + i]) for i in range(b)]
+        return ("Assign", targets, firmware_shape(g, c))
+    if name == "IfExp":
+        return (
+            "IfExp",
+            firmware_shape(g, a),
+            firmware_shape(g, b),
+            firmware_shape(g, c),
+        )
     if name == "Return":
         value = None if a < 0 else firmware_shape(g, a)
         return ("Return", value)
@@ -193,18 +291,27 @@ def firmware_shape(g: dict, nid: int) -> tuple:
         comps = [firmware_shape(g, kids[b + i]) for i in range(c)]
         return ("Compare", firmware_shape(g, a), ops, comps)
     if name == "Call":
-        args = [firmware_shape(g, kids[b + i]) for i in range(c)]
-        return ("Call", firmware_shape(g, a), args)
+        nargs = c & 65535
+        nkw = c >> 16
+        args = [firmware_shape(g, kids[b + i]) for i in range(nargs)]
+        kwnames = tuple(obj[:nkw]) if nkw else ()
+        return ("Call", firmware_shape(g, a), args, kwnames)
     if name == "FunctionDef":
         nargs = b & 65535
-        ndec = b >> 16
+        ndec = (b >> 16) & 65535
         decs = [firmware_shape(g, kids[a + i]) for i in range(ndec)]
         params = [firmware_shape(g, kids[a + ndec + i]) for i in range(nargs)]
         body = [firmware_shape(g, kids[a + ndec + nargs + i]) for i in range(c)]
-        return ("FunctionDef", obj, params, body, decs)
+        return ("FunctionDef", obj[0], params, body, decs, _fw_sig(b, obj))
     if name == "Lambda":
-        params = [firmware_shape(g, kids[a + i]) for i in range(b)]
-        return ("Lambda", params, firmware_shape(g, kids[a + b]))
+        nargs = b & 65535
+        params = [firmware_shape(g, kids[a + i]) for i in range(nargs)]
+        return (
+            "Lambda",
+            params,
+            firmware_shape(g, kids[a + nargs]),
+            _fw_sig(b, obj),
+        )
     if name == "Assert":
         msg = None if b < 0 else firmware_shape(g, b)
         return ("Assert", firmware_shape(g, a), msg)
@@ -259,27 +366,25 @@ def firmware_shape(g: dict, nid: int) -> tuple:
         hi = None if b < 0 else firmware_shape(g, b)
         st = None if c < 0 else firmware_shape(g, c)
         return ("Slice", lo, hi, st)
-    if name == "ListComp":
+    if name in ("ListComp", "SetComp", "DictComp"):
+        # nd_c indexes kids: [iter, cond] (+[value] for a DictComp).
+        cond = kids[c + 1]
+        shaped_cond = None if cond < 0 else firmware_shape(g, cond)
+        if name == "DictComp":
+            return (
+                "DictComp",
+                firmware_shape(g, a),
+                firmware_shape(g, kids[c + 2]),
+                firmware_shape(g, b),
+                firmware_shape(g, kids[c]),
+                shaped_cond,
+            )
         return (
-            "ListComp",
+            name,
             firmware_shape(g, a),
             firmware_shape(g, b),
-            firmware_shape(g, c),
-        )
-    if name == "SetComp":
-        return (
-            "SetComp",
-            firmware_shape(g, a),
-            firmware_shape(g, b),
-            firmware_shape(g, c),
-        )
-    if name == "DictComp":
-        return (
-            "DictComp",
-            firmware_shape(g, a),
-            firmware_shape(g, b),
-            firmware_shape(g, c),
-            firmware_shape(g, obj),
+            firmware_shape(g, kids[c]),
+            shaped_cond,
         )
     if name == "Raise":
         exc = None if a < 0 else firmware_shape(g, a)
@@ -313,6 +418,13 @@ def cpython_shape(node: ast.AST) -> tuple:
             "Assign",
             [cpython_shape(t) for t in node.targets],
             cpython_shape(node.value),
+        )
+    if isinstance(node, ast.IfExp):
+        return (
+            "IfExp",
+            cpython_shape(node.test),
+            cpython_shape(node.body),
+            cpython_shape(node.orelse),
         )
     if isinstance(node, ast.Return):
         value = None if node.value is None else cpython_shape(node.value)
@@ -358,31 +470,27 @@ def cpython_shape(node: ast.AST) -> tuple:
             [cpython_shape(c) for c in node.comparators],
         )
     if isinstance(node, ast.Call):
-        if node.keywords:
-            raise AssertionError("T1 corpus must not include keywords")
+        kwnames = []
+        kwvalues = []
+        for kw in node.keywords:
+            if kw.arg is None:
+                raise AssertionError("**kwargs at a call site is not in the subset")
+            kwnames.append(kw.arg)
+            kwvalues.append(cpython_shape(kw.value))
         return (
             "Call",
             cpython_shape(node.func),
-            [cpython_shape(a) for a in node.args],
+            [cpython_shape(a) for a in node.args] + kwvalues,
+            tuple(kwnames),
         )
     if isinstance(node, ast.FunctionDef):
-        if node.args.defaults or node.args.kwonlyargs:
-            raise AssertionError("G corpus is positional def only")
-        if node.args.vararg is not None or node.args.kwarg is not None:
-            raise AssertionError("G corpus is positional def only")
-        params = [
-            ("Name", arg.arg, "Store") for arg in node.args.args
-        ]
+        params = [("Name", arg.arg, "Store") for arg in _cp_param_args(node.args)]
         body = [cpython_shape(s) for s in node.body]
         decs = [cpython_shape(d) for d in node.decorator_list]
-        return ("FunctionDef", node.name, params, body, decs)
+        return ("FunctionDef", node.name, params, body, decs, _cp_sig(node.args))
     if isinstance(node, ast.Lambda):
-        if node.args.defaults or node.args.kwonlyargs:
-            raise AssertionError("T5 lambda is positional only")
-        if node.args.vararg is not None or node.args.kwarg is not None:
-            raise AssertionError("T5 lambda is positional only")
-        params = [("Name", arg.arg, "Store") for arg in node.args.args]
-        return ("Lambda", params, cpython_shape(node.body))
+        params = [("Name", arg.arg, "Store") for arg in _cp_param_args(node.args)]
+        return ("Lambda", params, cpython_shape(node.body), _cp_sig(node.args))
     if isinstance(node, ast.Assert):
         msg = None if node.msg is None else cpython_shape(node.msg)
         return ("Assert", cpython_shape(node.test), msg)
@@ -458,36 +566,28 @@ def cpython_shape(node: ast.AST) -> tuple:
         hi = None if node.upper is None else cpython_shape(node.upper)
         st = None if node.step is None else cpython_shape(node.step)
         return ("Slice", lo, hi, st)
-    if isinstance(node, ast.ListComp):
-        if len(node.generators) != 1 or node.generators[0].ifs:
-            raise AssertionError("T4 corpus is one generator, no ifs")
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp)):
+        if len(node.generators) != 1:
+            raise AssertionError("T4 corpus is one generator")
         gen = node.generators[0]
+        if len(gen.ifs) > 1:
+            raise AssertionError("T4 corpus is at most one comprehension if")
+        cond = cpython_shape(gen.ifs[0]) if gen.ifs else None
+        if isinstance(node, ast.DictComp):
+            return (
+                "DictComp",
+                cpython_shape(node.key),
+                cpython_shape(node.value),
+                cpython_shape(gen.target),
+                cpython_shape(gen.iter),
+                cond,
+            )
         return (
-            "ListComp",
+            type(node).__name__,
             cpython_shape(node.elt),
             cpython_shape(gen.target),
             cpython_shape(gen.iter),
-        )
-    if isinstance(node, ast.SetComp):
-        if len(node.generators) != 1 or node.generators[0].ifs:
-            raise AssertionError("T4 corpus is one generator, no ifs")
-        gen = node.generators[0]
-        return (
-            "SetComp",
-            cpython_shape(node.elt),
-            cpython_shape(gen.target),
-            cpython_shape(gen.iter),
-        )
-    if isinstance(node, ast.DictComp):
-        if len(node.generators) != 1 or node.generators[0].ifs:
-            raise AssertionError("T4 corpus is one generator, no ifs")
-        gen = node.generators[0]
-        return (
-            "DictComp",
-            cpython_shape(node.key),
-            cpython_shape(node.value),
-            cpython_shape(gen.target),
-            cpython_shape(gen.iter),
+            cond,
         )
     if isinstance(node, ast.Raise):
         if node.cause is not None:
@@ -582,12 +682,38 @@ class TestCompilerParserCorpus(unittest.TestCase):
         with self.assertRaises(SyntaxError):
             _host_exec_globals(g["_pyc_parse_main"], g)
 
-    def test_unsupported_default_arg(self) -> None:
-        g = load_firmware_package_namespace()
-        g["_in_src"] = "def f(a=1):\n    return a\n"
-        g["_in_mode"] = "exec"
-        with self.assertRaises(SyntaxError):
-            _host_exec_globals(g["_pyc_parse_main"], g)
+    def test_non_literal_default_is_rejected(self) -> None:
+        """Defaults ride on the code object, so they must be constants (D10)."""
+        for src in (
+            "def f(a=b):\n    return a\n",
+            "def f(a=[]):\n    return a\n",
+            "def f(a=g()):\n    return a\n",
+        ):
+            with self.subTest(src=src):
+                g = load_firmware_package_namespace()
+                g["_in_src"] = src
+                g["_in_mode"] = "exec"
+                with self.assertRaises(SyntaxError) as cm:
+                    _host_exec_globals(g["_pyc_parse_main"], g)
+                self.assertIn("literal", str(cm.exception))
+
+    def test_parameter_list_errors(self) -> None:
+        for src, want in (
+            ("def f(b=1, a):\n    return a\n", "without a default"),
+            ("def f(*a, *b):\n    return a\n", "duplicate '*'"),
+            ("def f(**a, b):\n    return a\n", "follows '**'"),
+            ("def f(a, /, b):\n    return a\n", "positional-only"),
+            ("def f(a: int):\n    return a\n", "annotations"),
+            ("def f() -> int:\n    return 1\n", "annotations"),
+            ("def f(*a=1):\n    return a\n", "cannot have a default"),
+        ):
+            with self.subTest(src=src):
+                g = load_firmware_package_namespace()
+                g["_in_src"] = src
+                g["_in_mode"] = "exec"
+                with self.assertRaises(SyntaxError) as cm:
+                    _host_exec_globals(g["_pyc_parse_main"], g)
+                self.assertIn(want, str(cm.exception))
 
     def test_string_escape_is_rejected_not_silently_kept(self) -> None:
         for src in (r"x = 'a\tb'" + "\n", r'x = "q\\"' + "\n", r"x = '''a\nb'''" + "\n"):
@@ -605,13 +731,57 @@ class TestCompilerParserCorpus(unittest.TestCase):
         _host_exec_globals(g["_pyc_parse_main"], g)
         self.assertIn(r"a\tb", g["nd_obj"])
 
-    def test_keyword_arguments_are_rejected(self) -> None:
-        g = load_firmware_package_namespace()
-        g["_in_src"] = "f(a=1)\n"
-        g["_in_mode"] = "eval"
-        with self.assertRaises(SyntaxError) as cm:
-            _host_exec_globals(g["_pyc_parse_main"], g)
-        self.assertIn("keyword arguments", str(cm.exception))
+    def test_keyword_argument_errors(self) -> None:
+        """CALL_KW needs the keyword values last and each name once."""
+        for src, want in (
+            ("f(a=1, 2)", "positional argument follows"),
+            ("f(a=1, a=2)", "duplicate keyword"),
+            ("f(1=2)", "must be an identifier"),
+            ("f(a.b=1)", "must be an identifier"),
+        ):
+            with self.subTest(src=src):
+                g = load_firmware_package_namespace()
+                g["_in_src"] = src
+                g["_in_mode"] = "eval"
+                with self.assertRaises(SyntaxError) as cm:
+                    _host_exec_globals(g["_pyc_parse_main"], g)
+                self.assertIn(want, str(cm.exception))
+
+    def test_packed_node_fields_fit_a_wrapping_int64(self) -> None:
+        """Every packed node/token field must stay inside a device int.
+
+        A device ``int`` is a wrapping signed 64-bit value
+        (compiler_design.md 7), but the firmware runs on arbitrary-precision
+        ints under host CPython. A field that spills past bit 62 therefore
+        passes every host test and is silently truncated on hardware -- how
+        the T3 parameter packing and the call operator-stack entry both
+        broke. Nothing but this check separates the two.
+        """
+        limit = 1 << 62
+        for src in PARSER_EXEC_CORPUS:
+            if not src.strip():
+                continue
+            with self.subTest(src=src):
+                g = load_firmware_package_namespace()
+                g["_in_src"] = src
+                g["_in_mode"] = "exec"
+                _host_exec_globals(g["_pyc_parse_main"], g)
+                for name in ("nd_a", "nd_b", "nd_c", "nd_pos"):
+                    for i in range(g["nd_n"]):
+                        value = g[name][i]
+                        if not isinstance(value, int):
+                            continue
+                        self.assertLess(
+                            abs(value), limit, f"{name}[{i}] in {src!r}"
+                        )
+                for name in ("tk_a", "tk_b"):
+                    for i in range(g["tk_n"]):
+                        value = g[name][i]
+                        if not isinstance(value, int):
+                            continue
+                        self.assertLess(
+                            abs(value), limit, f"{name}[{i}] in {src!r}"
+                        )
 
     def test_img_parser_tiny_expr_host_golden(self) -> None:
         self.assertEqual(

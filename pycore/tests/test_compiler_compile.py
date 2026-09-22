@@ -237,6 +237,87 @@ class TestCompilerCompileShim(unittest.TestCase):
             7,
         )
 
+    def test_reentrant_compile_raises_instead_of_clobbering(self) -> None:
+        """D9: the argument slots are module state on ``_PYC_G``.
+
+        A ``compile()`` reached from inside a compiled-and-executed program
+        would overwrite the outer call's ``_in_src`` mid-parse. The guard
+        makes that a clean ``ValueError``.
+        """
+        ns = load_rom_firmware_callables()
+        compile_fn = ns["compile"]
+        package = compile_fn.__globals__["_PYC_G"]
+        self.assertEqual(package["_busy"], 0)
+        package["_busy"] = 1
+        try:
+            with self.assertRaises(ValueError):
+                compile_fn("1 + 2", "<s>", "eval")
+        finally:
+            package["_busy"] = 0
+
+    def test_busy_is_cleared_after_a_failed_compile(self) -> None:
+        """A SyntaxError must not poison the next call."""
+        ns = load_rom_firmware_callables()
+        compile_fn = ns["compile"]
+        package = compile_fn.__globals__["_PYC_G"]
+        with self.assertRaises(SyntaxError):
+            compile_fn("import os", "<s>", "exec")
+        self.assertEqual(package["_busy"], 0)
+        self.assertEqual(compile_fn("3 + 4", "<s>", "eval")(), 7)
+
+    def test_busy_is_cleared_after_a_mode_error(self) -> None:
+        ns = load_rom_firmware_callables()
+        compile_fn = ns["compile"]
+        package = compile_fn.__globals__["_PYC_G"]
+        with self.assertRaises(ValueError):
+            compile_fn("1", "<s>", "single")
+        self.assertEqual(package["_busy"], 0)
+
+    def test_img_str_eq_runtime_long_host_golden(self) -> None:
+        """T0: the LONG_STR equality/ordering the design was built on."""
+        self.assertEqual(
+            host_entry_result(
+                PROGRAMS / "img_str_eq_runtime_long.py", "managed_entry"
+            ),
+            63,
+        )
+
+    def test_img_startup_multiprogram_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(
+                PROGRAMS / "img_startup_multiprogram.py", "managed_entry"
+            ),
+            7,
+        )
+
+    def test_img_compile_kwargs_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_kwargs.py", "managed_entry"),
+            7,
+        )
+
+    def test_img_compile_grammar_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(PROGRAMS / "img_compile_grammar.py", "managed_entry"),
+            7,
+        )
+
+    def test_img_compile_reentrant_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(
+                PROGRAMS / "img_compile_reentrant.py", "managed_entry"
+            ),
+            7,
+        )
+
+    def test_img_compile_ns_inherit_host_golden(self) -> None:
+        self.assertEqual(
+            host_entry_result(
+                PROGRAMS / "img_compile_ns_inherit.py", "managed_entry"
+            ),
+            7,
+        )
+
     def test_class_and_with_remain_syntax_error(self) -> None:
         compile_fn = load_rom_firmware_callables()["compile"]
         with self.assertRaises(SyntaxError):

@@ -88,7 +88,14 @@ Tagged = tuple[int, int]  # (tag, value128)
 
 
 def dict_min_slots(n_pairs: int) -> int:
-    """Mirror of pycore_dict_min_slots."""
+    """Exact mirror of ``pycore_dict_min_slots`` (pycore_defs.svh).
+
+    Only valid for tables the *hardware* sizes -- BUILD_MAP, BUILD_SET, and
+    the CALL FSM's ``**kwargs`` collector -- where ``n_pairs`` is a 7-bit
+    oparg and the RTL saturates at 128 slots. Image-time dicts are sized by
+    :func:`static_dict_slots` instead, because the hardware reads their
+    ``slot_count`` out of the object header and never recomputes it.
+    """
     if n_pairs <= 2:
         return 4
     if n_pairs <= 4:
@@ -100,6 +107,24 @@ def dict_min_slots(n_pairs: int) -> int:
     if n_pairs <= 32:
         return 64
     return 128
+
+
+def static_dict_slots(n_pairs: int) -> int:
+    """Slot count for an image-time dict: ``next_pow2(2 * n)``, minimum 4.
+
+    Open addressing degrades sharply past ~50% load, and ``alloc_dict``
+    refuses a table with no empty slot at all. ``dict_min_slots`` saturates
+    at 128 because its RTL twin takes a 7-bit oparg; a statically built
+    table has no such limit -- every lookup path reads ``slot_count`` from
+    the header (``pycore_cont_dict.svh`` "cont_dict_hdr_slots") -- so this
+    one keeps doubling and holds the load factor at or below 50%.
+    """
+    if n_pairs < 0:
+        raise ValueError("n_pairs must be non-negative")
+    slots = 4
+    while slots < 2 * n_pairs:
+        slots *= 2
+    return slots
 
 
 @dataclass

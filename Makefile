@@ -605,24 +605,28 @@ define PYCORE_IMAGE_RUN_SRC
 endef
 
 # Same as PYCORE_IMAGE_RUN_SRC but on the two-core top (LIST_EXTEND / grow).
+# Note the `_twocore` build directory: pycore-img and pycore-img-two-core run
+# inside one parallel sub-make, and 18 programs have a target in both lists.
+# Sharing build/img_<name>/ meant two jobs writing the same program.hex while
+# a third read it -- a MEM_FAULT that only ever showed up under -j.
 define PYCORE_IMAGE_RUN_SRC_TWOCORE
 	$(PYTHON) tools/ensure_sim.py twocore
-	mkdir -p $(BUILD_DIR)/$(1)
+	mkdir -p $(BUILD_DIR)/$(1)_twocore
 	$(PYTHON) pycore/tools/run_image_test.py \
 		--source pycore/programs/$(2) \
 		--entry managed_entry \
-		--program-hex $(BUILD_DIR)/$(1)/program.hex \
-		--dmem-hex $(BUILD_DIR)/$(1)/dmem.hex \
-		--meta $(BUILD_DIR)/$(1)/image.meta
-	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
-	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
-	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
-	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/$(1)/image.meta); \
+		--program-hex $(BUILD_DIR)/$(1)_twocore/program.hex \
+		--dmem-hex $(BUILD_DIR)/$(1)_twocore/dmem.hex \
+		--meta $(BUILD_DIR)/$(1)_twocore/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/$(1)_twocore/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/$(1)_twocore/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/$(1)_twocore/image.meta); \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/$(1)_twocore/image.meta); \
 	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
-		+PROG_HEX=$(BUILD_DIR)/$(1)/program.hex \
-		+DMEM_HEX=$(BUILD_DIR)/$(1)/dmem.hex \
-		+CODE_RAM_HEX=$(BUILD_DIR)/$(1)/code_ram.hex \
+		+PROG_HEX=$(BUILD_DIR)/$(1)_twocore/program.hex \
+		+DMEM_HEX=$(BUILD_DIR)/$(1)_twocore/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/$(1)_twocore/code_ram.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
@@ -755,22 +759,22 @@ endef
 # must use this path (or EXCORE_EN=1 fixtures).
 define PYCORE_IMAGE_RUN_TWOCORE
 	$(PYTHON) tools/ensure_sim.py twocore
-	mkdir -p $(BUILD_DIR)/img_$(1)
+	mkdir -p $(BUILD_DIR)/img_$(1)_twocore
 	$(PYTHON) pycore/tools/run_image_test.py \
 		--source pycore/programs/img_$(1).py \
 		--entry managed_entry \
-		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
-		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
-		--meta $(BUILD_DIR)/img_$(1)/image.meta
-	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
-	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
-	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
-	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+		--program-hex $(BUILD_DIR)/img_$(1)_twocore/program.hex \
+		--dmem-hex $(BUILD_DIR)/img_$(1)_twocore/dmem.hex \
+		--meta $(BUILD_DIR)/img_$(1)_twocore/image.meta
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)_twocore/image.meta); \
+	EXPECTED_TAG=$$(awk -F= '/^EXPECTED_TAG=/{print $$2}' $(BUILD_DIR)/img_$(1)_twocore/image.meta); \
+	EXPECTED_VALUE=$$(awk -F= '/^EXPECTED_VALUE=/{print $$2}' $(BUILD_DIR)/img_$(1)_twocore/image.meta); \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/img_$(1)_twocore/image.meta); \
 	test -n "$$HEAP_INIT_PTR" && test -n "$$EXPECTED_TAG" && test -n "$$EXPECTED_VALUE" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
-		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
-		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
-		+CODE_RAM_HEX=$(BUILD_DIR)/img_$(1)/code_ram.hex \
+		+PROG_HEX=$(BUILD_DIR)/img_$(1)_twocore/program.hex \
+		+DMEM_HEX=$(BUILD_DIR)/img_$(1)_twocore/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/img_$(1)_twocore/code_ram.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
@@ -786,21 +790,21 @@ endef
 # Skips host execution (host print would pollute logs); EXPECTED_* are INT 0.
 define PYCORE_IMAGE_RUN_TWOCORE_STDOUT
 	$(PYTHON) tools/ensure_sim.py twocore
-	mkdir -p $(BUILD_DIR)/img_$(1)
+	mkdir -p $(BUILD_DIR)/img_$(1)_twocore
 	$(PYTHON) pycore/tools/image_from_source.py \
 		--source pycore/programs/img_$(1).py \
-		--program-hex $(BUILD_DIR)/img_$(1)/program.hex \
-		--dmem-hex $(BUILD_DIR)/img_$(1)/dmem.hex \
-		--meta $(BUILD_DIR)/img_$(1)/image.meta \
+		--program-hex $(BUILD_DIR)/img_$(1)_twocore/program.hex \
+		--dmem-hex $(BUILD_DIR)/img_$(1)_twocore/dmem.hex \
+		--meta $(BUILD_DIR)/img_$(1)_twocore/image.meta \
 		--expected-tag 1 \
 		--expected-value 0
-	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
-	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/img_$(1)/image.meta); \
+	HEAP_INIT_PTR=$$(awk -F= '/^HEAP_INIT_PTR=/{print $$2}' $(BUILD_DIR)/img_$(1)_twocore/image.meta); \
+	CODE_RAM_INIT_SLOT=$$(awk -F= '/^CODE_RAM_INIT_SLOT=/{print $$2}' $(BUILD_DIR)/img_$(1)_twocore/image.meta); \
 	test -n "$$HEAP_INIT_PTR" && test -n "$$CODE_RAM_INIT_SLOT" || exit 1; \
 	$(PYCORE_SIM_TWOCORE_BIN) \
-		+PROG_HEX=$(BUILD_DIR)/img_$(1)/program.hex \
-		+DMEM_HEX=$(BUILD_DIR)/img_$(1)/dmem.hex \
-		+CODE_RAM_HEX=$(BUILD_DIR)/img_$(1)/code_ram.hex \
+		+PROG_HEX=$(BUILD_DIR)/img_$(1)_twocore/program.hex \
+		+DMEM_HEX=$(BUILD_DIR)/img_$(1)_twocore/dmem.hex \
+		+CODE_RAM_HEX=$(BUILD_DIR)/img_$(1)_twocore/code_ram.hex \
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=1 \
@@ -808,9 +812,9 @@ define PYCORE_IMAGE_RUN_TWOCORE_STDOUT
 		+CODE_RAM_INIT_SLOT=$$CODE_RAM_INIT_SLOT \
 		+EXPECTED_TAG=1 \
 		+EXPECTED_VALUE=0 \
-		+STDOUT_PATH=$(BUILD_DIR)/img_$(1)/sim.stdout \
+		+STDOUT_PATH=$(BUILD_DIR)/img_$(1)_twocore/sim.stdout \
 		+MAX_CYCLES=$(2) $(PYCORE_MEM_PLUSARGS) && \
-	diff -u pycore/programs/img_$(1).stdout $(BUILD_DIR)/img_$(1)/sim.stdout
+	diff -u pycore/programs/img_$(1).stdout $(BUILD_DIR)/img_$(1)_twocore/sim.stdout
 endef
 
 define PYCORE_IMAGE_TRAP_RUN
@@ -1286,6 +1290,43 @@ pycore-img-compile-closure-two-core: excore-fw
 pycore-img-compile-exec-roundtrip:
 	$(call PYCORE_IMAGE_RUN,compile_exec_roundtrip,40000000)
 
+# compiler_design.md T3: defaults / *args / kw-only / **kwargs + CALL_KW.
+pycore-img-compile-kwargs:
+	$(call PYCORE_IMAGE_RUN,compile_kwargs,40000000)
+
+pycore-img-compile-kwargs-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_kwargs,40000000)
+
+# The end-to-end shape on-device compile() exists for: a startup program
+# that compiles and launches several others, each in its own globals dict,
+# and survives one of them raising. Two-core: the launcher's result list and
+# the compiler's arenas both grow (PY_TRAP_LIST_GROW).
+pycore-img-startup-multiprogram-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,startup_multiprogram,60000000)
+
+# compiler_design.md D9: the compile() _busy re-entrancy guard, and that
+# it is cleared by `finally` so a failed compile does not poison the next.
+pycore-img-compile-reentrant:
+	$(call PYCORE_IMAGE_RUN,compile_reentrant,40000000)
+
+# compiler_design.md T1/T2/T4: conditional expressions, chained assignment,
+# ';' separators, and comprehension element expressions / if filters.
+# Two-core only: the comprehensions grow their result through LIST_APPEND /
+# MAP_ADD, which is a PY_TRAP_LIST_GROW excore round trip (same as
+# pycore-img-compile-list-comp-two-core).
+pycore-img-compile-grammar-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_grammar,40000000)
+
+# compiler_design.md 9 T0: the two facts the design was built on top of.
+# img_str_eq_runtime_long pins runtime LONG_STR content equality/ordering
+# (2.1); img_compile_ns_inherit pins _bi_exec_globals namespace inheritance
+# through a nested CALL (4.2 R2, fallback F-A).
+pycore-img-str-eq-runtime-long:
+	$(call PYCORE_IMAGE_RUN,str_eq_runtime_long,2000000)
+
+pycore-img-compile-ns-inherit:
+	$(call PYCORE_IMAGE_RUN,compile_ns_inherit,2000000)
+
 pycore-img-compile-exec-roundtrip-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_exec_roundtrip,40000000)
 
@@ -1416,6 +1457,10 @@ pycore-img-package-all: \
 	pycore-img-compile-reject-closure \
 	pycore-img-compile-closure \
 	pycore-img-compile-exec-roundtrip \
+	pycore-img-compile-kwargs \
+	pycore-img-compile-reentrant \
+	pycore-img-str-eq-runtime-long \
+	pycore-img-compile-ns-inherit \
 	pycore-img-compile-reject-locals \
 	pycore-img-compile-repeat \
 	pycore-img-compile-release-realloc \
@@ -1995,6 +2040,9 @@ pycore-img-two-core: \
 	pycore-img-compile-reject-closure-two-core \
 	pycore-img-compile-closure-two-core \
 	pycore-img-compile-exec-roundtrip-two-core \
+	pycore-img-compile-kwargs-two-core \
+	pycore-img-compile-grammar-two-core \
+	pycore-img-startup-multiprogram-two-core \
 	pycore-img-compile-reject-locals-two-core \
 	pycore-img-compile-repeat-two-core \
 	pycore-img-compile-release-realloc-two-core \

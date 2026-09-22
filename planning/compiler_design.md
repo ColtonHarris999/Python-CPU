@@ -65,7 +65,7 @@ The work is done when all of these are true.
 | A4 | A construct the machine cannot execute is a **`SyntaxError` from the compiler**, never an illegal-opcode or `CALL_FILTER` trap | `img_compile_reject_*` |
 | A5 | `compile(src, f, "single")` and `flags != 0` raise `ValueError` | `img_compile_mode_trap` |
 | A6 | The compiler's own source passes the subset gate | `test_compiler_subset.py` |
-| A7 | Host differential: for every corpus program, the firmware compiler's **result** equals CPython's | `test_compiler_differential.py` |
+| A7 | Host differential: for every corpus program, the firmware compiler's **result** equals CPython's | `test_compiler_differential.py` (**landed**: eval / exec / reject corpora) |
 | A8 | Image build fails, loudly, if the compiler overflows code RAM / heap | `make pycore-size-report` |
 
 Explicitly **not** in scope: BIOS, module loader / relocation, self-hosting,
@@ -355,7 +355,18 @@ def compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1):
 - `compile()` is **not re-entrant** in v1 (the argument slots are globals).
   Detect it: `_PYC_G["_busy"]`; raise `RuntimeError`-shaped `ValueError` on
   re-entry. A nested `compile()` inside compiled-and-executed code is the
-  realistic trigger; make it a clean error, not corruption.
+  realistic trigger; make it a clean error, not corruption. (**Landed** in
+  §11.8 once the `_PYC_G` key ceiling was lifted. Note the trigger named
+  here is not actually one: `exec(compile(src))` runs the compile to
+  completion first, so nothing re-enters today. The guard exists so that
+  when a path does appear it is a `ValueError`, not a miscompile.)
+- **`_PYC_G` is sized for growth, not packed.** Image-time dicts are sized by
+  `static_dict_slots` = `next_pow2(2n)`, the ≤ 50% load the RTL's
+  `pycore_dict_min_slots` comment states but cannot hold past 128 slots (its
+  oparg is 7 bits). Statically built tables are exempt from that ceiling:
+  every lookup path reads `slot_count` out of the object header
+  (`pycore_cont_dict.svh`, `cont_dict_hdr_slots`) and never recomputes it.
+  See §11.8.
 - Every `STORE_NAME`/`STORE_GLOBAL` and every `globals_base_r` change flushes
   the GIC (`memory_hierarchy.md` invalidation matrix). Entering and leaving
   `compile()` therefore costs two GIC flushes. Acceptable; note it in the
@@ -629,9 +640,10 @@ depth-first and land in the parent's `co_consts` before the parent is built.
 | --- | --- | --- |
 | **T1** | literals, names, `+ - * / // % ** & \| ^ << >> ~`, unary, comparisons incl. chains, `is`, `in`, `not`, `and`, `or`, calls, subscript, attribute, expression statements, assignment, `return` | v1 (A1) |
 | **T2** | `if`/`elif`/`else`, `while`, `for`, `break`, `continue`, `pass`, augmented assignment, `del` | v1 (A2) |
-| **T3** | `def` with positional / default / kw-only / `*args` / `**kwargs`, tuple unpacking, list / tuple / dict / set displays, `global` | v1 (A2) |
+| **T3** | `def` with positional / default / kw-only / `*args` / `**kwargs`, keyword call sites (`CALL_KW`), tuple unpacking, list / tuple / dict / set displays, `global` | **landed** (§11.8) |
 | T4 | `try`/`except`/`else`/`finally`, `raise`, comprehensions, string slicing | **landed** (§11.2) |
 | T5 | `lambda`, decorators, `assert`, simple f-strings (`FORMAT_SIMPLE` / `BUILD_STRING` / `CONVERT_VALUE`). `class` / `import` / `with` stay `SyntaxError` | **landed** |
+| T6 | Conditional expressions (`a if c else b`), chained assignment (`x = y = e`), `;`-separated simple statements, comprehension element expressions and `if` filters | **landed** (§11.8) |
 
 **Constant folding (§11.3).** Int `+ - * & | ^` and unary `- ~`, plus
 str `+`, fold to a `Constant` before emit. CPython still emits
@@ -684,7 +696,11 @@ Number these and pin them in `pycore/docs/compiler.md` (new) and
 | D6 | A frame window (`nlocals + co_stacksize`) over the cap in §6.1 S-6 is a `SyntaxError` | The irreducible limit surfaced at compile time instead of as a fatal `CALL_FILTER`. Recursion depth is **not** a compile-time error — deep recursion is a runtime `MEM_FAULT` when the spill region is exhausted, which is CPython's `RecursionError` in kind. Closures are §11.4 (`MAKE_CELL` / `LOAD_DEREF` / `COPY_FREE_VARS`). |
 | D7 | `"single"` mode and `flags != 0` raise `ValueError` | Matches the stub contract in `compile.md`. |
 | D8 | `filename` is stored, never opened | No filesystem. |
-| D9 | `compile()` is not re-entrant | `_busy` is deferred (127 of 128 `_PYC_G` keys). Nested `compile()` would clobber `_in_*` and scratch, not raise a clean error. |
+| D9 | `compile()` is not re-entrant | **Guarded.** `_PYC_G["_busy"]` makes an entry-while-active a `ValueError` rather than a clobbered `_in_*`; `finally` clears it so a `SyntaxError` does not poison the next call. No path reaches it today (`exec(compile(src))` is sequential, and the compiler never calls `compile`). `img_compile_reentrant` → 7. |
+| D10 | A `def` / `lambda` default must be a literal | Defaults ride on the **code object** (`_bi_code_new` fields 4 and 6), not on a function object — `SET_FUNCTION_ATTRIBUTE` 1/2 are not implemented, so there is no def-time evaluation to hang a non-constant default on. `def f(a=b)` is a `SyntaxError`. |
+| D11 | `del name` at module scope is a `SyntaxError` | `DELETE_NAME` / `DELETE_GLOBAL` are absent from `pycore/targets/pycore.json`; emitting one would be the illegal-opcode trap A4 exists to prevent. `del` of a local and `del xs[i]` work. |
+| D12 | One `for` and at most one `if` per comprehension | A second generator clause or filter is a clean `SyntaxError`. |
+| D13 | Two sequential `try` blocks in one function are rejected at image-build time | CPython emits `JUMP_BACKWARD_NO_INTERRUPT` on that cleanup edge, which `pycore.json` marks `reject`. Split the blocks into separate functions. Applies to host-compiled images; the firmware compiler never emits it. |
 
 ---
 
@@ -1019,7 +1035,7 @@ this work must close, not as new scope.
 | Growing `RF_DEPTH` | §6.1 adds spill/fill instead; the RF stays 256 entries and the flop count does not move |
 | A dedicated stack cache between the RF and dmem | §6.1 S-8: L1D already hits 95–99.6% on the frame region, and per-slot residency costs ~170 Kbit of tables (`attic/pycore_frame_buffer.sv`) |
 | LL(1) table generator + grammar tables | Precedence climbing needs neither |
-| Module image format / `_bi_load_module` / relocation | Compiler still fits (45995 / 65536); §11.7 not opened |
+| Module image format / `_bi_load_module` / relocation | Compiler still fits (50028 / 65536); §11.7 not opened |
 | BIOS | ROM `bios(payload)` execs a payload; programs may still `compile()` directly |
 | Trap → Python exception (exceptions T6) | Syntax errors are already real `raise`s |
 | `open` / stdin / console RX | Source is already a heap string |
@@ -1040,8 +1056,8 @@ cap). T4 raised `PYCORE_CODE_RAM_BLOCK_COUNT` to 128 (lever 2).
 | Resource | Capacity | Measured | Source |
 | --- | ---: | --- | --- |
 | Code ROM | 8 192 slots | **2 627 used**, 5 565 remain (boot image + ROM builtins) | `len(program_slots)` |
-| Code RAM | 65 536 slots | **compiler 45 995**, **19 541 remain** for compiled output | `len(code_ram_slots)` |
-| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 266 624 B**, 715 328 remain | `HEAP_INIT_PTR - HEAP_BASE` |
+| Code RAM | 65 536 slots | **compiler 50 028**, **15 508 remain** for compiled output | `len(code_ram_slots)` |
+| Heap | 981 952 B (`0x440`–`0xF0000`) | **static 350 016 B**, 631 936 remain | `HEAP_INIT_PTR - HEAP_BASE` |
 | Register file | 256 entries, ring window | resident working set only; per-frame `nlocals + co_stacksize ≤ 240` | S-1, S-6 |
 | RF spill region | 256 KB / 8 192 entries | ≈ 500–1 000 typical frames before `MEM_FAULT` | S-7 |
 | Frame stack | 32 KB / 1 024 descriptors | `MAX_CALL_DEPTH_CORE` matches the region | `pycore_defs.svh` |
@@ -1051,10 +1067,14 @@ The planning figure “compiler ≤ 14 000 slots, leave ≥ 18 000 for output”
 was ±30% from the PyCPython audit. After T1–T3 the package was 32 483 of
 32 768 slots (285 remain). T4 took lever 2:
 `PYCORE_CODE_RAM_BLOCK_COUNT` 64 → 128 (`code_loading.md` §1.2). After
-§11.3 folding the package was 39 547 slots; after §11.5 T5 it is
-45 995 slots (19 541 remain). Remaining levers if compiled-output
-headroom is still too small: (1) shrink `codegen.py`, (3) overlays.
-Do **not** restart the module loader for occupancy alone.
+§11.3 folding the package was 39 547 slots; after §11.5 T5 it was
+45 995 slots. §11.8 (real T3, comprehension elements and filters, T6
+grammar) took it to **50 028 slots (15 508 remain)**; the heap grew to
+350 016 B because `static_dict_slots` doubled the two big image-time
+dicts, which is the point — headroom for helpers rather than a table at
+99% load. Remaining levers if compiled-output headroom gets too small:
+(1) shrink `codegen.py`, (3) overlays. Do **not** restart the module
+loader for occupancy alone.
 
 ---
 
@@ -1086,7 +1106,7 @@ parallel with B and C.
 
 | Step | Work | Done when |
 | --- | --- | --- |
-| **T0** | Pin the three uncertain facts: (a) runtime LONG_STR `==` and ordering, (b) `_bi_exec_globals` namespace inheritance through nested `CALL`, (c) current ROM slot occupancy | `img_str_eq_runtime_long`, `img_compile_ns_inherit`, and a measured §7 table |
+| **T0** | Pin the three uncertain facts: (a) runtime LONG_STR `==` and ordering, (b) `_bi_exec_globals` namespace inheritance through nested `CALL`, (c) current ROM slot occupancy. **Landed late** (§11.8) — the design shipped on these unpinned | `img_str_eq_runtime_long` → 63, `img_compile_ns_inherit` → 7, and a measured §7 table |
 | **A** | `test_compiler_subset.py` + `compat` helpers + empty `pycore_firmware/compiler/` | Host test is **red** on `xs[-1]`, `xs[1:]`, `class`, a closure, and an over-cap frame window. Pure host Python, so it can land while B is in flight |
 | **B** | **§6.1 S-1…S-9: the RF ring window, spill/fill, and the locals lift.** **Landed** (no compiler code) | The **entire existing image suite passes unchanged**, plus `img_locals_40_uninit` (red on `main` today), `img_locals_64`, `img_rf_deep_recursion`, `img_rf_spill_refill`, `img_rf_thrash`, `img_rf_window_too_big_trap`, `img_rf_spill_oom_trap`, `tb_regfile` |
 | **C** | R-1…R-6 + W-4 + W-5 (the code write path and the four builtins). **Landed** | `img_code_new_call`: blit `RESUME; LOAD_SMALL_INT 7; RETURN_VALUE`, `_bi_code_new`, call it, get 7. Plus `img_code_emit_then_call`, `img_code_alloc_oom_trap`, `img_code_write_floor_trap` |
@@ -1104,10 +1124,11 @@ parallel with B and C.
 | **Fold** | §11.3 constant folding of int ALU / str Add. **Landed** | Host: `1+2` is one `LOAD_SMALL_INT`; `1+x` still `BINARY_OP` |
 | **Closures** | §11.4 cells + `OBK_FUNCTION`. **Landed** | `img_compile_reject_closure` → 1; `img_compile_closure` → 7 |
 | **T5** | lambda, decorators, assert, simple f-strings. **Landed** | `img_compile_lambda` → 7; `img_compile_assert` → 1; `img_compile_decorator` → 7; `img_compile_fstring` → 1. `class`/`import`/`with` stay A4 `SyntaxError` |
+| **Review** | §11.8: `_PYC_G` sizing, real T3, comprehension elements + `if`, T6 grammar, D9 `_busy`, the prefix-matched opcode gate, the two int64 packing bugs, A7 | `img_compile_kwargs` → 7; `img_compile_grammar` (two-core) → 7; `img_startup_multiprogram` (two-core) → 7; `img_compile_reentrant` → 7; `img_str_eq_runtime_long` → 63; `img_compile_ns_inherit` → 7; `test_compiler_differential.py` green |
 | **O-2** | split result/scratch arenas. **Not opened** | R4 watermark golden still holds; caller mark/release is the reclaim path |
-| **Loader** | module image + relocation. **Not opened** | compiler fits (45995 / 65536); overlays only if headroom vanishes |
+| **Loader** | module image + relocation. **Not opened** | compiler fits (50028 / 65536); overlays only if headroom vanishes |
 | **BIOS** | ROM `bios(payload)` execs source. **Landed** | `img_bios_exec` → 3 |
-| **Self-host** | compile the compiler on device. **Blocked on size** | need 45995 output slots, have 19541 headroom |
+| **Self-host** | compile the compiler on device. **Blocked on size** | need 50028 output slots, have 15508 headroom |
 
 Test-harness rules (unchanged, from `README.md`): host tests go in
 `pycore/tests/` under `make pycore-python-tests`; device images use
@@ -1121,7 +1142,7 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 
 | Image | Expect |
 | --- | --- |
-| `img_str_eq_runtime_long` | runtime-built LONG_STR `==` an interned copy is `True` (T0) |
+| `img_str_eq_runtime_long` | **63** — runtime-built LONG_STR `==`, `!=`, `<`, `>` against a distinct equal object and an interned copy (T0) |
 | `img_locals_40_uninit` | 40-local function, unassigned late local → `MEM_FAULT`. **Red on `main`** |
 | `img_locals_64` | 64-local function computes correctly |
 | `img_rf_deep_recursion` | ~500-frame recursion matches the host golden |
@@ -1129,7 +1150,7 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_rf_thrash` | watermark-straddling call/return ×1000; spill-count golden |
 | `img_rf_window_too_big_trap` | oversized frame window → `CALL_FILTER` |
 | `img_rf_spill_oom_trap` | unbounded recursion → `MEM_FAULT`, not corruption |
-| `img_compile_ns_inherit` | a helper called from an `_bi_exec_globals` frame resolves in the supplied dict (T0) |
+| `img_compile_ns_inherit` | **7** — a helper called two frames inside an `_bi_exec_globals` call resolves in the supplied dict, and the caller's globals survive the switch back (T0) |
 | `img_code_new_call` | 7 |
 | `img_code_emit_then_call` | blit, then immediately call the blitted slots — catches R-3/R-6 |
 | `img_code_alloc_oom_trap` | `MEM_FAULT` |
@@ -1166,6 +1187,10 @@ no per-fixture Verilator rebuild. Wire new targets into `pycore-img` and
 | `img_compile_decorator` | **7** — T5 identity decorator |
 | `img_compile_fstring` | **1** — T5 `f"a{1}b" == "a1b"` |
 | `img_bios_exec` | **3** — ROM `bios("x = 1 + 2")` (§11.7) |
+| `img_compile_kwargs` | **7** — T3 `def f(a, b=2, *rest, c=3, **kw)` plus an out-of-order `CALL_KW` site (§11.8) |
+| `img_compile_grammar` | **7** — T6 conditional expressions, `x = y = 3`, `;`, and comprehension element expressions / `if` filters (two-core: the comps grow) (§11.8) |
+| `img_compile_reentrant` | **7** — D9 `_busy` guard: cleared after a failed compile, silent on back-to-back compiles, refuses an entry that finds it set |
+| `img_startup_multiprogram` | **7** — a launcher compiles and runs four programs, each in its own globals dict, and survives one raising (two-core) |
 
 ---
 
@@ -1213,16 +1238,90 @@ In dependency order, not priority order.
    A downward result cursor is an allocator change; do not add it while
    the watermark golden holds.
 7. **Module loader + relocation.** **Not opened.** The compiler still fits
-   the boot image (45 995 of 65 536 code-RAM slots, 19 541 remain).
+   the boot image (50 028 of 65 536 code-RAM slots, 15 508 remain).
    `code_loading.md` §4 stays the recorded format; do not restart the
    loader for occupancy (lever 3 is overlays, only after shrinking
    `codegen.py`).
 8. **BIOS.** **Landed.** ROM `bios(payload)` `exec`s a string or code
    object in the caller's globals (`img_bios_exec` → 3). Programs may
    still call `compile()` / `exec()` directly.
-9. **Self-hosting.** **Blocked on size.** Stage-2 would compile
+9. **Review close-out (§11.8).** **Landed.** A senior review of the
+   finished plan found four things the tier table claimed and the code did
+   not do, plus one sizing bug behind them.
+
+   - **`_PYC_G` capacity.** The package dict was at **127 of 128 keys** —
+     99% load on an open-addressing table — because `_package_dict_slots`
+     mirrored `pycore_dict_min_slots`, which saturates at 128 slots since
+     its `n_pairs` input is 7 bits. That is a limit on tables the
+     *hardware* sizes (BUILD_MAP, BUILD_SET, the `**kwargs` collector);
+     a statically built dict is read back through `slot_count` in its own
+     header and is not subject to it. `heap_image.static_dict_slots`
+     (`next_pow2(2n)`) now sizes `_PYC_G` and the boot builtins dict at
+     ≤ 50% load, so the compiler can grow helpers again. The historic
+     "113 of 128 keys made `LOAD_GLOBAL _pyc_inc` miss" note in
+     `image_from_source.py` was this bug, not a seeding-policy problem.
+   - **T3 was not landed.** `def` defaults, `*args`, keyword-only
+     parameters, `**kwargs`, and keyword call sites were all `SyntaxError`
+     despite the tier table. Now implemented: one shared
+     `_pyc_parse_params` for `def` and `lambda`, parameter metadata on the
+     scope (`sc_argcount` / `sc_kwonly` / `sc_flags` / `sc_defaults` /
+     `sc_kwdefaults`) feeding `_bi_code_new` fields 3, 4, 6 and 8, and
+     `CALL_KW` with the keyword names in `co_consts`. Defaults must be
+     literals (D10).
+   - **T4 comprehensions were element-restricted.** `[x * 2 for x in xs]`
+     failed with "unexpected 'for'" because the pending operator was never
+     reduced before the `for` clause, and `if` filters were rejected
+     outright. All three comprehensions now share one node layout
+     (`nd_c` indexes `[iter, cond]`, plus `[value]` for a `DictComp`).
+   - **D9 `_busy`** was deferred only because `_PYC_G` had one free slot.
+     With the ceiling gone it is now implemented, with `finally` so a
+     failed compile does not poison the next (`img_compile_reentrant` → 7).
+   - **T6 grammar** (conditional expressions, `x = y = e`, `;`): added,
+     because a startup program that launches other programs writes all
+     three constantly. The ternary is an operator-stack marker (tag 11),
+     not recursion, so §5.2 Rule 2 still holds.
+   - **The host image builder's opcode gate was prefix-matched.**
+     `_is_supported_opname` returned true for *any* opname starting with
+     `JUMP_`, `POP_JUMP_`, or `LOAD_FAST`. `JUMP_BACKWARD_NO_INTERRUPT` is
+     `reject` in `pycore/targets/pycore.json` and CPython emits it on the
+     cleanup edge of two sequential `try` blocks in one function, so such a
+     program built clean and took a runtime `PY_TRAP_ILLEGAL_OPCODE` — the
+     exact failure A4 exists to turn into a build-time error. The three
+     prefixes are now an explicit twelve-name set, and
+     `test_image_from_source.py::SupportedOpnameGateTest` asserts it against
+     the catalog: no `reject` opcode may pass, and every name in the set
+     must be `execute`.
+   - **Two int64 packing bugs.** The device `int` wraps at 64 bits (§7) but
+     the firmware runs on arbitrary-precision ints under host CPython, so a
+     packed field above bit 62 passes every host test and is silently
+     truncated on hardware. Both the `FunctionDef` parameter word and the
+     call operator-stack entry hit this. `_pyc_ops_push` now rejects an
+     over-wide field, and `test_compiler_parser.py` sweeps the corpus for
+     node/token fields that do not fit.
+
+   - **`pycore-img` and `pycore-img-two-core` shared image directories.**
+     Both aggregates run inside one parallel sub-make and 18 programs have
+     a target in each, so two jobs wrote the same
+     `build/img_<name>/program.hex` while a third read it — a `MEM_FAULT`
+     that only appeared under `-j`. Two-core runs now build into
+     `build/img_<name>_twocore/`.
+   - **The end-to-end shape was never tested.** Every `compile()` fixture
+     compiled one snippet in the caller's own globals.
+     `img_startup_multiprogram` is the thing the compiler exists for: a
+     launcher that compiles four programs at run time, runs each in its own
+     globals dict so they cannot see each other's names, survives one that
+     raises, and reduces the results. Two-core (the launcher's list and the
+     compiler's arenas both grow). → 7.
+
+   Device: `img_compile_kwargs` → 7, `img_compile_grammar` (two-core) → 7,
+   `img_compile_reentrant` → 7, `img_startup_multiprogram` (two-core) → 7,
+   plus the two T0 fixtures §9 asked for and never got —
+   `img_str_eq_runtime_long` → 63 and `img_compile_ns_inherit` → 7.
+   Host: `test_compiler_differential.py` (A7).
+
+10. **Self-hosting.** **Blocked on size.** Stage-2 would compile
    `pycore_firmware/compiler/` on device and check byte-identical output.
-   That needs ~45 995 compiled-output slots; headroom is 19 541.
+   That needs ~50 028 compiled-output slots; headroom is 15 508.
    `make pycore-size-report` prints `self-host: blocked` until remaining
    ≥ used (raise CODE_RAM or shrink `codegen.py`).
 
@@ -1246,7 +1345,28 @@ tk_b = start | (end << 32)
 # AST arrays
 nd_pos = line | (col << 32)
 # variable arity: nd_a = kids_start, nd_b = kids_count, kids[] is a flat arena
+
+# FunctionDef / Lambda        (nd_obj = [name, defaults list, kwdefaults dict])
+nd_b   = nargs | (ndec << 16) | (params << 32)
+params = nposargs | (nkwonly << 16) | (has_varargs << 28) | (has_varkw << 29)
+
+# Call                        (nd_obj = keyword name list when nkw != 0)
+nd_c   = nargs | (nkw << 16)
+
+# operator stack entry
+ops[i] = tag | (a << 8) | (b << 32)          # a < 2**24, b < 2**30
+# call entry's b field
+b      = nargs | (nkw << 10) | (kw_start << 20)
 ```
+
+**Every packed field must fit a wrapping signed int64.** A device `int` is
+64 bits and wraps (§7); the same firmware source runs on arbitrary-precision
+ints under host CPython. A field at or above bit 63 therefore passes the host
+differential and is silently truncated on hardware. Both the `FunctionDef`
+parameter word and the call operator-stack entry shipped that way once
+(§11.8). `_pyc_ops_push` rejects an over-wide field at run time and
+`test_compiler_parser.py::test_packed_node_fields_fit_a_wrapping_int64`
+sweeps the corpus.
 
 ## Appendix B — v1 emit allowlist
 

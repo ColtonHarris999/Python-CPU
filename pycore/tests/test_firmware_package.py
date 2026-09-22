@@ -136,8 +136,11 @@ class TestFirmwarePackageSeed(unittest.TestCase):
             + len(PACKAGE_RUNTIME_SEEDS)
         )
         slots = _package_dict_slots(n)
-        self.assertLessEqual(slots, 128)
-        self.assertLess(n, slots)
+        # Open addressing, so headroom is the point: the table must stay at
+        # or under 50% load, not merely have one free slot. A near-full
+        # _PYC_G is what forced the "127 of 128 keys" freeze that blocked
+        # adding compiler helpers (compiler_design.md D9).
+        self.assertLessEqual(n * 2, slots)
 
     def test_img_pyc_package_call_host_golden(self) -> None:
         self.assertEqual(
