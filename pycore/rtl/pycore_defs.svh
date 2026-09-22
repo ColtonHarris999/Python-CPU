@@ -616,7 +616,9 @@ localparam logic [31:0] PY_BI_BYTEARRAY    = 32'd1;
 localparam logic [31:0] PY_BI_FROM_BYTES   = 32'd2;
 localparam logic [31:0] PY_BI_TO_BYTES     = 32'd3;
 localparam logic [31:0] PY_BI_MAX          = 32'd4;
-localparam logic [31:0] PY_BI_LIST_APPEND  = 32'd5;
+// id 5 is reserved: it once labelled `list.append`, which is handled as the
+// LIST_APPEND opcode (`PY_OP_LIST_APPEND` / `CONT_LIST_APPEND`) and never
+// as an OBK_BUILTIN. Do not reassign without regenerating every boot image.
 localparam logic [31:0] PY_BI_PRINT        = 32'd6;
 localparam logic [31:0] PY_BI_LEN          = 32'd7;
 localparam logic [31:0] PY_BI_RANGE        = 32'd8;

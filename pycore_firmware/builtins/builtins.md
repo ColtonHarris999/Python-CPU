@@ -119,7 +119,7 @@ These limit every firmware builtin:
 | --- | --- | --- | --- |
 | `from_bytes` | int.from_bytes-style constructor helper (pycore BI_FROM_BYTES). | blocked | Excore `PY_TRAP_BUILTIN_CALL`; no BYTES payload reader in Python. |
 | `to_bytes` | int.to_bytes-style conversion helper (pycore BI_TO_BYTES). | blocked | Excore path; needs BYTES allocation. |
-| `list_append` | list.append method helper (pycore BI_LIST_APPEND). | implemented | `lst += [value]` mirror; prefer LIST_APPEND opcode / excore grow. |
+| `list_append` | list.append native method (index 0 in `ROM_NATIVE_METHODS`). | implemented | `lst += [value]` mirror; grow goes through the excore LIST_APPEND trap. |
 
 ## Source layout
 
