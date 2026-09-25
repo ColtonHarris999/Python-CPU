@@ -92,7 +92,8 @@ EXCORE_RTL_SRCS := \
 	excore/rtl/excore_cpu.sv \
 	excore/rtl/excore_mmio.sv
 
-.PHONY: help lint-file pycore-preprocess run-file pycore-run-file all-tests pycore-test \
+.PHONY: help lint-file pycore-preprocess run-file pycore-run-file exec-file shell \
+	all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-type-pairs \
 	pycore-python-tests pycore-size-report pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib \
@@ -294,7 +295,8 @@ EXCORE_RTL_SRCS := \
 	excore-fw excore-asm-tests excore-cpu-test excore-test clean \
 	pycore-sim-img pycore-sim-img-twocore pycore-rtl-unit pycore-str-accel \
 	pycore-codc pycore-gic pycore-cache-transparency pycore-mem-latency-sweep \
-	docker-build docker-lint-file docker-run-file docker-pycore-test docker-all-tests \
+	docker-build docker-lint-file docker-run-file docker-exec-file docker-shell \
+	docker-pycore-test docker-all-tests \
 	docker-python-tests docker-rtl-unit docker-container docker-img \
 	docker-two-core docker-excore
 
@@ -314,6 +316,18 @@ lint-file:
 	$(PYTHON) pycore/tools/pycore_cli.py lint "$(RUN_SOURCE)" --entry "$(RUN_FUNCTION)"
 
 run-file: pycore-run-file
+
+# Hand PyCore the *source*: the on-device compile() builds it, exec() runs it,
+# output streams live, then the same file runs on CPython 3.14 and the report
+# compares output and compile / run cycles. `make shell` is the interactive
+# version (power on once, then type file paths).
+EXEC_ARGS ?=
+
+exec-file:
+	$(PYTHON) pycore/tools/pycore_cli.py exec "$(RUN_SOURCE)" $(EXEC_ARGS)
+
+shell:
+	$(PYTHON) pycore/tools/pycore_cli.py shell $(EXEC_ARGS)
 
 # Image-boot a user Python file on the two-core hart and check the return
 # against host CPython 3.14. Uses the shared plusarg tb_container binary
@@ -3217,6 +3231,16 @@ docker-run-file: docker-build
 		RUN_FUNCTION="$(RUN_FUNCTION)" \
 		RUN_MAX_CYCLES="$(RUN_MAX_CYCLES)" \
 		RUN_BUILD_DIR="$(RUN_BUILD_DIR)"
+
+docker-exec-file: docker-build
+	$(DOCKER_MAKE) make exec-file \
+		RUN_SOURCE="$(RUN_SOURCE)" \
+		EXEC_ARGS="$(EXEC_ARGS)"
+
+docker-shell: docker-build
+	docker run --rm -it $(DOCKER_RUN_FLAGS) \
+		-v "$(CURDIR):$(DOCKER_CONTAINER_WORKDIR)" \
+		-w "$(DOCKER_CONTAINER_WORKDIR)" $(DOCKER_IMAGE) make shell EXEC_ARGS="$(EXEC_ARGS)"
 
 docker-python-tests: docker-build
 	$(DOCKER_MAKE) make pycore-python-tests excore-asm-tests pycore-allocator-host

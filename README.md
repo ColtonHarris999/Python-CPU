@@ -71,6 +71,37 @@ A program should define a no-arg `managed_entry()` that returns `int` or `bool`.
 If you do not call it at module level, `run` appends a call. Type annotations
 are stripped.
 
+## Compile and run a file on the CPU (`exec` / `shell`)
+
+`run` lets host CPython compile. `exec` hands PyCore the **source text**: the
+resident on-device `compile()` builds it, `exec()` runs it as `__main__`, and
+anything it prints streams to your terminal. The same file then runs on stock
+CPython 3.14 and the report checks that the output matches, and compares the
+cycles each side spent compiling and running:
+
+```bash
+make shell                                         # power on, then type paths
+make exec-file RUN_SOURCE=pycore/programs/demo_exec.py
+python3.14 pycore/tools/pycore_cli.py exec my_prog.py --mem-latency 30
+```
+
+```text
+pycore> pycore/programs/demo_exec.py
+--- PyCore output (demo_exec.py) ---
+fib(30): 832040
+...
+  Result   PASS -- output matches CPython
+               PyCore cycles    @100 MHz    CPython cycles  CPython time  PyCore/CPython
+  compile          6,271,880    62.72 ms          ~903,455      430.2 us            6.9x
+  run                 68,594    685.9 us           ~29,072       13.8 us            2.4x
+```
+
+Programs are plain scripts (no `managed_entry` needed). The on-device compiler
+takes the T1–T5 grammar in `pycore/docs/compiler.md`, and `print()` takes
+`int` / `bool` / `None` / strings of at most 15 bytes. A 40-line file compiles
+in about 6M cycles, which is about a minute of simulation. Metrics, settings,
+and known limits: `pycore/docs/exec_runner.md`.
+
 ## What programs are allowed
 
 **Yes:** functions, `if`/`while`/`for`, list/dict/set/tuple displays, f-strings
