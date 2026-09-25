@@ -351,10 +351,10 @@ token stream (kinds, positions, payload text), not later `co_code`.
 
 `make pycore-size-report` builds `img_compile_eval_expr` and prints ROM,
 compiler code-RAM, and static heap occupancy vs hardware ceilings. Overflow
-fails the target (A8). Measured after §11.5: ROM **2627 / 8192** slots;
-compiler **45995 / 65536** code-RAM slots (19541 remain for compiled
-output); static heap **266624 / 981952** bytes. Self-host is blocked
-until remaining ≥ used (`self-host:` line in the report).
+fails the target (A8). Current measurement is in
+[`compile_limitations.md`](compile_limitations.md): code RAM is 131 072
+slots and the report's `self-host:` line is unblocked for a second copy
+of the resident host-built package.
 
 ## Lifetime
 
