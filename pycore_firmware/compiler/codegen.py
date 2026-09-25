@@ -185,16 +185,19 @@ def _pyc_normalize_index():
     # Stack is [..., obj, idx]. A negative int becomes len(obj) + idx so the
     # hart never sees a negative subscript (deviation 3 / A4). Strings and
     # other keys are left alone: comparing them with 0 is a TYPE trap.
+    # isinstance(idx, int) cannot do this check: its body loads __class__,
+    # and a tagged int has no object header, so that LOAD_ATTR is a TYPE trap.
+    # _bi_code_kind returns the raw tag; INT is 1.
     global tk_a
     skip = _pyc_emit(0 - 1, 0, 0 - 1)
     _pyc_emit(OPMAP["COPY"], 1, 0)
-    isi = _pyc_global_index("isinstance")
-    _pyc_emit(OPMAP["LOAD_GLOBAL"], isi * 2 + 1, 0)
+    ki = _pyc_global_index("_bi_code_kind")
+    _pyc_emit(OPMAP["LOAD_GLOBAL"], ki * 2 + 1, 0)
     _pyc_emit(OPMAP["SWAP"], 2, 0)
     _pyc_emit(OPMAP["SWAP"], 3, 0)
-    ii = _pyc_global_index("int")
-    _pyc_emit(OPMAP["LOAD_GLOBAL"], ii * 2, 0)
-    _pyc_emit(OPMAP["CALL"], 2, 0)
+    _pyc_emit(OPMAP["CALL"], 1, 0)
+    _pyc_emit(OPMAP["LOAD_SMALL_INT"], 1, 0)
+    _pyc_emit(OPMAP["COMPARE_OP"], 72, 0)
     _pyc_emit(OPMAP["POP_JUMP_IF_FALSE"], 0, skip)
     _pyc_emit(OPMAP["COPY"], 1, 0)
     _pyc_emit(OPMAP["LOAD_SMALL_INT"], 0, 0)
@@ -217,18 +220,6 @@ def _pyc_maybe_normalize_index(idx_nid):
     _pyc_normalize_index()
 
 
-def _pyc_normalize_bound():
-    # Stack [..., obj, bound]. None is an omitted slice end and stays None.
-    # Any other value goes through the negative-index rewrite.
-    skip = _pyc_emit(0 - 1, 0, 0 - 1)
-    _pyc_emit(OPMAP["COPY"], 1, 0)
-    _pyc_const_push(None)
-    _pyc_emit(OPMAP["IS_OP"], 0, 0)
-    _pyc_emit(OPMAP["POP_JUMP_IF_TRUE"], 0, skip)
-    _pyc_normalize_index()
-    tk_a[skip] = opnd_n
-
-
 def _pyc_int_const(nid):
     if nid < 0:
         return [0, 0]
@@ -237,6 +228,21 @@ def _pyc_int_const(nid):
     if nd_a[nid] != 0:
         return [0, 0]
     return [1, nd_obj[nid]]
+
+
+def _pyc_bound_needs_subject(nid):
+    # 1 when a slice end must read the subject: a negative int, or a value
+    # decided at runtime. A non-negative int and any other constant stay put.
+    if nid < 0:
+        return 0
+    pair = _pyc_int_const(nid)
+    if pair[0] == 1:
+        if pair[1] < 0:
+            return 1
+        return 0
+    if nd_kind[nid] == ND["Constant"]:
+        return 0
+    return 1
 
 
 def _pyc_clamp_slice(i, n):
@@ -1206,18 +1212,19 @@ def _pyc_visit(nid):
                 _pyc_visit(none_id)
             else:
                 _pyc_visit(lo)
-                _pyc_normalize_bound()
+                _pyc_maybe_normalize_index(lo)
             if hi < 0:
                 none_id = _pyc_nd_new(ND["Constant"], 1, 0, 5, 0, 0, None)
                 _pyc_visit(none_id)
             else:
                 _pyc_visit(hi)
-                # [obj, lo, hi] -> normalize hi against obj, which sits under lo.
-                _pyc_emit(OPMAP["COPY"], 3, 0)
-                _pyc_emit(OPMAP["SWAP"], 2, 0)
-                _pyc_normalize_bound()
-                _pyc_emit(OPMAP["SWAP"], 2, 0)
-                _pyc_emit(OPMAP["POP_TOP"], 0, 0)
+                if _pyc_bound_needs_subject(hi) == 1:
+                    # [obj, lo, hi] -> len() must see obj, which sits under lo.
+                    _pyc_emit(OPMAP["COPY"], 3, 0)
+                    _pyc_emit(OPMAP["SWAP"], 2, 0)
+                    _pyc_maybe_normalize_index(hi)
+                    _pyc_emit(OPMAP["SWAP"], 2, 0)
+                    _pyc_emit(OPMAP["POP_TOP"], 0, 0)
             _pyc_emit(OPMAP["BINARY_SLICE"], 0, 0)
             return
         if store == 1:

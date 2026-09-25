@@ -1785,6 +1785,8 @@ class _HostEmittedCode:
     def _lookup(self, name: str) -> object:
         if name in self._globals:
             return self._globals[name]
+        if name == "_bi_code_kind":
+            return _host_code_kind
         if hasattr(_builtins_mod, name):
             return getattr(_builtins_mod, name)
         raise NameError(name)

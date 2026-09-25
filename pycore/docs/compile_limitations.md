@@ -331,8 +331,10 @@ These used to parse, emit, and disagree with CPython. They are in
 - **Display slices and negative indexes.** A slice of a list or tuple
   display evaluates every element, drops the ones outside the clamped
   range, and builds the kept list or tuple. A negative index, and a
-  non-constant index, go through `len` after an `isinstance(..., int)`
-  check so a string dict key is not compared with `0`. Constant
+  non-constant index, go through `len` after a `_bi_code_kind` tag
+  check so a string dict key is not compared with `0`. `isinstance`
+  cannot do that check: it loads `__class__`, and a tagged int has no
+  object header. Constant
   non-negative indexes and non-int constants are left alone.
   Non-constant bounds on a display are `SyntaxError` (`slice of a
   list or tuple display is not supported`).
