@@ -169,6 +169,11 @@ def _pyc_sy_push_children(nid):
         _pyc_sy_work_push(a, 0)
         return
     if kind == ND["While"]:
+        norelse = nd_obj[nid]
+        i = norelse
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[b + c + i], 0)
         i = c
         while i > 0:
             i = i - 1
@@ -176,7 +181,13 @@ def _pyc_sy_push_children(nid):
         _pyc_sy_work_push(a, 0)
         return
     if kind == ND["For"]:
-        nbody = nd_obj[nid]
+        packed = nd_obj[nid]
+        nbody = packed & 65535
+        norelse = packed >> 16
+        i = norelse
+        while i > 0:
+            i = i - 1
+            _pyc_sy_work_push(kids[c + nbody + i], 0)
         i = nbody
         while i > 0:
             i = i - 1
@@ -220,14 +231,9 @@ def _pyc_sy_push_children(nid):
         or kind == ND["SetComp"]
         or kind == ND["DictComp"]
     ):
-        # c is a kids index: [iter, cond] (+[value] for a DictComp).
-        if kind == ND["DictComp"]:
-            _pyc_sy_work_push(kids[c + 2], 0)
-        if kids[c + 1] >= 0:
-            _pyc_sy_work_push(kids[c + 1], 0)
-        _pyc_sy_work_push(kids[c], 0)
-        _pyc_sy_work_push(b, 0)
-        _pyc_sy_work_push(a, 0)
+        # The main walk gives a comprehension its own scope. Reaching here
+        # would bind the target in the enclosing scope.
+        _pyc_parse_error("comprehension walked in the enclosing scope")
         return
     if kind == ND["Raise"]:
         if a >= 0:
@@ -345,13 +351,68 @@ def _pyc_symtab(root):
         kind = nd_kind[nid]
         cur = stmts[stmt_n - 1]
         if phase == 1:
-            if kind != fn_k:
-                if kind != lam_k:
-                    continue
+            pop_scope = 0
+            if kind == fn_k or kind == lam_k:
+                pop_scope = 1
+            if kind == ND["ListComp"] or kind == ND["SetComp"]:
+                pop_scope = 1
+            if kind == ND["DictComp"]:
+                pop_scope = 1
+            if pop_scope == 0:
+                continue
             nloc = sc_nlocals[cur]
             if nloc > 240:
                 _pyc_parse_error("too many locals")
             stmt_n = stmt_n - 1
+            continue
+        if (
+            kind == ND["ListComp"]
+            or kind == ND["SetComp"]
+            or kind == ND["DictComp"]
+        ):
+            cks = nd_c[nid]
+            it = kids[cks]
+            if phase == 0:
+                # Iterator expression stays in the enclosing scope.
+                _pyc_sy_work_push(it, 0)
+                _pyc_sy_work_push(nid, 2)
+                continue
+            sid = _pyc_sy_new_scope(1, cur, nid)
+            gdecl[sid] = [0] * 8
+            gdecl_n[sid] = 0
+            uses[sid] = [0] * 8
+            uses_n[sid] = 0
+            capf = len(sc_free)
+            while capf < sid + 1:
+                extra = capf
+                if extra < 8:
+                    extra = 8
+                sc_free = sc_free + ([0] * extra)
+                sc_free_n = sc_free_n + ([0] * extra)
+                capf = len(sc_free)
+            sc_free[sid] = [0] * 8
+            sc_free_n[sid] = 0
+            sc_argcount[sid] = 1
+            names, n = _pyc_sy_names_add(sc_varnames[sid], sc_nlocals[sid], ".0")
+            sc_varnames[sid] = names
+            sc_nlocals[sid] = n
+            cap = len(stmts)
+            while cap < stmt_n + 1:
+                extra = cap
+                if extra < 8:
+                    extra = 8
+                stmts = stmts + ([0] * extra)
+                cap = len(stmts)
+            stmts[stmt_n] = sid
+            stmt_n = stmt_n + 1
+            _pyc_sy_work_push(nid, 1)
+            # Target, filter, and element/value are locals of the comp.
+            if kind == ND["DictComp"]:
+                _pyc_sy_work_push(kids[cks + 2], 0)
+            _pyc_sy_work_push(nd_a[nid], 0)
+            if kids[cks + 1] >= 0:
+                _pyc_sy_work_push(kids[cks + 1], 0)
+            _pyc_sy_work_push(nd_b[nid], 0)
             continue
         if kind == fn_k or kind == lam_k:
             nargs = nd_b[nid] & 65535

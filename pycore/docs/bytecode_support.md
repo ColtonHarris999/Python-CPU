@@ -226,7 +226,12 @@ this milestone:
 16. **Exceptions propagate across ordinary Python frames.** On an exception-
   table miss, `RAISE_VARARGS` preserves the existing `OBK_EXCEPTION`, pops the
    frame through `S_RETURN`, and walks the caller's table at the CALL site.
-   A miss through the module frame remains `PY_TRAP_RAISE` (17). Protocol
+   A miss through the module frame remains `PY_TRAP_RAISE` (17). The
+   table is relative to the code object's entry slot. A normal return
+   reloads that slot after using the saved return PC as the redirect,
+   and builtin dispatch keeps its id in a separate register, so a call
+   earlier in the frame does not make a later handler miss.
+   Coverage: `img_try_after_call`. Protocol
    `FOR_ITER` exhaustion remains a separate identity comparison against the
    seeded `StopIteration` handle. Boot seeds Wave A exception types (including
    `SyntaxError` under `Exception`). `CHECK_EXC_MATCH` is identity then MRO.

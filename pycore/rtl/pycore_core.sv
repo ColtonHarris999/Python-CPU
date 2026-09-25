@@ -299,6 +299,9 @@ module pycore_core #(
     // frame push finally uses the callee's freshly-read fields.
     logic [31:0]                   call_code_addr_r;   // callee code byte addr
     logic [63:0]                   call_entry_slot_r;  // entry slot index
+    // Builtin dispatch used to park the builtin id in call_entry_slot_r,
+    // which made a later RAISE in that frame miss co_exceptiontable.
+    logic [31:0]                   call_bi_id_r;
     logic [127:0]                  call_consts_r;      // callee co_consts TUPLE
     logic [127:0]                  call_names_r;       // callee co_names TUPLE
     logic [15:0]                   call_argcount_r;    // effective/supplied argc
@@ -2337,6 +2340,7 @@ module pycore_core #(
             call_args_is_list_r  <= 1'b0;
             call_code_addr_r     <= '0;
             call_entry_slot_r    <= '0;
+            call_bi_id_r         <= '0;
             call_consts_r        <= '0;
             call_names_r         <= '0;
             call_argcount_r      <= '0;

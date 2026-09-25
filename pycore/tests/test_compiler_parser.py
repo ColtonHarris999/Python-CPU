@@ -328,10 +328,20 @@ def firmware_shape(g: dict, nid: int) -> tuple:
         return ("If", firmware_shape(g, a), body, orelse)
     if name == "While":
         body = [firmware_shape(g, kids[b + i]) for i in range(c)]
-        return ("While", firmware_shape(g, a), body)
+        orelse = [firmware_shape(g, kids[b + c + i]) for i in range(obj)]
+        return ("While", firmware_shape(g, a), body, orelse)
     if name == "For":
-        body = [firmware_shape(g, kids[c + i]) for i in range(obj)]
-        return ("For", firmware_shape(g, a), firmware_shape(g, b), body)
+        nbody = obj & 65535
+        norelse = obj >> 16
+        body = [firmware_shape(g, kids[c + i]) for i in range(nbody)]
+        orelse = [firmware_shape(g, kids[c + nbody + i]) for i in range(norelse)]
+        return (
+            "For",
+            firmware_shape(g, a),
+            firmware_shape(g, b),
+            body,
+            orelse,
+        )
     if name == "Pass":
         return ("Pass",)
     if name == "Break":
@@ -516,6 +526,7 @@ def cpython_shape(node: ast.AST) -> tuple:
             "While",
             cpython_shape(node.test),
             [cpython_shape(s) for s in node.body],
+            [cpython_shape(s) for s in node.orelse],
         )
     if isinstance(node, ast.For):
         if node.orelse:
@@ -525,6 +536,7 @@ def cpython_shape(node: ast.AST) -> tuple:
             cpython_shape(node.target),
             cpython_shape(node.iter),
             [cpython_shape(s) for s in node.body],
+            [cpython_shape(s) for s in node.orelse],
         )
     if isinstance(node, ast.Pass):
         return ("Pass",)
@@ -715,8 +727,22 @@ class TestCompilerParserCorpus(unittest.TestCase):
                     _host_exec_globals(g["_pyc_parse_main"], g)
                 self.assertIn(want, str(cm.exception))
 
-    def test_string_escape_is_rejected_not_silently_kept(self) -> None:
-        for src in (r"x = 'a\tb'" + "\n", r'x = "q\\"' + "\n", r"x = '''a\nb'''" + "\n"):
+    def test_string_escapes_decode(self) -> None:
+        cases = (
+            ("x = 'a\\tb'\n", "a\tb"),
+            ("x = '''a\\nb'''\n", "a\nb"),
+            ("x = '\\x41'\n", "A"),
+        )
+        for src, want in cases:
+            with self.subTest(src=src):
+                g = load_firmware_package_namespace()
+                g["_in_src"] = src
+                g["_in_mode"] = "exec"
+                _host_exec_globals(g["_pyc_parse_main"], g)
+                self.assertIn(want, g["nd_obj"])
+
+    def test_unsupported_escape_is_rejected(self) -> None:
+        for src in ("x = 'a\\u0041'\n", "x = '\\123'\n"):
             with self.subTest(src=src):
                 g = load_firmware_package_namespace()
                 g["_in_src"] = src

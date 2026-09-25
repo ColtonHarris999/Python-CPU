@@ -279,12 +279,72 @@ def _pyc_parse_string(text):
         _pyc_parse_error("invalid string literal")
     body = text[start:end]
     if raw == 0:
-        # v1 has no escape decoder. Returning the raw slice would silently
-        # give "a\tb" two characters where CPython gives one, so reject it
-        # (D5). A raw literal is exact as sliced.
-        if body.find("\\") >= 0:
-            _pyc_parse_error("escape sequences in string literals are not supported")
+        body = _pyc_decode_escapes(body)
     return body
+
+
+def _pyc_hex_val(ch):
+    if ch >= "0" and ch <= "9":
+        return ord(ch) - 48
+    if ch >= "a" and ch <= "f":
+        return ord(ch) - 87
+    if ch >= "A" and ch <= "F":
+        return ord(ch) - 55
+    return 0 - 1
+
+
+def _pyc_decode_escapes(body):
+    # Ordinary literals must match CPython. A raw slice of "a\\tb" is two
+    # characters where CPython makes one (D5), so decode instead of rejecting.
+    out = ""
+    i = 0
+    n = len(body)
+    while i < n:
+        ch = body[i]
+        if ch != "\\":
+            out = out + ch
+            i = i + 1
+            continue
+        if i + 1 >= n:
+            _pyc_parse_error("unterminated escape sequence")
+        nch = body[i + 1]
+        if nch == "n":
+            out = out + "\n"
+        elif nch == "t":
+            out = out + "\t"
+        elif nch == "r":
+            out = out + "\r"
+        elif nch == "\\":
+            out = out + "\\"
+        elif nch == "'":
+            out = out + "'"
+        elif nch == '"':
+            out = out + '"'
+        elif nch == "a":
+            out = out + "\a"
+        elif nch == "b":
+            out = out + "\b"
+        elif nch == "f":
+            out = out + "\f"
+        elif nch == "v":
+            out = out + "\v"
+        elif nch == "\n":
+            i = i + 2
+            continue
+        elif nch == "x":
+            if i + 3 >= n:
+                _pyc_parse_error("truncated \\x escape")
+            hi = _pyc_hex_val(body[i + 2])
+            lo = _pyc_hex_val(body[i + 3])
+            if hi < 0 or lo < 0:
+                _pyc_parse_error("invalid \\x escape")
+            out = out + chr(hi * 16 + lo)
+            i = i + 4
+            continue
+        else:
+            _pyc_parse_error("unsupported escape sequence")
+        i = i + 2
+    return out
 
 
 def _pyc_set_store(nid):
@@ -729,6 +789,10 @@ def _pyc_parse_expr():
                 want = 0
                 continue
             if kind == TOK_OP:
+                if text == "*" or text == "**":
+                    _pyc_parse_error("iterable unpacking is not supported")
+                if text == ":=":
+                    _pyc_parse_error("named expressions are not supported")
                 if text == "(":
                     line = _pyc_tok_line()
                     col = _pyc_tok_col()
@@ -1944,15 +2008,25 @@ def _pyc_parse_stmt():
         _pyc_tok_advance()
         body = _pyc_parse_suite()
         _pyc_skip_newlines()
+        orelse = [0] * 0
         if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "else":
-            _pyc_parse_error("while-else is not supported")
+            _pyc_tok_advance()
+            if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+                _pyc_parse_error("expected ':'")
+            _pyc_tok_advance()
+            orelse = _pyc_parse_suite()
         nbody = len(body)
+        norelse = len(orelse)
         ks = kids_n
         i = 0
         while i < nbody:
             _pyc_kids_append(body[i])
             i = i + 1
-        return _pyc_nd_new(ND["While"], line, col, test, ks, nbody, 0)
+        i = 0
+        while i < norelse:
+            _pyc_kids_append(orelse[i])
+            i = i + 1
+        return _pyc_nd_new(ND["While"], line, col, test, ks, nbody, norelse)
     if kind == TOK_NAME and text == "for":
         line = _pyc_tok_line()
         col = _pyc_tok_col()
@@ -2014,15 +2088,27 @@ def _pyc_parse_stmt():
         _pyc_tok_advance()
         body = _pyc_parse_suite()
         _pyc_skip_newlines()
+        orelse = [0] * 0
         if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "else":
-            _pyc_parse_error("for-else is not supported")
+            _pyc_tok_advance()
+            if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ":"):
+                _pyc_parse_error("expected ':'")
+            _pyc_tok_advance()
+            orelse = _pyc_parse_suite()
         nbody = len(body)
+        norelse = len(orelse)
         ks = kids_n
         i = 0
         while i < nbody:
             _pyc_kids_append(body[i])
             i = i + 1
-        return _pyc_nd_new(ND["For"], line, col, target, it, ks, nbody)
+        i = 0
+        while i < norelse:
+            _pyc_kids_append(orelse[i])
+            i = i + 1
+        return _pyc_nd_new(
+            ND["For"], line, col, target, it, ks, nbody | (norelse << 16)
+        )
     if kind == TOK_NAME and text == "raise":
         line = _pyc_tok_line()
         col = _pyc_tok_col()
@@ -2154,6 +2240,8 @@ def _pyc_parse_stmt():
         return _pyc_nd_new(ND["Assert"], line, col, test, msg, 0, 0)
     if kind == TOK_NAME and text == "from":
         _pyc_parse_error("import is not supported")
+    if kind == TOK_NAME and (text == "match" or text == "case"):
+        _pyc_parse_error(text + " is not supported")
     if kind == TOK_NAME and text in KEYWORDS:
         if (
             text != "True"
