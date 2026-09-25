@@ -1,4 +1,4 @@
-"""Python model of the String Accelerator (planning/string_accelerator_plan.md).
+"""Python model of the String Accelerator (planning/old/string_accelerator_plan.md).
 
 Standalone: it owns a byte-addressable dmem image, packs SHORT/LONG handles,
 and implements the P5a engines (COPY, COMPARE, SEARCH, CHAR_AT, ITER_NEXT,

@@ -1,9 +1,11 @@
 # Memory system plan — L1I / L1D / L2 / RAM, strings in dmem, descriptor caches
 
+> **Archived 2026-09-25.** Complete on `main` (P0–P7 built, P8 skipped, P9 measured). As-built reference: [`pycore/docs/memory_hierarchy.md`](../../pycore/docs/memory_hierarchy.md).
+
 **Status: complete on `main`.** P0–P7 are built; P8 (frame top-of-stack
 buffer) is skipped; P9 remeasured RTL vs memsim. As-built:
-[`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md),
-[`pycore/docs/string_accel.md`](../pycore/docs/string_accel.md). Numbers:
+[`pycore/docs/memory_hierarchy.md`](../../pycore/docs/memory_hierarchy.md),
+[`pycore/docs/string_accel.md`](../../pycore/docs/string_accel.md). Numbers:
 [`memory_hierarchy_report.md`](memory_hierarchy_report.md) §7. This file is
 the design history; do not treat remaining “will be” / phase-checklist
 language as current work.
@@ -11,7 +13,7 @@ language as current work.
 Implementation plan for the "Neumann on the outside, modified Harvard on the
 inside" memory system. Sizing and priority come from the measurements in
 [`memory_hierarchy_report.md`](memory_hierarchy_report.md); the harness that
-produced them is [`pycore/tools/memsim/`](../pycore/tools/memsim/README.md)
+produced them is [`pycore/tools/memsim/`](../../pycore/tools/memsim/README.md)
 and was the P9 acceptance gate.
 
 **In scope (all built except FTB):** L1I, L1D, unified L2, a parameterized RAM
@@ -467,8 +469,8 @@ buffer, or unwind reads stale dmem. `img_try_exc_cross_frame_fatal` and
 ### P9 — Re-measure, and write down what actually happened
 
 **Done; landed on `main` with P6/P7.** Docs:
-[`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md),
-[`pycore/docs/string_accel.md`](../pycore/docs/string_accel.md).
+[`pycore/docs/memory_hierarchy.md`](../../pycore/docs/memory_hierarchy.md),
+[`pycore/docs/string_accel.md`](../../pycore/docs/string_accel.md).
 Numbers: [`memory_hierarchy_report.md`](memory_hierarchy_report.md) §7.
 P8 remains skipped.
 
@@ -476,7 +478,7 @@ P8 remains skipped.
   compare measured hit rates against the model's predictions. Where they
   disagree by more than a few points, the model was wrong — say so and fix it.
 * Re-run `experiments.py`; update
-  `planning/memory_hierarchy_report.md` with a measured-vs-predicted column.
+  `planning/old/memory_hierarchy_report.md` with a measured-vs-predicted column.
 * Update `pycore/docs/architecture.md` §"Memory subsystem" and
   §"Code memory regions"; add a new `pycore/docs/memory_hierarchy.md` covering
   the levels, the port contract of §0, and the invalidation matrix of §4.
@@ -489,9 +491,9 @@ P8 remains skipped.
   rewrite the LONG_STR row in `pycore/docs/tags.md` for the new handle.
 * Record the STRACC Unicode ceiling in `pycore/docs/bytecode_support.md`, next
   to the 64-bit `int` ceiling.
-* Graduate `planning/string_accelerator_plan.md` to
+* Graduate `planning/old/string_accelerator_plan.md` to
   `pycore/docs/string_accel.md`.
-* Note in `planning/compile_plan.md` that on-device `compile()` allocates
+* Note in `planning/old/compile_plan.md` that on-device `compile()` allocates
   string constants through `HeapImageBuilder.alloc_str`, so a compiled-on-device
   module and an image-built module produce byte-identical string objects.
 * Update the root `README.md` register/memory section.
@@ -557,7 +559,7 @@ made non-blocking.
 
 | Need | Path |
 | --- | --- |
-| Measurements behind every size in §1 | `planning/memory_hierarchy_report.md` |
+| Measurements behind every size in §1 | `planning/old/memory_hierarchy_report.md` |
 | Re-run the measurements | `python3.14 pycore/tools/memsim/experiments.py` |
 | Existing bank + tiling | `pycore/rtl/pycore_mem_bank.sv`, `pycore_mem_block.sv` |
 | A model memory TB | `pycore/tb/tb_mem_bank.sv` |

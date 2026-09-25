@@ -1,9 +1,11 @@
 # Memory-hierarchy study: what PyCore should cache, and why
 
+> **Archived 2026-09-25.** Sizing study for the memory system, which is complete on `main`. `pycore/tests/test_memsim_regression.py` still pins the numbers it rests on. As-built reference: [`pycore/docs/memory_hierarchy.md`](../../pycore/docs/memory_hierarchy.md).
+
 Findings report that sized the L1I / L1D / L2 / RAM work. **§7 is the P9
 as-built measurement on `main`** — RTL counters vs this model, P8 skip, and
 whether the 8 KB L1D still holds with STRACC traffic. The hierarchy itself
-is specified in [`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md).
+is specified in [`pycore/docs/memory_hierarchy.md`](../../pycore/docs/memory_hierarchy.md).
 
 The original question:
 Python-specific cache structures — for code objects, frames, functions,
@@ -19,7 +21,7 @@ opposite extremes (0% vs 96% heap traffic).
 
 There is also a free 45%-fewer-misses result hiding in the allocator (F3b).
 
-Harness, benchmarks and raw output: [`pycore/tools/memsim/`](../pycore/tools/memsim/README.md).
+Harness, benchmarks and raw output: [`pycore/tools/memsim/`](../../pycore/tools/memsim/README.md).
 The implementation plan these findings feed is
 [`memory_system_plan.md`](memory_system_plan.md).
 
@@ -336,7 +338,7 @@ Ranked by measured cycles-per-gate, not by architectural tidiness.
   chains shorten *and* shorten again. That is a control-path change, not a
   cache change, and it may be worth more than the cache.
 * **String memory** (`pycore_string_mem.sv`) — **closed in P5.** Strings are
-  heap objects behind STRACC; see [`string_accel.md`](../pycore/docs/string_accel.md)
+  heap objects behind STRACC; see [`string_accel.md`](../../pycore/docs/string_accel.md)
   and §7.
 * **Storage.** Nothing here constrains it; the natural shape is a block device
   behind the L2 with the module loader as its only client, which fits the

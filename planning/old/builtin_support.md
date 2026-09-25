@@ -1,7 +1,9 @@
 # Builtin support plan
 
+> **Archived 2026-09-25.** `compile` and string-form `exec` / `eval` have landed. The remaining builtin work (F2 `getattr` / empty `min` / `max`, NYI stubs, print phase 2) is in [`../master_plan.md`](../master_plan.md). Inventory: [`pycore_firmware/builtins/builtins.md`](../../pycore_firmware/builtins/builtins.md).
+
 Remaining names in the boot builtins dict and ROM. The inventory is
-[`pycore_firmware/builtins/builtins.md`](../pycore_firmware/builtins/builtins.md).
+[`pycore_firmware/builtins/builtins.md`](../../pycore_firmware/builtins/builtins.md).
 Per-name stubs (`compile.md`, `open.md`, `super.md`, …) keep the deep
 blockers.
 

@@ -1,7 +1,9 @@
 # Bytecode support plan
 
+> **Archived 2026-09-25.** Its closure (`MAKE_CELL` / `*_DEREF` / `COPY_FREE_VARS`) and `assert` rows have landed via the on-device compiler. The remaining opcode work is in [`../master_plan.md`](../master_plan.md), and the live matrix is [`pycore/docs/bytecode_support.md`](../../pycore/docs/bytecode_support.md).
+
 Remaining opcode work. The living matrix is
-[`pycore/docs/bytecode_support.md`](../pycore/docs/bytecode_support.md)
+[`pycore/docs/bytecode_support.md`](../../pycore/docs/bytecode_support.md)
 and `pycore/targets/pycore.json`. Update those in the same PR that
 changes hardware or image validation.
 

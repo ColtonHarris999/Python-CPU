@@ -1,5 +1,7 @@
 # P5 String Accelerator — review follow-up
 
+> **Archived 2026-09-25.** §1–§3 landed in #107. §4 (`STRING_HEX`): the RTL parameter is gone and only Makefile leftovers remain. §4 and §5 are now items in [`../cleanup_report.md`](../cleanup_report.md).
+
 Findings from the post-merge review of the P5 implementation (String
 Accelerator, commits `a9d7c7d`..`6147876` on main). One correctness bug, two
 test-coverage gaps, and dead plumbing to remove. This doc is the handoff: each

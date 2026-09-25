@@ -1,10 +1,12 @@
 # Exceptions plan
 
+> **Archived 2026-09-25.** The remaining tracks (T6, T4 oparg 2, T7, T9, T10, T11, T12) are carried in [`../master_plan.md`](../master_plan.md). The type inventory is [`pycore/docs/exception_support.md`](../../pycore/docs/exception_support.md).
+
 Remaining exception work. The type inventory is
-[`pycore/docs/exception_support.md`](../pycore/docs/exception_support.md)
+[`pycore/docs/exception_support.md`](../../pycore/docs/exception_support.md)
 and `pycore.json` → `exceptions.types`. Update both in the same PR that
 seeds or relinks a type. Opcode rows stay in
-[`pycore/docs/bytecode_support.md`](../pycore/docs/bytecode_support.md).
+[`pycore/docs/bytecode_support.md`](../../pycore/docs/bytecode_support.md).
 
 ## On main
 
@@ -62,5 +64,5 @@ on these.
 
 Full track write-ups, CPython hierarchy copy, and RTL phase notes:
 
-- [`old/exceptions_full_support_plan.md`](old/exceptions_full_support_plan.md)
-- [`old/exceptions_firmware_followup_plan.md`](old/exceptions_firmware_followup_plan.md)
+- [`old/exceptions_full_support_plan.md`](exceptions_full_support_plan.md)
+- [`old/exceptions_firmware_followup_plan.md`](exceptions_firmware_followup_plan.md)

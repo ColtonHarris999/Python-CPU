@@ -15,7 +15,7 @@ firmware trap, not a silent wrong answer).
 **Exception types** are tracked separately, the same way: machine catalog in
 `pycore.json` → `exceptions.types`, human table in
 [`exception_support.md`](exception_support.md). Roadmap:
-[`planning/exceptions_plan.md`](../../planning/exceptions_plan.md).
+[`planning/master_plan.md`](../../planning/master_plan.md) (tracks 2 and 3).
 
 ## Inventory (from `pycore.json`)
 

@@ -1,7 +1,7 @@
 # `print` — console output
 
 **Status:** in ROM (MVP)  
-**Plan:** `planning/builtin_support.md` (print phase 2: LONG_STR / `__str__`)  
+**Plan:** `planning/master_plan.md` §4 (print phase 2: LONG_STR / `__str__`)  
 **Shipped notes:** `planning/old/implemented/builtins_print_console_plan.md`
 
 ## Architecture

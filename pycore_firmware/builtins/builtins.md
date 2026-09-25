@@ -1,9 +1,12 @@
 # pycore builtins (firmware ROM)
 
-Pure-Python sources for names resolved on the LEGB **B**uildin
-lookup. Each module will be compiled to bytecode and placed at a
-known address in the pycore boot image (hex fixtures in the current
-test flow). Small helpers may later be inlined instead of a PC jump.
+Pure-Python sources for names resolved on the LEGB **B**uiltin
+lookup. The image builder compiles each module listed in
+`ROM_FIRMWARE_BUILTINS` (`pycore/tools/image_from_source.py`) and seeds
+it into the boot-record builtins dict of every image. Native methods
+(`list.append`, `dict.get`, …) are seeded into the native-method table
+instead (`ROM_NATIVE_METHODS`). A `.py` file here that is in neither
+list is **not** in the image; see the status column.
 
 **Architecture:** prefer hardware `OBK_BUILTIN` / `BI_*` CALL fast paths
 for known tags; keep these `.py` bodies as **miss / protocol**
@@ -35,8 +38,8 @@ These limit every firmware builtin:
 | Native type methods | `lst.append` / `s.add` / `d.get` / `str.join` etc. are `LOAD_ATTR` table hits (firmware `CODE_OBJECT`s in the boot sidecar). They are not public builtins-dict names. |
 | `UNPACK_EX` + `CALL_INTRINSIC_1` (LIST_TO_TUPLE) | Starred unpack and `(*lst,)` / list→tuple materialization are available |
 | Nested plan docs | Deep blockers: `compile.md`, `eval.md`, `exec.md`, `open.md`, `super.md`, `property.md`. `ord.md` / `chr.md` are shipped notes. |
-| Next plan | `planning/builtin_support.md` — `LOAD_SUPER_ATTR` / OBJECT `TO_BOOL`; F2 `getattr` / empty min/max |
-| `compile`/`exec`/`eval` plan | `planning/compile_plan.md` (PyCPython host oracle → ROM subset compiler). Code-object `exec`/`eval` already in ROM. |
+| Next plan | `planning/master_plan.md` §3–§4: `LOAD_SUPER_ATTR` / OBJECT `TO_BOOL`; F2 `getattr` / empty min/max |
+| `compile`/`exec`/`eval` | Landed: ROM `compile()` (T1–T6), code-object and string-form `exec`/`eval`, `bios()`. As built: `pycore/docs/compiler.md`. |
 
 ## Builtin functions
 
@@ -56,7 +59,7 @@ These limit every firmware builtin:
 | `callable` | Return True if the object appears callable. | in progress | Heuristic via `__call__` in `__dict__`; no tag probe for `CODE_OBJECT`. |
 | `chr` | Return the Unicode character for an integer code point. | native | `BI_CHR` (id 11): INT → one-character SHORT_STR, 1–4 UTF-8 bytes inline. Rejects > U+10FFFF, negatives, and lone surrogates → TYPE trap (CPython allows surrogates). |
 | `classmethod` | Transform a method into a class method. | blocked | No classmethod kind; image folding rejects `@classmethod`. |
-| `compile` | Compile source into a code object usable by exec/eval. | in ROM | T1 shim; see `compile.md`. `"single"` / `flags != 0` → `ValueError`. |
+| `compile` | Compile source into a code object usable by exec/eval. | in ROM | ROM shim over the on-device compiler (T1–T6 grammar, closures); see `compile.md` and `pycore/docs/compiler.md`. `"single"` / `flags != 0` → `ValueError`. |
 | `complex` | Create a complex number from real/imag or a string. | blocked | COMPLEX ALU tag exists; no runtime constructor. |
 | `delattr` | Delete a named attribute from an object. | in ROM | `del obj.__dict__[name]` (instance dict only; no MRO). |
 | `dict` | Create a new dictionary. | in ROM | From iterable of pairs via `UNPACK_SEQUENCE` + `STORE_SUBSCR`. No kwargs ctor. |
@@ -180,7 +183,7 @@ Coverage: `img_builtin_ord`, `img_builtin_chr`, `img_builtin_ord_unicode`
 
 ### Implemented (not yet seeded / hybrid docs)
 
-`len` (miss-path body; `BI_LEN` owns dict entry), `list_append`, `max`
+`len` (miss-path body; `BI_LEN` owns dict entry), `max`
 (BI_MAX), `range` (list-form body; `BI_RANGE` owns dict), `set` (Python
 form; `BI_SET` owns dict)
 
@@ -200,7 +203,7 @@ form; `BI_SET` owns dict)
 ## Blocked by bytecode (§3 gaps)
 
 Audit of **blocked** / partially-blocked names against
-`planning/builtin_support.md`. Prefer linking deep plans under
+`planning/master_plan.md` §4. Prefer linking deep plans under
 `pycore_firmware/builtins/*.md` where they exist.
 
 | Bytecode / protocol gap | Blocked or limited builtins |

@@ -183,7 +183,7 @@ localparam int PYCORE_SHORT_STR_SIZE_LSB  = 124;
 localparam int PYCORE_SHORT_STR_DATA_MSB  = 123;
 localparam int PYCORE_SHORT_STR_DATA_LSB  = 4;
 
-// String Accelerator (planning/string_accelerator_plan.md P5).
+// String Accelerator (planning/old/string_accelerator_plan.md P5).
 localparam logic [5:0] PY_SA_CONCAT    = 6'd0;
 localparam logic [5:0] PY_SA_REPEAT    = 6'd1;
 localparam logic [5:0] PY_SA_SLICE     = 6'd2;
@@ -396,7 +396,7 @@ function automatic logic [5:0] pycore_stracc_case_flags_step(
 endfunction
 
 // Latin-1 (U+0000–U+00FF) classify/map LUTs. Kind 2/4 MAP/CLASSIFY traps to
-// firmware (planning/string_accelerator_plan.md §6). Bit i of each mask is
+// firmware (planning/old/string_accelerator_plan.md §6). Bit i of each mask is
 // CPython 3.14 `chr(i).<pred>()`.
 localparam logic [255:0] PYCORE_LATIN1_ALNUM =
     256'hff7fffffff7fffff762c04000000000007fffffe07fffffe03ff000000000000;

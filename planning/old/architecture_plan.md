@@ -1,10 +1,12 @@
 # Architecture plan
 
+> **Archived 2026-09-25.** A1 (code-RAM writers) and A3 (BIOS) landed. A2 (module loader) and the A4 options are tracked in [`../master_plan.md`](../master_plan.md). Its memory-map numbers predate the 65 536-slot code RAM; the current map is in [`pycore/docs/code_loading.md`](../../pycore/docs/code_loading.md).
+
 Remaining machine work. The current system is specified in
-[`pycore/docs/architecture.md`](../pycore/docs/architecture.md),
-[`pycore/docs/tags.md`](../pycore/docs/tags.md),
-[`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md),
-and [`pycore/docs/code_loading.md`](../pycore/docs/code_loading.md).
+[`pycore/docs/architecture.md`](../../pycore/docs/architecture.md),
+[`pycore/docs/tags.md`](../../pycore/docs/tags.md),
+[`pycore/docs/memory_hierarchy.md`](../../pycore/docs/memory_hierarchy.md),
+and [`pycore/docs/code_loading.md`](../../pycore/docs/code_loading.md).
 
 This file is only what is **not** built yet.
 
@@ -45,7 +47,7 @@ Do **not** invent a module-image loader just to emit one function.
 A relocatable module image (text + data + reloc table) copied into code
 RAM. Needed when the firmware compiler no longer fits in ROM, or when a
 BIOS loads a payload. Geometry is already recorded in
-[`code_loading.md`](../pycore/docs/code_loading.md) §4 — implement that,
+[`code_loading.md`](../../pycore/docs/code_loading.md) §4 — implement that,
 do not redesign the banks.
 
 ### A3 — BIOS (after A2, or in parallel once A1 is green)
@@ -63,7 +65,7 @@ returns a real code object.
 | List/tuple `BINARY_SLICE` | `copy_range` helper is a size/perf problem (see compile subset) |
 | Negative indices in hardware | rewrite with `len-1` is no longer honest |
 | GC / sweeping heap | after mark/release is insufficient for compiling large sources |
-| RTL FSM split / decode cleanup | [`old/optimization_plan.md`](old/optimization_plan.md) — not a feature gate |
+| RTL FSM split / decode cleanup | [`old/optimization_plan.md`](optimization_plan.md) — not a feature gate |
 
 ## Memory map locks
 
@@ -77,7 +79,7 @@ Do not move these without updating `encoding.py`, RTL params,
 - `CONSOLE_TX` at `0xF0`.
 
 The L1I/L1D/L2/RAM hierarchy, STRACC, CODC, and GIC are **built**. FTB is
-skipped. See [`memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md).
+skipped. See [`memory_hierarchy.md`](../../pycore/docs/memory_hierarchy.md).
 Dead `STRING_HEX` plusarg plumbing is a leftover, not a map move:
 [`p5_review_followup.md`](p5_review_followup.md) §4.
 

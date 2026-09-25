@@ -3,7 +3,7 @@
 Status: **in ROM** (compiler_design.md §11.7). One-arg wrapper that
 `exec`s a string or code object in the caller's globals.
 
-**Design:** [`planning/compiler_design.md`](../../planning/compiler_design.md)
+**Design:** [`planning/old/compiler_design.md`](../../planning/old/compiler_design.md)
 §11.7.
 
 ## API

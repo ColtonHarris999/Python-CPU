@@ -1,8 +1,11 @@
 # On-device `compile()`
 
 Status: **Landed** through T5 (`lambda`, decorators, `assert`, simple
-f-strings) plus T4 and §11.4 closures. Design:
-[`planning/compiler_design.md`](../../planning/compiler_design.md).
+f-strings) plus T4, §11.4 closures, and the §11.8 T6 grammar (conditional
+expressions, chained assignment, `;`). Remaining work (self-hosting, the
+module loader, O-2) is in
+[`planning/master_plan.md`](../../planning/master_plan.md) §1. Design
+history: [`planning/old/compiler_design.md`](../../planning/old/compiler_design.md).
 
 `compile()` is a resident PyCore builtin. This file records the
 pipeline, subset, and the deviations from CPython that tests pin.
@@ -53,8 +56,8 @@ nd_obj[n]                   str / int / float / list payload, or None
 kids[]                      flat arena
 ```
 
-`mode == "eval"` wraps a T1–T5 expression in `ND_EXPRESSION`. `mode == "exec"`
-parses T1–T5 statements (`if`/`while`/`for`, `break`/`continue`/`pass`,
+`mode == "eval"` wraps a T1–T6 expression in `ND_EXPRESSION`. `mode == "exec"`
+parses T1–T6 statements (`if`/`while`/`for`, `break`/`continue`/`pass`,
 augassign, `del`, displays, unpack, `def` with the full parameter grammar
 and decorators, `global`, `try`/`except`/`else`/`finally`, `raise`,
 `assert`, `lambda`, simple f-strings, single-generator list/set/dict
@@ -141,7 +144,7 @@ Device: `img_symtab_locals` (checksum), `img_symtab_closure` (returns 1).
 
 `_pyc_codegen_main() -> CODE_OBJECT` lexes, parses, builds the symbol table,
 then recursively visits `nd_*` (Rule 2) into instruction words and assembles
-them with `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_new`. T1–T5:
+them with `_bi_code_alloc` / `_bi_code_blit` / `_bi_code_new`. T1–T6:
 literals, names, ALU, unary, compare/chains, `is`/`in`, `not`/`and`/`or`,
 call, subscript, attribute, expression statements, assignment, `return`,
 `if`/`elif`/`else`, `while`/`for`, `break`/`continue`/`pass`, augassign,
@@ -321,9 +324,10 @@ stays constant in the source nesting.
 | --- | --- | --- |
 | T1 | literals, names, ALU, compare, call, subscr, attr, assign, `return` | parser (F); codegen (H); `compile()` shim (I) |
 | T2 | `if`/`while`/`for`, `break`/`continue`, augassign, `del` | parser + codegen (J, landed) |
-| T3 | `def` (positional args + indented / one-line suite), `global`, displays, unpack | parser slice in G; codegen (J, landed) |
+| T3 | `def` with literal defaults, `*args`, keyword-only, `**kwargs`; keyword call sites (`CALL_KW`); `global`; displays; unpack | parser + codegen (J; parameters and `CALL_KW` in §11.8, landed) |
 | T4 | `try`/`except`/`else`/`finally`, `raise`, comprehensions, string slices | parser + codegen (§11.2, landed) |
 | T5 | `lambda`, decorators, `assert`, simple f-strings. `class`/`import`/`with` stay `SyntaxError` | parser + codegen (§11.5, landed) |
+| T6 | conditional expressions, chained assignment, `;`-separated statements, comprehension element expressions and `if` filters | parser + codegen (§11.8, landed) |
 
 ## Deviations from CPython (D1–D13)
 

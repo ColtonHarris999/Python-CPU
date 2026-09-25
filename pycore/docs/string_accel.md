@@ -5,7 +5,7 @@ results on small strings stay on the pycore string ALU; everything else is
 one STRACC command. There is no `pycore_string_mem`.
 
 The design plan this was built from is
-[`planning/string_accelerator_plan.md`](../../planning/string_accelerator_plan.md)
+[`planning/old/string_accelerator_plan.md`](../../planning/old/string_accelerator_plan.md)
 (historical; this file is the as-built source of truth).
 
 ---

@@ -2,10 +2,11 @@
 
 Pure-Python software that ships in the pycore boot image (ROM).
 
-At tape-out, this tree is compiled to bytecode and placed at fixed memory
-locations so the core can initialize itself (booter / BIOS) and resolve
-LEGB **B**uildin calls by jumping the PC into precompiled ROM — or, for
-tiny helpers, by inlining their bytecode.
+The image builder (`pycore/tools/image_from_source.py`) compiles this tree
+with host CPython 3.14 and seeds it into every boot image: ROM builtins go
+into the boot-record builtins dict, and the compiler package goes into code
+RAM. The core resolves LEGB **B**uiltin calls by calling those code
+objects like any other function.
 
 ## Builtin model
 
@@ -19,7 +20,7 @@ paths (e.g. `len(obj)` → `obj.__len__()`), not slower rewrites of the
 fast paths. Bytecode and CALL work needed to finish this split is in
 `planning/old/implemented/builtins_bytecode_support_plan.md`.
 On-device `compile()`: ROM shim in `builtins/compile.py` plus the package
-under `compiler/` (`planning/compiler_design.md`). `vendor/pycpython` is
+under `compiler/` (as built: `pycore/docs/compiler.md`). `vendor/pycpython` is
 the host oracle only.
 
 ## Layout
@@ -27,7 +28,7 @@ the host oracle only.
 | Path | Role |
 | --- | --- |
 | `builtins/` | Pure-Python miss-path / ROM builtins + `builtins.md` inventory |
-| `compiler/` | On-device `compile()` package (T1–T3 landed). Helpers live in `_PYC_G` (code RAM); the public ROM shim is `builtins/compile.py`. `tables.py` is generated from `pycore/targets/pycore.json` (`pycore/tools/gen_compiler_tables.py`). Occupancy: `make pycore-size-report`. |
+| `compiler/` | On-device `compile()` package (T1–T6 grammar, closures; see `pycore/docs/compiler.md`). Helpers live in `_PYC_G` (code RAM); the public ROM shim is `builtins/compile.py`. `tables.py` is generated from `pycore/targets/pycore.json` (`pycore/tools/gen_compiler_tables.py`). Occupancy: `make pycore-size-report`. |
 
 Image tests compile these modules via `ROM_FIRMWARE_BUILTINS` in
 `pycore/tools/image_from_source.py` and seed them into the boot-record
@@ -42,5 +43,6 @@ under `compiler/` (except generated `tables.py`) into code RAM, copies
 builds one `MUT_DICT` bound as `_PYC_G`, and binds a 0-arg trampoline as
 `_PYC_ENTRY`. `compile()` stores `_in_src` / `_in_file` / `_in_mode` and
 runs `_pyc_codegen_main` with `_bi_exec_globals(_pyc_codegen_main, _PYC_G)`.
-`_PYC_ENTRY` remains the step-D toy (`return _pyc_add(_pyc_inc(40), 1)` → 42).
+`_PYC_ENTRY` remains the step-D toy (`return _pyc_add(_pyc_inc(40), 1)` → 42,
+from `compiler/toy.py`). Its removal is `planning/cleanup_report.md` item F2.
 

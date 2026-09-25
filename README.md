@@ -28,7 +28,7 @@ Shipped and regression-tested:
 - ROM builtins (`print`, `min`/`sorted`/`map`/`zip`/…), native `ord`/`chr`/`int`/`str`/`len`.
 - List/tuple sequence repeat (`[1,2] * 3`) and concat (`[1,2] + [3]`). Writable code RAM + `exec`/`eval` on
   precompiled code objects or source strings.
-- **On-device `compile()`** (`planning/compiler_design.md`): a compiler
+- **On-device `compile()`** (`pycore/docs/compiler.md`): a compiler
   written in the PyCore subset, resident in code RAM at reset, reached
   through four code-write builtins. Closures, `lambda`, decorators,
   `assert`, and simple f-strings are in; so is the full `def` parameter
@@ -83,7 +83,7 @@ Types: 64-bit `int`, `bool`, `float`, `None`, `str`, `list`, `tuple`, `dict`,
 `sum`, `sorted`, `map`/`zip`/`enumerate`/`filter`/`reversed` (these return
 **lists**), `list`/`dict`/`tuple`/`set`, `abs`/`all`/`any`, `bin`/`hex`/`oct`,
 `hasattr`/`getattr`/`isinstance`, `exec`/`eval` on a code object **or a
-source string**, `compile()` (T1–T5 source → code object), `bios(payload)`.
+source string**, `compile()` (T1–T6 source → code object), `bios(payload)`.
 Methods: `list.append/pop/extend/clear`, `set.add/update`,
 `str.join/startswith/endswith/find`, `dict.get/keys/items/values/update/pop`.
 
@@ -92,8 +92,8 @@ runtime `class`, `super()`, files,
 slice assignment, list/tuple slicing, format-spec f-strings, `STR * INT`,
 negative indices. String slice step other than `None`/1 is still rejected.
 
-Host `compile()` for images is still CPython. ROM `compile()` ships T1–T5
-plus closures: `eval(compile("1 + 2", "<s>", "eval"))` → 3,
+Host `compile()` for images is still CPython. ROM `compile()` ships the T1–T6
+grammar plus closures: `eval(compile("1 + 2", "<s>", "eval"))` → 3,
 `exec(compile(src, "<s>", "exec"))` A2 → 7, `def` with defaults /
 `*args` / keyword-only / `**kwargs`, keyword call sites, conditional
 expressions, chained assignment, and comprehensions with an element
@@ -151,11 +151,13 @@ Payload details: `pycore/docs/tags.md`.
 | Linear probe / contains / tombstone skip | **pycore** |
 | List append with spare capacity; last-element list delete | **pycore** |
 | Empty `LIST_EXTEND` (no-op pop) | **pycore** |
-| List/dict/set resize; non-empty `LIST_EXTEND`; mid-list delete; `SET_UPDATE` | **excore** |
+| List/dict/set resize; non-empty `LIST_EXTEND`; mid-list delete; uncontaminated `SET_UPDATE` / `DICT_UPDATE` / `DICT_MERGE`; `print` to the console | **excore** |
+| Bulk updates with an OBJECT key or element (contaminated), and every `TUPLE`-source `SET_UPDATE` | **pycore** (`pycore_cont_bulk.svh`) |
 
 Recoverable excore traps (`EXCORE_EN=1`): list grow (9), list extend (10),
-dict grow (11), list delete (12), set grow (13), set update (14), plus dict
-update/merge. See `pycore/docs/architecture.md`.
+dict grow (11), list delete (12), set grow (13), set update (14), builtin
+call (16), dict update (19), and dict merge (20). See
+`pycore/docs/architecture.md`.
 
 ## Docs
 
@@ -170,8 +172,11 @@ update/merge. See `pycore/docs/architecture.md`.
 | Image / preprocessing flow | `pycore/docs/preprocessing_breakdown.md` |
 | Dict / set + excore | `pycore/docs/dict_excore.md`, `pycore/docs/set_excore.md` |
 | ROM builtins inventory | `pycore_firmware/builtins/builtins.md` |
-| Active plans | `planning/master_plan.md` |
-| On-device compile | `planning/compile_plan.md` |
+| On-device `compile()` | `pycore/docs/compiler.md` |
+| Memory hierarchy / STRACC | `pycore/docs/memory_hierarchy.md`, `pycore/docs/string_accel.md` |
+| Roadmap (what is left to build) | `planning/master_plan.md` |
+| Cleanup backlog for agents | `planning/cleanup_report.md` |
+| Archived designs | `planning/old/` |
 | PyCPython vendor | `vendor/pycpython` (`git submodule update --init`) |
 | excore MMIO / ISA / firmware | `excore/docs/` |
 
@@ -185,8 +190,12 @@ sudo apt-get update
 sudo apt-get install -y make g++ verilator python3.14 python3.14-venv docker.io
 ```
 
-If the distro has no `python3.14`, install it via pyenv (or equivalent) and
-pass `PYTHON=python3.14` to make. Windows: WSL2 Ubuntu, same commands.
+The RTL needs **Verilator 5.032 or newer**: it slices function-call return
+values, which older releases (Ubuntu's 5.020 package, for one) reject. If
+your distro ships an older Verilator, use the Docker targets below, or
+build Verilator from source. If the distro has no `python3.14`, install it
+via pyenv (or equivalent) and pass `PYTHON=python3.14` to make. Windows:
+WSL2 Ubuntu, same commands.
 
 ```bash
 make docker-build
@@ -221,15 +230,16 @@ make pycore-sim-img-twocore    # EXCORE_EN=1
 
 ```bash
 make all-tests TEST_JOBS=4     # pycore + excore; TEST_JOBS default 2
-make pycore-container          # legacy hex fixtures
+make pycore-container          # container fixtures (some still hand-built hex)
 make pycore-img                # single-core image-boot
 make pycore-excore-system      # two-core trap round-trips
 make pycore-img-two-core       # image-boot on the two-core top
 make excore-cpu-test
 ```
 
-Image-boot tests (`make pycore-img-*`) are the production path. Do not use the
-old inline three-slot `LOAD_CONST` / `preprocess.py` flow for new work.
+Image-boot tests (`make pycore-img-*`) are the production path. Do not add
+new `BOOT_EN=0` hex fixtures or new uses of the deprecated `preprocess.py`
+(see `planning/cleanup_report.md` items A4 and C1).
 
 ### Docker equivalents
 
@@ -273,6 +283,9 @@ With `EXCORE_EN=1`, recoverable traps are handed to excore over
 | 12 | `PY_TRAP_LIST_DELETE` |
 | 13 | `PY_TRAP_SET_GROW` |
 | 14 | `PY_TRAP_SET_UPDATE` |
+| 16 | `PY_TRAP_BUILTIN_CALL` |
+| 19 | `PY_TRAP_DICT_UPDATE` |
+| 20 | `PY_TRAP_DICT_MERGE` |
 
 See `pycore/docs/architecture.md` (“Two-core transport and integration”) for
 mailbox format, memory-ownership protocol, and full trap taxonomy.
