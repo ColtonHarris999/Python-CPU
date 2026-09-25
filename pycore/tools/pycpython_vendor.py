@@ -2,7 +2,7 @@
 
 PyCPython is a git submodule at ``vendor/pycpython``. Firmware never imports
 it on the hart; host tests and image tooling use it as a ``compile()`` oracle.
-See ``planning/compile_plan.md``.
+See ``pycore/docs/compiler.md``.
 """
 
 from __future__ import annotations

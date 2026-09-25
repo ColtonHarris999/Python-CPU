@@ -1,5 +1,7 @@
 # Compile plan
 
+> **Archived 2026-09-25.** Superseded by [`compiler_design.md`](compiler_design.md), which has itself landed. As-built reference: [`pycore/docs/compiler.md`](../../pycore/docs/compiler.md).
+
 > **Superseded by [`compiler_design.md`](compiler_design.md).** That file is
 > the active, self-contained design for on-device `compile()`. It corrects
 > several constraints this document treats as live (list slicing, long-name
@@ -36,8 +38,8 @@ D  Device runtime  RTL `_bi_code_*` + ROM compile   writes code RAM
 
 | Layer | What it is |
 | --- | --- |
-| **H** | Git submodule [`vendor/pycpython`](../vendor/pycpython) ([PyCPython](https://github.com/ColtonHarris999/PyCPython), branch `claude/cpython-3-14-compile-frontend-4o4fcz`). `compile_source()` is the semantic oracle. Never seeded into ROM. |
-| **F** | New tree `pycore_firmware/compiler/`. Algorithms taken from PyCPython (`codegen.py`, `symtable.py`, `assemble.py`, tokenizer ideas) and **rewritten** against today’s ISA. Provenance headers + [`THIRD_PARTY.md`](../pycore_firmware/THIRD_PARTY.md). |
+| **H** | Git submodule [`vendor/pycpython`](../../vendor/pycpython) ([PyCPython](https://github.com/ColtonHarris999/PyCPython), branch `claude/cpython-3-14-compile-frontend-4o4fcz`). `compile_source()` is the semantic oracle. Never seeded into ROM. |
+| **F** | New tree `pycore_firmware/compiler/`. Algorithms taken from PyCPython (`codegen.py`, `symtable.py`, `assemble.py`, tokenizer ideas) and **rewritten** against today’s ISA. Provenance headers + [`THIRD_PARTY.md`](../../pycore_firmware/THIRD_PARTY.md). |
 | **D** | `_bi_code_alloc` / `_bi_code_emit` / `_bi_code_new`. Existing `exec`/`eval` on code objects already work. |
 
 **Do not execute `vendor/pycpython` on the hart.** Measured mix of compiling
@@ -55,7 +57,7 @@ slots (~3.5×); raw units including `CACHE` ~9.4×. Highest-count unsupported
 ops: `LOAD_COMMON_CONSTANT` (`assert`), `LOAD_BUILD_CLASS` / `LOAD_LOCALS`,
 `IMPORT_*`, cells / generators. Recompute with
 `python3.14 pycore/tools/measure_pycpython_opcodes.py` (writes
-[`old/bytecode_compile_progress.md`](old/bytecode_compile_progress.md)).
+[`old/bytecode_compile_progress.md`](bytecode_compile_progress.md)).
 
 Host smoke: `pycore/tests/test_pycpython_oracle.py` (needs
 `git submodule update --init`).
@@ -214,8 +216,8 @@ byte-identical string objects (same header packing, same intern key
 
 Folded into this file and superseded:
 
-- [`old/code_loading_bios_tokenizer_plan.md`](old/code_loading_bios_tokenizer_plan.md) (P9 PyPy tokenizer — dropped)
-- [`old/native_compiler_plan.md`](old/native_compiler_plan.md)
-- [`old/native_compiler_full_plan.md`](old/native_compiler_full_plan.md)
-- [`old/compile_fast_path.md`](old/compile_fast_path.md)
-- [`old/implemented/compile_exec_plan.md`](old/implemented/compile_exec_plan.md)
+- [`old/code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md) (P9 PyPy tokenizer — dropped)
+- [`old/native_compiler_plan.md`](native_compiler_plan.md)
+- [`old/native_compiler_full_plan.md`](native_compiler_full_plan.md)
+- [`old/compile_fast_path.md`](compile_fast_path.md)
+- [`old/implemented/compile_exec_plan.md`](implemented/compile_exec_plan.md)

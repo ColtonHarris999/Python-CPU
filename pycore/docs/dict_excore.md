@@ -11,10 +11,12 @@
 | Tombstone skip / same-tag delete | **pycore** | Dedicated `PY_TAG_TOMBSTONE` (14) |
 | Cross-tag delete / contains | **pycore** | Same rich-eq probe as STORE / SUBSCR |
 | Load ≥ 2/3 before new-key insert | **excore** `DICT_GROW` | Realloc table (`used*4` if used≤50k else `used*2`), rehash, complete STORE |
+| `DICT_UPDATE` (`{**a, **b}`, `a.update(b)`) / `DICT_MERGE` (`**kwargs` into a non-empty dict), both operands uncontaminated | **excore** `DICT_UPDATE` (19) / `DICT_MERGE` (20) | One recoverable trap per bulk op. Contaminated (OBJECT-key) operands stay in pycore (`pycore_cont_bulk.svh`); see the contamination bit in `tags.md` |
 | Complex object hashes | deferred | TYPE trap for unsupported key tags |
 
 Average probe chains are short, so collisions stay on pycore. Only
-capacity-changing work (`DICT_GROW`) is offloaded. See also
+capacity-changing work (`DICT_GROW`) and uncontaminated bulk updates
+(`DICT_UPDATE` / `DICT_MERGE`) are offloaded. See also
 `pycore/docs/set_excore.md`.
 
 ## Layout

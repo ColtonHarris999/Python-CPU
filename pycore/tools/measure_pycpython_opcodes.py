@@ -367,7 +367,7 @@ def render_markdown(report: MixReport) -> str:
     a(f"Logical instructions are about **{total / code_ram:.1f}×** that budget;")
     a(f"raw imem units including CACHE are about **{report.raw_units / code_ram:.1f}×**.")
     a("The unmodified compiler cannot be loaded even if every opcode ran.")
-    a("See `planning/compile_plan.md`.")
+    a("See `pycore/docs/compiler.md`.")
     a("")
     a("## Fully supported opcodes")
     a("")

@@ -1,7 +1,7 @@
 """Subset gate for ``pycore_firmware/compiler/``.
 
 Walks the AST and compiled ``co_*`` fields of every file in the firmware
-compiler tree. Algorithms live in ``planning/compiler_design.md`` §5.1.
+compiler tree. Algorithms live in ``planning/old/compiler_design.md`` §5.1.
 """
 
 from __future__ import annotations

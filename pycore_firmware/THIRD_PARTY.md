@@ -1,7 +1,7 @@
 # Third-party code in firmware and vendor trees
 
-`planning/compile_plan.md` requires a provenance record for every ported
-or vendored compiler source.
+Every ported or vendored compiler source needs a provenance record here
+(a rule set by the archived `planning/old/compile_plan.md`).
 
 | Project | Licence | Path | Revision / branch | What we use | Modifications |
 | --- | --- | --- | --- | --- | --- |

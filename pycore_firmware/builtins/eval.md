@@ -3,8 +3,8 @@
 Status: **in ROM** for code objects and string form (`_bi_code_kind` +
 ROM `compile()`, compiler_design.md §11.1).
 
-**Plan:** [`planning/compiler_design.md`](../../planning/compiler_design.md)
-and [`planning/builtin_support.md`](../../planning/builtin_support.md).
+**As built:** [`pycore/docs/compiler.md`](../../pycore/docs/compiler.md). Design
+history: [`planning/old/compiler_design.md`](../../planning/old/compiler_design.md) §11.1.
 
 ## Goal
 

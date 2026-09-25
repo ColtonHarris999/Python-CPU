@@ -1,6 +1,6 @@
 `include "pycore_defs.svh"
 
-// Standalone STRACC + RAM (planning/string_accelerator_plan.md §10.1).
+// Standalone STRACC + RAM (planning/old/string_accelerator_plan.md §10.1).
 module tb_str_accel;
     localparam int DATA_WIDTH = 128;
     localparam int ADDR_WIDTH = 32;

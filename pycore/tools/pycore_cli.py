@@ -139,7 +139,7 @@ on-device ``compile()`` builds it and ``exec()`` runs it as ``__main__``,
 with its output streamed live. The same file then runs on stock CPython
 3.14 and the report compares output (the validation) and the cycles spent
 compiling and running on each side. The on-device compiler takes the
-T1-T5 grammar in ``pycore/docs/compiler.md`` (no ``class`` / ``import`` /
+T1-T6 grammar in ``pycore/docs/compiler.md`` (no ``class`` / ``import`` /
 ``with`` / annotations), which is narrower than what ``run`` accepts.
 
 ``run`` builds a CPython 3.14 image, executes ``managed_entry`` on the host

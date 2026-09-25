@@ -23,6 +23,7 @@ python3 excore/tools/asm_rv32.py excore/fw/list_grow.s -o build/excore_fw/list_g
 | 12 | `PY_TRAP_LIST_DELETE` |
 | 13 | `PY_TRAP_SET_GROW` |
 | 14 | `PY_TRAP_SET_UPDATE` (LIST/SET/DICT source; dict source inserts keys) |
+| 16 | `PY_TRAP_BUILTIN_CALL` (`do_builtin_call`; today only `BI_PRINT` → `CONSOLE_TX`) |
 | 19 | `PY_TRAP_DICT_UPDATE` (`do_dict_update`: grow A to fit, insert all of B, overwrite dups) |
 | 20 | `PY_TRAP_DICT_MERGE` (`do_dict_merge`: build fresh dict C = A then B, duplicate key → fatal `TYPE`) |
 

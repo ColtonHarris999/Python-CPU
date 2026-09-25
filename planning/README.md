@@ -1,30 +1,26 @@
 # Planning
 
-Living plans for work that is **not done yet**. Current architecture and
-opcode/type inventories live under `pycore/docs/` and `excore/docs/`.
+Plans for work that is **not done yet**. The machine as built is documented
+under `pycore/docs/`, `excore/docs/`, and `pycore_firmware/builtins/`.
 
 | File | Role |
 | --- | --- |
-| [`master_plan.md`](master_plan.md) | Timeline and how the tracks connect |
-| [`architecture_plan.md`](architecture_plan.md) | Remaining boot / code-RAM writers (A1–A3) |
-| [`bytecode_support.md`](bytecode_support.md) | Remaining opcode work |
-| [`builtin_support.md`](builtin_support.md) | Remaining ROM / native builtins |
-| [`compiler_design.md`](compiler_design.md) | **On-device `compile()` — the active design.** Supersedes `compile_plan.md` |
-| [`exceptions_plan.md`](exceptions_plan.md) | Remaining exception tracks |
-| [`p5_review_followup.md`](p5_review_followup.md) | P5 leftovers: dead `STRING_HEX` plumbing, allocator-bytes orphan |
+| [`master_plan.md`](master_plan.md) | The only living roadmap: what is left to build, by track, plus policies and memory-map locks |
+| [`cleanup_report.md`](cleanup_report.md) | Simplification and dead-code backlog, written as independent work items for agents |
+| [`old/`](old/) | Archived designs and plans. Code comments cite them by section (`compiler_design.md §6.1`), so they stay in the repo |
 
-## Graduated (built on `main`)
+## Rules
 
-| File | Role |
-| --- | --- |
-| [`memory_system_plan.md`](memory_system_plan.md) | Complete. As-built: [`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md). P0–P7 built; P8 skipped; P9 measured |
-| [`string_accelerator_plan.md`](string_accelerator_plan.md) | STRACC design history. As-built: [`pycore/docs/string_accel.md`](../pycore/docs/string_accel.md) |
-| [`memory_hierarchy_report.md`](memory_hierarchy_report.md) | Sizing study; §7 is the P9 RTL vs model report |
+- When a plan lands, move it to `old/`, add an `Archived` note at the top
+  that points to the as-built doc, and copy anything still open into
+  `master_plan.md`. Do not keep a "graduated" plan at the top level.
+- Do not duplicate opcode, type, or builtin tables here. Link to
+  `pycore/docs/bytecode_support.md`, `pycore/docs/exception_support.md`,
+  `pycore/targets/pycore.json`, and `pycore_firmware/builtins/builtins.md`.
+- When you finish a `cleanup_report.md` item, delete its entry in the same
+  PR. The report should only ever list open work.
 
-Historical plans (including the old Plan 1 tokenizer and Plan 2/3 compiler
-splits) are in [`old/`](old/).
-
-GitHub CI skips the hardware suite when a PR/push only touches markdown,
+GitHub CI skips the hardware suite when a PR or push only touches markdown,
 `planning/`, licenses, or similar non-build paths (including `pycore/docs/`
-and `excore/docs/`). Mix in RTL, programs, tools, `Makefile`, Docker, or
-workflow files and the split jobs run as usual.
+and `excore/docs/`). If you also touch RTL, programs, tools, the `Makefile`,
+Docker, or workflow files, the split jobs run as usual.

@@ -12,7 +12,7 @@ unless the JSON `status` is `seeded` and boot (`build_builtins_dict`) agrees.
 [Built-in Exceptions](https://docs.python.org/3/library/exceptions.html)
 (Python 3.14). Copy `tp_base` from that page; do not invent parents.
 
-**Roadmap:** [`planning/exceptions_plan.md`](../../planning/exceptions_plan.md).
+**Roadmap:** [`planning/master_plan.md`](../../planning/master_plan.md) §2 (Exceptions).
 Opcode rows live in [`bytecode_support.md`](bytecode_support.md) and the
 `OBJ_EXC` group in `pycore.json`.
 
@@ -87,7 +87,7 @@ itself).
 | `ValueError` | seeded | T5-A | — | CALL constructs `OBK_EXCEPTION` |
 | `AttributeError` | seeded | T5-A | T6 | trap map not converted yet |
 | `RuntimeError` | seeded | T5-A | T4 | seeded, but bare `raise` with no active exception remains fatal until its handle has a boot sidecar |
-| `AssertionError` | seeded | T5-A | T7 | `LOAD_COMMON_CONSTANT` still trap |
+| `AssertionError` | seeded | T5-A | T7 | Host-built images: `LOAD_COMMON_CONSTANT` still traps. On-device `compile()` rewrites `assert` to `LOAD_GLOBAL AssertionError` + `RAISE_VARARGS 1`, so it works there |
 | `SyntaxError` | seeded | T1 rebase | — | leaf pulled under `Exception`; `IndentationError`/`TabError` stay absent |
 
 T1 shipped MRO + tuple `CHECK_EXC_MATCH` in the same PR as Wave A seeds. Rebase onto `main` also seeds `SyntaxError`.

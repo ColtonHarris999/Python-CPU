@@ -1,4 +1,6 @@
-Graduated to [`pycore/docs/string_accel.md`](../pycore/docs/string_accel.md)
+> **Archived 2026-09-25.** Complete on `main`. As-built reference: [`pycore/docs/string_accel.md`](../../pycore/docs/string_accel.md).
+
+Graduated to [`pycore/docs/string_accel.md`](../../pycore/docs/string_accel.md)
 (as-built). This file is the design history; do not treat its "will be" /
 "today `string_mem`" language as current.
 
@@ -572,7 +574,7 @@ image, one heap.
 This is also the hook the future on-device `compile()` needs: it allocates
 string constants with the same routine, so a compiled-on-device module and an
 image-built module produce byte-identical string objects. Note that in
-`planning/compile_plan.md`.
+`planning/old/compile_plan.md`.
 
 ## 13. Phases
 

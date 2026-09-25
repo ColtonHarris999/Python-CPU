@@ -1,113 +1,211 @@
 # Master plan
 
 PyCore is a CPython 3.14 bytecode CPU (hart) plus an RV32 companion
-(`excore`) that finishes recoverable container work. Programs today boot
-from a **host** `compile()` image. The remaining product work is to make
-that pipeline run **on the hart**, and to close the language gaps that
-still trap.
+(`excore`) that finishes recoverable container work. Programs boot from a
+host-built image, and the hart can now compile and run Python source
+itself (`compile()`, string `exec` / `eval`, `bios()`).
 
-This file is the timeline. Topic plans hold the specifics. Living
-inventories (what the hardware actually does today) stay in `pycore/docs/`
-and `pycore_firmware/builtins/builtins.md`.
+This is the **only** living plan. It lists what is left to build, in the
+order that unblocks the next step. Engineering cleanup (dead code, build
+system, RTL structure) is tracked separately in
+[`cleanup_report.md`](cleanup_report.md).
 
-## How the docs connect
+Snapshot: `main` @ `7134b6d` plus PR #132 (`exec` / `shell`), 2026-09-25.
+
+## Where the truth lives
 
 ```text
-planning/master_plan.md          timeline
+planning/master_plan.md          what is left to build (this file)
+planning/cleanup_report.md       simplification / dead-code backlog
+planning/old/                    archived designs (cited by section from code)
         │
-        ├── architecture_plan.md   boot, code RAM writers, loader, BIOS
-        ├── bytecode_support.md    remaining opcodes
-        ├── builtin_support.md     remaining ROM / native names
-        ├── compiler_design.md    on-device compile() (active design)
-        └── exceptions_plan.md     trap→raise, assert, with, subclasses
-                │
-                ▼
-pycore/docs/*                    current machine (tags, opcodes, exceptions,
-                                 memory_hierarchy.md, string_accel.md)
-pycore_firmware/builtins/*       current ROM inventory
+        ▼
+pycore/docs/*                    the machine as built: architecture, tags,
+                                 bytecode_support, exception_support,
+                                 object_model, compiler, exec_runner,
+                                 code_loading, memory_hierarchy,
+                                 string_accel
+pycore/targets/pycore.json       machine-readable opcode / type catalog
+pycore_firmware/builtins/*.md    ROM builtin inventory
+excore/docs/*                    excore MMIO, ISA subset, firmware
 ```
 
-Do not duplicate opcode tables or type lists in planning files. Point at
-`pycore/docs/bytecode_support.md` and `pycore/docs/exception_support.md`.
+Do not copy opcode tables or type lists into planning files. Point at
+`pycore/docs/bytecode_support.md`, `pycore/docs/exception_support.md`,
+and `pycore.json`, and update those in the same PR as the RTL change.
 
-## What is already on main
+## What is on `main`
 
-- Two-core system: pycore bytecode hart + excore grow/extend/delete firmware.
-- Image-boot from CPython 3.14 (`image_from_source.py` / `pycore_cli.py`).
-- Int / bool / float / complex ALU, strings (index, iterate, variable-bound
-  slice), lists / tuples / dicts / sets, `range`, `for` / comprehensions.
-- Functions with defaults / `*args` / `**kwargs` / keyword calls.
-- Module-level classes, instance attributes, native methods
-  (`list.append`, `dict.get`, `str.join`, …).
-- `try` / `except` / `else` / `finally`, `raise TypeError("msg")`, MRO match,
-  cross-frame unwind, catchable firmware raises, readable `e.args`.
-- ROM builtins (`print`, `min`/`sorted`/`map`/`zip`/…), native `ord`/`chr`/`int`/`str`/`len`.
-- Writable **code RAM** + `exec`/`eval` on **precompiled** code objects.
-- Heap / code mark-release.
-- Memory hierarchy on the hart: 8 KB L1I, 8 KB L1D, 128 KB inclusive L2,
-  parameterized RAM, STRACC (strings are heap objects), 4-entry CODC, 16-entry
-  GIC. Frame top-of-stack buffer **skipped** (L1D already hits >95% of the
-  frame region). As-built: [`pycore/docs/memory_hierarchy.md`](../pycore/docs/memory_hierarchy.md),
-  [`pycore/docs/string_accel.md`](../pycore/docs/string_accel.md).
+- Two-core system: pycore bytecode hart plus excore grow / extend / delete /
+  bulk-update firmware over `trap_mailbox.sv`.
+- Image boot from host CPython 3.14 (`image_from_source.py`, `pycore_cli.py`).
+- Int / bool / float / complex ALU; strings (index, iterate, unit-step
+  slice); lists, tuples, dicts, sets, `range`, `for`, comprehensions.
+- Functions with defaults, `*args`, keyword-only arguments, `**kwargs`, and
+  keyword calls; closures (cells and `OBK_FUNCTION`); module-level classes,
+  instance attributes, and native methods.
+- `try` / `except` / `else` / `finally`, `raise` of seeded types, MRO and
+  tuple match, cross-frame unwind, catchable firmware raises, `e.args`.
+- ROM builtins, including `compile()` (T1–T6 grammar), string `exec` /
+  `eval`, and `bios(payload)`.
+- `make exec-file` / `make shell`: hand the hart a source file, compile
+  and run it on device, and compare output and cycles with CPython
+  (`pycore/docs/exec_runner.md`).
+- Register-file ring with spill/fill (500-frame recursion, 64+ locals).
+- Memory hierarchy: 8 KB L1I, 8 KB L1D, 128 KB L2, parameterized RAM,
+  STRACC, CODC, GIC. Code ROM of 8192 slots plus 65 536 slots of writable
+  code RAM.
 
-## Timeline
+The full "can I write this?" answer is the root `README.md` and
+`make lint-file`.
 
-Order is “what unblocks the next product step,” not calendar estimates.
+## Known bugs (fix before new features)
 
-### 1. Code-RAM writers — **landed** (architecture + compile step C)
+Found with `make exec-file` (PR #132) and not yet fixed. Both are
+correctness bugs in code the on-device compiler accepts, so they come
+before any new grammar.
 
-`_bi_code_alloc` / `_bi_code_blit` / `_bi_code_patch` / `_bi_code_new` write
-code RAM and fabricate `CODE_OBJECT` handles. Host stand-ins live in
-`load_rom_firmware_callables()`. Details: [`compiler_design.md`](compiler_design.md)
-step C and [`architecture_plan.md`](architecture_plan.md).
-
-### 2. On-device `compile()` — **T1–T3 landed** (steps D–J)
-
-Vendor [PyCPython](https://github.com/ColtonHarris999/PyCPython) at
-`vendor/pycpython` is the **host oracle** and algorithm source. The
-PyCore-subset port is `pycore_firmware/compiler/`. Do **not** run unmodified
-PyCPython on the hart.
-
-```python
-eval(compile("1 + 2", "<s>", "eval")) == 3          # A1
-exec(compile(src, "<s>", "exec"))  # globals match    # A2 → 7
-```
-
-Design: [`compiler_design.md`](compiler_design.md). Occupancy:
-`make pycore-size-report` (step K). No BIOS, no module loader, no self-host
-required for that.
-
-### 3. Language leftovers in parallel
-
-These do not block first `compile()`, but they are the rest of “Python on
-this CPU”:
-
-| Track | Plan | Next slice |
+| Bug | Symptom | Where to start |
 | --- | --- | --- |
-| Exceptions | [`exceptions_plan.md`](exceptions_plan.md) | T6 trap→raise, then `assert` / `with` / user subclasses |
-| Bytecode | [`bytecode_support.md`](bytecode_support.md) | list/tuple slice, `TO_BOOL` on OBJECT, `LOAD_SUPER_ATTR`, import/class/closures |
-| Builtins | [`builtin_support.md`](builtin_support.md) | string `exec`/`eval` after compile; F2 `getattr` / empty `min`/`max`; print LONG_STR |
-| Architecture | [`architecture_plan.md`](architecture_plan.md) | BIOS + module loader **after** first compile; optional intern / GC |
+| `try` / `except` in on-device-compiled code does not catch when the function made a call before the `try` | The exception escapes to the caller (or ends in trap 17) instead of reaching the handler | Compare the exception table the firmware assembler emits (`pycore_firmware/compiler/codegen.py`, `pycore/tools/exception_table.py`) with CPython's for the same function. Suspect handler offsets or stack depth after a `CALL` |
+| A module-level `for` loop that calls a function `TYPE`-traps | Hardware `PY_TRAP_TYPE` during run | Module scope uses `LOAD_NAME` / `STORE_NAME` (the globals dict) for the loop variable. Check what the firmware codegen emits around `FOR_ITER` + `CALL` at module scope versus inside a function |
 
-### 4. Later (after first compile is green)
+Add a failing `img_compile_*` fixture for each bug first. Also add it to
+`pycore/tests/test_compiler_differential.py` if the host stand-ins
+reproduce it.
 
-- String-form `exec` / `eval` (thin dispatch over `compile`).
-- Overlays via the module loader if compiled-output headroom (285 code-RAM
-  slots today) is too tight; `make pycore-size-report` is the occupancy gate.
-- Self-host: compile the compiler on device.
-- BIOS that boots and `exec`s a payload.
+## Open pull requests (parked)
 
-## Non-goals for this cycle
+These are parked until the owner decides to rebase or close them. Both are
+100+ commits behind `main` and conflict with it.
 
-- Running `vendor/pycpython` on the hart.
-- An open-source (PyPy) tokenizer port.
+| PR | Adds | Blocks |
+| --- | --- | --- |
+| [#99](https://github.com/ColtonHarris999/Python-CPU/pull/99) | `str.__class__` for `isinstance(s, str)`, T10 exception class bases, TUPLE dict keys | Exceptions T10 below |
+| [#94](https://github.com/ColtonHarris999/Python-CPU/pull/94) | LIST / TUPLE `BINARY_SLICE` | Bytecode "list/tuple slicing" below |
+
+Before starting either feature from scratch, read the parked PR.
+
+## Tracks
+
+Each track lists its next slice first.
+
+### 1. Compiler and system software
+
+| Item | State | Next step / trigger |
+| --- | --- | --- |
+| Self-hosting | **Blocked on size.** The compiler uses 50 028 code-RAM slots and 15 508 remain | Shrink `pycore_firmware/compiler/codegen.py` or raise `CODE_RAM_SLOTS`. `make pycore-size-report` prints `self-host: blocked` until remaining ≥ used |
+| Grammar still `SyntaxError` | `class`, `import`, `with`, generator expressions, `raise … from`, slice step, `while`/`for`-`else`, a second `for`/`if` in a comprehension, positional-only `/`, annotations, nested f-strings, format specs, `f"{x=}"`, `del` of a module-level name, non-literal defaults | Each one needs its runtime opcode first (tracks 2 and 3). See `pycore/docs/compiler.md` D1–D13 |
+| Compiler heap ceiling | `compile()` keeps roughly 5–10 KB of heap per source line and about 600 KB is free at boot, so files over ~60–100 lines `MEM_FAULT` during compile (measured with `make exec-file`, `pycore/docs/exec_runner.md`) | This is the practical size limit today. Fixing it means O-2 or GC (below), or a smaller AST / token representation |
+| O-2 split result/scratch heap arenas | Not opened | The trigger was `img_compile_repeat` (heap watermark ≤ 400000) failing. The compiler heap ceiling above is now a second reason to open it. Caller mark/release is the reclaim path today |
+| Module loader + relocation | Not opened | Only when code-RAM headroom runs out or a BIOS must load a payload from outside the image. The format is already recorded in `pycore/docs/code_loading.md` §4, so implement that rather than redesigning it |
+| Garbage collection | Not opened | `compile()` leaks its working set; `_bi_heap_mark` / `_bi_heap_release` is the stopgap |
+| `_bi_intern(s)` | Optional | Only if compiler names over 15 bytes make SHORT_STR policy fail |
+
+### 2. Exceptions
+
+Inventory: `pycore/docs/exception_support.md`. Unhandled raise is still
+fatal `PY_TRAP_RAISE` (17). Hardware type/mem traps are **not** yet Python
+exceptions.
+
+| Track | What | Notes |
+| --- | --- | --- |
+| **T6** (next) | Hardware trap → catchable exception: `TypeError`, `ZeroDivisionError`, `AttributeError`, then `IndexError` / `KeyError` / `NameError` / `UnboundLocalError` | See the sketch below |
+| T4 leftover | `RAISE_VARARGS` oparg 2 (`raise e from cause`); bare `raise` with no active exception should raise `RuntimeError` | Needs a `RuntimeError` boot sidecar |
+| T7 | `LOAD_COMMON_CONSTANT` 0 → `AssertionError` for **host-built** images | The on-device compiler already rewrites `assert` to `LOAD_GLOBAL AssertionError` + `RAISE_VARARGS 1` |
+| T9 | `with` (`LOAD_SPECIAL`, `WITH_EXCEPT_START`) | Needs `__enter__` / `__exit__` lookup |
+| T10 | `class MyError(Exception)` | Parked in PR #99 |
+| T5-B/C | More types (`OverflowError`, `ImportError`, `SystemExit`, …) | Seed a type only when a program needs its name |
+| T11 | `except*` / exception groups | Later. A single `tp_base` cannot express dual inheritance |
+| T12 | Generators / `GeneratorExit` | Together with `YIELD_*` |
+
+Locks that still apply: do not bake type names into `CHECK_EXC_MATCH`;
+never implement `SETUP_*` / `POP_BLOCK` (3.14 pseudo-ops); protocol
+`StopIteration` stays identity against `iter_exhaust_type_r`; MRO depth 8;
+recoverable excore traps stay mailbox completions, not Python exceptions.
+
+**T6 sketch.** Seed boot-sidecar handles for the already-seeded types. The
+sites that pulse `PY_TRAP_TYPE` / `PY_TRAP_DIV_ZERO` / `PY_TRAP_ATTR_ERROR`
+(later index / key / name) construct an `OBK_EXCEPTION` and enter the
+exception-table walk as if `RAISE_VARARGS 1` had run. Unhandled still ends in
+trap 17. Do not convert recoverable mailbox traps.
+
+### 3. Bytecode
+
+Matrix: `pycore/docs/bytecode_support.md` and `pycore.json`.
+
+| Opcode / ceiling | Why | Notes |
+| --- | --- | --- |
+| List / tuple `BINARY_SLICE` | Common in user code | Parked in PR #94 |
+| `TO_BOOL` on `OBJECT` (`__bool__` / `__len__`) | Truthiness of user objects | Today TYPE-traps |
+| `LOAD_SUPER_ATTR` | `super()` | Needed for method overriding |
+| Negative indices | `xs[-1]` | Deviation 3 in `bytecode_support.md`. Rewrite with `len-1` until it hurts |
+| `STR * INT` | String repeat | Today TYPE-traps |
+| `STORE_SLICE`, `BUILD_SLICE`, slice step ≠ 1 | Slice assignment and stepped slices | `PY_TRAP_SLICE` exists only for `bytearray` |
+| `FORMAT_WITH_SPEC` | Format-spec f-strings | |
+| `LOAD_BUILD_CLASS` / `LOAD_LOCALS` | Runtime `class` (today classes are folded at image build) | Also unblocks `class` in the on-device compiler |
+| `IMPORT_NAME` / `IMPORT_FROM` | `import` | Needs the module loader (track 1) |
+| `YIELD_VALUE` / `SEND` / … | Generators | With T12 |
+| `MATCH_*` | `match` | Low priority |
+
+Never in v1 hardware: `SETUP_*` / `POP_BLOCK` (not in `co_code`), async
+(`GET_AWAITABLE`, …), and `CACHE` in firmware-emitted code (fetch skips it;
+the ROM compiler emits none).
+
+**Policy for new opcodes.** Prefer a same-algorithm rewrite in firmware
+(an index loop instead of a slice) over new hardware, unless the rewrite is a
+known bug-farm (`lst.append(x)` → `lst += [x]` was one). Land the JSON
+`support` / `plan_track` change and the human table in the same PR as the
+RTL. Image tests use the shared simulator plusargs (`tools/ensure_sim.py`).
+
+### 4. Builtins
+
+Inventory: `pycore_firmware/builtins/builtins.md`.
+
+| Item | Today | Target |
+| --- | --- | --- |
+| `getattr(obj, name)` with no default | returns `None` | raise `AttributeError` (firmware F2) |
+| `min` / `max` of an empty iterable | returns `None` | raise `ValueError` (F2) |
+| 27 not-implemented stubs (`open.py`, `super.py`, `hash.py`, …) | `return 1 % 0` bodies, **not seeded** into ROM, so a call is a missing-name `MEM_FAULT` | When one is seeded, it should `raise TypeError` (F3). See cleanup item F1 |
+| `print` phase 2 | one INT / BOOL / None / SHORT_STR per `_bi_print` | LONG_STR on the sink, container `__str__`, `file=` |
+| `property` / `classmethod` / `staticmethod` | blocked | needs a descriptor protocol |
+
+`hasattr` must stay non-raising. Leave blocked: async (`aiter` / `anext`),
+files, `breakpoint`, `hash` as a Python builtin, `memoryview`,
+`compile(..., flags≠0)`, `"single"` mode, `locals=` on `exec` / `eval`.
+
+**ROM seed rule.** Do not seed CPython's full builtins dict. Boot-dict size
+and 128 B per `OBK_TYPE` share the bump heap under `PYCORE_HEAP_LIMIT`. New
+ROM bodies must pass `validate_code_tree` and, if they will be compiled on
+device, the compiler subset gate (`test_compiler_subset.py`).
+
+## Memory-map locks
+
+Do not move these without updating `encoding.py`, `pycore_defs.svh`,
+`memory_hierarchy.md`, and `code_loading.md` together.
+`test_memory_map_mirror.py` is the gate.
+
+- Code ROM slots `0x0000..0x1FFF`; code RAM `0x2000..0x11FFF` (65 536 slots).
+- Boot record `0x3E0` (96 B); heap bump `0x440`..`PYCORE_HEAP_LIMIT`
+  (`0xF0000`); exc-info arena `0xF0000..0xF0FFF`; native-method table
+  `0xF0DE0`; frame descriptors `0xF1000..0xF8FFF`; RF spill LIFO
+  `0x100000..0x13FFFF`.
+- `CONSOLE_TX` at `0xF0`.
+
+## Non-goals
+
+- Running unmodified `vendor/pycpython` on the hart. It is the host oracle
+  and algorithm source only.
+- A PyPy / open-source tokenizer port.
 - Merging the simulator UI (`ui` branch) onto `main`.
-- Treating `preprocess.py` as a production path (image-boot only).
+- New work on `preprocess.py` or `BOOT_EN=0` hex fixtures. Image boot is the
+  only production path.
 
 ## Test contract
 
-Host tests: `make pycore-python-tests` (CI job `python`). Clone with
-`git submodule update --init` so `vendor/pycpython` is present.
-
-Device images: `PYCORE_IMAGE_RUN` / plusargs into one shared `tb_container`
-binary. Do not add per-fixture Verilator rebuilds. See the root `README.md`.
+- Host: `make pycore-python-tests` (CI job `python`). Clone with
+  `git submodule update --init` so `vendor/pycpython` is present.
+- Device: `PYCORE_IMAGE_RUN` / plusargs into the one shared `tb_container`
+  binary per topology. Do not add per-fixture Verilator rebuilds.
+- Architectural gates: `make pycore-cache-transparency` and
+  `make pycore-mem-latency-sweep` must keep retired results identical.

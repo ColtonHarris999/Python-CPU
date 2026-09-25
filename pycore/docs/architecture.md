@@ -10,9 +10,9 @@ tracked in `pycore/docs/bytecode_support.md`. The machine catalog is
 `pycore/targets/pycore.json` (`opcodes`). To check a user program against that
 subset: `make lint-file RUN_SOURCE=...` (`pycore/tools/pycore_cli.py`). Built-in
 exception **types** are tracked the same way in `pycore/docs/exception_support.md`
-and `pycore.json` → `exceptions.types`. Remaining architecture work is
-[`planning/architecture_plan.md`](../../planning/architecture_plan.md);
-the timeline is [`planning/master_plan.md`](../../planning/master_plan.md).
+and `pycore.json` → `exceptions.types`. Remaining work is in
+[`planning/master_plan.md`](../../planning/master_plan.md), and structural
+cleanup is in [`planning/cleanup_report.md`](../../planning/cleanup_report.md).
 The memory hierarchy and STRACC as built are
 [`memory_hierarchy.md`](memory_hierarchy.md) and
 [`string_accel.md`](string_accel.md).
@@ -201,7 +201,7 @@ port is single-slot), then branches on `res_code` as described above.
 
 The two-core top level. `pycore_system.sv` remains the single-core top
 (`EXCORE_EN` defaults to 0; trap_req/trap_res ports tied off) for
-`EXCORE_EN=0` runs and `tb_pycore_runfile`. `tb_container.sv` takes
+`EXCORE_EN=0` runs. `tb_container.sv` takes
 `EXCORE_EN`/`FW_HEX` and a `generate if` that instantiates
 `pycore_excore_system` when `EXCORE_EN=1`, wrapped in generate block
 `g_dut` so hierarchical debug refs (`g_dut.dut.core.*`) resolve for
@@ -211,15 +211,12 @@ either top. Image-boot tests run on the two-core system with
 
 ## CPython image fidelity boundary
 
-"Identical to what a CPython compiler would create" means: the image contains
-the same object graph as `compile()` output -- same bytecode units in the same
-order (including `CACHE` and `EXTENDED_ARG`), same `co_consts`/`co_names`, and
-nested code objects -- lowered mechanically into tagged 128-bit-slot encoding.
-No opcode is added, removed, reordered, rewritten, or argument-remapped.
-
-Byte-exact CPython C-struct layout is out of scope because PyCore requires
-tagged slots for hardware access. Matching CPython's in-memory C object layout
-is future work.
+The image carries CPython's own bytecode, one code unit per imem slot, with
+`CACHE` and `EXTENDED_ARG` kept and branch arguments unchanged. The three
+host rewrites allowed on top of that (slice constants, literal defaults,
+module-level classes) are all in-place and `NOP`-padded. The full rule, and
+the list of rewrites, is in
+[`preprocessing_breakdown.md`](preprocessing_breakdown.md).
 
 ## Tagged value invariant
 
@@ -403,9 +400,10 @@ Sizes, the P5 data map, the invalidation matrix, and the P8 skip are in
   `MEM_FAULT` / `ADDR_ALIGN`.
 
 PTR load/store reach data memory through two internal-only opcodes
-(`PY_OP_MEM_LOAD_PTR`, `PY_OP_MEM_STORE_PTR`) that are not part of the CPython
-opcode space and are never emitted by `preprocess.py`; they exist so test streams
-can exercise the dmem datapath through the real MEM stage. A PTR load tags its
+(`PY_OP_MEM_LOAD_PTR`, `PY_OP_MEM_STORE_PTR`, opcodes 200/201) that are not part
+of the CPython opcode space. They were added so hand-built test streams could
+exercise the dmem datapath through the real MEM stage; no current fixture
+emits them (removal is `planning/cleanup_report.md` item D2). A PTR load tags its
 result `INT` in v1.
 
 ## Register file and frames
@@ -452,7 +450,7 @@ plus the 256 KB spill region (`0x100000`–`0x13FFFF`).
 > invalidation row. `PYCORE_FTB_FRAMES` is a named localparam only; see
 > [`memory_hierarchy.md`](memory_hierarchy.md). The attic
 > `pycore_frame_buffer.sv` per-slot residency map is superseded by this suffix
-> watermark (`planning/compiler_design.md` §6.1).
+> watermark (`planning/old/compiler_design.md` §6.1).
 
 ## Image boot and code objects
 
@@ -489,8 +487,11 @@ field 6: co_kwdefaults      (MUT_DICT handle; empty if none)
 field 7: co_exceptiontable  (TUPLE of INT bytes; raw CPython table)
 ```
 
-The interim function model is **function == code object**: `MAKE_FUNCTION`
-checks that TOS is a `CODE_OBJECT` and leaves it in place. `CALL` /
+The function model is **function == code object**: `MAKE_FUNCTION`
+checks that TOS is a `CODE_OBJECT` and leaves it in place. A closure is
+the one exception: `SET_FUNCTION_ATTRIBUTE` flag 8 wraps the code object and
+its cell tuple in a 96 B `OBK_FUNCTION` (see
+[`compiler.md`](compiler.md) and `pycore_cont_closure.svh`). `CALL` /
 `CALL_KW` / `CALL_FUNCTION_EX` expect the matching CPython 3.14 stack
 shapes, validate the callable, bind args (positional and/or keyword via
 `co_varnames`, with `CO_VARARGS` packing excess positionals into `*args` and
@@ -543,16 +544,17 @@ path companion to those `BI_*` entries, not a replacement for header reads.
 
 ## CPython 3.14 image tooling
 
-`pycore/tools/image_from_source.py` is the primary flow. It must run on Python
-3.14, compiles the module with `compile()`, validates that all code objects use
-supported opcodes, transcodes every raw `co_code` unit one-for-one into imem,
-serializes the object graph (`co_consts`, `co_names`, nested code objects, and
-globals dict) into tagged dmem slots, and writes the boot record. Branch
-arguments are not remapped because imem slot index equals CPython code-unit
-index.
+`pycore/tools/image_from_source.py` is the only production flow. It must run
+on Python 3.14. It compiles the module with `compile()`, applies the
+documented in-place folds, validates that all code objects use supported
+opcodes, transcodes every raw `co_code` unit one-for-one into imem, serializes
+the object graph into tagged dmem slots, seeds the ROM firmware and the
+compiler package, and writes the boot record. Branch arguments are not
+remapped, because the imem slot index equals the CPython code-unit index.
+Step-by-step: [`preprocessing_breakdown.md`](preprocessing_breakdown.md).
 
-`pycore/tools/preprocess.py` is deprecated (older single-function / `run-file`
-fixtures only) and should not be used for new image-boot tests.
+`pycore/tools/preprocess.py` is deprecated. No test suite uses it; do not use
+it for new work.
 
 ## Container heap and object model
 
@@ -905,7 +907,7 @@ Design notes: `pycore/docs/set_excore.md`.
 
 ### `S_CONTAINER` FSM state
 
-`S_CONTAINER` (state value 8, 4-bit `state_r`) is entered from `S_EXEC` when
+`S_CONTAINER` (state value 8, 5-bit `state_r`) is entered from `S_EXEC` when
 `dec_is_container` is asserted. It bypasses both `S_MEM` and `S_WB`; TOS and
 RF updates happen inside `S_CONTAINER`.
 
@@ -923,8 +925,11 @@ selector `container_op_r` is likewise 6-bit). Shared phases include:
 Additional phases cover list buffer / writeback, dict/set probe, name/const
 loads, and extend source-header reads — see `pycore_cont_defs.svh` for the
 full `CP_*` enumeration. The `unique case (container_op_r)` arms live in
-`pycore_cont_list.svh`, `pycore_cont_dict.svh`, and `pycore_cont_object.svh`
-(included from `pycore_core.sv`).
+`pycore_cont_list.svh`, `pycore_cont_dict.svh`, `pycore_cont_bulk.svh`,
+`pycore_cont_object.svh`, `pycore_cont_str.svh`, `pycore_cont_raise.svh`,
+`pycore_cont_exc.svh`, and `pycore_cont_closure.svh`, all textually included
+inside the core's sequential block (`pycore_core.sv`). 56 of the 64
+`CONT_*` codes are in use (`pycore_cont_defs.svh`).
 
 The dmem port is arbitrated via `container_dmem_pending_r`, which mirrors
 `frame_dmem_pending_r` used by `S_CALL` and `S_RETURN`.
@@ -943,9 +948,9 @@ is cycles per opcode on the typed fast path:
 CPO = total_cycles / dynamic_opcodes
 ```
 
-Secondary metrics are type-trap rate and unit utilization. The helper
-`pycore/tools/cosim_trace.py` summarizes traces containing `opcode=`, `unit=`,
-and `trap=` fields.
+Secondary metrics are type-trap rate and unit utilization. The testbench
+reports `cycle_count` and, when asked, RF spill counts
+(`+CHECK_RF_SPILL_COUNT=`); there is no per-opcode trace today.
 
 ## Code memory regions
 

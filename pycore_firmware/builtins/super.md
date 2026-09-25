@@ -2,7 +2,7 @@
 
 Status: **blocked** (stub in `super.py`)
 
-**Plan:** [`planning/bytecode_support.md`](../../planning/bytecode_support.md)
+**Plan:** [`planning/master_plan.md`](../../planning/master_plan.md) §3
 (`LOAD_SUPER_ATTR`).
 
 ## Goal

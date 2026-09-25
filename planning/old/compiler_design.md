@@ -1,11 +1,13 @@
 # PyCore on-device `compile()` — design
 
-**Status:** design, ready for review → implementation
+> **Archived 2026-09-25.** Complete on `main` except O-2 (split arenas), the module loader, and self-hosting, which are tracked in [`../master_plan.md`](../master_plan.md). As-built reference: [`pycore/docs/compiler.md`](../../pycore/docs/compiler.md). Code comments cite this file by section number (`§6.1`, `§11.4`, …), so it is kept intact.
+
+**Status:** implemented (see the archive note above)
 **Supersedes:** [`compile_plan.md`](compile_plan.md),
-[`old/native_compiler_full_plan.md`](old/native_compiler_full_plan.md),
-[`old/native_compiler_plan.md`](old/native_compiler_plan.md),
-[`old/compile_fast_path.md`](old/compile_fast_path.md),
-[`old/code_loading_bios_tokenizer_plan.md`](old/code_loading_bios_tokenizer_plan.md)
+[`old/native_compiler_full_plan.md`](native_compiler_full_plan.md),
+[`old/native_compiler_plan.md`](native_compiler_plan.md),
+[`old/compile_fast_path.md`](compile_fast_path.md),
+[`old/code_loading_bios_tokenizer_plan.md`](code_loading_bios_tokenizer_plan.md)
 **Audience:** the implementing agent. This file is self-contained — you should
 not need any of the superseded documents.
 

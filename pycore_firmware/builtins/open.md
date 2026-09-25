@@ -2,7 +2,7 @@
 
 Status: **blocked** (stub in `open.py`)
 
-**Plan:** [`planning/builtin_support.md`](../../planning/builtin_support.md)
+**Plan:** [`planning/master_plan.md`](../../planning/master_plan.md) §4
 (leave blocked until there is a device).
 
 ## Goal
