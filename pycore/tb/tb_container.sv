@@ -10,6 +10,13 @@
 //   +EXPECT_TRAP= +EXPECTED_TRAP_CODE= +EXPECTED_TRAP_REQ_COUNT=
 //   +CHECK_RF_SPILL_COUNT= +CONTAINER_CALL_SPIKE_EN= +STDOUT_PATH=
 //   +CACHE_EN= +MEM_LATENCY=
+//   +PHASE_MARKS= +HEARTBEAT=
+//
+// PHASE_MARKS=1 (two-core only) turns CONSOLE_TX bytes 0x01..0x07 into
+// `PHASE_MARK` lines stamped with the perf counters below instead of
+// writing them to STDOUT_PATH; `pycore_cli.py exec` brackets on-device
+// compile() and exec() with them. HEARTBEAT=N prints a `HEARTBEAT` line
+// every N cycles so a long run can show progress.
 //
 // EXCORE_EN still selects the generate (single-core vs two-core top), so
 // those two topologies are compiled once each.
@@ -54,6 +61,8 @@ module tb_container #(
     parameter string STDOUT_PATH             = ""
 );
     localparam logic [3:0] CORE_S_WB = 4'd4;
+    localparam logic [4:0] CORE_S_TRAP_MARSHAL = 5'd10;
+    localparam logic [4:0] CORE_S_TRAP_WAIT    = 5'd11;
 
     logic clk;
     logic rst_n;
@@ -70,6 +79,27 @@ module tb_container #(
     // grant count (e.g. "exactly 3 traps fired" / "excore never granted
     // memory").
     int unsigned trap_req_count;
+
+    // Perf counters for PHASE_MARK / PERF lines: instructions latched by
+    // fetch (EXTENDED_ARG included) and cycles pycore spent handing a
+    // recoverable trap to the excore and waiting for its result.
+    longint unsigned instr_issued;
+    longint unsigned excore_wait_cycles;
+    initial begin
+        instr_issued = 0;
+        excore_wait_cycles = 0;
+    end
+    always @(posedge clk) begin
+        if (rst_n) begin
+            if (g_dut.dut.core.latch_instr) begin
+                instr_issued <= instr_issued + 1;
+            end
+            if ((g_dut.dut.core.state_r == CORE_S_TRAP_MARSHAL) ||
+                (g_dut.dut.core.state_r == CORE_S_TRAP_WAIT)) begin
+                excore_wait_cycles <= excore_wait_cycles + 1;
+            end
+        end
+    end
 
     // g_dut wraps the DUT instance so both branches resolve to the same
     // hierarchical prefix (g_dut.dut.core.*) regardless of which top is
@@ -106,9 +136,12 @@ module tb_container #(
 
             // Console capture: spy MMIO writes to CONSOLE_TX @ 0xF0.
             int stdout_fd;
+            int phase_marks;
             initial begin
                 string stdout_path;
                 stdout_fd = 0;
+                phase_marks = 0;
+                void'($value$plusargs("PHASE_MARKS=%d", phase_marks));
                 stdout_path = STDOUT_PATH;
                 void'($value$plusargs("STDOUT_PATH=%s", stdout_path));
                 if (stdout_path.len() > 0) begin
@@ -122,11 +155,22 @@ module tb_container #(
             // Capture on the MMIO request pulse (req is one-cycle; ack is
             // registered one cycle later so req&&ack never overlaps).
             always @(posedge clk) begin
-                if ((stdout_fd != 0) &&
-                    dut.ex_mmio_req && dut.ex_mmio_we &&
+                if (dut.ex_mmio_req && dut.ex_mmio_we &&
                     (dut.ex_mmio_addr[7:0] == 8'hF0)) begin
-                    $fwrite(stdout_fd, "%c", dut.ex_mmio_wdata[7:0]);
-                    $fflush(stdout_fd);
+                    if ((phase_marks != 0) &&
+                        (dut.ex_mmio_wdata[7:0] >= 8'h01) &&
+                        (dut.ex_mmio_wdata[7:0] <= 8'h07)) begin
+                        $display("PHASE_MARK id=%0d cycle=%0d instr=%0d excore_traps=%0d excore_wait=%0d l1i_hit=%0d l1i_miss=%0d l1d_hit=%0d l1d_miss=%0d",
+                                 dut.ex_mmio_wdata[7:0], cycle_count,
+                                 instr_issued, trap_req_count,
+                                 excore_wait_cycles,
+                                 dut.l1i_hit_count, dut.l1i_miss_count,
+                                 dut.l1d_hit_count, dut.l1d_miss_count);
+                        $fflush();
+                    end else if (stdout_fd != 0) begin
+                        $fwrite(stdout_fd, "%c", dut.ex_mmio_wdata[7:0]);
+                        $fflush(stdout_fd);
+                    end
                 end
             end
             final begin
@@ -187,6 +231,7 @@ module tb_container #(
         string                         prog_hex_disp;
         string                         expected_value_s;
         int                            k;
+        int                            heartbeat;
 
         max_cycles = MAX_CYCLES;
         expected_tag = EXPECTED_TAG;
@@ -196,6 +241,7 @@ module tb_container #(
         check_entry_return = CHECK_ENTRY_RETURN;
         expected_trap_req_count = EXPECTED_TRAP_REQ_COUNT;
         check_rf_spill_count = -1;
+        heartbeat = 0;
         prog_hex_disp = PROG_HEX;
 
         void'($value$plusargs("MAX_CYCLES=%d", max_cycles));
@@ -218,6 +264,7 @@ module tb_container #(
         void'($value$plusargs("CHECK_RF_SPILL_COUNT=%d",
                              check_rf_spill_count));
         void'($value$plusargs("PROG_HEX=%s", prog_hex_disp));
+        void'($value$plusargs("HEARTBEAT=%d", heartbeat));
 
         begin
             int cache_en_disp;
@@ -238,6 +285,12 @@ module tb_container #(
 
         for (i = 0; i < max_cycles; i++) begin
             @(posedge clk);
+
+            if ((heartbeat > 0) && (i > 0) && ((i % heartbeat) == 0)) begin
+                $display("HEARTBEAT cycle=%0d instr=%0d", cycle_count,
+                         instr_issued);
+                $fflush();
+            end
 
             if (trap_out) begin
                 trap_seen = 1;
@@ -341,6 +394,8 @@ module tb_container #(
         $display("fetch mem_req=%0d buf_hit=%0d",
                  g_dut.dut.core.fetch.mem_req_count_r,
                  g_dut.dut.core.fetch.buf_hit_count_r);
+        $display("PERF instr=%0d excore_traps=%0d excore_wait=%0d",
+                 instr_issued, trap_req_count, excore_wait_cycles);
         $finish;
     end
 endmodule

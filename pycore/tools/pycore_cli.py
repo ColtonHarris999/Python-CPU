@@ -5,6 +5,8 @@ Commands:
   help   Executive summary of the supported Python subset, plus usage
   lint   Check that a .py file meets the current image-boot requirements
   run    Lint, then simulate on the shared two-core hart and compare against CPython
+  exec   Hand PyCore the source: compile it on device, run it, compare with CPython
+  shell  Power on PyCore and feed it Python files interactively
 """
 
 from __future__ import annotations
@@ -120,13 +122,25 @@ Machine sources of truth: ``pycore/targets/pycore.json``,
 USAGE = """\
 Usage
   python3.14 pycore/tools/pycore_cli.py help
-  python3.14 pycore/tools/pycore_cli.py lint PATH.py
-  python3.14 pycore/tools/pycore_cli.py run  PATH.py
+  python3.14 pycore/tools/pycore_cli.py lint  PATH.py
+  python3.14 pycore/tools/pycore_cli.py run   PATH.py
+  python3.14 pycore/tools/pycore_cli.py exec  PATH.py [PATH.py ...]
+  python3.14 pycore/tools/pycore_cli.py shell
 
 Makefile
   make help
   make lint-file RUN_SOURCE=path/to/program.py
   make run-file  RUN_SOURCE=path/to/program.py
+  make exec-file RUN_SOURCE=path/to/program.py
+  make shell
+
+``exec`` and ``shell`` give PyCore the *source text*: the resident
+on-device ``compile()`` builds it and ``exec()`` runs it as ``__main__``,
+with its output streamed live. The same file then runs on stock CPython
+3.14 and the report compares output (the validation) and the cycles spent
+compiling and running on each side. The on-device compiler takes the
+T1-T5 grammar in ``pycore/docs/compiler.md`` (no ``class`` / ``import`` /
+``with`` / annotations), which is narrower than what ``run`` accepts.
 
 ``run`` builds a CPython 3.14 image, executes ``managed_entry`` on the host
 for a golden int/bool, then runs the shared two-core ``tb_container``
@@ -137,6 +151,7 @@ Examples
   make lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
   make run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py
   make run-file  RUN_SOURCE=pycore/programs/img_algo_sort.py RUN_MAX_CYCLES=200000
+  make exec-file RUN_SOURCE=pycore/programs/demo_exec.py
 """
 
 
@@ -509,6 +524,73 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 1
 
 
+def _exec_config(args: argparse.Namespace):
+    from pycore_exec import ExecConfig  # noqa: PLC0415 - imports this module
+
+    return ExecConfig(
+        max_cycles=args.max_cycles,
+        cache_en=args.cache_en,
+        mem_latency=args.mem_latency,
+        pycore_mhz=args.pycore_mhz,
+        host=not args.no_host,
+        host_python=args.host_python,
+        build_dir=args.build_dir,
+        progress=not args.no_progress,
+        json_path=getattr(args, "json", None),
+    )
+
+
+def cmd_exec(args: argparse.Namespace) -> int:
+    from pycore_exec import exec_file  # noqa: PLC0415
+
+    cfg = _exec_config(args)
+    rc = 0
+    for source in args.sources:
+        rc |= exec_file(pathlib.Path(source), cfg)
+    return rc
+
+
+def cmd_shell(args: argparse.Namespace) -> int:
+    import pycore_shell  # noqa: PLC0415
+
+    return pycore_shell.main(_exec_config(args))
+
+
+def _add_exec_options(p: argparse.ArgumentParser) -> None:
+    from pycore_exec import (  # noqa: PLC0415
+        DEFAULT_BUILD_DIR,
+        DEFAULT_MAX_CYCLES,
+        DEFAULT_PYCORE_MHZ,
+    )
+
+    p.add_argument("--max-cycles", type=int, default=DEFAULT_MAX_CYCLES)
+    p.add_argument(
+        "--cache-en", type=int, choices=(0, 1),
+        default=int(os.environ.get("PYCORE_CACHE_EN", "1")),
+    )
+    p.add_argument(
+        "--mem-latency", type=int,
+        default=int(os.environ.get("PYCORE_MEM_LATENCY", "4")),
+    )
+    p.add_argument(
+        "--pycore-mhz", type=float, default=DEFAULT_PYCORE_MHZ,
+        help="Assumed PyCore clock for the report's wall-clock column",
+    )
+    p.add_argument(
+        "--no-host", action="store_true",
+        help="Skip the CPython 3.14 reference run and comparison",
+    )
+    p.add_argument(
+        "--host-python", default=sys.executable,
+        help="CPython used for the reference run (default: this interpreter)",
+    )
+    p.add_argument("--build-dir", default=DEFAULT_BUILD_DIR)
+    p.add_argument(
+        "--no-progress", action="store_true",
+        help="Do not draw the live cycle counter",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pycore_cli.py",
@@ -544,6 +626,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not instantiate excore (list/dict/set growth will fatal-trap)",
     )
     p_run.set_defaults(func=cmd_run)
+
+    p_exec = sub.add_parser(
+        "exec",
+        help="Compile the file on PyCore, run it, compare with CPython 3.14",
+    )
+    p_exec.add_argument("sources", nargs="+", help="Python source file(s)")
+    _add_exec_options(p_exec)
+    p_exec.add_argument("--json", help="Also write the report as JSON here")
+    p_exec.set_defaults(func=cmd_exec)
+
+    p_shell = sub.add_parser(
+        "shell",
+        help="Power on PyCore and give it Python files interactively",
+    )
+    _add_exec_options(p_shell)
+    p_shell.set_defaults(func=cmd_shell)
     return parser
 
 
