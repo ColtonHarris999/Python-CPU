@@ -82,7 +82,7 @@ the next, and the `boot` line in the report is the reset-to-harness cost.
 | --- | --- |
 | `PASS` | Same stdout as CPython. Also given when both raised the same exception, or both compilers rejected the file. |
 | `MISMATCH` | stdout differs (a diff is shown), or only one side raised. |
-| `UNSUPPORTED` | The on-device `compile()` raised `SyntaxError` on code CPython accepts, because it is outside the T1–T5 grammar. |
+| `UNSUPPORTED` | The on-device `compile()` raised `SyntaxError` on code CPython accepts, because it is outside the T1–T6 grammar. |
 | `TRAP` | A hardware trap halted the hart. The report gives the trap name, the phase, and a likely cause. |
 | `TIMEOUT` | `--max-cycles` was reached. |
 | `RAN` | The CPython comparison is off (`--no-host`, `set compare off`). |

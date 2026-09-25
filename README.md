@@ -97,7 +97,7 @@ fib(30): 832040
 ```
 
 Programs are plain scripts (no `managed_entry` needed). The on-device compiler
-takes the T1–T5 grammar in `pycore/docs/compiler.md`, and `print()` takes
+takes the T1–T6 grammar in `pycore/docs/compiler.md`, and `print()` takes
 `int` / `bool` / `None` / strings of at most 15 bytes. A 40-line file compiles
 in about 6M cycles, which is about a minute of simulation. Metrics, settings,
 and known limits: `pycore/docs/exec_runner.md`.
@@ -204,6 +204,7 @@ call (16), dict update (19), and dict merge (20). See
 | Dict / set + excore | `pycore/docs/dict_excore.md`, `pycore/docs/set_excore.md` |
 | ROM builtins inventory | `pycore_firmware/builtins/builtins.md` |
 | On-device `compile()` | `pycore/docs/compiler.md` |
+| Compile-and-run a file on the CPU (`exec` / `shell`) | `pycore/docs/exec_runner.md` |
 | Memory hierarchy / STRACC | `pycore/docs/memory_hierarchy.md`, `pycore/docs/string_accel.md` |
 | Roadmap (what is left to build) | `planning/master_plan.md` |
 | Cleanup backlog for agents | `planning/cleanup_report.md` |

@@ -10,7 +10,7 @@ order that unblocks the next step. Engineering cleanup (dead code, build
 system, RTL structure) is tracked separately in
 [`cleanup_report.md`](cleanup_report.md).
 
-Snapshot: `main` @ `7134b6d` (2026-09-25).
+Snapshot: `main` @ `7134b6d` plus PR #132 (`exec` / `shell`), 2026-09-25.
 
 ## Where the truth lives
 
@@ -22,8 +22,9 @@ planning/old/                    archived designs (cited by section from code)
         ▼
 pycore/docs/*                    the machine as built: architecture, tags,
                                  bytecode_support, exception_support,
-                                 object_model, compiler, code_loading,
-                                 memory_hierarchy, string_accel
+                                 object_model, compiler, exec_runner,
+                                 code_loading, memory_hierarchy,
+                                 string_accel
 pycore/targets/pycore.json       machine-readable opcode / type catalog
 pycore_firmware/builtins/*.md    ROM builtin inventory
 excore/docs/*                    excore MMIO, ISA subset, firmware
@@ -47,6 +48,9 @@ and `pycore.json`, and update those in the same PR as the RTL change.
   tuple match, cross-frame unwind, catchable firmware raises, `e.args`.
 - ROM builtins, including `compile()` (T1–T6 grammar), string `exec` /
   `eval`, and `bios(payload)`.
+- `make exec-file` / `make shell`: hand the hart a source file, compile
+  and run it on device, and compare output and cycles with CPython
+  (`pycore/docs/exec_runner.md`).
 - Register-file ring with spill/fill (500-frame recursion, 64+ locals).
 - Memory hierarchy: 8 KB L1I, 8 KB L1D, 128 KB L2, parameterized RAM,
   STRACC, CODC, GIC. Code ROM of 8192 slots plus 65 536 slots of writable
@@ -54,6 +58,21 @@ and `pycore.json`, and update those in the same PR as the RTL change.
 
 The full "can I write this?" answer is the root `README.md` and
 `make lint-file`.
+
+## Known bugs (fix before new features)
+
+Found with `make exec-file` (PR #132) and not yet fixed. Both are
+correctness bugs in code the on-device compiler accepts, so they come
+before any new grammar.
+
+| Bug | Symptom | Where to start |
+| --- | --- | --- |
+| `try` / `except` in on-device-compiled code does not catch when the function made a call before the `try` | The exception escapes to the caller (or ends in trap 17) instead of reaching the handler | Compare the exception table the firmware assembler emits (`pycore_firmware/compiler/codegen.py`, `pycore/tools/exception_table.py`) with CPython's for the same function. Suspect handler offsets or stack depth after a `CALL` |
+| A module-level `for` loop that calls a function `TYPE`-traps | Hardware `PY_TRAP_TYPE` during run | Module scope uses `LOAD_NAME` / `STORE_NAME` (the globals dict) for the loop variable. Check what the firmware codegen emits around `FOR_ITER` + `CALL` at module scope versus inside a function |
+
+Add a failing `img_compile_*` fixture for each bug first. Also add it to
+`pycore/tests/test_compiler_differential.py` if the host stand-ins
+reproduce it.
 
 ## Open pull requests (parked)
 
@@ -77,7 +96,8 @@ Each track lists its next slice first.
 | --- | --- | --- |
 | Self-hosting | **Blocked on size.** The compiler uses 50 028 code-RAM slots and 15 508 remain | Shrink `pycore_firmware/compiler/codegen.py` or raise `CODE_RAM_SLOTS`. `make pycore-size-report` prints `self-host: blocked` until remaining ≥ used |
 | Grammar still `SyntaxError` | `class`, `import`, `with`, generator expressions, `raise … from`, slice step, `while`/`for`-`else`, a second `for`/`if` in a comprehension, positional-only `/`, annotations, nested f-strings, format specs, `f"{x=}"`, `del` of a module-level name, non-literal defaults | Each one needs its runtime opcode first (tracks 2 and 3). See `pycore/docs/compiler.md` D1–D13 |
-| O-2 split result/scratch heap arenas | Not opened | Only when `img_compile_repeat` (heap watermark ≤ 400000) fails. Caller mark/release is the reclaim path today |
+| Compiler heap ceiling | `compile()` keeps roughly 5–10 KB of heap per source line and about 600 KB is free at boot, so files over ~60–100 lines `MEM_FAULT` during compile (measured with `make exec-file`, `pycore/docs/exec_runner.md`) | This is the practical size limit today. Fixing it means O-2 or GC (below), or a smaller AST / token representation |
+| O-2 split result/scratch heap arenas | Not opened | The trigger was `img_compile_repeat` (heap watermark ≤ 400000) failing. The compiler heap ceiling above is now a second reason to open it. Caller mark/release is the reclaim path today |
 | Module loader + relocation | Not opened | Only when code-RAM headroom runs out or a BIOS must load a payload from outside the image. The format is already recorded in `pycore/docs/code_loading.md` §4, so implement that rather than redesigning it |
 | Garbage collection | Not opened | `compile()` leaks its working set; `_bi_heap_mark` / `_bi_heap_release` is the stopgap |
 | `_bi_intern(s)` | Optional | Only if compiler names over 15 bytes make SHORT_STR policy fail |

@@ -3,7 +3,7 @@
 A backlog of ways to make this repository simpler, written so that another
 agent can pick up **one item** and finish it without reading the rest.
 Every item cites evidence that was checked against `main` @ `7134b6d`
-(2026-09-25). Re-check the evidence before you start, because the tree moves.
+plus PR #132 (`exec` / `shell`), 2026-09-25. Re-check the evidence before you start, because the tree moves.
 
 This report covers engineering cleanup only. Language and feature work is in
 [`master_plan.md`](master_plan.md).
@@ -30,6 +30,7 @@ This report covers engineering cleanup only. Language and feature work is in
 | [A2](#a2-remove-string_hex-leftovers-and-the-41-_strhex-placeholders) | Remove `STRING_HEX` leftovers and 41 `_str.hex` placeholders | S | Low | Medium |
 | [A3](#a3-wire-up-or-delete-orphan-targets-and-programs) | Wire up or delete orphan targets and programs | S | Low | Low |
 | [A4](#a4-retire-boot_en0-hand-built-hex-fixtures) | Retire `BOOT_EN=0` hand-built hex fixtures | M | M | Medium |
+| [A5](#a5-one-simulator-driver-for-every-runner) | One simulator driver for every runner | M | Low | High |
 | [B1](#b1-stop-committing-generated-fixtures) | Stop committing generated fixtures | M | Low | Medium |
 | [B2](#b2-delete-singlecorezip) | Delete `singlecore.zip` | S | Low | Medium |
 | [B3](#b3-delete-dead-files) | Delete dead files (tools, RTL, testbench) | S | Low | Medium |
@@ -42,6 +43,7 @@ This report covers engineering cleanup only. Language and feature work is in
 | [D3](#d3-remove-the-container_call_spike_en-test-knob) | Remove the `CONTAINER_CALL_SPIKE_EN` test knob | S | Low | Low |
 | [D4](#d4-break-the-core-into-modules-with-real-interfaces) | Break `pycore_core.sv` into modules with real interfaces | L | High | Very high |
 | [D5](#d5-share-one-scan--probe-engine-for-contains-and-hash-lookups) | One scan/probe engine for CONTAINS and hash lookups | M | M | Medium |
+| [D6](#d6-give-the-core-a-perf-counter-port) | Give the core a perf-counter port | S | Low | Medium |
 | [E1](#e1-restructure-the-excore-firmware) | Restructure the excore firmware | M | Low | Medium |
 | [F1](#f1-keep-a-firmware-py-file-only-when-it-ships) | Keep a firmware `.py` file only when it ships | S | Low | Medium |
 | [F2](#f2-remove-the-step-d-toy-package) | Remove the step-D toy package | S | Low | Low |
@@ -50,7 +52,7 @@ This report covers engineering cleanup only. Language and feature work is in
 | [H2](#h2-one-dockerfile) | One Dockerfile | S | Low | Low |
 
 **Suggested order.** Do the quick deletions first (A2, A3, B2, B3, D2, D3,
-F2, H2). Then do the harness work in sequence: C1, B1, A4, A1, D1, H1.
+F2, H2). Then do the harness work in sequence: C1, B1, A4, A5, A1, D1, H1.
 C2, C3, and C4 can run in parallel with the harness work. Leave D4 and D5
 for last, once CI is fast enough to iterate on RTL.
 
@@ -95,6 +97,8 @@ describes test fixtures:
    Add `make pycore-fixture NAME=<name>` to run a single fixture.
 4. Generate the manifest **mechanically** from the current `Makefile` with a
    throwaway script. Do not retype it.
+
+**Depends.** Build the runner on A5's shared driver.
 
 **Verify.** Before deleting any target, show that the runner executes the
 same set of (program, topology, `max_cycles`, expectation, extra plusargs)
@@ -163,6 +167,35 @@ image boot. Then delete the fixtures, and make `BOOT_EN=1` the only mode.
 fixtures).
 
 **Verify.** CI `container` green with the same expectations as before.
+
+### A5. One simulator driver for every runner
+
+**Problem.** Three separate pieces of code now build an image and drive the
+shared `tb_container` binary, each with its own copy of the same plumbing:
+
+| Runner | Where the plumbing lives |
+| --- | --- |
+| `make pycore-img-*` | 12 `define` recipes in the `Makefile`, which `awk` fields out of `image.meta` and spell out the plusargs |
+| `pycore_cli.py run` | `ENSURE_SIM` / `SIM_TWOCORE_BIN` constants (lines 56–58), `_parse_meta` (354), its own plusarg list (around 408) |
+| `pycore_exec.py` (`exec` / `shell`, PR #132) | The same two constants again (35–36), a second `_parse_meta` (204), and a second plusarg list (452–467) |
+
+On top of that, `pycore_exec.py` reads results by matching free-form
+`$display` text with regexes (`_PASS_RE`, `_TRAP_RE`, `_TIMEOUT_RE`,
+`_PERF_RE`, `_MARK_RE`, …). Any wording change in `tb_container.sv`
+silently breaks it.
+
+**Change.** Add `pycore/tools/sim_driver.py` with three functions: build an
+image into a work directory and return its paths and metadata; turn
+metadata plus options into plusargs; run the binary and return a parsed
+result (pass/trap/timeout, cycles, perf counters). Have
+`tb_container.sv` print its end-of-run facts as one machine-readable
+`RESULT key=value …` line, and parse only that. Port `pycore_cli.py run`
+and `pycore_exec.py` to the driver. A1's suite runner is then the third
+client instead of a third copy.
+
+**Verify.** `test_pycore_exec.py` and `test_pycore_cli.py` green.
+`make run-file` and `make exec-file RUN_SOURCE=pycore/programs/demo_exec.py`
+give the same verdicts as before.
 
 ---
 
@@ -291,7 +324,9 @@ orchestrator. It re-exports the old names so that tests and
   firmware scratch slots.
 
 `test_memory_map_mirror.py` exists only to catch drift, and only for the
-memory map. The repo already has the right pattern:
+memory map. A fourth consumer arrived with PR #132: `pycore_exec.py`
+(`trap_names`, `hardware_limits`) regex-parses `pycore_defs.svh` at run
+time to get trap names, the code-RAM limit, and the heap limit. The repo already has the right pattern:
 `gen_compiler_tables.py` generates `pycore_firmware/compiler/tables.py`
 from `pycore.json`, and `test_compiler_tables_fresh.py` checks it is
 current.
@@ -322,7 +357,9 @@ tests. Meanwhile `tools/` at the root holds one live script
 **Change.** Add `pycore/__init__.py` and `pycore/tools/__init__.py`, and
 switch every import to `from pycore.tools import …`. Put one
 `require_python_3_14()` in a shared module and call it once per entry
-point. Move `tools/ensure_sim.py` to `pycore/tools/`. Drop `PYTHONPATH=`
+point. Move `tools/ensure_sim.py` to `pycore/tools/`. `pycore_cli.py` and
+`pycore_exec.py` each hard-code its path, so update both, or do A5 first so
+there is one place. Drop `PYTHONPATH=`
 from the `Makefile`.
 
 **Verify.** `python3.14 -m unittest discover -s pycore/tests` passes with no
@@ -353,6 +390,11 @@ each. The `Makefile` has parallel `_TWOCORE` copies of most recipes.
 **Verify.** After step 1: CI green. After step 2: both suites green from
 one binary, with a clearly shorter CI wall time. Report the numbers in the
 PR.
+
+A related wrinkle: the console capture and the PR #132 `+PHASE_MARKS`
+handling in `tb_container.sv` live inside the two-core branch of the
+`generate`, so `exec` / `shell` only work on the two-core binary. With one
+top, they work everywhere.
 
 **Depends.** Much simpler after A1, because the runner then picks the
 topology per fixture.
@@ -438,7 +480,9 @@ green:
 **Risk.** High, which is why this is incremental. Run
 `pycore-cache-transparency` and `pycore-mem-latency-sweep` on every step.
 
-**Depends.** H1 (a faster CI loop) and D2 first.
+**Depends.** H1 (a faster CI loop), D2, and D6 first. D6 matters
+because the testbench reads core internals by hierarchical name, and
+moving logic into submodules would break those paths.
 
 ### D5. Share one scan / probe engine for CONTAINS and hash lookups
 
@@ -458,6 +502,33 @@ probe-index helper, and use them from list, tuple, dict, and set.
 
 **Verify.** CI green, with no cycle regression on `img_str_dict_*`,
 `img_*contains*`, and `img_dict_*`.
+
+### D6. Give the core a perf-counter port
+
+**Problem.** `tb_container.sv` reads 19 signals inside the core by
+hierarchical path (`g_dut.dut.core.state_r`, `.latch_instr`,
+`.rf_spill_count_r`, `.codc_hit_count_o`, `.fetch.mem_req_count_r`, …).
+PR #132 added more, and it copies the core's state encodings into the
+testbench by hand:
+
+```systemverilog
+localparam logic [4:0] CORE_S_TRAP_MARSHAL = 5'd10;   // tb_container.sv
+localparam logic [4:0] CORE_S_TRAP_WAIT    = 5'd11;
+```
+
+These must match the `localparam`s in `pycore_core.sv`. If a state is
+renumbered, or D4 moves logic into a submodule, the counters silently count
+the wrong thing, or the build breaks.
+
+**Change.** Add a `perf_o` struct output to `pycore_core` (instructions
+issued, excore-wait cycles, RF spill count, fetch counters, CODC/GIC
+counters) that is maintained inside the core, and route it out through
+`pycore_excore_system`. The testbench then reads only ports. Delete the
+copied state constants.
+
+**Verify.** The `PERF` / `PHASE_MARK` numbers from
+`make exec-file RUN_SOURCE=pycore/programs/demo_exec.py` are unchanged.
+CI green.
 
 ---
 
