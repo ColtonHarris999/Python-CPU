@@ -236,6 +236,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
 	pycore-img-try-exception pycore-img-try-typeerror \
+	pycore-img-try-after-call pycore-img-for-call-toplevel \
 	pycore-img-raise-typeerror-call pycore-img-raise-instance \
 	pycore-img-try-tuple-match pycore-img-try-lookuperror \
 	pycore-img-try-except-miss pycore-img-bare-raise \
@@ -2265,6 +2266,7 @@ pycore-img-attr-all: \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
 	pycore-img-try-exception pycore-img-try-typeerror \
+	pycore-img-try-after-call pycore-img-for-call-toplevel \
 	pycore-img-raise-typeerror-call pycore-img-raise-instance \
 	pycore-img-try-tuple-match pycore-img-try-lookuperror \
 	pycore-img-try-except-miss pycore-img-bare-raise \
@@ -2540,6 +2542,12 @@ pycore-img-try-stopiteration-nested:
 pycore-img-try-exception:
 	$(call PYCORE_IMAGE_RUN,try_exception,100000)
 
+pycore-img-try-after-call:
+	$(call PYCORE_IMAGE_RUN,try_after_call,100000)
+
+pycore-img-for-call-toplevel:
+	$(call PYCORE_IMAGE_RUN,for_call_toplevel,100000)
+
 pycore-img-try-typeerror:
 	$(call PYCORE_IMAGE_RUN,try_typeerror,100000)
 
@@ -2578,6 +2586,7 @@ pycore-img-exc-all: \
 	pycore-img-try-stopiteration-nested \
 	pycore-img-raise-stopiteration-fatal \
 	pycore-img-try-exception \
+	pycore-img-try-after-call \
 	pycore-img-try-typeerror \
 	pycore-img-raise-typeerror-call \
 	pycore-img-raise-instance \

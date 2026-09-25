@@ -181,6 +181,13 @@ EXEC_CORPUS = [
     "x = [i for i in range(5)]\ny = sum(x)\n",
     # T3 functions: every parameter form the grammar accepts
     "def f():\n    return 1\nx = f()\n",
+    # Call from a module-level for (and the while / function shapes that
+    # already worked). Result must match; the hart used to TYPE-trap the
+    # module-level form.
+    "def g(n):\n    return n + 1\nacc = 0\nfor i in [1, 2, 3]:\n    acc = acc + g(i)\n",
+    "def g():\n    return 1\nx = 0\nfor i in [1, 2]:\n    x = x + g()\n",
+    "def g(n):\n    return n + 1\ndef f():\n    acc = 0\n    for i in [1, 2, 3]:\n        acc = acc + g(i)\n    return acc\nx = f()\n",
+    "def g(n):\n    return n + 1\nacc = 0\ni = 1\nwhile i < 4:\n    acc = acc + g(i)\n    i = i + 1\n",
     "def f(a, b):\n    return a + b\nx = f(1, 2)\n",
     "def f(a, b=2):\n    return a + b\nx = f(1)\ny = f(1, 5)\n",
     "def f(a=1, b=2):\n    return a * 10 + b\nx = f()\ny = f(3)\nz = f(3, 4)\nw = f(b=9)\n",
@@ -205,6 +212,8 @@ EXEC_CORPUS = [
     # T4 exceptions
     "try:\n    x = 1\nexcept TypeError:\n    x = 2\n",
     "try:\n    raise TypeError('m')\nexcept TypeError:\n    x = 7\n",
+    # A call before the handler must not stop the handler matching.
+    "def ok():\n    return 1\ndef f():\n    ok()\n    len([1])\n    try:\n        raise TypeError('m')\n    except TypeError:\n        return 7\n    return 0\nx = f()\n",
     "try:\n    x = 1\nexcept TypeError:\n    x = 2\nelse:\n    x = 3\n",
     "x = 1\ntry:\n    x = x + 1\nfinally:\n    x = x + 10\n",
     "try:\n    raise TypeError('m')\nexcept TypeError as e:\n    x = 7\n",

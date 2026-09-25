@@ -601,7 +601,7 @@
                             unique case (call_sub_r)
                                 6'd0: begin
                                     if (!container_dmem_pending_r) begin
-                                        call_entry_slot_r[31:0] <= container_rd_data_r[31:0]; // id
+                                        call_bi_id_r <= container_rd_data_r[31:0];
                                         container_dmem_addr_r <=
                                             pycore_obj_field_tag_addr(
                                                 call_obj_addr_r, 32'd0);
@@ -640,7 +640,7 @@
                                         call_self_tag_r <= container_rd_data_r[3:0];
                                         // Free-function form requires NULL sentinel.
                                         // Method form (non-NULL) still OK for bound builtins.
-                                        if (call_entry_slot_r[31:0] == PY_BI_MAX) begin
+                                        if (call_bi_id_r == PY_BI_MAX) begin
                                             if (cur_arg_r[15:0] != 16'd2) begin
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
@@ -648,7 +648,7 @@
                                                     {1'b0, tos_r} - 9'd2);
                                                 call_sub_r <= 6'd4;
                                             end
-                                        end else if (call_entry_slot_r[31:0] == PY_BI_LEN) begin
+                                        end else if (call_bi_id_r == PY_BI_LEN) begin
                                             if (cur_arg_r[15:0] != 16'd1) begin
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
@@ -656,7 +656,7 @@
                                                     {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 6'd6;
                                             end
-                                        end else if (call_entry_slot_r[31:0] ==
+                                        end else if (call_bi_id_r ==
                                                      PY_BI_RANGE) begin
                                             if (cur_arg_r[15:0] < 16'd1 ||
                                                 cur_arg_r[15:0] > 16'd3) begin
@@ -668,22 +668,22 @@
                                                     {1'b0, cur_arg_r[7:0]});
                                                 call_sub_r <= 6'd12;
                                             end
-                                        end else if ((call_entry_slot_r[31:0] ==
+                                        end else if ((call_bi_id_r ==
                                                       PY_BI_HEAP_MARK) ||
-                                                     (call_entry_slot_r[31:0] ==
+                                                     (call_bi_id_r ==
                                                       PY_BI_CODE_MARK)) begin
                                             // Zero-arg: read a bump cursor.
                                             if (cur_arg_r[15:0] != 16'd0) begin
                                                 call_filter_trap_r <= 1'b1;
                                             end else begin
                                                 call_sub_r <=
-                                                    (call_entry_slot_r[31:0] ==
+                                                    (call_bi_id_r ==
                                                      PY_BI_HEAP_MARK)
                                                     ? 6'd54 : 6'd55;
                                             end
-                                        end else if ((call_entry_slot_r[31:0] ==
+                                        end else if ((call_bi_id_r ==
                                                       PY_BI_HEAP_RELEASE) ||
-                                                     (call_entry_slot_r[31:0] ==
+                                                     (call_bi_id_r ==
                                                       PY_BI_CODE_RELEASE)) begin
                                             if (cur_arg_r[15:0] != 16'd1) begin
                                                 call_filter_trap_r <= 1'b1;
@@ -691,11 +691,11 @@
                                                 container_rf_addr_r <= RF_AW'(
                                                     {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <=
-                                                    (call_entry_slot_r[31:0] ==
+                                                    (call_bi_id_r ==
                                                      PY_BI_HEAP_RELEASE)
                                                     ? 6'd56 : 6'd57;
                                             end
-                                        end else if (call_entry_slot_r[31:0] ==
+                                        end else if (call_bi_id_r ==
                                                      PY_BI_ORD) begin
                                             if (cur_arg_r[15:0] != 16'd1) begin
                                                 call_filter_trap_r <= 1'b1;
@@ -704,7 +704,7 @@
                                                     {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 6'd52;
                                             end
-                                        end else if (call_entry_slot_r[31:0] ==
+                                        end else if (call_bi_id_r ==
                                                      PY_BI_CHR) begin
                                             if (cur_arg_r[15:0] != 16'd1) begin
                                                 call_filter_trap_r <= 1'b1;
@@ -713,7 +713,7 @@
                                                     {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 6'd53;
                                             end
-                                        end else if (call_entry_slot_r[31:0] ==
+                                        end else if (call_bi_id_r ==
                                                      PY_BI_SET) begin
                                             if (cur_arg_r[15:0] > 16'd1) begin
                                                 container_type_trap_r <= 1'b1;
@@ -730,7 +730,7 @@
                                                     call_sub_r <= 6'd24;
                                                 end
                                             end
-                                        end else if (call_entry_slot_r[31:0] ==
+                                        end else if (call_bi_id_r ==
                                                      PY_BI_EXEC_GLOBALS) begin
                                             // Two-arg: code object + MUT_DICT.
                                             if (cur_arg_r[15:0] != 16'd2) begin
@@ -740,7 +740,7 @@
                                                     {1'b0, tos_r} - 9'd2);
                                                 call_sub_r <= 6'd58;
                                             end
-                                        end else if (call_entry_slot_r[31:0] ==
+                                        end else if (call_bi_id_r ==
                                                      PY_BI_CODE_ALLOC) begin
                                             if (cur_arg_r[15:0] != 16'd1) begin
                                                 call_filter_trap_r <= 1'b1;
@@ -750,7 +750,7 @@
                                                 call_sub_r <= 6'd60;
                                                 code_op_phase_r <= 5'd0;
                                             end
-                                        end else if (call_entry_slot_r[31:0] ==
+                                        end else if (call_bi_id_r ==
                                                      PY_BI_CODE_BLIT) begin
                                             if (cur_arg_r[15:0] != 16'd2) begin
                                                 call_filter_trap_r <= 1'b1;
@@ -760,7 +760,7 @@
                                                 call_sub_r <= 6'd61;
                                                 code_op_phase_r <= 5'd0;
                                             end
-                                        end else if (call_entry_slot_r[31:0] ==
+                                        end else if (call_bi_id_r ==
                                                      PY_BI_CODE_PATCH) begin
                                             if (cur_arg_r[15:0] != 16'd2) begin
                                                 call_filter_trap_r <= 1'b1;
@@ -770,7 +770,7 @@
                                                 call_sub_r <= 6'd62;
                                                 code_op_phase_r <= 5'd0;
                                             end
-                                        end else if (call_entry_slot_r[31:0] ==
+                                        end else if (call_bi_id_r ==
                                                      PY_BI_CODE_NEW) begin
                                             if (cur_arg_r[15:0] != 16'd1) begin
                                                 call_filter_trap_r <= 1'b1;
@@ -780,7 +780,7 @@
                                                 call_sub_r <= 6'd63;
                                                 code_op_phase_r <= 5'd0;
                                             end
-                                        end else if (call_entry_slot_r[31:0] ==
+                                        end else if (call_bi_id_r ==
                                                      PY_BI_CODE_KIND) begin
                                             // 1-arg: return the raw 4-bit tag.
                                             if (cur_arg_r[15:0] != 16'd1) begin
@@ -4708,9 +4708,8 @@
                                 call_codc_hit_r <= 1'b0;
                                 if (call_exc_pending_r) begin
                                     // Exception-table entries are relative to
-                                    // the caller's code entry.  Normal return
-                                    // only needs the saved return PC, so pay
-                                    // for this extra metadata read on unwind.
+                                    // the caller's code entry. Reload it
+                                    // before the table walk.
                                     container_dmem_addr_r <=
                                         pycore_code_field_val_addr(
                                             cur_code_r,
@@ -4757,7 +4756,18 @@
                                                                   + RF_AW'(1);
                                             redirect_pending_r <= 1'b1;
                                             redirect_tgt_r     <= call_entry_slot_r[31:0];
-                                            return_phase_r     <= RET_PHASE_DONE;
+                                            // call_entry_slot_r still holds the
+                                            // return PC. A later RAISE in this
+                                            // frame is relative to the code
+                                            // entry, so read that back before
+                                            // leaving S_RETURN.
+                                            container_dmem_addr_r <=
+                                                pycore_code_field_val_addr(
+                                                    cur_code_r,
+                                                    PYCORE_CODE_FIELD_ENTRY_SLOT);
+                                            container_dmem_we_r      <= 1'b0;
+                                            container_dmem_pending_r <= 1'b1;
+                                            return_phase_r     <= 3'd5;
                                         end
                                     end else begin
                                         return_wb_we_r     <= 1'b1;
@@ -4766,7 +4776,13 @@
                                         tos_r              <= call_tos_base_r + RF_AW'(1);
                                         redirect_pending_r <= 1'b1;
                                         redirect_tgt_r     <= call_entry_slot_r[31:0];
-                                        return_phase_r     <= RET_PHASE_DONE;
+                                        container_dmem_addr_r <=
+                                            pycore_code_field_val_addr(
+                                                cur_code_r,
+                                                PYCORE_CODE_FIELD_ENTRY_SLOT);
+                                        container_dmem_we_r      <= 1'b0;
+                                        container_dmem_pending_r <= 1'b1;
+                                        return_phase_r     <= 3'd5;
                                     end
                                 end
                             end
@@ -4786,6 +4802,13 @@
                                 container_dmem_we_r      <= 1'b0;
                                 container_dmem_pending_r <= 1'b1;
                                 return_phase_r <= 3'd4;
+                            end
+                        end
+
+                        3'd5: begin
+                            if (!container_dmem_pending_r) begin
+                                call_entry_slot_r <= container_rd_data_r[63:0];
+                                return_phase_r <= RET_PHASE_DONE;
                             end
                         end
 

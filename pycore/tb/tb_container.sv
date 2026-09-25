@@ -246,18 +246,24 @@ module tb_container #(
             end
 
             if ((g_dut.dut.core.state_r == CORE_S_WB) &&
-                (g_dut.dut.core.cur_opcode_r == PY_OP_RETURN_VALUE) &&
-                (g_dut.dut.core.frame_active_depth ==
-                    (check_entry_return ? 8'd1 : 8'd0))) begin
-                // Under image boot the module frame's terminal return is
-                // typically `return None` (RETURN_VALUE with a NONE-tagged
-                // TOS).  Filter those out so the check locks onto the
-                // entry function's real return value.
-                if (check_entry_return &&
-                    pycore_is_none(pycore_get_tag(g_dut.dut.core.rs1_r),
-                                   pycore_get_val(g_dut.dut.core.rs1_r))) begin
-                    // Skip and keep waiting for the entry return.
-                end else begin
+                (g_dut.dut.core.cur_opcode_r == PY_OP_RETURN_VALUE)) begin
+                // Image boot runs the module at depth 0 and the entry at
+                // depth 1. The module may call other functions first; each
+                // of those is also depth 1. Keep the latest non-None depth-1
+                // return and stop on the module's own return. A None return
+                // at depth 1 is not the entry value (entry programs return
+                // a real result; the module's terminal return is None).
+                if (check_entry_return) begin
+                    if (g_dut.dut.core.frame_active_depth == 8'd0) begin
+                        break;
+                    end else if ((g_dut.dut.core.frame_active_depth == 8'd1) &&
+                                 !pycore_is_none(
+                                     pycore_get_tag(g_dut.dut.core.rs1_r),
+                                     pycore_get_val(g_dut.dut.core.rs1_r))) begin
+                        return_seen  = 1;
+                        return_entry = g_dut.dut.core.rs1_r;
+                    end
+                end else if (g_dut.dut.core.frame_active_depth == 8'd0) begin
                     return_seen  = 1;
                     return_entry = g_dut.dut.core.rs1_r;
                     break;
