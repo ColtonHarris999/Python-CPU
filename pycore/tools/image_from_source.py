@@ -1471,6 +1471,17 @@ PACKAGE_RUNTIME_SEEDS: dict[str, object] = {
     # slots above are module state, so a nested compile() would clobber the
     # outer one's source mid-parse; this turns that into a clean ValueError.
     "_busy": 0,
+    # finally / exception-table hole stacks. Logical length is the *_n
+    # counter; the lists are pre-seeded so STORE_GLOBAL updates a key
+    # instead of growing _PYC_G on the single-core image.
+    "_fin_n": 0,
+    "_fin_ks": [],
+    "_fin_nf": [],
+    "_fin_loop": [],
+    "_hole_n": 0,
+    "_hole_lo": [],
+    "_hole_hi": [],
+    "_hole_fin": [],
 }
 # Only these tables.py names are LOAD_GLOBAL'd by firmware today; the rest
 # of tables.py would be payload with no reader. Seeding every TOK_* integer
@@ -1778,8 +1789,17 @@ class _HostEmittedCode:
             return getattr(_builtins_mod, name)
         raise NameError(name)
 
-    def _raise_to_handler(self, exc: BaseException, raise_pc: int) -> int:
-        """Walk the CPython-format exception table; return handler pc."""
+    def _raise_to_handler(
+        self, exc: BaseException, raise_pc: int, stack: list[object]
+    ) -> int:
+        """Walk the CPython-format exception table; return handler pc.
+
+        The hart unwinds the value stack to the entry depth, optionally
+        pushes the raising instruction (lasti), then pushes the exception.
+        ``PUSH_EXC_INFO`` turns that ``[exc]`` into ``[prev, exc]``. The
+        cleanup block ``COPY 3 / POP_EXCEPT / RERAISE 1`` needs those three
+        slots, so the stand-in has to do the same unwind.
+        """
         from exception_table import parse_exception_table
 
         rel = raise_pc - self._entry
@@ -1787,7 +1807,15 @@ class _HostEmittedCode:
         entries = parse_exception_table(bytes(self._exctable))
         for entry in entries:
             if entry.start <= byte_off < entry.end:
-                self._exc = exc
+                depth = entry.depth
+                if depth < len(stack):
+                    del stack[depth:]
+                else:
+                    while len(stack) < depth:
+                        stack.append(None)
+                if entry.lasti:
+                    stack.append(0)
+                stack.append(exc)
                 return self._entry + (entry.target >> 1)
         raise exc
 
@@ -1810,13 +1838,20 @@ class _HostEmittedCode:
                 stack.append(self._consts[oparg])
                 continue
             if opcode == _HOST_OP_LOAD_NAME:
-                stack.append(self._lookup(str(self._names[oparg])))
+                try:
+                    stack.append(self._lookup(str(self._names[oparg])))
+                except NameError as exc:
+                    pc = self._raise_to_handler(exc, pc - 1, stack)
                 continue
             if opcode == _HOST_OP_STORE_NAME:
                 self._globals[str(self._names[oparg])] = stack.pop()
                 continue
             if opcode == _HOST_OP_LOAD_GLOBAL:
-                stack.append(self._lookup(str(self._names[oparg >> 1])))
+                try:
+                    stack.append(self._lookup(str(self._names[oparg >> 1])))
+                except NameError as exc:
+                    pc = self._raise_to_handler(exc, pc - 1, stack)
+                    continue
                 if oparg & 1:
                     stack.append(_HOST_NULL)
                 continue
@@ -1826,7 +1861,12 @@ class _HostEmittedCode:
             if opcode == _HOST_OP_LOAD_FAST:
                 val = locals_[oparg]
                 if val is _HOST_UNBOUND:
-                    raise UnboundLocalError(str(self._varnames[oparg]))
+                    pc = self._raise_to_handler(
+                        UnboundLocalError(str(self._varnames[oparg])),
+                        pc - 1,
+                        stack,
+                    )
+                    continue
                 stack.append(val)
                 continue
             if opcode == _HOST_OP_STORE_FAST:
@@ -2073,7 +2113,12 @@ class _HostEmittedCode:
                 cell = locals_[oparg]
                 val = cell[0]  # type: ignore[index]
                 if val is _HOST_UNBOUND:
-                    raise UnboundLocalError(str(self._varnames[oparg]))
+                    pc = self._raise_to_handler(
+                        UnboundLocalError(str(self._varnames[oparg])),
+                        pc - 1,
+                        stack,
+                    )
+                    continue
                 stack.append(val)
                 continue
             if opcode == _HOST_OP_STORE_DEREF:
@@ -2132,9 +2177,13 @@ class _HostEmittedCode:
                 mp[key] = val  # type: ignore[index]
                 continue
             if opcode == _HOST_OP_PUSH_EXC_INFO:
-                stack.append(self._prev_exc)
+                # Hart: [exc] -> [prev, exc], and the active exception becomes
+                # the value that was on top. Prev lives on the value stack so
+                # nested handlers restore it in POP_EXCEPT.
+                tos_exc = stack.pop()
                 stack.append(self._exc)
-                self._prev_exc = self._exc
+                stack.append(tos_exc)
+                self._exc = tos_exc
                 continue
             if opcode == _HOST_OP_CHECK_EXC_MATCH:
                 typ = stack.pop()
@@ -2142,9 +2191,8 @@ class _HostEmittedCode:
                 stack.append(isinstance(exc, typ))  # type: ignore[arg-type]
                 continue
             if opcode == _HOST_OP_POP_EXCEPT:
-                stack.pop()
-                self._exc = self._prev_exc
-                self._prev_exc = None
+                prev = stack.pop()
+                self._exc = prev
                 continue
             if opcode == _HOST_OP_RAISE_VARARGS:
                 if oparg == 0:
@@ -2153,7 +2201,7 @@ class _HostEmittedCode:
                     exc = self._exc
                     if not isinstance(exc, BaseException):
                         raise TypeError("active exception is not an exception")
-                    pc = self._raise_to_handler(exc, pc - 1)
+                    pc = self._raise_to_handler(exc, pc - 1, stack)
                     continue
                 obj = stack.pop()
                 if isinstance(obj, type) and issubclass(obj, BaseException):
@@ -2162,7 +2210,7 @@ class _HostEmittedCode:
                     exc = obj
                 else:
                     raise TypeError("exceptions must derive from BaseException")
-                pc = self._raise_to_handler(exc, pc - 1)
+                pc = self._raise_to_handler(exc, pc - 1, stack)
                 continue
             if opcode == _HOST_OP_RERAISE:
                 obj = stack[-1]
@@ -2172,7 +2220,7 @@ class _HostEmittedCode:
                     exc = obj
                 else:
                     raise TypeError("exceptions must derive from BaseException")
-                pc = self._raise_to_handler(exc, pc - 1)
+                pc = self._raise_to_handler(exc, pc - 1, stack)
                 continue
             raise RuntimeError(
                 f"host code-RAM interpreter: unsupported opcode {opcode}"

@@ -10,7 +10,9 @@ import unittest
 if sys.version_info[:2] != (3, 14):
     raise unittest.SkipTest("compiler compile-shim tests require Python 3.14")
 
+from encoding import CODE_RAM_SLOT_BASE, CODE_RAM_SLOTS
 from image_from_source import (
+    FIRMWARE_COMPILER_DIR,
     HOST_STANDIN_BUILTINS,
     ROM_FIRMWARE_BUILTINS,
     _HostEmittedCode,
@@ -324,6 +326,29 @@ class TestCompilerCompileShim(unittest.TestCase):
             compile_fn("class C:\n    x = 1\n", "<s>", "exec")
         with self.assertRaises(SyntaxError):
             compile_fn("with x:\n    y = 1\n", "<s>", "exec")
+
+    def test_firmware_compiler_compiles_its_own_sources(self) -> None:
+        """Every compiler module must parse under the ROM compile shim.
+
+        Slot use is the firmware emitter's own output (no CACHE). It has
+        to fit in code RAM; the boot image stays the host-built package
+        because that package executes fewer real opcodes (fetch skips
+        CACHE). See compile_limitations.md.
+        """
+        ns = load_rom_firmware_callables()
+        compile_fn = ns["compile"]
+        ram = ns["_PYC_G"]["_bi_code_alloc"].__self__
+        start = ram.ptr
+        paths = sorted(FIRMWARE_COMPILER_DIR.glob("*.py"))
+        self.assertGreaterEqual(len(paths), 7)
+        for path in paths:
+            with self.subTest(path=path.name):
+                code = compile_fn(path.read_text(encoding="utf-8"), path.name, "exec")
+                self.assertIsInstance(code, _HostEmittedCode)
+        used = ram.ptr - start
+        self.assertGreater(used, 0)
+        self.assertLess(used, CODE_RAM_SLOTS)
+        self.assertGreaterEqual(start, CODE_RAM_SLOT_BASE)
 
 
 if __name__ == "__main__":
