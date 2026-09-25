@@ -301,7 +301,9 @@ BI_BYTEARRAY = 1
 BI_FROM_BYTES = 2
 BI_TO_BYTES = 3
 BI_MAX = 4
-BI_LIST_APPEND = 5
+# id 5 is reserved: it once labelled `list.append`, which is handled as the
+# LIST_APPEND opcode (`PY_OP_LIST_APPEND` / `CONT_LIST_APPEND`) and never as
+# an OBK_BUILTIN. Do not reassign without regenerating every boot image.
 BI_PRINT = 6
 BI_LEN = 7
 BI_RANGE = 8
