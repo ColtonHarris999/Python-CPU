@@ -1,18 +1,16 @@
 # Compile limitations
 
 Status of on-device `compile()` as of the current tree. The pipeline
-itself is landed (T1–T5, closures, the `compile` shim). This file is the
+itself is landed (T1–T6, closures, the `compile` shim). This file is the
 inventory of what is still wrong, what is still missing, and what has to
 change before two particular programs work: compiling the compiler, and
 compiling and running `async` code.
 
 Authoritative behavior is the firmware in
 `pycore_firmware/compiler/` plus `pycore/targets/pycore.json`. Design
-history is [`planning/compiler_design.md`](../../planning/compiler_design.md).
+history is [`planning/old/compiler_design.md`](../../planning/old/compiler_design.md).
 The pipeline overview is [`compiler.md`](compiler.md). Where those
 disagree with a measurement below, the measurement wins.
-`pycore_firmware/builtins/compile.md` still says `*args` / defaults are
-`SyntaxError` and that re-entrancy is deferred. That note is stale.
 Current occupancy is the size-report block in §1.
 
 ## What already works
@@ -365,7 +363,7 @@ The compiler cannot see the type. Slice assignment and a step stay
 Each of these is a `SyntaxError` (or, for the shim, `ValueError`).
 They are limitations, not miscompiles. The opcode column is what has
 to exist before the rejection can go away. "Host images" notes
-whether `make run-file` can already run the construct via CPython's
+whether `make run-file HOST_COMPILE=1` can already run the construct via CPython's
 `compile()`, which is a different front end.
 
 | Construct | Rejection | Blocked on | Host images |

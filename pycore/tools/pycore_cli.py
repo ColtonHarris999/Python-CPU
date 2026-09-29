@@ -4,8 +4,9 @@
 Commands:
   help   Executive summary of the supported Python subset, plus usage
   lint   Check that a .py file meets the current image-boot requirements
-  run    Lint, then simulate on the shared two-core hart and compare against CPython
-  exec   Hand PyCore the source: compile it on device, run it, compare with CPython
+  run    Compile the file on PyCore, run it, compare with CPython 3.14
+         (--host-compile: CPython builds the image, the hart runs managed_entry)
+  exec   Same as ``run`` (on-device compile), for one or more files
   shell  Power on PyCore and feed it Python files interactively
 """
 
@@ -123,7 +124,7 @@ USAGE = """\
 Usage
   python3.14 pycore/tools/pycore_cli.py help
   python3.14 pycore/tools/pycore_cli.py lint  PATH.py
-  python3.14 pycore/tools/pycore_cli.py run   PATH.py
+  python3.14 pycore/tools/pycore_cli.py run   PATH.py [--host-compile]
   python3.14 pycore/tools/pycore_cli.py exec  PATH.py [PATH.py ...]
   python3.14 pycore/tools/pycore_cli.py shell
 
@@ -131,27 +132,30 @@ Makefile
   make help
   make lint-file RUN_SOURCE=path/to/program.py
   make run-file  RUN_SOURCE=path/to/program.py
+  make run-file  RUN_SOURCE=path/to/program.py HOST_COMPILE=1
   make exec-file RUN_SOURCE=path/to/program.py
   make shell
 
-``exec`` and ``shell`` give PyCore the *source text*: the resident
-on-device ``compile()`` builds it and ``exec()`` runs it as ``__main__``,
-with its output streamed live. The same file then runs on stock CPython
-3.14 and the report compares output (the validation) and the cycles spent
-compiling and running on each side. The on-device compiler takes the
-T1-T6 grammar in ``pycore/docs/compiler.md`` (no ``class`` / ``import`` /
-``with`` / annotations), which is narrower than what ``run`` accepts.
+``run`` (and ``exec`` / ``shell``) give PyCore the *source text*: the
+resident on-device ``compile()`` builds it and ``exec()`` runs it as
+``__main__``, with its output streamed live. The same file then runs on
+stock CPython 3.14 and the report compares output (the validation) and the
+cycles spent compiling and running on each side. The on-device compiler
+takes the T1-T6 grammar in ``pycore/docs/compiler.md`` (no ``class`` /
+``import`` / ``with`` / annotations).
 
-``run`` builds a CPython 3.14 image, executes ``managed_entry`` on the host
-for a golden int/bool, then runs the shared two-core ``tb_container``
-simulator (``tools/ensure_sim.py twocore``) with plusargs and checks that
-the hart returns the same tagged value.
+``run --host-compile`` is the hardware-test path: host CPython 3.14 builds
+the image, the host executes ``managed_entry`` for a golden int/bool, and
+the shared two-core ``tb_container`` (``tools/ensure_sim.py twocore``)
+checks that the hart returns the same tagged value. It accepts a wider
+subset (for example module-level ``class``), but it tests the hardware on
+CPython's bytecode, not the on-device compiler.
 
 Examples
+  make run-file  RUN_SOURCE=pycore/programs/demo_exec.py
   make lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
-  make run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py
-  make run-file  RUN_SOURCE=pycore/programs/img_algo_sort.py RUN_MAX_CYCLES=200000
-  make exec-file RUN_SOURCE=pycore/programs/demo_exec.py
+  make run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py HOST_COMPILE=1
+  make run-file  RUN_SOURCE=pycore/programs/img_algo_sort.py HOST_COMPILE=1
 """
 
 
@@ -431,7 +435,24 @@ def _run_shared_sim(
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    if not args.host_compile:
+        from pycore_exec import exec_file  # noqa: PLC0415
+
+        from pycore_exec import DEFAULT_BUILD_DIR as exec_dir  # noqa: PLC0415
+        from pycore_exec import DEFAULT_MAX_CYCLES as exec_max  # noqa: PLC0415
+
+        if args.max_cycles is None:
+            args.max_cycles = exec_max
+        if args.build_dir is None:
+            args.build_dir = exec_dir
+        return exec_file(pathlib.Path(args.source), _exec_config(args))
+    return cmd_run_host_compile(args)
+
+
+def cmd_run_host_compile(args: argparse.Namespace) -> int:
     require_python_3_14()
+    if args.max_cycles is None:
+        args.max_cycles = DEFAULT_MAX_CYCLES
     source = pathlib.Path(args.source)
     if not source.is_file():
         print(f"run FAIL: {source}: file not found", file=sys.stderr)
@@ -466,7 +487,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     kind = "bool" if isinstance(expected, bool) else "int"
     print(f"Host golden: {kind} {expected!r}  (tag={tag} value=0x{value:x})")
 
-    work = pathlib.Path(args.build_dir)
+    work = pathlib.Path(args.build_dir or "build/pycore_run")
     if not work.is_absolute():
         work = REPO_ROOT / work
     work.mkdir(parents=True, exist_ok=True)
@@ -556,14 +577,18 @@ def cmd_shell(args: argparse.Namespace) -> int:
     return pycore_shell.main(_exec_config(args))
 
 
-def _add_exec_options(p: argparse.ArgumentParser) -> None:
+def _add_exec_options(p: argparse.ArgumentParser, *, run_mode: bool = False) -> None:
     from pycore_exec import (  # noqa: PLC0415
         DEFAULT_BUILD_DIR,
         DEFAULT_MAX_CYCLES,
         DEFAULT_PYCORE_MHZ,
     )
 
-    p.add_argument("--max-cycles", type=int, default=DEFAULT_MAX_CYCLES)
+    # ``run`` picks its defaults after it knows the mode (--host-compile).
+    p.add_argument(
+        "--max-cycles", type=int,
+        default=None if run_mode else DEFAULT_MAX_CYCLES,
+    )
     p.add_argument(
         "--cache-en", type=int, choices=(0, 1),
         default=int(os.environ.get("PYCORE_CACHE_EN", "1")),
@@ -584,7 +609,7 @@ def _add_exec_options(p: argparse.ArgumentParser) -> None:
         "--host-python", default=sys.executable,
         help="CPython used for the reference run (default: this interpreter)",
     )
-    p.add_argument("--build-dir", default=DEFAULT_BUILD_DIR)
+    p.add_argument("--build-dir", default=None if run_mode else DEFAULT_BUILD_DIR)
     p.add_argument(
         "--no-progress", action="store_true",
         help="Do not draw the live cycle counter",
@@ -610,20 +635,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser(
         "run",
-        help="Lint, simulate with the shared tb_container, check return",
+        help="Compile the file on PyCore, run it, compare with CPython 3.14",
     )
     p_run.add_argument("source", help="Python source file")
-    p_run.add_argument("--entry", default=DEFAULT_ENTRY)
-    p_run.add_argument("--max-cycles", type=int, default=DEFAULT_MAX_CYCLES)
+    _add_exec_options(p_run, run_mode=True)
     p_run.add_argument(
-        "--build-dir",
-        default="build/pycore_run",
-        help="Directory for hex images and console capture",
+        "--host-compile",
+        action="store_true",
+        help=(
+            "Build the image with host CPython 3.14 instead of the on-device "
+            "compiler, and check managed_entry()'s return value"
+        ),
+    )
+    p_run.add_argument(
+        "--entry", default=DEFAULT_ENTRY,
+        help="--host-compile only: the no-arg function whose return is checked",
     )
     p_run.add_argument(
         "--single-core",
         action="store_true",
-        help="Do not instantiate excore (list/dict/set growth will fatal-trap)",
+        help="--host-compile only: no excore (list/dict/set growth fatal-traps)",
     )
     p_run.set_defaults(func=cmd_run)
 

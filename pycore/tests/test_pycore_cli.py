@@ -167,7 +167,9 @@ class RunHostGoldenGateTest(unittest.TestCase):
         try:
             buf = io.StringIO()
             with redirect_stdout(buf):
-                rc = pycore_cli.main(["run", path, "--build-dir", "build/pycore_cli_test"])
+                rc = pycore_cli.main(
+                    ["run", path, "--host-compile", "--build-dir", "build/pycore_cli_test"]
+                )
             self.assertEqual(rc, 1)
             self.assertIn("Lint FAIL", buf.getvalue())
         finally:
@@ -185,13 +187,58 @@ class RunHostGoldenGateTest(unittest.TestCase):
                 pycore_cli, "_run_shared_sim"
             ) as sim:
                 rc = pycore_cli.main(
-                    ["run", path, "--build-dir", "build/pycore_cli_test_bad_ret"]
+                    ["run", path, "--host-compile", "--build-dir",
+                     "build/pycore_cli_test_bad_ret"]
                 )
             self.assertEqual(rc, 1)
             sim.assert_not_called()
             self.assertIn("Host golden FAIL", buf.getvalue())
         finally:
             os.unlink(path)
+
+
+class RunModeDispatchTest(unittest.TestCase):
+    """`run` compiles on the device by default; --host-compile is opt-in."""
+
+    def test_run_defaults_to_on_device_compile(self) -> None:
+        import pycore_exec  # noqa: PLC0415
+
+        with mock.patch.object(pycore_exec, "exec_file", return_value=0) as ex, \
+                mock.patch.object(pycore_cli, "cmd_run_host_compile") as host:
+            rc = pycore_cli.main(["run", "prog.py"])
+        self.assertEqual(rc, 0)
+        host.assert_not_called()
+        ex.assert_called_once()
+        path, cfg = ex.call_args.args
+        self.assertEqual(path, pathlib.Path("prog.py"))
+        self.assertEqual(cfg.max_cycles, pycore_exec.DEFAULT_MAX_CYCLES)
+        self.assertEqual(cfg.build_dir, pycore_exec.DEFAULT_BUILD_DIR)
+
+    def test_run_passes_exec_options_through(self) -> None:
+        import pycore_exec  # noqa: PLC0415
+
+        with mock.patch.object(pycore_exec, "exec_file", return_value=1) as ex:
+            rc = pycore_cli.main(
+                ["run", "prog.py", "--max-cycles", "1234", "--mem-latency", "30",
+                 "--no-host"]
+            )
+        self.assertEqual(rc, 1)
+        cfg = ex.call_args.args[1]
+        self.assertEqual(cfg.max_cycles, 1234)
+        self.assertEqual(cfg.mem_latency, 30)
+        self.assertFalse(cfg.host)
+
+    def test_host_compile_flag_selects_image_path(self) -> None:
+        import pycore_exec  # noqa: PLC0415
+
+        with mock.patch.object(pycore_exec, "exec_file") as ex, \
+                mock.patch.object(
+                    pycore_cli, "cmd_run_host_compile", return_value=0
+                ) as host:
+            rc = pycore_cli.main(["run", "prog.py", "--host-compile"])
+        self.assertEqual(rc, 0)
+        ex.assert_not_called()
+        host.assert_called_once()
 
 
 class SharedSimPlusargsTest(unittest.TestCase):

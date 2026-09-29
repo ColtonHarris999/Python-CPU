@@ -565,12 +565,17 @@ container objects.  The heap occupies a fixed region of data memory:
 
 ```text
 PYCORE_HEAP_BASE  = 0x0000_0440  (first byte after the 96-byte boot record)
-PYCORE_HEAP_LIMIT = 0x0001_B000  (just below the exc-info arena)
-PYCORE_EXC_STACK  = 0x0001_B000 – 0x0001_BFFF  (4 KB; pycore_exc_stack)
-FRAME_STACK       = 0x0001_C000 – 0x0001_FFFF  (call frames)
+PYCORE_HEAP_LIMIT = 0x000F_0000  (just below the exc-info arena)
+PYCORE_EXC_STACK  = 0x000F_0000 – 0x000F_0FFF  (4 KB; pycore_exc_stack,
+                    native-method table at 0xF0DE0, StopIteration sidecar
+                    at 0xF0FE0)
+FRAME_STACK       = 0x000F_1000 – 0x000F_8FFF  (call-frame descriptors)
+RF_SPILL          = 0x0010_0000 – 0x0013_FFFF  (register-file spill LIFO)
 ```
 
-Capacity: ~106 KB of object heap.  A `heap_ptr_r` register in `pycore_core.sv`
+Capacity: ~983 KB of object heap, of which the static boot image (ROM
+builtins, the compiler package's constants and tables, the builtins dict)
+takes about 380 KB.  A `heap_ptr_r` register in `pycore_core.sv`
 starts at `HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE`) and advances
 monotonically; there is no free list (no object reclamation in this
 prototype).  Overflow traps `PY_TRAP_MEM_FAULT`.  A preloaded static heap
@@ -579,7 +584,7 @@ bump allocation does not overwrite them.  `DMEM_HEX` on `pycore_system` /
 `pycore_dmem` preloads the whole dmem bank (not just the first 4 KB block).
 The boot record occupies `[0x3e0, 0x440)` and must not overlap heap objects.
 Boot also seeds Wave A exception types (including `StopIteration`) and a sidecar at
-`ITER_EXHAUST_TYPE_ADDR` (`0x1BFE0`) for `FOR_ITER` protocol exhaustion.
+`ITER_EXHAUST_TYPE_ADDR` (`0xF0FE0`) for `FOR_ITER` protocol exhaustion.
 
 ### LIST in-dmem layout
 
