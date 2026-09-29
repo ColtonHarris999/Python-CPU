@@ -1,20 +1,22 @@
-# `exec` / `shell`: compile and run a file on PyCore
+# `run` / `exec` / `shell`: compile and run a file on PyCore
 
-`pycore_cli.py exec FILE` and the interactive `pycore_cli.py shell` give
-PyCore a Python file as **source text**. The hart compiles it with the
-resident on-device `compile()` (`compiler.md`), runs it with `exec()`, and
-streams what it prints. The same file then runs on stock CPython 3.14 as a
-golden, and the report compares output and cost.
+`pycore_cli.py run FILE` (the default mode), `pycore_cli.py exec FILE…`, and
+the interactive `pycore_cli.py shell` give PyCore a Python file as **source
+text**. The hart compiles it with the resident on-device `compile()`
+(`compiler.md`), runs it with `exec()`, and streams what it prints. The same
+file then runs on stock CPython 3.14 as a golden, and the report compares
+output and cost.
 
 ```bash
+make run-file RUN_SOURCE=path/to/prog.py     # one shot (same as exec-file)
 make shell                                   # power on, then type file paths
-make exec-file RUN_SOURCE=path/to/prog.py    # one shot
-make exec-file RUN_SOURCE=prog.py EXEC_ARGS="--mem-latency 30 --cache-en 0"
+make run-file RUN_SOURCE=prog.py EXEC_ARGS="--mem-latency 30 --cache-en 0"
 python3.14 pycore/tools/pycore_cli.py exec a.py b.py --json out.json
 ```
 
-Compare with `run`, where host CPython compiles the module into the boot
-image and the hart only executes `managed_entry()`.
+Compare with `run --host-compile` (`make run-file HOST_COMPILE=1`), where host
+CPython compiles the module into the boot image and the hart only executes
+`managed_entry()`. That is the hardware-test path; see the root `README.md`.
 
 ## How it works
 

@@ -24,13 +24,14 @@ PYCORE_STRING_HEX ?= pycore/programs/string_mem.hex
 PYCORE_TYPES ?= pycore/programs/program.types
 PYCORE_CACHE_MAP ?= pycore/programs/cache_map.hex
 
-RUN_SOURCE ?= pycore/programs/smoke_return.py
+RUN_SOURCE ?= pycore/programs/demo_exec.py
 RUN_FUNCTION ?= managed_entry
-RUN_PROGRAM_HEX ?= pycore/programs/run_program.hex
-RUN_TYPES ?= pycore/programs/run_program.types
-RUN_CACHE_MAP ?= pycore/programs/run_cache_map.hex
-RUN_MAX_CYCLES ?= 200000
-RUN_BUILD_DIR ?= build/pycore_run
+# run-file compiles on the device by default. HOST_COMPILE=1 builds the image
+# with host CPython instead (the hardware-test path). Empty RUN_MAX_CYCLES /
+# RUN_BUILD_DIR let pycore_cli.py pick the per-mode defaults.
+HOST_COMPILE ?=
+RUN_MAX_CYCLES ?=
+RUN_BUILD_DIR ?=
 
 PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_tag_decode.sv \
@@ -330,14 +331,17 @@ exec-file:
 shell:
 	$(PYTHON) pycore/tools/pycore_cli.py shell $(EXEC_ARGS)
 
-# Image-boot a user Python file on the two-core hart and check the return
-# against host CPython 3.14. Uses the shared plusarg tb_container binary
-# (`tools/ensure_sim.py twocore`). Lint first with `make lint-file`.
+# Run a user Python file on the two-core hart. By default the on-device
+# compile() builds it (same as exec-file) and the output is compared with
+# CPython 3.14. HOST_COMPILE=1 instead image-boots a host-built image and
+# checks managed_entry()'s return against host CPython (lint first with
+# `make lint-file`). Both use the shared plusarg tb_container binary.
 pycore-run-file:
 	$(PYTHON) pycore/tools/pycore_cli.py run "$(RUN_SOURCE)" \
-		--entry "$(RUN_FUNCTION)" \
-		--max-cycles $(RUN_MAX_CYCLES) \
-		--build-dir "$(RUN_BUILD_DIR)"
+		$(if $(HOST_COMPILE),--host-compile --entry "$(RUN_FUNCTION)") \
+		$(if $(RUN_MAX_CYCLES),--max-cycles $(RUN_MAX_CYCLES)) \
+		$(if $(RUN_BUILD_DIR),--build-dir "$(RUN_BUILD_DIR)") \
+		$(EXEC_ARGS)
 
 # Shared tb_container binaries: hex paths and goldens are plusargs, not -G.
 PYCORE_SIM_IMG_BIN := $(BUILD_DIR)/sim_img/Vtb_container
@@ -3238,8 +3242,10 @@ docker-run-file: docker-build
 	$(DOCKER_MAKE) make run-file \
 		RUN_SOURCE="$(RUN_SOURCE)" \
 		RUN_FUNCTION="$(RUN_FUNCTION)" \
+		HOST_COMPILE="$(HOST_COMPILE)" \
 		RUN_MAX_CYCLES="$(RUN_MAX_CYCLES)" \
-		RUN_BUILD_DIR="$(RUN_BUILD_DIR)"
+		RUN_BUILD_DIR="$(RUN_BUILD_DIR)" \
+		EXEC_ARGS="$(EXEC_ARGS)"
 
 docker-exec-file: docker-build
 	$(DOCKER_MAKE) make exec-file \

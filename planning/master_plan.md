@@ -10,7 +10,7 @@ order that unblocks the next step. Engineering cleanup (dead code, build
 system, RTL structure) is tracked separately in
 [`cleanup_report.md`](cleanup_report.md).
 
-Snapshot: `main` @ `7134b6d` plus PR #132 (`exec` / `shell`), 2026-09-25.
+Snapshot: `main` @ `939c8c7` (PR #131 merged), 2026-09-29.
 
 ## Where the truth lives
 
@@ -48,31 +48,27 @@ and `pycore.json`, and update those in the same PR as the RTL change.
   tuple match, cross-frame unwind, catchable firmware raises, `e.args`.
 - ROM builtins, including `compile()` (T1–T6 grammar), string `exec` /
   `eval`, and `bios(payload)`.
-- `make exec-file` / `make shell`: hand the hart a source file, compile
+- `make run-file` / `make shell`: hand the hart a source file, compile
   and run it on device, and compare output and cycles with CPython
-  (`pycore/docs/exec_runner.md`).
+  (`pycore/docs/exec_runner.md`). `HOST_COMPILE=1` / `--host-compile`
+  is the hardware-test path: CPython builds the image instead.
 - Register-file ring with spill/fill (500-frame recursion, 64+ locals).
 - Memory hierarchy: 8 KB L1I, 8 KB L1D, 128 KB L2, parameterized RAM,
-  STRACC, CODC, GIC. Code ROM of 8192 slots plus 65 536 slots of writable
+  STRACC, CODC, GIC. Code ROM of 8192 slots plus 131 072 slots of writable
   code RAM.
 
 The full "can I write this?" answer is the root `README.md` and
 `make lint-file`.
 
-## Known bugs (fix before new features)
+## Known bugs
 
-Found with `make exec-file` (PR #132) and not yet fixed. Both are
-correctness bugs in code the on-device compiler accepts, so they come
-before any new grammar.
-
-| Bug | Symptom | Where to start |
-| --- | --- | --- |
-| `try` / `except` in on-device-compiled code does not catch when the function made a call before the `try` | The exception escapes to the caller (or ends in trap 17) instead of reaching the handler | Compare the exception table the firmware assembler emits (`pycore_firmware/compiler/codegen.py`, `pycore/tools/exception_table.py`) with CPython's for the same function. Suspect handler offsets or stack depth after a `CALL` |
-| A module-level `for` loop that calls a function `TYPE`-traps | Hardware `PY_TRAP_TYPE` during run | Module scope uses `LOAD_NAME` / `STORE_NAME` (the globals dict) for the loop variable. Check what the firmware codegen emits around `FOR_ITER` + `CALL` at module scope versus inside a function |
-
-Add a failing `img_compile_*` fixture for each bug first. Also add it to
-`pycore/tests/test_compiler_differential.py` if the host stand-ins
-reproduce it.
+None open that are known. Both bugs PR #132 found were fixed in #131
+(`dc5615c`): a `try` after an earlier call now catches (the caller's
+code-entry slot is restored after a call), and the module-level `for`
+loop "trap" was the image checker mistaking a module-level call for the
+entry return. The live list of compiler bugs and ceilings is
+[`pycore/docs/compile_limitations.md`](../pycore/docs/compile_limitations.md)
+§3; add new finds there with a failing `img_compile_*` fixture.
 
 ## Open pull requests (parked)
 
@@ -94,13 +90,38 @@ Each track lists its next slice first.
 
 | Item | State | Next step / trigger |
 | --- | --- | --- |
-| Self-hosting | **Blocked on size.** The compiler uses 50 028 code-RAM slots and 15 508 remain | Shrink `pycore_firmware/compiler/codegen.py` or raise `CODE_RAM_SLOTS`. `make pycore-size-report` prints `self-host: blocked` until remaining ≥ used |
-| Grammar still `SyntaxError` | `class`, `import`, `with`, generator expressions, `raise … from`, slice step, `while`/`for`-`else`, a second `for`/`if` in a comprehension, positional-only `/`, annotations, nested f-strings, format specs, `f"{x=}"`, `del` of a module-level name, non-literal defaults | Each one needs its runtime opcode first (tracks 2 and 3). See `pycore/docs/compiler.md` D1–D13 |
-| Compiler heap ceiling | `compile()` keeps roughly 5–10 KB of heap per source line and about 600 KB is free at boot, so files over ~60–100 lines `MEM_FAULT` during compile (measured with `make exec-file`, `pycore/docs/exec_runner.md`) | This is the practical size limit today. Fixing it means O-2 or GC (below), or a smaller AST / token representation |
+| Self-hosting | **Unblocked on size** since code RAM doubled (#131): the resident package is 56 469 slots and 74 603 remain. Every compiler file already compiles on the host stand-in | Install the compiled copy and prove the fixpoint: `pycore/docs/compile_limitations.md` §1.3 |
+| Grammar still `SyntaxError` | `class`, `import`, `with`, generators and generator expressions, `raise … from`, slice step and slice assignment, `*` / `**` unpacking at call sites and in displays, a second `for`/`if` in a comprehension, positional-only `/`, annotations, nested f-strings, format specs, `f"{x=}"`, `del` of a module-level name, non-literal defaults, `:=`, `match` | Full table with what each is blocked on: `pycore/docs/compile_limitations.md` §4. Some need hardware first (tracks 2 and 3); `*` / `**` unpacking, `/`, and a second comprehension clause are compiler-only work |
+| Compiler heap ceiling | `compile()` keeps roughly 5–10 KB of heap per source line and about 600 KB is free at boot, so files over ~60–100 lines `MEM_FAULT` during compile (measured with `make run-file`, `pycore/docs/exec_runner.md`) | This is the practical size limit today. Fixing it means O-2 or GC (below), or a smaller AST / token representation |
 | O-2 split result/scratch heap arenas | Not opened | The trigger was `img_compile_repeat` (heap watermark ≤ 400000) failing. The compiler heap ceiling above is now a second reason to open it. Caller mark/release is the reclaim path today |
 | Module loader + relocation | Not opened | Only when code-RAM headroom runs out or a BIOS must load a payload from outside the image. The format is already recorded in `pycore/docs/code_loading.md` §4, so implement that rather than redesigning it |
 | Garbage collection | Not opened | `compile()` leaks its working set; `_bi_heap_mark` / `_bi_heap_release` is the stopgap |
 | `_bi_intern(s)` | Optional | Only if compiler names over 15 bytes make SHORT_STR policy fail |
+
+#### On-device compiler vs CPython: opcodes it never emits
+
+The on-device compiler ports CPython's front half (tokenizer, parser,
+symbol table, codegen, assembler) but not its optimizer (`flowgraph.c`),
+and its parser rejects `*` / `**` unpacking outside `def` parameters. So
+17 opcodes the hardware executes are never emitted. Checked on the
+181-program `test_compiler_differential.py` corpus: the firmware compiler
+emits none of them, CPython emits several (`NOT_TAKEN` 29,
+`LOAD_FAST_BORROW` 27, `STORE_FAST_LOAD_FAST` 11, `LOAD_FAST_AND_CLEAR`
+11, `LIST_EXTEND` 10). Programs still get CPython's results; the cost is
+speed, grammar, and hardware coverage.
+
+| Group | Opcodes | Why missing | Effect | Plan |
+| --- | --- | --- | --- | --- |
+| Superinstructions | `LOAD_FAST_LOAD_FAST`, `STORE_FAST_LOAD_FAST`, `STORE_FAST_STORE_FAST` | No optimizer pass | One extra fetch/decode per pair. Part of why the firmware-built compiler runs 41 178 real opcodes vs 23 658 host-built | Peephole pass after codegen |
+| Borrowed loads | `LOAD_FAST_BORROW`, `LOAD_FAST_BORROW_LOAD_FAST_BORROW` | Refcount optimization; meaningless on PyCore | None | Emit only if the pair form is free once superinstructions land |
+| `is None` jumps | `POP_JUMP_IF_NONE`, `POP_JUMP_IF_NOT_NONE` | No optimizer pass | `x is None` costs `LOAD_CONST` + `IS_OP` + `POP_JUMP_IF_*` (3 vs 1) | Same peephole pass |
+| Starred forms | `CALL_FUNCTION_EX`, `DICT_MERGE`, `UNPACK_EX`, `LIST_EXTEND`, `SET_UPDATE`, `DICT_UPDATE`, `CALL_INTRINSIC_1` | Parser rejects `f(*xs)`, `f(**kw)`, `a, *b = xs`, `[*a]`, `{*a}`, `{**a}`, `(*a,)` | `SyntaxError` | Grammar + codegen. Also fold constant list/set displays to `LIST_EXTEND` / `SET_UPDATE` like CPython |
+| Inlined comprehensions | `LOAD_FAST_AND_CLEAR` | Comprehensions compile as a nested function (pre-3.12 shape) | Correct scoping, but a call per comprehension | Optional: inline like CPython 3.12+ (PEP 709) |
+| Not needed | `LOAD_FAST_CHECK`, `NOT_TAKEN` | Hardware `LOAD_FAST` already traps on `UNINIT`; `NOT_TAKEN` is a no-op monitoring marker | None | Do not emit |
+
+Cleanup item I1 in [`cleanup_report.md`](cleanup_report.md) is the
+implementation checklist. The device-compiled test suite (test contract
+below) is how each lift is verified.
 
 ### 2. Exceptions
 
@@ -185,7 +206,7 @@ Do not move these without updating `encoding.py`, `pycore_defs.svh`,
 `memory_hierarchy.md`, and `code_loading.md` together.
 `test_memory_map_mirror.py` is the gate.
 
-- Code ROM slots `0x0000..0x1FFF`; code RAM `0x2000..0x11FFF` (65 536 slots).
+- Code ROM slots `0x0000..0x1FFF`; code RAM `0x2000..0x21FFF` (131 072 slots).
 - Boot record `0x3E0` (96 B); heap bump `0x440`..`PYCORE_HEAP_LIMIT`
   (`0xF0000`); exc-info arena `0xF0000..0xF0FFF`; native-method table
   `0xF0DE0`; frame descriptors `0xF1000..0xF8FFF`; RF spill LIFO
@@ -209,3 +230,9 @@ Do not move these without updating `encoding.py`, `pycore_defs.svh`,
   binary per topology. Do not add per-fixture Verilator rebuilds.
 - Architectural gates: `make pycore-cache-transparency` and
   `make pycore-mem-latency-sweep` must keep retired results identical.
+- Planned: a **device-compile suite**. A small set of programs that
+  together cover the whole on-device compiler (every grammar tier and
+  every emitted opcode family) is compiled **on the hart**, run on the
+  hart, and compared with host CPython 3.14 compiling and running the
+  same file. The ~460 host-compiled `pycore-img-*` fixtures stay as the
+  hardware tests.

@@ -36,53 +36,28 @@ Shipped and regression-tested:
 
 Still open (see `planning/master_plan.md`):
 
-- Module loader / relocation, and self-hosting (the compiler does not yet
-  fit in its own compiled-output headroom — `make pycore-size-report`).
+- Module loader / relocation, and self-hosting (the compiler compiles its
+  own sources and a second copy now fits in code RAM; installing it and
+  proving the fixpoint remain, `pycore/docs/compile_limitations.md` §1).
 - `with`, `import`, generators, `except*`, runtime `class`,
-  trap→Python-exception, list/tuple slicing, negative indices,
-  `del` of a module-level name.
+  trap→Python-exception, list/tuple slicing of a name, `*` / `**`
+  unpacking in the on-device compiler, `del` of a module-level name.
 - Garbage collection: `compile()` leaks its working set; the caller
   reclaims with `_bi_heap_mark` / `_bi_heap_release`.
 
 ## Try a Python file
 
-Requires **Python 3.14** and Verilator. Lint first, then simulate:
+Requires **Python 3.14** and Verilator 5.032 or newer (see Setup). By
+default, PyCore compiles and runs your file itself: `run` hands the hart the
+**source text**, the resident on-device `compile()` builds it, `exec()` runs
+it as `__main__`, and anything it prints streams to your terminal. The same
+file then runs on stock CPython 3.14, and the report checks that the output
+matches and compares the cycles each side spent compiling and running.
 
 ```bash
-make help
-make lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
-make run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py
-```
-
-Equivalent:
-
-```bash
-python3.14 pycore/tools/pycore_cli.py help
-python3.14 pycore/tools/pycore_cli.py lint pycore/programs/example_sum_loop.py
-python3.14 pycore/tools/pycore_cli.py run  pycore/programs/example_sum_loop.py
-```
-
-`run` compiles the module to a boot image, executes `managed_entry()` on host
-CPython 3.14 for a golden `int`/`bool`, then runs the shared two-core
-`tb_container` (plusargs, same binary as image CI) and checks that the retired
-return matches. `help` prints the supported-program summary below in full.
-
-A program should define a no-arg `managed_entry()` that returns `int` or `bool`.
-If you do not call it at module level, `run` appends a call. Type annotations
-are stripped.
-
-## Compile and run a file on the CPU (`exec` / `shell`)
-
-`run` lets host CPython compile. `exec` hands PyCore the **source text**: the
-resident on-device `compile()` builds it, `exec()` runs it as `__main__`, and
-anything it prints streams to your terminal. The same file then runs on stock
-CPython 3.14 and the report checks that the output matches, and compares the
-cycles each side spent compiling and running:
-
-```bash
-make shell                                         # power on, then type paths
-make exec-file RUN_SOURCE=pycore/programs/demo_exec.py
-python3.14 pycore/tools/pycore_cli.py exec my_prog.py --mem-latency 30
+make run-file RUN_SOURCE=pycore/programs/demo_exec.py
+make shell                                    # power on, then type file paths
+python3.14 pycore/tools/pycore_cli.py run my_prog.py --mem-latency 30
 ```
 
 ```text
@@ -96,11 +71,37 @@ fib(30): 832040
   run                 68,594    685.9 us           ~29,072       13.8 us            2.4x
 ```
 
-Programs are plain scripts (no `managed_entry` needed). The on-device compiler
-takes the T1–T6 grammar in `pycore/docs/compiler.md`, and `print()` takes
-`int` / `bool` / `None` / strings of at most 15 bytes. A 40-line file compiles
-in about 6M cycles, which is about a minute of simulation. Metrics, settings,
+The **PyCore/CPython** column is a cycle ratio, not wall-clock time: it
+divides PyCore's cycles by the host CPU's cycles for the same phase.
+
+Programs are plain scripts (no `managed_entry` needed). The on-device
+compiler takes the T1–T6 grammar in `pycore/docs/compiler.md`: no `class`,
+`import`, `with`, annotations, or `*` / `**` unpacking at call sites and in
+displays yet. `print()` takes `int` / `bool` / `None` / strings of at most 15
+bytes. A 40-line file compiles in about 6M cycles, which is about a minute of
+simulation, and files over roughly 60–100 lines run out of heap during
+compile. `make exec-file` is the same as `make run-file`. Metrics, settings,
 and known limits: `pycore/docs/exec_runner.md`.
+
+### `--host-compile`: CPython builds the image
+
+```bash
+make lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
+make run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py HOST_COMPILE=1
+python3.14 pycore/tools/pycore_cli.py run pycore/programs/example_sum_loop.py --host-compile
+```
+
+With `--host-compile` (`HOST_COMPILE=1`), host CPython 3.14 compiles the module
+into a boot image, host CPython runs `managed_entry()` for a golden
+`int`/`bool`, and the hart must retire the same value. The file must define a
+no-arg `managed_entry()` returning `int` or `bool`. If you do not call it at
+module level, `run` appends a call. Type annotations are stripped. Run
+`make lint-file` first.
+
+This is the hardware-test path. It accepts a wider subset than the on-device
+compiler (module-level `class`, for example), and it exercises the hardware on
+exactly the bytecode CPython emits, including opcodes the on-device compiler
+does not emit yet. Every `make pycore-img-*` test uses it.
 
 ## What programs are allowed
 
@@ -204,7 +205,7 @@ call (16), dict update (19), and dict merge (20). See
 | Dict / set + excore | `pycore/docs/dict_excore.md`, `pycore/docs/set_excore.md` |
 | ROM builtins inventory | `pycore_firmware/builtins/builtins.md` |
 | On-device `compile()` | `pycore/docs/compiler.md` |
-| Compile-and-run a file on the CPU (`exec` / `shell`) | `pycore/docs/exec_runner.md` |
+| `run` / `exec` / `shell` (on-device compile and run) | `pycore/docs/exec_runner.md` |
 | Memory hierarchy / STRACC | `pycore/docs/memory_hierarchy.md`, `pycore/docs/string_accel.md` |
 | Roadmap (what is left to build) | `planning/master_plan.md` |
 | Cleanup backlog for agents | `planning/cleanup_report.md` |
@@ -231,8 +232,8 @@ WSL2 Ubuntu, same commands.
 
 ```bash
 make docker-build
-make docker-lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
-make docker-run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py
+make docker-run-file  RUN_SOURCE=pycore/programs/demo_exec.py
+make docker-run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py HOST_COMPILE=1
 ```
 
 ## Testing workflows
@@ -285,7 +286,8 @@ make docker-excore
 make docker-pycore-test
 make docker-all-tests
 make docker-lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
-make docker-run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py
+make docker-run-file  RUN_SOURCE=pycore/programs/demo_exec.py
+make docker-run-file  RUN_SOURCE=pycore/programs/example_sum_loop.py HOST_COMPILE=1
 ```
 
 If needed, you can pass host-network flags:

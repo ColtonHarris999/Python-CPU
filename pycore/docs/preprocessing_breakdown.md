@@ -33,8 +33,10 @@ tagged slots for hardware access.
 ## Image flow (`pycore/tools/image_from_source.py`)
 
 User-facing entry: `pycore/tools/pycore_cli.py` (`make lint-file` /
-`make run-file`). It calls this builder, then (for `run`) the shared
-two-core `tb_container` simulator with plusargs.
+`make run-file HOST_COMPILE=1`). It calls this builder, then (for
+`run --host-compile`) the shared two-core `tb_container` simulator with
+plusargs. Plain `make run-file` does not use this flow for the user's file:
+the on-device compiler builds it (`exec_runner.md`).
 
 Input: a Python source module.
 

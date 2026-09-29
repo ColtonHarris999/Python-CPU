@@ -3,7 +3,8 @@
 A backlog of ways to make this repository simpler, written so that another
 agent can pick up **one item** and finish it without reading the rest.
 Every item cites evidence that was checked against `main` @ `7134b6d`
-plus PR #132 (`exec` / `shell`), 2026-09-25. Re-check the evidence before you start, because the tree moves.
+plus PR #132 (`exec` / `shell`), 2026-09-25. Section I was added against
+`939c8c7` (PR #131), 2026-09-29. Re-check the evidence before you start, because the tree moves.
 
 This report covers engineering cleanup only. Language and feature work is in
 [`master_plan.md`](master_plan.md).
@@ -50,9 +51,11 @@ This report covers engineering cleanup only. Language and feature work is in
 | [G1](#g1-deduplicate-the-docs) | Deduplicate the docs | M | Low | Medium |
 | [H1](#h1-build-the-ci-image-and-simulators-once) | Build the CI image and simulators once | M | M | High |
 | [H2](#h2-one-dockerfile) | One Dockerfile | S | Low | Low |
+| [I1](#i1-close-the-on-device-compilers-opcode-gap) | Close the on-device compiler's opcode gap | M | M | High |
 
 **Suggested order.** Do the quick deletions first (A2, A3, B2, B3, D2, D3,
 F2, H2). Then do the harness work in sequence: C1, B1, A4, A5, A1, D1, H1.
+I1 is independent of all of them.
 C2, C3, and C4 can run in parallel with the harness work. Leave D4 and D5
 for last, once CI is fast enough to iterate on RTL.
 
@@ -677,6 +680,75 @@ function-call return values, which Ubuntu's 5.020 package does not support.
 the version comment. Point `.cursor/environment.json` at it.
 
 **Verify.** `make docker-build` works, and CI green.
+
+---
+
+## I. On-device compiler output
+
+### I1. Close the on-device compiler's opcode gap
+
+**Problem.** The firmware compiler (`pycore_firmware/compiler/`) never
+emits 17 opcodes that the hardware executes. It ports CPython's codegen
+and assembler but not its optimizer (`flowgraph.c`), and the parser
+rejects starred expressions (`parser.py`, `iterable unpacking is not
+supported`). Measured on the 181 programs of
+`pycore/tests/test_compiler_differential.py` with the host stand-in:
+
+| Opcode | Firmware | CPython |
+| --- | ---: | ---: |
+| `NOT_TAKEN` | 0 | 29 |
+| `LOAD_FAST_BORROW` | 0 | 27 |
+| `STORE_FAST_LOAD_FAST` | 0 | 11 |
+| `LOAD_FAST_AND_CLEAR` | 0 | 11 |
+| `LIST_EXTEND` | 0 | 10 |
+| `LOAD_FAST_BORROW_LOAD_FAST_BORROW` | 0 | 9 |
+| `LOAD_FAST_CHECK`, `SET_UPDATE` | 0 | 1 each |
+| `LOAD_FAST_LOAD_FAST`, `STORE_FAST_STORE_FAST`, `CALL_FUNCTION_EX`, `UNPACK_EX`, `DICT_UPDATE`, `DICT_MERGE`, `CALL_INTRINSIC_1`, `POP_JUMP_IF_NONE`, `POP_JUMP_IF_NOT_NONE` | 0 | 0 in this corpus (it has no starred forms and no `is None` tests) |
+
+The costs:
+
+- **Speed.** The host-built compiler executes 23 658 real opcodes and the
+  firmware-emitted copy executes 41 178 for the same sources
+  (`pycore/docs/compile_limitations.md` §1.2). Missing superinstructions
+  and `is None` fusion account for part of that.
+- **Grammar.** `f(*xs)`, `f(**kw)`, `a, *b = xs`, `[*a]`, `{*a}`,
+  `{**a}`, and `(*a,)` are `SyntaxError`.
+- **Coverage.** Hardware paths for these opcodes are only exercised by
+  host-compiled fixtures.
+
+**Change.** Take it in three independent slices.
+
+1. **Peephole pass.** Run it after codegen, on the instruction arrays and
+   before assembly. Fuse `LOAD_FAST a; LOAD_FAST b` →
+   `LOAD_FAST_LOAD_FAST`, `STORE_FAST; LOAD_FAST` → `STORE_FAST_LOAD_FAST`,
+   `STORE_FAST; STORE_FAST` → `STORE_FAST_STORE_FAST` (CPython packs both
+   indexes as `a << 4 | b` and only when both are < 16). Fuse
+   `LOAD_CONST None; IS_OP k; POP_JUMP_IF_TRUE/FALSE` into
+   `POP_JUMP_IF_NONE` / `POP_JUMP_IF_NOT_NONE`. Jump targets and the
+   exception table must be remapped after fusion, or the pass must run
+   before labels resolve.
+2. **Starred forms.** Parser and codegen for `*` / `**` at call sites
+   (`CALL_FUNCTION_EX`, `DICT_MERGE`, `CALL_INTRINSIC_1` list-to-tuple),
+   in displays (`LIST_EXTEND`, `SET_UPDATE`, `DICT_UPDATE`), and in
+   assignment targets (`UNPACK_EX`). Mirror CPython 3.14's emit shapes so
+   the existing hardware paths see the stack layouts they were built for.
+3. **Optional.** Inline comprehensions (PEP 709, `LOAD_FAST_AND_CLEAR`).
+   Today each comprehension is a nested function, which is correct but
+   pays a call.
+
+Do not emit `LOAD_FAST_CHECK` (the hardware's `LOAD_FAST` already traps
+on `UNINIT`), `NOT_TAKEN` (a monitoring no-op), or the `_BORROW` forms
+(a refcount optimization that means nothing here).
+
+**Verify.** `test_compiler_differential.py` stays green and gains cases
+for every new form. The device-compile suite (`master_plan.md`, test
+contract) passes on the hart. `make pycore-size-report` shows the resident
+package still fits. Add a host test that compiles a fixed program and
+asserts the new opcodes appear, so a regression to the long forms is
+caught.
+
+**Risk.** Medium. Codegen changes can miscompile silently, so each slice
+needs differential cases before it lands.
 
 ---
 
