@@ -96,7 +96,7 @@ EXCORE_RTL_SRCS := \
 .PHONY: help lint-file pycore-preprocess run-file pycore-run-file exec-file shell \
 	all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-type-pairs \
-	pycore-python-tests pycore-size-report pycore-mem pycore-cache-lru pycore-cache pycore-ram \
+	pycore-python-tests pycore-size-report pycore-compile-suite pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib \
 	pycore-regfile \
 	pycore-codc \
@@ -300,7 +300,7 @@ EXCORE_RTL_SRCS := \
 	docker-build docker-lint-file docker-run-file docker-exec-file docker-shell \
 	docker-pycore-test docker-all-tests \
 	docker-python-tests docker-rtl-unit docker-container docker-img \
-	docker-two-core docker-excore
+	docker-two-core docker-excore docker-compile-suite
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -389,6 +389,7 @@ all-tests:
 	$(MAKE) pycore-sim-img pycore-sim-img-twocore excore-cpu-test
 	$(MAKE) -j$(TEST_JOBS) pycore-container pycore-img \
 		pycore-excore-system pycore-img-two-core
+	$(MAKE) pycore-compile-suite
 	$(MAKE) pycore-cache-transparency pycore-mem-latency-sweep
 
 # Architectural gates (memory_system_plan.md §6). Both reuse the shared
@@ -669,6 +670,12 @@ pycore-img-allocator-bytes:
 
 pycore-python-tests:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
+
+# Device-compile suite: programs in pycore/programs/compile_suite/ are
+# compiled by the on-device compile(), run on the two-core hart, and their
+# output is compared with host CPython 3.14 (pycore/tools/compile_suite.py).
+pycore-compile-suite:
+	$(PYTHON) pycore/tools/compile_suite.py --jobs $(TEST_JOBS)
 
 # compiler_design.md W-8 / A8: ROM, code-RAM package, and heap vs ceilings.
 pycore-size-report:
@@ -1348,6 +1355,10 @@ pycore-img-compile-ns-inherit:
 
 pycore-img-compile-exec-roundtrip-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_exec_roundtrip,40000000)
+
+# exec'd STORE_NAME grows globals with a for-iterator on the stack.
+pycore-img-compile-store-name-grow-loop-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_store_name_grow_loop,40000000)
 
 pycore-img-compile-reject-locals:
 	$(call PYCORE_IMAGE_RUN,compile_reject_locals,80000000)
@@ -2059,6 +2070,7 @@ pycore-img-two-core: \
 	pycore-img-compile-reject-closure-two-core \
 	pycore-img-compile-closure-two-core \
 	pycore-img-compile-exec-roundtrip-two-core \
+	pycore-img-compile-store-name-grow-loop-two-core \
 	pycore-img-compile-kwargs-two-core \
 	pycore-img-compile-grammar-two-core \
 	pycore-img-startup-multiprogram-two-core \
@@ -3274,6 +3286,9 @@ docker-two-core: docker-build
 
 docker-excore: docker-build
 	$(DOCKER_MAKE) make excore-test
+
+docker-compile-suite: docker-build
+	$(DOCKER_MAKE) sh -c 'make pycore-sim-img-twocore && make pycore-compile-suite TEST_JOBS=$(TEST_JOBS)'
 
 docker-pycore-test: docker-build
 	$(DOCKER_MAKE) make pycore-test TEST_JOBS=$(TEST_JOBS)

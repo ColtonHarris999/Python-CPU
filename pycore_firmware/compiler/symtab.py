@@ -148,6 +148,11 @@ def _pyc_sy_push_children(nid):
     if kind == ND["Attribute"]:
         _pyc_sy_work_push(a, 0)
         return
+    if kind == ND["Starred"]:
+        # nd_a is -1 for the `**x` marker key in a Dict display.
+        if a >= 0:
+            _pyc_sy_work_push(a, 0)
+        return
     if kind == ND["Subscript"]:
         _pyc_sy_work_push(b, 0)
         _pyc_sy_work_push(a, 0)

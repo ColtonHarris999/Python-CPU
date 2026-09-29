@@ -69,24 +69,33 @@ is never cached. `CACHE_EN=0` is a miss pass-through.
 
 ---
 
-## Data map (P5)
+## Data map
 
-`DMEM_BLOCK_COUNT = 512` → 2 MB. Constants are mirrored in
+`DMEM_BLOCK_COUNT = 4096` → a 16 MB data window that ends exactly at
+`PYCORE_CODE_ADDR_BASE`, so data and code never alias in the unified L2.
+The physical RAM (`PYCORE_RAM_BYTES`) was already 16 MB; only the legal
+window and the runtime regions moved (from the P5 2 MB map, where the
+heap ended at `0xF0000`). Constants are mirrored in
 `pycore/tools/encoding.py` (`test_memory_map_mirror.py`).
 
 ```
 0x0000_0000 – 0x0000_03DF   reserved
 0x0000_03E0 – 0x0000_043F   boot record (96 B: code / globals / builtins)
-0x0000_0440 – 0x000E_FFFF   object heap (~955 KB, bump, 64 B start-align)
-0x000F_0000 – 0x000F_0FFF   exception-info arena (4 KB)
-0x000F_1000 – 0x000F_8FFF   call-frame stack (32 KB, 1024 frames)
-0x0010_0000 – 0x0013_FFFF   RF spill LIFO (256 KB, 8192 entries)
-0x0020_0000                 DATA_LIMIT
-0x0100_0000 – …             CODE address space (slot-indexed ROM + RAM)
+0x0000_0440 – 0x00EF_FFFF   object heap (~15 MB, bump, 64 B start-align)
+0x00F0_0000 – 0x00F0_0FFF   exception-info arena (4 KB)
+0x00F0_1000 – 0x00F0_8FFF   call-frame stack (32 KB, 1024 frames)
+0x00F4_0000 – 0x00F7_FFFF   RF spill LIFO (256 KB, 8192 entries)
+0x00F8_0000 – 0x00FF_FFFF   reserved
+0x0100_0000                 DATA_LIMIT == CODE address base (ROM + RAM)
 ```
 
+The static boot image takes about 380 KB of the heap, so about 15 MB is
+free when a program starts. On-device `compile()` keeps its whole
+working set (roughly 10–15 KB per source line), so this is what sets the
+largest file the hart can compile.
+
 The native-method sidecar sits in the exc arena immediately below the
-StopIteration latch (`NATIVE_METHOD_TABLE_ADDR = 0xF0DE0`).
+StopIteration latch (`NATIVE_METHOD_TABLE_ADDR = 0xF00DE0`).
 
 ---
 

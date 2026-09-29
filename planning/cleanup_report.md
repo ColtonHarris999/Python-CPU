@@ -51,11 +51,13 @@ This report covers engineering cleanup only. Language and feature work is in
 | [G1](#g1-deduplicate-the-docs) | Deduplicate the docs | M | Low | Medium |
 | [H1](#h1-build-the-ci-image-and-simulators-once) | Build the CI image and simulators once | M | M | High |
 | [H2](#h2-one-dockerfile) | One Dockerfile | S | Low | Low |
-| [I1](#i1-close-the-on-device-compilers-opcode-gap) | Close the on-device compiler's opcode gap | M | M | High |
+| [I1](#i1-inline-comprehensions-optional) | Inline comprehensions (optional) | M | M | Low |
+| [J1](#j1-bind-max-to-a-body-that-takes-an-iterable) | Bind `max` to a body that takes an iterable | S | Low | Medium |
+| [J2](#j2-print-the-full-64-bit-int) | `print()` the full 64-bit int | M | Low | Medium |
 
 **Suggested order.** Do the quick deletions first (A2, A3, B2, B3, D2, D3,
 F2, H2). Then do the harness work in sequence: C1, B1, A4, A5, A1, D1, H1.
-I1 is independent of all of them.
+I1, J1, and J2 are independent of all of them.
 C2, C3, and C4 can run in parallel with the harness work. Leave D4 and D5
 for last, once CI is fast enough to iterate on RTL.
 
@@ -685,70 +687,66 @@ the version comment. Point `.cursor/environment.json` at it.
 
 ## I. On-device compiler output
 
-### I1. Close the on-device compiler's opcode gap
+### I1. Inline comprehensions (optional)
 
-**Problem.** The firmware compiler (`pycore_firmware/compiler/`) never
-emits 17 opcodes that the hardware executes. It ports CPython's codegen
-and assembler but not its optimizer (`flowgraph.c`), and the parser
-rejects starred expressions (`parser.py`, `iterable unpacking is not
-supported`). Measured on the 181 programs of
-`pycore/tests/test_compiler_differential.py` with the host stand-in:
+**Problem.** The compiler-gaps work closed the rest of the on-device
+compiler's opcode gap (superinstructions, `is None` jumps, starred
+forms; see `master_plan.md`). What remains is performance only.
+Comprehensions compile as a nested function (the pre-3.12 shape), so
+each one pays a `CALL` and a frame. CPython 3.12+ inlines them (PEP 709)
+and uses `LOAD_FAST_AND_CLEAR` to save and restore the loop variable.
 
-| Opcode | Firmware | CPython |
-| --- | ---: | ---: |
-| `NOT_TAKEN` | 0 | 29 |
-| `LOAD_FAST_BORROW` | 0 | 27 |
-| `STORE_FAST_LOAD_FAST` | 0 | 11 |
-| `LOAD_FAST_AND_CLEAR` | 0 | 11 |
-| `LIST_EXTEND` | 0 | 10 |
-| `LOAD_FAST_BORROW_LOAD_FAST_BORROW` | 0 | 9 |
-| `LOAD_FAST_CHECK`, `SET_UPDATE` | 0 | 1 each |
-| `LOAD_FAST_LOAD_FAST`, `STORE_FAST_STORE_FAST`, `CALL_FUNCTION_EX`, `UNPACK_EX`, `DICT_UPDATE`, `DICT_MERGE`, `CALL_INTRINSIC_1`, `POP_JUMP_IF_NONE`, `POP_JUMP_IF_NOT_NONE` | 0 | 0 in this corpus (it has no starred forms and no `is None` tests) |
+**Change.** In `codegen.py` `_pyc_emit_comp`, emit the comprehension
+body inline in the enclosing code object: `LOAD_FAST_AND_CLEAR` for each
+comprehension-local name, `SWAP` the saved values under the iterator,
+build the result, and restore with `STORE_FAST` (mirror
+`codegen_comprehension` in CPython 3.14's `codegen.c`). The symbol
+table then has to stop giving comprehensions their own scope, except for
+names that are closed over.
 
-The costs:
+**Verify.** `test_compiler_differential.py` comprehension cases, the
+`cs_containers.py` / `cs_t5_t6.py` suite programs, and a cycle-count
+comparison on a comprehension-heavy program before and after.
 
-- **Speed.** The host-built compiler executes 23 658 real opcodes and the
-  firmware-emitted copy executes 41 178 for the same sources
-  (`pycore/docs/compile_limitations.md` §1.2). Missing superinstructions
-  and `is None` fusion account for part of that.
-- **Grammar.** `f(*xs)`, `f(**kw)`, `a, *b = xs`, `[*a]`, `{*a}`,
-  `{**a}`, and `(*a,)` are `SyntaxError`.
-- **Coverage.** Hardware paths for these opcodes are only exercised by
-  host-compiled fixtures.
+**Risk.** Medium. Scoping bugs here are silent.
 
-**Change.** Take it in three independent slices.
+## J. Hart gaps found by the compile suite
 
-1. **Peephole pass.** Run it after codegen, on the instruction arrays and
-   before assembly. Fuse `LOAD_FAST a; LOAD_FAST b` →
-   `LOAD_FAST_LOAD_FAST`, `STORE_FAST; LOAD_FAST` → `STORE_FAST_LOAD_FAST`,
-   `STORE_FAST; STORE_FAST` → `STORE_FAST_STORE_FAST` (CPython packs both
-   indexes as `a << 4 | b` and only when both are < 16). Fuse
-   `LOAD_CONST None; IS_OP k; POP_JUMP_IF_TRUE/FALSE` into
-   `POP_JUMP_IF_NONE` / `POP_JUMP_IF_NOT_NONE`. Jump targets and the
-   exception table must be remapped after fusion, or the pass must run
-   before labels resolve.
-2. **Starred forms.** Parser and codegen for `*` / `**` at call sites
-   (`CALL_FUNCTION_EX`, `DICT_MERGE`, `CALL_INTRINSIC_1` list-to-tuple),
-   in displays (`LIST_EXTEND`, `SET_UPDATE`, `DICT_UPDATE`), and in
-   assignment targets (`UNPACK_EX`). Mirror CPython 3.14's emit shapes so
-   the existing hardware paths see the stack layouts they were built for.
-3. **Optional.** Inline comprehensions (PEP 709, `LOAD_FAST_AND_CLEAR`).
-   Today each comprehension is a nested function, which is correct but
-   pays a call.
+`make pycore-compile-suite` compiles programs on the hart and compares
+their output with CPython. It found three hart-side problems. The
+`DICT_GROW` pop count for `STORE_NAME` / `STORE_GLOBAL` is fixed
+(`compile_limitations.md` §3.2). These two are open; the suite programs
+avoid them and say so in a comment.
 
-Do not emit `LOAD_FAST_CHECK` (the hardware's `LOAD_FAST` already traps
-on `UNINIT`), `NOT_TAKEN` (a monitoring no-op), or the `_BORROW` forms
-(a refcount optimization that means nothing here).
+### J1. Bind `max` to a body that takes an iterable
 
-**Verify.** `test_compiler_differential.py` stays green and gains cases
-for every new form. The device-compile suite (`master_plan.md`, test
-contract) passes on the hart. `make pycore-size-report` shows the resident
-package still fits. Add a host test that compiles a fixed program and
-asserts the new opcodes appear, so a regression to the long forms is
-caught.
+**Problem.** `max` in the builtins dict is the native `BI_MAX`, which
+takes exactly two arguments. `max([4, 1, 3])` traps CALL_FILTER.
+`pycore_firmware/builtins/max.py` handles an iterable but is not seeded
+(see F1). `min` was already moved to a ROM `min(*args)` body.
 
-**Risk.** Medium. Codegen changes can miscompile silently, so each slice
-needs differential cases before it lands.
+**Change.** Give `max` the same shape as `min` (`max(*args)`: one
+iterable, or two or more values) and seed it in `ROM_FIRMWARE_BUILTINS`.
+Either keep `BI_MAX` as the fast path for exactly two numeric arguments
+(call it from the ROM body) or retire it with its fixtures.
+
+**Verify.** A `max(list)` fixture on the hart, `img_builtin_max_float`
+still passing, and `max(nums)` restored in `cs_containers.py`.
+
+### J2. `print()` the full 64-bit int
+
+**Problem.** Ints are 64-bit and the arithmetic keeps the high bits, but
+`_bi_print` formats an `INT` as a signed 32-bit value: `print(2 ** 32)`
+prints `0`, and `print(2147483648)` prints `-2147483648`. `str(int)` is
+also capped at a 15-character `SHORT_STR`.
+
+**Change.** Format the full 64-bit value in the native print sink (up to
+20 characters with the sign), and let `str(int)` produce a `LONG_STR`
+when it does not fit a `SHORT_STR`.
+
+**Verify.** A print fixture for `2 ** 40`, `-(2 ** 63)`, and
+`2 ** 63 - 1`; restore the plain `2 ** 40 + 1` line in
+`cs_expressions.py`.
 
 ---
 

@@ -1840,6 +1840,9 @@ class _HostEmittedCode:
         pc = self._entry
         stack: list[object] = []
         locals_ = self._bind_args(args, kwargs)
+        # The hart's handled-exception state outlives the frame, so a return
+        # from inside a handler must POP_EXCEPT first, as CPython does.
+        entry_exc = self._exc
         # Bound the walk so a missing RETURN cannot hang the host golden.
         for _ in range(1 << 16):
             word = self._ram.words.get(pc, 0)
@@ -2020,6 +2023,10 @@ class _HostEmittedCode:
                     pc = pc + _host_jump_n_cache(opcode) + oparg
                 continue
             if opcode == _HOST_OP_RETURN_VALUE:
+                if self._exc is not entry_exc:
+                    raise RuntimeError(
+                        "RETURN_VALUE inside an active handler (missing POP_EXCEPT)"
+                    )
                 return stack.pop() if stack else None
             if opcode == _HOST_OP_NOP:
                 continue

@@ -27,8 +27,13 @@ simple f-strings, `try` / `except` / `else` / `finally` (including
 `finally` on `break` / `continue` / `return`), `raise`,
 single-generator comprehensions with one `if` (their own scope),
 ordinary string escapes, negative indexes, slices of a list or tuple
-display, string slices, and closures. Differentials compare results,
-not `co_code` (`pycore/tests/test_compiler_differential.py`).
+display, string slices, closures, and `*` / `**` unpacking at call
+sites, in list / tuple / set / dict displays, and in assignment and
+`for` targets. A peephole pass emits CPython's superinstructions and
+`is None` jumps. Differentials compare results, not `co_code`
+(`pycore/tests/test_compiler_differential.py`), and the device-compile
+suite (`make pycore-compile-suite`) runs a set of programs covering all
+of it on the hart against CPython 3.14.
 
 Everything in the rest of this file is outside that set, or inside it
 but still wrong.
@@ -82,11 +87,13 @@ or `try`.
 | Region | Used | Capacity | Remain |
 | --- | ---: | ---: | ---: |
 | Code ROM | 2 669 | 8 192 | 5 523 |
-| Code RAM (compiler) | 56 469 | 131 072 | 74 603 |
-| Heap (static image) | 379 648 | 981 952 | 602 304 |
+| Code RAM (compiler) | 61 929 | 131 072 | 69 143 |
+| Heap (static image) | 389 376 | 15 727 552 | 15 338 176 |
 
-The report prints `self-host: unblocked (74603 headroom >= 56469
-package)`. Code RAM is 256 blocks (1 MB, slots `0x2000 .. 0x21FFF`).
+The report prints `self-host: unblocked (69143 headroom >= 61929
+package)`. The package grew from 56 469 slots with the peephole pass,
+starred forms, and handler unwinding; the opcode comparison below was
+measured at 56 469 and has not been re-run. Code RAM is 256 blocks (1 MB, slots `0x2000 .. 0x21FFF`).
 The previous 65 536-slot bank left 9 667 free against a 55 869-slot
 resident package, so a second copy could not be emitted beside it.
 
@@ -106,8 +113,8 @@ the startup ROM. A later measurement that shows it also faster is
 what would justify serializing it over the host `co_code`.
 
 Both arrangements fit in 131 072 slots: a second host-built copy
-(56 469 ≤ 74 603) and a firmware-emitted copy beside the resident
-host image (41 178 ≤ 74 603). Two firmware copies (82 356) fit as
+(61 929 ≤ 69 143) and a firmware-emitted copy beside the resident
+host image (41 178 at last measurement ≤ 69 143). Two firmware copies (82 356) fit as
 well. Heap does not need to grow.
 
 ### 1.3 What "compile the compiler" still needs
@@ -337,8 +344,28 @@ These used to parse, emit, and disagree with CPython. They are in
   Non-constant bounds on a display are `SyntaxError` (`slice of a
   list or tuple display is not supported`).
 - **Named rejections.** `match` / `case` are `is not supported`.
-  `:=` is `named expressions are not supported`. A star where an
-  operand is expected is `iterable unpacking is not supported`.
+  `:=` is `named expressions are not supported`. A star in a place
+  CPython also rejects is `can't use starred expression here`.
+- **`try` inside a `for` loop.** The exception table recorded stack
+  depth 0 for every handler. Inside a loop the iterator is on the stack,
+  so a raise dropped it and the next `FOR_ITER` ran on an empty stack
+  (host stand-in `IndexError`; the hart unwinds the same way). Depths now
+  count what enclosing constructs hold: one per enclosing `for`
+  iterator, one for an enclosing handler's saved exception, two inside a
+  `finally` that runs on the exception path (`_stk_base` in
+  `codegen.py`).
+- **Leaving a handler early.** `return`, `break`, and `continue` inside
+  an `except` body (or a `finally` running on the exception path) left
+  without `POP_EXCEPT`. The host stand-in keeps exception state per call,
+  so it never noticed; the hart's handled-exception state outlives the
+  frame. Handler bodies now ride the finally stack: the exit drops what
+  sits above the saved exception (`SWAP 2` / `POP_TOP` under a return
+  value), emits `POP_EXCEPT`, and clears an `as` name, as CPython does.
+  The code after that is a hole in the handler's own table entries. The
+  stand-in now raises if `RETURN_VALUE` runs with a handler still active.
+- **`assert x, msg`.** CPython's `CALL 0` with the message in the self
+  slot CALL_FILTER-trapped the hart's exception constructor. The emitter
+  uses `PUSH_NULL`, the message, `CALL 1`.
 - **`for` / `while` `else`.** Exhaustion runs the `else` and then
   `POP_ITER`. `break` jumps to `POP_ITER` and skips the `else`. A
   false `while` test jumps to the `else`; `break` lands after it.
@@ -350,6 +377,22 @@ host stand-in. Other interpreter raises (a bad subscript, a compare
 exceptions.
 
 ### 3.2 Still a runtime ceiling
+
+The device-compile suite (`make pycore-compile-suite`) found three
+hart-side problems that were not the compiler's:
+
+- **Globals-dict growth inside a loop (fixed).** The excore `DICT_GROW`
+  handler popped 3 for `STORE_NAME` / `STORE_GLOBAL`, the
+  `STORE_SUBSCR` count. The hart synthesizes the dict and the name, so
+  only the value is on the stack; the two extra pops ate a `for`
+  iterator and the next `FOR_ITER` TYPE-trapped. Host-built images
+  pre-bind every stored name, so only exec'd code grew globals.
+  `excore/fw/list_grow.s` now pops 1; `img_compile_store_name_grow_loop`
+  covers it.
+- **`print()` of an int formats 32 bits.** Ints are 64-bit and the
+  arithmetic is right; `print(2 ** 32)` prints `0`. Open.
+- **`max(iterable)` traps CALL_FILTER.** `max` is the native two-argument
+  `BI_MAX`; the ROM `max.py` that handles an iterable is not bound. Open.
 
 A slice whose subject is a name stays `BINARY_SLICE`. Strings work.
 A list or tuple in that name still traps `PY_TRAP_TYPE` on the hart.
@@ -378,8 +421,8 @@ whether `make run-file HOST_COMPILE=1` can already run the construct via CPython
 | `lambda` of a non-literal default | `default argument must be a literal` | `SET_FUNCTION_ATTRIBUTE` flags 1 and 2. Only flag 8 (closure) executes. Defaults ride on the code object (D10) | host folder evaluates them at image build |
 | positional-only `/` | `positional-only marker '/' is not supported` | compiler only. Metadata already has `posonlyargcount`; host images run `/` | yes |
 | annotations, `->` | `annotations are not supported` | `SET_FUNCTION_ATTRIBUTE` 16, `SETUP_ANNOTATIONS` | stripped or folded |
-| `*args` at a **call** (`f(*xs)`, `f(**kw)`) | `iterable unpacking is not supported` | compiler only. `CALL_FUNCTION_EX` executes; the host stand-in does not | yes |
-| `{**d}` | `iterable unpacking is not supported` | `DICT_UPDATE` / `DICT_MERGE` (partial, excore) | yes |
+| a positional `*x` after a keyword argument (`f(k=1, *xs)`) | `positional argument follows keyword argument` | compiler only: keyword values must be contiguous at the end of the call. `f(*xs, k=1)` and `f(k=1, **kw)` work | yes |
+| `*` target in a comprehension `for` clause | `unsupported for-target` | compiler only. Statement `for a, *b in ...` works | yes |
 | `@` matmul | `unexpected input after expression` | `BINARY_OP` oparg for matmul, no datatype | no |
 | generator expression | `generator expressions are not supported` | §2.3 | no |
 | second `for` or second `if` in a comprehension | `nested comprehension` / `multiple comprehension ifs` | another nested code object per clause | yes |
@@ -407,6 +450,8 @@ These match CPython inside the ceiling and stop matching outside it.
 | Ceiling | Behavior |
 | --- | --- |
 | No `CACHE` (D1) | `co_code` is not CPython's. Results are the oracle. |
+| Peephole pass | `LOAD_FAST` pairs → `LOAD_FAST_LOAD_FAST`, `STORE_FAST` + `LOAD_FAST` → `STORE_FAST_LOAD_FAST`, `STORE_FAST` pairs → `STORE_FAST_STORE_FAST` (both indexes < 16), and `LOAD_CONST None; IS_OP; POP_JUMP_IF_*` → `POP_JUMP_IF_[NOT_]NONE`. Never across a label or an exception-table boundary. The hart's paired load does not trap on an unbound local, so a load is fused only when the local is provably bound (parameter, cell, or stored earlier in the same block). No `LOAD_FAST_BORROW`, `LOAD_FAST_CHECK`, or `NOT_TAKEN`: they mean nothing on this machine. |
+| Comprehension scope | A nested function (the pre-3.12 shape), not inlined with `LOAD_FAST_AND_CLEAR`. Correct scoping; one call per comprehension. |
 | Constant folding (D2) | Int `+ - * & \| ^`, unary `-` `~`, and `str +` fold to a constant. `/ // % ** << >>` stay as `BINARY_OP`, so `1/0` still raises at run time. |
 | Unary `+` | The operand is visited and no opcode is emitted. `CALL_INTRINSIC_1` oparg 5 (`UNARY_POSITIVE`) is not in the allowlist. Fine for ints; a user type with `__pos__` would be wrong. User types are barely callable from this compiler anyway (`class` is rejected). |
 | F-strings | `FORMAT_SIMPLE`, `CONVERT_VALUE` 1/2/3, `BUILD_STRING`. No format spec, no `f"{x=}"`, no nested f-strings, no t-strings. `BUILD_STRING` requires every piece to be a `SHORT_STR` and the total length ≤ 15; otherwise the hart raises `TYPE`. A long f-string compiles and traps. |
@@ -429,7 +474,7 @@ These match CPython inside the ceiling and stop matching outside it.
 | Item | State |
 | --- | --- |
 | Split result / scratch arenas (O-2) | Not started. Caller mark/release is the reclaim path. Open it when `img_compile_repeat`'s watermark stops holding. |
-| Module loader, relocation, overlays | Not started. The compiler fits the boot image (56 469 / 131 072, 74 603 free). Overlays are not what unblocked the second copy; the larger code RAM did. |
+| Module loader, relocation, overlays | Not started. The compiler fits the boot image (61 929 / 131 072, 69 143 free). Overlays are not what unblocked the second copy; the larger code RAM did. |
 | `compile()` of `"single"` | `ValueError`. A REPL would need it. |
 | Re-entrancy beyond the guard | The guard is the whole feature. Arenas are process-global. |
 | Diagnostics | Unsupported keywords, `match` / `case`, `:=`, and a starred operand name themselves. Positions are carried on tokens (`line << 24 \| col << 8`) but many `_pyc_parse_error` messages have no source span in the text the user sees. |
@@ -453,11 +498,10 @@ image stayed the host build because it executes fewer real opcodes
    in its own globals and check that a second compile matches the
    first. `size_report.py` compares free slots to the resident host
    package, which is the image that boots.
-2. **Call-site `*args` / `**kwargs` and `/`.** Hardware already runs
-   `CALL_FUNCTION_EX` and stores `posonlyargcount`. The host stand-in
-   does not expand `CALL_FUNCTION_EX` and does not enforce
-   positional-only, so those two have to land together or the
-   differential cannot see them.
+2. **Positional-only `/`.** Metadata already stores
+   `posonlyargcount`. The host stand-in does not enforce
+   positional-only, so the two have to land together or the
+   differential cannot see them. (Call-site `*` / `**` landed.)
 3. **Generator frames, then Layer A async** (§2). Do not parse `async`
    successfully until `SEND` returns. `yield` and `await` share the
    frame work; land it once.

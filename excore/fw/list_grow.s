@@ -804,15 +804,24 @@ dg_tag_ok:
     li   t0, RES_COMPLETED
     sw   t0, RES_CODE(s11)
     # STORE_ATTR (opcode 110): value+obj on stack → pop 2. MAP_ADD (opcode 98):
-    # key+value popped, dict left in place → pop 2. Else STORE_SUBSCR
-    # (value+key+container) / STORE_NAME → pop 3.
+    # key+value popped, dict left in place → pop 2. STORE_NAME (116) /
+    # STORE_GLOBAL (115): the hart synthesizes the globals dict and the name,
+    # only the value is on the stack → pop 1. Else STORE_SUBSCR
+    # (value+key+container) → pop 3.
     lw   t0, MB_INSTR_LO(s11)
     andi t0, t0, 0xFF
     li   t1, 110
     beq  t0, t1, dg_pop_store_attr
     li   t1, 98
     beq  t0, t1, dg_pop_store_attr
+    li   t1, 116
+    beq  t0, t1, dg_pop_store_name
+    li   t1, 115
+    beq  t0, t1, dg_pop_store_name
     li   t0, 3
+    j    dg_pop_store
+dg_pop_store_name:
+    li   t0, 1
     j    dg_pop_store
 dg_pop_store_attr:
     li   t0, 2

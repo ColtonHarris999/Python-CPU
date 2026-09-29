@@ -394,9 +394,9 @@ Sizes, the P5 data map, the invalidation matrix, and the P8 skip are in
   `PYCORE_CODE_ADDR_BASE = 0x01000000` so code and data do not alias in L2.
 - Data port is 128-bit, 16-byte aligned, with `wstrb[15:0]`.
 - Default map (`pycore_defs.svh`): `ADDR_WIDTH = 32`, `BLOCK_SHIFT = 12`,
-  `IMEM_BLOCK_COUNT = 16` (64 KB ROM), `DMEM_BLOCK_COUNT = 512` (2 MB).
-  Heap `0x440`–`0xEFFFF`, frames `0xF1000`–`0xF8FFF`, RF spill
-  `0x100000`–`0x13FFFF`. Out-of-range or misaligned data accesses raise
+  `IMEM_BLOCK_COUNT = 16` (64 KB ROM), `DMEM_BLOCK_COUNT = 4096` (16 MB).
+  Heap `0x440`–`0xEFFFFF`, frames `0xF01000`–`0xF08FFF`, RF spill
+  `0xF40000`–`0xF7FFFF`. Out-of-range or misaligned data accesses raise
   `MEM_FAULT` / `ADDR_ALIGN`.
 
 PTR load/store reach data memory through two internal-only opcodes
@@ -420,7 +420,7 @@ spilled prefix   everything below the watermark, in RF order
 A callee needs `nlocals + co_stacksize` entries simultaneously resident, capped
 at `RF_WINDOW_CAP = 240`. If the live occupancy plus that window would exceed
 256, `S_RF_SPILL` evicts a watermark suffix (plus `RF_SPILL_HYST = 32`) to the
-dmem LIFO at `0x100000`. `S_RF_FILL` restores it on RETURN. Spilling *within* a
+dmem LIFO at `0xF40000`. `S_RF_FILL` restores it on RETURN. Spilling *within* a
 frame is out of scope; an oversized window is `CALL_FILTER`.
 
 Function calls are managed by the as-built `pycore_frame.sv`, which implements
@@ -440,9 +440,9 @@ and the caller gets its original globals back. `FRAME_ENTRY_BYTES` stays 32.
 Each RETURN pops slot 1 then slot 0, restores the caller's code object pointer,
 PC, TOS base, locals base, and globals base, then reloads the caller's `co_consts` and
 `co_names` from the code object before fetch resumes. Frame depth is bounded by
-the reserved frame-stack region (`0xF1000`–`0xF8FFF`, 32 KB / 1024 descriptors);
+the reserved frame-stack region (`0xF01000`–`0xF08FFF`, 32 KB / 1024 descriptors);
 `MAX_CALL_DEPTH_CORE` matches that. RF occupancy is bounded by the 256-entry ring
-plus the 256 KB spill region (`0x100000`–`0x13FFFF`).
+plus the 256 KB spill region (`0xF40000`–`0xF7FFFF`).
 
 > **P8 skipped.** L1D already hits the frame-stack region well above the 95%
 > gate on `img_recursion` / `img_deep_callgraph`. RF spill/fill uses the
@@ -565,15 +565,15 @@ container objects.  The heap occupies a fixed region of data memory:
 
 ```text
 PYCORE_HEAP_BASE  = 0x0000_0440  (first byte after the 96-byte boot record)
-PYCORE_HEAP_LIMIT = 0x000F_0000  (just below the exc-info arena)
-PYCORE_EXC_STACK  = 0x000F_0000 – 0x000F_0FFF  (4 KB; pycore_exc_stack,
-                    native-method table at 0xF0DE0, StopIteration sidecar
-                    at 0xF0FE0)
-FRAME_STACK       = 0x000F_1000 – 0x000F_8FFF  (call-frame descriptors)
-RF_SPILL          = 0x0010_0000 – 0x0013_FFFF  (register-file spill LIFO)
+PYCORE_HEAP_LIMIT = 0x00F0_0000  (just below the exc-info arena)
+PYCORE_EXC_STACK  = 0x00F0_0000 – 0x00F0_0FFF  (4 KB; pycore_exc_stack,
+                    native-method table at 0xF00DE0, StopIteration sidecar
+                    at 0xF00FE0)
+FRAME_STACK       = 0x00F0_1000 – 0x00F0_8FFF  (call-frame descriptors)
+RF_SPILL          = 0x00F4_0000 – 0x00F7_FFFF  (register-file spill LIFO)
 ```
 
-Capacity: ~983 KB of object heap, of which the static boot image (ROM
+Capacity: ~15 MB of object heap, of which the static boot image (ROM
 builtins, the compiler package's constants and tables, the builtins dict)
 takes about 380 KB.  A `heap_ptr_r` register in `pycore_core.sv`
 starts at `HEAP_INIT_PTR` (default `PYCORE_HEAP_BASE`) and advances
@@ -584,7 +584,7 @@ bump allocation does not overwrite them.  `DMEM_HEX` on `pycore_system` /
 `pycore_dmem` preloads the whole dmem bank (not just the first 4 KB block).
 The boot record occupies `[0x3e0, 0x440)` and must not overlap heap objects.
 Boot also seeds Wave A exception types (including `StopIteration`) and a sidecar at
-`ITER_EXHAUST_TYPE_ADDR` (`0xF0FE0`) for `FOR_ITER` protocol exhaustion.
+`ITER_EXHAUST_TYPE_ADDR` (`0xF00FE0`) for `FOR_ITER` protocol exhaustion.
 
 ### LIST in-dmem layout
 

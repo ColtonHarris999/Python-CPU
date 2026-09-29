@@ -639,6 +639,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument("source", help="Python source file")
     _add_exec_options(p_run, run_mode=True)
+    p_run.add_argument("--json", help="Also write the report as JSON here")
     p_run.add_argument(
         "--host-compile",
         action="store_true",
