@@ -236,6 +236,7 @@ Do not move these without updating `encoding.py`, `pycore_defs.svh`,
   `pycore-img-*` fixtures stay as the hardware tests. Add a program here
   when the compiler learns a new construct. Its first hart run found a compiler
   bug the stand-in hid (no `POP_EXCEPT` when leaving a handler early), an
-  `assert` call shape the hart rejects, and an excore `DICT_GROW` pop-count
-  bug for `STORE_NAME`; all fixed. `print()` of ints above 32 bits and
+  `assert` call shape the hart rejects, an excore `DICT_GROW` pop-count
+  bug for `STORE_NAME`, and a stale `nlocals` after `RETURN` that put a
+  later handler's stack too high; all fixed. `print()` of ints above 32 bits and
   `max(iterable)` are open (`cleanup_report.md` J1, J2).

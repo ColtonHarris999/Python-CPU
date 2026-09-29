@@ -235,6 +235,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-jaro-window \
 	pycore-img-builtin-str pycore-img-builtin-str-type-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
+	pycore-img-raise-after-call-loop \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
 	pycore-img-try-exception pycore-img-try-typeerror \
@@ -2293,6 +2294,7 @@ pycore-img-attr-all: \
 	pycore-img-jaro-window \
 	pycore-img-builtin-str pycore-img-builtin-str-type-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
+	pycore-img-raise-after-call-loop \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
 	pycore-img-try-exception pycore-img-try-typeerror \
@@ -2559,6 +2561,10 @@ pycore-img-to-bool-containers:
 
 pycore-img-raise-varargs:
 	$(call PYCORE_IMAGE_TRAP_RUN,raise_varargs,1,50000)
+
+# RAISE after a call returned: handler depth uses the caller's nlocals.
+pycore-img-raise-after-call-loop:
+	$(call PYCORE_IMAGE_RUN,raise_after_call_loop,400000)
 
 pycore-img-raise-stopiteration-fatal:
 	$(call PYCORE_IMAGE_TRAP_RUN,raise_stopiteration_fatal,17,50000)

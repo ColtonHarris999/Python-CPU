@@ -4808,6 +4808,26 @@
                         3'd5: begin
                             if (!container_dmem_pending_r) begin
                                 call_entry_slot_r <= container_rd_data_r[63:0];
+                                // call_nlocals_r still holds the callee's
+                                // count. A later RAISE in this frame places
+                                // the handler stack at locals_base + nlocals
+                                // + depth, so reload the caller's metadata.
+                                container_dmem_addr_r <=
+                                    pycore_code_field_val_addr(
+                                        cur_code_r,
+                                        PYCORE_CODE_FIELD_METADATA);
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_pending_r <= 1'b1;
+                                return_phase_r <= 3'd6;
+                            end
+                        end
+
+                        3'd6: begin
+                            if (!container_dmem_pending_r) begin
+                                call_nlocals_r <= pycore_code_meta_nlocals(
+                                    container_rd_data_r);
+                                call_stacksize_r <= pycore_code_meta_stacksize(
+                                    container_rd_data_r);
                                 return_phase_r <= RET_PHASE_DONE;
                             end
                         end

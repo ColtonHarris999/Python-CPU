@@ -378,8 +378,16 @@ exceptions.
 
 ### 3.2 Still a runtime ceiling
 
-The device-compile suite (`make pycore-compile-suite`) found three
+The device-compile suite (`make pycore-compile-suite`) found four
 hart-side problems that were not the compiler's:
+
+- **Handler depth after a call returned (fixed).** A raise places the
+  handler stack at `locals_base + nlocals + depth`, but a normal `RETURN`
+  left `call_nlocals_r` at the callee's count. A raise after calling a
+  function with more locals (`print` has five) unwound too high, and a
+  loop's `FOR_ITER` then ran on garbage. CPython's own bytecode hits it
+  too. `S_RETURN` now reloads the caller's metadata (one extra read per
+  return); `img_raise_after_call_loop` covers it.
 
 - **Globals-dict growth inside a loop (fixed).** The excore `DICT_GROW`
   handler popped 3 for `STORE_NAME` / `STORE_GLOBAL`, the

@@ -713,9 +713,9 @@ comparison on a comprehension-heavy program before and after.
 ## J. Hart gaps found by the compile suite
 
 `make pycore-compile-suite` compiles programs on the hart and compares
-their output with CPython. It found three hart-side problems. The
-`DICT_GROW` pop count for `STORE_NAME` / `STORE_GLOBAL` is fixed
-(`compile_limitations.md` §3.2). These two are open; the suite programs
+their output with CPython. It found four hart-side problems. The
+`DICT_GROW` pop count for `STORE_NAME` / `STORE_GLOBAL` and the stale
+`nlocals` after `RETURN` are fixed (`compile_limitations.md` §3.2). These two are open; the suite programs
 avoid them and say so in a comment.
 
 ### J1. Bind `max` to a body that takes an iterable
