@@ -2959,9 +2959,9 @@ pycore-container-dict-full-insert:
 	$(call PYCORE_IMAGE_TRAP_RUN_SRC,container_dict_full_insert,dict_full_insert.py,11,50000)
 
 # HEAP_INIT_PTR = HEAP_LIMIT-100 so BUILD_LIST 3 (112 bytes) exceeds
-# PYCORE_HEAP_LIMIT (0xF0000; exc-info arena begins there).
+# PYCORE_HEAP_LIMIT (0xF00000; exc-info arena begins there).
 pycore-container-list-oom:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7 +HEAP_INIT_PTR=982940,pycore_container_list_oom)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7 +HEAP_INIT_PTR=15728540,pycore_container_list_oom)
 
 # Natural FOR_ITER exhaustion skips END_FOR, so this raw stream executes
 # END_FOR directly and verifies its POP_TOP-equivalent stack effect.
@@ -3043,7 +3043,7 @@ pycore-excore-grow-from-zero: excore-fw pycore-excore-integration-fixtures
 pycore-excore-fast-path-no-trap: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,fast_path_no_trap,+EXPECTED_TAG=1 +EXPECTED_VALUE=9 +EXPECTED_TRAP_REQ_COUNT=0)
 
-# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0xF0000) so the excore's
+# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0xF00000) so the excore's
 # doubled buffer (cap 4 -> 8, 256 bytes) cannot fit -> FATAL(MEM_FAULT).
 pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 	$(PYTHON) tools/ensure_sim.py twocore
@@ -3053,7 +3053,7 @@ pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
-		+HEAP_INIT_PTR=982912 \
+		+HEAP_INIT_PTR=15728512 \
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=7 \
 		$(PYCORE_MEM_PLUSARGS)
@@ -3117,7 +3117,7 @@ pycore-excore-extend-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
-		+HEAP_INIT_PTR=982912 \
+		+HEAP_INIT_PTR=15728512 \
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=7 \
 		$(PYCORE_MEM_PLUSARGS)

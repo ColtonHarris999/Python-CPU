@@ -20,7 +20,7 @@ localparam int PYCORE_BLOCK_SHIFT      = 12;   // 4096 bytes / block
 // 64 KB / 8-byte slots = 8192 words — ROM firmware + large images (e.g.
 // allocator_list) exceed the prior 32 KB / 4096-slot ceiling.
 localparam int PYCORE_IMEM_BLOCK_COUNT = 16;
-localparam int PYCORE_DMEM_BLOCK_COUNT = 512;  // 2 MB data memory (RF spill at 1 MB)
+localparam int PYCORE_DMEM_BLOCK_COUNT = 4096; // 16 MB data window (runtime regions at the top)
 localparam int PYCORE_IMEM_DATA_WIDTH  = 64;   // one 8-byte instruction slot
 localparam int PYCORE_DMEM_DATA_WIDTH  = 128;  // one 128-bit value slot
 localparam int PYCORE_IMEM_WSTRB_WIDTH = PYCORE_IMEM_DATA_WIDTH / 8;  // 8
@@ -3107,27 +3107,32 @@ endfunction
 // The bump pointer starts at PYCORE_HEAP_BASE and grows upward; a trap is
 // raised when it would exceed PYCORE_HEAP_LIMIT.
 //
-// P5/B map (DMEM_BLOCK_COUNT=512 → 2 MB):
-//   0x00000 – 0x003DF  reserved / user PTR data
-//   0x003E0 – 0x0043F  boot record (96 B: code / globals / builtins)
-//   0x00440 – 0xEFFFF  object heap (~955 KB)
-//   0xF0000 – 0xF0FFF  (4 KB) exc-info stack arena (§5.5)
-//   0xF1000 – 0xF8FFF  (32 KB) call-frame stack (1024 frames)
-//   0x100000 – 0x13FFFF (256 KB) RF spill LIFO (8192 × 32 B entries)
-//   0x200000           DATA_LIMIT
+// 16 MB map (DMEM_BLOCK_COUNT=4096). The data window ends exactly at
+// PYCORE_CODE_ADDR_BASE (0x0100_0000), so data and code never alias in the
+// unified L2. The runtime regions moved from 0xF0000.. to 0xF00000.. when
+// the window grew from 2 MB, which gave the heap ~15 MB (on-device compile
+// keeps its whole working set, ~10 KB per source line):
+//   0x000000 – 0x0003DF  reserved / user PTR data
+//   0x0003E0 – 0x00043F  boot record (96 B: code / globals / builtins)
+//   0x000440 – 0xEFFFFF  object heap (~15 MB)
+//   0xF00000 – 0xF00FFF  (4 KB) exc-info stack arena (§5.5)
+//   0xF01000 – 0xF08FFF  (32 KB) call-frame stack (1024 frames)
+//   0xF40000 – 0xF7FFFF  (256 KB) RF spill LIFO (8192 × 32 B entries)
+//   0xF80000 – 0xFFFFFF  reserved
+//   0x1000000            DATA_LIMIT (== PYCORE_CODE_ADDR_BASE)
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0440;
-localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h000F_0000;
-localparam logic [31:0] PYCORE_FRAME_STACK_BASE  = 32'h000F_1000;
+localparam logic [31:0] PYCORE_HEAP_LIMIT = 32'h00F0_0000;
+localparam logic [31:0] PYCORE_FRAME_STACK_BASE  = 32'h00F0_1000;
 localparam logic [31:0] PYCORE_FRAME_STACK_BYTES = 32'h0000_8000;  // 32 KB, 1024 frames
-localparam logic [31:0] PYCORE_RF_SPILL_BASE  = 32'h0010_0000;
+localparam logic [31:0] PYCORE_RF_SPILL_BASE  = 32'h00F4_0000;
 localparam logic [31:0] PYCORE_RF_SPILL_BYTES = 32'h0004_0000;  // 256 KB, 8192 entries
 localparam int PYCORE_RF_DEPTH       = 256;
 localparam int PYCORE_RF_RESERVE     = 16;
 localparam int PYCORE_RF_SPILL_HYST  = 32;
 localparam int PYCORE_RF_INIT_CHUNK  = 32;
 localparam int PYCORE_RF_WINDOW_CAP  = PYCORE_RF_DEPTH - PYCORE_RF_RESERVE;  // 240
-localparam logic [31:0] PYCORE_EXC_STACK_BASE  = 32'h000F_0000;
+localparam logic [31:0] PYCORE_EXC_STACK_BASE  = 32'h00F0_0000;
 localparam logic [31:0] PYCORE_EXC_STACK_BYTES = 32'h0000_1000;
 localparam logic [31:0] PYCORE_EXC_NODE_BYTES  = 32'd32;
 localparam logic [31:0] PYCORE_EXC_STACK_MAX   = 32'd128;

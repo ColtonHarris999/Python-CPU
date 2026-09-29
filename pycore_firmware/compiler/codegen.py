@@ -1639,7 +1639,176 @@ def _pyc_visit(nid):
     _pyc_parse_error("unsupported node in codegen")
 
 
+def _pyc_peephole():
+    # CPython's optimizer pass (flowgraph.c), the parts this machine can use.
+    # Runs on the instruction arrays before jump offsets are resolved:
+    #   LOAD_FAST a; LOAD_FAST b     -> LOAD_FAST_LOAD_FAST   (a << 4 | b)
+    #   STORE_FAST a; LOAD_FAST b    -> STORE_FAST_LOAD_FAST  (a << 4 | b)
+    #   STORE_FAST a; STORE_FAST b   -> STORE_FAST_STORE_FAST (a << 4 | b)
+    #   LOAD_CONST None; IS_OP k; [TO_BOOL;] POP_JUMP_IF_x -> POP_JUMP_IF_[NOT_]NONE
+    # A pair is never fused across a label or an exception-table boundary.
+    # The hardware's paired load does not check for UNINIT the way LOAD_FAST
+    # traps, so a load is fused only when the local is known bound: a
+    # parameter, a cell or free slot, or stored earlier in the same block.
+    global opnd, ops, ops_obj, opnd_n
+    n = opnd_n
+    if n < 2:
+        return
+    op_lf = OPMAP["LOAD_FAST"]
+    op_sf = OPMAP["STORE_FAST"]
+    op_df = OPMAP["DELETE_FAST"]
+    op_lc = OPMAP["LOAD_CONST"]
+    op_is = OPMAP["IS_OP"]
+    op_tb = OPMAP["TO_BOOL"]
+    op_pjf = OPMAP["POP_JUMP_IF_FALSE"]
+    op_pjt = OPMAP["POP_JUMP_IF_TRUE"]
+    op_mc = OPMAP["MAKE_CELL"]
+    op_cfv = OPMAP["COPY_FREE_VARS"]
+    mark = [0] * (n + 1)
+    lab = 1
+    while lab <= _lex_n:
+        t = tk_a[lab]
+        if t >= 0:
+            if t <= n:
+                mark[t] = 1
+        lab = lab + 1
+    ei = tk_b[0]
+    while ei + 4 < kids_n:
+        mark[kids[ei]] = 1
+        mark[kids[ei + 1]] = 1
+        mark[kids[ei + 2]] = 1
+        ei = ei + 5
+    nloc = sc_nlocals[_lex_i]
+    nparam = 0
+    if (sc_kind[_lex_i] & 255) == 1:
+        fl = sc_flags[_lex_i]
+        nparam = sc_argcount[_lex_i] + sc_kwonly[_lex_i] + (fl & 1) + ((fl >> 1) & 1)
+    # always[i]: bound for the whole body (a cell or a free slot, which
+    # cannot be deleted, or a parameter that no DELETE_FAST touches).
+    always = [0] * (nloc + 1)
+    i = 0
+    while i < nparam:
+        always[i] = 1
+        i = i + 1
+    i = 0
+    while i < n:
+        op = opnd[i]
+        if op == op_df:
+            if ops[i] < nparam:
+                always[ops[i]] = 0
+        elif op == op_mc:
+            always[ops[i]] = 2
+        elif op == op_cfv:
+            k = nloc - ops[i]
+            while k < nloc:
+                always[k] = 2
+                k = k + 1
+        i = i + 1
+    bound = [0] * (nloc + 1)
+    newpos = [0] * (n + 1)
+    i = 0
+    j = 0
+    while i < n:
+        if mark[i]:
+            k = 0
+            while k < nloc:
+                bound[k] = always[k]
+                k = k + 1
+        if i == 0:
+            k = 0
+            while k < nloc:
+                bound[k] = always[k]
+                k = k + 1
+        op = opnd[i]
+        arg = ops[i]
+        lb = ops_obj[i]
+        newpos[i] = j
+        if i + 1 < n:
+            if lb == 0:
+                if ops_obj[i + 1] == 0:
+                    if mark[i + 1] == 0:
+                        op2 = opnd[i + 1]
+                        arg2 = ops[i + 1]
+                        fused = 0
+                        if arg < 16 and arg2 < 16:
+                            if op == op_lf and op2 == op_lf:
+                                if bound[arg] and bound[arg2]:
+                                    fused = OPMAP["LOAD_FAST_LOAD_FAST"]
+                            elif op == op_sf and op2 == op_lf:
+                                if bound[arg2] or arg2 == arg:
+                                    fused = OPMAP["STORE_FAST_LOAD_FAST"]
+                            elif op == op_sf and op2 == op_sf:
+                                fused = OPMAP["STORE_FAST_STORE_FAST"]
+                        if fused:
+                            opnd[j] = fused
+                            ops[j] = (arg << 4) | arg2
+                            ops_obj[j] = 0
+                            if op == op_sf:
+                                bound[arg] = 1
+                            if op2 == op_sf:
+                                bound[arg2] = 1
+                            newpos[i + 1] = j
+                            i = i + 2
+                            j = j + 1
+                            continue
+        if op == op_lc and lb == 0 and i + 2 < n:
+            if stmts[arg] is None:
+                k = i + 1
+                if opnd[k] == op_is and mark[k] == 0 and ops_obj[k] == 0:
+                    isnot = ops[k]
+                    k2 = k + 1
+                    if opnd[k2] == op_tb and mark[k2] == 0:
+                        if k2 + 1 < n:
+                            k2 = k2 + 1
+                    op3 = opnd[k2]
+                    if mark[k2] == 0 and (op3 == op_pjf or op3 == op_pjt):
+                        jump_none = 0
+                        if op3 == op_pjt:
+                            jump_none = 1
+                        if isnot:
+                            jump_none = 1 - jump_none
+                        if jump_none:
+                            opnd[j] = OPMAP["POP_JUMP_IF_NONE"]
+                        else:
+                            opnd[j] = OPMAP["POP_JUMP_IF_NOT_NONE"]
+                        ops[j] = 0
+                        ops_obj[j] = ops_obj[k2]
+                        m = i
+                        while m <= k2:
+                            newpos[m] = j
+                            m = m + 1
+                        i = k2 + 1
+                        j = j + 1
+                        continue
+        if op == op_sf:
+            bound[arg] = 1
+        elif op == op_df:
+            if always[arg] != 2:
+                bound[arg] = 0
+        opnd[j] = op
+        ops[j] = arg
+        ops_obj[j] = lb
+        i = i + 1
+        j = j + 1
+    newpos[n] = j
+    lab = 1
+    while lab <= _lex_n:
+        t = tk_a[lab]
+        if t >= 0:
+            if t <= n:
+                tk_a[lab] = newpos[t]
+        lab = lab + 1
+    ei = tk_b[0]
+    while ei + 4 < kids_n:
+        kids[ei] = newpos[kids[ei]]
+        kids[ei + 1] = newpos[kids[ei + 1]]
+        kids[ei + 2] = newpos[kids[ei + 2]]
+        ei = ei + 5
+    opnd_n = j
+
+
 def _pyc_assemble():
+    _pyc_peephole()
     i = 0
     while i < opnd_n:
         lab = ops_obj[i]
@@ -1661,7 +1830,12 @@ def _pyc_assemble():
                 # TYPE-traps a negative oparg (A4).
                 if delta != 0 - 1:
                     _pyc_parse_error("internal: negative jump offset")
-                if op == OPMAP["POP_JUMP_IF_FALSE"] or op == OPMAP["POP_JUMP_IF_TRUE"]:
+                if (
+                    op == OPMAP["POP_JUMP_IF_FALSE"]
+                    or op == OPMAP["POP_JUMP_IF_TRUE"]
+                    or op == OPMAP["POP_JUMP_IF_NONE"]
+                    or op == OPMAP["POP_JUMP_IF_NOT_NONE"]
+                ):
                     opnd[i] = OPMAP["POP_TOP"]
                     delta = 0
                 else:
@@ -1701,6 +1875,8 @@ def _pyc_assemble():
             or op == OPMAP["POP_TOP"]
             or op == OPMAP["POP_JUMP_IF_FALSE"]
             or op == OPMAP["POP_JUMP_IF_TRUE"]
+            or op == OPMAP["POP_JUMP_IF_NONE"]
+            or op == OPMAP["POP_JUMP_IF_NOT_NONE"]
             or op == OPMAP["BINARY_OP"]
             or op == OPMAP["COMPARE_OP"]
             or op == OPMAP["IS_OP"]
@@ -1711,7 +1887,11 @@ def _pyc_assemble():
             or op == OPMAP["DELETE_ATTR"]
         ):
             d = 0 - 1
+        elif op == OPMAP["LOAD_FAST_LOAD_FAST"]:
+            d = 2
         elif op == OPMAP["STORE_ATTR"] or op == OPMAP["DELETE_SUBSCR"]:
+            d = 0 - 2
+        elif op == OPMAP["STORE_FAST_STORE_FAST"]:
             d = 0 - 2
         elif op == OPMAP["STORE_SUBSCR"]:
             d = 0 - 3

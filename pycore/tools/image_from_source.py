@@ -1606,6 +1606,19 @@ _HOST_OP_STORE_GLOBAL = 115
 _HOST_OP_STORE_NAME = 116
 _HOST_OP_SWAP = 117
 _HOST_OP_UNPACK_SEQUENCE = 119
+_HOST_OP_CALL_FUNCTION_EX = 4
+_HOST_OP_CALL_INTRINSIC_1 = 53
+_HOST_OP_DICT_MERGE = 66
+_HOST_OP_DICT_UPDATE = 67
+_HOST_OP_LIST_EXTEND = 79
+_HOST_OP_LOAD_FAST_LOAD_FAST = 89
+_HOST_OP_POP_JUMP_IF_NONE = 101
+_HOST_OP_POP_JUMP_IF_NOT_NONE = 102
+_HOST_OP_SET_UPDATE = 109
+_HOST_OP_STORE_FAST_LOAD_FAST = 113
+_HOST_OP_STORE_FAST_STORE_FAST = 114
+_HOST_OP_UNPACK_EX = 118
+_HOST_INTRINSIC_LIST_TO_TUPLE = 6
 _HOST_NULL = object()
 _HOST_UNBOUND = object()
 
@@ -1679,6 +1692,8 @@ def _host_jump_n_cache(opcode: int) -> int:
         _HOST_OP_JUMP_BACKWARD,
         _HOST_OP_POP_JUMP_IF_FALSE,
         _HOST_OP_POP_JUMP_IF_TRUE,
+        _HOST_OP_POP_JUMP_IF_NONE,
+        _HOST_OP_POP_JUMP_IF_NOT_NONE,
         _HOST_OP_FOR_ITER,
     ):
         return 1
@@ -2166,6 +2181,119 @@ class _HostEmittedCode:
                 val = stack.pop()
                 lst = stack[-oparg]
                 lst.append(val)  # type: ignore[union-attr]
+                continue
+            if opcode == _HOST_OP_LOAD_FAST_LOAD_FAST:
+                # Superinstruction: push locals[oparg >> 4], then
+                # locals[oparg & 15]. The firmware only fuses loads of locals
+                # it knows are bound, so an UNBOUND here is a compiler bug;
+                # raise it the way LOAD_FAST would rather than hide it.
+                unbound = None
+                for idx in (oparg >> 4, oparg & 15):
+                    val = locals_[idx]
+                    if val is _HOST_UNBOUND:
+                        unbound = idx
+                        break
+                    stack.append(val)
+                if unbound is not None:
+                    pc = self._raise_to_handler(
+                        UnboundLocalError(str(self._varnames[unbound])),
+                        pc - 1,
+                        stack,
+                    )
+                continue
+            if opcode == _HOST_OP_STORE_FAST_LOAD_FAST:
+                locals_[oparg >> 4] = stack.pop()
+                val = locals_[oparg & 15]
+                if val is _HOST_UNBOUND:
+                    pc = self._raise_to_handler(
+                        UnboundLocalError(str(self._varnames[oparg & 15])),
+                        pc - 1,
+                        stack,
+                    )
+                    continue
+                stack.append(val)
+                continue
+            if opcode == _HOST_OP_STORE_FAST_STORE_FAST:
+                locals_[oparg >> 4] = stack.pop()
+                locals_[oparg & 15] = stack.pop()
+                continue
+            if opcode == _HOST_OP_POP_JUMP_IF_NONE:
+                if stack.pop() is None:
+                    pc = pc + _host_jump_n_cache(opcode) + oparg
+                continue
+            if opcode == _HOST_OP_POP_JUMP_IF_NOT_NONE:
+                if stack.pop() is not None:
+                    pc = pc + _host_jump_n_cache(opcode) + oparg
+                continue
+            if opcode == _HOST_OP_LIST_EXTEND:
+                src = stack.pop()
+                lst = stack[-oparg]
+                lst.extend(src)  # type: ignore[union-attr]
+                continue
+            if opcode == _HOST_OP_SET_UPDATE:
+                src = stack.pop()
+                st = stack[-oparg]
+                st.update(src)  # type: ignore[union-attr]
+                continue
+            if opcode == _HOST_OP_DICT_UPDATE:
+                src = stack.pop()
+                dst = stack[-oparg]
+                dst.update(src)  # type: ignore[union-attr]
+                continue
+            if opcode == _HOST_OP_DICT_MERGE:
+                # `f(**a, **b)`: like DICT_UPDATE, but a repeated keyword is
+                # a TypeError (CPython: "got multiple values for keyword").
+                src = stack.pop()
+                dst = stack[-oparg]
+                for key in src:  # type: ignore[union-attr]
+                    if key in dst:  # type: ignore[operator]
+                        pc = self._raise_to_handler(
+                            TypeError(f"got multiple values for keyword argument {key!r}"),
+                            pc - 1,
+                            stack,
+                        )
+                        break
+                    dst[key] = src[key]  # type: ignore[index]
+                continue
+            if opcode == _HOST_OP_CALL_INTRINSIC_1:
+                if oparg != _HOST_INTRINSIC_LIST_TO_TUPLE:
+                    raise TypeError(
+                        f"host code-RAM interpreter: CALL_INTRINSIC_1 {oparg}"
+                    )
+                stack.append(tuple(stack.pop()))  # type: ignore[arg-type]
+                continue
+            if opcode == _HOST_OP_UNPACK_EX:
+                before = oparg & 0xFF
+                after = oparg >> 8
+                items = list(stack.pop())  # type: ignore[call-overload]
+                if len(items) < before + after:
+                    pc = self._raise_to_handler(
+                        ValueError(
+                            f"not enough values to unpack (expected at least "
+                            f"{before + after}, got {len(items)})"
+                        ),
+                        pc - 1,
+                        stack,
+                    )
+                    continue
+                middle = items[before:len(items) - after]
+                parts = items[:before] + [middle] + items[len(items) - after:]
+                stack.extend(reversed(parts))
+                continue
+            if opcode == _HOST_OP_CALL_FUNCTION_EX:
+                kwargs_obj = stack.pop()
+                callargs = stack.pop()
+                self_or_null = stack.pop()
+                fn = stack.pop()
+                if not callable(fn):
+                    raise TypeError(
+                        "host code-RAM interpreter: CALL_FUNCTION_EX of non-callable"
+                    )
+                kw = {} if kwargs_obj is _HOST_NULL else dict(kwargs_obj)  # type: ignore[call-overload]
+                pos = tuple(callargs)  # type: ignore[arg-type]
+                if self_or_null is not _HOST_NULL:
+                    pos = (self_or_null,) + pos
+                stack.append(fn(*pos, **{str(k): v for k, v in kw.items()}))
                 continue
             if opcode == _HOST_OP_SET_ADD:
                 val = stack.pop()
