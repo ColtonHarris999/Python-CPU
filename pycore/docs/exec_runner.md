@@ -65,16 +65,16 @@ the next, and the `boot` line in the report is the reset-to-harness cost.
   Result   PASS -- output matches CPython
   ...
                PyCore cycles    @100 MHz    CPython cycles  CPython time  PyCore/CPython
-  compile          6,271,880    62.72 ms          ~903,455      430.2 us            6.9x
-  run                 68,594    685.9 us           ~29,072       13.8 us            2.4x
-  total            6,340,474    63.40 ms          ~932,528      444.1 us            6.8x
+  compile         12,678,780   126.79 ms          ~754,448      359.3 us           16.8x
+  run                 90,906    909.1 us           ~32,862       15.6 us            2.8x
+  total           12,769,686   127.70 ms          ~787,311      374.9 us           16.2x
   PyCore detail
-    boot (reset -> harness entry)     3,307 cycles (+1,344 per phase mark, subtracted)
-    compile  241,136 bytecodes issued, 26.0 cycles/bytecode; excore 1 handoffs / 1,624 cycles
-             L1I hit 68.3%, L1D hit 94.6%
-    run      1,133 bytecodes issued, 60.5 cycles/bytecode; excore 26 handoffs / 41,802 cycles
-    compiled output                  182 code-RAM slots (CPython: 165 instructions, 321 code units with CACHE)
-    heap used                        compile 389,504 B (64% of free heap), run 5,568 B
+    boot (reset -> harness entry)     5,047 cycles (+1,824 per phase mark, subtracted)
+    compile  297,729 bytecodes issued, 42.6 cycles/bytecode; excore 1 handoffs / 2,549 cycles
+             L1I hit 67.0%, L1D hit 94.4%
+    run      1,147 bytecodes issued, 79.3 cycles/bytecode; excore 26 handoffs / 46,680 cycles
+    compiled output                  207 code-RAM slots (CPython: 165 instructions, 321 code units with CACHE)
+    heap used                        compile 430,400 B (3% of free heap), run 5,568 B
     ...
 ```
 

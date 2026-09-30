@@ -12,8 +12,8 @@
 //   * Code lives in a side array rather than past the 16 MB data window
 //     (0x0100_0000 is just above RAM_BYTES). Hex preload matches today's
 //     PROG_HEX / CODE_RAM_HEX plusargs.
-//   * DATA_LIMIT defaults to the 2 MB data map so out-of-range
-//     accesses still fault. String objects and the RF spill LIFO live in
+//   * DATA_LIMIT defaults to the 16 MB data window (PYCORE_DMEM_BYTES) so
+//     out-of-range accesses still fault. String objects and the RF spill LIFO live in
 //     this window.
 //
 // Timing: a request is captured the cycle `req_i` is high. `ack_o` pulses

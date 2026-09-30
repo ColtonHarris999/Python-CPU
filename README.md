@@ -67,8 +67,8 @@ fib(30): 832040
 ...
   Result   PASS -- output matches CPython
                PyCore cycles    @100 MHz    CPython cycles  CPython time  PyCore/CPython
-  compile          6,271,880    62.72 ms          ~903,455      430.2 us            6.9x
-  run                 68,594    685.9 us           ~29,072       13.8 us            2.4x
+  compile         12,678,780   126.79 ms          ~754,448      359.3 us           16.8x
+  run                 90,906    909.1 us           ~32,862       15.6 us            2.8x
 ```
 
 The **PyCore/CPython** column is a cycle ratio, not wall-clock time: it

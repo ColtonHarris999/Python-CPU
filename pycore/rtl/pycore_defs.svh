@@ -49,11 +49,11 @@ localparam int PYCORE_RAM_BEATS        = PYCORE_LINE_BYTES / (PYCORE_DMEM_DATA_W
 localparam logic [31:0] PYCORE_CODE_ADDR_BASE = 32'h0100_0000;
 localparam int PYCORE_L1I_HIT_CYCLES   = 1;
 localparam int PYCORE_L1D_HIT_CYCLES   = 1;
-// P2 local call, still in force with L1s present: the target table's
-// 8-cycle L2 hit blows MAX_CYCLES on cold-start fixtures. L1D covers
-// the hit path; record the real 8-cycle number in P9.
-localparam int PYCORE_L2_HIT_CYCLES    = 1;
-// P5: data window is 1 MB so string objects live on the ordinary heap.
+// L2 hit latency from the memory-system target table. An L1 miss that
+// hits L2 costs this many cycles before the line starts to return.
+localparam int PYCORE_L2_HIT_CYCLES    = 8;
+// 16 MB data window (DMEM_BLOCK_COUNT x 4 KB). String objects live on the
+// ordinary heap inside it.
 localparam int PYCORE_DMEM_BYTES       =
     PYCORE_DMEM_BLOCK_COUNT << PYCORE_BLOCK_SHIFT;
 localparam int PYCORE_CODC_ENTRIES     = 4;
