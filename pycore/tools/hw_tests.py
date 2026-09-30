@@ -293,8 +293,14 @@ class Runner:
         d = BUILD / t.name
         log = d / f"sim-{cfg.slug}.log"
         if t.kind == "make":
-            cmd = [
-                "make", t.target or "",
+            # prepare() already ran every generator in `needs`. Mark them
+            # up to date: a recipe that regenerated pycore/programs/*.hex
+            # mid-run raced the tests reading those files.
+            cmd = ["make"]
+            for need in t.needs:
+                cmd += ["-o", need]
+            cmd += [
+                t.target or "",
                 f"PYCORE_CACHE_EN={cfg.cache_en}",
                 f"PYCORE_MEM_LATENCY={cfg.latency}",
                 f"EXCORE_FW_HEX={self.fw_hex}",
