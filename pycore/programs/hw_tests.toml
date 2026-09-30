@@ -1,0 +1,550 @@
+# Hardware tests, grouped by what they check.
+#
+#   make test-<area>          run one area on the default memory config
+#   make test-hw              run every area
+#   make test-caching         the memory-system gate (see hw_tests.py)
+#   python3.14 pycore/tools/hw_tests.py --list [--area A]
+#
+# Each entry is one program run on the simulated hart. Fields:
+#   kind      run (default): build with host CPython, the hart must return
+#             what managed_entry() returns on the host
+#             trap: the hart must stop with trap code `trap`
+#             stdout: two-core console output must match img_<src>.stdout
+#             coderam: run with every function placed in code RAM
+#             container / container_boot / excore: prebuilt hex fixtures
+#             make: a hand-written Makefile recipe, `target`
+#   core      single (default) or twocore (hart + excore helper)
+#   src       program pycore/programs/img_<src>.py; `file` names any other
+#   cycles    MAX_CYCLES for the default config
+#   plusargs  extra simulator plusargs
+#   needs     make targets that generate the fixture first
+#   legacy    the old make target name, when it is not pycore-img-<name>
+
+# Integer and float arithmetic, comparisons, bitwise and unary ops, truthiness.
+[alu]
+bitwise-calls = { src = "bitwise_calls", cycles = 100_000 }
+to-bool = { src = "to_bool", cycles = 50_000 }
+to-bool-type-trap = { src = "to_bool_type_trap", cycles = 50_000 }
+to-bool-str = { src = "to_bool_str", cycles = 50_000 }
+to-bool-list-trap = { src = "to_bool_list_trap", cycles = 50_000 }
+unary-not = { src = "unary_not", cycles = 50_000 }
+unary-invert = { src = "unary_invert", cycles = 50_000 }
+unary-negative = { src = "unary_negative", cycles = 50_000 }
+unary-invert-float-trap = { kind = "trap", src = "unary_invert_float_trap", trap = 1, cycles = 50_000 }
+is-op = { src = "is_op", cycles = 50_000 }
+compare-op = { src = "compare_op", cycles = 50_000 }
+compare-op-type-trap = { kind = "trap", src = "compare_op_type_trap", trap = 1, cycles = 50_000 }
+to-bool-none = { src = "to_bool_none", cycles = 50_000 }
+to-bool-containers = { src = "to_bool_containers", cycles = 100_000 }
+bitwise-calls-two-core = { core = "twocore", src = "bitwise_calls", cycles = 100_000 }
+
+# String constants, compare, index, slice, methods, formatting, and string-heavy algorithms.
+[strings]
+slice-str = { src = "slice_str", cycles = 50_000 }
+slice-str-open = { src = "slice_str_open", cycles = 50_000 }
+slice-str-clamp = { src = "slice_str_clamp", cycles = 50_000 }
+slice-str-long = { src = "slice_str_long", cycles = 100_000 }
+slice-str-unicode = { src = "slice_str_unicode", cycles = 100_000 }
+slice-str-empty = { src = "slice_str_empty", cycles = 50_000 }
+slice-str-scan = { src = "slice_str_scan", cycles = 200_000 }
+slice-str-neg-trap = { src = "slice_str_neg_trap", cycles = 50_000 }
+slice-str-const = { src = "slice_str_const", cycles = 50_000 }
+slice-damerau = { src = "slice_damerau", cycles = 50_000 }
+str-eq-runtime-long = { src = "str_eq_runtime_long", cycles = 2_000_000 }
+str-consts = { src = "str_consts", cycles = 50_000 }
+string-ops = { src = "string_ops", cycles = 100_000 }
+list-repeat-jaro = { src = "list_repeat_jaro", cycles = 100_000 }
+list-concat-damerau = { src = "list_concat_damerau", cycles = 100_000 }
+str-eq = { src = "str_eq", cycles = 50_000 }
+str-lt = { src = "str_lt", cycles = 50_000 }
+format-simple = { src = "format_simple", cycles = 50_000 }
+convert-value = { src = "convert_value", cycles = 50_000 }
+convert-repr-str = { src = "convert_repr_str", cycles = 50_000 }
+build-string = { src = "build_string", cycles = 50_000 }
+str-subscr = { src = "str_subscr", cycles = 50_000 }
+str-subscr-long = { src = "str_subscr_long", cycles = 50_000 }
+str-subscr-unicode = { src = "str_subscr_unicode", cycles = 50_000 }
+str-subscr-loop = { src = "str_subscr_loop", cycles = 100_000 }
+str-subscr-oob-trap = { kind = "trap", src = "str_subscr_oob_trap", trap = 7, cycles = 50_000 }
+str-subscr-char-oob-trap = { kind = "trap", src = "str_subscr_char_oob_trap", trap = 7, cycles = 50_000 }
+str-dict-key-runtime = { src = "str_dict_key_runtime", cycles = 100_000 }
+str-dict-key-runtime-del = { src = "str_dict_key_runtime_del", cycles = 100_000 }
+jaro-window = { src = "jaro_window", cycles = 100_000 }
+str-methods = { src = "str_methods", cycles = 150_000 }
+str-search-methods = { src = "str_search_methods", cycles = 200_000 }
+str-p5e-batch2 = { src = "str_p5e_batch2", cycles = 300_000 }
+str-p5e-batch3 = { src = "str_p5e_batch3", cycles = 400_000 }
+str-consts-two-core = { core = "twocore", src = "str_consts", cycles = 50_000 }
+string-ops-two-core = { core = "twocore", src = "string_ops", cycles = 100_000 }
+
+# Lists, tuples, dicts and sets: build, index, store, delete, methods, unpacking.
+[containers]
+slice-list-trap = { kind = "trap", src = "slice_list_trap", trap = 1, cycles = 50_000 }
+containers = { src = "containers", cycles = 50_000 }
+unpack-tuple = { src = "unpack_tuple", cycles = 50_000 }
+unpack-list = { src = "unpack_list", cycles = 50_000 }
+unpack-len-trap = { kind = "trap", src = "unpack_len_trap", trap = 1, cycles = 50_000 }
+unpack-ex = { src = "unpack_ex", cycles = 50_000 }
+list-to-tuple = { core = "twocore", src = "list_to_tuple", cycles = 100_000 }
+list-repeat = { src = "list_repeat", cycles = 100_000 }
+list-repeat-type-trap = { src = "list_repeat_type_trap", cycles = 50_000 }
+list-concat = { src = "list_concat", cycles = 100_000 }
+list-concat-type-trap = { kind = "trap", src = "list_concat_type_trap", trap = 1, cycles = 50_000 }
+list-comp-basic = { core = "twocore", src = "list_comp_basic", cycles = 400_000 }
+list-comp-fast-clear = { core = "twocore", src = "list_comp_fast_clear", cycles = 400_000 }
+list-del-last-only = { src = "list_del_last_only", cycles = 50_000 }
+list-contains-simple = { src = "list_contains_simple", cycles = 50_000 }
+list-contains-types = { src = "list_contains_types", cycles = 50_000 }
+tuple-contains = { src = "tuple_contains", cycles = 50_000 }
+dict-contains = { src = "dict_contains", cycles = 50_000 }
+list-del-contains-call = { src = "list_del_contains_call", cycles = 100_000 }
+list-del-oob = { kind = "trap", src = "list_del_oob", trap = 7, cycles = 50_000 }
+list-del-tuple-trap = { kind = "trap", src = "list_del_tuple_trap", trap = 1, cycles = 50_000 }
+# Same-tag dict delete is on-pycore (tombstone); no TYPE trap despite the name.
+dict-del-trap = { src = "dict_del_trap", cycles = 50_000 }
+dict-store-lookup = { src = "dict_store_lookup", cycles = 50_000 }
+dict-overwrite = { src = "dict_overwrite", cycles = 50_000 }
+dict-del-simple = { src = "dict_del_simple", cycles = 50_000 }
+dict-del-then-insert = { src = "dict_del_then_insert", cycles = 50_000 }
+dict-hash-neg1 = { src = "dict_hash_neg1", cycles = 50_000 }
+dict-str-keys = { src = "dict_str_keys", cycles = 50_000 }
+dict-large-pycore = { src = "dict_large_pycore", cycles = 100_000 }
+dict-bool-int-collision = { src = "dict_bool_int_collision", cycles = 100_000 }
+dict-false-zero = { src = "dict_false_zero", cycles = 100_000 }
+dict-del-collision = { src = "dict_del_collision", cycles = 100_000 }
+dict-contains-collision = { src = "dict_contains_collision", cycles = 100_000 }
+set-build-simple = { src = "set_build_simple", cycles = 50_000 }
+set-add-contains = { src = "set_add_contains", cycles = 50_000 }
+set-bool-int = { src = "set_bool_int", cycles = 50_000 }
+set-hash-neg1 = { src = "set_hash_neg1", cycles = 50_000 }
+set-str = { src = "set_str", cycles = 50_000 }
+list-pop = { src = "list_pop", cycles = 100_000 }
+list-pop-empty = { src = "list_pop_empty", cycles = 100_000 }
+list-method-missing = { kind = "trap", src = "list_method_missing", trap = 15, cycles = 50_000 }
+list-methods = { core = "twocore", src = "list_methods", cycles = 300_000 }
+list-method-unbound = { core = "twocore", src = "list_method_unbound", cycles = 200_000 }
+dict-methods = { core = "twocore", src = "dict_methods", cycles = 400_000 }
+set-methods = { core = "twocore", src = "set_methods", cycles = 300_000 }
+containers-two-core = { core = "twocore", src = "containers", cycles = 50_000 }
+list-extend-two-core = { core = "twocore", src = "list_extend", cycles = 100_000 }
+list-extend-del-contains-two-core = { core = "twocore", src = "list_extend_del_contains", cycles = 100_000 }
+list-del-simple = { core = "twocore", src = "list_del_simple", cycles = 100_000 }
+list-del-first-last = { core = "twocore", src = "list_del_first_last", cycles = 100_000 }
+list-del-contains = { core = "twocore", src = "list_del_contains", cycles = 100_000 }
+list-del-nested = { core = "twocore", src = "list_del_nested", cycles = 100_000 }
+dict-mixed-ops = { core = "twocore", src = "dict_mixed_ops", cycles = 200_000 }
+set-update = { core = "twocore", src = "set_update", cycles = 100_000 }
+set-update-tuple = { core = "twocore", src = "set_update_tuple", cycles = 100_000 }
+map-add = { core = "twocore", src = "map_add", cycles = 150_000 }
+dict-update = { core = "twocore", src = "dict_update", cycles = 150_000 }
+dict-update-obj = { core = "twocore", src = "dict_update_obj", cycles = 200_000 }
+dict-merge = { core = "twocore", src = "dict_merge", cycles = 150_000 }
+container-build-index = { file = "list_build_index.py", cycles = 50_000 }
+container-store-subscr = { file = "list_store_subscr.py", cycles = 50_000 }
+container-dict-lookup = { file = "dict_build_lookup.py", cycles = 50_000 }
+container-dict-store = { file = "dict_store_subscr.py", cycles = 50_000 }
+container-list-empty = { file = "list_empty.py", cycles = 50_000 }
+container-dict-multi-pair = { file = "dict_multi_pair.py", cycles = 50_000 }
+container-dict-collision = { file = "dict_collision.py", cycles = 50_000 }
+container-dict-insert-new-key = { file = "dict_insert_new_key.py", cycles = 50_000 }
+container-dict-empty = { file = "dict_empty.py", cycles = 50_000 }
+container-list-nested = { file = "list_nested.py", cycles = 50_000 }
+container-tuple-index = { file = "tuple_index.py", cycles = 50_000 }
+container-tuple-empty = { kind = "container", hex = "pycore/programs/tuple_empty.hex", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=9" }
+container-list-oob-read = { kind = "trap", file = "list_oob_read.py", trap = 7, cycles = 50_000 }
+container-list-oob-write = { kind = "trap", file = "list_oob_write.py", trap = 7, cycles = 50_000 }
+container-dict-missing-key = { kind = "trap", file = "dict_missing_key.py", trap = 7, cycles = 50_000 }
+container-tuple-store-trap = { kind = "trap", file = "tuple_store_trap.py", trap = 1, cycles = 50_000 }
+# Load >= 2/3 / last-slot insert -> PY_TRAP_DICT_GROW (11), not MEM_FAULT.
+container-dict-full-insert = { kind = "trap", file = "dict_full_insert.py", trap = 11, cycles = 50_000 }
+container-list-append-fast = { kind = "container_boot", stem = "list_append_fast", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=17", needs = ["pycore-list-append-fixtures"] }
+container-list-extend-fast = { kind = "container_boot", stem = "list_extend_fast", plusargs = "+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=10", needs = ["pycore-list-extend-fixtures"] }
+container-list-extend-fast-tuple = { kind = "container_boot", stem = "list_extend_fast_tuple", plusargs = "+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=10", needs = ["pycore-list-extend-fixtures"] }
+container-list-extend-empty = { kind = "container_boot", stem = "list_extend_empty", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=42", needs = ["pycore-list-extend-fixtures"] }
+
+# Branches, jumps, EXTENDED_ARG, and for-loops over every iterable kind.
+[control-flow]
+extended-arg = { src = "extended_arg", cycles = 200_000 }
+branchy = { src = "branchy", cycles = 50_000 }
+pop-jump-if-none = { src = "pop_jump_if_none", cycles = 50_000 }
+for-iter = { src = "for_iter", cycles = 100_000 }
+for-iter-type-trap = { kind = "trap", src = "for_iter_type_trap", trap = 1, cycles = 50_000 }
+for-iter-nested = { src = "for_iter_nested", cycles = 100_000 }
+for-iter-edges = { src = "for_iter_edges", cycles = 100_000 }
+for-iter-branch = { src = "for_iter_branch", cycles = 100_000 }
+for-iter-mutate = { src = "for_iter_mutate", cycles = 100_000 }
+for-iter-mutate-visited = { src = "for_iter_mutate_visited", cycles = 100_000 }
+for-iter-rebind = { src = "for_iter_rebind", cycles = 100_000 }
+for-iter-delete = { core = "twocore", src = "for_iter_delete", cycles = 150_000 }
+for-iter-clear = { core = "twocore", src = "for_iter_clear", cycles = 150_000 }
+for-iter-subscr = { src = "for_iter_subscr", cycles = 100_000 }
+for-iter-build-tuple = { src = "for_iter_build_tuple", cycles = 100_000 }
+for-iter-range = { src = "for_iter_range", cycles = 100_000 }
+for-iter-range-bounds = { src = "for_iter_range_bounds", cycles = 150_000 }
+for-iter-range-step = { src = "for_iter_range_step", cycles = 100_000 }
+for-iter-range-empty = { src = "for_iter_range_empty", cycles = 100_000 }
+for-iter-range-negative-step = { src = "for_iter_range_negative_step", cycles = 100_000 }
+for-iter-range-type-trap = { kind = "trap", src = "for_iter_range_type_trap", trap = 1, cycles = 50_000 }
+for-iter-range-bool = { src = "for_iter_range_bool", cycles = 100_000 }
+for-iter-range-zero-step-trap = { kind = "trap", src = "for_iter_range_zero_step_trap", trap = 1, cycles = 50_000 }
+for-iter-str-short = { src = "for_iter_str_short", cycles = 100_000 }
+for-iter-str-empty = { src = "for_iter_str_empty", cycles = 100_000 }
+for-iter-str-long = { src = "for_iter_str_long", cycles = 150_000 }
+for-iter-str-unicode = { src = "for_iter_str_unicode", cycles = 100_000 }
+for-iter-str-branch = { src = "for_iter_str_branch", cycles = 100_000 }
+for-iter-str-type-trap = { kind = "trap", src = "for_iter_str_type_trap", trap = 1, cycles = 50_000 }
+for-iter-dict-keys = { src = "for_iter_dict_keys", cycles = 100_000 }
+for-iter-dict-empty = { src = "for_iter_dict_empty", cycles = 50_000 }
+for-iter-dict-delete = { kind = "trap", src = "for_iter_dict_delete", trap = 1, cycles = 100_000 }
+for-iter-dict-str-keys = { src = "for_iter_dict_str_keys", cycles = 150_000 }
+for-iter-set-basic = { src = "for_iter_set_basic", cycles = 150_000 }
+for-iter-set-empty = { src = "for_iter_set_empty", cycles = 100_000 }
+for-iter-set-type-trap = { kind = "trap", src = "for_iter_set_type_trap", trap = 1, cycles = 50_000 }
+for-iter-object-list = { src = "for_iter_object_list", cycles = 200_000 }
+for-iter-object-next = { src = "for_iter_object_next", cycles = 400_000 }
+for-iter-object-exhaust = { src = "for_iter_object_exhaust", cycles = 200_000 }
+for-iter-object-no-iter-trap = { kind = "trap", src = "for_iter_object_no_iter_trap", trap = 1, cycles = 100_000 }
+for-iter-object-nested = { src = "for_iter_object_nested", cycles = 400_000 }
+container-for-iter-end-for = { kind = "container", hex = "pycore/programs/for_iter_end_for.hex", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=7", needs = ["pycore-for-iter-fixtures"] }
+for-iter-object-raise-catch = { src = "for_iter_object_raise_catch", cycles = 400_000 }
+nop = { src = "nop", cycles = 50_000 }
+for-call-toplevel = { src = "for_call_toplevel", cycles = 100_000 }
+return-true = { src = "return_true", cycles = 50_000 }
+extended-arg-two-core = { core = "twocore", src = "extended_arg", cycles = 200_000 }
+branchy-two-core = { core = "twocore", src = "branchy", cycles = 50_000 }
+
+# Function calls: argument binding, defaults, *args / **kwargs, keywords, recursion.
+[calls]
+smoke = { src = "smoke", cycles = 50_000 }
+call-chain = { src = "call_chain", cycles = 50_000 }
+recursion = { src = "recursion", cycles = 500_000 }
+noncallable = { kind = "trap", src = "noncallable", trap = 6, cycles = 50_000 }
+bad-argc = { kind = "trap", src = "bad_argc", trap = 6, cycles = 50_000 }
+deep-callgraph = { src = "deep_callgraph", cycles = 400_000 }
+container-call-spike = { kind = "make", target = "pycore-img-container-call-spike" }
+default-arg = { src = "default_arg", cycles = 50_000 }
+default-arg-argc-trap = { kind = "trap", src = "default_arg_argc_trap", trap = 6, cycles = 50_000 }
+default-none = { src = "default_none", cycles = 50_000 }
+default-false-zero = { src = "default_false_zero", cycles = 50_000 }
+default-empty-tuple = { src = "default_empty_tuple", cycles = 50_000 }
+default-multi-zero-argc = { src = "default_multi_zero_argc", cycles = 50_000 }
+default-arg-too-many = { kind = "trap", src = "default_arg_too_many", trap = 6, cycles = 50_000 }
+default-kwonly-none = { src = "default_kwonly_none", cycles = 100_000 }
+default-partial-none = { src = "default_partial_none", cycles = 50_000 }
+default-call-ex-empty = { src = "default_call_ex_empty", cycles = 100_000 }
+default-nested = { src = "default_nested", cycles = 50_000 }
+varargs-pos-defaults = { src = "varargs_pos_defaults", cycles = 100_000 }
+call-kw = { src = "call_kw", cycles = 100_000 }
+call-kw-unexpected = { kind = "trap", src = "call_kw_unexpected", trap = 6, cycles = 50_000 }
+call-function-ex = { src = "call_function_ex", cycles = 100_000 }
+call-function-ex-kw = { src = "call_function_ex_kw", cycles = 100_000 }
+varargs-basic = { src = "varargs_basic", cycles = 100_000 }
+varargs-empty = { src = "varargs_empty", cycles = 100_000 }
+varargs-kwonly = { src = "varargs_kwonly", cycles = 100_000 }
+varargs-kwonly2 = { src = "varargs_kwonly2", cycles = 100_000 }
+varargs-kwonly2-partial = { src = "varargs_kwonly2_partial", cycles = 100_000 }
+varargs-ex-kw = { src = "varargs_ex_kw", cycles = 100_000 }
+varargs-call-ex = { src = "varargs_call_ex", cycles = 100_000 }
+varkw-basic = { src = "varkw_basic", cycles = 100_000 }
+varkw-empty = { src = "varkw_empty", cycles = 100_000 }
+varkw-only = { src = "varkw_only", cycles = 100_000 }
+varkw-and-varargs = { src = "varkw_and_varargs", cycles = 100_000 }
+varkw-call-ex = { src = "varkw_call_ex", cycles = 150_000 }
+varkw-posonly = { src = "varkw_posonly", cycles = 100_000 }
+posonly-kw-trap = { kind = "trap", src = "posonly_kw_trap", trap = 6, cycles = 50_000 }
+posonly-ok = { src = "posonly_ok", cycles = 100_000 }
+varkw-name-collision = { src = "varkw_name_collision", cycles = 100_000 }
+varkw-no-wipe = { src = "varkw_no_wipe", cycles = 100_000 }
+varkw-many = { src = "varkw_many", cycles = 150_000 }
+varkw-kwonly = { src = "varkw_kwonly", cycles = 100_000 }
+varkw-combo = { src = "varkw_combo", cycles = 150_000 }
+varkw-dup-trap = { kind = "trap", src = "varkw_dup_trap", trap = 6, cycles = 50_000 }
+varkw-kwonly-missing-trap = { kind = "trap", src = "varkw_kwonly_missing_trap", trap = 6, cycles = 50_000 }
+smoke-two-core = { core = "twocore", src = "smoke", cycles = 50_000 }
+call-chain-two-core = { core = "twocore", src = "call_chain", cycles = 50_000 }
+recursion-two-core = { core = "twocore", src = "recursion", cycles = 500_000 }
+noncallable-two-core = { kind = "trap", core = "twocore", src = "noncallable", trap = 6, cycles = 50_000 }
+bad-argc-two-core = { kind = "trap", core = "twocore", src = "bad_argc", trap = 6, cycles = 50_000 }
+deep-callgraph-two-core = { core = "twocore", src = "deep_callgraph", cycles = 400_000 }
+
+# Classes, instances, attributes, methods, and constructors.
+[objects]
+attr-basic = { src = "attr_basic", cycles = 50_000 }
+attr-overwrite = { src = "attr_overwrite", cycles = 50_000 }
+attr-many = { core = "twocore", src = "attr_many", cycles = 100_000 }
+attr-missing = { kind = "trap", src = "attr_missing", trap = 15, cycles = 50_000 }
+attr-type-trap = { kind = "trap", src = "attr_type_trap", trap = 1, cycles = 50_000 }
+attr-del = { kind = "trap", src = "attr_del", trap = 15, cycles = 50_000 }
+attr-del-reinsert = { src = "attr_del_reinsert", cycles = 50_000 }
+attr-shadow = { src = "attr_shadow", cycles = 50_000 }
+attr-mro = { src = "attr_mro", cycles = 50_000 }
+attr-dunder-dict = { src = "attr_dunder_dict", cycles = 50_000 }
+attr-dunder-class = { src = "attr_dunder_class", cycles = 50_000 }
+attr-dunder-base = { src = "attr_dunder_base", cycles = 50_000 }
+attr-dunder-store-trap = { kind = "trap", src = "attr_dunder_store_trap", trap = 1, cycles = 50_000 }
+attr-dunder-del-trap = { kind = "trap", src = "attr_dunder_del_trap", trap = 1, cycles = 50_000 }
+firmware-attr-helpers = { src = "firmware_attr_helpers", cycles = 200_000 }
+method-call = { src = "method_call", cycles = 50_000 }
+method-nested = { src = "method_nested", cycles = 100_000 }
+ctor-noinit = { src = "ctor_noinit", cycles = 50_000 }
+ctor-init = { src = "ctor_init", cycles = 100_000 }
+method-default = { src = "method_default", cycles = 100_000 }
+varkw-method = { src = "varkw_method", cycles = 150_000 }
+method-call-kw = { src = "method_call_kw", cycles = 100_000 }
+bound-method-obj = { src = "bound_method_obj", cycles = 100_000 }
+class-simple = { src = "class_simple", cycles = 100_000 }
+class-const = { src = "class_const", cycles = 100_000 }
+staticmethod = { src = "staticmethod", cycles = 100_000 }
+class-two-instances = { src = "class_two_instances", cycles = 100_000 }
+
+# Locals, globals, builtins lookup, superinstruction loads and stores.
+[variables]
+undef-global = { kind = "trap", src = "undef_global", trap = 7, cycles = 50_000 }
+globals-accum = { src = "globals_accum", cycles = 100_000 }
+copy = { src = "copy", cycles = 50_000 }
+swap = { src = "swap", cycles = 50_000 }
+delete-fast = { src = "delete_fast", cycles = 50_000 }
+delete-fast-unbound = { kind = "trap", src = "delete_fast_unbound", trap = 7, cycles = 50_000 }
+store-fast-load-fast = { src = "store_fast_load_fast", cycles = 50_000 }
+load-fast-load-fast = { src = "load_fast_load_fast", cycles = 50_000 }
+load-fast-borrow-load-fast-borrow = { src = "load_fast_borrow_load_fast_borrow", cycles = 50_000 }
+load-fast-and-clear = { src = "load_fast_and_clear", cycles = 50_000 }
+load-fast-and-clear-cleared = { kind = "trap", src = "load_fast_and_clear_cleared", trap = 7, cycles = 50_000 }
+load-fast-check = { src = "load_fast_check", cycles = 50_000 }
+load-fast-check-unbound = { kind = "trap", src = "load_fast_check_unbound", trap = 7, cycles = 50_000 }
+load-global-namei = { src = "load_global_namei", cycles = 50_000 }
+builtins-fallback = { src = "builtins_fallback", cycles = 50_000 }
+builtins-shadow = { src = "builtins_shadow", cycles = 50_000 }
+builtins-null-bit = { src = "builtins_null_bit", cycles = 50_000 }
+load-name-builtin = { src = "load_name_builtin", cycles = 50_000 }
+undef-global-two-core = { kind = "trap", core = "twocore", src = "undef_global", trap = 7, cycles = 50_000 }
+globals-accum-two-core = { core = "twocore", src = "globals_accum", cycles = 100_000 }
+
+# raise, try / except / else / finally, exception types, cross-frame unwind.
+[exceptions]
+try-syntaxerror = { src = "try_syntaxerror", cycles = 50_000 }
+try-exc-types = { src = "try_exc_types", cycles = 100_000 }
+try-syntaxerror-msg = { src = "try_syntaxerror_msg", cycles = 50_000 }
+raise-syntaxerror-fatal = { kind = "trap", src = "raise_syntaxerror_fatal", trap = 17, cycles = 50_000 }
+try-exc-cross-frame-fatal = { src = "try_exc_cross_frame_fatal", cycles = 100_000 }
+try-stopiteration = { src = "try_stopiteration", cycles = 100_000 }
+try-stopiteration-nested = { src = "try_stopiteration_nested", cycles = 100_000 }
+raise-stopiteration-fatal = { kind = "trap", src = "raise_stopiteration_fatal", trap = 17, cycles = 50_000 }
+try-exception = { src = "try_exception", cycles = 100_000 }
+try-after-call = { src = "try_after_call", cycles = 100_000 }
+try-typeerror = { src = "try_typeerror", cycles = 100_000 }
+raise-typeerror-call = { src = "raise_typeerror_call", cycles = 100_000 }
+raise-instance = { src = "raise_instance", cycles = 100_000 }
+try-tuple-match = { src = "try_tuple_match", cycles = 100_000 }
+try-lookuperror = { src = "try_lookuperror", cycles = 100_000 }
+try-except-miss = { kind = "trap", src = "try_except_miss", trap = 17, cycles = 100_000 }
+bare-raise = { src = "bare_raise", cycles = 100_000 }
+bare-raise-no-active = { kind = "trap", src = "bare_raise_no_active", trap = 17, cycles = 50_000 }
+try-except-else = { src = "try_except_else", cycles = 100_000 }
+try-finally = { src = "try_finally", cycles = 150_000 }
+try-except-as = { src = "try_except_as", cycles = 100_000 }
+try-callee-unhandled = { kind = "trap", src = "try_callee_unhandled", trap = 17, cycles = 100_000 }
+fw-next-exhausted = { src = "fw_next_exhausted", cycles = 200_000 }
+exc-args = { src = "exc_args", cycles = 100_000 }
+raise-varargs = { kind = "trap", src = "raise_varargs", trap = 1, cycles = 50_000 }
+raise-after-call-loop = { src = "raise_after_call_loop", cycles = 400_000 }
+
+# ROM builtins (len, int, str, ord, chr, max, sorted, print, ...) on the hart.
+[builtins]
+helper-containers = { src = "helper_containers", cycles = 100_000 }
+algo-sort = { src = "algo_sort", cycles = 200_000 }
+sorted-str = { core = "twocore", src = "sorted_str", cycles = 100_000 }
+fw-range-zero-step = { src = "fw_range_zero_step", cycles = 200_000 }
+fw-pow-neg-mod = { src = "fw_pow_neg_mod", cycles = 200_000 }
+builtin-max = { src = "builtin_max", cycles = 50_000 }
+builtin-len-list = { src = "builtin_len_list", cycles = 50_000 }
+builtin-len-long-str = { src = "builtin_len_long_str", cycles = 50_000 }
+builtin-len-range = { src = "builtin_len_range", cycles = 50_000 }
+builtin-len-empty-range = { src = "builtin_len_empty_range", cycles = 50_000 }
+builtin-len-obj = { src = "builtin_len_obj", cycles = 100_000 }
+builtin-len-obj-missing = { kind = "trap", src = "builtin_len_obj_missing", trap = 15, cycles = 50_000 }
+builtin-ord = { src = "builtin_ord", cycles = 50_000 }
+builtin-chr = { src = "builtin_chr", cycles = 50_000 }
+builtin-ord-unicode = { src = "builtin_ord_unicode", cycles = 100_000 }
+builtin-ord-scan = { src = "builtin_ord_scan", cycles = 100_000 }
+builtin-ord-len-trap = { kind = "trap", src = "builtin_ord_len_trap", trap = 1, cycles = 50_000 }
+builtin-ord-type-trap = { kind = "trap", src = "builtin_ord_type_trap", trap = 1, cycles = 50_000 }
+builtin-chr-range-trap = { kind = "trap", src = "builtin_chr_range_trap", trap = 1, cycles = 50_000 }
+builtin-chr-surrogate-trap = { src = "builtin_chr_surrogate_trap", cycles = 50_000 }
+builtin-int = { src = "builtin_int", cycles = 50_000 }
+builtin-int-type-trap = { kind = "trap", src = "builtin_int_type_trap", trap = 1, cycles = 50_000 }
+builtin-int-float = { src = "builtin_int_float", cycles = 50_000 }
+builtin-max-float = { src = "builtin_max_float", cycles = 50_000 }
+builtin-str = { src = "builtin_str", cycles = 50_000 }
+builtin-str-type-trap = { kind = "trap", src = "builtin_str_type_trap", trap = 1, cycles = 50_000 }
+firmware-rom-subset = { src = "firmware_rom_subset", cycles = 200_000 }
+firmware-iterators = { core = "twocore", src = "firmware_iterators", cycles = 500_000 }
+firmware-wave3a = { src = "firmware_wave3a", cycles = 200_000 }
+firmware-wave3-strings = { src = "firmware_wave3_strings", cycles = 200_000 }
+firmware-wave3-pow = { src = "firmware_wave3_pow", cycles = 200_000 }
+firmware-wave3-containers = { core = "twocore", src = "firmware_wave3_containers", cycles = 500_000 }
+firmware-sorted-kw = { core = "twocore", src = "firmware_sorted_kw", cycles = 500_000 }
+firmware-filter-pred = { core = "twocore", src = "firmware_filter_pred", cycles = 500_000 }
+firmware-isinstance = { src = "firmware_isinstance", cycles = 200_000 }
+firmware-tuple-empty = { src = "firmware_tuple_empty", cycles = 100_000 }
+firmware-min-varargs = { src = "firmware_min_varargs", cycles = 200_000 }
+print-empty = { kind = "stdout", core = "twocore", src = "print_empty", cycles = 200_000 }
+print-basic = { kind = "stdout", core = "twocore", src = "print_basic", cycles = 200_000 }
+print-sep-end = { kind = "stdout", core = "twocore", src = "print_sep_end", cycles = 200_000 }
+print-end-only = { kind = "stdout", core = "twocore", src = "print_end_only", cycles = 200_000 }
+print-none-sep = { kind = "stdout", core = "twocore", src = "print_none_sep", cycles = 200_000 }
+print-many = { kind = "stdout", core = "twocore", src = "print_many", cycles = 300_000 }
+print-star = { kind = "stdout", core = "twocore", src = "print_star", cycles = 300_000 }
+print-star-kw = { kind = "stdout", core = "twocore", src = "print_star_kw", cycles = 300_000 }
+print-neg = { kind = "stdout", core = "twocore", src = "print_neg", cycles = 200_000 }
+print-bools = { kind = "stdout", core = "twocore", src = "print_bools", cycles = 200_000 }
+print-type-trap = { kind = "trap", core = "twocore", src = "print_type_trap", trap = 1, cycles = 200_000 }
+helper-containers-two-core = { core = "twocore", src = "helper_containers", cycles = 100_000 }
+algo-sort-two-core = { core = "twocore", src = "algo_sort", cycles = 200_000 }
+
+# Heap and code-RAM marks, register-file spill / refill, large frames.
+[memory]
+code-ram-call-rom = { src = "code_ram_call", cycles = 100_000 }
+code-ram-call = { kind = "coderam", src = "code_ram_call", cycles = 100_000 }
+heap-mark-release = { src = "heap_mark_release", cycles = 100_000 }
+code-mark-release = { src = "code_mark_release", cycles = 50_000 }
+heap-release-stale-trap = { kind = "trap", src = "heap_release_stale_trap", trap = 7, cycles = 50_000 }
+heap-release-below-base-trap = { kind = "trap", src = "heap_release_below_base_trap", trap = 7, cycles = 50_000 }
+code-release-stale-trap = { kind = "trap", src = "code_release_stale_trap", trap = 7, cycles = 50_000 }
+heap-mark-argc-trap = { kind = "trap", src = "heap_mark_argc_trap", trap = 6, cycles = 50_000 }
+code-alloc-oom-trap = { kind = "trap", src = "code_alloc_oom_trap", trap = 7, cycles = 50_000 }
+code-write-floor-trap = { kind = "trap", src = "code_write_floor_trap", trap = 7, cycles = 50_000 }
+locals-40-uninit = { kind = "trap", src = "locals_40_uninit", trap = 7, cycles = 100_000 }
+locals-64 = { src = "locals_64", cycles = 100_000 }
+rf-deep-recursion = { src = "rf_deep_recursion", cycles = 8_000_000 }
+rf-spill-refill = { src = "rf_spill_refill", cycles = 2_000_000 }
+rf-thrash = { src = "rf_thrash", cycles = 4_000_000, plusargs = "+CHECK_RF_SPILL_COUNT=33" }
+rf-window-too-big-trap = { kind = "trap", src = "rf_window_too_big_trap", trap = 6, cycles = 100_000 }
+rf-spill-oom-trap = { kind = "trap", src = "rf_spill_oom_trap", trap = 7, cycles = 2_000_000 }
+align-mask = { src = "align_mask", cycles = 50_000 }
+locals-40-uninit-two-core = { kind = "trap", core = "twocore", src = "locals_40_uninit", trap = 7, cycles = 100_000 }
+locals-64-two-core = { core = "twocore", src = "locals_64", cycles = 100_000 }
+container-list-oom = { kind = "container", hex = "pycore/programs/list_oom.hex", plusargs = "+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7 +HEAP_INIT_PTR=15728540" }
+
+# The helper core: list / dict / set growth and other recoverable traps.
+[excore]
+for-iter-grow = { core = "twocore", src = "for_iter_grow", cycles = 150_000 }
+for-iter-dict-grow = { core = "twocore", src = "for_iter_dict_grow", cycles = 200_000 }
+dict-grow-fatal = { kind = "trap", src = "dict_grow_fatal", trap = 11, cycles = 50_000 }
+set-grow-fatal = { kind = "trap", src = "set_grow_fatal", trap = 13, cycles = 50_000 }
+attr-grow-global = { core = "twocore", src = "attr_grow_global", cycles = 200_000 }
+seed-grow-global = { core = "twocore", src = "seed_grow_global", cycles = 200_000 }
+allocator-list = { core = "twocore", file = "allocator_list.py", cycles = 30_000_000 }
+compile-store-name-grow-loop-two-core = { core = "twocore", src = "compile_store_name_grow_loop", cycles = 40_000_000 }
+list-del-shift-excore = { core = "twocore", src = "list_del_shift_excore", cycles = 100_000 }
+dict-grow-basic = { core = "twocore", src = "dict_grow_basic", cycles = 100_000 }
+dict-grow-large = { core = "twocore", src = "dict_grow_large", cycles = 200_000 }
+set-grow-basic = { core = "twocore", src = "set_grow_basic", cycles = 100_000 }
+container-list-append-full-fatal = { kind = "container", hex = "pycore/programs/list_append_full_fatal.hex", plusargs = "+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=9" }
+container-list-extend-full-fatal = { kind = "container", hex = "pycore/programs/list_extend_full_fatal.hex", plusargs = "+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=10" }
+container-list-extend-type-fatal = { kind = "container", hex = "pycore/programs/list_extend_type_fatal.hex", plusargs = "+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=1" }
+excore-grow-from-zero = { kind = "excore", core = "twocore", stem = "grow_from_zero", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=55 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=20000", needs = ["pycore-excore-integration-fixtures"] }
+excore-fast-path-no-trap = { kind = "excore", core = "twocore", stem = "fast_path_no_trap", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=9 +EXPECTED_TRAP_REQ_COUNT=0", needs = ["pycore-excore-integration-fixtures"] }
+excore-grow-oom-fatal = { kind = "make", core = "twocore", target = "pycore-excore-grow-oom-fatal", needs = ["pycore-excore-integration-fixtures"] }
+excore-alias-stability = { kind = "excore", core = "twocore", stem = "alias_stability", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=30 +EXPECTED_TRAP_REQ_COUNT=1", needs = ["pycore-excore-integration-fixtures"] }
+excore-mixed-tags-preserved = { kind = "excore", core = "twocore", stem = "mixed_tags_preserved", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=1677 +EXPECTED_TRAP_REQ_COUNT=1", needs = ["pycore-excore-integration-fixtures"] }
+excore-grow-repeated = { kind = "excore", core = "twocore", stem = "grow_repeated", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=3850 +EXPECTED_TRAP_REQ_COUNT=3 +MAX_CYCLES=20000", needs = ["pycore-excore-integration-fixtures"] }
+excore-append-across-call = { kind = "excore", core = "twocore", stem = "append_across_call", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=77 +EXPECTED_TRAP_REQ_COUNT=1", needs = ["pycore-excore-integration-fixtures"] }
+excore-disabled = { kind = "make", target = "pycore-excore-disabled", needs = ["pycore-excore-integration-fixtures"] }
+excore-extend-grow-list = { kind = "excore", core = "twocore", stem = "extend_grow_list", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=6 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=50000", needs = ["pycore-excore-integration-fixtures"] }
+excore-extend-grow-tuple = { kind = "excore", core = "twocore", stem = "extend_grow_tuple", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=60 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=50000", needs = ["pycore-excore-integration-fixtures"] }
+excore-extend-fast-no-trap = { kind = "excore", core = "twocore", stem = "extend_fast_no_trap", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=5 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=50000", needs = ["pycore-excore-integration-fixtures"] }
+excore-extend-empty-noop = { kind = "excore", core = "twocore", stem = "extend_empty_noop", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=7 +EXPECTED_TRAP_REQ_COUNT=0", needs = ["pycore-excore-integration-fixtures"] }
+excore-extend-self = { kind = "excore", core = "twocore", stem = "extend_self", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=60 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=50000", needs = ["pycore-excore-integration-fixtures"] }
+excore-extend-mixed-tags = { kind = "excore", core = "twocore", stem = "extend_mixed_tags", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=1677 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=50000", needs = ["pycore-excore-integration-fixtures"] }
+excore-extend-grow-to-fit = { kind = "excore", core = "twocore", stem = "extend_grow_to_fit", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=146 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=100000", needs = ["pycore-excore-integration-fixtures"] }
+excore-extend-oom-fatal = { kind = "make", core = "twocore", target = "pycore-excore-extend-oom-fatal", needs = ["pycore-excore-integration-fixtures"] }
+excore-extend-across-call = { kind = "excore", core = "twocore", stem = "extend_across_call", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=88 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=50000", needs = ["pycore-excore-integration-fixtures"] }
+excore-extend-disabled = { kind = "make", target = "pycore-excore-extend-disabled", needs = ["pycore-excore-integration-fixtures"] }
+
+# The on-device compiler (lexer, parser, symtab, codegen, compile) and exec / eval.
+[compiler]
+exec-code-basic = { src = "exec_code_basic", cycles = 50_000, caching = true }
+exec-code-globals-rw = { src = "exec_code_globals_rw", cycles = 50_000 }
+exec-code-returns-none = { src = "exec_code_returns_none", cycles = 50_000 }
+exec-code-nested = { src = "exec_code_nested", cycles = 50_000 }
+eval-code-expr = { src = "eval_code_expr", cycles = 50_000 }
+exec-bad-arg-trap = { kind = "trap", src = "exec_bad_arg_trap", trap = 6, cycles = 50_000 }
+exec-globals-dict = { src = "exec_globals_dict", cycles = 100_000 }
+exec-globals-read = { src = "exec_globals_read", cycles = 100_000 }
+exec-globals-restore = { src = "exec_globals_restore", cycles = 100_000 }
+exec-globals-nested = { src = "exec_globals_nested", cycles = 100_000 }
+exec-globals-type-trap = { kind = "trap", src = "exec_globals_type_trap", trap = 1, cycles = 50_000 }
+code-new-call = { src = "code_new_call", cycles = 100_000, caching = true }
+code-emit-then-call = { src = "code_emit_then_call", cycles = 100_000 }
+code-new-badfield-trap = { kind = "trap", src = "code_new_badfield_trap", trap = 1, cycles = 50_000 }
+code-kind-tags = { src = "code_kind_tags", cycles = 50_000 }
+pyc-package-call = { src = "pyc_package_call", cycles = 100_000 }
+lexer-count = { src = "lexer_count", cycles = 4_000_000, caching = true }
+parser-tiny-expr = { src = "parser_tiny_expr", cycles = 4_000_000 }
+compile-deep-nesting = { src = "compile_deep_nesting", cycles = 20_000_000, plusargs = "+CHECK_RF_SPILL_COUNT=0" }
+symtab-locals = { src = "symtab_locals", cycles = 16_000_000 }
+symtab-closure = { src = "symtab_closure", cycles = 16_000_000 }
+codegen-t1-expr = { src = "codegen_t1_expr", cycles = 8_000_000 }
+compile-eval-expr = { src = "compile_eval_expr", cycles = 40_000_000, caching = true }
+compile-mode-trap = { src = "compile_mode_trap", cycles = 1_000_000 }
+compile-reject-import = { src = "compile_reject_import", cycles = 4_000_000 }
+compile-reject-closure = { src = "compile_reject_closure", cycles = 40_000_000 }
+compile-closure = { src = "compile_closure", cycles = 40_000_000 }
+compile-exec-roundtrip = { src = "compile_exec_roundtrip", cycles = 40_000_000 }
+compile-kwargs = { src = "compile_kwargs", cycles = 40_000_000 }
+compile-reentrant = { src = "compile_reentrant", cycles = 40_000_000 }
+compile-ns-inherit = { src = "compile_ns_inherit", cycles = 2_000_000 }
+compile-reject-locals = { src = "compile_reject_locals", cycles = 80_000_000 }
+compile-repeat = { src = "compile_repeat", cycles = 80_000_000 }
+compile-release-realloc = { src = "compile_release_realloc", cycles = 40_000_000 }
+compile-try-except = { src = "compile_try_except", cycles = 40_000_000, caching = true }
+compile-try-else = { src = "compile_try_else", cycles = 40_000_000 }
+compile-try-finally = { src = "compile_try_finally", cycles = 40_000_000 }
+compile-raise = { src = "compile_raise", cycles = 40_000_000 }
+compile-str-slice = { src = "compile_str_slice", cycles = 40_000_000 }
+compile-lambda = { src = "compile_lambda", cycles = 40_000_000 }
+compile-assert = { src = "compile_assert", cycles = 40_000_000 }
+compile-decorator = { src = "compile_decorator", cycles = 40_000_000 }
+compile-fstring = { src = "compile_fstring", cycles = 40_000_000 }
+compile-const-pool = { src = "compile_const_pool", cycles = 40_000_000 }
+eval-str-direct = { src = "eval_str_direct", cycles = 8_000_000 }
+eval-str-long = { src = "eval_str_long", cycles = 8_000_000 }
+exec-str-direct = { src = "exec_str_direct", cycles = 8_000_000 }
+bios-exec = { src = "bios_exec", cycles = 40_000_000 }
+code-new-call-two-core = { core = "twocore", src = "code_new_call", cycles = 100_000 }
+code-kind-tags-two-core = { core = "twocore", src = "code_kind_tags", cycles = 50_000 }
+pyc-package-call-two-core = { core = "twocore", src = "pyc_package_call", cycles = 100_000 }
+lexer-count-two-core = { core = "twocore", src = "lexer_count", cycles = 4_000_000 }
+parser-tiny-expr-two-core = { core = "twocore", src = "parser_tiny_expr", cycles = 4_000_000 }
+compile-deep-nesting-two-core = { core = "twocore", src = "compile_deep_nesting", cycles = 20_000_000, plusargs = "+CHECK_RF_SPILL_COUNT=0" }
+symtab-locals-two-core = { core = "twocore", src = "symtab_locals", cycles = 16_000_000 }
+symtab-closure-two-core = { core = "twocore", src = "symtab_closure", cycles = 16_000_000 }
+codegen-t1-expr-two-core = { core = "twocore", src = "codegen_t1_expr", cycles = 8_000_000 }
+compile-eval-expr-two-core = { core = "twocore", src = "compile_eval_expr", cycles = 40_000_000 }
+compile-mode-trap-two-core = { core = "twocore", src = "compile_mode_trap", cycles = 1_000_000 }
+compile-reject-import-two-core = { core = "twocore", src = "compile_reject_import", cycles = 4_000_000 }
+compile-reject-closure-two-core = { core = "twocore", src = "compile_reject_closure", cycles = 40_000_000 }
+compile-closure-two-core = { core = "twocore", src = "compile_closure", cycles = 40_000_000 }
+compile-exec-roundtrip-two-core = { core = "twocore", src = "compile_exec_roundtrip", cycles = 40_000_000 }
+compile-kwargs-two-core = { core = "twocore", src = "compile_kwargs", cycles = 40_000_000 }
+compile-grammar-two-core = { core = "twocore", src = "compile_grammar", cycles = 40_000_000 }
+startup-multiprogram-two-core = { core = "twocore", src = "startup_multiprogram", cycles = 60_000_000 }
+compile-reject-locals-two-core = { core = "twocore", src = "compile_reject_locals", cycles = 80_000_000 }
+compile-repeat-two-core = { core = "twocore", src = "compile_repeat", cycles = 80_000_000 }
+compile-release-realloc-two-core = { core = "twocore", src = "compile_release_realloc", cycles = 40_000_000 }
+compile-try-except-two-core = { core = "twocore", src = "compile_try_except", cycles = 40_000_000 }
+compile-try-else-two-core = { core = "twocore", src = "compile_try_else", cycles = 40_000_000 }
+compile-try-finally-two-core = { core = "twocore", src = "compile_try_finally", cycles = 40_000_000 }
+compile-raise-two-core = { core = "twocore", src = "compile_raise", cycles = 40_000_000 }
+compile-str-slice-two-core = { core = "twocore", src = "compile_str_slice", cycles = 40_000_000 }
+compile-list-comp-two-core = { core = "twocore", src = "compile_list_comp", cycles = 40_000_000 }
+compile-lambda-two-core = { core = "twocore", src = "compile_lambda", cycles = 40_000_000 }
+compile-assert-two-core = { core = "twocore", src = "compile_assert", cycles = 40_000_000 }
+compile-decorator-two-core = { core = "twocore", src = "compile_decorator", cycles = 40_000_000 }
+compile-fstring-two-core = { core = "twocore", src = "compile_fstring", cycles = 40_000_000 }
+compile-const-pool-two-core = { core = "twocore", src = "compile_const_pool", cycles = 40_000_000 }
+eval-str-direct-two-core = { core = "twocore", src = "eval_str_direct", cycles = 8_000_000 }
+eval-str-long-two-core = { core = "twocore", src = "eval_str_long", cycles = 8_000_000 }
+exec-str-direct-two-core = { core = "twocore", src = "exec_str_direct", cycles = 8_000_000 }
+bios-exec-two-core = { core = "twocore", src = "bios_exec", cycles = 40_000_000 }

@@ -13,7 +13,7 @@ This report covers engineering cleanup only. Language and feature work is in
 
 - Take one item per PR. Items marked **Depends** need the listed item first.
 - Most items change RTL, tools, or the `Makefile`, so the full CI hardware
-  suite runs. You need a green `all-tests`, including `gates`, before the
+  suite runs. You need a green `all-tests`, including `caching`, before the
   item is done. No Verilator? Then CI is your only check. Say so in the PR.
 - A pure move or rename should produce **byte-identical** images. Where an
   item says so, prove it by diffing `build/img_*/program.hex`, `dmem.hex`,
@@ -27,7 +27,7 @@ This report covers engineering cleanup only. Language and feature work is in
 
 | ID | Item | Size | Risk | Payoff |
 | --- | --- | --- | --- | --- |
-| [A1](#a1-replace-per-fixture-makefile-targets-with-a-manifest-and-one-runner) | Fixture manifest + one suite runner instead of ~460 Makefile targets | L | M | Very high |
+| [A1](#a1-replace-per-fixture-makefile-targets-with-a-manifest-and-one-runner) | Fixture manifest + one suite runner instead of ~460 Makefile targets (**done**) | L | M | Very high |
 | [A2](#a2-remove-string_hex-leftovers-and-the-41-_strhex-placeholders) | Remove `STRING_HEX` leftovers and 41 `_str.hex` placeholders | S | Low | Medium |
 | [A3](#a3-wire-up-or-delete-orphan-targets-and-programs) | Wire up or delete orphan targets and programs | S | Low | Low |
 | [A4](#a4-retire-boot_en0-hand-built-hex-fixtures) | Retire `BOOT_EN=0` hand-built hex fixtures | M | M | Medium |
@@ -56,7 +56,7 @@ This report covers engineering cleanup only. Language and feature work is in
 | [J2](#j2-print-the-full-64-bit-int) | `print()` the full 64-bit int | M | Low | Medium |
 
 **Suggested order.** Do the quick deletions first (A2, A3, B2, B3, D2, D3,
-F2, H2). Then do the harness work in sequence: C1, B1, A4, A5, A1, D1, H1.
+F2, H2). Then do the harness work in sequence: C1, B1, A4, A5, D1, H1.
 I1, J1, and J2 are independent of all of them.
 C2, C3, and C4 can run in parallel with the harness work. Leave D4 and D5
 for last, once CI is fast enough to iterate on RTL.
@@ -67,51 +67,19 @@ for last, once CI is fast enough to iterate on RTL.
 
 ### A1. Replace per-fixture Makefile targets with a manifest and one runner
 
-**Problem.** The `Makefile` is 3 252 lines (118 KB), and almost all of it
-describes test fixtures:
+**Done.** The ~490 hardware tests are data in `pycore/programs/hw_tests.toml`,
+grouped by area (`alu`, `strings`, `containers`, `control-flow`, `calls`,
+`objects`, `variables`, `exceptions`, `builtins`, `memory`, `excore`,
+`compiler`). `pycore/tools/hw_tests.py` runs them: it builds each image once
+into `build/hw/<name>/` and runs it under one or more memory configs. The
+`Makefile` went from 3,312 lines to about 680. `make test-<area>` runs an
+area, and the old `make pycore-img-<name>` names still work through pattern
+rules. The manifest was generated mechanically from the old `Makefile`, and
+the full set ran green before the targets were deleted. Five tests still
+need a hand-written recipe (`kind = "make"`).
 
-- 461 `pycore-img-*` targets, each a one-line `$(call …)`. Of these, 279
-  call `PYCORE_IMAGE_RUN`, 86 call `PYCORE_IMAGE_RUN_TWOCORE`, 60 call
-  `PYCORE_IMAGE_TRAP_RUN`, 14 call `PYCORE_EXCORE_RUN`, and the rest use
-  eight other variants.
-- Twelve `define` recipes that are near copies of each other: build an
-  image, then `awk` four fields out of `image.meta`, then run the simulator.
-  The `awk` block is pasted 17 times.
-- The suite lists (`pycore-img`, `pycore-img-two-core`, `pycore-container`,
-  `pycore-excore-system`) and a 200-line `.PHONY` list are kept by hand.
-  An earlier review already found two targets reachable from no suite
-  (A3).
-- The build-directory race fixed in `9018ea5` (two suites writing the same
-  `build/img_<name>/`) was only possible because every fixture is hand-wired.
-
-**Change.**
-
-1. Describe each fixture with its program. Either use a header pragma in
-   the `.py` file (the image builder already parses `# pycore-seed` pragmas,
-   see `parse_seed_pragmas`), or add one manifest file,
-   `pycore/programs/fixtures.toml`. A fixture record needs: program, suites
-   (`img`, `two-core`), `max_cycles`, the expectation (host golden, trap
-   code, or stdout file), and any extra plusargs.
-2. Add `pycore/tools/run_suite.py --suite img --jobs N [--filter GLOB]`. It
-   builds each image into `build/<suite>/<name>/`, runs the shared simulator
-   binary (`tools/ensure_sim.py`) with plusargs, and prints a pass/fail
-   table. It exits non-zero on any failure.
-3. Keep the `make` entry points that CI and `README.md` use (`pycore-img`,
-   `pycore-img-two-core`, `pycore-container`, `pycore-excore-system`,
-   `pycore-cache-transparency`, `pycore-mem-latency-sweep`) as thin wrappers.
-   Add `make pycore-fixture NAME=<name>` to run a single fixture.
-4. Generate the manifest **mechanically** from the current `Makefile` with a
-   throwaway script. Do not retype it.
-
-**Depends.** Build the runner on A5's shared driver.
-
-**Verify.** Before deleting any target, show that the runner executes the
-same set of (program, topology, `max_cycles`, expectation, extra plusargs)
-tuples as the old `Makefile`: dump both sets and diff them. Then CI
-`all-tests` must be green, with the same number of fixtures per job.
-
-**Risk.** Medium. CI job names and `README.md` depend on the wrapper target
-names, so keep those names.
+What is left belongs to A5: `hw_tests.py` is now a fourth copy of the
+image-build and plusarg plumbing.
 
 ### A2. Remove `STRING_HEX` leftovers and the 41 `_str.hex` placeholders
 
@@ -140,8 +108,6 @@ flag goes away with `preprocess.py`.
 - `pycore-img-allocator-bytes` is defined but in no suite. Its comment says
   the image build fails until `bytearray` / `int.from_bytes` exist
   (`planning/old/p5_review_followup.md` §5).
-- `pycore-allocator-host` only runs from `docker-python-tests`, not from
-  `make all-tests`.
 - `pycore/programs/mixed_arith.py` is referenced by nothing.
 
 **Change.** Delete `pycore-img-allocator-bytes` and keep
@@ -180,7 +146,7 @@ shared `tb_container` binary, each with its own copy of the same plumbing:
 
 | Runner | Where the plumbing lives |
 | --- | --- |
-| `make pycore-img-*` | 12 `define` recipes in the `Makefile`, which `awk` fields out of `image.meta` and spell out the plusargs |
+| `hw_tests.py` (A1) | Its own `_read_meta` and a plusarg builder per test kind (`Runner.plusargs`) |
 | `pycore_cli.py run` | `ENSURE_SIM` / `SIM_TWOCORE_BIN` constants (lines 56–58), `_parse_meta` (354), its own plusarg list (around 408) |
 | `pycore_exec.py` (`exec` / `shell`, PR #132) | The same two constants again (35–36), a second `_parse_meta` (204), and a second plusarg list (452–467) |
 
@@ -195,8 +161,7 @@ metadata plus options into plusargs; run the binary and return a parsed
 result (pass/trap/timeout, cycles, perf counters). Have
 `tb_container.sv` print its end-of-run facts as one machine-readable
 `RESULT key=value …` line, and parse only that. Port `pycore_cli.py run`
-and `pycore_exec.py` to the driver. A1's suite runner is then the third
-client instead of a third copy.
+and `pycore_exec.py` to the driver, then `hw_tests.py`.
 
 **Verify.** `test_pycore_exec.py` and `test_pycore_cli.py` green.
 `make run-file` and `make exec-file RUN_SOURCE=pycore/programs/demo_exec.py`
@@ -482,8 +447,8 @@ green:
 4. Once the families are modules, dispatch per family, so the 6-bit
    `container_op_r` does not have to grow.
 
-**Risk.** High, which is why this is incremental. Run
-`pycore-cache-transparency` and `pycore-mem-latency-sweep` on every step.
+**Risk.** High, which is why this is incremental. Run `make test-caching`
+on every step.
 
 **Depends.** H1 (a faster CI loop), D2, and D6 first. D6 matters
 because the testbench reads core internals by hierarchical name, and
@@ -650,12 +615,16 @@ Nothing in `pycore/docs/` contradicts `pycore.json`.
 ### H1. Build the CI image and simulators once
 
 **Problem.** Every job in `.github/workflows/all-tests.yml` calls
-`make docker-*`, and each of those starts with `docker build`. So seven
-parallel jobs build the same image. The `container`, `img`, and `gates`
-jobs each compile the single-core Verilator simulator from scratch, and
-`two-core` compiles the other. `gates` runs five serial full `pycore-img`
-passes (the `CACHE_EN` × `MEM_LATENCY` sweep) and needed its timeout raised
-to 180 minutes in `4d62c75`.
+`make docker-test-*`, and each of those starts with `docker build`. There
+are now 16 parallel jobs (one per hardware area, plus `host-tools`,
+`rtl-modules`, `compiler-vs-cpython`, and `caching`), so the image is built
+16 times and the simulators about 14 times. Each build is short (a job that
+compiles a simulator finished in about 90 s), but it is repeated work.
+
+The `caching` gate used to be five serial full passes (180-minute timeout).
+It now builds each image once, drops the pass that duplicated the default
+config, and runs the compiler area's cache-off arms on a marked sample
+(`hw_tests.py` docstring).
 
 **Change.**
 
@@ -663,7 +632,6 @@ to 180 minutes in `4d62c75`.
    GHA cache, or publish it to GHCR keyed on the `Dockerfile` hash.
 2. Build `sim_img` / `sim_img_twocore` once in a `build-sim` job, and hand
    them to the others with `actions/upload-artifact`.
-3. Turn `gates` into a matrix of the five (`CACHE_EN`, `MEM_LATENCY`) arms.
 
 **Verify.** Same jobs green. Wall time and total runner minutes go down.
 Put before/after numbers in the PR.
@@ -712,7 +680,7 @@ comparison on a comprehension-heavy program before and after.
 
 ## J. Hart gaps found by the compile suite
 
-`make pycore-compile-suite` compiles programs on the hart and compares
+`make test-compiler-vs-cpython` compiles programs on the hart and compares
 their output with CPython. It found four hart-side problems. The
 `DICT_GROW` pop count for `STORE_NAME` / `STORE_GLOBAL` and the stale
 `nlocals` after `RETURN` are fixed (`compile_limitations.md` §3.2). These two are open; the suite programs

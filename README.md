@@ -102,7 +102,7 @@ module level, `run` appends a call. Type annotations are stripped. Run
 This is the hardware-test path. It accepts a wider subset than the on-device
 compiler (module-level `class`, for example), and it exercises the hardware on
 exactly the bytecode CPython emits, including opcodes the on-device compiler
-does not emit yet. Every `make pycore-img-*` test uses it.
+does not emit yet. Every hardware test in `hw_tests.toml` uses it.
 
 ## What programs are allowed
 
@@ -260,31 +260,39 @@ make pycore-sim-img            # EXCORE_EN=0
 make pycore-sim-img-twocore    # EXCORE_EN=1
 ```
 
-### Grouped hardware suites
+### Tests, by what they check
+
+Every test target is named for what it checks. The hardware tests run one
+program each on the simulated hart and are listed by area in
+[`pycore/programs/hw_tests.toml`](pycore/programs/hw_tests.toml).
 
 ```bash
-make all-tests TEST_JOBS=4     # pycore + excore; TEST_JOBS default 2
-make pycore-container          # container fixtures (some still hand-built hex)
-make pycore-img                # single-core image-boot
-make pycore-excore-system      # two-core trap round-trips
-make pycore-img-two-core       # image-boot on the two-core top
-make excore-cpu-test
+make test-all                  # everything below; TEST_JOBS defaults to nproc
+make test-host                 # Python unit tests of the host tools and compiler
+make test-rtl-modules          # per-module RTL testbenches
+make test-hw                   # every hardware area
+make test-alu                  # one area: alu, strings, containers, control-flow,
+                               #   calls, objects, variables, exceptions, builtins,
+                               #   memory, excore, compiler
+make test-compiler-vs-cpython  # compile on the hart, run on the hart, diff CPython
+make test-caching              # memory-system gate: cache off at latency 1/4/30,
+                               #   cache on at latency 30
+make pycore-img-smoke          # one test by its old target name
+python3.14 pycore/tools/hw_tests.py --list --area calls   # what an area holds
+python3.14 pycore/tools/hw_tests.py 'str-*' --config 0,30 # by name, custom config
 ```
 
-Image-boot tests (`make pycore-img-*`) are the production path. Do not add
-new `BOOT_EN=0` hex fixtures or new uses of the deprecated `preprocess.py`
-(see `planning/cleanup_report.md` items A4 and C1).
+Add a hardware test by writing `pycore/programs/img_<name>.py` and one line
+in `hw_tests.toml` under the area it checks. Image-boot tests are the
+production path. Do not add new `BOOT_EN=0` hex fixtures or new uses of the
+deprecated `preprocess.py` (see `planning/cleanup_report.md` items A4 and C1).
 
 ### Docker equivalents
 
 ```bash
-make docker-python-tests
-make docker-rtl-unit
-make docker-container
-make docker-img
-make docker-two-core
-make docker-excore
-make docker-pycore-test
+make docker-test-host          # docker-test-<name> runs make test-<name>
+make docker-test-alu
+make docker-test-caching
 make docker-all-tests
 make docker-lint-file RUN_SOURCE=pycore/programs/example_sum_loop.py
 make docker-run-file  RUN_SOURCE=pycore/programs/demo_exec.py
@@ -298,12 +306,6 @@ make docker-all-tests DOCKER_BUILD_FLAGS=--network=host DOCKER_RUN_FLAGS=--netwo
 ```
 
 ---
-
-## PyCore quick reference
-
-```bash
-make pycore-test
-```
 
 ## excore quick reference
 
@@ -328,6 +330,5 @@ mailbox format, memory-ownership protocol, and full trap taxonomy.
 
 ```bash
 make excore-test                 # standalone excore (mocked mailbox)
-make pycore-excore-system         # pycore <-> excore integration (real traps)
-make pycore-img-two-core          # img_* differentials on the two-core top
+make test-excore                  # pycore <-> excore integration (real traps)
 ```

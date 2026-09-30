@@ -95,8 +95,10 @@ jobs:
           echo "No RTL, programs, tools, Makefile, or workflow files changed."
           echo "Hardware regression is skipped for this update."
 
-  python:
-    name: python
+  # Every job is named for what it checks. TEST_JOBS is left to default to
+  # the runner's CPU count (see the Makefile).
+  host-tools:
+    name: host-tools
     needs: changes
     if: needs.changes.outputs.hw == 'true'
     runs-on: ubuntu-latest
@@ -106,95 +108,72 @@ jobs:
         with:
           submodules: true
       - run: docker --version
-      - run: make docker-python-tests
+      - run: make docker-test-host
 
-  rtl-unit:
-    name: rtl-unit
+  rtl-modules:
+    name: rtl-modules
     needs: changes
     if: needs.changes.outputs.hw == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - run: make docker-rtl-unit
+      - run: make docker-test-rtl-modules
 
-  container:
-    name: container
+  # Hardware tests, one job per area of pycore/programs/hw_tests.toml. Each
+  # runs the default memory config (CACHE_EN=1, MEM_LATENCY=4).
+  hardware:
+    name: ${{ matrix.area }}
     needs: changes
     if: needs.changes.outputs.hw == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        area: [alu, strings, containers, control-flow, calls, objects,
+               variables, exceptions, builtins, memory, excore, compiler]
     steps:
       - uses: actions/checkout@v4
-      - run: make docker-container TEST_JOBS=2
+      - run: make docker-test-${{ matrix.area }}
 
-  img:
-    name: img
-    needs: changes
-    if: needs.changes.outputs.hw == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - run: make docker-img TEST_JOBS=2
-
-  two-core:
-    name: two-core
-    needs: changes
-    if: needs.changes.outputs.hw == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - run: make docker-two-core TEST_JOBS=2
-
-  # Device-compile suite: each program is compiled by the on-device
-  # compile(), run on the hart, and its output compared with host CPython
-  # 3.14 (pycore/tools/compile_suite.py). The img/two-core jobs test the
-  # hardware on CPython's bytecode; this job tests the firmware compiler's.
-  compile-suite:
-    name: compile-suite
+  # The on-device compiler's own output: each program in
+  # pycore/programs/compile_suite/ is compiled on the hart, run on the hart,
+  # and compared with CPython 3.14 (pycore/tools/compile_suite.py). The area
+  # jobs test the hardware on CPython's bytecode; this one tests the
+  # firmware compiler's.
+  compiler-vs-cpython:
+    name: compiler-vs-cpython
     needs: changes
     if: needs.changes.outputs.hw == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - run: make docker-compile-suite TEST_JOBS=2
+      - run: make docker-test-compiler-vs-cpython
 
-  excore:
-    name: excore
+  # The memory-system gate (memory_system_plan.md §6). The area jobs run one
+  # configuration; this one runs the others: cache off at latency 1, 4 and
+  # 30, and cache on at latency 30. A cache that changes a retired result,
+  # or a master that assumed single-cycle memory, fails only here -- the
+  # L2-to-RAM writeback bug fixed in #101 was invisible because CI never ran
+  # a second configuration. Each image is built once and reused across the
+  # four configs; see pycore/tools/hw_tests.py for which tests run where.
+  caching:
+    name: caching
     needs: changes
     if: needs.changes.outputs.hw == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - run: make docker-excore
-
-  # The architectural gates from memory_system_plan.md §6. Every other job
-  # runs one configuration (CACHE_EN=1, MEM_LATENCY=4); these run the image
-  # suite across the CACHE_EN 0-vs-1 transparency comparison and the
-  # MEM_LATENCY sweep. A cache that changes a retired result, or a master
-  # that assumed single-cycle memory, fails only here -- the L2-to-RAM
-  # writeback bug fixed in #101 was invisible precisely because CI never ran
-  # a second configuration. T5 compile() goldens at CACHE_EN=0 / LAT=30
-  # push the job past 90 minutes (one compile_closure is ~8.5M cycles).
-  gates:
-    name: gates
-    needs: changes
-    if: needs.changes.outputs.hw == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v4
-      - run: make docker-gates TEST_JOBS=2
+      - run: make docker-test-caching
 
   # Keep this job id/name so existing branch protection on "all-tests" still
   # matches. It is a gate over the path-filtered jobs, not a 3h monolith.
   all-tests:
     name: all-tests
-    needs: [changes, docs, python, rtl-unit, container, img, two-core, compile-suite, excore, gates]
+    needs: [changes, docs, host-tools, rtl-modules, hardware, compiler-vs-cpython, caching]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -222,10 +201,9 @@ jobs:
           if [ "${{ needs.changes.outputs.docs_only }}" = "true" ]; then
             test "${{ needs.docs.result }}" = "success"
           else
-            for r in "${{ needs.python.result }}" "${{ needs.rtl-unit.result }}" \
-                     "${{ needs.container.result }}" "${{ needs.img.result }}" \
-                     "${{ needs.two-core.result }}" "${{ needs.excore.result }}" \
-                     "${{ needs.gates.result }}"; do
+            for r in "${{ needs.host-tools.result }}" "${{ needs.rtl-modules.result }}" \
+                     "${{ needs.hardware.result }}" "${{ needs.compiler-vs-cpython.result }}" \
+                     "${{ needs.caching.result }}"; do
               test "$r" = "success"
             done
           fi
