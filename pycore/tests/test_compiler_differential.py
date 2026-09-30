@@ -475,7 +475,7 @@ class EmittedOpcodeGapTest(unittest.TestCase):
 class CompileSuiteHostTest(unittest.TestCase):
     """Every device-compile suite program matches CPython on the host stand-in.
 
-    ``make pycore-compile-suite`` runs these on the hart; this is the fast
+    ``make test-compiler-vs-cpython`` runs these on the hart; this is the fast
     pre-check, so a compiler regression fails the ``python`` CI job first.
     """
 

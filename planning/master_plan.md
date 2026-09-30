@@ -220,20 +220,23 @@ Do not move these without updating `encoding.py`, `pycore_defs.svh`,
 
 ## Test contract
 
-- Host: `make pycore-python-tests` (CI job `python`). Clone with
+- Host: `make test-host` (CI job `host-tools`). Clone with
   `git submodule update --init` so `vendor/pycpython` is present.
-- Device: `PYCORE_IMAGE_RUN` / plusargs into the one shared `tb_container`
-  binary per topology. Do not add per-fixture Verilator rebuilds.
-- Architectural gates: `make pycore-cache-transparency` and
-  `make pycore-mem-latency-sweep` must keep retired results identical.
-- **Device-compile suite** (`make pycore-compile-suite`, CI job
-  `compile-suite`). The programs in `pycore/programs/compile_suite/`
+- Device: every hardware test is a line in `pycore/programs/hw_tests.toml`,
+  under the area it checks; `make test-<area>` runs one area and CI runs one
+  job per area. They all share one `tb_container` binary per topology. Do
+  not add per-fixture Verilator rebuilds.
+- Architectural gate: `make test-caching` (CI job `caching`) must keep
+  retired results identical with the cache off at latency 1, 4 and 30 and
+  with the cache on at latency 30.
+- **Device-compile suite** (`make test-compiler-vs-cpython`, CI job
+  `compiler-vs-cpython`). The programs in `pycore/programs/compile_suite/`
   together cover the whole on-device compiler (every grammar tier and
   every emitted opcode family). Each is compiled **on the hart**, run on
   the hart, and its output compared with host CPython 3.14 compiling and
   running the same file. `CompileSuiteHostTest` runs the same programs on
-  the host stand-in as a fast pre-check. The ~460 host-compiled
-  `pycore-img-*` fixtures stay as the hardware tests. Add a program here
+  the host stand-in as a fast pre-check. The ~490 host-compiled
+  hardware tests in `hw_tests.toml` stay the hardware tests. Add a program here
   when the compiler learns a new construct. Its first hart run found a compiler
   bug the stand-in hid (no `POP_EXCEPT` when leaving a handler early), an
   `assert` call shape the hart rejects, an excore `DICT_GROW` pop-count

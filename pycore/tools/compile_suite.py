@@ -16,7 +16,7 @@ Usage::
 
     python3.14 pycore/tools/compile_suite.py            # all programs, 2 jobs
     python3.14 pycore/tools/compile_suite.py --jobs 4 cs_starred
-    make pycore-compile-suite TEST_JOBS=4
+    make test-compiler-vs-cpython TEST_JOBS=4
 """
 
 from __future__ import annotations

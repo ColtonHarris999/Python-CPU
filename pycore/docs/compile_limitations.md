@@ -32,7 +32,7 @@ sites, in list / tuple / set / dict displays, and in assignment and
 `for` targets. A peephole pass emits CPython's superinstructions and
 `is None` jumps. Differentials compare results, not `co_code`
 (`pycore/tests/test_compiler_differential.py`), and the device-compile
-suite (`make pycore-compile-suite`) runs a set of programs covering all
+suite (`make test-compiler-vs-cpython`) runs a set of programs covering all
 of it on the hart against CPython 3.14.
 
 Everything in the rest of this file is outside that set, or inside it
@@ -378,7 +378,7 @@ exceptions.
 
 ### 3.2 Still a runtime ceiling
 
-The device-compile suite (`make pycore-compile-suite`) found four
+The device-compile suite (`make test-compiler-vs-cpython`) found four
 hart-side problems that were not the compiler's:
 
 - **Handler depth after a call returned (fixed).** A raise places the
