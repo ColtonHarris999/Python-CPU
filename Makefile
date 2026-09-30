@@ -96,7 +96,7 @@ EXCORE_RTL_SRCS := \
 .PHONY: help lint-file pycore-preprocess run-file pycore-run-file exec-file shell \
 	all-tests pycore-test \
 	pycore-tag-decode pycore-exec pycore-type-pairs \
-	pycore-python-tests pycore-size-report pycore-mem pycore-cache-lru pycore-cache pycore-ram \
+	pycore-python-tests pycore-size-report pycore-compile-suite pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-l1d-handoff pycore-fetch pycore-frame pycore-frame-fib \
 	pycore-regfile \
 	pycore-codc \
@@ -235,6 +235,7 @@ EXCORE_RTL_SRCS := \
 	pycore-img-jaro-window \
 	pycore-img-builtin-str pycore-img-builtin-str-type-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
+	pycore-img-raise-after-call-loop \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
 	pycore-img-try-exception pycore-img-try-typeerror \
@@ -300,7 +301,7 @@ EXCORE_RTL_SRCS := \
 	docker-build docker-lint-file docker-run-file docker-exec-file docker-shell \
 	docker-pycore-test docker-all-tests \
 	docker-python-tests docker-rtl-unit docker-container docker-img \
-	docker-two-core docker-excore
+	docker-two-core docker-excore docker-compile-suite
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -389,6 +390,7 @@ all-tests:
 	$(MAKE) pycore-sim-img pycore-sim-img-twocore excore-cpu-test
 	$(MAKE) -j$(TEST_JOBS) pycore-container pycore-img \
 		pycore-excore-system pycore-img-two-core
+	$(MAKE) pycore-compile-suite
 	$(MAKE) pycore-cache-transparency pycore-mem-latency-sweep
 
 # Architectural gates (memory_system_plan.md §6). Both reuse the shared
@@ -669,6 +671,12 @@ pycore-img-allocator-bytes:
 
 pycore-python-tests:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
+
+# Device-compile suite: programs in pycore/programs/compile_suite/ are
+# compiled by the on-device compile(), run on the two-core hart, and their
+# output is compared with host CPython 3.14 (pycore/tools/compile_suite.py).
+pycore-compile-suite:
+	$(PYTHON) pycore/tools/compile_suite.py --jobs $(TEST_JOBS)
 
 # compiler_design.md W-8 / A8: ROM, code-RAM package, and heap vs ceilings.
 pycore-size-report:
@@ -1348,6 +1356,10 @@ pycore-img-compile-ns-inherit:
 
 pycore-img-compile-exec-roundtrip-two-core: excore-fw
 	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_exec_roundtrip,40000000)
+
+# exec'd STORE_NAME grows globals with a for-iterator on the stack.
+pycore-img-compile-store-name-grow-loop-two-core: excore-fw
+	$(call PYCORE_IMAGE_RUN_TWOCORE,compile_store_name_grow_loop,40000000)
 
 pycore-img-compile-reject-locals:
 	$(call PYCORE_IMAGE_RUN,compile_reject_locals,80000000)
@@ -2059,6 +2071,7 @@ pycore-img-two-core: \
 	pycore-img-compile-reject-closure-two-core \
 	pycore-img-compile-closure-two-core \
 	pycore-img-compile-exec-roundtrip-two-core \
+	pycore-img-compile-store-name-grow-loop-two-core \
 	pycore-img-compile-kwargs-two-core \
 	pycore-img-compile-grammar-two-core \
 	pycore-img-startup-multiprogram-two-core \
@@ -2281,6 +2294,7 @@ pycore-img-attr-all: \
 	pycore-img-jaro-window \
 	pycore-img-builtin-str pycore-img-builtin-str-type-trap \
 	pycore-img-to-bool-none pycore-img-to-bool-containers pycore-img-raise-varargs \
+	pycore-img-raise-after-call-loop \
 	pycore-img-raise-stopiteration-fatal pycore-img-try-stopiteration \
 	pycore-img-try-stopiteration-nested \
 	pycore-img-try-exception pycore-img-try-typeerror \
@@ -2547,6 +2561,10 @@ pycore-img-to-bool-containers:
 
 pycore-img-raise-varargs:
 	$(call PYCORE_IMAGE_TRAP_RUN,raise_varargs,1,50000)
+
+# RAISE after a call returned: handler depth uses the caller's nlocals.
+pycore-img-raise-after-call-loop:
+	$(call PYCORE_IMAGE_RUN,raise_after_call_loop,400000)
 
 pycore-img-raise-stopiteration-fatal:
 	$(call PYCORE_IMAGE_TRAP_RUN,raise_stopiteration_fatal,17,50000)
@@ -2959,9 +2977,9 @@ pycore-container-dict-full-insert:
 	$(call PYCORE_IMAGE_TRAP_RUN_SRC,container_dict_full_insert,dict_full_insert.py,11,50000)
 
 # HEAP_INIT_PTR = HEAP_LIMIT-100 so BUILD_LIST 3 (112 bytes) exceeds
-# PYCORE_HEAP_LIMIT (0xF0000; exc-info arena begins there).
+# PYCORE_HEAP_LIMIT (0xF00000; exc-info arena begins there).
 pycore-container-list-oom:
-	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7 +HEAP_INIT_PTR=982940,pycore_container_list_oom)
+	$(call PYCORE_CONTAINER_RUN,pycore/programs/list_oom.hex,+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=7 +HEAP_INIT_PTR=15728540,pycore_container_list_oom)
 
 # Natural FOR_ITER exhaustion skips END_FOR, so this raw stream executes
 # END_FOR directly and verifies its POP_TOP-equivalent stack effect.
@@ -3043,7 +3061,7 @@ pycore-excore-grow-from-zero: excore-fw pycore-excore-integration-fixtures
 pycore-excore-fast-path-no-trap: excore-fw pycore-excore-integration-fixtures
 	$(call PYCORE_EXCORE_RUN,fast_path_no_trap,+EXPECTED_TAG=1 +EXPECTED_VALUE=9 +EXPECTED_TRAP_REQ_COUNT=0)
 
-# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0xF0000) so the excore's
+# HEAP_INIT_PTR overridden near PYCORE_HEAP_LIMIT (0xF00000) so the excore's
 # doubled buffer (cap 4 -> 8, 256 bytes) cannot fit -> FATAL(MEM_FAULT).
 pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 	$(PYTHON) tools/ensure_sim.py twocore
@@ -3053,7 +3071,7 @@ pycore-excore-grow-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
-		+HEAP_INIT_PTR=982912 \
+		+HEAP_INIT_PTR=15728512 \
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=7 \
 		$(PYCORE_MEM_PLUSARGS)
@@ -3117,7 +3135,7 @@ pycore-excore-extend-oom-fatal: excore-fw pycore-excore-integration-fixtures
 		+FW_HEX=$(EXCORE_FW_HEX) \
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
-		+HEAP_INIT_PTR=982912 \
+		+HEAP_INIT_PTR=15728512 \
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=7 \
 		$(PYCORE_MEM_PLUSARGS)
@@ -3274,6 +3292,9 @@ docker-two-core: docker-build
 
 docker-excore: docker-build
 	$(DOCKER_MAKE) make excore-test
+
+docker-compile-suite: docker-build
+	$(DOCKER_MAKE) sh -c 'make pycore-sim-img-twocore && make pycore-compile-suite TEST_JOBS=$(TEST_JOBS)'
 
 docker-pycore-test: docker-build
 	$(DOCKER_MAKE) make pycore-test TEST_JOBS=$(TEST_JOBS)

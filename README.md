@@ -75,12 +75,13 @@ The **PyCore/CPython** column is a cycle ratio, not wall-clock time: it
 divides PyCore's cycles by the host CPU's cycles for the same phase.
 
 Programs are plain scripts (no `managed_entry` needed). The on-device
-compiler takes the T1–T6 grammar in `pycore/docs/compiler.md`: no `class`,
-`import`, `with`, annotations, or `*` / `**` unpacking at call sites and in
-displays yet. `print()` takes `int` / `bool` / `None` / strings of at most 15
-bytes. A 40-line file compiles in about 6M cycles, which is about a minute of
-simulation, and files over roughly 60–100 lines run out of heap during
-compile. `make exec-file` is the same as `make run-file`. Metrics, settings,
+compiler takes the T1–T6 grammar in `pycore/docs/compiler.md`, including
+`*` / `**` unpacking, but no `class`, `import`, `with`, or annotations yet.
+`print()` takes `int` / `bool` / `None` / strings of at most 15 bytes.
+Compiling costs roughly 150–300k cycles per source line (a 50-line file is
+about 3 minutes of simulation). The compiler keeps its working set, about
+10–16 KB of heap per line, and ~15 MB is free at boot, so files of about a
+thousand lines fit. `make exec-file` is the same as `make run-file`. Metrics, settings,
 and known limits: `pycore/docs/exec_runner.md`.
 
 ### `--host-compile`: CPython builds the image
@@ -148,7 +149,7 @@ may still trap on a semantic ceiling the linter cannot see. Details:
 ## Register layout and tags
 
 256-entry RF ring: occupancy is the suffix `[watermark, tos)`; CALL spills a
-watermark prefix to dmem (`0x100000`) when the live window would not fit, and
+watermark prefix to dmem (`0xF40000`) when the live window would not fit, and
 RETURN fills it back. Entries are `{ tag[3:0], value[127:0] }`. Call-frame
 *descriptors* are a dmem push/pop stack (`pycore/rtl/pycore_frame.sv`). Behind
 `imem_*` / `dmem_*` is an 8 KB L1I, 8 KB L1D, 128 KB L2 and parameterized RAM;

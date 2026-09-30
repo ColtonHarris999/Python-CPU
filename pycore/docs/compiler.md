@@ -61,13 +61,18 @@ parses T1–T6 statements (`if`/`while`/`for`, `break`/`continue`/`pass`,
 augassign, `del`, displays, unpack, `def` with the full parameter grammar
 and decorators, `global`, `try`/`except`/`else`/`finally`, `raise`,
 `assert`, `lambda`, simple f-strings, single-generator list/set/dict
-comprehensions, string slices) into `ND_MODULE`. Chained assignment
-(`x = y = expr`), `;`-separated simple statements, and conditional
-expressions (`a if c else b`) are all in. Slice step, generator
-expressions, `raise from`, `except*`, `while`/`for`-`else`, a second
-comprehension `for` or `if`, positional-only `/`, annotations, nested
-f-strings, format specs, `f"{x=}"`, and `class`/`import`/`with` are
-`SyntaxError`.
+comprehensions, string slices, `while`/`for`-`else`) into `ND_MODULE`.
+Chained assignment (`x = y = expr`), `;`-separated simple statements, and
+conditional expressions (`a if c else b`) are all in, and so is `*` / `**`
+unpacking: `f(*xs, **kw)`, `[*a, *b]`, `(*a,)`, `{*a}`, `{**d}`,
+`a, *b = xs`, and `for a, *b in xs`. A `*x` operand is operator-stack tag
+12 (lowest precedence), reduced into a `Starred` node; `**x` in a call is a
+keyword whose name is `None`; `**x` in a dict display is a marker key
+`Starred(nd_a=-1, nd_b=2)` followed by the value. Slice step, generator
+expressions, `raise from`, `except*`, a second comprehension `for` or `if`,
+positional-only `/`, annotations, nested f-strings, format specs,
+`f"{x=}"`, a positional `*x` after a keyword argument, and
+`class`/`import`/`with` are `SyntaxError`.
 
 **Packed node fields must fit a wrapping signed int64** (§7). The firmware
 runs on arbitrary-precision ints under host CPython, so a field that spills
@@ -183,6 +188,56 @@ Host: `pycore/tests/test_compiler_codegen.py` result differential vs CPython
 `eval`/`exec`. Device: `img_codegen_t1_expr` (assembled `"1 + 2"` returns 3),
 `img_compile_exec_roundtrip` (A2 → 7).
 
+## Peephole pass
+
+`_pyc_peephole()` runs at the top of `_pyc_assemble`, on the instruction
+arrays, before jump offsets are resolved. It does the parts of CPython's
+optimizer (`flowgraph.c`) that this machine can use:
+
+| Pattern | Becomes |
+| --- | --- |
+| `LOAD_FAST a; LOAD_FAST b` | `LOAD_FAST_LOAD_FAST (a << 4 \| b)` |
+| `STORE_FAST a; LOAD_FAST b` | `STORE_FAST_LOAD_FAST (a << 4 \| b)` |
+| `STORE_FAST a; STORE_FAST b` | `STORE_FAST_STORE_FAST (a << 4 \| b)` |
+| `LOAD_CONST None; IS_OP k; [TO_BOOL;] POP_JUMP_IF_x` | `POP_JUMP_IF_NONE` / `POP_JUMP_IF_NOT_NONE` |
+
+Both indexes of a pair must be below 16. A pair is never fused across a
+jump label or an exception-table boundary, and both are remapped after
+the arrays are compacted. The hardware's paired load (`CONT_LFB_PAIR`)
+does not trap on `UNINIT` the way `LOAD_FAST` does, so a load is fused
+only when the local is provably bound: a parameter that is never
+deleted, a cell or free slot, or a local stored earlier in the same basic
+block. `LOAD_FAST_BORROW`, `LOAD_FAST_CHECK`, and `NOT_TAKEN` are never
+emitted: on this machine they mean nothing, or plain `LOAD_FAST` already
+does the check.
+
+## Exception-table depth
+
+Each exception-table entry carries the value-stack depth to unwind to.
+`_stk_base` counts what the enclosing constructs hold on the stack at the
+current statement: one per enclosing `for` iterator (body and `else`),
+one inside an `except` body (the saved previous exception), and two in a
+`finally` running on the exception path. Handler entries use `_stk_base`
+and `_stk_base + 1`. Nested function compiles save it and start from 0.
+Before this, every entry used depth 0, so a `try` inside a `for` loop
+dropped the iterator when it raised.
+
+## Leaving a handler early
+
+`return`, `break`, and `continue` unwind the finally stack inside-out
+(`_pyc_fin_emit_from`). A `finally` body is inlined and recorded as a hole
+in its own `try`'s range. An `except` body, or a `finally` on the exception
+path, is pushed with a negative count `-1 - base`, where `base` is the
+depth of its saved exception: the exit pops what sits above that slot
+(`SWAP 2; POP_TOP` when a return value is on top), emits `POP_EXCEPT`
+(`SWAP 2` first for a return value), and clears an `as` name. Everything
+after the `POP_EXCEPT` is a hole in the handler entries of that `try`, so a
+raise in an outer inlined `finally` does not run this handler's cleanup
+on a stack it already popped. The hart's handled-exception state lives in
+the exception-info arena, not the frame, so skipping `POP_EXCEPT` leaks it
+into the caller; the host stand-in raises if `RETURN_VALUE` runs with a
+handler still active.
+
 ## Compile shim (step I)
 
 `compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1)`
@@ -229,7 +284,10 @@ the rest.
 
 Single-core dicts cannot grow, so a program's namespace must be pre-bound
 with every name it stores. On two-core, `PY_TRAP_DICT_GROW` is a recoverable
-excore round trip and the dict grows on demand.
+excore round trip and the dict grows on demand. The excore handler pops only
+the stored value for `STORE_NAME` / `STORE_GLOBAL` (the hart synthesizes
+the dict and the name); it used to pop 3, which ate a `for` iterator when
+a loop bound a new global (`img_compile_store_name_grow_loop`).
 
 Lifetime is caller-driven (§5.7): `compile()` does not release, so a
 launcher that runs many programs should bracket them with

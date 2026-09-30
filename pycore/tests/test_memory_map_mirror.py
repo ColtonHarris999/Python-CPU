@@ -1,7 +1,7 @@
 """encoding.py and pycore_defs.svh must agree on every shared memory-map constant.
 
 The image builder and the RTL each hardcode the heap / exception / frame /
-boot-record / code-RAM layout. Drift is a live hazard (HEAP_LIMIT is 0xF0000
+boot-record / code-RAM layout. Drift is a live hazard (HEAP_LIMIT is 0xF00000
 in both files by hand). P1 (line alignment) and P5 (string objects) both
 touch this mirror — this test is the gate.
 """
@@ -186,8 +186,9 @@ class TestMemoryMapMirror(unittest.TestCase):
         # itself must already be on a line or the first object would pad.
         self.assertEqual(encoding.HEAP_BASE % encoding.LINE_BYTES, 0)
         self.assertEqual(encoding.align_line(encoding.HEAP_BASE), encoding.HEAP_BASE)
-        self.assertEqual(encoding.DMEM_BYTES, 0x200000)
-        self.assertEqual(encoding.RF_SPILL_BASE, 0x100000)
+        self.assertEqual(encoding.DMEM_BYTES, 0x1000000)
+        self.assertEqual(encoding.HEAP_LIMIT, 0xF00000)
+        self.assertEqual(encoding.RF_SPILL_BASE, 0xF40000)
         self.assertEqual(encoding.RF_SPILL_BYTES, 0x40000)
         self.assertEqual(encoding.RF_WINDOW_CAP, 240)
         self.assertLess(
@@ -199,6 +200,9 @@ class TestMemoryMapMirror(unittest.TestCase):
             encoding.DMEM_BYTES,
         )
         self.assertEqual(encoding.CODE_ADDR_BASE, 0x01000000)
+        # The data window must end at or below the code base, or data and
+        # code alias in the unified L2 namespace.
+        self.assertLessEqual(encoding.DMEM_BYTES, encoding.CODE_ADDR_BASE)
 
 
 if __name__ == "__main__":

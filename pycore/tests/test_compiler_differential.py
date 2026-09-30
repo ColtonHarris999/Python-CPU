@@ -241,6 +241,49 @@ EXEC_CORPUS = [
     "x = 0\nfor i in [1, 2, 3]:\n    if i == 2:\n        break\n    x = x + i\nelse:\n    x = x + 10\n",
     "x = 0\nwhile x < 2:\n    x = x + 1\nelse:\n    x = x + 10\n",
     "x = 0\nwhile 1:\n    x = 1\n    break\nelse:\n    x = 5\n",
+    # Starred forms (CALL_FUNCTION_EX, DICT_MERGE, LIST_EXTEND, SET_UPDATE,
+    # DICT_UPDATE, UNPACK_EX, CALL_INTRINSIC_1 list-to-tuple).
+    "def f(*a, **k):\n    return len(a) * 10 + len(k)\nxs = [1, 2, 3]\n"
+    "r1 = f(*xs)\nr2 = f(0, *xs, 9)\nkw = {'p': 1}\nr3 = f(**kw)\n"
+    "r4 = f(1, *xs, q=2, **kw)\nr5 = f(q=2, **kw)\nr6 = f(1, **kw)\n",
+    "a = [1, 2]\nb = (3, 4)\nl = [*a, 5, *b]\nt = (*a,)\nt2 = (0, *b)\ns = {*a, 9}\n",
+    "d1 = {'x': 1}\nd2 = {'y': 2}\nd = {**d1, 'z': 3, **d2}\ne = {**d1}\n",
+    "xs = [1, 2, 3, 4, 5]\na, *b = xs\nc, *d, e = xs\n*f, g = xs\n[h, *i] = xs\n",
+    "def m(a, b=2, *r, c=3, **kw):\n    return a + b + len(r) + c + len(kw)\n"
+    "args = (1, 5, 6)\nopts = {'c': 10, 'z': 0}\nr = m(*args, **opts)\n",
+    "for a, *b in [[1, 2, 3], [4, 5]]:\n    last = b\n",
+    "def k(*args):\n    return args\nr = k(*[1], *[2, 3])\n",
+    # A try inside a for loop: the exception table must keep the iterator
+    # (depth 1), or the next FOR_ITER runs on an empty stack.
+    "c = 0\nfor e in [ValueError, TypeError]:\n    try:\n        raise e('x')\n"
+    "    except TypeError:\n        c += 10\n    except ValueError:\n        c += 1\n",
+    "def f():\n    c = 0\n    for i in [1, 2, 3]:\n        for j in [4, 5]:\n            try:\n"
+    "                if j == 5:\n                    raise KeyError('k')\n            except KeyError:\n"
+    "                c += i\n            finally:\n                c += 100\n    return c\nr = f()\n",
+    "c = 0\nfor i in [1, 2]:\n    try:\n        raise ValueError('a')\n    except ValueError:\n"
+    "        try:\n            raise TypeError('b')\n        except TypeError:\n            c += i\n",
+    # Leaving a handler early must POP_EXCEPT (and clear an `as` name) the
+    # way CPython does; the hart's handled-exception state outlives the
+    # frame. The stand-in checks the balance at every RETURN_VALUE.
+    "def f(b):\n    try:\n        if b == 0:\n            raise ValueError('z')\n        return 10 // b\n"
+    "    except ValueError as e:\n        return -1\n    finally:\n        pass\nr = f(2) + f(0)\n",
+    "def f():\n    try:\n        raise KeyError('k')\n    except KeyError:\n        for i in [1, 2]:\n"
+    "            if i == 2:\n                return i\n    return 0\nr = f()\n",
+    "def f():\n    try:\n        raise KeyError('k')\n    except KeyError:\n"
+    "        try:\n            raise TypeError('t')\n        except TypeError:\n            return 5\nr = f()\n",
+    "def f():\n    t = 0\n    try:\n        try:\n            raise KeyError('k')\n"
+    "        except KeyError:\n            return 1\n    finally:\n        t = 2\n    return t\nr = f()\n",
+    "def f():\n    try:\n        raise KeyError('k')\n    finally:\n        return 3\nr = f()\n",
+    "c = 0\nfor i in [1, 2, 3, 4]:\n    try:\n        raise ValueError('v')\n    except ValueError:\n"
+    "        if i == 2:\n            continue\n        if i == 3:\n            break\n        c += i\n",
+    "c = 0\nfor i in [1, 2, 3]:\n    try:\n        raise ValueError('v')\n    except ValueError as e:\n"
+    "        if i == 2:\n            break\n        c += i\nd = 1\nwhile d < 5:\n    d += 1\n"
+    "    try:\n        raise KeyError('k')\n    finally:\n        if d == 2:\n            break\n",
+    # Peephole shapes: superinstructions and is-None jumps.
+    "def g(x):\n    if x is None:\n        return 1\n    if x is not None:\n        return 2\n"
+    "    return 3\nr = g(None) * 10 + g(0)\n",
+    "def h(a, b):\n    c = a + b\n    d = c\n    x, y = a, b\n    return c + d + x * y\nr = h(3, 4)\n",
+    "def u(a):\n    del a\n    a = 5\n    b = a\n    return b\nr = u(1)\n",
 ]
 
 # ---------------------------------------------------------------------------
@@ -268,6 +311,11 @@ REJECT_CORPUS = [
     ("eval", "[x for x in xs for y in ys]", "nested comprehension"),
     ("exec", "def f(*a, *b):\n    return a\n", "duplicate '*'"),
     ("exec", "x[0:1:2]", "slice step"),
+    ("exec", "x = *a\n", "starred expression"),
+    ("exec", "a, *b, *c = d\n", "multiple starred"),
+    ("eval", "f(k=1, *a)", "positional argument follows keyword"),
+    ("exec", "del *a\n", "starred"),
+    ("exec", "for *a in b:\n    pass\n", "starred assignment target"),
 ]
 
 
@@ -366,6 +414,90 @@ class TestCompilerDifferential(unittest.TestCase):
             with self.subTest(src=src):
                 with self.assertRaises(SyntaxError):
                     self.compile_fn(src, "<s>", "exec")
+
+
+class EmittedOpcodeGapTest(unittest.TestCase):
+    """The optimizer shapes and starred forms really reach code RAM.
+
+    A regression to the long forms (LOAD_FAST; LOAD_FAST, LOAD_CONST None;
+    IS_OP; POP_JUMP_IF_FALSE, or a SyntaxError on `*x`) would still give
+    CPython's results, so the differential corpus alone cannot catch it.
+    """
+
+    SRC = (
+        "def f(a, b, *r, **k):\n"
+        "    c = a + b\n"
+        "    d = c\n"
+        "    x, y = a, b\n"
+        "    if r is None:\n"
+        "        return 0\n"
+        "    if k is not None:\n"
+        "        c = c + 1\n"
+        "    return c + d + x + y\n"
+        "xs = [1, 2]\n"
+        "kw = {'z': 1}\n"
+        "r = f(*xs, **kw)\n"
+        "l = [*xs, 3]\n"
+        "s = {*xs}\n"
+        "d = {**kw}\n"
+        "t = (*xs,)\n"
+        "p, *q = l\n"
+    )
+
+    def test_new_opcodes_are_emitted(self) -> None:
+        import dis
+
+        code = _firmware_compile()(self.SRC, "<s>", "exec")
+        emitted = {dis.opname[w & 0xFF] for w in code._ram.words.values()}
+        for name in (
+            "LOAD_FAST_LOAD_FAST",
+            "STORE_FAST_LOAD_FAST",
+            "STORE_FAST_STORE_FAST",
+            "POP_JUMP_IF_NONE",
+            "POP_JUMP_IF_NOT_NONE",
+            "CALL_FUNCTION_EX",
+            "DICT_MERGE",
+            "LIST_EXTEND",
+            "SET_UPDATE",
+            "DICT_UPDATE",
+            "UNPACK_EX",
+            "CALL_INTRINSIC_1",
+        ):
+            with self.subTest(opcode=name):
+                self.assertIn(name, emitted)
+        want: dict = {}
+        exec(compile(self.SRC, "<s>", "exec"), want)
+        code()
+        got = _scrub(code._globals)
+        self.assertEqual({k: got.get(k) for k in _scrub(want)}, _scrub(want))
+
+
+class CompileSuiteHostTest(unittest.TestCase):
+    """Every device-compile suite program matches CPython on the host stand-in.
+
+    ``make pycore-compile-suite`` runs these on the hart; this is the fast
+    pre-check, so a compiler regression fails the ``python`` CI job first.
+    """
+
+    def test_suite_programs_match_cpython(self) -> None:
+        import contextlib
+        import io
+        import pathlib as _pathlib
+
+        suite = _pathlib.Path(__file__).resolve().parents[1] / "programs" / "compile_suite"
+        programs = sorted(suite.glob("*.py"))
+        self.assertGreater(len(programs), 0)
+        compile_fn = _firmware_compile()
+        for path in programs:
+            with self.subTest(program=path.name):
+                src = path.read_text(encoding="utf-8")
+                want = io.StringIO()
+                with contextlib.redirect_stdout(want):
+                    exec(compile(src, path.name, "exec"), {"__name__": "__main__"})
+                got = io.StringIO()
+                with contextlib.redirect_stdout(got):
+                    compile_fn(src, path.name, "exec")()
+                self.assertEqual(got.getvalue(), want.getvalue())
 
 
 if __name__ == "__main__":

@@ -134,6 +134,6 @@ about a minute before its first output.
 | Symptom | Cause |
 | --- | --- |
 | `TRAP TYPE` during run | `print()` of a `str` longer than 15 bytes, a `float`, or a container. The native print sink takes INT/BOOL/None/SHORT_STR only (`pycore_firmware/builtins/print.md`). |
-| `TRAP MEM_FAULT` during compile | The compiler ran out of heap. It keeps roughly 5–10 KB per source line, and about 600 KB is free at boot, so files of more than about 60–100 lines do not fit yet. |
+| `TRAP MEM_FAULT` during compile | The compiler ran out of heap. It keeps its whole working set, roughly 10–16 KB per source line, and about 15 MB is free at boot (16 MB data window), so the limit is around a thousand lines. Simulation time runs out long before that. |
 | `UNSUPPORTED` | `class`, `import`, `with`, annotations, generator expressions, slice steps, and the other `compiler.md` exclusions. |
 | `TRAP DIV_ZERO`, `MEM_FAULT` during run | Division by zero, a missing dict key, a bad or negative index, or an unbound name. These are hardware traps, not catchable exceptions yet. |

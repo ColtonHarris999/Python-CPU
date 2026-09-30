@@ -33,12 +33,16 @@
 # ExceptHandler: nd_a=type (-1 bare), nd_b=body start, nd_c=n_body,
 #   nd_obj=name string or "".
 # Call: nd_a=func, nd_b=kids start, nd_c=nargs | (nkw << 16),
-#   nd_obj=keyword name list when nkw != 0 (CALL_KW), else 0.
+#   nd_obj=keyword name list when nkw != 0 (CALL_KW), else 0. A `**x`
+#   argument is a keyword whose name is None; `*x` is a Starred kid.
+# Starred: nd_a=value, nd_b=1, nd_c=ctx. In a Dict display, a `**x` entry
+#   is a marker key Starred(nd_a=-1, nd_b=2) followed by the value x.
 # Subscript tag 5 extra: 0=index, -1=slice lower none, else lower+1.
 #
 # Operator-stack tags (LOAD_CONST, not _PYC_G names):
 #   1 BinOp  2 UnaryOp  3 (  4 call  5 [subscr]  6 Compare  7 BoolOp
 #   8 list   9 tuple   10 dict/set  11 conditional expression
+#   12 `*` unpacking (lowest precedence, reduced into Starred)
 # _lex_col selects the expression mode while parsing: 0 normal,
 # 1 f-string interior, 2 no top-level tuple, 3 comprehension iterable or
 # filter (or_test only: no tuple and no conditional expression).
@@ -367,6 +371,14 @@ def _pyc_set_store(nid):
             _pyc_set_store(kids[ks + i])
             i = i + 1
         return
+    if kind == ND["Starred"]:
+        if nd_b[nid] != 1:
+            _pyc_parse_error("cannot assign to this expression")
+        if _lex_i == 0 - 2:
+            _pyc_parse_error("cannot delete starred")
+        nd_c[nid] = ctx
+        _pyc_set_store(nd_a[nid])
+        return
     _pyc_parse_error("cannot assign to this expression")
 
 
@@ -415,6 +427,13 @@ def _pyc_reduce_one():
         ks = _pyc_flush_n(n_val)
         line, col = _pyc_pos_of(kids[ks])
         nid = _pyc_nd_new(ND["BoolOp"], line, col, a, ks, n_val, 0)
+        _pyc_opnd_push(nid)
+        return
+    if tag == 12:
+        operand = _pyc_opnd_pop()
+        line = extra & 4294967295
+        col = extra >> 32
+        nid = _pyc_nd_new(ND["Starred"], line, col, operand, 1, ND["Load"], 0)
         _pyc_opnd_push(nid)
         return
     if tag == 11:
@@ -789,8 +808,63 @@ def _pyc_parse_expr():
                 want = 0
                 continue
             if kind == TOK_OP:
-                if text == "*" or text == "**":
-                    _pyc_parse_error("iterable unpacking is not supported")
+                if text == "*":
+                    line = _pyc_tok_line()
+                    col = _pyc_tok_col()
+                    _pyc_ops_push(12, 0, 0, line | (col << 32))
+                    _pyc_tok_advance()
+                    want = 1
+                    continue
+                if text == "**":
+                    top = _pyc_top_tag()
+                    if top == 4:
+                        # `f(..., **x)`: a keyword argument with no name.
+                        # Keyword values stay contiguous at the end, so
+                        # `f(k=1, *xs)` stays a SyntaxError here.
+                        packed = ops[ops_n - 1]
+                        fn = (packed >> 8) & 16777215
+                        packed_b = packed >> 32
+                        nargs = packed_b & 1023
+                        nkw = (packed_b >> 10) & 1023
+                        kw_start = (packed_b >> 20) & 1023
+                        if nkw == 0:
+                            kw_start = nargs
+                        elif kw_start + nkw != nargs:
+                            _pyc_parse_error("positional argument follows keyword argument")
+                        if nkw + 1 >= 1024:
+                            _pyc_parse_error("too many keyword arguments")
+                        names = ops_obj[ops_n - 1]
+                        if nkw == 0:
+                            names = []
+                        names = names + [None]
+                        nkw = nkw + 1
+                        ops[ops_n - 1] = (
+                            4
+                            | (fn << 8)
+                            | ((nargs | (nkw << 10) | (kw_start << 20)) << 32)
+                        )
+                        ops_obj[ops_n - 1] = names
+                        _pyc_tok_advance()
+                        want = 1
+                        continue
+                    if top == 10:
+                        # `{..., **x}`: a marker key, then x as the value.
+                        packed = ops[ops_n - 1]
+                        extra = ops_obj[ops_n - 1]
+                        nargs = (packed >> 8) & 16777215
+                        kind_ds = packed >> 32
+                        if kind_ds == 1 or kind_ds == 2:
+                            _pyc_parse_error("invalid dict display")
+                        line = _pyc_tok_line()
+                        col = _pyc_tok_col()
+                        mk = _pyc_nd_new(ND["Starred"], line, col, 0 - 1, 2, ND["Load"], 0)
+                        _pyc_opnd_push(mk)
+                        ops[ops_n - 1] = 10 | (nargs << 8) | (1 << 32)
+                        ops_obj[ops_n - 1] = extra
+                        _pyc_tok_advance()
+                        want = 1
+                        continue
+                    _pyc_parse_error("'**' unpacking is only allowed in calls and dict displays")
                 if text == ":=":
                     _pyc_parse_error("named expressions are not supported")
                 if text == "(":
@@ -1196,8 +1270,9 @@ def _pyc_parse_expr():
                 kn = nd_obj[kwname]
                 j = 0
                 while j < nkw:
-                    if names[j] == kn:
-                        _pyc_parse_error("duplicate keyword argument")
+                    if names[j] is not None:
+                        if names[j] == kn:
+                            _pyc_parse_error("duplicate keyword argument")
                     j = j + 1
                 names = names + [kn]
                 nkw = nkw + 1
@@ -2031,24 +2106,22 @@ def _pyc_parse_stmt():
         line = _pyc_tok_line()
         col = _pyc_tok_col()
         _pyc_tok_advance()
-        if _pyc_tok_kind() != TOK_NAME:
-            _pyc_parse_error("unsupported for-target")
-        tname = _pyc_tok_text()
-        if tname in KEYWORDS:
-            _pyc_parse_error("invalid for-target")
-        tline = _pyc_tok_line()
-        tcol = _pyc_tok_col()
-        _pyc_tok_advance()
         tnodes = [0] * 8
         nt = 0
-        tnodes[0] = _pyc_nd_new(
-            ND["Name"], tline, tcol, ND["Store"], 0, 0, tname
-        )
-        nt = 1
-        while _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ",":
-            _pyc_tok_advance()
-            if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "in":
-                break
+        nstar = 0
+        while 1:
+            if nt > 0:
+                if not (_pyc_tok_kind() == TOK_OP and _pyc_tok_text() == ","):
+                    break
+                _pyc_tok_advance()
+                if _pyc_tok_kind() == TOK_NAME and _pyc_tok_text() == "in":
+                    break
+            star = 0
+            if _pyc_tok_kind() == TOK_OP and _pyc_tok_text() == "*":
+                star = 1
+                sline = _pyc_tok_line()
+                scol = _pyc_tok_col()
+                _pyc_tok_advance()
             if _pyc_tok_kind() != TOK_NAME:
                 _pyc_parse_error("unsupported for-target")
             tname = _pyc_tok_text()
@@ -2064,10 +2137,14 @@ def _pyc_parse_stmt():
                     extra = 8
                 tnodes = tnodes + ([0] * extra)
                 cap = len(tnodes)
-            tnodes[nt] = _pyc_nd_new(
-                ND["Name"], tline, tcol, ND["Store"], 0, 0, tname
-            )
+            tn = _pyc_nd_new(ND["Name"], tline, tcol, ND["Store"], 0, 0, tname)
+            if star:
+                tn = _pyc_nd_new(ND["Starred"], sline, scol, tn, 1, ND["Store"], 0)
+                nstar = nstar + 1
+            tnodes[nt] = tn
             nt = nt + 1
+        if nstar > 0 and nt == 1:
+            _pyc_parse_error("starred assignment target must be in a list or tuple")
         if nt == 1:
             target = tnodes[0]
         else:

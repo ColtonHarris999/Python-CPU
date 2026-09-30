@@ -148,6 +148,20 @@ jobs:
       - uses: actions/checkout@v4
       - run: make docker-two-core TEST_JOBS=2
 
+  # Device-compile suite: each program is compiled by the on-device
+  # compile(), run on the hart, and its output compared with host CPython
+  # 3.14 (pycore/tools/compile_suite.py). The img/two-core jobs test the
+  # hardware on CPython's bytecode; this job tests the firmware compiler's.
+  compile-suite:
+    name: compile-suite
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-compile-suite TEST_JOBS=2
+
   excore:
     name: excore
     needs: changes
@@ -180,7 +194,7 @@ jobs:
   # matches. It is a gate over the path-filtered jobs, not a 3h monolith.
   all-tests:
     name: all-tests
-    needs: [changes, docs, python, rtl-unit, container, img, two-core, excore, gates]
+    needs: [changes, docs, python, rtl-unit, container, img, two-core, compile-suite, excore, gates]
     if: always()
     runs-on: ubuntu-latest
     steps:

@@ -168,7 +168,7 @@ creation until frame-local namespaces exist.
 1. Resolve `co_names[namei]` (`namei = oparg >> 1`).
 2. Native receivers (`LIST` / `SET` / `DICT` / `SHORT_STR` / `LONG_STR`):
    look up the name in the 16-entry sidecar table at
-   `PYCORE_NATIVE_METHOD_TABLE_ADDR` (`0xF0DE0`). A hit is a pre-seeded
+   `PYCORE_NATIVE_METHOD_TABLE_ADDR` (`0xF00DE0`). A hit is a pre-seeded
    `CODE_OBJECT`; writeback is the ordinary method form (`method_flag=1`
    pushes `[func, self]` with no allocation; `method_flag=0` allocates
    `OBK_BOUND_METHOD`). Miss → `PY_TRAP_ATTR_ERROR` (15).
