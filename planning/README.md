@@ -7,7 +7,7 @@ under `pycore/docs/`, `excore/docs/`, and `pycore_firmware/builtins/`.
 | --- | --- |
 | [`master_plan.md`](master_plan.md) | The only living roadmap: what is left to build, by track, plus policies and memory-map locks |
 | [`cleanup_report.md`](cleanup_report.md) | Simplification and dead-code backlog, written as independent work items for agents |
-| [`benchmarking_plan.md`](benchmarking_plan.md) | What to build, which programs to run, and how to run them to benchmark PyCore against CPython 3.14 |
+| [`benchmarking_plan.md`](benchmarking_plan.md) | Running the standard pyperformance and MicroPython `perf_bench` suites on PyCore: preparation, benchmark set, and how to run it |
 | [`old/`](old/) | Archived designs and plans. Code comments cite them by section (`compiler_design.md §6.1`), so they stay in the repo |
 
 ## Rules
