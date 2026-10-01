@@ -380,11 +380,11 @@ def e7(results):
         i, _, _ = sim(2048, 64, 4, 16384, 64, 8, 1, 8, t_ram, islots)
         print(f"    L1I 2K + L1D 2K + L2 16K      "
               f"CPO {(d + i + pipe)/ops:7.2f}")
-        d8, _, _ = sim(8192, 64, 4, 131072, 64, 8, 1, 1, t_ram, accs)
-        i8, _, _ = sim(8192, 64, 4, 131072, 64, 8, 1, 1, t_ram, islots)
+        d8, _, _ = sim(8192, 64, 4, 131072, 64, 8, 1, 8, t_ram, accs)
+        i8, _, _ = sim(8192, 64, 4, 131072, 64, 8, 1, 8, t_ram, islots)
         print(f"    L1I 8K + L1D 8K + L2 128K     "
               f"CPO {(d8 + i8 + pipe)/ops:7.2f}   "
-              f"(as-built; L2 hit = 1 cyc, see PYCORE_L2_HIT_CYCLES)")
+              f"(as-built; L2 hit = 8 cyc, see PYCORE_L2_HIT_CYCLES)")
         # (c) + python-aware result caches in front of L1D
         cc = DirectTagCache(32, 2)
         gc = DirectTagCache(16, 2, index_fn=gic_set_index)
