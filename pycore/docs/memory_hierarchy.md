@@ -41,12 +41,12 @@ everywhere.
 | --- | ---: | ---: | ---: | --- | ---: |
 | **L1I** | 8 KB | 64 B | 4 | read-only; line refill | 1 cyc (`PYCORE_L1I_HIT_CYCLES`) |
 | **L1D** | 8 KB | 64 B | 4 | write-back, write-allocate, LRU | 1 cyc |
-| **L2** | 128 KB | 64 B | 8 | unified, write-back, **inclusive** | **1 cyc shipped** |
+| **L2** | 128 KB | 64 B | 8 | unified, write-back, **inclusive** | 8 cyc (`PYCORE_L2_HIT_CYCLES`) |
 | **RAM** | 16 MB | — | — | behavioral; `RAM_T_FIRST` / `RAM_T_BEAT` | CI default 4 via `+MEM_LATENCY=` |
 
-The plan table listed L2 hit = 8 cycles. `PYCORE_L2_HIT_CYCLES` is **1**: an
-8-cycle L2 hit blew `MAX_CYCLES` on cold-start fixtures, and L1D covers the
-hit path. Recorded here so the localparam is not mistaken for a measurement.
+`PYCORE_L2_HIT_CYCLES` is 8, the plan table's number. It was 1 until the
+test cycle budgets were raised to fit an 8-cycle L2. Like every latency
+here it is a model parameter, not a measurement.
 
 Fetch still uses Harvard slot addresses (`pc << 3`). The xbar adds
 `PYCORE_CODE_ADDR_BASE = 0x01000000` so instruction bytes and data never
