@@ -142,12 +142,14 @@ jobs:
   # and compared with CPython 3.14 (pycore/tools/compile_suite.py). The area
   # jobs test the hardware on CPython's bytecode; this one tests the
   # firmware compiler's.
+  # Runner speed varies 3-4x between runs; on a slow one this job took 60
+  # minutes, so the timeout leaves room for that.
   compiler-vs-cpython:
     name: compiler-vs-cpython
     needs: changes
     if: needs.changes.outputs.hw == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - run: make docker-test-compiler-vs-cpython

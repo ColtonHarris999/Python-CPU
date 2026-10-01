@@ -52,6 +52,15 @@ def discover(names: list[str]) -> list[pathlib.Path]:
     return picked
 
 
+def _code_size(path: pathlib.Path) -> int:
+    """Non-comment, non-whitespace characters: a proxy for compile cycles."""
+    size = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.lstrip().startswith("#"):
+            size += len("".join(line.split()))
+    return size
+
+
 def run_one(
     path: pathlib.Path, build: pathlib.Path, extra: list[str], max_cycles: int
 ) -> dict:
@@ -137,9 +146,13 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"compile_suite: {len(programs)} program(s), {args.jobs} job(s)", flush=True)
     results: list[dict] = []
+    # Largest first. Started in name order, cs_program (about twice the
+    # cycles of anything else) waited for a free worker and finished last,
+    # alone, on a slow CI runner.
+    order = sorted(programs, key=_code_size, reverse=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
         futures = {
-            pool.submit(run_one, p, build, extra, args.max_cycles): p for p in programs
+            pool.submit(run_one, p, build, extra, args.max_cycles): p for p in order
         }
         for fut in concurrent.futures.as_completed(futures):
             r = fut.result()
