@@ -548,3 +548,110 @@ eval-str-direct-two-core = { core = "twocore", src = "eval_str_direct", cycles =
 eval-str-long-two-core = { core = "twocore", src = "eval_str_long", cycles = 8_000_000 }
 exec-str-direct-two-core = { core = "twocore", src = "exec_str_direct", cycles = 8_000_000 }
 bios-exec-two-core = { core = "twocore", src = "bios_exec", cycles = 40_000_000 }
+
+# Garbage collector (pycore/docs/gc.md). Each program fills a small heap on
+# purpose so the collector runs; it must return what CPython returns. The
+# collector is off by default, so every entry asks for +GC_EN=1. Entries here
+# stay under ~1M cycles at the default config; caching = true marks the ones
+# the caching gate also runs with the cache off.
+[gc]
+gc-verify-containers = { src = "gc_verify_containers", cycles = 1_100_000, plusargs = "+GC_EN=1", caching = true }
+gc-verify-cycles = { src = "gc_verify_cycles", cycles = 1_120_000, plusargs = "+GC_EN=1", caching = true }
+gc-reuse-after-collect = { src = "gc_reuse_after_collect", cycles = 1_100_000, plusargs = "+GC_EN=1", caching = true }
+gc-mark-release-epoch = { src = "gc_mark_release_epoch", cycles = 1_100_000, plusargs = "+GC_EN=1", caching = true }
+gc-zero-on-reuse = { src = "gc_zero_on_reuse", cycles = 500_000, plusargs = "+GC_EN=1", caching = true }
+gc-cycle-self = { src = "gc_cycle_self", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-cycle-mutual = { src = "gc_cycle_mutual", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-root-spill = { src = "gc_root_spill", cycles = 4_000_000, plusargs = "+GC_EN=1" }
+gc-root-caller-rf = { src = "gc_root_caller_rf", cycles = 2_000_000, plusargs = "+GC_EN=1 +GC_POISON=1", caching = true }
+gc-ltt-churn = { src = "gc_ltt_churn", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-unpack-ex = { src = "gc_unpack_ex", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-stracc-partition = { src = "gc_stracc_partition", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-call-churn = { src = "gc_call_churn", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-call-churn-two-core = { core = "twocore", src = "gc_call_churn", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-exc-churn-two-core = { core = "twocore", src = "gc_exc_churn", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-range-churn = { src = "gc_range_churn", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-bind-churn = { src = "gc_bind_churn", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-set-update = { src = "gc_set_update", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-exc-churn = { src = "gc_exc_churn", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-stale-saved-rs2 = { src = "gc_stale_saved_rs2", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_POISON=1 +GC_AT_BOUNDARY_EVERY=11 +MAX_CYCLES_SCALE=40" }
+gc-root-iterators = { src = "gc_root_iterators", cycles = 8_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-root-exception = { src = "gc_root_exception", cycles = 4_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-suspended-next = { src = "gc_suspended_next", cycles = 4_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-static-to-dynamic = { src = "gc_static_to_dynamic", cycles = 4_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-precision = { src = "gc_precision", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-boot-reset = { src = "gc_boot_reset", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-stracc-split = { src = "gc_stracc_split", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-str-replace-expand = { src = "gc_str_replace_expand", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-preload-stale = { src = "gc_preload_stale", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_EVERY_N_RUNS=1 +HEAP_DYN_BYTES=4096" }
+gc-fragmented-alloc = { src = "gc_fragmented_alloc", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=40960", caching = true }
+gc-fragmented-alloc-two-core = { core = "twocore", src = "gc_fragmented_alloc", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=40960", caching = true }
+gc-live-exceeds-heap = { src = "gc_live_exceeds_heap", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=65536" }
+gc-live-exceeds-heap-two-core = { core = "twocore", src = "gc_live_exceeds_heap", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=65536" }
+gc-memoryerror-caught = { src = "gc_memoryerror_caught", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192", caching = true }
+gc-memoryerror-caught-two-core = { core = "twocore", src = "gc_memoryerror_caught", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192", caching = true }
+gc-builtin-type-dict = { src = "gc_builtin_type_dict", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
+gc-len-varkw = { src = "gc_len_varkw", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-call-kw-varargs = { src = "gc_call_kw_varargs", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-call-kw-varargs-two-core = { core = "twocore", src = "gc_call_kw_varargs", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-call-varargs = { src = "gc_call_varargs", cycles = 16_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-call-varargs-two-core = { core = "twocore", src = "gc_call_varargs", cycles = 16_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-memoryerror-again = { src = "gc_memoryerror_again", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-memoryerror-again-two-core = { core = "twocore", src = "gc_memoryerror_again", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-release-zero = { src = "gc_release_zero", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-release-zero-two-core = { core = "twocore", src = "gc_release_zero", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-protocol-body-call = { src = "gc_protocol_body_call", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-protocol-body-call-two-core = { core = "twocore", src = "gc_protocol_body_call", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-release-zero-after-oom = { src = "gc_release_zero_after_oom", cycles = 2_000_000, plusargs = "+GC_EN=1 +GC_AUTO=0 +HEAP_DYN_BYTES=262144" }
+gc-release-zero-after-oom-two-core = { core = "twocore", src = "gc_release_zero_after_oom", cycles = 2_000_000, plusargs = "+GC_EN=1 +GC_AUTO=0 +HEAP_DYN_BYTES=262144" }
+gc-memoryerror-recover = { src = "gc_memoryerror_recover", cycles = 16_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=65536" }
+gc-memoryerror-recover-two-core = { core = "twocore", src = "gc_memoryerror_recover", cycles = 16_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=65536" }
+gc-alias-identity-key = { src = "gc_alias_identity_key", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-overwrite-bindings = { src = "gc_overwrite_bindings", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-mutant-43 = { src = "gc_mutant_43", cycles = 2_000_000, plusargs = "+GC_EN=1 +GC_AT_BOUNDARY_EVERY=1 +MAX_CYCLES_SCALE=40", caching = true }
+gc-mutant-44 = { src = "gc_mutant_44", cycles = 40_000_000, plusargs = "+GC_EN=1" }
+gc-mutant-40 = { kind = "trap", src = "gc_mutant_40", trap = 7, cycles = 8_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-mutant-28 = { src = "gc_mutant_28", cycles = 8_000_000, plusargs = "+GC_EN=1", caching = true }
+gc-mutant-36 = { kind = "trap", src = "gc_mutant_36", trap = 7, cycles = 2_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192", caching = true }
+gc-excore-need-heap = { core = "twocore", file = "img_gc_excore_need_heap.py", cycles = 2_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192", caching = true }
+gc-growth-paths = { core = "twocore", file = "img_gc_growth_paths.py", cycles = 4_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192", caching = true }
+gc-excore-churn = { core = "twocore", file = "img_gc_excore_churn.py", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+
+# Long GC loops: steady-state plateaus, allocation-site churn, benches and
+# compile loops (millions of cycles each, up to ~150M uncached). Not in
+# test-hw, test-caching or the per-PR CI matrix: `make test-gc-long` runs
+# them (nightly / on demand).
+[gc-long]
+gc-verify-closures = { src = "gc_verify_closures", cycles = 20_500_000, plusargs = "+GC_EN=1" }
+gc-root-heap-iter = { src = "gc_root_heap_iter", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_POISON=1 +GC_AT_BOUNDARY_EVERY=11 +MAX_CYCLES_SCALE=40" }
+gc-fuzz-11 = { src = "gc_fuzz_11", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_POISON=1 +GC_AT_BOUNDARY_EVERY=11 +MAX_CYCLES_SCALE=40" }
+gc-fuzz-13 = { src = "gc_fuzz_13", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_POISON=1 +GC_AT_BOUNDARY_EVERY=101 +MAX_CYCLES_SCALE=40" }
+gc-iter-short = { src = "gc_iter_short", cycles = 64_000_000, plusargs = "+GC_EN=1" }
+gc-code-new = { src = "gc_code_new", cycles = 16_000_000, plusargs = "+GC_EN=1" }
+gc-bulk-churn = { src = "gc_bulk_churn", cycles = 8_000_000, plusargs = "+GC_EN=1" }
+gc-code-new-churn = { src = "gc_code_new_churn", cycles = 100_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
+gc-iter-short-two-core = { core = "twocore", src = "gc_iter_short", cycles = 64_000_000, plusargs = "+GC_EN=1" }
+gc-steady-closure-two-core = { core = "twocore", src = "gc_steady_closure", cycles = 60_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=196608" }
+gc-code-new-churn-two-core = { core = "twocore", src = "gc_code_new_churn", cycles = 100_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
+gc-grant-churn-two-core = { core = "twocore", src = "gc_grant_churn", cycles = 600_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=32768" }
+gc-exec-pyc-g = { src = "gc_exec_pyc_g", cycles = 40_000_000, plusargs = "+GC_EN=1" }
+gc-root-closure = { src = "gc_root_closure", cycles = 40_000_000, plusargs = "+GC_EN=1" }
+gc-root-frames = { src = "gc_root_frames", cycles = 60_000_000, plusargs = "+GC_EN=1" }
+gc-mutant-8 = { src = "gc_mutant_8", cycles = 40_000_000, plusargs = "+GC_EN=1" }
+gc-mutant-27 = { kind = "trap", src = "gc_mutant_27", trap = 7, cycles = 40_000_000, plusargs = "+GC_EN=1" }
+gc-mutant-34 = { kind = "trap", src = "gc_mutant_34", trap = 7, cycles = 40_000_000, plusargs = "+GC_EN=1" }
+gc-steady-list = { src = "gc_steady_list", cycles = 20_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
+gc-steady-dict = { src = "gc_steady_dict", cycles = 20_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
+gc-steady-set = { src = "gc_steady_set", cycles = 20_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
+gc-steady-str = { src = "gc_steady_str", cycles = 20_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
+gc-steady-exc = { src = "gc_steady_exc", cycles = 20_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
+gc-steady-closure = { src = "gc_steady_closure", cycles = 60_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=196608" }
+gc-steady-compile = { src = "gc_steady_compile", cycles = 200_000_000, plusargs = "+GC_EN=1" }
+gc-compile-loop = { src = "gc_compile_loop", cycles = 400_000_000, plusargs = "+GC_EN=1" }
+gc-compile-loop-two-core = { core = "twocore", src = "gc_compile_loop", cycles = 400_000_000, plusargs = "+GC_EN=1" }
+gc-compile-syntaxerror = { src = "gc_compile_syntaxerror", cycles = 300_000_000, plusargs = "+GC_EN=1" }
+gc-compile-syntaxerror-two-core = { core = "twocore", src = "gc_compile_syntaxerror", cycles = 300_000_000, plusargs = "+GC_EN=1" }
+gc-bench-full = { src = "gc_bench_full", cycles = 40_000_000, plusargs = "+GC_EN=1" }
+gc-bench-deep = { src = "gc_bench_deep", cycles = 20_000_000, plusargs = "+GC_EN=1" }
+gc-bench-wide = { src = "gc_bench_wide", cycles = 40_000_000, plusargs = "+GC_EN=1" }
+gc-bench-churn = { src = "gc_bench_churn", cycles = 40_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=81920" }

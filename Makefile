@@ -16,6 +16,12 @@ PYCORE_CACHE_EN ?= 1
 # CI default is 4 once the RAM model exists (P2); 1-cycle banks ignore it.
 PYCORE_MEM_LATENCY ?= 4
 PYCORE_MEM_PLUSARGS ?= +CACHE_EN=$(PYCORE_CACHE_EN) +MEM_LATENCY=$(PYCORE_MEM_LATENCY)
+# Extra simulator plusargs for every hardware test, placed before each
+# test's own so they win (Verilog takes the first match), e.g.
+# `make test-hw HW_PLUSARGS=+GC_EN=1` runs the suite with the collector on.
+HW_PLUSARGS ?=
+# GC acceptance runner (planning/gc_plan.md §10.3): MODE=quick|full.
+MODE ?= quick
 
 PYCORE_SOURCE ?= pycore/programs/smoke_return.py
 PYCORE_FUNCTION ?= managed_entry
@@ -64,6 +70,7 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_mem_hier.sv \
 	pycore/rtl/pycore_mem_stage.sv \
 	pycore/rtl/pycore_exc_stack.sv \
+	pycore/rtl/pycore_gc.sv \
 	pycore/rtl/pycore_core.sv \
 	pycore/rtl/pycore_system.sv \
 	excore/rtl/excore_cpu.sv \
@@ -108,7 +115,8 @@ EXCORE_RTL_SRCS := \
 	pycore-rtl-unit pycore-str-accel pycore-codc pycore-gic docker-build \
 	docker-lint-file docker-run-file docker-exec-file docker-shell \
 	docker-all-tests test-host test-rtl-modules test-hw test-caching \
-	test-compiler-vs-cpython test-all $(addprefix test-,$(HW_AREAS))
+	test-compiler-vs-cpython test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
+	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-fuzz pycore-gc-bench
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -157,18 +165,23 @@ PYCORE_SIM_TWOCORE_BIN := $(BUILD_DIR)/sim_img_twocore/Vtb_container
 PYCORE_SIM_DEPS := \
 	$(PYCORE_RTL_SRCS) \
 	pycore/tb/tb_container.sv \
+	pycore/tb/gc_tb_util.svh \
+	pycore/tb/gc_shadow_check.sv \
 	$(wildcard pycore/rtl/*.svh) \
 	$(wildcard excore/rtl/*.svh) \
 	$(wildcard excore/rtl/singlecore/*.sv)
+# OPT_FAST=-O2: Verilator compiles the model with -Os by default; -O2 runs
+# the image simulators about 3.4x faster with identical results and cycles.
 PYCORE_SIM_VERILATOR_FLAGS := \
 	-sv --binary --timing \
-	+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+	+incdir+pycore/rtl +incdir+pycore/tb +incdir+excore/rtl/singlecore \
 	--top-module tb_container \
 	-GPROG_HEX=\"\" \
 	-GDMEM_HEX=\"\" \
 	-GCODE_RAM_HEX=\"\" \
 	-GFW_HEX=\"\" \
-	-Wall -Wno-fatal
+	-Wall -Wno-fatal \
+	-MAKEFLAGS OPT_FAST=-O2
 
 $(PYCORE_SIM_IMG_BIN): $(PYCORE_SIM_DEPS)
 	mkdir -p $(BUILD_DIR)/sim_img
@@ -206,9 +219,11 @@ pycore-sim-img-twocore: $(PYCORE_SIM_TWOCORE_BIN)
 #
 # The old per-fixture names still work: `make pycore-img-smoke` runs the
 # `smoke` test. `python3.14 pycore/tools/hw_tests.py --list` lists them all.
+#   test-gc-long               long GC loops (nightly / on demand, not per PR)
 HW_AREAS := alu strings containers control-flow calls objects variables \
-	exceptions builtins memory excore compiler
-HW_TESTS = $(PYTHON) pycore/tools/hw_tests.py --jobs $(TEST_JOBS)
+	exceptions builtins memory excore compiler gc
+HW_TESTS = $(PYTHON) pycore/tools/hw_tests.py --jobs $(TEST_JOBS) \
+	$(if $(HW_PLUSARGS),--plusargs "$(HW_PLUSARGS)")
 
 test-host: pycore-python-tests pycore-size-report excore-asm-tests \
 	pycore-allocator-host
@@ -221,21 +236,69 @@ $(addprefix test-,$(HW_AREAS)):
 # The excore area also runs the helper core's own CPU testbench.
 test-excore: excore-cpu-test
 
+# The gc area also runs the collector engine's unit testbench (gate G3).
+test-gc: pycore-gc
+
+# Long GC loops and soak programs: minutes to hours each, so they are not
+# part of test-hw or the per-PR CI matrix (pycore/docs/gc.md, Testing).
+test-gc-long:
+	$(HW_TESTS) --area gc-long
+
 test-hw:
-	$(HW_TESTS) --area all
+	$(HW_TESTS) --area all --exclude-area gc-long
 
 test-caching:
-	$(HW_TESTS) --caching
+	$(HW_TESTS) --caching --exclude-area gc-long
 
 test-compiler-vs-cpython:
 	$(PYTHON) pycore/tools/compile_suite.py --jobs $(TEST_JOBS)
 
 test-all:
 	$(MAKE) test-host test-rtl-modules
-	$(MAKE) test-hw excore-cpu-test
+	$(MAKE) test-hw excore-cpu-test pycore-gc
 	$(MAKE) test-compiler-vs-cpython test-caching
 
 all-tests: test-all
+
+# ---- Garbage collector -------------------------------------------------------
+# GC engine unit testbench (planning/gc_plan.md §10.2 G3): pycore_gc on the
+# real memory hierarchy. `make pycore-gc` builds it and runs the seeded
+# heaps from pycore/tools/gc_heapgen.py against the gc_model.py oracle.
+PYCORE_TB_GC_BIN := $(BUILD_DIR)/tb_gc/Vtb_gc
+GC_UNIT_SEEDS ?= 200
+GC_UNIT_ARGS ?=
+
+$(PYCORE_TB_GC_BIN): $(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl/pycore_gc.sv \
+		pycore/tb/tb_gc.sv pycore/tb/gc_tb_util.svh pycore/rtl/pycore_defs.svh
+	mkdir -p $(BUILD_DIR)/tb_gc
+	$(VERILATOR) -sv --binary --timing +incdir+pycore/rtl +incdir+pycore/tb \
+		--top-module tb_gc --Mdir $(BUILD_DIR)/tb_gc -Wall -Wno-fatal -MAKEFLAGS OPT_FAST=-O2 \
+		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl/pycore_gc.sv pycore/tb/tb_gc.sv
+
+pycore-gc: $(PYCORE_TB_GC_BIN)
+	$(PYTHON) tools/gc_unit.py --seeds $(GC_UNIT_SEEDS) --jobs $(TEST_JOBS) $(GC_UNIT_ARGS)
+
+# G10 (planning/gc_plan.md §10.2): the quick gate subset against every mutant.
+# MUTANTS=1,5,20 restricts the run.
+pycore-gc-mutants: $(PYCORE_TB_GC_BIN)
+	$(PYTHON) tools/gc_mutants.py --jobs $(TEST_JOBS) $(if $(MUTANTS),--only $(MUTANTS))
+
+# GC acceptance (planning/gc_plan.md §10.3): gates G0..G16, written to
+# build/gc_acceptance/status.json. Being ported to the hw_tests.toml runner;
+# see pycore/docs/gc.md, Testing.
+pycore-gc-acceptance:
+	$(PYTHON) tools/gc_acceptance.py --mode $(MODE) --jobs $(TEST_JOBS)
+
+# G8 (planning/gc_plan.md §10.2): randomized differential fuzzing.
+# SEEDS=0..49 (quick) or 0..999 (full). TOP=single|twocore.
+SEEDS ?= 0..49
+TOP ?= single
+pycore-gc-fuzz:
+	$(PYTHON) pycore/tools/gc_fuzz.py --seeds $(SEEDS) --top $(TOP) --jobs $(TEST_JOBS)
+
+# G13 (planning/gc_plan.md §10.2): bench fixtures + counter table.
+pycore-gc-bench:
+	$(PYTHON) tools/gc_bench.py --jobs $(TEST_JOBS)
 
 pycore-img-%:
 	$(HW_TESTS) --target $@

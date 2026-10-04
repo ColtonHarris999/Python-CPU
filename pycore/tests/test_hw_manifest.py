@@ -16,7 +16,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 AREAS = {
     "alu", "strings", "containers", "control-flow", "calls", "objects",
     "variables", "exceptions", "builtins", "memory", "excore", "compiler",
+    "gc",
 }
+# Areas in the manifest that are not CI matrix jobs (make test-gc-long).
+OFF_MATRIX = {"gc-long"}
 
 
 class HwManifestTest(unittest.TestCase):
@@ -25,7 +28,7 @@ class HwManifestTest(unittest.TestCase):
         cls.tests = hw_tests.load_manifest()
 
     def test_areas_match_the_makefile_and_ci(self) -> None:
-        self.assertEqual(set(hw_tests.areas_of(self.tests)), AREAS)
+        self.assertEqual(set(hw_tests.areas_of(self.tests)), AREAS | OFF_MATRIX)
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         m = re.search(r"^HW_AREAS := ((?:.*\\\n)*.*)$", makefile, re.M)
         assert m is not None
@@ -60,11 +63,11 @@ class HwManifestTest(unittest.TestCase):
                 for need in t.needs:
                     self.assertRegex(makefile, rf"(?m)^{re.escape(need)}:")
 
-    def test_caching_sample_is_compiler_only(self) -> None:
+    def test_caching_sample_is_in_a_sampled_area(self) -> None:
         sample = [t for t in self.tests if t.caching]
         self.assertTrue(sample)
         for t in sample:
-            self.assertEqual(t.area, "compiler", t.name)
+            self.assertIn(t.area, hw_tests.SAMPLED_AREAS, t.name)
 
 
 if __name__ == "__main__":

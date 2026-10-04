@@ -2,3 +2,5 @@ build/
 .DS_Store
 __pycache__/
 *.pyc
+.cursor/gc_task_active
+.cursor/gc_blocked.md
