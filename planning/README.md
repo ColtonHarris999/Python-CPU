@@ -9,11 +9,18 @@ under `pycore/docs/`, `excore/docs/`, and `pycore_firmware/builtins/`.
 | [`cleanup_report.md`](cleanup_report.md) | Simplification and dead-code backlog, written as independent work items for agents |
 | [`old/`](old/) | Archived designs and plans. Code comments cite them by section (`compiler_design.md §6.1`), so they stay in the repo |
 
+## Graduated
+
+| File | As-built doc | Why it is still here |
+| --- | --- | --- |
+| [`gc_plan.md`](gc_plan.md), [`gc_progress.md`](gc_progress.md) | [`pycore/docs/gc.md`](../pycore/docs/gc.md) | `tools/gc_acceptance.py` and the task hook read them at this path; move both to `old/` once nothing reads them |
+
 ## Rules
 
 - When a plan lands, move it to `old/`, add an `Archived` note at the top
   that points to the as-built doc, and copy anything still open into
-  `master_plan.md`. Do not keep a "graduated" plan at the top level.
+  `master_plan.md`. Do not keep a "graduated" plan at the top level,
+  except as listed under Graduated below.
 - Do not duplicate opcode, type, or builtin tables here. Link to
   `pycore/docs/bytecode_support.md`, `pycore/docs/exception_support.md`,
   `pycore/targets/pycore.json`, and `pycore_firmware/builtins/builtins.md`.

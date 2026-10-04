@@ -13,7 +13,8 @@ through RF, dmem packing, every hex image, and every testbench.
 **Decision:** `PY_TAG_OBJECT` (`4'b1010`) means *"heap object — read
 `ob_head` for the kind."* Attribute and call paths pay one extra dmem read;
 that is already a multi-cycle path. Lists/dicts/sets use `MUT_COLLEC`, not
-`OBJECT`.
+`OBJECT`. The collector traces each `ob_kind`'s pointer fields from this
+layout; see [`gc.md`](gc.md).
 
 ## D2 — Uniform header, tuple-element stride
 

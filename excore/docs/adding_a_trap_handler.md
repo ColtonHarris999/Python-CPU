@@ -46,7 +46,9 @@ the live container handlers in `excore/fw/list_grow.s`:
    advance (true by construction if step 3 held) and the firmware could
    not finish the effect itself; `FATAL` with a `fatal_code` that mirrors
    a `PY_TRAP_*` value pycore understands (it is forwarded verbatim into
-   `pycore_trap`).
+   `pycore_trap`); `NEED_HEAP` (3) if the bump does not fit
+   `MB_HEAP_LIMIT` — `RES_HEAP_PTR` is the byte need, pop=push=0, heap
+   unmoved. PyCore collects and re-dispatches.
 
 7. **Test at both layers.** Unit-test the new firmware against a mocked
    mailbox (extend `tb_excore.sv` or add a new `excore/tb/` testbench,

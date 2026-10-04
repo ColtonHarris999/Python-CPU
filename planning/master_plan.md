@@ -70,6 +70,14 @@ entry return. The live list of compiler bugs and ceilings is
 [`pycore/docs/compile_limitations.md`](../pycore/docs/compile_limitations.md)
 §3; add new finds there with a failing `img_compile_*` fixture.
 
+Open hazards from the garbage-collection work (`pycore/docs/gc.md`):
+
+| Bug | Symptom | Where to start |
+| --- | --- | --- |
+| `_bi_heap_release` with `GC_EN=0` hands back unzeroed bytes | A dict or set built after a release can see the released table's keys (`img_gc_release_zero` returns 4 with `+GC_EN=0`) | With GC on the release zeroes `[mark, old ptr)` at the next boundary (gc.md invariant 6). Doing the same with GC off changes cycle counts, so it waits for a baseline refresh |
+| Run-time source that spells `_PYC_G` or `__dict__` without the program naming it | The image builder decides the compiler-cleanup descriptor and immutable type dicts from the names and string constants it can see (gc.md). `exec("_PY" + "C_G['k'] = [1]")` stores a heap value the collector does not trace and frees it | Either treat any run-time source with a non-constant argument as reaching every name (costs the compile-loop cleanup), or check at collection time that `_PYC_G` and the type dicts hold no dynamic pointers outside the scratch slots |
+| GC sizing on the 16 MB map | The mark stack (16,384 entries) and run table were sized for a ~1 MB heap; a live graph with more pushable objects than that raises `MemoryError` at collection. The on-chip mark bitmap is 120 KB | Re-size or bound before turning the collector on by default |
+
 ## Open pull requests (parked)
 
 These are parked until the owner decides to rebase or close them. Both are
@@ -95,7 +103,7 @@ Each track lists its next slice first.
 | Compiler heap ceiling | Raised: the data window grew from 2 MB to 16 MB, so ~15 MB of heap is free at boot. `compile()` keeps roughly 10–16 KB per source line, so files of about a thousand lines fit (before, ~600 KB free capped files at ~60–100 lines). `cs_starred.py` (52 lines) needs 813 KB and would not have compiled before | O-2 or GC still matter for a long-running process that compiles repeatedly without mark/release |
 | O-2 split result/scratch heap arenas | Not opened | The trigger was `img_compile_repeat` (heap watermark ≤ 400000) failing. The compiler heap ceiling above is now a second reason to open it. Caller mark/release is the reclaim path today |
 | Module loader + relocation | Not opened | Only when code-RAM headroom runs out or a BIOS must load a payload from outside the image. The format is already recorded in `pycore/docs/code_loading.md` §4, so implement that rather than redesigning it |
-| Garbage collection | Not opened | `compile()` leaks its working set; `_bi_heap_mark` / `_bi_heap_release` is the stopgap |
+| Garbage collection | Landed, off by default (`pycore/docs/gc.md`) | Turn it on by default after the full acceptance run passes on the 16 MB map. Code RAM is still not reclaimed (`_bi_code_mark` / `_bi_code_release`); see gc.md invariant 7 |
 | `_bi_intern(s)` | Optional | Only if compiler names over 15 bytes make SHORT_STR policy fail |
 
 #### On-device compiler vs CPython: opcode coverage

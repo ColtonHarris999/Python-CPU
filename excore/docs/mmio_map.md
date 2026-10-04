@@ -21,6 +21,7 @@ with canned trap messages. On the two-core top, `trap_mailbox.sv` under
 | `0x10` | `MB_INSTR_HI` | `{24'd0, arg[31:24]}` |
 | `0x14` | `MB_HEAP_PTR` | |
 | `0x18` | `MB_ENTRY_COUNT` | `[2:0]` |
+| `0x1C` | `MB_HEAP_LIMIT` | end of the current PyCore garbage-collection grant (`heap_limit_r`); firmware must not bump past it. A short grant returns `RES_CODE=3` (`NEED_HEAP`) so PyCore can collect and re-dispatch ([`pycore/docs/gc.md`](../../pycore/docs/gc.md)). |
 | `0x20..` | `MB_ENTRY[i]` | `i = 0..MAX_TRAP_ENTRIES-1` (default 4), 5 words each: `VAL0..VAL3` (LSW first), `TAG`. Stride 0x14 (20 bytes). |
 
 `result_accepted` is set the cycle `RES_GO` commits and clears whenever
@@ -33,7 +34,7 @@ or by the `trap_res` handshake on `pycore_excore_system`.
 
 | Offset | Name | Fields |
 | --- | --- | --- |
-| `0x80` | `RES_CODE` | `[3:0]` code: 0=COMPLETED, 1=RETRY, 2=FATAL; `[8:4]` `fatal_code` (meaningful only when code=FATAL; 5-bit trap codes) |
+| `0x80` | `RES_CODE` | `[3:0]` code: 0=COMPLETED, 1=RETRY, 2=FATAL, 3=NEED_HEAP; `[8:4]` `fatal_code` (meaningful only when code=FATAL; 5-bit trap codes). NEED_HEAP: `RES_HEAP_PTR` is the byte need, `pop=push=0`, heap unmoved. |
 | `0x84` | `RES_POP_COUNT` | `[2:0]` |
 | `0x88` | `RES_PUSH_COUNT` | `[1:0]` |
 | `0x8C` | `RES_HEAP_PTR` | |

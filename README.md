@@ -42,8 +42,12 @@ Still open (see `planning/master_plan.md`):
 - `with`, `import`, generators, `except*`, runtime `class`,
   trap→Python-exception, list/tuple slicing of a name, `*` / `**`
   unpacking in the on-device compiler, `del` of a module-level name.
-- Garbage collection: `compile()` leaks its working set; the caller
-  reclaims with `_bi_heap_mark` / `_bi_heap_release`.
+- Garbage collection is built (`pycore/docs/gc.md`) but off by default
+  until it has been verified on the 16 MB memory map; `+GC_EN=1` turns it
+  on. With it off, `compile()` leaks its working set and the caller
+  reclaims with `_bi_heap_mark` / `_bi_heap_release`. Code RAM is never
+  reclaimed: a program that compiles in a loop without `_bi_code_mark` /
+  `_bi_code_release` runs out of code RAM.
 
 ## Try a Python file
 
