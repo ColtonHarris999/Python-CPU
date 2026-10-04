@@ -88,6 +88,35 @@ RF_RESERVE = 16
 RF_SPILL_HYST = 32
 RF_INIT_CHUNK = 32
 RF_WINDOW_CAP = RF_DEPTH - RF_RESERVE
+# GC metadata (mirror PYCORE_GC_* in pycore_defs.svh; pycore/docs/gc.md).
+GC_META_BASE = 0xF80000
+GC_MARK_BITMAP = 0xF80000
+# Builtins values the prune map keeps; traced when the builtins dict is
+# premarked (32 tagged pairs, 32 B apart, in the unused mark-bitmap region).
+GC_EXTRA_ROOTS = GC_MARK_BITMAP
+GC_EXTRA_ROOTS_COUNT = 32
+GC_MARK_BITMAP_BYTES = 0x2000
+GC_ROOT_STASH = 0xF82000
+GC_ROOT_STASH_BYTES = 0x4000
+GC_STATS = 0xF86000
+GC_STATS_BYTES = 0x400
+# Image-provided descriptor for collector-time cleanup of the compiler's
+# runtime scratch slots.  The descriptor lives in the otherwise unused upper
+# part of GC_STATS; see pycore/docs/gc.md.
+GC_COMPILER_CLEANUP = GC_STATS + 0x100
+GC_COMPILER_CLEANUP_BYTES = 0x300
+GC_COMPILER_CLEANUP_MAGIC = 0x50594343  # "PYCC"
+GC_STATIC_MAP = 0xF86400
+GC_STATIC_MAP_BYTES = 0x2000
+GC_RUN_TABLE = 0xF88400
+GC_RUN_TABLE_BYTES = 0x37C00
+GC_MARK_STACK = 0xFC0000
+GC_MARK_STACK_BYTES = 0x40000
+GC_MARK_STACK_ENTRIES = 16384
+GC_GRANULE_BYTES = 16
+GC_BITMAP_WORDS = HEAP_LIMIT >> 11
+GC_FREE_MAGIC = 0x46524545
+GC_POISON_WORD = 0xDEAD6C00DEAD6C00DEAD6C00DEAD6C0F
 # Cache / RAM hierarchy (mirror pycore_defs.svh).
 CACHE_EN = 1
 LINE_BYTES = 64
@@ -232,6 +261,9 @@ NATIVE_METHOD_COUNT = 16
 NATIVE_METHOD_ENTRY_BYTES = 32
 NATIVE_METHOD_TABLE_BYTES = NATIVE_METHOD_COUNT * NATIVE_METHOD_ENTRY_BYTES
 NATIVE_METHOD_TABLE_ADDR = ITER_EXHAUST_TYPE_ADDR - NATIVE_METHOD_TABLE_BYTES  # 0xF00DE0
+# Tagged handle for the preallocated MemoryError singleton.  Images that do
+# not name MemoryError leave this sidecar zero, preserving their static heap.
+MEMORY_ERROR_INSTANCE_ADDR = NATIVE_METHOD_TABLE_ADDR - 32  # 0xF00DC0
 
 # LIST element buffer stride (bytes); mirror pycore list layout (32B/element).
 LIST_ELEMENT_BYTES = 32
@@ -319,6 +351,9 @@ BI_CODE_BLIT = 18
 BI_CODE_PATCH = 19
 BI_CODE_NEW = 20
 BI_CODE_KIND = 21
+BI_GC_COLLECT = 22
+BI_HEAP_FREE = 23
+BI_GC_STATS = 24
 
 # Code address space (mirror pycore_defs.svh PYCORE_CODE_RAM_*).
 # The ROM holds IMEM_BLOCK_COUNT * 4096 / 8 slots; code RAM starts right after.
