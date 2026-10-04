@@ -32,6 +32,7 @@ module trap_mailbox #(
     input  logic [31:0]   trap_req_pc_i,
     input  logic [39:0]   trap_req_instr_i,
     input  logic [31:0]   trap_req_heap_ptr_i,
+    input  logic [31:0]   trap_req_heap_limit_i,
     input  logic [2:0]    trap_req_entry_count_i,
     input  logic [131:0]  trap_req_entries_i [0:MAX_TRAP_ENTRIES-1],
 
@@ -52,6 +53,7 @@ module trap_mailbox #(
     output logic [7:0]    mb_opcode_o,
     output logic [31:0]   mb_arg_o,
     output logic [31:0]   mb_heap_ptr_o,
+    output logic [31:0]   mb_heap_limit_o,
     output logic [2:0]    mb_entry_count_o,
     output logic [131:0]  mb_entries_o [0:MAX_TRAP_ENTRIES-1],
 
@@ -65,11 +67,14 @@ module trap_mailbox #(
     input  logic [131:0]  ex_res_entries_i [0:MAX_RES_ENTRIES-1]
 );
 
-    localparam logic [1:0] S_IDLE     = 2'd0;
-    localparam logic [1:0] S_WAIT_RES = 2'd1;
-    localparam logic [1:0] S_RES_VALID = 2'd2;
+    localparam logic [1:0] S_IDLE        = 2'd0;
+    localparam logic [1:0] S_WAIT_RES    = 2'd1;
+    localparam logic [1:0] S_RES_VALID   = 2'd2;
+    localparam logic [1:0] S_NEED_DELAY  = 2'd3;
+    localparam logic [3:0] RES_NEED_HEAP = 4'd3;
 
     logic [1:0] state_r;
+    logic [2:0] need_delay_r;
 
     // Latched request (presented to excore_mmio's mailbox inputs while
     // mb_trap_pending_o is asserted).
@@ -78,6 +83,7 @@ module trap_mailbox #(
     logic [7:0]   mb_opcode_r;
     logic [31:0]  mb_arg_r;
     logic [31:0]  mb_heap_ptr_r;
+    logic [31:0]  mb_heap_limit_r;
     logic [2:0]   mb_entry_count_r;
     logic [131:0] mb_entries_r [0:MAX_TRAP_ENTRIES-1];
 
@@ -99,6 +105,7 @@ module trap_mailbox #(
     assign mb_opcode_o       = mb_opcode_r;
     assign mb_arg_o          = mb_arg_r;
     assign mb_heap_ptr_o     = mb_heap_ptr_r;
+    assign mb_heap_limit_o   = mb_heap_limit_r;
     assign mb_entry_count_o  = mb_entry_count_r;
     assign mb_entries_o      = mb_entries_r;
 
@@ -112,11 +119,13 @@ module trap_mailbox #(
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
             state_r          <= S_IDLE;
+            need_delay_r     <= 3'd0;
             mb_trap_code_r   <= 4'h0;
             mb_pc_r          <= 32'h0;
             mb_opcode_r      <= 8'h0;
             mb_arg_r         <= 32'h0;
             mb_heap_ptr_r    <= 32'h0;
+            mb_heap_limit_r  <= 32'h0;
             mb_entry_count_r <= 3'h0;
             res_code_r       <= 4'h0;
             res_fatal_code_r <= 5'h0;
@@ -134,6 +143,7 @@ module trap_mailbox #(
                         mb_opcode_r      <= trap_req_instr_i[7:0];
                         mb_arg_r         <= trap_req_instr_i[39:8];
                         mb_heap_ptr_r    <= trap_req_heap_ptr_i;
+                        mb_heap_limit_r  <= trap_req_heap_limit_i;
                         mb_entry_count_r <= trap_req_entry_count_i;
                         for (int i = 0; i < MAX_TRAP_ENTRIES; i++) begin
                             mb_entries_r[i] <= trap_req_entries_i[i];
@@ -152,7 +162,27 @@ module trap_mailbox #(
                         for (int i = 0; i < MAX_RES_ENTRIES; i++) begin
                             res_entries_r[i] <= ex_res_entries_i[i];
                         end
-                        state_r <= S_RES_VALID;
+                        // The pre-grant firmware's direct OOM-to-FATAL path
+                        // was four cycles longer than the new NEED_HEAP
+                        // round trip when GC is disabled. Keep the mailbox
+                        // non-pending while matching that architectural
+                        // timing; GC-enabled retries pay only this fixed,
+                        // four-cycle response cost.
+                        if (ex_res_code_i == RES_NEED_HEAP) begin
+                            need_delay_r <= 3'd4;
+                            state_r      <= S_NEED_DELAY;
+                        end else begin
+                            state_r <= S_RES_VALID;
+                        end
+                    end
+                end
+
+                S_NEED_DELAY: begin
+                    if (need_delay_r == 3'd1) begin
+                        need_delay_r <= 3'd0;
+                        state_r      <= S_RES_VALID;
+                    end else begin
+                        need_delay_r <= need_delay_r - 3'd1;
                     end
                 end
 

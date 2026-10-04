@@ -89,6 +89,7 @@ module pycore_core #(
     output logic [PYCORE_LINE_BYTES*8-1:0] dmem_wline_o,
     input  logic                          dmem_ack_i,
     input  logic [DMEM_DATA_W-1:0]        dmem_rdata_i,
+    input  logic [PYCORE_LINE_BYTES*8-1:0] dmem_rdata_line_i,
     input  logic                          dmem_fault_i,
     // trap_req (pycore -> excore, via trap_mailbox.sv). Unused (tied off)
     // when EXCORE_EN=0.
@@ -98,6 +99,7 @@ module pycore_core #(
     output logic [31:0]                   trap_req_pc_o,
     output logic [39:0]                   trap_req_instr_o,
     output logic [31:0]                   trap_req_heap_ptr_o,
+    output logic [31:0]                   trap_req_heap_limit_o,
     output logic [2:0]                    trap_req_entry_count_o,
     output logic [PYCORE_ENTRY_WIDTH-1:0] trap_req_entries_o [0:MAX_TRAP_ENTRIES-1],
     // trap_res (excore -> pycore, via trap_mailbox.sv).
@@ -178,11 +180,18 @@ module pycore_core #(
     // (compiler_design.md R-2). Fetch is stalled (not S_FETCH) and its
     // imem_we_o stays 0; the mux below selects.
     localparam logic [4:0] S_CODE_WRITE   = 5'd16;
+    // Garbage collection (plan §3.3): drain + engine start, stream roots,
+    // wait for mark/sweep, then pop/zero a run and resume or re-dispatch.
+    localparam logic [4:0] S_GC_ENTER     = 5'd17;
+    localparam logic [4:0] S_GC_ROOTS     = 5'd18;
+    localparam logic [4:0] S_GC_RUN       = 5'd19;
+    localparam logic [4:0] S_GC_ALLOC     = 5'd20;
 
     // trap_res_code_i values (mirrors excore/docs/mmio_map.md RES_CODE).
     localparam logic [3:0] TRAP_RES_COMPLETED = 4'd0;
     localparam logic [3:0] TRAP_RES_RETRY     = 4'd1;
     localparam logic [3:0] TRAP_RES_FATAL     = 4'd2;
+    localparam logic [3:0] TRAP_RES_NEED_HEAP = 4'd3;
 
     `include "pycore_cont_defs.svh"
 
@@ -360,6 +369,76 @@ module pycore_core #(
     // Heap bump allocator.  Starts at PYCORE_HEAP_BASE and grows upward.
     // OOM is detected before each allocation; traps PY_TRAP_MEM_FAULT.
     logic [31:0]                   heap_ptr_r;
+
+    // GC allocator state (plan §4.4): bump inside [heap_ptr_r, heap_limit_r).
+    // With GC_EN=0, heap_limit_r stays PYCORE_HEAP_LIMIT and nothing moves.
+    logic [31:0]  heap_limit_r;       // end of the current run
+    logic [31:0]  run_base_r;         // start of the current run (mark/release)
+    logic [31:0]  run_list_head_r;    // next free run (0 = none)
+    logic [31:0]  run_skipped_head_r; // too-small pops + abandoned remainder
+    logic [31:0]  gc_list_free_r;     // bytes in the runs still on the list
+    logic [31:0]  heap_zero_r;        // [heap_zero_r, limit) never written: zero
+    logic [31:0]  gc_epoch_r;
+    // Request / resume bookkeeping.
+    logic         gc_abort_r;         // re-dispatch the aborted instruction
+    logic         gc_keep_run;        // collection keeps [heap_ptr, heap_limit)
+    // Set when anything but the collector writes _PYC_G["_busy"] (compile()
+    // does on entry); cleared when an idle cleanup loop completes.
+    logic         gc_pyc_dirty_r;
+    logic         gc_tdict_exposed_r;  // LOAD_ATTR __dict__ on a TYPE has run
+    logic [31:0]  gc_clean_busy_addr;
+    logic         gc_clean_done;
+    logic         gc_explicit_r;      // _bi_gc_collect(): write live bytes, resume
+    logic         gc_exit_req_r;      // +GC_AT_EXIT: managed_entry returned
+    logic         gc_boundary_req_r;  // +GC_AT_BOUNDARY_EVERY hit
+    logic         gc_collected_r;     // this request already collected once
+    logic         gc_oom_raise_r;     // raise preallocated MemoryError
+    logic [31:0]  gc_need_bytes_r;
+    logic [1:0]   gc_retry_count_r;
+    logic [31:0]  gc_retry_pc_r;
+    logic [31:0]  gc_retry_largest_r;
+    logic [31:0]  gc_boundary_cnt_r;
+    logic [31:0]  gc_runsw_cnt_r;
+    logic [4:0]   gc_root_idx_r;
+    logic [7:0]   gc_rf_idx_r;
+    logic         gc_roots_done_r;
+    logic         gc_started_r;
+    logic [3:0]   gc_alloc_phase_r;
+    logic         gc_alloc_pending_r;  // S_GC_ALLOC dmem op in flight
+    logic         gcalloc_issued_r;
+    logic [31:0]  gc_cand_base_r;
+    logic [31:0]  gc_cand_size_r;
+    logic         gc_rel_zero_r;      // _bi_heap_release left [mark, old ptr) dirty
+    // Testbench site statistics only (G9): the current CALL abort came from
+    // the binder reservation, and the reserved need includes a **kwargs dict.
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic         gc_res_abort_r, gc_res_abort_kw_r;
+    /* verilator lint_on UNUSEDSIGNAL */
+    logic [31:0]  gc_zero_ptr_r;
+    logic [31:0]  gc_zero_end_r;
+    logic         gc_cache_flush;      // CODC + GIC flush at the end of a collection
+    // CALL undo record (plan §3.5, as built): the prelude commits of the CALL
+    // in flight, reverted by CALL_PHASE_GC_UNWIND before an allocation abort
+    // so the re-dispatched CALL sees its original stack.
+    logic         gc_undo_bm_r;        // NULL sentinel overwritten (BM self / TYPE instance)
+    logic [7:0]   gc_undo_bm_slot_r;
+    logic         gc_undo_len_r;       // len(instance) replaced the callable with __len__
+    logic [7:0]   gc_undo_len_slot_r;
+    logic         gc_undo_kw_r;        // CALL_KW names tuple popped
+    logic [RF_AW-1:0] gc_call_entry_tos_r; // TOS at S_WB, names still on stack
+    logic         gc_undo_ex_r;        // CALL_FUNCTION_EX args and kw slot popped
+    logic [PYCORE_ENTRY_WIDTH-1:0] gc_ex_args_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] gc_ex_kw_r;
+    logic [6:0]   gc_ex_kw_n_r;        // kwargs dict order_len (slow path only)
+    logic         gc_ex_kw_known_r;
+    logic [1:0]   gc_unwind_step_r;
+    // Statistics (counter line, _bi_gc_stats).
+    logic [31:0]  gc_collections_r, gc_max_pause_r, gc_pause_cur_r, gc_run_pops_r;
+    logic [31:0]  gc_reclaimed_last_r, gc_superseded_r, gc_live_last_r, gc_free_last_r;
+    logic [31:0]  gc_largest_last_r, gc_free_before_r, gc_need_heap_cnt_r;
+    logic [63:0]  gc_total_pause_r, gc_mark_cyc_total_r, gc_sweep_cyc_total_r;
+    logic [63:0]  gc_port_busy_total_r, gc_stash_cyc_total_r, gc_mark_xacts_total_r;
+    logic [31:0]  gc_stack_hw_max_r, gc_spill_total_r, gc_zero_lines_r;
 
     // Simulation plusarg overrides so one compiled binary can run many
     // image fixtures.  Defaults match the module parameters; plusargs win
@@ -568,6 +647,7 @@ module pycore_core #(
     // resume/retry/fatal decision has been applied.
     logic                          trap_res_seen_r;
     logic [3:0]                    trap_res_code_r2;
+    logic [31:0]                   trap_res_heap_r2;
     logic [4:0]                    trap_res_fatal_r2;
     logic [1:0]                    trap_res_push_r;
     logic [PYCORE_ENTRY_WIDTH-1:0] trap_res_entries_r2 [0:1]; // MAX_RES_ENTRIES
@@ -854,6 +934,8 @@ module pycore_core #(
     // slots without a second read port (callable / null / STORE value).
     assign rs1_addr_eff = ((state_r == S_RF_SPILL))
                           ? rf_wm_r
+                          : (state_r == S_GC_ROOTS)
+                          ? gc_rf_idx_r
                           : ((state_r == S_CONTAINER) || (state_r == S_CALL))
                           ? container_rf_addr_r
                           : ((state_r == S_STRACC) &&
@@ -966,6 +1048,9 @@ module pycore_core #(
     logic [PYCORE_ENTRY_WIDTH-1:0] stracc_res_entry;
     logic [31:0] stracc_res_heap;
     logic [4:0]  stracc_res_code;
+    logic        stracc_res_need;
+    logic [31:0] stracc_res_need_bytes;
+    logic        gc_stracc_unwind_r;   // NEED_HEAP from a CALL-launched method
     logic        stracc_req, stracc_we, stracc_line;
     logic [15:0] stracc_wstrb;
     logic [31:0] stracc_addr;
@@ -998,11 +1083,14 @@ module pycore_core #(
         .cmd_b_i(stracc_cmd_b),
         .cmd_c_i(stracc_cmd_c),
         .cmd_heap_ptr_i(heap_ptr_r),
+        .cmd_heap_limit_i(heap_limit_r),
         .res_valid_o(stracc_res_valid),
         .res_entry_o(stracc_res_entry),
         .res_heap_ptr_o(stracc_res_heap),
         .res_trap_o(stracc_res_trap),
         .res_trap_code_o(stracc_res_code),
+        .res_need_heap_o(stracc_res_need),
+        .res_need_bytes_o(stracc_res_need_bytes),
         .req_o(stracc_req),
         .we_o(stracc_we),
         .line_o(stracc_line),
@@ -1370,7 +1458,8 @@ module pycore_core #(
          ((call_sub_r == 6'd56) || (call_sub_r == 6'd57) ||
           (call_sub_r == 6'd61) || (call_sub_r == 6'd62) ||
           (call_sub_r == 6'd63))) ||
-        (state_r == S_CODE_WRITE);
+        (state_r == S_CODE_WRITE) ||
+        gc_cache_flush;
     assign codc_p_entry    = codc_payload[63:0];
     assign codc_p_consts   = codc_payload[191:64];
     assign codc_p_names    = codc_payload[319:192];
@@ -1429,7 +1518,8 @@ module pycore_core #(
         ((state_r == S_RETURN) && (return_phase_r == 3'd0) &&
          frame_return_done && (frame_globals_base_out != globals_base_r)) ||
         ((state_r == S_CALL) && (call_phase_r == 5'd13) &&
-         ((call_sub_r == 6'd56) || (call_sub_r == 6'd63)));
+         ((call_sub_r == 6'd56) || (call_sub_r == 6'd63))) ||
+        gc_cache_flush;
 
     pycore_gic u_gic (
         .clk_i(clk_i),
@@ -1584,6 +1674,380 @@ module pycore_core #(
         .dmem_rdata_i(dmem_rdata_i)
     );
 
+    // ---------------------------------------------------------------------
+    // Garbage collector (planning/gc_plan.md, pycore/docs/gc.md).
+    //
+    // GC_EN (+GC_EN=) selects the collector; with GC_EN=0 none of the logic
+    // below changes a cycle. Collections start at instruction boundaries:
+    // S_GC_ENTER -> S_GC_ROOTS (stream register and RF roots) -> S_GC_RUN
+    // (engine marks and sweeps) -> S_GC_ALLOC (pop and zero the next free run,
+    // then resume or re-dispatch). An allocation that does not fit in the
+    // current run aborts its instruction before any commit and enters
+    // S_GC_ALLOC directly; only an empty run list forces a collection.
+    // ---------------------------------------------------------------------
+    // Simulation plusargs; every default is today's behaviour.
+    bit          gc_en_sim;
+    bit          gc_verify_only_sim;   // Phase 0: collect, but never consume runs
+    bit          gc_auto_sim;          // empty run list -> collect (else MEM_FAULT)
+    bit          gc_at_exit_sim;
+    bit          gc_stash_sim;
+    bit          gc_poison_sim;
+    logic [31:0] gc_heap_limit_sim;
+    logic [31:0] gc_every_n_runs_sim;
+    logic [31:0] gc_boundary_every_sim;
+    logic [31:0] gc_stack_limit_sim;
+    logic [7:0]  gc_onchip_sim;
+    logic [7:0]  gc_mutant_sim;
+    initial begin
+        int v;
+        gc_en_sim = 1'b0;
+        gc_verify_only_sim = 1'b0;
+        gc_auto_sim = 1'b1;
+        gc_at_exit_sim = 1'b0;
+        gc_stash_sim = 1'b0;
+        gc_poison_sim = 1'b0;
+        gc_heap_limit_sim = PYCORE_HEAP_LIMIT;
+        gc_every_n_runs_sim = 32'd0;
+        gc_boundary_every_sim = 32'd0;
+        gc_stack_limit_sim = 32'd0;
+        gc_onchip_sim = 8'd0;
+        gc_mutant_sim = 8'd0;
+        if ($value$plusargs("GC_EN=%d", v)) gc_en_sim = (v != 0);
+        if ($value$plusargs("GC_VERIFY_ONLY=%d", v)) gc_verify_only_sim = (v != 0);
+        if ($value$plusargs("GC_AUTO=%d", v)) gc_auto_sim = (v != 0);
+        if ($value$plusargs("GC_AT_EXIT=%d", v)) gc_at_exit_sim = (v != 0);
+        if ($value$plusargs("GC_ROOT_STASH=%d", v)) gc_stash_sim = (v != 0);
+        if ($value$plusargs("GC_POISON=%d", v)) gc_poison_sim = (v != 0);
+        if ($value$plusargs("HEAP_LIMIT=%d", v)) gc_heap_limit_sim = v;
+        if ($value$plusargs("GC_EVERY_N_RUNS=%d", v)) gc_every_n_runs_sim = v;
+        if ($value$plusargs("GC_AT_BOUNDARY_EVERY=%d", v)) gc_boundary_every_sim = v;
+        if ($value$plusargs("GC_STACK_LIMIT=%d", v)) gc_stack_limit_sim = v;
+        if ($value$plusargs("GC_ONCHIP=%d", v)) gc_onchip_sim = 8'(v);
+        if ($value$plusargs("GC_MUTANT=%d", v)) gc_mutant_sim = 8'(v);
+        // +HEAP_DYN_BYTES=n: heap limit = HEAP_INIT_PTR + n (G7 shrinks each
+        // fixture to its static image plus 2x its peak live bytes).
+        gc_heap_dyn_bytes_sim = 32'd0;
+        if ($value$plusargs("HEAP_DYN_BYTES=%d", v)) gc_heap_dyn_bytes_sim = (v + 15) & ~15;
+        if (!gc_en_sim) begin
+            gc_heap_limit_sim = PYCORE_HEAP_LIMIT;
+            gc_heap_dyn_bytes_sim = 32'd0;
+        end
+    end
+    logic [31:0] gc_heap_dyn_bytes_sim;
+    logic [31:0] gc_heap_limit_eff;
+    assign gc_heap_limit_eff =
+        (gc_heap_dyn_bytes_sim == 32'd0) ? gc_heap_limit_sim
+        : ((heap_init_ptr_sim + gc_heap_dyn_bytes_sim > PYCORE_HEAP_LIMIT)
+               ? PYCORE_HEAP_LIMIT : heap_init_ptr_sim + gc_heap_dyn_bytes_sim);
+
+    // Engine.
+    logic         gc_start;
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic         gc_busy;             // engine status; the core sequences by state
+    /* verilator lint_on UNUSEDSIGNAL */
+    logic         gc_done;
+    logic         gc_root_valid, gc_root_ready;
+    logic [PYCORE_ENTRY_WIDTH-1:0] gc_root_entry;
+    logic         gc_eng_req, gc_eng_we, gc_eng_line;
+    logic [31:0]  gc_eng_addr;
+    logic [127:0] gc_eng_wdata;
+    logic [15:0]  gc_eng_wstrb;
+    logic [31:0]  gc_live_bytes, gc_free_bytes, gc_largest_base, gc_largest_size;
+    logic [31:0]  gc_run_head, gc_runs, gc_bad_kind, gc_reserved_tag, gc_wild_ptr;
+    logic [31:0]  gc_run_onchip_n, gc_run_overflow_head;
+    logic [31:0]  gc_run_peek_base, gc_run_peek_size;
+    logic [31:0]  gc_run_idx_r, gc_run_onchip_lat_r;
+    logic [31:0]  gc_run_rover, gc_run_wrap_r;  // next-fit start; [0, wrap) still to search
+    logic         gc_stack_overflow, gc_eng_fault;
+    logic [31:0]  gc_mark_cyc, gc_sweep_cyc, gc_port_busy_mark, gc_mark_xacts;
+    logic [31:0]  gc_spill_xacts, gc_stack_hw, gc_stash_cyc, gc_objects, gc_roots_n;
+    logic         gc_free_range_valid;
+    logic [31:0]  gc_free_range_base, gc_free_range_len;
+    logic [31:0]  gc_dirty_hi;
+    logic         gc_state;
+    assign gc_state = (state_r == S_GC_ENTER) || (state_r == S_GC_ROOTS) ||
+                      (state_r == S_GC_RUN) || (state_r == S_GC_ALLOC);
+
+    pycore_gc u_gc (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .start_i(gc_start),
+        .busy_o(gc_busy),
+        .done_o(gc_done),
+        .dyn_base_i(heap_init_ptr_sim),
+        .heap_limit_i(gc_heap_limit_eff),
+        .spill_sp_i(spill_sp_r),
+        .exc_sp_i(exc_sp),
+        .frame_depth_i(32'(frame_active_depth)),
+        .stash_en_i(gc_stash_sim),
+        .poison_en_i(gc_poison_sim),
+        .line_wr_ok_i(cache_en_sim),
+        .zero_base_i(heap_zero_r),
+        .keep_lo_i(gc_keep_run ? heap_ptr_r : 32'd0),
+        .keep_hi_i(gc_keep_run ? heap_limit_r : 32'd0),
+        .rover_addr_i(gc_explicit_r ? 32'd0 : heap_ptr_r),
+        .clean_skip_i(!gc_pyc_dirty_r),
+        // Mutant 45 never traces the extra roots (B23 without the fix).
+        .extra_roots_i(gc_tdict_exposed_r && (gc_mutant_sim != 8'd45)),
+        .clean_busy_addr_o(gc_clean_busy_addr),
+        .clean_done_o(gc_clean_done),
+        .stack_limit_i(gc_stack_limit_sim),
+        .onchip_limit_i(gc_onchip_sim),
+        .mutant_i(gc_mutant_sim),
+        .root_valid_i(gc_root_valid),
+        .root_entry_i(gc_root_entry),
+        .roots_done_i(gc_roots_done_r),
+        .root_ready_o(gc_root_ready),
+        .req_o(gc_eng_req),
+        .we_o(gc_eng_we),
+        .line_o(gc_eng_line),
+        .addr_o(gc_eng_addr),
+        .wdata_o(gc_eng_wdata),
+        .wstrb_o(gc_eng_wstrb),
+        .ack_i(dmem_ack_i && (state_r == S_GC_ROOTS || state_r == S_GC_RUN)),
+        .rdata_i(dmem_rdata_i),
+        .rline_i(dmem_rdata_line_i),
+        .fault_i(dmem_fault_i),
+        .cache_en_i(cache_en_sim),
+        .live_bytes_o(gc_live_bytes),
+        .free_bytes_o(gc_free_bytes),
+        .largest_base_o(gc_largest_base),
+        .largest_size_o(gc_largest_size),
+        .run_head_o(gc_run_head),
+        .runs_o(gc_runs),
+        .run_onchip_n_o(gc_run_onchip_n),
+        .run_rover_o(gc_run_rover),
+        .run_overflow_head_o(gc_run_overflow_head),
+        .run_peek_idx_i(gc_run_idx_r[9:0]),
+        .run_peek_base_o(gc_run_peek_base),
+        .run_peek_size_o(gc_run_peek_size),
+        .stack_overflow_o(gc_stack_overflow),
+        .fault_o(gc_eng_fault),
+        .bad_kind_o(gc_bad_kind),
+        .reserved_tag_o(gc_reserved_tag),
+        .wild_ptr_o(gc_wild_ptr),
+        .mark_cyc_o(gc_mark_cyc),
+        .sweep_cyc_o(gc_sweep_cyc),
+        .port_busy_mark_o(gc_port_busy_mark),
+        .mark_xacts_o(gc_mark_xacts),
+        .spill_xacts_o(gc_spill_xacts),
+        .stack_hw_o(gc_stack_hw),
+        .stash_cyc_o(gc_stash_cyc),
+        .objects_o(gc_objects),
+        .roots_o(gc_roots_n),
+        .dirty_hi_o(gc_dirty_hi),
+        .free_range_valid_o(gc_free_range_valid),
+        .free_range_base_o(gc_free_range_base),
+        .free_range_len_o(gc_free_range_len)
+    );
+
+    // Register roots in the fixed order of plan §3.3, then the RF ring.
+    // Raw addresses are re-tagged; zero or inactive registers are skipped.
+    logic         gc_reg_root_ok;
+    logic [PYCORE_ENTRY_WIDTH-1:0] gc_reg_root;
+    always_comb begin
+        gc_reg_root_ok = 1'b0;
+        gc_reg_root    = '0;
+        unique case (gc_root_idx_r)
+            5'd0: begin
+                gc_reg_root_ok = (cur_code_r != 32'd0) && (gc_mutant_sim != 8'd11);
+                gc_reg_root = pycore_make_entry(PY_TAG_CODE_OBJECT, {96'd0, cur_code_r});
+            end
+            5'd1: begin
+                gc_reg_root_ok = (globals_base_r != 32'd0) && (gc_mutant_sim != 8'd11);
+                gc_reg_root = pycore_make_mut(PY_MUT_DICT, {32'd0, globals_base_r}, 1'b0);
+            end
+            5'd2: begin
+                gc_reg_root_ok = (builtins_base_r != 32'd0);
+                gc_reg_root = pycore_make_mut(PY_MUT_DICT, {32'd0, builtins_base_r}, 1'b0);
+            end
+            5'd3: begin
+                gc_reg_root_ok = (cur_closure_r != 128'd0) && (gc_mutant_sim != 8'd8);
+                gc_reg_root = pycore_make_entry(PY_TAG_TUPLE, cur_closure_r);
+            end
+            5'd4: begin
+                gc_reg_root_ok = active_exc_valid_r && (gc_mutant_sim != 8'd6);
+                gc_reg_root = active_exc_r;
+            end
+            5'd5: begin
+                gc_reg_root_ok = call_exc_pending_r;
+                gc_reg_root = call_exc_handle_r;
+            end
+            5'd6: begin
+                gc_reg_root_ok = container_call_active_r && (gc_mutant_sim != 8'd7);
+                gc_reg_root = container_call_saved_rs1_r;
+            end
+            5'd7: begin
+                gc_reg_root_ok = container_call_active_r && (gc_mutant_sim != 8'd7);
+                gc_reg_root = container_call_saved_rs2_r;
+            end
+            5'd8: begin
+                // Result is written as the protocol CALL deactivates
+                // (`return_valid`). Rooting it while `active` kept a freed
+                // list from the previous `__iter__` (img_for_iter_object_nested
+                // G7 (b) collection 60, wild_ptr).
+                gc_reg_root_ok = container_call_return_valid_r && (gc_mutant_sim != 8'd7);
+                gc_reg_root = container_call_result_r;
+            end
+            5'd9: begin
+                gc_reg_root_ok = container_call_active_r && (gc_mutant_sim != 8'd7);
+                gc_reg_root = container_proto_iter_r;
+            end
+            5'd10: begin
+                gc_reg_root_ok = (iter_exhaust_type_r != '0);
+                gc_reg_root = iter_exhaust_type_r;
+            end
+            default: ;
+        endcase
+    end
+    localparam logic [4:0] GC_ROOT_IDX_RF = 5'd11;
+    logic gc_rf_roots_left;
+    assign gc_rf_roots_left = (gc_rf_idx_r != tos_r) && (gc_mutant_sim != 8'd1);
+    assign gc_root_valid = (state_r == S_GC_ROOTS) && gc_started_r && !gc_roots_done_r &&
+                           ((gc_root_idx_r < GC_ROOT_IDX_RF) ? gc_reg_root_ok
+                                                             : gc_rf_roots_left);
+    assign gc_root_entry = (gc_root_idx_r < GC_ROOT_IDX_RF) ? gc_reg_root : rf_rs1;
+
+    // S_GC_ALLOC's own dmem traffic: run-header reads and zero line writes.
+    logic         gcalloc_dmem_active;
+    logic         gcalloc_we_r, gcalloc_line_r;
+    logic [31:0]  gcalloc_addr_r;
+    logic [127:0] gcalloc_wdata_r;
+    logic         gcalloc_after_skip_r;
+    assign gcalloc_dmem_active = (state_r == S_GC_ALLOC) && gc_alloc_pending_r;
+    // Sequential-table headers store the heap run in [31:0]; leftover
+    // in-place headers keep that word 0 and the header address is the run.
+    logic [31:0] gc_hdr_base;
+    assign gc_hdr_base = (dmem_rdata_i[31:0] != 32'd0)
+                         ? dmem_rdata_i[31:0] : gcalloc_addr_r;
+    logic         gc_eng_dmem_active;
+    assign gc_eng_dmem_active = gc_eng_req &&
+                                ((state_r == S_GC_ROOTS) || (state_r == S_GC_RUN));
+
+    // Drain an aborted instruction's outstanding dmem beat before the
+    // engine's first request. Otherwise skip-clear PRELOAD can sample that
+    // beat as prune-map word 0 (objects RTL=oracle+5 on G8 even seeds).
+    logic dmem_busy_r;
+    assign gc_start       = (state_r == S_GC_ENTER) && !dmem_busy_r;
+    assign gc_cache_flush = (state_r == S_GC_RUN) && gc_done && (gc_mutant_sim != 8'd29);
+    // +GC_EVERY_N_RUNS: every N-th run switch collects first (G7 torture).
+    logic gc_force_collect;
+    assign gc_force_collect = (gc_every_n_runs_sim != 32'd0) &&
+                              ((gc_runsw_cnt_r + 32'd1) >= gc_every_n_runs_sim);
+    assign gc_alloc_collect = (state_r == S_GC_ALLOC) && (gc_alloc_phase_r == 4'd0) &&
+                              !gc_collected_r && gc_auto_sim && (gc_need_bytes_r != 32'd0) &&
+                              (((run_list_head_r == 32'd0) &&
+                                (gc_run_idx_r >= gc_run_onchip_lat_r) &&
+                                (gc_run_wrap_r == 32'd0)) ||
+                               gc_force_collect);
+    assign gc_alloc_exit  = (state_r == S_GC_ALLOC) && (gc_alloc_phase_r == 4'd3);
+
+`ifndef SYNTHESIS
+    // G6 in-RTL invariants (plan §10.2): always compiled, never allowed to fire.
+    logic [31:0]  gc_inv_epoch_at_enter;
+    logic [RF_AW-1:0] gc_inv_tos_at_enter;
+    logic [7:0]   gc_inv_op;
+    logic [31:0]  gc_inv_pc;
+    logic         gc_inv_was_gc, gc_inv_collected;
+    logic         gc_inv_hdr_pending;
+    logic [31:0]  gc_inv_hdr_end;
+    logic         gc_inv_wr_pending;
+    logic [31:0]  gc_inv_wr_end;
+    initial gc_inv_hdr_pending = 1'b0;
+    initial gc_inv_wr_pending = 1'b0;
+    initial begin
+        gc_inv_was_gc = 1'b0;
+        gc_inv_collected = 1'b0;
+    end
+    always @(posedge clk_i) begin
+        if (rst_n_i && gc_en_sim) begin
+            if (heap_ptr_r > heap_limit_r)
+                $fatal(1, "[GC-INV] heap_ptr_r %h above heap_limit_r %h", heap_ptr_r, heap_limit_r);
+            // Memory at and above heap_zero_r is handed out without zeroing,
+            // so a run header the allocator writes must lie below it once
+            // written (gc.md invariant 6; review round 1).
+            if (gc_inv_hdr_pending && (heap_zero_r < gc_inv_hdr_end))
+                $fatal(1, "[GC-INV] run header written at %h above heap_zero_r %h",
+                       gc_inv_hdr_end - 32'd16, heap_zero_r);
+            // Phase 2 zeroes: its word writes must carry zero data (review
+            // round 3: a release-zero pass once inherited a run header).
+            if ((state_r == S_GC_ALLOC) && (gc_alloc_phase_r == 4'd2) && gcalloc_req &&
+                gcalloc_we_r && !gcalloc_line_r && (gcalloc_wdata_r != 128'd0))
+                $fatal(1, "[GC-INV] zeroing write at %h carries non-zero data", gcalloc_addr_r);
+            // ... and so must every other core write into the dynamic heap.
+            if (gc_inv_wr_pending && (heap_zero_r < gc_inv_wr_end))
+                $fatal(1, "[GC-INV] heap write at %h above heap_zero_r %h",
+                       gc_inv_wr_end - 32'd16, heap_zero_r);
+            gc_inv_wr_pending <= gc_en_sim && !gc_state && dmem_req_o && dmem_we_o &&
+                                 (dmem_addr_o >= heap_init_ptr_sim) &&
+                                 (dmem_addr_o < gc_heap_limit_eff);
+            gc_inv_wr_end     <= dmem_addr_o + (dmem_line_o ? 32'd64 : 32'd16);
+            gc_inv_hdr_pending <= gcalloc_req && gcalloc_we_r && !gcalloc_line_r &&
+                                  (gcalloc_wdata_r != 128'd0);
+            gc_inv_hdr_end     <= gcalloc_addr_r + 32'd16;
+            if (!gc_state && (state_next == S_GC_ENTER || state_next == S_GC_ALLOC)) begin
+                gc_inv_epoch_at_enter <= gc_epoch_r;
+                gc_inv_tos_at_enter   <= tos_r;
+                gc_inv_op <= cur_opcode_r;
+                gc_inv_pc <= cur_pc_r;
+            end
+            if (gc_state && rf_we && !((state_r == S_GC_ALLOC || state_r == S_GC_RUN) &&
+                                       container_wb_we_r && (gc_explicit_r || gc_verify_only_sim)))
+                $fatal(1, "[GC-INV] register-file write during a collection");
+            // A boundary collection can follow an instruction whose last
+            // edge (S_WB) still moved tos_r: take the value in the first
+            // S_GC_ENTER cycle.
+            if ((state_r == S_GC_ENTER) && !gc_inv_was_gc) gc_inv_tos_at_enter <= tos_r;
+            if (gc_state && (tos_r != gc_inv_tos_at_enter) &&
+                !((state_r == S_GC_ENTER) && !gc_inv_was_gc) &&
+                (state_r != S_GC_ALLOC || gc_alloc_phase_r != 4'd3))
+                $fatal(1, "[GC-INV] tos_r moved during a collection");
+            if ((state_r == S_GC_RUN) && gc_done) gc_inv_collected <= 1'b1;
+            if (!gc_state && (state_next == S_GC_ENTER || state_next == S_GC_ALLOC))
+                gc_inv_collected <= 1'b0;
+            // First cycle after a pause: the epoch moved by exactly one per
+            // collection, and the result caches were flushed.
+            if (gc_inv_was_gc && !gc_state && !freeze_pipeline) begin
+                if ((gc_epoch_r != gc_inv_epoch_at_enter + (gc_inv_collected ? 32'd1 : 32'd0)))
+                    $fatal(1, "[GC-INV] epoch %0d after a pause that started at %0d", gc_epoch_r,
+                           gc_inv_epoch_at_enter);
+                for (int s = 0; s < PYCORE_CODC_ENTRIES / PYCORE_CODC_WAYS; s++)
+                    for (int w = 0; w < PYCORE_CODC_WAYS; w++)
+                        if (u_codc.valid_r[s][w] && gc_inv_collected)
+                            $fatal(1, "[GC-INV] CODC entry valid after a collection");
+                for (int s = 0; s < PYCORE_GIC_ENTRIES / PYCORE_GIC_WAYS; s++)
+                    for (int w = 0; w < PYCORE_GIC_WAYS; w++)
+                        if (u_gic.valid_r[s][w] && gc_inv_collected)
+                            $fatal(1, "[GC-INV] GIC entry valid after a collection");
+            end
+            gc_inv_was_gc <= gc_state;
+            if (gc_state && (state_next == S_FETCH) && !freeze_pipeline) begin
+                // Re-dispatch re-latches the aborted instruction from fetch.
+                if (gc_abort_r &&
+                    !(if_instr_valid && (if_pc == gc_inv_pc) && (if_opcode == gc_inv_op)))
+                    $fatal(1, "[GC-INV] fetch no longer holds the aborted instruction (pc %0d)",
+                           gc_inv_pc);
+            end
+        end
+    end
+
+    // +GC_TRACE: print every transition into, out of, or between GC states.
+    bit gc_trace_sim;
+    initial gc_trace_sim = $test$plusargs("GC_TRACE");
+    always @(posedge clk_i) begin
+        if (rst_n_i && gc_trace_sim && (state_next != state_r) &&
+            (gc_state || (state_next >= S_GC_ENTER && state_next <= S_GC_ALLOC)))
+            $display("[GC-TRACE] cyc=%0d pc=%0d state %0d -> %0d eng=%0d/%0d/%0d root_idx=%0d rf=%0d/%0d need=%0d heap=%h/%h head=%h",
+                     cycle_count_o, cur_pc_r, state_r, state_next, u_gc.phase_r, u_gc.t_st_r,
+                     u_gc.m_st_r, gc_root_idx_r, gc_rf_idx_r, tos_r, gc_need_bytes_r,
+                     heap_ptr_r, heap_limit_r, run_list_head_r);
+        if (rst_n_i && gc_trace_sim && gc_state && (dmem_req_o || dmem_ack_i) &&
+            $test$plusargs("GC_TRACE_MEM"))
+            $display("[GC-TRACE] cyc=%0d dmem req=%0d we=%0d line=%0d addr=%h ack=%0d",
+                     cycle_count_o, dmem_req_o, dmem_we_o, dmem_line_o, dmem_addr_o, dmem_ack_i);
+    end
+`endif
+
     assign frame_dmem_active     = frame_dmem_pending_r &&
                                    ((state_r == S_CALL) || (state_r == S_RETURN));
     assign container_dmem_active = container_dmem_pending_r &&
@@ -1602,28 +2066,43 @@ module pycore_core #(
         ? (spill_sp_r + (rf_spill_half_r ? 32'd16 : 32'd0))
         : ((spill_sp_r - 32'd32) + (rf_spill_half_r ? 32'd16 : 32'd0));
 
+    // GC sources (engine in S_GC_ROOTS/S_GC_RUN, allocator in S_GC_ALLOC)
+    // own the port only in their states, where no other master is active.
+    // S_GC_ALLOC requests are one-cycle pulses, like STRACC's.
+    logic gcalloc_req;
+    assign gcalloc_req = gcalloc_dmem_active && !gcalloc_issued_r;
     assign dmem_req_o   = rf_spill_dmem_active  ? 1'b1 :
                           frame_dmem_active     ? 1'b1 :
                           container_dmem_active ? 1'b1 :
                           stracc_dmem_active    ? 1'b1 :
-                          exc_dmem_active       ? 1'b1 : ms_dmem_req;
+                          exc_dmem_active       ? 1'b1 :
+                          gc_eng_dmem_active    ? 1'b1 :
+                          gcalloc_dmem_active   ? gcalloc_req : ms_dmem_req;
     assign dmem_we_o    = rf_spill_dmem_active  ? (state_r == S_RF_SPILL) :
                           frame_dmem_active     ? (state_r == S_CALL) :
                           container_dmem_active ? container_dmem_we_r  :
                           stracc_dmem_active    ? stracc_we           :
-                          exc_dmem_active       ? exc_dmem_we         : ms_dmem_we;
-    assign dmem_line_o  = stracc_dmem_active    ? stracc_line : 1'b0;
+                          exc_dmem_active       ? exc_dmem_we         :
+                          gc_eng_dmem_active    ? gc_eng_we           :
+                          gcalloc_dmem_active   ? gcalloc_we_r        : ms_dmem_we;
+    assign dmem_line_o  = stracc_dmem_active    ? stracc_line :
+                          gc_eng_dmem_active    ? gc_eng_line :
+                          gcalloc_dmem_active   ? gcalloc_line_r : 1'b0;
     assign dmem_wstrb_o = rf_spill_dmem_active  ? {DMEM_DATA_W/8{1'b1}} :
                           frame_dmem_active     ? {DMEM_DATA_W/8{1'b1}} :
                           container_dmem_active ? container_dmem_wstrb_r :
                           stracc_dmem_active    ? stracc_wstrb        :
-                          exc_dmem_active       ? exc_dmem_wstrb      : ms_dmem_wstrb;
+                          exc_dmem_active       ? exc_dmem_wstrb      :
+                          gc_eng_dmem_active    ? gc_eng_wstrb        :
+                          gcalloc_dmem_active   ? {DMEM_DATA_W/8{1'b1}} : ms_dmem_wstrb;
     assign dmem_addr_o  = rf_spill_dmem_active  ? rf_spill_dmem_addr[ADDR_WIDTH-1:0] :
                           frame_dmem_active     ?
                               ((state_r == S_CALL) ? frame_push_addr : frame_pop_addr) :
                           container_dmem_active ? container_dmem_addr_r :
                           stracc_dmem_active    ? stracc_addr          :
-                          exc_dmem_active       ? exc_dmem_addr        : ms_dmem_addr;
+                          exc_dmem_active       ? exc_dmem_addr        :
+                          gc_eng_dmem_active    ? gc_eng_addr          :
+                          gcalloc_dmem_active   ? gcalloc_addr_r       : ms_dmem_addr;
     assign dmem_wdata_o = rf_spill_dmem_active  ? (
                               rf_spill_half_r
                                   ? {124'b0, pycore_get_tag(rf_rs1)}
@@ -1632,8 +2111,18 @@ module pycore_core #(
                           frame_dmem_active     ? frame_push_data :
                           container_dmem_active ? container_dmem_wdata_r :
                           stracc_dmem_active    ? stracc_wdata         :
-                          exc_dmem_active       ? exc_dmem_wdata       : ms_dmem_wdata;
-    assign dmem_wline_o = stracc_dmem_active    ? stracc_wline : '0;
+                          exc_dmem_active       ? exc_dmem_wdata       :
+                          gc_eng_dmem_active    ? gc_eng_wdata         :
+                          gcalloc_dmem_active   ? gcalloc_wdata_r      : ms_dmem_wdata;
+    // Engine line writes (GC_POISON, CACHE_EN=1) carry one poison word in each 16 B slot.
+    assign dmem_wline_o = stracc_dmem_active    ? stracc_wline :
+                          gc_eng_dmem_active    ? {4{gc_eng_wdata}} : '0;
+
+    always_ff @(posedge clk_i or negedge rst_n_i) begin
+        if (!rst_n_i) dmem_busy_r <= 1'b0;
+        else if (dmem_req_o && !dmem_ack_i) dmem_busy_r <= 1'b1;
+        else if (dmem_ack_i) dmem_busy_r <= 1'b0;
+    end
 
     // ---------------------------------------------------------------------
     // Trap aggregation (single in-flight instruction).
@@ -1814,6 +2303,17 @@ module pycore_core #(
         .trap_rs2_o(),
         .freeze_pipeline_o(freeze_pipeline)
     );
+`ifndef SYNTHESIS
+    always @(posedge clk_i) begin
+        if (rst_n_i && (call_filter_trap_r || frame_fault_trap_sig) &&
+            $test$plusargs("GC_TRACE_DEC"))
+            $display("[GC-DEC] CALL_FILTER pc=%0d op=%0d phase=%0d mode=%0d rs1tag=%0h rftag=%0h rfval=%h tos=%0d entry_tos=%0d undo_kw=%0d rfaddr=%0d filter=%0d frame_fault=%0d depth=%0d",
+                     cur_pc_r, cur_opcode_r, call_phase_r, call_mode_r,
+                     rs1_r[PYCORE_ENTRY_WIDTH-1 -: 4], cont_rf_rs1_tag, rf_rs1[127:0],
+                     tos_r, gc_call_entry_tos_r, gc_undo_kw_r, container_rf_addr_r,
+                     call_filter_trap_r, frame_fault_trap_sig, frame_active_depth);
+    end
+`endif
 
     // -------------------------------------------------------------------------
     // S_TRAP_MARSHAL / S_TRAP_WAIT (Phase C) combinational wiring.
@@ -1827,6 +2327,10 @@ module pycore_core #(
     assign trap_req_pc_o           = cur_pc_r;
     assign trap_req_instr_o        = {cur_arg_r, cur_opcode_r};
     assign trap_req_heap_ptr_o     = heap_ptr_r;
+    // Mutant 33: firmware still sees the hard heap ceiling, so a grant
+    // shrink after collect is invisible and NEED_HEAP never fires.
+    assign trap_req_heap_limit_o   = (gc_mutant_sim == 8'd33)
+                                     ? PYCORE_HEAP_LIMIT : heap_limit_r;
     assign trap_req_entry_count_o  = trap_marshal_entry_count_r;
     assign trap_req_entries_o      = trap_marshal_entries_r;
 
@@ -2127,6 +2631,37 @@ module pycore_core #(
     localparam logic [4:0] CALL_PHASE_STRACC_ARG0 = 5'd21;
     localparam logic [4:0] CALL_PHASE_STRACC_ARG1 = 5'd22;
     localparam logic [4:0] CALL_PHASE_FUNCTION    = 5'd23;
+    // GC: kwargs-dict length read (slow path), undo unwind, and the parked
+    // phase an aborted CALL sits in until S_GC_ALLOC takes over.
+    localparam logic [4:0] CALL_PHASE_GC_KWLEN    = 5'd24;
+    localparam logic [4:0] CALL_PHASE_GC_UNWIND   = 5'd25;
+    localparam logic [4:0] CALL_PHASE_GC_IDLE     = 5'd26;
+    // A current run this large always fits a CALL's binder allocations
+    // (*args <= 127 elements, **kwargs <= 128 slots), so the reservation
+    // is skipped without a cycle.
+    localparam logic [31:0] GC_CALL_FAST_BYTES    = 32'd17408;
+    // Bytes the binder may allocate for this CALL: the *args tuple and the
+    // **kwargs dict, each with 64 B of placement slack (plan §3.5). Both
+    // the CODC-hit and the CODC-miss paths reserve this before phase 14.
+    function automatic logic [31:0] gc_call_binder_need(
+        input logic [127:0] meta,
+        input logic [15:0]  argc,
+        input logic [6:0]   n_kw
+    );
+        logic [15:0] extra;
+        logic [31:0] need;
+        begin
+            extra = (argc > pycore_code_meta_argcount(meta))
+                  ? argc - pycore_code_meta_argcount(meta) : 16'd0;
+            need = 32'd0;
+            if (pycore_code_meta_varargs(meta) && (extra != 16'd0))
+                need = pycore_tuple_alloc_bytes({16'd0, extra}) + 32'd64;
+            if (pycore_code_meta_varkeywords(meta))
+                need = need + pycore_dict_place_end(32'd0, pycore_dict_min_slots(n_kw))
+                     + 32'd64 - ((gc_mutant_sim == 8'd34) ? 32'd96 : 32'd0);
+            return need;
+        end
+    endfunction
     localparam logic [2:0] RET_PHASE_DONE  = 3'd7;
     localparam logic [3:0] BOOT_PHASE_DONE = 4'd15;
     // call_mode_r encodings
@@ -2134,6 +2669,18 @@ module pycore_core #(
     localparam logic [1:0] CALL_MODE_KW    = 2'd1; // CALL_KW (names tuple)
     localparam logic [1:0] CALL_MODE_EX    = 2'd2; // CALL_FUNCTION_EX expand
     localparam logic [1:0] CALL_MODE_EX_KW = 2'd3; // EX with kwargs dict binder
+    // Binder reservation inputs (gc_call_binder_need). gc_call_argc_now is
+    // the phase-2 value of call_argcount_r (rs1 is the NULL/self sentinel
+    // there), so the CODC-hit path can reserve in the same cycle.
+    logic [6:0]  gc_call_n_kw;
+    logic [15:0] gc_call_argc_now;
+    assign gc_call_n_kw = (call_mode_r == CALL_MODE_EX_KW)
+                        ? (gc_ex_kw_known_r ? gc_ex_kw_n_r : 7'd127)
+                        : call_n_kwargs_r[6:0];
+    assign gc_call_argc_now =
+        (((call_mode_r == CALL_MODE_KW) || (call_mode_r == CALL_MODE_EX_KW))
+            ? {8'b0, call_n_pos_r} : cur_arg_r[15:0])
+        + (pycore_is_null(cont_rf_rs1_tag, cont_rf_rs1_val) ? 16'd0 : 16'd1);
     // SHORT_STR value for "__init__" (size=8); used by TYPE-call tp_dict probe.
     localparam logic [127:0] CALL_INIT_NAME_VAL =
         128'h85f5f696e69745f5f000000000000000;
@@ -2143,8 +2690,23 @@ module pycore_core #(
     // Empty dict for new instances: 4 slots (BUILD_MAP min for 0 pairs).
     localparam logic [31:0] CALL_EMPTY_DICT_SLOTS = 32'd4;
 
+    logic gc_to_fetch;
+    logic gc_boundary_want;
+    // Keep the current run across a boundary or exit collection: it has no
+    // allocation to satisfy, so re-selecting a run is pure overhead (G13 P8).
+    // An explicit _bi_gc_collect() still hands out freed memory first-fit.
+    assign gc_keep_run = !gc_abort_r && !gc_explicit_r && (gc_need_bytes_r == 32'd0) &&
+                         !gc_verify_only_sim &&
+                         (heap_limit_r > heap_ptr_r) && (heap_ptr_r >= heap_init_ptr_sim);
+    logic gc_alloc_collect;   // S_GC_ALLOC: run list exhausted, collect now
+    logic gc_alloc_exit;      // S_GC_ALLOC: resume / re-dispatch this cycle
+    assign gc_boundary_want = gc_explicit_r || gc_exit_req_r ||
+                              ((gc_boundary_every_sim != 32'd0) &&
+                               ((gc_boundary_cnt_r + 32'd1) >= gc_boundary_every_sim));
+
     always_comb begin
         state_next = state_r;  // default: hold current state
+        gc_to_fetch = 1'b0;
 
         if (freeze_pipeline) begin
             state_next = S_HALT;
@@ -2183,7 +2745,9 @@ module pycore_core #(
                     // S_STRACC after the self/args RF walk; spill runs before
                     // the frame push (phase 7); extra UNINIT-clear chunks
                     // run in S_RF_INIT after CALL_PHASE_DONE.
-                    if (call_stracc_go_r)
+                    if (gc_abort_r)
+                        state_next = S_GC_ALLOC;
+                    else if (call_stracc_go_r)
                         state_next = S_STRACC;
                     else if (code_write_needed_r)
                         state_next = S_CODE_WRITE;
@@ -2230,11 +2794,16 @@ module pycore_core #(
                     end else if (container_call_exc_unwind_r) begin
                         state_next = S_RETURN;
                     end else if (container_phase_r == CP_DONE) begin
-                        state_next = trap_marshal_pending_r ? S_TRAP_MARSHAL : S_FETCH;
+                        state_next = gc_abort_r ? S_GC_ALLOC
+                                   : trap_marshal_pending_r ? S_TRAP_MARSHAL : S_FETCH;
                     end
                 end
                 S_STRACC: begin
-                    if (stracc_finishing_r)
+                    if (gc_abort_r)
+                        state_next = S_GC_ALLOC;
+                    else if (gc_stracc_unwind_r)
+                        state_next = S_CALL;
+                    else if (stracc_finishing_r)
                         state_next = S_FETCH;
                 end
                 S_TRAP_MARSHAL: begin
@@ -2242,18 +2811,50 @@ module pycore_core #(
                 end
                 S_TRAP_WAIT: begin
                     if (trap_wait_ready) begin
-                        state_next = (trap_res_code_r2 == TRAP_RES_FATAL) ? S_HALT : S_FETCH;
+                        if (trap_res_code_r2 == TRAP_RES_FATAL)
+                            state_next = S_HALT;
+                        else if (trap_res_code_r2 == TRAP_RES_NEED_HEAP &&
+                                 gc_en_sim && !gc_verify_only_sim)
+                            state_next = S_GC_ALLOC;
+                        else if (trap_res_code_r2 == TRAP_RES_NEED_HEAP)
+                            state_next = S_HALT;
+                        else
+                            state_next = S_FETCH;
                     end
                 end
                 S_BOOT: begin
                     if (boot_phase_r == BOOT_PHASE_DONE)
                         state_next = rf_init_more_r ? S_RF_INIT : S_FETCH;
                 end
+                S_GC_ENTER: begin
+                    state_next = dmem_busy_r ? S_GC_ENTER : S_GC_ROOTS;
+                end
+                S_GC_ROOTS: begin
+                    if (gc_roots_done_r) state_next = S_GC_RUN;
+                end
+                S_GC_RUN: begin
+                    if (gc_done)
+                        state_next = gc_verify_only_sim ? S_FETCH : S_GC_ALLOC;
+                end
+                S_GC_ALLOC: begin
+                    if (gc_oom_raise_r) state_next = S_CONTAINER;
+                    else if (gc_alloc_collect) state_next = S_GC_ENTER;
+                    else if (gc_alloc_exit) state_next = S_FETCH;
+                end
                 S_HALT: begin
                     state_next = S_HALT;
                 end
                 default: state_next = S_FETCH;
             endcase
+            // Instruction boundary: a transition into S_FETCH from a
+            // completed instruction. A pending boundary collection
+            // (_bi_gc_collect, +GC_AT_EXIT, +GC_AT_BOUNDARY_EVERY) takes it.
+            gc_to_fetch = (state_next == S_FETCH) && (state_r != S_FETCH) && !gc_state;
+            // A rewinding _bi_heap_release zeroes the bytes it hands back
+            // first (S_GC_ALLOC phase 2 only); a pending collection waits
+            // one instruction.
+            if (gc_en_sim && gc_to_fetch && gc_rel_zero_r) state_next = S_GC_ALLOC;
+            else if (gc_en_sim && gc_to_fetch && gc_boundary_want) state_next = S_GC_ENTER;
         end
     end
 
@@ -2380,6 +2981,82 @@ module pycore_core #(
             return_wb_data_r     <= '0;
             // Container / heap allocator reset.
             heap_ptr_r               <= heap_init_ptr_sim;
+            heap_limit_r             <= gc_heap_limit_eff;
+            run_base_r               <= heap_init_ptr_sim;
+            run_list_head_r          <= '0;
+            run_skipped_head_r       <= '0;
+            gc_run_idx_r             <= '0;
+            gc_run_wrap_r            <= '0;
+            gc_run_onchip_lat_r      <= '0;
+            gc_list_free_r           <= '0;
+            heap_zero_r              <= heap_init_ptr_sim;
+            gc_epoch_r               <= '0;
+            gc_abort_r               <= 1'b0;
+            gc_explicit_r            <= 1'b0;
+            gc_exit_req_r            <= 1'b0;
+            gc_boundary_req_r        <= 1'b0;
+            gc_collected_r           <= 1'b0;
+            gc_oom_raise_r           <= 1'b0;
+            gc_need_bytes_r          <= '0;
+            gc_retry_count_r         <= '0;
+            gc_retry_pc_r            <= 32'hFFFF_FFFF;
+            gc_retry_largest_r       <= '0;
+            gc_boundary_cnt_r        <= '0;
+            gc_runsw_cnt_r           <= '0;
+            gc_root_idx_r            <= '0;
+            gc_rf_idx_r              <= '0;
+            gc_roots_done_r          <= 1'b0;
+            gc_started_r             <= 1'b0;
+            gc_alloc_phase_r         <= '0;
+            gc_alloc_pending_r       <= 1'b0;
+            gcalloc_issued_r         <= 1'b0;
+            gcalloc_we_r             <= 1'b0;
+            gcalloc_line_r           <= 1'b0;
+            gcalloc_addr_r           <= '0;
+            gcalloc_wdata_r          <= '0;
+            gcalloc_after_skip_r     <= 1'b0;
+            gc_cand_base_r           <= '0;
+            gc_cand_size_r           <= '0;
+            gc_rel_zero_r            <= 1'b0;
+            gc_res_abort_r           <= 1'b0;
+            gc_res_abort_kw_r        <= 1'b0;
+            gc_zero_ptr_r            <= '0;
+            gc_zero_end_r            <= '0;
+            gc_undo_bm_r             <= 1'b0;
+            gc_undo_bm_slot_r        <= '0;
+            gc_undo_len_r            <= 1'b0;
+            gc_undo_len_slot_r       <= '0;
+            gc_undo_kw_r             <= 1'b0;
+            gc_call_entry_tos_r      <= '0;
+            gc_undo_ex_r             <= 1'b0;
+            gc_ex_args_r             <= '0;
+            gc_ex_kw_r               <= '0;
+            gc_ex_kw_n_r             <= '0;
+            gc_ex_kw_known_r         <= 1'b0;
+            gc_unwind_step_r         <= '0;
+            gc_stracc_unwind_r       <= 1'b0;
+            gc_collections_r         <= '0;
+            gc_max_pause_r           <= '0;
+            gc_pause_cur_r           <= '0;
+            gc_run_pops_r            <= '0;
+            gc_reclaimed_last_r      <= '0;
+            gc_superseded_r          <= '0;
+            gc_live_last_r           <= '0;
+            gc_free_last_r           <= '0;
+            gc_largest_last_r        <= '0;
+            gc_free_before_r         <= '0;
+            gc_need_heap_cnt_r       <= '0;
+            gc_total_pause_r         <= '0;
+            gc_pyc_dirty_r           <= 1'b1;
+            gc_tdict_exposed_r       <= 1'b0;
+            gc_mark_cyc_total_r      <= '0;
+            gc_sweep_cyc_total_r     <= '0;
+            gc_port_busy_total_r     <= '0;
+            gc_stash_cyc_total_r     <= '0;
+            gc_mark_xacts_total_r    <= '0;
+            gc_stack_hw_max_r        <= '0;
+            gc_spill_total_r         <= '0;
+            gc_zero_lines_r          <= '0;
             code_ram_ptr_r           <= code_ram_init_slot_sim;
             code_ram_floor_r         <= code_ram_init_slot_sim;
             code_write_needed_r      <= 1'b0;
@@ -2518,6 +3195,7 @@ module pycore_core #(
             trap_wait_push_idx_r       <= '0;
             trap_res_seen_r            <= 1'b0;
             trap_res_code_r2           <= '0;
+            trap_res_heap_r2           <= '0;
             trap_res_fatal_r2          <= '0;
             trap_res_push_r            <= '0;
             trap_res_entries_r2[0]     <= '0;
@@ -2528,6 +3206,58 @@ module pycore_core #(
             state_r <= state_next;  // register next state (computed in always_comb)
 
             cycle_count_o        <= cycle_count_o + 1'b1;
+
+            // ---- GC bookkeeping (inert with GC_EN=0) ----
+            if (gc_state) gc_total_pause_r <= gc_total_pause_r + 64'd1;
+            if (gc_clean_done)
+                gc_pyc_dirty_r <= 1'b0;
+            else if (!gc_state && dmem_req_o && dmem_we_o &&
+                     (gc_clean_busy_addr != 32'd0) &&
+                     ((dmem_addr_o >> 4) == (gc_clean_busy_addr >> 4)))
+                gc_pyc_dirty_r <= 1'b1;
+            gc_pause_cur_r <= gc_state ? gc_pause_cur_r + 32'd1 : 32'd0;
+            if (gc_en_sim && gc_to_fetch && (gc_boundary_every_sim != 32'd0))
+                gc_boundary_cnt_r <= (gc_boundary_want && !gc_rel_zero_r) ? 32'd0
+                                                                       : gc_boundary_cnt_r + 32'd1;
+            if (gc_en_sim && gc_to_fetch && gc_rel_zero_r) begin
+                gc_rel_zero_r    <= 1'b0;
+                gc_alloc_phase_r <= 4'd2;
+                // Mutant 48 keeps the allocator's last header word (B28).
+                if (gc_mutant_sim != 8'd48) gcalloc_wdata_r <= '0;
+            end
+            if (gc_en_sim && gc_at_exit_sim && (state_r == S_WB) && dec_is_return &&
+                (frame_active_depth == 11'd1))
+                gc_exit_req_r <= 1'b1;
+            // heap_zero_r: one past the highest heap byte ever allocated or
+            // written. A run header the allocator writes at the old bump
+            // pointer (abandoned remainder, skipped run) also raises it, so
+            // the next install zeroes that header (review round 1).
+            begin
+                logic [31:0] hz;
+                hz = heap_zero_r;
+                if (gc_en_sim && (heap_ptr_r > hz)) hz = heap_ptr_r;
+                if (gc_en_sim && gcalloc_req && gcalloc_we_r && !gcalloc_line_r &&
+                    (gcalloc_wdata_r != 128'd0) && (gcalloc_addr_r + 32'd16 > hz))
+                    hz = gcalloc_addr_r + 32'd16;
+                // Any other core write into the dynamic heap above it too:
+                // STRACC writes pieces past heap_ptr_r before a later piece
+                // answers NEED_HEAP, and the aborted op never moves
+                // heap_ptr_r over them (review round 4, B30; mutant 49).
+                if (gc_en_sim && !gc_state && dmem_req_o && dmem_we_o &&
+                    (dmem_addr_o >= heap_init_ptr_sim) && (dmem_addr_o < gc_heap_limit_eff) &&
+                    (dmem_addr_o + (dmem_line_o ? 32'd64 : 32'd16) > hz) &&
+                    (gc_mutant_sim != 8'd49))
+                    hz = dmem_addr_o + (dmem_line_o ? 32'd64 : 32'd16);
+                if (hz != heap_zero_r) heap_zero_r <= hz;
+            end
+            if (state_r == S_CALL) gc_stracc_unwind_r <= 1'b0;
+            // An instruction that completes resets the loop guard, so the
+            // same pc aborting in a later loop iteration starts afresh.
+            if (gc_to_fetch) begin
+                gc_res_abort_r   <= 1'b0;
+                gc_retry_count_r <= 2'd0;
+                gc_retry_pc_r    <= 32'hFFFF_FFFF;
+            end
 
             // Clear one-cycle pulses by default.
             frame_call_valid_r   <= 1'b0;
@@ -2846,6 +3576,12 @@ module pycore_core #(
                         call_stracc_go_r     <= 1'b0;
                         stracc_from_call_r   <= 1'b0;
                         fetch_skip_r         <= 1'b1;
+                        gc_undo_bm_r         <= 1'b0;
+                        gc_undo_len_r        <= 1'b0;
+                        gc_undo_kw_r         <= 1'b0;
+                        gc_call_entry_tos_r  <= tos_r;
+                        gc_undo_ex_r         <= 1'b0;
+                        gc_ex_kw_known_r     <= 1'b0;
                         // state_next = S_CALL (from always_comb)
 
                     end else begin
@@ -2897,7 +3633,21 @@ module pycore_core #(
                         stracc_iter_pending_r <= 1'b0;
                         stracc_finishing_r  <= 1'b1;
                     end else if (stracc_res_valid) begin
-                        if (stracc_res_trap) begin
+                        if (stracc_res_trap && stracc_res_need && gc_en_sim && !gc_verify_only_sim &&
+                            (gc_mutant_sim != 8'd32)) begin
+                            // GC (plan §3.6): the result did not fit the grant;
+                            // nothing was published. Collect and re-dispatch.
+                            if (stracc_from_call_r) begin
+                                stracc_from_call_r <= 1'b0;
+                                gc_stracc_unwind_r <= 1'b1;
+                                gc_need_heap_cnt_r <= gc_need_heap_cnt_r + 32'd1;
+                                `GC_CALL_OOM(stracc_res_need_bytes)
+                            end else begin
+                                gc_need_heap_cnt_r <= gc_need_heap_cnt_r + 32'd1;
+                                `GC_ABORT_COMMON(stracc_res_need_bytes)
+                            end
+                        end else if (stracc_res_trap && !(stracc_res_need && (gc_mutant_sim == 8'd32) &&
+                                                          gc_en_sim && !gc_verify_only_sim)) begin
                             if (stracc_res_code == PY_TRAP_TYPE)
                                 container_type_trap_r <= 1'b1;
                             else
@@ -3053,7 +3803,15 @@ module pycore_core #(
                     if (container_call_pending_r) begin
                         container_call_pending_r <= 1'b0;
                         container_call_active_r <= 1'b1;
+                        // proto_iter_r is only live for HEAP_ITER FOR_ITER.
+                        // A later protocol CALL (__init__, __next__ via a
+                        // new iterator) must not keep a freed HEAP_ITER as
+                        // a GC root (img_gc_root_heap_iter / B9).
+                        if (!(container_op_r == CONT_FOR_ITER &&
+                              container_phase_r == CP_COPY_VAL_WB))
+                            container_proto_iter_r <= '0;
                         container_call_return_valid_r <= 1'b0;
+                        container_call_result_r <= '0;
                         container_call_saved_op_r <= container_op_r;
                         container_call_saved_phase_r <= container_phase_r;
                         container_call_saved_opcode_r <= cur_opcode_r;
@@ -3066,7 +3824,11 @@ module pycore_core #(
                             (container_op_r == CONT_FOR_ITER &&
                              container_phase_r == CP_COPY_VAL_WB)
                                 ? container_proto_iter_r : rs1_r;
-                        container_call_saved_rs2_r <= rs2_r;
+                        // Protocol CALL is always CALL 0: rs2 is not an
+                        // operand. Snapshotting the stale latch kept a
+                        // collected LIST alive as a root (img_gc_stale_saved_rs2,
+                        // G8 seed 11 collection 29).
+                        container_call_saved_rs2_r <= '0;
                         container_call_target_depth_r <= frame_active_depth + 1'b1;
                         // __iter__ / __next__ use CALL 0.  Preserve the
                         // container oparg above (FOR_ITER needs its jump delta)
@@ -3101,6 +3863,11 @@ module pycore_core #(
                         call_args_is_list_r  <= 1'b0;
                         container_dmem_pending_r <= 1'b0;
                         fetch_skip_r         <= 1'b1;
+                        gc_undo_bm_r         <= 1'b0;
+                        gc_undo_len_r        <= 1'b0;
+                        gc_undo_kw_r         <= 1'b0;
+                        gc_undo_ex_r         <= 1'b0;
+                        gc_ex_kw_known_r     <= 1'b0;
                     end else if (container_stracc_issue ||
                                  (stracc_issued_r && !container_stracc_done_r)) begin
                         // P5d: SA_CMP for LONG vs LONG dict/set / list-in.
@@ -3469,11 +4236,23 @@ module pycore_core #(
                 // resume / retry / forward-fatal per trap_res_code_i.
                 S_TRAP_WAIT: begin
                     if (trap_res_valid_i && !trap_res_seen_r) begin
-                        // First cycle observing the result: latch it and
-                        // apply heap_ptr + pop right away.
-                        heap_ptr_r          <= trap_res_heap_ptr_i;
-                        tos_r               <= tos_r - RF_AW'({5'b0, trap_res_pop_count_i});
+                        // First cycle observing the result: latch it.
+                        // NEED_HEAP (plan §3.6): RES_HEAP_PTR is the byte
+                        // need, not a new bump; pop=push=0; heap unmoved.
+                        if (trap_res_code_i != TRAP_RES_NEED_HEAP) begin
+                            if ((trap_res_code_i == TRAP_RES_COMPLETED) &&
+                                (trap_res_heap_ptr_i > heap_limit_r)) begin
+`ifndef SYNTHESIS
+                                $fatal(1, "[GC-INV] excore RES_HEAP_PTR %h > heap_limit %h",
+                                       trap_res_heap_ptr_i, heap_limit_r);
+`endif
+                                container_mem_fault_r <= 1'b1;
+                            end
+                            heap_ptr_r <= trap_res_heap_ptr_i;
+                            tos_r      <= tos_r - RF_AW'({5'b0, trap_res_pop_count_i});
+                        end
                         trap_res_code_r2    <= trap_res_code_i;
+                        trap_res_heap_r2    <= trap_res_heap_ptr_i;
                         trap_res_fatal_r2   <= trap_res_fatal_code_i;
                         trap_res_push_r     <= trap_res_push_count_i;
                         trap_res_entries_r2 <= trap_res_entries_i;
@@ -3489,7 +4268,7 @@ module pycore_core #(
                         tos_r                <= tos_r + RF_AW'(1);
                         trap_wait_push_idx_r <= trap_wait_push_idx_r + 2'd1;
                     end else if (trap_res_seen_r) begin
-                        // All pushes done: resume / retry / forward-fatal.
+                        // All pushes done: resume / retry / NEED_HEAP / fatal.
                         trap_res_seen_r <= 1'b0;
                         unique case (trap_res_code_r2)
                             TRAP_RES_COMPLETED: begin
@@ -3498,6 +4277,14 @@ module pycore_core #(
                             TRAP_RES_RETRY: begin
                                 redirect_pending_r <= 1'b1;
                                 redirect_tgt_r     <= cur_pc_r; // re-dispatch same pc
+                            end
+                            TRAP_RES_NEED_HEAP: begin
+                                if (gc_en_sim && !gc_verify_only_sim) begin
+                                    gc_need_heap_cnt_r <= gc_need_heap_cnt_r + 32'd1;
+                                    `GC_ABORT_COMMON(trap_res_heap_r2)
+                                end else begin
+                                    container_mem_fault_r <= 1'b1;
+                                end
                             end
                             default: begin // TRAP_RES_FATAL
                                 excore_fatal_trap_r <= 1'b1;
@@ -3508,6 +4295,418 @@ module pycore_core #(
                 end
 
                 // ----------------------------------------------------------
+                // ----------------------------------------------------------
+                // S_GC_ENTER: one cycle once dmem is idle. An abort can
+                // leave a container/STRACC/CALL beat in flight; hold here
+                // until it acks so PRELOAD cannot consume that rdata.
+                S_GC_ENTER: begin
+                    gc_root_idx_r    <= '0;
+                    gc_rf_idx_r      <= 8'(rf_wm_r);
+                    gc_roots_done_r  <= 1'b0;
+                    gc_started_r     <= 1'b1;
+                    gc_free_before_r <= (heap_limit_r - heap_ptr_r) + gc_list_free_r;
+`ifndef SYNTHESIS
+                    if ($test$plusargs("GC_TRACE_DEC"))
+                        $display("[GC-DEC] enter n=%0d pc=%0d wm=%0d tos=%0d spill=%h depth=%0d active=%0d proto=%h saved1=%h saved2tag=%0h saved2=%h restag=%0h res=%h",
+                                 gc_collections_r + 32'd1, cur_pc_r, rf_wm_r, tos_r,
+                                 spill_sp_r, frame_active_depth, container_call_active_r,
+                                 container_proto_iter_r, container_call_saved_rs1_r,
+                                 container_call_saved_rs2_r[PYCORE_ENTRY_WIDTH-1 -: 4],
+                                 container_call_saved_rs2_r[127:0],
+                                 container_call_result_r[PYCORE_ENTRY_WIDTH-1 -: 4],
+                                 container_call_result_r[127:0]);
+`endif
+                end
+
+                // S_GC_ROOTS: stream the register roots (skipping zero or
+                // inactive ones), then the RF ring [wm, tos), one per cycle.
+                S_GC_ROOTS: begin
+                    if (!gc_roots_done_r) begin
+                        if (gc_root_idx_r < GC_ROOT_IDX_RF) begin
+                            if (!gc_reg_root_ok || gc_root_ready)
+                                gc_root_idx_r <= gc_root_idx_r + 5'd1;
+                        end else if (!gc_rf_roots_left) begin
+                            gc_roots_done_r <= 1'b1;
+                        end else if (gc_root_ready) begin
+`ifndef SYNTHESIS
+                            if ($test$plusargs("GC_TRACE_DEC")) begin
+                                automatic logic [3:0] rftag;
+                                rftag = rf_rs1[PYCORE_ENTRY_WIDTH-1 -: 4];
+                                if ((rftag == PY_TAG_ITER) || (rftag == PY_TAG_TUPLE) ||
+                                    (rftag == PY_TAG_LONG_STR) || (rftag == PY_TAG_MUT_COLLEC) ||
+                                    (rftag == PY_TAG_OBJECT) || (rftag == PY_TAG_RANGE) ||
+                                    (rftag == PY_TAG_CODE_OBJECT))
+                                    $display("[GC-DEC] rf[%0d] tag=%0h val=%h",
+                                             gc_rf_idx_r, rftag, rf_rs1[127:0]);
+                            end
+`endif
+                            gc_rf_idx_r <= gc_rf_idx_r + 8'd1;
+                        end
+                    end
+                end
+
+                // S_GC_RUN: the engine marks and sweeps.
+                S_GC_RUN: begin
+                    if (gc_done) begin
+                        gc_started_r <= 1'b0;
+                        gc_collected_r <= 1'b1;
+                        if (gc_mutant_sim != 8'd30) gc_epoch_r <= gc_epoch_r + 32'd1;
+                        gc_collections_r   <= gc_collections_r + 32'd1;
+                        gc_live_last_r     <= gc_live_bytes;
+                        gc_free_last_r     <= gc_free_bytes;
+                        gc_largest_last_r  <= gc_largest_size;
+                        gc_reclaimed_last_r <= gc_free_bytes - gc_free_before_r;
+                        gc_mark_cyc_total_r  <= gc_mark_cyc_total_r + 64'(gc_mark_cyc);
+                        gc_sweep_cyc_total_r <= gc_sweep_cyc_total_r + 64'(gc_sweep_cyc);
+                        gc_port_busy_total_r <= gc_port_busy_total_r + 64'(gc_port_busy_mark);
+                        gc_stash_cyc_total_r <= gc_stash_cyc_total_r + 64'(gc_stash_cyc);
+                        gc_mark_xacts_total_r <= gc_mark_xacts_total_r + 64'(gc_mark_xacts);
+                        gc_spill_total_r   <= gc_spill_total_r + gc_spill_xacts;
+                        if (gc_stack_hw > gc_stack_hw_max_r) gc_stack_hw_max_r <= gc_stack_hw;
+                        if (gc_dirty_hi > heap_zero_r) heap_zero_r <= gc_dirty_hi;
+                        if (gc_stack_overflow || gc_eng_fault) begin
+                            // Collector resource exhaustion follows the same
+                            // allocation-free MemoryError path as heap OOM.
+                            gc_oom_raise_r   <= 1'b1;
+                            gc_alloc_phase_r <= 4'd7;
+                        end else if (gc_verify_only_sim) begin
+                            gc_collected_r <= 1'b0;
+                            if (gc_pause_cur_r > gc_max_pause_r) gc_max_pause_r <= gc_pause_cur_r;
+                            gc_exit_req_r     <= 1'b0;
+                            gc_boundary_req_r <= 1'b0;
+                            if (gc_explicit_r) begin
+                                gc_explicit_r       <= 1'b0;
+                                container_wb_we_r   <= 1'b1;
+                                container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                container_wb_data_r <= pycore_int_entry({32'd0, gc_live_bytes});
+                            end
+                        end else begin
+                            run_list_head_r    <= gc_run_overflow_head;
+                            // Next-fit (G13 P8): search from the first run at or
+                            // above the old bump pointer, then wrap to the
+                            // runs below it. Restarting at the lowest address
+                            // re-examined the same small holes after every
+                            // collection. Only when every run is on-chip; an
+                            // explicit collect keeps first-fit (rover 0).
+                            if (gc_run_overflow_head == 32'd0) begin
+                                gc_run_idx_r  <= gc_run_rover;
+                                gc_run_wrap_r <= gc_run_rover;
+                            end else begin
+                                gc_run_idx_r  <= '0;
+                                gc_run_wrap_r <= '0;
+                            end
+                            gc_run_onchip_lat_r <= gc_run_onchip_n;
+                            run_skipped_head_r <= '0;
+                            // A collection with no allocation to satisfy
+                            // (boundary, explicit, exit) keeps the current
+                            // run: the engine left it off the list. Otherwise
+                            // its remainder is on the new list and S_GC_ALLOC
+                            // pops and zeroes a fresh current run.
+                            gc_list_free_r     <= gc_free_bytes
+                                - (gc_keep_run ? heap_limit_r - heap_ptr_r : 32'd0);
+                            if (!gc_keep_run)
+                                heap_limit_r     <= heap_ptr_r;
+                            gc_alloc_phase_r <= 4'd0;
+                            // Loop guard (plan §3.3 / §4.4): a second
+                            // collection at the same pc is true OOM only when
+                            // the largest run still cannot satisfy the
+                            // request. EVERY_N_RUNS collects at every switch
+                            // of a multi-grant instruction (STRACC split);
+                            // that is not a failed ensure_run.
+                            gc_retry_largest_r <= gc_largest_size;
+                            if (gc_abort_r && (gc_retry_count_r != 2'd0) &&
+                                (gc_largest_size <= gc_retry_largest_r) &&
+                                (gc_largest_size < gc_need_bytes_r + 32'd64) &&
+                                (gc_mutant_sim != 8'd36)) begin
+                                gc_oom_raise_r   <= 1'b1;
+                                gc_alloc_phase_r <= 4'd7;
+                            end
+                        end
+                    end
+                end
+
+                // S_GC_ALLOC: pop free runs until one fits, zero it, resume.
+                S_GC_ALLOC: begin
+                    if (gcalloc_req) gcalloc_issued_r <= 1'b1;
+                    if (gc_oom_raise_r) begin
+                        // The aborted instruction committed nothing. Reuse
+                        // its pc for exception-table lookup, but do not pop
+                        // TOS: the singleton is supplied by a sidecar.
+                        gc_abort_r                <= 1'b0;
+                        gc_explicit_r             <= 1'b0;
+                        gc_need_bytes_r           <= 32'd0;
+                        // The next abort starts a new allocation: it must
+                        // collect again before it can declare OOM (B24).
+                        gc_collected_r            <= 1'b0;
+                        gc_res_abort_r            <= 1'b0;
+                        gc_alloc_phase_r          <= 4'd0;
+                        container_call_pending_r  <= 1'b0;
+                        container_op_r            <= CONT_RAISE;
+                        container_phase_r         <= CP_INIT;
+                    end else unique case (gc_alloc_phase_r)
+                        4'd0: begin
+                            if (gc_alloc_collect) begin
+                                // state_next = S_GC_ENTER
+                            end else if (gc_need_bytes_r == 32'd0) begin
+                                // Explicit/boundary collection has no
+                                // allocation to resume. Leave every swept
+                                // run queued and defer selection/clearing
+                                // until ensure_run supplies the real size.
+                                gc_alloc_phase_r <= 4'd3;
+                            end else if ((run_list_head_r == 32'd0) &&
+                                         (gc_run_idx_r >= gc_run_onchip_lat_r) &&
+                                         (gc_run_wrap_r != 32'd0)) begin
+                                // Next-fit wrap: search the runs below the
+                                // rover before declaring the list empty.
+                                gc_run_idx_r        <= '0;
+                                gc_run_onchip_lat_r <= gc_run_wrap_r;
+                                gc_run_wrap_r       <= '0;
+                            end else if ((run_list_head_r == 32'd0) &&
+                                         (gc_run_idx_r >= gc_run_onchip_lat_r)) begin
+                                if (gc_mutant_sim != 8'd36) begin
+                                    // Mutant 36 skips both the loop guard
+                                    // (§3.3) and this empty-list MEM_FAULT;
+                                    // the latter made the guard-only mutant
+                                    // a no-op (both paths trap 7).
+                                    gc_oom_raise_r   <= 1'b1;
+                                    gc_alloc_phase_r <= 4'd7;
+                                end
+                            end else if (gc_run_idx_r < gc_run_onchip_lat_r) begin
+                                gc_run_pops_r <= gc_run_pops_r + 32'd1;
+                                gc_run_idx_r  <= gc_run_idx_r + 32'd1;
+                                if (((gc_mutant_sim == 8'd27)
+                                        ? gc_run_peek_size >= gc_need_bytes_r
+                                        : gc_run_peek_size >= gc_need_bytes_r + 32'd64) ||
+                                    ((gc_need_bytes_r == 32'd0) &&
+                                     (gc_run_peek_size != 32'd0))) begin
+                                    gc_cand_base_r <= gc_run_peek_base;
+                                    gc_cand_size_r <= gc_run_peek_size;
+                                    if ((heap_limit_r - heap_ptr_r) >= 32'd16) begin
+                                        gc_list_free_r <= gc_list_free_r
+                                            - gc_run_peek_size
+                                            + (heap_limit_r - heap_ptr_r);
+                                        gcalloc_wdata_r <= {
+                                            PYCORE_GC_FREE_MAGIC,
+                                            heap_limit_r - heap_ptr_r,
+                                            run_skipped_head_r,
+                                            heap_ptr_r
+                                        };
+                                        gcalloc_addr_r       <= heap_ptr_r;
+                                        gcalloc_we_r         <= 1'b1;
+                                        gcalloc_line_r       <= 1'b0;
+                                        gc_alloc_pending_r   <= 1'b1;
+                                        gcalloc_issued_r     <= 1'b0;
+                                        gcalloc_after_skip_r <= 1'b1;
+                                        gc_alloc_phase_r     <= 4'd4;
+                                    end else begin
+                                        gc_list_free_r <= gc_list_free_r
+                                            - gc_run_peek_size;
+                                        heap_ptr_r   <= gc_run_peek_base;
+                                        if (gc_mutant_sim != 8'd26)
+                                            heap_limit_r <= gc_run_peek_base
+                                                + gc_run_peek_size;
+                                        run_base_r    <= gc_run_peek_base;
+                                        gc_zero_ptr_r <= gc_run_peek_base;
+                                        gc_zero_end_r <=
+                                            (gc_run_peek_base + gc_run_peek_size
+                                                <= heap_zero_r)
+                                                ? gc_run_peek_base + gc_run_peek_size
+                                                : (heap_zero_r > gc_run_peek_base
+                                                    + 32'd16)
+                                                    ? heap_zero_r
+                                                    : gc_run_peek_base + 32'd16;
+                                        gcalloc_wdata_r  <= '0;
+                                        gc_alloc_phase_r <= 4'd2;
+                                    end
+                                end else if (gc_mutant_sim == 8'd28) begin
+                                    gc_list_free_r   <= gc_list_free_r
+                                        - gc_run_peek_size;
+                                    // stay in phase 0; idx already advanced
+                                end else begin
+                                    gc_cand_size_r <= gc_run_peek_size;
+                                    gcalloc_wdata_r <= {
+                                        PYCORE_GC_FREE_MAGIC,
+                                        gc_run_peek_size,
+                                        run_skipped_head_r,
+                                        gc_run_peek_base
+                                    };
+                                    gcalloc_addr_r       <= gc_run_peek_base;
+                                    gcalloc_we_r         <= 1'b1;
+                                    gcalloc_line_r       <= 1'b0;
+                                    gc_alloc_pending_r   <= 1'b1;
+                                    gcalloc_issued_r     <= 1'b0;
+                                    gcalloc_after_skip_r <= 1'b0;
+                                    gc_alloc_phase_r     <= 4'd4;
+                                end
+                            end else begin
+                                gcalloc_addr_r     <= run_list_head_r;
+                                gcalloc_we_r       <= 1'b0;
+                                gcalloc_line_r     <= 1'b0;
+                                gc_alloc_pending_r <= 1'b1;
+                                gcalloc_issued_r   <= 1'b0;
+                                gc_alloc_phase_r   <= 4'd1;
+                            end
+                        end
+                        // Run header {FREE_MAGIC, size, next, base}.
+                        // `base` is the heap run; the header itself may live
+                        // in the sequential GC run table (G13 P4).
+                        4'd1: begin
+                            if (dmem_ack_i) begin
+                                gc_alloc_pending_r <= 1'b0;
+                                gc_run_pops_r   <= gc_run_pops_r + 32'd1;
+                                if (gc_mutant_sim != 8'd28) run_list_head_r <= dmem_rdata_i[63:32];
+                                if (((gc_mutant_sim == 8'd27) ? dmem_rdata_i[95:64] >= gc_need_bytes_r
+                                     : dmem_rdata_i[95:64] >= gc_need_bytes_r + 32'd64) ||
+                                    ((gc_need_bytes_r == 32'd0) && (dmem_rdata_i[95:64] != 32'd0))) begin
+                                    gc_cand_base_r <= gc_hdr_base;
+                                    gc_cand_size_r <= dmem_rdata_i[95:64];
+                                    // Abandoned remainder of the previous
+                                    // current run goes on the skipped list
+                                    // (plan §4.4) so the next ensure_run
+                                    // can still find it.
+                                    if ((heap_limit_r - heap_ptr_r) >= 32'd16) begin
+                                        gc_list_free_r <= gc_list_free_r
+                                            - dmem_rdata_i[95:64]
+                                            + (heap_limit_r - heap_ptr_r);
+                                        gcalloc_wdata_r <= {
+                                            PYCORE_GC_FREE_MAGIC,
+                                            heap_limit_r - heap_ptr_r,
+                                            run_skipped_head_r,
+                                            heap_ptr_r
+                                        };
+                                        gcalloc_addr_r       <= heap_ptr_r;
+                                        gcalloc_we_r         <= 1'b1;
+                                        gcalloc_line_r       <= 1'b0;
+                                        gc_alloc_pending_r   <= 1'b1;
+                                        gcalloc_issued_r     <= 1'b0;
+                                        gcalloc_after_skip_r <= 1'b1;
+                                        gc_alloc_phase_r     <= 4'd4;
+                                    end else begin
+                                        gc_list_free_r <= gc_list_free_r - dmem_rdata_i[95:64];
+                                        heap_ptr_r   <= gc_hdr_base;
+                                        if (gc_mutant_sim != 8'd26)
+                                            heap_limit_r <= gc_hdr_base + dmem_rdata_i[95:64];
+                                        run_base_r    <= gc_hdr_base;
+                                        gc_zero_ptr_r <= gc_hdr_base;
+                                        gc_zero_end_r <=
+                                            (gc_hdr_base + dmem_rdata_i[95:64] <= heap_zero_r)
+                                                ? gc_hdr_base + dmem_rdata_i[95:64]
+                                                : (heap_zero_r > gc_hdr_base + 32'd16)
+                                                    ? heap_zero_r
+                                                    : gc_hdr_base + 32'd16;
+                                        gcalloc_wdata_r  <= '0;
+                                        gc_alloc_phase_r <= 4'd2;
+                                    end
+                                end else if (gc_mutant_sim == 8'd28) begin
+                                    gc_list_free_r   <= gc_list_free_r - dmem_rdata_i[95:64];
+                                    gc_alloc_phase_r <= 4'd0;
+                                end else begin
+                                    gc_cand_size_r <= dmem_rdata_i[95:64];
+                                    gcalloc_wdata_r <= {
+                                        PYCORE_GC_FREE_MAGIC,
+                                        dmem_rdata_i[95:64],
+                                        run_skipped_head_r,
+                                        dmem_rdata_i[31:0]
+                                    };
+                                    gcalloc_we_r         <= 1'b1;
+                                    gcalloc_line_r       <= 1'b0;
+                                    gc_alloc_pending_r   <= 1'b1;
+                                    gcalloc_issued_r     <= 1'b0;
+                                    gcalloc_after_skip_r <= 1'b0;
+                                    gc_alloc_phase_r     <= 4'd4;
+                                end
+                            end
+                        end
+                        // Write a skipped-run header (too-small pop or the
+                        // abandoned remainder), then either search again or
+                        // install the candidate.
+                        4'd4: begin
+                            if (dmem_ack_i) begin
+                                gc_alloc_pending_r <= 1'b0;
+                                run_skipped_head_r <= gcalloc_addr_r;
+                                if (gcalloc_after_skip_r) begin
+                                    heap_ptr_r   <= gc_cand_base_r;
+                                    if (gc_mutant_sim != 8'd26)
+                                        heap_limit_r <= gc_cand_base_r + gc_cand_size_r;
+                                    run_base_r    <= gc_cand_base_r;
+                                    gc_zero_ptr_r <= gc_cand_base_r;
+                                    gc_zero_end_r <=
+                                        (gc_cand_base_r + gc_cand_size_r <= heap_zero_r)
+                                            ? gc_cand_base_r + gc_cand_size_r
+                                            : (heap_zero_r > gc_cand_base_r + 32'd16)
+                                                ? heap_zero_r : gc_cand_base_r + 32'd16;
+                                    gcalloc_wdata_r  <= '0;
+                                    gc_alloc_phase_r <= 4'd2;
+                                end else begin
+                                    gc_alloc_phase_r <= 4'd0;
+                                end
+                            end
+                        end
+                        // Zero [gc_zero_ptr_r, gc_zero_end_r): full-line writes
+                        // where aligned, 16 B writes at the edges.
+                        4'd2: begin
+                            if (!gc_alloc_pending_r) begin
+                                // Mutant 41 (B1) skips zero-on-reuse.
+                                if ((gc_zero_ptr_r >= gc_zero_end_r) ||
+                                    (gc_mutant_sim == 8'd41)) begin
+                                    gc_alloc_phase_r <= 4'd3;
+                                end else begin
+                                    gcalloc_addr_r     <= gc_zero_ptr_r;
+                                    gcalloc_we_r       <= 1'b1;
+                                    // Line writes need the L1D; with CACHE_EN=0
+                                    // the hierarchy carries 16 B words only.
+                                    gcalloc_line_r     <= cache_en_sim &&
+                                                          (gc_zero_ptr_r[5:0] == 6'd0) &&
+                                                          (gc_zero_ptr_r + 32'd64 <= gc_zero_end_r);
+                                    gc_alloc_pending_r <= 1'b1;
+                                    gcalloc_issued_r   <= 1'b0;
+                                end
+                            end else if (dmem_ack_i) begin
+                                gc_alloc_pending_r <= 1'b0;
+                                if (gcalloc_line_r) begin
+                                    gc_zero_ptr_r   <= gc_zero_ptr_r + 32'd64;
+                                    gc_zero_lines_r <= gc_zero_lines_r + 32'd1;
+                                end else begin
+                                    gc_zero_ptr_r <= gc_zero_ptr_r + 32'd16;
+                                end
+                            end
+                        end
+                        // Resume: write the _bi_gc_collect result, or
+                        // re-dispatch the aborted instruction by re-latching
+                        // it from fetch (which still holds it; see the
+                        // G6 check below).
+                        4'd3: begin
+                            gc_alloc_phase_r <= 4'd0;
+                            gc_collected_r   <= 1'b0;
+                            // A re-dispatched CALL can abort again elsewhere
+                            // (review round 7): drop the reservation tag.
+                            gc_res_abort_r   <= 1'b0;
+                            gc_need_bytes_r  <= 32'd0;
+                            gc_exit_req_r     <= 1'b0;
+                            gc_boundary_req_r <= 1'b0;
+                            if (gc_pause_cur_r > gc_max_pause_r && gc_collected_r)
+                                gc_max_pause_r <= gc_pause_cur_r;
+                            if (gc_explicit_r) begin
+                                gc_explicit_r       <= 1'b0;
+                                container_wb_we_r   <= 1'b1;
+                                container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
+                                container_wb_data_r <= pycore_int_entry({32'd0, gc_live_last_r});
+                            end
+                            if (gc_abort_r) begin
+                                gc_abort_r   <= 1'b0;
+                                fetch_skip_r <= (gc_mutant_sim == 8'd31);
+                                // CALL_KW pops the names tuple in phase 16.
+                                // Re-dispatch must see the original stack even
+                                // if CALL_PHASE_GC_UNWIND did not run (or its
+                                // tos++ was lost across a nested collect).
+                                if (cur_opcode_r == PY_OP_CALL_KW)
+                                    tos_r <= gc_call_entry_tos_r;
+                            end
+                        end
+                        default: ;
+                    endcase
+                end
+
                 S_HALT: ;  // state_next = S_HALT (from always_comb)
 
                 default: ;  // state_next = S_FETCH (from always_comb)

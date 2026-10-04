@@ -16,6 +16,8 @@ from encoding import (
     CODE_FIELD_CO_KWDEFAULTS,
     CODE_FIELD_CO_VARNAMES,
     CODE_FIELD_METADATA,
+    GC_COMPILER_CLEANUP,
+    GC_COMPILER_CLEANUP_MAGIC,
     MUT_DICT,
     TAG_CODE_OBJECT,
     TAG_INT,
@@ -35,6 +37,32 @@ def _compile_module(src: str):
 
 
 class ImageTranscodingTest(unittest.TestCase):
+    def test_compiler_cleanup_descriptor_names_idle_reference_slots(self) -> None:
+        result = image_from_source.build_image_from_source_text(
+            "def managed_entry():\n    return 1\n\nmanaged_entry()\n",
+            "<cleanup-descriptor>",
+        )
+        header = result.heap.words[GC_COMPILER_CLEANUP]
+        self.assertEqual(header >> 96, GC_COMPILER_CLEANUP_MAGIC)
+        count = (header >> 64) & 0xFFFF_FFFF
+        busy_addr = (header >> 32) & 0xFFFF_FFFF
+        pyc_g_addr = (header & 0xFFFF) << 4
+        builtins_addr = ((header >> 16) & 0xFFFF) << 4
+        self.assertEqual(count, len(image_from_source.PACKAGE_RUNTIME_CLEAR_NAMES))
+        self.assertEqual(result.heap.words[busy_addr], 0)
+        self.assertEqual(result.heap.words[busy_addr + 16] & 0xF, TAG_INT)
+
+        addrs = []
+        for i in range(count):
+            word = result.heap.words[GC_COMPILER_CLEANUP + 16 + (i // 4) * 16]
+            addrs.append((word >> ((i % 4) * 32)) & 0xFFFF_FFFF)
+        self.assertEqual(len(addrs), len(set(addrs)))
+        self.assertNotIn(busy_addr, addrs)
+        self.assertGreater(pyc_g_addr, 0)
+        self.assertGreater(builtins_addr, 0)
+        self.assertTrue(all(addr % 16 == 0 for addr in addrs))
+        self.assertTrue(all((result.heap.words[addr + 16] & 0xF) != TAG_INT for addr in addrs))
+
     def test_pack_code_metadata_includes_kwonlyargcount(self) -> None:
         meta = pack_code_metadata(
             stacksize=7,
@@ -1209,6 +1237,29 @@ class SliceConstFoldTest(unittest.TestCase):
         self.assertNotIn("BINARY_OP", opnames)
         self.assertFalse(any(type(c) is slice for c in folded.co_consts))
         self.assertGreaterEqual(folded.co_stacksize, f_co.co_stacksize + 1)
+
+    def test_fold_list_to_tuple_nops_list_extend(self) -> None:
+        module_code = _compile_module(
+            "def f(lst):\n"
+            "    return (*lst,)\n"
+        )
+        f_co = next(
+            co for co in image_from_source.iter_code_objects(module_code)
+            if co.co_name == "f"
+        )
+        self.assertTrue(
+            any(ins.opname == "LIST_EXTEND" for ins in image_from_source.iter_raw_instructions(f_co))
+        )
+        folded = image_from_source.fold_list_to_tuple(f_co)
+        live = [
+            ins.opname
+            for ins in image_from_source.iter_raw_instructions(folded)
+            if ins.opname not in {"CACHE", "NOP", "RESUME"}
+        ]
+        self.assertIn("CALL_INTRINSIC_1", live)
+        self.assertNotIn("LIST_EXTEND", live)
+        self.assertNotIn("BUILD_LIST", live)
+        self.assertTrue(any(n.startswith("LOAD_") for n in live))
 
     def test_build_accepts_literal_slices(self) -> None:
         result = image_from_source.build_image_from_source_text(

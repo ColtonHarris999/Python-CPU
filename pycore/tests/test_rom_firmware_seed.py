@@ -168,6 +168,31 @@ class RomFirmwareSeedTest(unittest.TestCase):
             words[obj_field_val_addr(type_addr, 1)] & 0xF, CTL_NONE
         )
 
+    def test_memoryerror_singleton_is_conditional_and_sidecared(self) -> None:
+        from encoding import (
+            MEMORY_ERROR_INSTANCE_ADDR,
+            OBK_EXCEPTION,
+            OBK_TYPE,
+            TAG_OBJECT,
+            ob_kind,
+            obj_field_tag_addr,
+            obj_field_val_addr,
+        )
+
+        plain = image_from_source._ImageSerializer()
+        image_from_source.build_builtins_dict(plain)
+        self.assertNotIn(MEMORY_ERROR_INSTANCE_ADDR, plain.heap.words)
+
+        serializer = image_from_source._ImageSerializer()
+        image_from_source.build_builtins_dict(serializer, memory_error=True)
+        words = serializer.heap.words
+        self.assertEqual(words[MEMORY_ERROR_INSTANCE_ADDR + 16] & 0xF, TAG_OBJECT)
+        instance = words[MEMORY_ERROR_INSTANCE_ADDR] & ((1 << 64) - 1)
+        self.assertEqual(ob_kind(words[instance]), OBK_EXCEPTION)
+        self.assertEqual(words[obj_field_tag_addr(instance, 0)] & 0xF, TAG_OBJECT)
+        exc_type = words[obj_field_val_addr(instance, 0)] & ((1 << 64) - 1)
+        self.assertEqual(ob_kind(words[exc_type]), OBK_TYPE)
+
     def test_bi_print_seeded_as_native_builtin(self) -> None:
         from encoding import (
             BI_PRINT,

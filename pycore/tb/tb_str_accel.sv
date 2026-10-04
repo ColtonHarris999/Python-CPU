@@ -14,6 +14,8 @@ module tb_str_accel;
     logic [3:0]  cmd_var;
     logic [PYCORE_ENTRY_WIDTH-1:0] cmd_a, cmd_b, cmd_c, res_entry;
     logic [31:0] cmd_heap, res_heap;
+    logic [31:0] cmd_limit, res_need_bytes;
+    logic        res_need_heap;
     logic [4:0]  res_code;
 
     logic acc_req, acc_we, acc_line, acc_ack, acc_last, acc_fault;
@@ -82,11 +84,14 @@ module tb_str_accel;
         .cmd_b_i(cmd_b),
         .cmd_c_i(cmd_c),
         .cmd_heap_ptr_i(cmd_heap),
+        .cmd_heap_limit_i(cmd_limit),
         .res_valid_o(res_valid),
         .res_entry_o(res_entry),
         .res_heap_ptr_o(res_heap),
         .res_trap_o(res_trap),
         .res_trap_code_o(res_code),
+        .res_need_heap_o(res_need_heap),
+        .res_need_bytes_o(res_need_bytes),
         .req_o(acc_req),
         .we_o(acc_we),
         .line_o(acc_line),
@@ -221,6 +226,7 @@ module tb_str_accel;
         cmd_b = b;
         cmd_c = c;
         cmd_heap = heap;
+        if (cmd_limit == 32'd0) cmd_limit = PYCORE_HEAP_LIMIT;
         cmd_valid = 1'b1;
         @(negedge clk);
         cmd_valid = 1'b0;
@@ -383,6 +389,22 @@ module tb_str_accel;
               PYCORE_HEAP_LIMIT - 32'd16);
         check(res_trap && res_code == PY_TRAP_MEM_FAULT, "oom");
         check(res_heap == (PYCORE_HEAP_LIMIT - 32'd16), "oom heap moved");
+        // GC grant (gc_plan.md §3.6): the overflow reports NEED_HEAP with the
+        // bytes needed from the command's heap pointer (20000 B payload +
+        // 16 B header, line-aligned from LIMIT-16).
+        check(res_need_heap && (res_need_bytes == 32'd20032), "oom need_heap bytes");
+        // A small grant: a 30-byte concat result is a 48-byte object (16 B
+        // header + 32 B payload, packed); a 32-byte grant reports
+        // NEED_HEAP(48) and leaves the heap unmoved.
+        cmd_limit = PYCORE_HEAP_BASE + 32'h1C0 + 32'd32;
+        issue(PY_SA_CONCAT, 0, mk_short("0123456789abcde"), mk_short("0123456789abcde"),
+              mk_none(), PYCORE_HEAP_BASE + 32'h1C0);
+        check(res_trap && res_need_heap && (res_need_bytes == 32'd48), "grant need_heap");
+        check(res_heap == (PYCORE_HEAP_BASE + 32'h1C0), "grant heap moved");
+        cmd_limit = PYCORE_HEAP_LIMIT;
+        issue(PY_SA_CONCAT, 0, mk_short("0123456789abcde"), mk_short("0123456789abcde"),
+              mk_none(), PYCORE_HEAP_BASE + 32'h1C0);
+        check(!res_trap && !res_need_heap, "grant retry fits");
 
         begin
             logic [31:0] u_alpha [0:7];

@@ -39,6 +39,7 @@
     .equ MB_INSTR_LO,    0x0C
     .equ MB_INSTR_HI,    0x10
     .equ MB_HEAP_PTR,    0x14
+    .equ MB_HEAP_LIMIT,  0x1C
     .equ MB_E0_VAL0,     0x20
     .equ MB_E0_VAL3,     0x2C
     .equ MB_E0_TAG,      0x30
@@ -80,6 +81,7 @@
 
     .equ RES_COMPLETED,  0
     .equ RES_FATAL,      2
+    .equ RES_NEED_HEAP,  3
 
     .equ TRAP_LIST_GROW,     9
     .equ TRAP_LIST_EXTEND,   10
@@ -229,6 +231,18 @@ fatal_mem:
     li   t0, FATAL_MEM_FAULT
     j    do_fatal
 
+# a0 = bytes the bump needs. Heap unmoved; PyCore collects and re-dispatches.
+res_need_heap:
+    li   t0, RES_NEED_HEAP
+    sw   t0, RES_CODE(s11)
+    sw   a0, RES_HEAP_PTR(s11)
+    li   t0, 0
+    sw   t0, RES_POP_COUNT(s11)
+    sw   t0, RES_PUSH_COUNT(s11)
+    li   t0, 1
+    sw   t0, RES_GO(s11)
+    j    wait_trap
+
 do_fatal:
     slli t0, t0, 4
     ori  t0, t0, RES_FATAL
@@ -287,12 +301,13 @@ cap_done:
 
     lw   s4, MB_HEAP_PTR(s11)      # s4 = new_buf
 
-    # ---- OOM check: new_buf + new_cap*32 > HEAP_LIMIT -> FATAL(MEM_FAULT)
+    # ---- OOM check: new_buf + new_cap*32 > MB_HEAP_LIMIT -> NEED_HEAP
     slli t0, s3, 5
     add  t0, s4, t0                # t0 = new_buf + new_cap*32
-    li   t1, HEAP_LIMIT
-    bge  t1, t0, copy_start        # HEAP_LIMIT >= t0  =>  fits, proceed
-    j    fatal_mem
+    lw   t1, MB_HEAP_LIMIT(s11)
+    bge  t1, t0, copy_start        # grant >= end  =>  fits, proceed
+    sub  a0, t0, s4                # bytes needed
+    j    res_need_heap
 
     # ---- copy `len` elements old_buf -> new_buf (s6 = index i) ----------
 copy_start:
@@ -547,9 +562,10 @@ ext_cap_done:
     lw   s4, MB_HEAP_PTR(s11)      # new_buf
     slli t0, s3, 5
     add  t0, s4, t0
-    li   t1, HEAP_LIMIT
+    lw   t1, MB_HEAP_LIMIT(s11)
     bge  t1, t0, ext_copy_dst
-    j    fatal_mem
+    sub  a0, t0, s4
+    j    res_need_heap
 
     # ---- copy dst len elements old_buf -> new_buf ------------------------
 ext_copy_dst:
@@ -1125,9 +1141,11 @@ dgr_alloc:
     add  s4, t3, t0              # table follows new order buffer
     slli t0, s7, 6
     add  t0, s4, t0
-    li   t1, HEAP_LIMIT
+    lw   t1, MB_HEAP_LIMIT(s11)
     bge  t1, t0, dgr_copy_order
-    j    fatal_mem
+    lw   a0, MB_HEAP_PTR(s11)
+    sub  a0, t0, a0
+    j    res_need_heap
 dgr_copy_order:
     li   s6, 0
 dgr_copy_order_loop:
@@ -2025,9 +2043,10 @@ sgr_alloc:
     lw   s4, MB_HEAP_PTR(s11)
     slli t0, s7, 5
     add  t0, s4, t0
-    li   t1, HEAP_LIMIT
+    lw   t1, MB_HEAP_LIMIT(s11)
     bge  t1, t0, sgr_zero
-    j    fatal_mem
+    sub  a0, t0, s4
+    j    res_need_heap
 sgr_zero:
     li   s6, 0
 sgr_zero_loop:
@@ -2401,8 +2420,8 @@ do_dict_merge:
     mv   s3, t3
     slli t2, t1, 6
     add  t4, t3, t2                    # new heap = table + slots*64
-    li   t5, HEAP_LIMIT
-    blt  t5, t4, xd_fatal_mem
+    lw   t5, MB_HEAP_LIMIT(s11)
+    blt  t5, t4, xd_need_heap
     sw   t4, SCR_C_HEAP(x0)
     mv   s1, t1                        # C slots
     li   s2, 0                         # C used
@@ -2646,6 +2665,9 @@ xd_fatal_type:
     j    fatal_type
 xd_fatal_mem:
     j    fatal_mem
+xd_need_heap:
+    sub  a0, t4, s0
+    j    res_need_heap
 
 # ===========================================================================
 # BUILTIN_CALL (trap 16): OBK_BUILTIN / BI_PRINT one-argument console sink.

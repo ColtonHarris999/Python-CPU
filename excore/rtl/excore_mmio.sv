@@ -30,6 +30,7 @@ module excore_mmio #(
     input  logic [7:0]   mb_opcode_i,
     input  logic [31:0]  mb_arg_i,
     input  logic [31:0]  mb_heap_ptr_i,
+    input  logic [31:0]  mb_heap_limit_i,
     input  logic [2:0]   mb_entry_count_i,
     input  logic [131:0] mb_entries_i [0:MAX_TRAP_ENTRIES-1],
 
@@ -64,6 +65,7 @@ module excore_mmio #(
     localparam logic [7:0] OFF_MB_INSTR_HI    = 8'h10;
     localparam logic [7:0] OFF_MB_HEAP_PTR    = 8'h14;
     localparam logic [7:0] OFF_MB_ENTRY_COUNT = 8'h18;
+    localparam logic [7:0] OFF_MB_HEAP_LIMIT  = 8'h1C;
     localparam logic [7:0] OFF_MB_ENTRY_BASE  = 8'h20;
     localparam int          MB_ENTRY_STRIDE   = 8'h14; // 5 words * 4 bytes
 
@@ -254,6 +256,8 @@ module excore_mmio #(
             rdata_comb = mb_heap_ptr_i;
         end else if (off == OFF_MB_ENTRY_COUNT) begin
             rdata_comb = {29'b0, mb_entry_count_i};
+        end else if (off == OFF_MB_HEAP_LIMIT) begin
+            rdata_comb = mb_heap_limit_i;
         end else if (off == OFF_RES_CODE) begin
             rdata_comb = {23'b0, res_fatal_code_r, res_code_r};
         end else if (off == OFF_RES_POP_COUNT) begin
@@ -292,13 +296,37 @@ module excore_mmio #(
 
     logic ack_r;
     logic [31:0] rdata_r;
+    // The pre-GC firmware loaded the constant heap ceiling with the
+    // assembler's two-word `li` expansion.  A register-bank `lw` completes
+    // four cycles sooner on the multicycle hart.  Delay only this new read
+    // by four cycles so GC_EN=0 (and GC_EN=1 runs that do not collect) stay
+    // cycle-identical to the original firmware path.
+    logic       heap_limit_pending_r;
+    logic [2:0] heap_limit_delay_r;
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
-            ack_r   <= 1'b0;
-            rdata_r <= 32'h0;
+            ack_r                <= 1'b0;
+            rdata_r              <= 32'h0;
+            heap_limit_pending_r <= 1'b0;
+            heap_limit_delay_r   <= 3'd0;
         end else begin
-            ack_r   <= cpu_req_i;
-            rdata_r <= rdata_comb;
+            ack_r <= 1'b0;
+            if (heap_limit_pending_r) begin
+                if (heap_limit_delay_r == 3'd1) begin
+                    ack_r                <= 1'b1;
+                    heap_limit_pending_r <= 1'b0;
+                    heap_limit_delay_r   <= 3'd0;
+                end else begin
+                    heap_limit_delay_r <= heap_limit_delay_r - 3'd1;
+                end
+            end else if (cpu_req_i && !cpu_we_i && (off == OFF_MB_HEAP_LIMIT)) begin
+                rdata_r              <= rdata_comb;
+                heap_limit_pending_r <= 1'b1;
+                heap_limit_delay_r   <= 3'd4;
+            end else begin
+                ack_r   <= cpu_req_i;
+                rdata_r <= rdata_comb;
+            end
         end
     end
     assign cpu_ack_o   = ack_r;

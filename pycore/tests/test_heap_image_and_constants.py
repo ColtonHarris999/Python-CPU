@@ -110,6 +110,22 @@ class TestStringHeapInterning(unittest.TestCase):
 
 
 class TestControlKeyPacking(unittest.TestCase):
+    def test_dict_value_addr_follows_probes_and_rejects_missing_key(self) -> None:
+        builder = heap_image.HeapImageBuilder()
+        key1 = (encoding.TAG_INT, 1)
+        key2 = (encoding.TAG_INT, 5)  # Same initial slot in a four-slot table.
+        handle = builder.alloc_dict(
+            [(key1, (encoding.TAG_INT, 11)), (key2, (encoding.TAG_INT, 22))],
+            slot_count=4,
+        )
+        addr1 = builder.dict_value_addr(handle, key1)
+        addr2 = builder.dict_value_addr(handle, key2)
+        self.assertNotEqual(addr1, addr2)
+        self.assertEqual(builder.words[addr1], 11)
+        self.assertEqual(builder.words[addr2], 22)
+        with self.assertRaises(KeyError):
+            builder.dict_value_addr(handle, (encoding.TAG_INT, 9))
+
     def test_none_dict_key_carries_control_id_in_tag_word(self) -> None:
         builder = heap_image.HeapImageBuilder()
         handle = builder.alloc_dict(

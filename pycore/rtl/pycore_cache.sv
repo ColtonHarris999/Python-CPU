@@ -31,6 +31,9 @@ module pycore_cache #(
     // still faults writes when this is 0.
     parameter bit    WRITE_INV_NO_ALLOC = 1'b0,
     parameter bit    WRITE_BACK  = 1'b1,
+    // L1D only: an all-zero full-line write is allocator initialization.
+    // Forward it as one full-line request without displacing an L1 line.
+    parameter bit    ZERO_LINE_BYPASS = 1'b0,
     parameter int    HIT_CYCLES  = 1,
     // 1: down port is a 4-beat line burst (L2 → RAM). 0: each beat is a
     // separate word request (L1D → L2, whose CPU port has no line_i).
@@ -118,7 +121,9 @@ module pycore_cache #(
         ST_FLUSH_SCAN,
         ST_FLUSH_WB_ISSUE,
         ST_FLUSH_WB_WAIT,
-        ST_INV
+        ST_INV,
+        ST_ZL_ISSUE,
+        ST_ZL_WAIT
     } state_e;
 
     state_e state_r;
@@ -287,7 +292,10 @@ module pycore_cache #(
                                ? line_word(wb_line_r, beat_r)
                                : cap_wdata_r)
                         : wdata_i;
-    assign down_wline_o = cache_en_i ? wb_line_r : wline_i;
+    assign down_wline_o = cache_en_i
+                        ? (((state_r == ST_ZL_ISSUE) || (state_r == ST_ZL_WAIT))
+                               ? cap_wline_r : wb_line_r)
+                        : wline_i;
 
     assign hit_count_o       = hit_count_r;
     assign miss_count_o      = miss_count_r;
@@ -398,7 +406,19 @@ module pycore_cache #(
                         cap_wdata_r <= wdata_i;
                         cap_line_wr_r <= we_i && line_i;
                         cap_wline_r <= wline_i;
-                        if (we_i && WRITE_INV_NO_ALLOC) begin
+                        if (ZERO_LINE_BYPASS && we_i && line_i && (wline_i == '0)) begin
+                            // The target line is wholly overwritten. A hit is
+                            // invalidated locally; L2 receives the zero line
+                            // atomically and handles its own victim normally.
+                            if (comb_hit) begin
+                                valid_q[req_set][comb_hit_way] <= 1'b0;
+                                dirty_q[req_set][comb_hit_way] <= 1'b0;
+                                hit_count_r <= hit_count_r + 1'b1;
+                            end else begin
+                                miss_count_r <= miss_count_r + 1'b1;
+                            end
+                            state_r <= ST_ZL_ISSUE;
+                        end else if (we_i && WRITE_INV_NO_ALLOC) begin
                             if (comb_hit) begin
                                 valid_q[req_set][comb_hit_way] <= 1'b0;
                                 dirty_q[req_set][comb_hit_way] <= 1'b0;
@@ -581,6 +601,26 @@ module pycore_cache #(
                         else begin
                             ack_r   <= 1'b1;
                             rdata_r <= '0;
+                            state_r <= ST_IDLE;
+                        end
+                    end
+                end
+                ST_ZL_ISSUE: begin
+                    down_req_r   <= 1'b1;
+                    down_we_r    <= 1'b1;
+                    down_line_r  <= 1'b1;
+                    down_wstrb_r <= {DATA_WIDTH/8{1'b1}};
+                    down_addr_r  <= line_align(cap_addr_r);
+                    state_r      <= ST_ZL_WAIT;
+                end
+                ST_ZL_WAIT: begin
+                    if (down_ack_i) begin
+                        if (down_fault_i)
+                            state_r <= ST_FAULT;
+                        else begin
+                            ack_r   <= 1'b1;
+                            rdata_r <= '0;
+                            rline_r <= '0;
                             state_r <= ST_IDLE;
                         end
                     end

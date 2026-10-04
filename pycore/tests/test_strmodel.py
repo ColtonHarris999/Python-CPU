@@ -351,6 +351,10 @@ class StrModelTest(unittest.TestCase):
         self.assertEqual(self.text_of(r.entry), "banana")
         r = self.accel.exec(SA_REPLACE, 0, _short("abc"), _short(""), _short("-"), self.heap)
         self.assertEqual(self.text_of(r.entry), "abc".replace("", "-"))
+        # Longer new string: 27-char haystack → 32-byte LONG_STR (word boundary).
+        hay = self.put("string-number-0-with-a-tail")
+        r = self.accel.exec(SA_REPLACE, 0, hay, _short("-"), _short("+-"), self.heap)
+        self.assertEqual(self.text_of(r.entry), "string+-number+-0+-with+-a+-tail")
 
     def test_type_error(self) -> None:
         r = self.accel.exec(SA_CONCAT, 0, _int(1), _short("x"), _none(), self.heap)

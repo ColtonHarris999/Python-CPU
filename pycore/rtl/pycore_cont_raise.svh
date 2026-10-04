@@ -15,7 +15,16 @@
 CONT_RAISE: begin
     unique case (container_phase_r)
         CP_INIT: begin
-            if (cur_arg_r == 32'd0) begin
+            if (gc_oom_raise_r) begin
+                // Allocation already failed, so raising must not allocate or
+                // consume a stack operand. Load the image's static singleton.
+                gc_oom_raise_r          <= 1'b0;
+                container_dmem_addr_r   <= PYCORE_MEMORY_ERROR_INSTANCE_ADDR;
+                container_dmem_we_r     <= 1'b0;
+                container_dmem_pending_r <= 1'b1;
+                container_probe_r       <= 32'd8;
+                container_phase_r       <= CP_HDR;
+            end else if (cur_arg_r == 32'd0) begin
                 if (!active_exc_valid_r ||
                     (pycore_get_tag(active_exc_r) != PY_TAG_OBJECT)) begin
                     container_raise_trap_r <= 1'b1;
@@ -56,6 +65,23 @@ CONT_RAISE: begin
         CP_HDR: begin
             if (!container_dmem_pending_r) begin
                 unique case (container_probe_r[3:0])
+                    4'd8: begin
+                        if (container_rd_data_r == 128'd0) begin
+                            // Old images have no singleton sidecar. Preserve
+                            // their clean fatal-OOM behavior.
+                            container_mem_fault_r <= 1'b1;
+                            container_phase_r     <= CP_DONE;
+                        end else begin
+                            container_tag_r  <= PY_TAG_OBJECT;
+                            container_val_r  <= container_rd_data_r;
+                            container_base_r <= container_rd_data_r[31:0];
+                            container_dmem_addr_r <= pycore_obj_field_val_addr(
+                                container_rd_data_r[31:0], 32'd0);
+                            container_dmem_we_r      <= 1'b0;
+                            container_dmem_pending_r <= 1'b1;
+                            container_probe_r        <= 32'd7;
+                        end
+                    end
                     4'd6: begin
                         if (pycore_ob_kind(container_rd_data_r) ==
                                 PY_OBK_EXCEPTION) begin
@@ -74,8 +100,8 @@ CONT_RAISE: begin
                                      PY_OBK_TYPE) begin
                             if (pycore_heap_end(
                                     heap_ptr_r, PYCORE_OBJ_EXCEPTION_BYTES) >
-                                    PYCORE_HEAP_LIMIT) begin
-                                container_mem_fault_r <= 1'b1;
+                                    heap_limit_r) begin
+                                `GC_CONT_OOM((pycore_heap_end( heap_ptr_r, PYCORE_OBJ_EXCEPTION_BYTES)) - heap_ptr_r)
                             end else begin
                                 container_base_r      <=
                                     pycore_heap_place(

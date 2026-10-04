@@ -51,6 +51,7 @@ module tb_excore #(
     logic [7:0]   mb_opcode;
     logic [31:0]  mb_arg;
     logic [31:0]  mb_heap_ptr;
+    logic [31:0]  mb_heap_limit;
     logic [2:0]   mb_entry_count;
     logic [131:0] mb_entries [0:3];
 
@@ -84,6 +85,7 @@ module tb_excore #(
         .mb_opcode_i(mb_opcode),
         .mb_arg_i(mb_arg),
         .mb_heap_ptr_i(mb_heap_ptr),
+        .mb_heap_limit_i(mb_heap_limit),
         .mb_entry_count_i(mb_entry_count),
         .mb_entries_i(mb_entries),
         .res_go_o(res_go),
@@ -157,6 +159,7 @@ module tb_excore #(
         mb_opcode       = 8'h0;
         mb_arg          = 32'h0;
         mb_heap_ptr     = 32'h0;
+        mb_heap_limit   = 32'h000F_0000;
         mb_entry_count  = 3'h0;
         mb_entries[0]   = 132'h0;
         mb_entries[1]   = 132'h0;
@@ -251,6 +254,7 @@ module tb_excore #(
     localparam logic [3:0] TRAP_SET_GROW       = 4'd13;
     localparam logic [3:0] RES_COMPLETED       = 4'd0;
     localparam logic [3:0] RES_FATAL           = 4'd2;
+    localparam logic [3:0] RES_NEED_HEAP       = 4'd3;
 
     // Present a LIST_DELETE trap (list + INT/BOOL index).
     task automatic run_list_delete(
@@ -436,7 +440,7 @@ module tb_excore #(
         $display("PASS: scenario3 (cap 4 -> 8, mixed tags preserved bit-exactly)");
 
         // ------------------------------------------------------------------
-        // Scenario 4: OOM -> FATAL(MEM_FAULT), memory untouched.
+        // Scenario 4: bump past MB_HEAP_LIMIT -> NEED_HEAP, memory untouched.
         // ------------------------------------------------------------------
         do_reset();
         obj_addr = 32'hEF_FF00;
@@ -452,16 +456,17 @@ module tb_excore #(
 
         run_list_grow(obj_addr, {4'd1, 128'd7}, 32'hEF_FF80, 20000);
 
-        check(res_code == RES_FATAL, "scenario4: expected RES_FATAL");
-        check(res_fatal_code == PY_TRAP_MEM_FAULT,
-              "scenario4: expected fatal_code == PY_TRAP_MEM_FAULT");
-        // Memory must be untouched: the OOM check happens before any write.
-        check(peek_slot(obj_addr) == {64'd4, 64'd2}, "scenario4: header was mutated on OOM");
-        check(peek_slot(obj_addr + 16) == {96'd0, old_buf}, "scenario4: ob_item was mutated on OOM");
-        check(peek_slot(old_buf) == 128'd1, "scenario4: old buffer element0 was mutated on OOM");
-        check(peek_slot(old_buf + 32) == 128'd2, "scenario4: old buffer element1 was mutated on OOM");
-        check(write_count == 0, "scenario4: no slot-port write should have been issued on OOM");
-        $display("PASS: scenario4 (OOM -> FATAL(MEM_FAULT), memory untouched)");
+        check(res_code == RES_NEED_HEAP, "scenario4: expected RES_NEED_HEAP");
+        check(res_pop_count == 3'd0, "scenario4: pop=0");
+        check(res_push_count == 2'd0, "scenario4: push=0");
+        check(res_heap_ptr == 32'd256, "scenario4: need = new_cap*32");
+        // Memory must be untouched: the grant check happens before any write.
+        check(peek_slot(obj_addr) == {64'd4, 64'd2}, "scenario4: header was mutated on NEED_HEAP");
+        check(peek_slot(obj_addr + 16) == {96'd0, old_buf}, "scenario4: ob_item was mutated on NEED_HEAP");
+        check(peek_slot(old_buf) == 128'd1, "scenario4: old buffer element0 was mutated on NEED_HEAP");
+        check(peek_slot(old_buf + 32) == 128'd2, "scenario4: old buffer element1 was mutated on NEED_HEAP");
+        check(write_count == 0, "scenario4: no slot-port write should have been issued on NEED_HEAP");
+        $display("PASS: scenario4 (OOM -> NEED_HEAP, memory untouched)");
 
         // ------------------------------------------------------------------
         // Scenario 5: unknown trap code -> FATAL(ILLEGAL_OPCODE).
@@ -716,6 +721,30 @@ module tb_excore #(
             check(ntbl != 32'd0, "scenario11: table_ptr set");
             $display("PASS: scenario11 (SET_GROW empty -> insert)");
         end
+
+        // ------------------------------------------------------------------
+        // Scenario 12: LIST_GROW with MB_HEAP_LIMIT below the new buffer
+        // end → NEED_HEAP, heap unmoved, pop=push=0.
+        // ------------------------------------------------------------------
+        do_reset();
+        obj_addr = 32'h0E00;
+        old_buf  = 32'h0E20;
+        new_buf  = 32'h0E60;
+        poke_slot(obj_addr, {64'd2, 64'd1});
+        poke_slot(obj_addr + 16, {96'd0, old_buf});
+        poke_slot(old_buf, 128'd100);
+        poke_slot(old_buf + 16, {124'b0, 4'd1});
+        mb_heap_limit = new_buf; // grant ends at the unused bump
+        run_list_grow(obj_addr, {4'd1, 128'd200}, new_buf, 20000);
+        check(res_code == RES_NEED_HEAP, "scenario12: expected RES_NEED_HEAP");
+        check(res_pop_count == 3'd0, "scenario12: pop=0");
+        check(res_push_count == 2'd0, "scenario12: push=0");
+        check(res_heap_ptr == 32'd128, "scenario12: need = new_cap*32");
+        hdr = peek_slot(obj_addr);
+        check(hdr == {64'd2, 64'd1}, "scenario12: list header unmoved");
+        check(peek_slot(obj_addr + 16) == {96'd0, old_buf},
+              "scenario12: ob_item unmoved");
+        $display("PASS: scenario12 (LIST_GROW NEED_HEAP, heap unmoved)");
 
         check(!cpu_fault, "excore_cpu raised an internal fault (unsupported instruction)");
 

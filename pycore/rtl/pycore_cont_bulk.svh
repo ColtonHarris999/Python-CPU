@@ -186,8 +186,8 @@
                                             if (pycore_heap_end(
                                                     heap_ptr_r,
                                                     (new_slots << 5))
-                                                    > PYCORE_HEAP_LIMIT) begin
-                                                container_mem_fault_r <= 1'b1;
+                                                    > heap_limit_r) begin
+                                                `GC_CONT_OOM((pycore_heap_end( heap_ptr_r, (new_slots << 5))) - heap_ptr_r)
                                             end else begin
                                                 container_buf_r        <=
                                                     pycore_heap_place(
@@ -739,8 +739,8 @@
                                                     pycore_heap_end(
                                                         heap_ptr_r, ord_bytes),
                                                     tbl_bytes)
-                                                    > PYCORE_HEAP_LIMIT) begin
-                                                container_mem_fault_r <= 1'b1;
+                                                    > heap_limit_r) begin
+                                                `GC_CONT_OOM((pycore_heap_end( pycore_heap_end( heap_ptr_r, ord_bytes), tbl_bytes)) - heap_ptr_r)
                                             end else begin
                                                 container_order_ptr_r  <=
                                                     pycore_heap_place(
@@ -1273,8 +1273,8 @@
                                             heap_ptr_r, new_slots);
                                         if (pycore_dict_place_end(
                                                 heap_ptr_r, new_slots)
-                                                > PYCORE_HEAP_LIMIT) begin
-                                            container_mem_fault_r <= 1'b1;
+                                                > heap_limit_r) begin
+                                            `GC_CONT_OOM((pycore_dict_place_end( heap_ptr_r, new_slots)) - heap_ptr_r)
                                         end else begin
                                             heap_ptr_r <= pycore_dict_place_end(
                                                 heap_ptr_r, new_slots);
