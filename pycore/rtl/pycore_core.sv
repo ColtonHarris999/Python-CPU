@@ -91,6 +91,10 @@ module pycore_core #(
     input  logic [DMEM_DATA_W-1:0]        dmem_rdata_i,
     input  logic [PYCORE_LINE_BYTES*8-1:0] dmem_rdata_line_i,
     input  logic                          dmem_fault_i,
+    // Non-blocking line prefetch into L1D (GC marking only).
+    output logic                          dmem_nb_req_o,
+    output logic [ADDR_WIDTH-1:0]         dmem_nb_addr_o,
+    input  logic                          dmem_nb_gnt_i,
     // trap_req (pycore -> excore, via trap_mailbox.sv). Unused (tied off)
     // when EXCORE_EN=0.
     output logic                          trap_req_valid_o,
@@ -1692,6 +1696,7 @@ module pycore_core #(
     bit          gc_at_exit_sim;
     bit          gc_stash_sim;
     bit          gc_poison_sim;
+    bit          gc_pf_sim;
     logic [31:0] gc_heap_limit_sim;
     logic [31:0] gc_every_n_runs_sim;
     logic [31:0] gc_boundary_every_sim;
@@ -1707,6 +1712,7 @@ module pycore_core #(
         gc_at_exit_sim = 1'b0;
         gc_stash_sim = 1'b0;
         gc_poison_sim = 1'b0;
+        gc_pf_sim = 1'b1;
         gc_heap_limit_sim = PYCORE_HEAP_LIMIT;
         gc_every_n_runs_sim = 32'd0;
         gc_boundary_every_sim = 32'd0;
@@ -1720,6 +1726,7 @@ module pycore_core #(
         if ($value$plusargs("GC_AT_EXIT=%d", v)) gc_at_exit_sim = (v != 0);
         if ($value$plusargs("GC_ROOT_STASH=%d", v)) gc_stash_sim = (v != 0);
         if ($value$plusargs("GC_POISON=%d", v)) gc_poison_sim = (v != 0);
+        if ($value$plusargs("GC_PREFETCH=%d", v)) gc_pf_sim = (v != 0);
         if ($value$plusargs("HEAP_LIMIT=%d", v)) gc_heap_limit_sim = v;
         if ($value$plusargs("GC_EVERY_N_RUNS=%d", v)) gc_every_n_runs_sim = v;
         if ($value$plusargs("GC_AT_BOUNDARY_EVERY=%d", v)) gc_boundary_every_sim = v;
@@ -1752,6 +1759,10 @@ module pycore_core #(
     logic         gc_root_valid, gc_root_ready;
     logic [PYCORE_ENTRY_WIDTH-1:0] gc_root_entry;
     logic         gc_eng_req, gc_eng_we, gc_eng_line;
+    logic         gc_pf_req;
+    logic [31:0]  gc_pf_addr;
+    assign dmem_nb_req_o  = gc_pf_req;
+    assign dmem_nb_addr_o = gc_pf_addr[ADDR_WIDTH-1:0];
     logic [31:0]  gc_eng_addr;
     logic [127:0] gc_eng_wdata;
     logic [15:0]  gc_eng_wstrb;
@@ -1814,6 +1825,10 @@ module pycore_core #(
         .rline_i(dmem_rdata_line_i),
         .fault_i(dmem_fault_i),
         .cache_en_i(cache_en_sim),
+        .pf_en_i(gc_pf_sim),
+        .pf_req_o(gc_pf_req),
+        .pf_addr_o(gc_pf_addr),
+        .pf_gnt_i(dmem_nb_gnt_i),
         .live_bytes_o(gc_live_bytes),
         .free_bytes_o(gc_free_bytes),
         .largest_base_o(gc_largest_base),

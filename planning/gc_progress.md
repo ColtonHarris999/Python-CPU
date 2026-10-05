@@ -21,11 +21,15 @@ Status: IN PROGRESS            <!-- IN PROGRESS | DONE | BLOCKED -->
   can be taken on a commit that has the collector.
 - `MODE=quick` on the merged tree: G0-G8 pass (G3 1200/1200, G4 300 dumps,
   G8 50 seeds, coverage complete). Host tests 578 OK.
-- G13: P5 549,289 and P6b 25.8% still miss; with `PYCORE_L2_HIT_CYCLES = 1`
-  they are 343,209 and 24.0%. The cause is the 8-cycle L2 hit, not the map
-  size (master_plan.md, open hazards).
-- Next: decide P5/P6b (overlap mark requests, or restate the targets), then
-  `MODE=full`.
+- G13: P5 549,289 and P6b 25.8% missed; with `PYCORE_L2_HIT_CYCLES = 1`
+  they were 343,209 and 24.0%, so the cause was the 8-cycle L2 hit.
+- Fixed by overlapping the misses: L1D gained a non-blocking line-read
+  port (4 fills in flight, tagged answers, prefetches), L2 a pipelined port,
+  the xbar a pipe mode (memory_hierarchy.md, "Several loads in flight";
+  `make pycore-mem-nb`). The marker prefetches pushed children and the next
+  lines of a scan (gc.md, Performance). P5 324,398, P6b 22.5%. Ordinary
+  requests keep their timing (G1).
+- Next: `MODE=full`.
 
 ## Active handoff — 2026-10-05 (gates on hw_tests.toml, 16 MB map)
 

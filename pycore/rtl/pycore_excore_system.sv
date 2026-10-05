@@ -61,6 +61,8 @@ module pycore_excore_system #(
     logic [ADDR_WIDTH-1:0]  core_dmem_addr;
     logic [DMEM_DATA_W-1:0] core_dmem_wdata, core_dmem_rdata;
     logic [PYCORE_LINE_BYTES*8-1:0] core_dmem_wline, core_dmem_rdata_line;
+    logic                   core_dmem_nb_req, core_dmem_nb_gnt;
+    logic [ADDR_WIDTH-1:0]  core_dmem_nb_addr;
 
     // ---- excore's slot-port master (into L2, not L1D) --------------------
     logic          sp_req, sp_we, sp_ack, sp_fault;
@@ -156,6 +158,9 @@ module pycore_excore_system #(
         .dmem_ack_i(core_dmem_ack),
         .dmem_rdata_i(core_dmem_rdata),
         .dmem_rdata_line_i(core_dmem_rdata_line),
+        .dmem_nb_req_o(core_dmem_nb_req),
+        .dmem_nb_addr_o(core_dmem_nb_addr),
+        .dmem_nb_gnt_i(core_dmem_nb_gnt),
         .dmem_fault_i(core_dmem_fault),
         .trap_req_valid_o(trap_req_valid),
         .trap_req_ready_i(trap_req_ready),
@@ -421,6 +426,17 @@ module pycore_excore_system #(
         .dmem_ack_o(core_dmem_ack),
         .dmem_rdata_o(core_dmem_rdata),
         .dmem_rdata_line_o(core_dmem_rdata_line),
+        .dmem_nb_req_i(core_dmem_nb_req && (mem_owner_r == OWNER_PYCORE)),
+        .dmem_nb_pf_i(1'b1),
+        .dmem_nb_addr_i(core_dmem_nb_addr),
+        .dmem_nb_id_i('0),
+        .dmem_nb_gnt_o(core_dmem_nb_gnt),
+        /* verilator lint_off PINCONNECTEMPTY */
+        .dmem_nb_ack_o(),
+        .dmem_nb_fault_o(),
+        .dmem_nb_id_o(),
+        .dmem_nb_line_o(),
+        /* verilator lint_on PINCONNECTEMPTY */
         .dmem_fault_o(core_dmem_fault),
         .excore_req_i(sp_req && (mem_owner_r == OWNER_EXCORE)),
         .excore_we_i(sp_we),

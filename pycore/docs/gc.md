@@ -483,34 +483,48 @@ writes those slots.
 G13 targets, re-measured on the 16 MB map at CACHE_EN=1 MEM_LATENCY=4
 (`make pycore-gc-bench`; P1/P2 from G13's run of every existing single-core
 image test with `+GC_EN=1`; P8 over 50 single-core `pycore-gc-fuzz` seeds).
-The 1 MB-map value, where it differs, is in brackets. P3-P7 were re-measured
-after the sweep fix and bounded marking were merged (`make pycore-gc-bench`);
+The 1 MB-map value, where it differs, is in brackets. P3-P7 are measured
+with mark prefetch (below) on the merged sweep fix and bounded marking;
 P1, P2 and P8 are from the earlier full measurement.
 
-P5 and P6b miss because of the 8-cycle L2 hit (`PYCORE_L2_HIT_CYCLES`, from
-#137), not the map size: with the hit set back to 1 cycle on the same 16 MB
-map, `bench_full`'s max pause is 343,209 and `bench_churn`'s GC share 24.0%,
-both met. Marking is memory-bound (port busy 0.85-0.97 of the mark phase,
-one blocking request at a time), so every L2 hit adds directly to the pause.
+**Mark prefetch.** Marking is memory-bound: the tracer's reads wait on L1D
+misses, and with the 8-cycle L2 hit (`PYCORE_L2_HIT_CYCLES`, #137) one
+blocking miss at a time put `bench_full` at 549,289 cycles and `bench_churn`
+at 25.8% (P5 and P6b missed; with a 1-cycle L2 hit they were 343,209 and
+24.0%). While marking (`P_ROOTS_MEM`, `P_MARK`, `CACHE_EN=1`) the engine now
+prefetches lines into L1D through its non-blocking port
+([`memory_hierarchy.md`](memory_hierarchy.md), "Several loads in flight"),
+so up to four fills overlap each other and the tracer's work:
+
+- the line of every child the marker pushes on the stack (it is popped and
+  read soon after: newest first, as the stack pops);
+- the next two lines of the range the tracer is scanning, when it reaches
+  the first element of a line (plain arrays and dict tables).
+
+Candidates go on an 8-entry LIFO that drops its oldest entry when full;
+addresses outside `[0x40, heap_limit)` are skipped. Prefetches change no
+result and no counter except cycles: dumps, roots and run lists are the same
+with `+GC_PREFETCH=0` (G3 runs every seed with prefetch on; the core and
+`tb_gc` take `+GC_PREFETCH=0` to compare). `mark_xacts` and the port-busy
+count still count only the tracer's and marker's own requests.
 
 | ID | Target | Measured (16 MB map) | |
 | --- | --- | --- | --- |
 | P1 | no-collect tests match G0 cycles | 359 of 359 existing image tests run without a collection; 357 cycle-identical to `main`, the two release-zeroing tests within the revised bound (`heap-mark-release` 5610 vs G0 5468, zeroing 30 cycles over 2 lines; `compile-release-realloc` 781,887 vs 779,159, zeroing 5,056 over 361 lines) and identical with mutant 46. G1: all 372 single-core tests identical with `GC_EN=0` | met |
 | P2 | a collecting existing test adds only its pause (+0.5%) | no existing test collects at the default heap | — |
-| P3 | mark port utilisation ≥ 0.80 on `bench_full` | 0.971 | met |
+| P3 | mark port utilisation ≥ 0.80 on `bench_full` | 0.949 | met |
 | P4 | sweep ≤ 4 cycles/bitmap word + 6/run | 2,211 cycles on `bench_full` (cap 4 × 7,680 + 6 × 562 = 34,092; 9,430 before the sweep fix) [2,172, cap 5,292] | met |
-| P5 | max pause ≤ 400,000 cycles on `bench_full` | **549,289** (343,209 with a 1-cycle L2 hit) [399,009] | missed |
-| P6a | GC share ≤ 2% on `img_gc_compile_loop` | 1,023,427 / 83,812,730 = 1.22% [1.92%] | met |
-| P6b | GC share ≤ 25% on `bench_churn` | **1,726,595 / 6,686,740 = 25.8%** (24.0% with a 1-cycle L2 hit) [24.2%] | missed |
+| P5 | max pause ≤ 400,000 cycles on `bench_full` | 324,398 (549,289 without prefetch) [399,009] | met |
+| P6a | GC share ≤ 2% on `img_gc_compile_loop` | 1,001,778 / 83,791,081 = 1.20% [1.92%] | met |
+| P6b | GC share ≤ 25% on `bench_churn` | 1,436,979 / 6,397,124 = 22.5% (25.8% without prefetch) [24.2%] | met |
 | P7 | mark-stack spills ≤ 5% of mark transactions | `bench_full` 0 / 28,919; `bench_deep` 0 / 40,331 (chunked scans) | met |
 | P8 | ≤ 0.05 run-list pops per allocation over the G8 corpus | 1,493 / 102,431 = 0.0146 | met |
 
-Other counters (`bench_*`, two collections each unless noted): `bench_full`
-mark 1,051,606 cycles; `bench_deep` max pause 411,527; `bench_wide` max pause
-568,952 (968,978 before chunked scans), 0 spills / 47,967 mark transactions;
-`bench_churn` 47 collections, max pause 44,142.
-P5 and P6b are open (`planning/master_plan.md`); `MODE=full` fails G13 until
-the mark path hides L2 latency or the targets are restated for an 8-cycle L2.
+Other counters (`bench_*`, two collections each unless noted; without
+prefetch in parentheses): `bench_full` mark 603,098 cycles (1,051,606);
+`bench_deep` max pause 223,591 (411,527); `bench_wide` max pause 396,086
+(568,952; 968,978 before chunked scans), 0 spills / 47,967 mark
+transactions; `bench_churn` 47 collections, max pause 38,443 (44,142).
 
 ## Clock and timing
 
@@ -553,8 +567,9 @@ The arrays are the real limit:
 ### A separate clock
 
 Marking is memory-bound: the dmem port is busy 84-97% of the mark phase
-(blocking L1D/L2, one outstanding request). The part of a pause that the
-engine's own clock speeds up is small:
+(blocking L1D/L2, one outstanding request; measured before mark prefetch,
+which overlaps those misses). The part of a pause that the engine's own
+clock speeds up is small:
 
 | Benchmark | Live | Mark cycles | Port busy | Engine-only (mark + sweep) |
 | --- | --- | --- | --- | --- |

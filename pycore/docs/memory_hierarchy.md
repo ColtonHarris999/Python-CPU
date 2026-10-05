@@ -22,7 +22,7 @@ core waits.
 > A request is captured on the cycle `req_i` is high (the master need not
 > hold it). `ack_o` pulses for exactly one cycle when the response is ready,
 > any number of cycles later. `fault_o` accompanies `ack_o`. At most one
-> request is outstanding per master port.
+> request is outstanding per master port (except on the opt-in ports below).
 
 `PYCORE_CACHE_EN=0` (`+CACHE_EN=0`) is combinational pass-through to the next
 level — the bisect switch and the transparency-test control arm.
@@ -30,6 +30,44 @@ level — the bisect switch and the transparency-test control arm.
 Masters: fetch, MEM stage, container FSM, CALL/RETURN frame walk, exception
 stack, STRACC, the garbage collector (`pycore_gc.sv`; see [`gc.md`](gc.md)),
 excore (at L2, never at L1D).
+
+### Several loads in flight (opt-in)
+
+Beside the ordinary port, L1D has a **non-blocking line-read port** and L2 a
+**pipelined port**. Nothing changes for a master that does not use them: an
+ordinary request takes exactly as many cycles as before (G1 checks every
+existing test cycle for cycle).
+
+- **L1D `nb_*` port** (`pycore_cache` `NB=1`). A request (`nb_req_i`,
+  `nb_addr_i`, a 4-bit `nb_id_i`) is accepted when `nb_gnt_o` is high in the
+  same cycle. Up to `NB_SLOTS` (4) line fills are in flight. A read answers
+  once with `nb_ack_o`, its `nb_id_o` and the whole line: a hit the next
+  cycle, a miss when its line arrives, so answers can come out of request
+  order. `nb_pf_i` makes it a prefetch: it fills L1D and never answers (a
+  prefetch of a line already present or on its way is dropped).
+- **While fills are in flight** an ordinary request that hits is served as
+  usual. An ordinary miss (or a zero-line write) waits in a one-entry
+  holding register until the fills have installed, then runs the ordinary
+  miss path, so that path always has the down port to itself. While an
+  ordinary request is waiting, `nb_gnt_o` stays low.
+- **Install.** Fills install oldest first and pick their victim then. A
+  dirty victim goes to a one-line writeback buffer that issues ahead of
+  further reads.
+- **Down path.** Fills and writebacks go down as whole-line requests on
+  the xbar's pipe mode to L2's pipelined port (`pipe_i`, `gnt_o`, `last_o`).
+  L2 takes one per cycle while they hit and answers in order, a read as 4
+  beats after `PYCORE_L2_HIT_CYCLES`. A pipelined miss stops acceptance,
+  waits for the answers ahead of it, and takes the ordinary miss path. The
+  xbar stays with L1D until every pipelined request has answered.
+- `CACHE_EN=0` turns both off (`nb_gnt_o` is low).
+- Covered by `make pycore-mem-nb` (`tb_mem_nb`): ordinary (held and
+  one-cycle) and non-blocking requests on conflicting addresses against a
+  shadow memory, at memory latency 4 and 30.
+
+The garbage collector is the first user: while marking it prefetches the
+line of each object it pushes and the next lines of the range it is
+scanning ([`gc.md`](gc.md), Performance). A scoreboarded core can use the
+tagged reads.
 
 ---
 

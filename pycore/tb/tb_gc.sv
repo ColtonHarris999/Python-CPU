@@ -20,6 +20,9 @@ module tb_gc;
     always #5 clk = ~clk;
 
     bit cache_en_sim;
+    bit pf_en_sim;
+    logic         pf_req, pf_gnt;
+    logic [31:0]  pf_addr;
     int mem_latency_sim;
     initial begin
         int ce;
@@ -28,6 +31,8 @@ module tb_gc;
         cache_en_sim = (ce != 0);
         mem_latency_sim = PYCORE_RAM_T_FIRST_CI;
         void'($value$plusargs("MEM_LATENCY=%d", mem_latency_sim));
+        pf_en_sim = 1'b1;
+        if ($value$plusargs("GC_PREFETCH=%d", ce)) pf_en_sim = (ce != 0);
     end
 
     logic         d_req, d_we, d_line, d_ack, d_fault;
@@ -49,6 +54,9 @@ module tb_gc;
         .dmem_addr_i(d_addr), .dmem_wdata_i(d_wdata), .dmem_wline_i('0),
         .dmem_ack_o(d_ack), .dmem_rdata_o(d_rdata), .dmem_fault_o(d_fault),
         .dmem_rdata_line_o(d_rline),
+        .dmem_nb_req_i(pf_req), .dmem_nb_pf_i(1'b1), .dmem_nb_addr_i(pf_addr),
+        .dmem_nb_id_i('0), .dmem_nb_gnt_o(pf_gnt), .dmem_nb_ack_o(), .dmem_nb_fault_o(),
+        .dmem_nb_id_o(), .dmem_nb_line_o(),
         .excore_req_i(1'b0), .excore_we_i(1'b0), .excore_wstrb_i('0), .excore_addr_i('0),
         .excore_wdata_i('0), .excore_ack_o(), .excore_rdata_o(), .excore_fault_o(),
         .flush_req_i(1'b0), .inv_req_i(1'b0), .flush_done_o(), .inv_done_o(), .l1d_idle_o(),
@@ -87,6 +95,7 @@ module tb_gc;
         .wdata_o(d_wdata), .wstrb_o(d_wstrb),
         .ack_i(d_ack), .rdata_i(d_rdata), .rline_i(d_rline), .fault_i(d_fault),
         .cache_en_i(cache_en_sim),
+        .pf_en_i(pf_en_sim), .pf_req_o(pf_req), .pf_addr_o(pf_addr), .pf_gnt_i(pf_gnt),
         .live_bytes_o(live), .free_bytes_o(free_b), .largest_base_o(lbase),
         .largest_size_o(lsize), .run_head_o(rhead), .runs_o(runs),
         .run_onchip_n_o(run_onchip_n), .run_overflow_head_o(run_ovf_head),

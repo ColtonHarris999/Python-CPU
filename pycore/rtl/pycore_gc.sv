@@ -107,6 +107,14 @@ module pycore_gc #(
     input  logic [PYCORE_LINE_BYTES*8-1:0] rline_i,
     input  logic         fault_i,
     input  logic         cache_en_i,
+    // Line prefetch into L1D's non-blocking port while marking (CACHE_EN=1):
+    // the line of each child pushed on the mark stack and the next lines of
+    // the range being scanned. A prefetch only warms L1D; it changes no
+    // result, only how long the demand reads above wait.
+    input  logic         pf_en_i,
+    output logic         pf_req_o,
+    output logic [31:0]  pf_addr_o,
+    input  logic         pf_gnt_i,
     // Results (valid from done until the next start).
     output logic [31:0]  live_bytes_o,
     output logic [31:0]  free_bytes_o,
@@ -343,6 +351,23 @@ module pycore_gc #(
     assign objects_o        = objects_r;
     assign roots_o          = roots_r;
     assign rescans_o        = rescans_r;
+
+    // =====================================================================
+    // Prefetch: a LIFO of line addresses (newest first: the marker pops the
+    // newest child first, and the tracer wants its next lines soonest).
+    // When full, the oldest entry is dropped.
+    // =====================================================================
+    localparam int PF_DEPTH = 8;
+    logic [25:0] pf_stk_q [0:PF_DEPTH-1];   // line address [31:6]; [0] is the top
+    logic [3:0]  pf_n_r;
+    logic        pf_active;
+    // Events from the marker (a child pushed) and the tracer (a scan reached
+    // a new line: the next line now, the one after next cycle).
+    logic        pf_mk_v_r, pf_st_v_r, pf_st2_v_r, pf_pend_v_r;
+    logic [31:0] pf_mk_addr_r, pf_st_addr_r, pf_st2_addr_r, pf_pend_addr_r;
+    logic [31:0] pf_lim_r;
+    assign pf_req_o  = pf_active && (pf_n_r != 4'd0);
+    assign pf_addr_o = {pf_stk_q[0], 6'd0};
 
     // =====================================================================
     // Tracer
@@ -699,6 +724,8 @@ module pycore_gc #(
             tp_cnt_r <= '0;
             bot_r <= '0; cnt_r <= '0; mem_cnt_r <= '0; stack_hw_r <= '0;
             pop_give_r <= 1'b0; pop_ent_r <= '0; mark_done_r <= 1'b0;
+            pf_mk_v_r <= 1'b0; pf_mk_addr_r <= '0;
+            pf_st_v_r <= 1'b0; pf_st_addr_r <= '0; pf_st2_v_r <= 1'b0; pf_st2_addr_r <= '0;
             free_bytes_r <= '0; largest_base_r <= '0; largest_size_r <= '0;
             run_head_r <= '0; runs_r <= '0; overflow_r <= 1'b0; fault_r <= 1'b0;
             bad_kind_r <= '0; reserved_r <= '0; wild_r <= '0;
@@ -732,6 +759,9 @@ module pycore_gc #(
             done_r <= 1'b0;
             clean_done_r <= 1'b0;
             pop_give_r <= 1'b0;
+            pf_mk_v_r  <= 1'b0;
+            pf_st_v_r  <= 1'b0;
+            pf_st2_v_r <= 1'b0;
             free_range_valid_o <= 1'b0;
 
             // ---- port bookkeeping ----
@@ -916,6 +946,18 @@ module pycore_gc #(
                         end
                     end else if (!t_want_r && (tp_cnt_r == 2'd0 ||
                                (t_mode_r != SM_FRAME && tp_cnt_r < 2'd3))) begin
+                        // First element of a line: prefetch the next two
+                        // lines of the range (elements are 32 B plain, 64 B
+                        // dict slots).
+                        if ((t_ptr_r[5:0] == 6'd0) &&
+                            ((t_mode_r == SM_PLAIN) || (t_mode_r == SM_DICTT))) begin
+                            pf_st_v_r     <= (t_mode_r == SM_PLAIN) ? (t_left_r > 32'd2)
+                                                                    : (t_left_r > 32'd1);
+                            pf_st_addr_r  <= t_ptr_r + 32'd64;
+                            pf_st2_v_r    <= (t_mode_r == SM_PLAIN) ? (t_left_r > 32'd4)
+                                                                    : (t_left_r > 32'd2);
+                            pf_st2_addr_r <= t_ptr_r + 32'd128;
+                        end
                         if (cache_en_i && (t_ptr_r[5:0] == 6'd0) &&
                             (tp_cnt_r < 2'd2) &&
                             (((t_mode_r == SM_PLAIN) && (t_left_r >= 32'd2)) ||
@@ -1761,6 +1803,8 @@ module pycore_gc #(
                                 if (cnt_r < (OC_AW+1)'(onchip_limit_r)) begin
                                     ring[OC_AW'(bot_r + OC_AW'(cnt_r))] <=
                                         {d_kind, d_size, d_addr};
+                                    pf_mk_v_r    <= 1'b1;
+                                    pf_mk_addr_r <= d_addr;
                                     cnt_r  <= cnt_r + 1'b1;
                                     m_st_r <= M_IDLE;
                                 end else begin
@@ -1796,6 +1840,8 @@ module pycore_gc #(
                 M_PUSH: begin
                     if (cnt_r < (OC_AW+1)'(onchip_limit_r)) begin
                         ring[OC_AW'(bot_r + OC_AW'(cnt_r))] <= m_pent_r;
+                        pf_mk_v_r    <= 1'b1;
+                        pf_mk_addr_r <= m_pent_r[31:0];
                         cnt_r  <= cnt_r + 1'b1;
                         m_st_r <= M_IDLE;
                     end else begin
@@ -2241,14 +2287,14 @@ module pycore_gc #(
     end
     always @(posedge clk_i) begin
         if (rst_n_i && prof_en) begin
-            if (phase_r != P_IDLE) prof_cyc[phase_r] = prof_cyc[phase_r] + 1;
+            if (phase_r != P_IDLE) prof_cyc[phase_r] <= prof_cyc[phase_r] + 1;
             if (done_r) begin
                 $display("[GC-PHASE] clear=%0d cleanup=%0d preload=%0d roots_reg=%0d roots_mem=%0d mark=%0d sweep=%0d finish=%0d objects=%0d xacts=%0d spill=%0d",
                          prof_cyc[P_CLEAR], prof_cyc[P_CLEANUP], prof_cyc[P_PRELOAD],
                          prof_cyc[P_ROOTS_REG], prof_cyc[P_ROOTS_MEM], prof_cyc[P_MARK],
                          prof_cyc[P_SWEEP], prof_cyc[P_FINISH], objects_r, mark_xacts_r,
                          spill_xacts_r);
-                for (int i = 0; i < 9; i++) prof_cyc[i] = 0;
+                for (int i = 0; i < 9; i++) prof_cyc[i] <= 0;
             end
         end
     end
@@ -2271,4 +2317,59 @@ module pycore_gc #(
         end
     end
 `endif
+
+    // ---------------------------------------------------------------------
+    // Prefetch stack
+    // ---------------------------------------------------------------------
+    assign pf_active = pf_en_i && cache_en_i &&
+                       ((phase_r == P_ROOTS_MEM) || (phase_r == P_MARK));
+    // Next stack: the issued top leaves, then the child and the stream line
+    // are pushed (the stream line ends on top).
+    logic [25:0] pf_stk_d [0:PF_DEPTH-1];
+    logic [3:0]  pf_n_d;
+    always_comb begin
+        logic        sv;
+        logic [31:0] sa;
+        for (int i = 0; i < PF_DEPTH; i++) pf_stk_d[i] = pf_stk_q[i];
+        pf_n_d = pf_n_r;
+        if (pf_req_o && pf_gnt_i) begin
+            for (int i = 0; i < PF_DEPTH - 1; i++) pf_stk_d[i] = pf_stk_d[i + 1];
+            pf_n_d = pf_n_d - 4'd1;
+        end
+        // Stream: this cycle's next line, else last cycle's line after it.
+        sv = pf_st_v_r || pf_pend_v_r;
+        sa = pf_st_v_r ? pf_st_addr_r : pf_pend_addr_r;
+        for (int k = 0; k < 2; k++) begin
+            logic        v;
+            logic [31:0] a;
+            v = (k == 0) ? pf_mk_v_r : sv;
+            a = (k == 0) ? pf_mk_addr_r : sa;
+            if (v && (a >= 32'h40) && (a < pf_lim_r) &&
+                !((pf_n_d != 4'd0) && (pf_stk_d[0] == a[31:6]))) begin
+                for (int i = PF_DEPTH - 1; i > 0; i--) pf_stk_d[i] = pf_stk_d[i - 1];
+                pf_stk_d[0] = a[31:6];
+                if (pf_n_d != 4'(PF_DEPTH)) pf_n_d = pf_n_d + 4'd1;
+            end
+        end
+    end
+
+    always_ff @(posedge clk_i or negedge rst_n_i) begin
+        if (!rst_n_i) begin
+            pf_n_r <= '0;
+            pf_pend_v_r <= 1'b0;
+            pf_pend_addr_r <= '0;
+            pf_lim_r <= '0;
+            for (int i = 0; i < PF_DEPTH; i++) pf_stk_q[i] <= '0;
+        end else if (!pf_active) begin
+            pf_n_r      <= '0;
+            pf_pend_v_r <= 1'b0;
+            pf_lim_r    <= heap_limit_r;
+        end else begin
+            for (int i = 0; i < PF_DEPTH; i++) pf_stk_q[i] <= pf_stk_d[i];
+            pf_n_r         <= pf_n_d;
+            pf_pend_v_r    <= pf_st_v_r && pf_st2_v_r;
+            pf_pend_addr_r <= pf_st2_addr_r;
+        end
+    end
+
 endmodule

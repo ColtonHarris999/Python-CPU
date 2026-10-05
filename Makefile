@@ -438,6 +438,22 @@ pycore-l1d-handoff:
 		pycore/tb/tb_l1d_handoff.sv
 	./$(BUILD_DIR)/pycore_l1d_handoff/Vtb_l1d_handoff
 
+# Non-blocking L1D port and pipelined L2 against a shadow memory, at the
+# CI latency and at 30 cycles.
+pycore-mem-nb:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_mem_nb \
+		--Mdir $(BUILD_DIR)/pycore_mem_nb \
+		-Wall -Wno-fatal \
+		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv \
+		pycore/tb/tb_mem_nb.sv
+	./$(BUILD_DIR)/pycore_mem_nb/Vtb_mem_nb +SEED=1 | tee $(BUILD_DIR)/pycore_mem_nb/run1.log
+	grep -q "^PASS" $(BUILD_DIR)/pycore_mem_nb/run1.log
+	./$(BUILD_DIR)/pycore_mem_nb/Vtb_mem_nb +SEED=2 +MEM_LATENCY=30 | tee $(BUILD_DIR)/pycore_mem_nb/run2.log
+	grep -q "^PASS" $(BUILD_DIR)/pycore_mem_nb/run2.log
+
 pycore-ram:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
@@ -710,7 +726,7 @@ excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec \
 	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
-	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff \
+	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff pycore-mem-nb \
 	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile
 
 DOCKER_MAKE = docker run --rm $(DOCKER_RUN_FLAGS) \

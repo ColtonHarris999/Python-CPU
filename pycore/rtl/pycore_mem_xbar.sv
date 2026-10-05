@@ -10,6 +10,12 @@
 // is high. `l2_req_o` is held until `l2_ack_i`. Master `ack_o` is a
 // one-cycle pulse the cycle after L2 acks — extra occupancy, same §0
 // contract.
+//
+// Pipe mode: a dmem request with dmem_pipe_i (L1D's non-blocking fills)
+// passes straight through to the L2's pipelined port. dmem_gnt_o is the
+// L2's grant and responses come back in the same cycle, with
+// dmem_last_o. The xbar stays with dmem until every pipelined request has
+// answered; the other masters wait, as they do behind an ordinary request.
 module pycore_mem_xbar #(
     parameter int    ADDR_WIDTH    = PYCORE_ADDR_WIDTH,
     parameter int    IMEM_DATA_W   = PYCORE_IMEM_DATA_WIDTH,
@@ -35,6 +41,9 @@ module pycore_mem_xbar #(
     input  logic [DMEM_DATA_W-1:0]  dmem_wdata_i,
     input  logic                    dmem_line_i,
     input  logic [PYCORE_LINE_BYTES*8-1:0] dmem_wline_i,
+    input  logic                    dmem_pipe_i,
+    output logic                    dmem_gnt_o,
+    output logic                    dmem_last_o,
     output logic                    dmem_ack_o,
     output logic [DMEM_DATA_W-1:0]  dmem_rdata_o,
     output logic                    dmem_fault_o,
@@ -55,6 +64,9 @@ module pycore_mem_xbar #(
     output logic [DMEM_DATA_W-1:0]  l2_wdata_o,
     output logic                    l2_line_o,
     output logic [PYCORE_LINE_BYTES*8-1:0] l2_wline_o,
+    output logic                    l2_pipe_o,
+    input  logic                    l2_gnt_i,
+    input  logic                    l2_last_i,
     input  logic                    l2_ack_i,
     input  logic [DMEM_DATA_W-1:0]  l2_rdata_i,
     input  logic                    l2_fault_i
@@ -83,25 +95,35 @@ module pycore_mem_xbar #(
     logic [ADDR_WIDTH-1:0] imem_uaddr;
     logic idle_take;
 
-    assign idle_take = (grant_r == G_NONE) && !l2_req_r &&
+    // Pipe mode: pmode_r while pipelined requests are outstanding; pmode
+    // also covers the cycle that opens it, so the first request passes
+    // through at once.
+    logic       pmode_r, pmode, pipe_take;
+    logic [3:0] pcnt_r;
+    assign idle_take = (grant_r == G_NONE) && !l2_req_r && !pmode_r &&
                        !imem_ack_r && !dmem_ack_r && !excore_ack_r;
-    assign take_dmem   = idle_take && dmem_req_i;
+    assign pmode     = pmode_r || (idle_take && dmem_req_i && dmem_pipe_i);
+    assign pipe_take = pmode && dmem_req_i && dmem_pipe_i && l2_gnt_i;
+    assign take_dmem   = idle_take && dmem_req_i && !dmem_pipe_i;
     assign take_excore = idle_take && !dmem_req_i && excore_req_i;
     assign take_imem   = idle_take && !dmem_req_i && !excore_req_i && imem_req_i;
     assign imem_uaddr = ADDR_WIDTH'(CODE_BASE) + imem_addr_i;
     assign imem_hi    = imem_uaddr[3];
 
-    assign l2_req_o   = l2_req_r && !l2_ack_i;
-    assign l2_we_o    = l2_we_r;
-    assign l2_wstrb_o = l2_wstrb_r;
-    assign l2_addr_o  = l2_addr_r;
-    assign l2_wdata_o = l2_wdata_r;
-    assign l2_line_o  = l2_line_r;
-    assign l2_wline_o = l2_wline_r;
+    assign l2_req_o   = pmode ? (dmem_req_i && dmem_pipe_i) : (l2_req_r && !l2_ack_i);
+    assign l2_pipe_o  = pmode;
+    assign l2_we_o    = pmode ? dmem_we_i    : l2_we_r;
+    assign l2_wstrb_o = pmode ? dmem_wstrb_i : l2_wstrb_r;
+    assign l2_addr_o  = pmode ? dmem_addr_i  : l2_addr_r;
+    assign l2_wdata_o = pmode ? dmem_wdata_i : l2_wdata_r;
+    assign l2_line_o  = pmode ? dmem_line_i  : l2_line_r;
+    assign l2_wline_o = pmode ? dmem_wline_i : l2_wline_r;
 
-    assign dmem_ack_o   = dmem_ack_r;
-    assign dmem_rdata_o = rdata_hold_r;
-    assign dmem_fault_o = dmem_ack_r && fault_hold_r;
+    assign dmem_gnt_o   = pmode && l2_gnt_i;
+    assign dmem_ack_o   = pmode_r ? l2_ack_i : dmem_ack_r;
+    assign dmem_last_o  = pmode_r ? l2_last_i : 1'b1;
+    assign dmem_rdata_o = pmode_r ? l2_rdata_i : rdata_hold_r;
+    assign dmem_fault_o = pmode_r ? (l2_ack_i && l2_fault_i) : (dmem_ack_r && fault_hold_r);
 
     assign excore_ack_o   = excore_ack_r;
     assign excore_rdata_o = rdata_hold_r;
@@ -127,7 +149,16 @@ module pycore_mem_xbar #(
             l2_wdata_r   <= '0;
             l2_line_r    <= 1'b0;
             l2_wline_r   <= '0;
+            pmode_r      <= 1'b0;
+            pcnt_r       <= '0;
         end else begin
+            begin
+                logic [3:0] n;
+                n = pcnt_r + (pipe_take ? 4'd1 : 4'd0)
+                           - ((pmode_r && l2_ack_i && l2_last_i) ? 4'd1 : 4'd0);
+                pcnt_r  <= n;
+                pmode_r <= pmode && (n != 4'd0);
+            end
             imem_ack_r   <= 1'b0;
             dmem_ack_r   <= 1'b0;
             excore_ack_r <= 1'b0;
