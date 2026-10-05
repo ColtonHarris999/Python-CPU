@@ -453,9 +453,11 @@ current commit.
 
 ## Clock and timing
 
-`tools/gc_timing.sh` estimates the engine's logic depth: sv2v, every
-on-chip array shrunk to 16 entries, Yosys + ABC mapped to the SkyWater
-sky130 hd library (typical corner, no wire load). One sky130 FO4 is 80.5 ps.
+`tools/gc_timing.sh` estimates the engine's logic depth: sv2v, the mark
+bitmap and mark-stack ring shrunk to 16 entries (the run table, 1,024
+entries, and the prune-map copy, 256, stay full size), Yosys + ABC mapped to
+the SkyWater sky130 hd library (typical corner, no wire load). One sky130
+FO4 is 80.5 ps.
 
 | Path | Delay | FO4 |
 | --- | --- | --- |

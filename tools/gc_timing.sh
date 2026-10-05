@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Logic-depth estimate for the GC engine (pycore/docs/gc.md, "Clock and
-# timing"). Converts pycore_gc.sv with sv2v, shrinks every on-chip array to
-# 16 entries (the arrays are read combinationally and would otherwise
-# synthesize to ~1M flops; their read-mux delay is measured separately), maps
-# to the SkyWater sky130 hd library with Yosys + ABC, and prints ABC's
-# worst register-to-register delay and its start/end points.
+# timing"). Converts pycore_gc.sv with sv2v, shrinks the mark bitmap and the
+# mark-stack ring to 16 entries (both are read combinationally; the 16 MB
+# bitmap alone would synthesize to ~1M flops, and its read-mux delay is
+# measured separately); the run table (1,024) and prune-map copy (256) stay
+# full size. Maps to the SkyWater sky130 hd library with Yosys + ABC and
+# prints ABC's worst register-to-register delay and its start/end points.
 #
 #   tools/gc_timing.sh [out_dir]          # ~20 min, ~6 GB RAM
 #
@@ -24,11 +25,9 @@ fi
 sv2v -DSYNTHESIS -I "$ROOT/pycore/rtl" "$ROOT/pycore/rtl/pycore_gc.sv" > "$OUT/gc.v"
 sed -i \
     -e 's/localparam signed \[31:0\] BM_WORDS = PYCORE_GC_BITMAP_WORDS;/localparam signed [31:0] BM_WORDS = 16;/' \
-    -e 's/localparam signed \[31:0\] RUN_ONCHIP = 1024;/localparam signed [31:0] RUN_ONCHIP = 16;/' \
-    -e 's/localparam signed \[31:0\] SHADOW_WORDS = 256;/localparam signed [31:0] SHADOW_WORDS = 16;/' \
     -e 's/parameter signed \[31:0\] MSTACK_ONCHIP = 256;/parameter signed [31:0] MSTACK_ONCHIP = 16;/' \
     "$OUT/gc.v"
-[ "$(grep -c '= 16;' "$OUT/gc.v")" -ge 4 ] || { echo "gc_timing: array parameters not found" >&2; exit 1; }
+[ "$(grep -c '= 16;' "$OUT/gc.v")" -ge 2 ] || { echo "gc_timing: array parameters not found" >&2; exit 1; }
 cat > "$OUT/abc.script" <<'EOF'
 strash
 dch -f
