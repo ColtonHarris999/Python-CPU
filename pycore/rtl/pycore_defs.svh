@@ -3118,7 +3118,7 @@ endfunction
 //   0xF00000 – 0xF00FFF  (4 KB) exc-info stack arena (§5.5)
 //   0xF01000 – 0xF08FFF  (32 KB) call-frame stack (1024 frames)
 //   0xF40000 – 0xF7FFFF  (256 KB) RF spill LIFO (8192 × 32 B entries)
-//   0xF80000 – 0xFFFFFF  reserved
+//   0xF80000 – 0xFFFFFF  (512 KB) GC metadata (PYCORE_GC_* below)
 //   0x1000000            DATA_LIMIT (== PYCORE_CODE_ADDR_BASE)
 // -------------------------------------------------------------------------
 localparam logic [31:0] PYCORE_HEAP_BASE  = 32'h0000_0440;
@@ -3149,8 +3149,12 @@ localparam logic [31:0] PYCORE_NATIVE_METHOD_TABLE_BYTES =
     PYCORE_NATIVE_METHOD_COUNT * PYCORE_NATIVE_METHOD_ENTRY_BYTES;
 localparam logic [31:0] PYCORE_NATIVE_METHOD_TABLE_ADDR =
     PYCORE_ITER_EXHAUST_TYPE_ADDR - PYCORE_NATIVE_METHOD_TABLE_BYTES;
+// Preallocated MemoryError singleton handle. Images that do not need the
+// type leave the pair zero and retain the legacy fatal-OOM fallback.
+localparam logic [31:0] PYCORE_MEMORY_ERROR_INSTANCE_ADDR =
+    PYCORE_NATIVE_METHOD_TABLE_ADDR - 32'd32;
 localparam logic [31:0] PYCORE_EXC_SIDECAR_RESERVE_BYTES =
-    PYCORE_NATIVE_METHOD_TABLE_BYTES + 32'd32;
+    PYCORE_NATIVE_METHOD_TABLE_BYTES + 32'd64;
 
 function automatic logic pycore_is_native_method_receiver(
     input logic [3:0] tag,
@@ -3714,5 +3718,65 @@ localparam logic [31:0] PYCORE_CODE_RAM_BYTE_BASE =
 
 localparam logic [31:0] PYCORE_BOOT_RECORD_ADDR = 32'h0000_03E0;
 localparam logic [31:0] PYCORE_BOOT_RECORD_BYTES = 32'd96;
+
+// -------------------------------------------------------------------------
+// Garbage collector metadata (planning/gc_plan.md §4.3, pycore/docs/gc.md).
+// Lives in the 512 KB above the RF spill LIFO (top of the 16 MB data
+// window); never traced, never part of the heap.
+//   0xF80000 – 0xF81FFF  extra roots (the bitmap itself is on chip)
+//   0xF82000 – 0xF85FFF  root stash: count word, then value/tag pairs
+//   0xF86000 – 0xF863FF  stats (+ compiler cleanup descriptor)
+//   0xF86400 – 0xF883FF  static prune map (one bit per static granule)
+//   0xF88400 – 0xFBFFFF  free-run overflow table
+//   0xFC0000 – 0xFFFFFF  mark-stack spill area (16,384 x 16 B entries)
+// Bitmap bit g covers heap granule g = addr >> 4 (16 B); word = addr >> 11.
+// Free runs carry a 16 B header in their first granule:
+//   { FREE_MAGIC[127:96], size_bytes[95:64], next_run[63:32], 32'd0 }.
+// -------------------------------------------------------------------------
+// Memory-map constants mirrored by pycore/tools/encoding.py; some are only
+// read by the host tools and the testbench.
+/* verilator lint_off UNUSEDPARAM */
+localparam logic [31:0] PYCORE_GC_META_BASE        = 32'h00F8_0000;
+localparam logic [31:0] PYCORE_GC_MARK_BITMAP      = 32'h00F8_0000;
+localparam logic [31:0] PYCORE_GC_MARK_BITMAP_BYTES = 32'h0000_2000;
+localparam logic [31:0] PYCORE_GC_EXTRA_ROOTS      = PYCORE_GC_MARK_BITMAP;
+localparam logic [31:0] PYCORE_GC_EXTRA_ROOTS_COUNT = 32'd32;
+localparam logic [31:0] PYCORE_GC_ROOT_STASH       = 32'h00F8_2000;
+localparam logic [31:0] PYCORE_GC_ROOT_STASH_BYTES = 32'h0000_4000;
+localparam logic [31:0] PYCORE_GC_STATS            = 32'h00F8_6000;
+localparam logic [31:0] PYCORE_GC_STATS_BYTES      = 32'h0000_0400;
+// Image descriptor used to clear idle compiler scratch references before
+// marking. Header = {"PYCC", count, busy_value_addr, builtins_g, pyc_g};
+// subsequent words contain four 32-bit value-slot addresses each.
+localparam logic [31:0] PYCORE_GC_COMPILER_CLEANUP = PYCORE_GC_STATS + 32'h100;
+localparam logic [31:0] PYCORE_GC_COMPILER_CLEANUP_BYTES = 32'h0000_0300;
+localparam logic [31:0] PYCORE_GC_COMPILER_CLEANUP_MAGIC = 32'h5059_4343;
+// Static prune map (built by the image builder, pycore/tools/gc_static.py):
+// bit g set <=> granule g starts a static object whose subgraph holds no
+// runtime-mutable object; preloaded into the mark bitmap each collection.
+localparam logic [31:0] PYCORE_GC_STATIC_MAP       = 32'h00F8_6400;
+localparam logic [31:0] PYCORE_GC_STATIC_MAP_BYTES = 32'h0000_2000;
+// Extra memory roots written by the image builder (32 tagged pairs, value
+// then tag, 32 B apart) in the otherwise unused mark-bitmap region (the
+// bitmap is on chip): the builtins values that the static prune map keeps. When compile() is idle
+// the engine premarks the builtins dict header (it reaches only static
+// objects) and traces these instead of the whole table (review round 1:
+// `int` reaches the mutable int.__dict__).
+localparam logic [31:0] PYCORE_GC_RUN_TABLE        = 32'h00F8_8400;
+localparam logic [31:0] PYCORE_GC_RUN_TABLE_BYTES  = 32'h0003_7C00;
+localparam logic [31:0] PYCORE_GC_MARK_STACK       = 32'h00FC_0000;
+localparam logic [31:0] PYCORE_GC_MARK_STACK_BYTES = 32'h0004_0000;
+localparam logic [31:0] PYCORE_GC_MARK_STACK_ENTRIES = 32'd16384;
+localparam logic [31:0] PYCORE_GC_GRANULE_BYTES    = 32'd16;
+/* verilator lint_on UNUSEDPARAM */
+localparam logic [31:0] PYCORE_GC_BITMAP_WORDS     = PYCORE_HEAP_LIMIT >> 11;
+localparam logic [31:0] PYCORE_GC_FREE_MAGIC       = 32'h4652_4545;  // "FREE"
+localparam logic [127:0] PYCORE_GC_POISON_WORD =
+    128'hDEAD_6C00_DEAD_6C00_DEAD_6C00_DEAD_6C0F;  // tag nibble = FROZENSET
+
+// GC builtins (CALL subs 65-67; seeded by image_from_source.py).
+localparam logic [31:0] PY_BI_GC_COLLECT   = 32'd22;
+localparam logic [31:0] PY_BI_HEAP_FREE    = 32'd23;
+localparam logic [31:0] PY_BI_GC_STATS     = 32'd24;
 
 `endif

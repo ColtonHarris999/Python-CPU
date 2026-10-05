@@ -57,14 +57,18 @@ SIM_TARGET = {"single": "pycore-sim-img", "twocore": "pycore-sim-img-twocore"}
 DEFAULT_FW_HEX = ROOT / "build" / "excore_fw" / "list_grow.hex"
 KINDS = {"run", "trap", "stdout", "coderam", "container", "container_boot", "excore", "make"}
 
-# (label, CACHE_EN, MEM_LATENCY, scope). scope "sample" skips compiler
-# entries that are not marked caching = true.
+# (label, CACHE_EN, MEM_LATENCY, scope). scope "sample" skips entries of the
+# SAMPLED_AREAS that are not marked caching = true.
 CACHING_CONFIGS = [
     ("cache=0 lat=1", 0, 1, "sample"),
     ("cache=0 lat=4", 0, 4, "sample"),
     ("cache=0 lat=30", 0, 30, "sample"),
     ("cache=1 lat=30", 1, 30, "all"),
 ]
+# Areas whose fixtures run many times longer uncached: the compiler (a
+# compile is 10-50x anything else) and the GC loops, which fill the heap on
+# purpose. Their caching = true entries stand for the area at cache off.
+SAMPLED_AREAS = {"compiler", "gc"}
 
 
 @dataclasses.dataclass
@@ -188,8 +192,12 @@ def _run(cmd: list[str], log: pathlib.Path, timeout: int = 7200) -> tuple[int, s
 
 
 class Runner:
-    def __init__(self, fw_hex: pathlib.Path, python: str) -> None:
+    def __init__(self, fw_hex: pathlib.Path, python: str, plusargs: str = "") -> None:
         self.fw_hex = fw_hex
+        # Global plusargs go before each test's own so they win (Verilog
+        # $value$plusargs takes the first match): +GC_EN=0 on a GC fixture
+        # that asks for +GC_EN=1 runs it with the collector off.
+        self.global_plusargs = plusargs.split()
         self.python = python
 
     def work_dir(self, t: Test) -> pathlib.Path:
@@ -272,9 +280,9 @@ class Runner:
                     f"+EXPECTED_TAG={meta['EXPECTED_TAG']}",
                     f"+EXPECTED_VALUE={meta['EXPECTED_VALUE']}",
                 ]
-            return args + cycles + mem + extra
+            return args + cycles + mem + self.global_plusargs + extra
         if t.kind == "container":
-            return [f"+PROG_HEX={t.hex}", "+BOOT_EN=0"] + extra + mem
+            return [f"+PROG_HEX={t.hex}", "+BOOT_EN=0"] + self.global_plusargs + extra + mem
         if t.kind in ("container_boot", "excore"):
             meta = _read_meta(PROGRAMS / f"{t.stem}.meta")
             if not meta.get("HEAP_INIT_PTR"):
@@ -286,7 +294,7 @@ class Runner:
                 "+BOOT_EN=1",
                 "+CHECK_ENTRY_RETURN=0",
                 f"+HEAP_INIT_PTR={meta['HEAP_INIT_PTR']}",
-            ] + extra + mem
+            ] + self.global_plusargs + extra + mem
         raise RuntimeError(f"no plusargs for kind {t.kind}")
 
     def simulate(self, t: Test, cfg: Config) -> tuple[bool, str, int | None]:
@@ -305,6 +313,11 @@ class Runner:
                 f"PYCORE_MEM_LATENCY={cfg.latency}",
                 f"EXCORE_FW_HEX={self.fw_hex}",
             ]
+            if self.global_plusargs:
+                cmd.append(
+                    f"PYCORE_MEM_PLUSARGS=+CACHE_EN={cfg.cache_en} +MEM_LATENCY={cfg.latency} "
+                    + " ".join(self.global_plusargs)
+                )
         else:
             try:
                 cmd = [str(SIM[t.core])] + self.plusargs(t, cfg)
@@ -330,7 +343,7 @@ class Runner:
 def configs_for(t: Test, configs: list[Config]) -> list[Config]:
     out = []
     for cfg in configs:
-        if cfg.scope == "sample" and t.area == "compiler" and not t.caching:
+        if cfg.scope == "sample" and t.area in SAMPLED_AREAS and not t.caching:
             continue
         out.append(cfg)
     return out
@@ -363,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--list", action="store_true", help="list the selected tests and exit")
     ap.add_argument("--fw-hex", default=os.environ.get("EXCORE_FW_HEX", str(DEFAULT_FW_HEX)))
     ap.add_argument("--no-prepare", action="store_true", help="skip building sims and fixtures")
+    ap.add_argument("--plusargs", default="", help="extra simulator plusargs for every run, ahead of each test's own")
     args = ap.parse_args(argv)
 
     tests = load_manifest()
@@ -394,7 +408,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.no_prepare:
         prepare(picked)
-    runner = Runner(pathlib.Path(args.fw_hex).resolve(), sys.executable)
+    runner = Runner(pathlib.Path(args.fw_hex).resolve(), sys.executable, args.plusargs)
     total_runs = sum(len(configs_for(t, configs)) for t in picked)
     print(
         f"hw_tests: {len(picked)} test(s), {total_runs} run(s), "

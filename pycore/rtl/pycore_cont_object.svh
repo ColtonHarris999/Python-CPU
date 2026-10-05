@@ -1209,6 +1209,11 @@
                                             end else if (attr_ob_kind == PY_OBK_TYPE) begin
                                                 if (name_is_dict) begin
                                                     // Return tp_dict handle (field0).
+                                                    // The only way a program gets a
+                                                    // type dict: from now on the
+                                                    // collector traces the image's
+                                                    // extra roots (gc.md, B23).
+                                                    gc_tdict_exposed_r <= 1'b1;
                                                     container_src_len_r     <= container_src_buf_r;
                                                     container_count_r       <= 7'd0;
                                                     container_lfb_hi_r      <= 4'd1;
@@ -1594,8 +1599,8 @@
                                         if (pycore_heap_end(
                                                 heap_ptr_r,
                                                 PYCORE_OBJ_BOUND_METHOD_BYTES)
-                                                > PYCORE_HEAP_LIMIT) begin
-                                            container_mem_fault_r <= 1'b1;
+                                                > heap_limit_r) begin
+                                            `GC_CONT_OOM((pycore_heap_end( heap_ptr_r, PYCORE_OBJ_BOUND_METHOD_BYTES)) - heap_ptr_r)
                                         end else begin
                                             container_base_r       <=
                                                 pycore_heap_place(

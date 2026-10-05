@@ -12,8 +12,8 @@
                                     if (pycore_list_place_end(
                                             heap_ptr_r,
                                             {25'b0, container_count_r})
-                                            > PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                            > heap_limit_r) begin
+                                        `GC_CONT_OOM((pycore_list_place_end( heap_ptr_r, {25'b0, container_count_r})) - heap_ptr_r)
                                     end else begin
                                         // Object base (stable handle target).
                                         container_base_r       <=
@@ -324,8 +324,8 @@
                                                 heap_ptr_r, 32'd16);
                                             endp = pycore_heap_end(
                                                 heap_ptr_r, 32'd16);
-                                            if (endp > PYCORE_HEAP_LIMIT) begin
-                                                container_mem_fault_r <= 1'b1;
+                                            if (endp > heap_limit_r) begin
+                                                `GC_CONT_OOM((endp) - heap_ptr_r)
                                             end else begin
                                                 container_dmem_addr_r <= place;
                                                 container_dmem_wdata_r <=
@@ -1521,14 +1521,14 @@
                                         container_wb_addr_r    <= RF_AW'({2'b0, tos_r});
                                         container_wb_data_r    <= pycore_make_entry(
                                             PY_TAG_TUPLE,
-                                            {64'd0, {32'b0, heap_ptr_r}});
+                                            {64'd0, {32'b0, gc_en_sim ? 32'd0 : heap_ptr_r}});
                                         tos_r             <= tos_r + RF_AW'(1);
                                         fetch_skip_r      <= 1'b1;
                                         container_phase_r <= CP_DONE;
                                     end else if (pycore_heap_end(
                                             heap_ptr_r, cont_bt_alloc)
-                                            > PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                            > heap_limit_r) begin
+                                        `GC_CONT_OOM((pycore_heap_end( heap_ptr_r, cont_bt_alloc)) - heap_ptr_r)
                                     end else begin
                                         container_base_r  <=
                                             pycore_heap_place(
@@ -1628,15 +1628,15 @@
                                             container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(1));
                                             container_wb_data_r <= pycore_make_entry(
                                                 PY_TAG_TUPLE,
-                                                {64'd0, {32'b0, heap_ptr_r}});
+                                                {64'd0, {32'b0, gc_en_sim ? 32'd0 : heap_ptr_r}});
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
                                         end else if (pycore_heap_end(
                                                 heap_ptr_r,
                                                 pycore_tuple_alloc_bytes(
                                                     cont_hdr_len[31:0]))
-                                                > PYCORE_HEAP_LIMIT) begin
-                                            container_mem_fault_r <= 1'b1;
+                                                > heap_limit_r) begin
+                                            `GC_CONT_OOM((pycore_heap_end( heap_ptr_r, pycore_tuple_alloc_bytes( cont_hdr_len[31:0]))) - heap_ptr_r)
                                         end else begin
                                             container_count_r <= cont_hdr_len[6:0];
                                             container_base_r  <=
@@ -1823,8 +1823,8 @@
                                         end else if (pycore_heap_end(
                                                 heap_ptr_r,
                                                 pycore_list_obj_bytes())
-                                                > PYCORE_HEAP_LIMIT) begin
-                                            container_mem_fault_r <= 1'b1;
+                                                > heap_limit_r) begin
+                                            `GC_CONT_OOM((pycore_heap_end( heap_ptr_r, pycore_list_obj_bytes())) - heap_ptr_r)
                                         end else begin
                                             container_base_r <=
                                                 pycore_list_place_obj(heap_ptr_r);
@@ -1859,8 +1859,8 @@
                                     if (container_src_is_tuple_r) begin
                                         if (pycore_heap_end(
                                                 heap_ptr_r, cont_repeat_alloc)
-                                                > PYCORE_HEAP_LIMIT) begin
-                                            container_mem_fault_r <= 1'b1;
+                                                > heap_limit_r) begin
+                                            `GC_CONT_OOM((pycore_heap_end( heap_ptr_r, cont_repeat_alloc)) - heap_ptr_r)
                                         end else begin
                                             container_base_r <=
                                                 pycore_heap_place(
@@ -1881,8 +1881,8 @@
                                         end
                                     end else if (pycore_list_place_end(
                                             heap_ptr_r, container_src_slots_r)
-                                            > PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                            > heap_limit_r) begin
+                                        `GC_CONT_OOM((pycore_list_place_end( heap_ptr_r, container_src_slots_r)) - heap_ptr_r)
                                     end else begin
                                         container_base_r <=
                                             pycore_list_place_obj(heap_ptr_r);
@@ -2248,8 +2248,8 @@
                                     begin
                                         if (pycore_heap_end(
                                                 heap_ptr_r, cont_repeat_alloc)
-                                                > PYCORE_HEAP_LIMIT) begin
-                                            container_mem_fault_r <= 1'b1;
+                                                > heap_limit_r) begin
+                                            `GC_CONT_OOM((pycore_heap_end( heap_ptr_r, cont_repeat_alloc)) - heap_ptr_r)
                                         end else begin
                                             container_base_r <=
                                                 pycore_heap_place(
@@ -2270,8 +2270,8 @@
                                         end
                                     end else if (pycore_list_place_end(
                                             heap_ptr_r, container_src_slots_r)
-                                            > PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                            > heap_limit_r) begin
+                                        `GC_CONT_OOM((pycore_list_place_end( heap_ptr_r, container_src_slots_r)) - heap_ptr_r)
                                     end else begin
                                         container_base_r <=
                                             pycore_list_place_obj(heap_ptr_r);
@@ -2907,8 +2907,9 @@
                                         container_type_trap_r <= 1'b1;
                                     end else if (pycore_list_place_end(
                                             heap_ptr_r, cont_unpack_rest_len)
-                                            > PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                            > heap_limit_r) begin
+                                        `GC_CONT_OOM((pycore_list_place_end( heap_ptr_r, cont_unpack_rest_len)) - heap_ptr_r)
+                                        if (gc_mutant_sim == 8'd35) tos_r <= tos_r - RF_AW'(1);
                                     end else begin
                                         tos_r <= tos_r - RF_AW'(1);
                                         if (container_unpack_after_r != 8'd0) begin

@@ -29,6 +29,7 @@ from encoding import (
     HEAP_BASE,
     HEAP_LIMIT,
     ITER_EXHAUST_TYPE_ADDR,
+    MEMORY_ERROR_INSTANCE_ADDR,
     NATIVE_METHOD_COUNT,
     NATIVE_METHOD_TABLE_ADDR,
     OBK_BOUND_METHOD,
@@ -271,8 +272,9 @@ class HeapImageBuilder:
     def alloc_tuple(self, elements: list[Tagged]) -> Tagged:
         n = len(elements)
         if n == 0:
-            # Empty tuple: no dmem payload; address is the would-be base.
-            return TAG_TUPLE, (0 << 64) | (self.ptr & ((1 << 64) - 1))
+            # Empty tuple: no dmem payload and address 0, so it never appears
+            # to alias a later allocation (gc_plan.md §4.7, decision 4).
+            return TAG_TUPLE, 0
         base = self._alloc(n * 32)
         for i, (tag, val) in enumerate(elements):
             self._write_tagged(base + i * 32, tag, val)
@@ -375,6 +377,29 @@ class HeapImageBuilder:
             | (used & ((1 << 64) - 1)),
         )
         return make_dict(obj)
+
+    def dict_value_addr(self, handle: Tagged, key: Tagged) -> int:
+        """Return the value-word address for an existing image-time key."""
+        if not is_mut_kind(handle, MUT_DICT):
+            raise ValueError("dict_value_addr handle must be a DICT")
+        obj = mut_addr(handle[1])
+        slots = (self.words[obj] >> 64) & ((1 << 64) - 1)
+        table = self.words[obj + 32] & ((1 << 64) - 1)
+        if slots == 0 or table == 0:
+            raise KeyError(key)
+        idx = dict_key_hash(key[0], key[1]) & (slots - 1)
+        for _ in range(slots):
+            slot = table + idx * 64
+            tag_word = self.words.get(slot + 16, 0)
+            if tag_word == 0:
+                break
+            tag = tag_word & 0xF
+            if tag != TAG_TOMBSTONE and dict_key_rich_eq(
+                key[0], key[1], tag, self.words.get(slot, 0)
+            ):
+                return slot + 32
+            idx = (idx + 1) & (slots - 1)
+        raise KeyError(key)
 
     # ---- SET ----
     # Element-only open addressing (see set_excore.md / pycore_defs.svh):
@@ -733,6 +758,16 @@ class HeapImageBuilder:
             raise ValueError("ITER_EXHAUST_TYPE_ADDR must be 16-byte aligned")
         self._write_tagged(
             ITER_EXHAUST_TYPE_ADDR, stop_iteration[0], stop_iteration[1]
+        )
+
+    def write_memory_error_instance(self, instance: Tagged) -> None:
+        """Write the preallocated MemoryError handle into its sidecar."""
+        if instance[0] != TAG_OBJECT:
+            raise ValueError("MemoryError singleton must be an OBJECT handle")
+        if MEMORY_ERROR_INSTANCE_ADDR % 16 != 0:
+            raise ValueError("MEMORY_ERROR_INSTANCE_ADDR must be 16-byte aligned")
+        self._write_tagged(
+            MEMORY_ERROR_INSTANCE_ADDR, instance[0], instance[1]
         )
 
     def write_native_method_table(self, handles: list[Tagged]) -> None:

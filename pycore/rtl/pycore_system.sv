@@ -55,6 +55,7 @@ module pycore_system #(
     logic                   dmem_ack;
     logic [DMEM_DATA_W-1:0] dmem_rdata;
     logic                   dmem_fault;
+    logic [PYCORE_LINE_BYTES*8-1:0] dmem_rdata_line;
 
     // +CACHE_EN= overrides PYCORE_CACHE_EN at sim time. Wired to L2
     // (and later L1s) as the combinational pass-through switch.
@@ -112,6 +113,7 @@ module pycore_system #(
         .dmem_wline_o(dmem_wline),
         .dmem_ack_i(dmem_ack),
         .dmem_rdata_i(dmem_rdata),
+        .dmem_rdata_line_i(dmem_rdata_line),
         .dmem_fault_i(dmem_fault),
         // EXCORE_EN defaults to 0 (not overridden here): this legacy
         // single-core top never enters S_TRAP_MARSHAL/S_TRAP_WAIT, so the
@@ -122,6 +124,9 @@ module pycore_system #(
         .trap_req_pc_o(),
         .trap_req_instr_o(),
         .trap_req_heap_ptr_o(),
+        /* verilator lint_off PINCONNECTEMPTY */
+        .trap_req_heap_limit_o(),
+        /* verilator lint_on PINCONNECTEMPTY */
         .trap_req_entry_count_o(),
         .trap_req_entries_o(),
         .trap_res_valid_i(1'b0),
@@ -180,6 +185,7 @@ module pycore_system #(
         .dmem_ack_o(dmem_ack),
         .dmem_rdata_o(dmem_rdata),
         .dmem_fault_o(dmem_fault),
+        .dmem_rdata_line_o(dmem_rdata_line),
         .excore_req_i(1'b0),
         .excore_we_i(1'b0),
         .excore_wstrb_i('0),

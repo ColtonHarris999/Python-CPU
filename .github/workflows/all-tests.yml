@@ -132,7 +132,7 @@ jobs:
       fail-fast: false
       matrix:
         area: [alu, strings, containers, control-flow, calls, objects,
-               variables, exceptions, builtins, memory, excore, compiler]
+               variables, exceptions, builtins, memory, excore, compiler, gc]
     steps:
       - uses: actions/checkout@v4
       - run: make docker-test-${{ matrix.area }}

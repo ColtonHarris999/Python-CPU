@@ -57,6 +57,7 @@ module tb_l1d_handoff;
         .dmem_wline_i('0),
         .dmem_ack_o(dmem_ack),
         .dmem_rdata_o(dmem_rdata),
+        .dmem_rdata_line_o(),
         .dmem_fault_o(dmem_fault),
         .excore_req_i(ex_req),
         .excore_we_i(ex_we),

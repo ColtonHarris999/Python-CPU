@@ -6,8 +6,8 @@
                                 CP_INIT: begin
                                     if (pycore_heap_end(
                                             heap_ptr_r, PYCORE_OBJ_CELL_BYTES) >
-                                            PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                            heap_limit_r) begin
+                                        `GC_CONT_OOM((pycore_heap_end( heap_ptr_r, PYCORE_OBJ_CELL_BYTES)) - heap_ptr_r)
                                     end else begin
                                         container_base_r <=
                                             pycore_heap_place(
@@ -283,8 +283,8 @@
                                     end else if (pycore_heap_end(
                                             heap_ptr_r,
                                             PYCORE_OBJ_FUNCTION_BYTES) >
-                                            PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                            heap_limit_r) begin
+                                        `GC_CONT_OOM((pycore_heap_end( heap_ptr_r, PYCORE_OBJ_FUNCTION_BYTES)) - heap_ptr_r)
                                     end else begin
                                         container_base_r <=
                                             pycore_heap_place(

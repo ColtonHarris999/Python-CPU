@@ -55,6 +55,7 @@ module pycore_mem_hier #(
     output logic                    dmem_ack_o,
     output logic [DMEM_DATA_W-1:0]  dmem_rdata_o,
     output logic                    dmem_fault_o,
+    output logic [PYCORE_LINE_BYTES*8-1:0] dmem_rdata_line_o,
 
     input  logic                    excore_req_i,
     input  logic                    excore_we_i,
@@ -86,6 +87,8 @@ module pycore_mem_hier #(
     logic [DMEM_DATA_W/8-1:0] l1d_down_wstrb;
     logic [ADDR_WIDTH-1:0]  l1d_down_addr;
     logic [DMEM_DATA_W-1:0] l1d_down_wdata, l1d_down_rdata;
+    logic                   l1d_down_line;
+    logic [PYCORE_LINE_BYTES*8-1:0] l1d_down_wline;
 
     logic                   l1i_down_req, l1i_down_we, l1i_down_ack, l1i_down_fault;
     logic [IMEM_DATA_W/8-1:0] l1i_down_wstrb;
@@ -100,6 +103,8 @@ module pycore_mem_hier #(
     logic [DMEM_DATA_W/8-1:0] l2_wstrb;
     logic [ADDR_WIDTH-1:0]  l2_addr;
     logic [DMEM_DATA_W-1:0] l2_wdata, l2_rdata;
+    logic                   l2_line;
+    logic [PYCORE_LINE_BYTES*8-1:0] l2_wline;
 
     logic                   ram_req, ram_we, ram_line, ram_ack, ram_last, ram_fault;
     logic [DMEM_DATA_W/8-1:0] ram_wstrb;
@@ -185,6 +190,7 @@ module pycore_mem_hier #(
         .WAYS(L1D_WAYS),
         .READ_ONLY(1'b0),
         .WRITE_BACK(1'b1),
+        .ZERO_LINE_BYPASS(1'b1),
         .HIT_CYCLES(L1D_HIT_CYCLES),
         .DOWN_LINE(1'b0),
         .REGION_BASE(PYCORE_FRAME_STACK_BASE),
@@ -203,14 +209,14 @@ module pycore_mem_hier #(
         .ack_o(dmem_ack_o),
         .rdata_o(dmem_rdata_o),
         .fault_o(dmem_fault_o),
-        .rdata_line_o(),
+        .rdata_line_o(dmem_rdata_line_o),
         .down_req_o(l1d_down_req),
         .down_we_o(l1d_down_we),
-        .down_line_o(),
+        .down_line_o(l1d_down_line),
         .down_wstrb_o(l1d_down_wstrb),
         .down_addr_o(l1d_down_addr),
         .down_wdata_o(l1d_down_wdata),
-        .down_wline_o(),
+        .down_wline_o(l1d_down_wline),
         .down_ack_i(l1d_down_ack),
         .down_last_i(1'b0),
         .down_rdata_i(l1d_down_rdata),
@@ -249,6 +255,8 @@ module pycore_mem_hier #(
         .dmem_wstrb_i(l1d_down_wstrb),
         .dmem_addr_i(l1d_down_addr),
         .dmem_wdata_i(l1d_down_wdata),
+        .dmem_line_i(l1d_down_line),
+        .dmem_wline_i(l1d_down_wline),
         .dmem_ack_o(l1d_down_ack),
         .dmem_rdata_o(l1d_down_rdata),
         .dmem_fault_o(l1d_down_fault),
@@ -265,6 +273,8 @@ module pycore_mem_hier #(
         .l2_wstrb_o(l2_wstrb),
         .l2_addr_o(l2_addr),
         .l2_wdata_o(l2_wdata),
+        .l2_line_o(l2_line),
+        .l2_wline_o(l2_wline),
         .l2_ack_i(l2_ack),
         .l2_rdata_i(l2_rdata),
         .l2_fault_i(l2_fault)
@@ -278,6 +288,7 @@ module pycore_mem_hier #(
         .WAYS(L2_WAYS),
         .READ_ONLY(1'b0),
         .WRITE_BACK(1'b1),
+        .ZERO_LINE_BYPASS(1'b1),
         .HIT_CYCLES(L2_HIT_CYCLES)
     ) l2 (
         .clk_i(clk_i),
@@ -288,8 +299,8 @@ module pycore_mem_hier #(
         .wstrb_i(l2_wstrb),
         .addr_i(l2_addr),
         .wdata_i(l2_wdata),
-        .line_i(1'b0),
-        .wline_i('0),
+        .line_i(l2_line),
+        .wline_i(l2_wline),
         .ack_o(l2_ack),
         .rdata_o(l2_rdata),
         .fault_o(l2_fault),

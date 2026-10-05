@@ -197,5 +197,7 @@ allocation puts there. The rule is therefore: **release only when nothing
 allocated after the mark can still be reachable**, and let one owner (the BIOS,
 once it exists) hold the marks rather than scattering them through firmware.
 
-Real tracing GC remains future work; `README.md` already lists it as a
-milestone.
+Heap objects allocated by `compile()` are reclaimed by the mark-and-sweep
+collector in [`gc.md`](gc.md). Code RAM is not: a compile loop still grows
+code RAM without a matching release. That ceiling is out of scope for the
+collector.

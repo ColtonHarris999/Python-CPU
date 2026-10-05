@@ -7,8 +7,8 @@
                                 CP_INIT: begin
                                     if (pycore_dict_place_end(
                                             heap_ptr_r, cont_dict_min_slots)
-                                            > PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                            > heap_limit_r) begin
+                                        `GC_CONT_OOM((pycore_dict_place_end( heap_ptr_r, cont_dict_min_slots)) - heap_ptr_r)
                                     end else begin
                                         container_slot_count_r <= cont_dict_min_slots;
                                         container_used_r       <= 64'd0;
@@ -1370,8 +1370,8 @@
                                 CP_INIT: begin
                                     if (pycore_set_place_end(
                                             heap_ptr_r, cont_set_min_slots)
-                                            > PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                            > heap_limit_r) begin
+                                        `GC_CONT_OOM((pycore_set_place_end( heap_ptr_r, cont_set_min_slots)) - heap_ptr_r)
                                     end else begin
                                         container_slot_count_r <= cont_set_min_slots;
                                         container_used_r       <= 64'd0;

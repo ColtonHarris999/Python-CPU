@@ -15,7 +15,8 @@ and `pycore.json` → `exceptions.types`. Remaining work is in
 cleanup is in [`planning/cleanup_report.md`](../../planning/cleanup_report.md).
 The memory hierarchy and STRACC as built are
 [`memory_hierarchy.md`](memory_hierarchy.md) and
-[`string_accel.md`](string_accel.md).
+[`string_accel.md`](string_accel.md). The mark-and-sweep collector is
+[`gc.md`](gc.md).
 
 Paper-oriented systems notes (LaTeX) for near-complete subsystems live under
 `docs/paper/` — start with `docs/paper/systems/call_fsm.tex` for the CALL FSM

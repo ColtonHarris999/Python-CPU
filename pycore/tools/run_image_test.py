@@ -159,6 +159,11 @@ def host_entry_result_from_text(
 
     namespace["exec"] = _host_exec
     namespace["eval"] = _host_eval
+    # GC builtins (pycore/docs/gc.md): host stand-ins. A program whose result
+    # depends on their values must carry `# pycore-expect:`.
+    namespace.setdefault("_bi_gc_collect", lambda: 0)
+    namespace.setdefault("_bi_heap_free", lambda: 0)
+    namespace.setdefault("_bi_gc_stats", lambda k: 0)
     bios_fn = namespace.get("bios")
     if callable(bios_fn):
         bios_fn.__globals__["exec"] = _host_exec
@@ -254,6 +259,7 @@ def run_image_test(
     dmem_hex: pathlib.Path,
     meta: pathlib.Path,
     slot_base: int = 0,
+    fold_ltt: bool = False,
 ) -> tuple[int, int]:
     require_python_3_14()
     source = pathlib.Path(source)
@@ -266,7 +272,7 @@ def run_image_test(
     )
     expected_tag, expected_value = expected_tag_value(expected)
     image = build_image_from_source_text(
-        source_text, str(source), slot_base=slot_base
+        source_text, str(source), slot_base=slot_base, fold_ltt=fold_ltt
     )
     write_image_outputs(
         image,

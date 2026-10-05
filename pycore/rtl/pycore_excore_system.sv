@@ -60,7 +60,7 @@ module pycore_excore_system #(
     logic [DMEM_DATA_W/8-1:0] core_dmem_wstrb;
     logic [ADDR_WIDTH-1:0]  core_dmem_addr;
     logic [DMEM_DATA_W-1:0] core_dmem_wdata, core_dmem_rdata;
-    logic [PYCORE_LINE_BYTES*8-1:0] core_dmem_wline;
+    logic [PYCORE_LINE_BYTES*8-1:0] core_dmem_wline, core_dmem_rdata_line;
 
     // ---- excore's slot-port master (into L2, not L1D) --------------------
     logic          sp_req, sp_we, sp_ack, sp_fault;
@@ -75,6 +75,7 @@ module pycore_excore_system #(
     logic [31:0]   trap_req_pc;
     logic [39:0]   trap_req_instr;
     logic [31:0]   trap_req_heap_ptr;
+    logic [31:0]   trap_req_heap_limit;
     logic [2:0]    trap_req_entry_count;
     logic [PYCORE_ENTRY_WIDTH-1:0] trap_req_entries [0:MAX_TRAP_ENTRIES-1];
 
@@ -102,6 +103,7 @@ module pycore_excore_system #(
     logic [7:0]    mb_opcode;
     logic [31:0]   mb_arg;
     logic [31:0]   mb_heap_ptr;
+    logic [31:0]   mb_heap_limit;
     logic [2:0]    mb_entry_count;
     logic [PYCORE_ENTRY_WIDTH-1:0] mb_entries [0:MAX_TRAP_ENTRIES-1];
 
@@ -153,6 +155,7 @@ module pycore_excore_system #(
         .dmem_wline_o(core_dmem_wline),
         .dmem_ack_i(core_dmem_ack),
         .dmem_rdata_i(core_dmem_rdata),
+        .dmem_rdata_line_i(core_dmem_rdata_line),
         .dmem_fault_i(core_dmem_fault),
         .trap_req_valid_o(trap_req_valid),
         .trap_req_ready_i(trap_req_ready),
@@ -160,6 +163,7 @@ module pycore_excore_system #(
         .trap_req_pc_o(trap_req_pc),
         .trap_req_instr_o(trap_req_instr),
         .trap_req_heap_ptr_o(trap_req_heap_ptr),
+        .trap_req_heap_limit_o(trap_req_heap_limit),
         .trap_req_entry_count_o(trap_req_entry_count),
         .trap_req_entries_o(trap_req_entries),
         .trap_res_valid_i(trap_res_valid),
@@ -222,6 +226,7 @@ module pycore_excore_system #(
         .mb_opcode_i(mb_opcode),
         .mb_arg_i(mb_arg),
         .mb_heap_ptr_i(mb_heap_ptr),
+        .mb_heap_limit_i(mb_heap_limit),
         .mb_entry_count_i(mb_entry_count),
         .mb_entries_i(mb_entries),
         .res_go_o(res_go),
@@ -252,6 +257,7 @@ module pycore_excore_system #(
         .trap_req_pc_i(trap_req_pc),
         .trap_req_instr_i(trap_req_instr),
         .trap_req_heap_ptr_i(trap_req_heap_ptr),
+        .trap_req_heap_limit_i(trap_req_heap_limit),
         .trap_req_entry_count_i(trap_req_entry_count),
         .trap_req_entries_i(trap_req_entries),
         .trap_res_valid_o(mb_trap_res_valid),
@@ -268,6 +274,7 @@ module pycore_excore_system #(
         .mb_opcode_o(mb_opcode),
         .mb_arg_o(mb_arg),
         .mb_heap_ptr_o(mb_heap_ptr),
+        .mb_heap_limit_o(mb_heap_limit),
         .mb_entry_count_o(mb_entry_count),
         .mb_entries_o(mb_entries),
         .res_go_i(res_go),
@@ -413,6 +420,7 @@ module pycore_excore_system #(
         .dmem_wline_i(core_dmem_wline),
         .dmem_ack_o(core_dmem_ack),
         .dmem_rdata_o(core_dmem_rdata),
+        .dmem_rdata_line_o(core_dmem_rdata_line),
         .dmem_fault_o(core_dmem_fault),
         .excore_req_i(sp_req && (mem_owner_r == OWNER_EXCORE)),
         .excore_we_i(sp_we),

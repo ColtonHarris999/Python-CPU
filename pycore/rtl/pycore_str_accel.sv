@@ -16,12 +16,18 @@ module pycore_str_accel #(
     input  logic [PYCORE_ENTRY_WIDTH-1:0] cmd_b_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] cmd_c_i,
     input  logic [31:0]                   cmd_heap_ptr_i,
+    // End of the current allocation run (GC grant). Results that do not fit
+    // finish with res_need_heap_o and the bytes needed from cmd_heap_ptr_i;
+    // the heap is untouched and the core collects, then re-dispatches.
+    input  logic [31:0]                   cmd_heap_limit_i,
 
     output logic                          res_valid_o,
     output logic [PYCORE_ENTRY_WIDTH-1:0] res_entry_o,
     output logic [31:0]                   res_heap_ptr_o,
     output logic                          res_trap_o,
     output logic [4:0]                    res_trap_code_o,
+    output logic                          res_need_heap_o,
+    output logic [31:0]                   res_need_bytes_o,
 
     output logic                          req_o,
     output logic                          we_o,
@@ -100,6 +106,10 @@ module pycore_str_accel #(
     logic [3:0]  a_tag_r, b_tag_r, c_tag_r;
     logic [127:0] a_val_r, b_val_r, c_val_r;
     logic [31:0] heap_ptr_r;
+    logic [31:0] heap_limit_r;
+    logic [31:0] heap_start_r;
+    logic        res_need_r;
+    logic [31:0] res_need_bytes_r;
 
     logic [PYCORE_ENTRY_WIDTH-1:0] res_entry_r;
     logic [31:0] res_heap_r;
@@ -216,6 +226,8 @@ module pycore_str_accel #(
     assign res_valid_o = (state_r == ST_DONE);
     assign res_entry_o = res_entry_r;
     assign res_heap_ptr_o = res_heap_r;
+    assign res_need_heap_o = res_need_r;
+    assign res_need_bytes_o = res_need_bytes_r;
     assign res_trap_o = res_trap_r;
     assign res_trap_code_o = res_code_r;
 
@@ -280,8 +292,21 @@ module pycore_str_accel #(
     endfunction
 
     task automatic set_trap(input logic [4:0] code);
+        res_need_r <= 1'b0;
         res_trap_r <= 1'b1;
         res_code_r <= code;
+        res_entry_r <= '0;
+        res_heap_r <= heap_ptr_r;
+        state_r <= ST_DONE;
+    endtask
+
+    // Out of room in the grant: MEM_FAULT to a core without GC, NEED_HEAP
+    // (bytes from the command's start pointer) to one with GC.
+    task automatic set_need_heap(input logic [31:0] end_addr);
+        res_need_r <= 1'b1;
+        res_need_bytes_r <= end_addr - heap_start_r;
+        res_trap_r <= 1'b1;
+        res_code_r <= PY_TRAP_MEM_FAULT;
         res_entry_r <= '0;
         res_heap_r <= heap_ptr_r;
         state_r <= ST_DONE;
@@ -291,6 +316,7 @@ module pycore_str_accel #(
         input logic [PYCORE_ENTRY_WIDTH-1:0] entry,
         input logic [31:0] heap
     );
+        res_need_r <= 1'b0;
         res_trap_r <= 1'b0;
         res_code_r <= PY_TRAP_NONE;
         res_entry_r <= entry;
@@ -345,6 +371,10 @@ module pycore_str_accel #(
             res_code_r <= PY_TRAP_NONE;
             res_entry_r <= '0;
             res_heap_r <= '0;
+            res_need_r <= 1'b0;
+            res_need_bytes_r <= '0;
+            heap_start_r <= '0;
+            heap_limit_r <= HEAP_LIMIT;
             bytes_scanned_r <= '0;
             bytes_written_r <= '0;
             cmd_count_r <= '0;
@@ -367,6 +397,8 @@ module pycore_str_accel #(
                         c_tag_r <= cmd_c_i[PYCORE_TAG_MSB:PYCORE_TAG_LSB];
                         c_val_r <= cmd_c_i[PYCORE_VAL_MSB:PYCORE_VAL_LSB];
                         heap_ptr_r <= cmd_heap_ptr_i;
+                        heap_start_r <= cmd_heap_ptr_i;
+                        heap_limit_r <= cmd_heap_limit_i;
                         cmd_count_r <= cmd_count_r + 32'd1;
                         src_word_valid_r <= 1'b0;
                         dst_word_dirty_r <= 1'b0;
@@ -1036,8 +1068,8 @@ module pycore_str_accel #(
             obj_bytes = 32'd16 + ((nbytes + 32'd15) & ~32'd15);
             place = pycore_heap_place(heap_ptr_r, obj_bytes);
             end_addr = place + obj_bytes;
-            if (end_addr > HEAP_LIMIT)
-                set_trap(PY_TRAP_MEM_FAULT);
+            if (end_addr > heap_limit_r)
+                set_need_heap(end_addr);
             else begin
                 dst_short_r <= 1'b0;
                 dst_nchars_r <= nout;
@@ -1530,6 +1562,8 @@ module pycore_str_accel #(
         if (replace_fill_r && replace_empty_r) begin
             if (out_idx_r >= dst_nchars_r)
                 finish_copy();
+            else if (!dest_can_take())
+                issue_write(dst_word_addr_r, dst_word_r, MEM_WR_DST);
             else begin
                 period = c_nchars_r + 32'd1;
                 group = (period == 32'd0) ? 32'd0 : (out_idx_r / period);
@@ -1544,6 +1578,8 @@ module pycore_str_accel #(
         end else if (replace_fill_r) begin
             if (out_idx_r >= dst_nchars_r)
                 finish_copy();
+            else if (!dest_can_take())
+                issue_write(dst_word_addr_r, dst_word_r, MEM_WR_DST);
             else if (replace_emit_new_r) begin
                 if (new_idx_r >= c_nchars_r) begin
                     replace_emit_new_r <= 1'b0;
@@ -2316,8 +2352,8 @@ module pycore_str_accel #(
                     nout = pycore_tuple_alloc_bytes(32'd3);
                     place = pycore_heap_place(heap_ptr_r, nout);
                     end_addr = place + nout;
-                    if (end_addr > HEAP_LIMIT)
-                        set_trap(PY_TRAP_MEM_FAULT);
+                    if (end_addr > heap_limit_r)
+                        set_need_heap(end_addr);
                     else begin
                         join_obj_r <= place;
                         join_buf_r <= end_addr;
@@ -2521,8 +2557,8 @@ module pycore_str_accel #(
                     place = pycore_list_place_obj(heap_ptr_r);
                     if (n == 32'd0) begin
                         end_addr = place + 32'd32;
-                        if (end_addr > HEAP_LIMIT)
-                            set_trap(PY_TRAP_MEM_FAULT);
+                        if (end_addr > heap_limit_r)
+                            set_need_heap(end_addr);
                         else begin
                             join_obj_r <= place;
                             join_buf_r <= 32'd0;
@@ -2533,8 +2569,8 @@ module pycore_str_accel #(
                         buf_bytes = n << 5;
                         taddr = pycore_list_place_buf(heap_ptr_r, n);
                         end_addr = taddr + buf_bytes;
-                        if (end_addr > HEAP_LIMIT)
-                            set_trap(PY_TRAP_MEM_FAULT);
+                        if (end_addr > heap_limit_r)
+                            set_need_heap(end_addr);
                         else begin
                             join_obj_r <= place;
                             join_buf_r <= taddr;

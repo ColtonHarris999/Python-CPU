@@ -33,6 +33,8 @@ module pycore_mem_xbar #(
     input  logic [DMEM_DATA_W/8-1:0] dmem_wstrb_i,
     input  logic [ADDR_WIDTH-1:0]   dmem_addr_i,
     input  logic [DMEM_DATA_W-1:0]  dmem_wdata_i,
+    input  logic                    dmem_line_i,
+    input  logic [PYCORE_LINE_BYTES*8-1:0] dmem_wline_i,
     output logic                    dmem_ack_o,
     output logic [DMEM_DATA_W-1:0]  dmem_rdata_o,
     output logic                    dmem_fault_o,
@@ -51,6 +53,8 @@ module pycore_mem_xbar #(
     output logic [DMEM_DATA_W/8-1:0] l2_wstrb_o,
     output logic [ADDR_WIDTH-1:0]   l2_addr_o,
     output logic [DMEM_DATA_W-1:0]  l2_wdata_o,
+    output logic                    l2_line_o,
+    output logic [PYCORE_LINE_BYTES*8-1:0] l2_wline_o,
     input  logic                    l2_ack_i,
     input  logic [DMEM_DATA_W-1:0]  l2_rdata_i,
     input  logic                    l2_fault_i
@@ -69,6 +73,8 @@ module pycore_mem_xbar #(
     logic [DMEM_DATA_W/8-1:0] l2_wstrb_r;
     logic [ADDR_WIDTH-1:0]   l2_addr_r;
     logic [DMEM_DATA_W-1:0]  l2_wdata_r;
+    logic                    l2_line_r;
+    logic [PYCORE_LINE_BYTES*8-1:0] l2_wline_r;
 
     logic take_dmem;
     logic take_excore;
@@ -90,6 +96,8 @@ module pycore_mem_xbar #(
     assign l2_wstrb_o = l2_wstrb_r;
     assign l2_addr_o  = l2_addr_r;
     assign l2_wdata_o = l2_wdata_r;
+    assign l2_line_o  = l2_line_r;
+    assign l2_wline_o = l2_wline_r;
 
     assign dmem_ack_o   = dmem_ack_r;
     assign dmem_rdata_o = rdata_hold_r;
@@ -117,6 +125,8 @@ module pycore_mem_xbar #(
             l2_wstrb_r   <= '0;
             l2_addr_r    <= '0;
             l2_wdata_r   <= '0;
+            l2_line_r    <= 1'b0;
+            l2_wline_r   <= '0;
         end else begin
             imem_ack_r   <= 1'b0;
             dmem_ack_r   <= 1'b0;
@@ -129,6 +139,8 @@ module pycore_mem_xbar #(
                 l2_wstrb_r <= dmem_wstrb_i;
                 l2_addr_r  <= dmem_addr_i;
                 l2_wdata_r <= dmem_wdata_i;
+                l2_line_r  <= dmem_line_i;
+                l2_wline_r <= dmem_wline_i;
             end else if (take_excore) begin
                 grant_r    <= G_EXCORE;
                 imem_hi_r  <= 1'b0;
@@ -137,6 +149,8 @@ module pycore_mem_xbar #(
                 l2_wstrb_r <= excore_wstrb_i;
                 l2_addr_r  <= excore_addr_i;
                 l2_wdata_r <= excore_wdata_i;
+                l2_line_r  <= 1'b0;
+                l2_wline_r <= '0;
             end else if (take_imem) begin
                 grant_r    <= G_IMEM;
                 imem_hi_r  <= imem_hi;
@@ -146,6 +160,8 @@ module pycore_mem_xbar #(
                 l2_addr_r  <= {imem_uaddr[ADDR_WIDTH-1:4], 4'b0};
                 l2_wdata_r <= imem_hi ? {imem_wdata_i, 64'b0}
                                       : {64'b0, imem_wdata_i};
+                l2_line_r  <= 1'b0;
+                l2_wline_r <= '0;
             end else if (l2_req_r && l2_ack_i) begin
                 rdata_hold_r <= l2_rdata_i;
                 fault_hold_r <= l2_fault_i;

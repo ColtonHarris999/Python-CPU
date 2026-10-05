@@ -176,6 +176,22 @@
                                 else
                                     call_sub_r <= 6'd0;
                                 call_phase_r <= 5'd14;
+                                // Same binder reservation as the miss path
+                                // (phase 6). A CODC hit skips phase 6; without
+                                // this the binder could permute slots, then
+                                // fail and unwind a half-bound CALL (B18).
+                                // Mutant 38 drops this reservation.
+                                if (gc_en_sim && !gc_verify_only_sim && (gc_mutant_sim != 8'd38) &&
+                                    ((heap_limit_r - heap_ptr_r) < GC_CALL_FAST_BYTES)) begin
+                                    logic [31:0] need;
+                                    need = gc_call_binder_need(codc_p_meta,
+                                                               gc_call_argc_now, gc_call_n_kw);
+                                    if ((need != 32'd0) && (heap_ptr_r + need > heap_limit_r)) begin
+                                        `GC_CALL_OOM(need)
+                                        gc_res_abort_r    <= 1'b1;
+                                        gc_res_abort_kw_r <= pycore_code_meta_varkeywords(codc_p_meta);
+                                    end
+                                end
                             end else begin
                                 call_codc_hit_r          <= 1'b0;
                                 container_dmem_addr_r    <= pycore_code_field_val_addr(
@@ -264,6 +280,22 @@
                                 else
                                     call_sub_r <= 6'd0;
                                 call_phase_r <= 4'd14;
+                                // GC binder reservation (plan §3.5, as built):
+                                // the *args tuple and **kwargs dict must fit
+                                // before the binder permutes any live slot.
+                                // A current run of GC_CALL_FAST_BYTES always
+                                // fits, so the common case adds no cycle.
+                                if (gc_en_sim && !gc_verify_only_sim &&
+                                    ((heap_limit_r - heap_ptr_r) < GC_CALL_FAST_BYTES)) begin
+                                    logic [31:0] need;
+                                    need = gc_call_binder_need(container_rd_data_r,
+                                                               call_argcount_r, gc_call_n_kw);
+                                    if ((need != 32'd0) && (heap_ptr_r + need > heap_limit_r)) begin
+                                        `GC_CALL_OOM(need)
+                                        gc_res_abort_r    <= 1'b1;
+                                        gc_res_abort_kw_r <= pycore_code_meta_varkeywords(container_rd_data_r);
+                                    end
+                                end
                             end
                         end
 
@@ -508,6 +540,8 @@
                                     container_wb_addr_r <= RF_AW'(
                                         {1'b0, tos_r} - {1'b0, cur_arg_r[7:0]}
                                         - 9'd1);
+                                    gc_undo_bm_r      <= 1'b1;
+                                    gc_undo_bm_slot_r <= 8'({1'b0, tos_r} - {1'b0, cur_arg_r[7:0]} - 9'd1);
                                     container_wb_data_r <= pycore_make_entry(
                                         container_rd_data_r[3:0], call_self_val_r);
                                     if ((call_mode_r == CALL_MODE_KW) ||
@@ -789,6 +823,23 @@
                                                 container_rf_addr_r <= RF_AW'(
                                                     {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 7'd64;
+                                            end
+                                        end else if ((call_bi_id_r == PY_BI_GC_COLLECT) ||
+                                                     (call_bi_id_r == PY_BI_HEAP_FREE)) begin
+                                            // Zero-arg GC builtins (gc.md).
+                                            if (cur_arg_r[15:0] != 16'd0) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                call_sub_r <= (call_bi_id_r == PY_BI_GC_COLLECT)
+                                                              ? 7'd65 : 7'd66;
+                                            end
+                                        end else if (call_bi_id_r == PY_BI_GC_STATS) begin
+                                            if (cur_arg_r[15:0] != 16'd1) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd1);
+                                                call_sub_r <= 7'd67;
                                             end
                                         end else if (EXCORE_EN &&
                                             pycore_trap_recoverable(PY_TRAP_BUILTIN_CALL)) begin
@@ -1100,8 +1151,8 @@
                                         call_sub_r <= 6'd0;
                                     end else if (pycore_heap_end(
                                                  heap_ptr_r, 32'd96) >
-                                                 PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                                 heap_limit_r) begin
+                                        `GC_CALL_OOM((pycore_heap_end( heap_ptr_r, 32'd96)) - heap_ptr_r)
                                     end else begin
                                         container_base_r <=
                                             pycore_heap_place(heap_ptr_r, 32'd96);
@@ -1245,8 +1296,8 @@
                                         container_count_r);
                                     if (pycore_set_place_end(
                                          heap_ptr_r, set_slots) >
-                                        PYCORE_HEAP_LIMIT) begin
-                                        container_mem_fault_r <= 1'b1;
+                                        heap_limit_r) begin
+                                        `GC_CALL_OOM((pycore_set_place_end( heap_ptr_r, set_slots)) - heap_ptr_r)
                                     end else begin
                                         container_base_r <=
                                             pycore_set_place_obj(heap_ptr_r);
@@ -1644,6 +1695,13 @@
                                             call_argcount_r   <= 16'd1;
                                             call_new_locals_r <= RF_AW'(
                                                 {1'b0, tos_r} - 9'd2);
+                                            // A binder reservation abort after
+                                            // this point must restore `len` and
+                                            // the NULL slot (review round 1).
+                                            gc_undo_len_r      <= 1'b1;
+                                            gc_undo_len_slot_r <= 8'({1'b0, tos_r} - 9'd3);
+                                            gc_undo_bm_r       <= 1'b1;
+                                            gc_undo_bm_slot_r  <= 8'({1'b0, tos_r} - 9'd2);
                                             call_sub_r <= 6'd50;
                                         end
                                     end
@@ -1703,8 +1761,14 @@
                                     container_wb_we_r   <= 1'b1;
                                     container_wb_addr_r <= RF_AW'(
                                         {1'b0, tos_r} - 9'd2);
+                                    // GC (plan §5.4): the epoch rides in bits
+                                    // 63:32 (0 until the first collection;
+                                    // 32 bits so it cannot wrap in a run,
+                                    // review round 3).
                                     container_wb_data_r <= pycore_make_entry(
-                                        PY_TAG_INT, {{96{1'b0}}, heap_ptr_r});
+                                        PY_TAG_INT, {{64{1'b0}},
+                                                     gc_en_sim ? gc_epoch_r : 32'd0,
+                                                     heap_ptr_r});
                                     tos_r <= RF_AW'({1'b0, tos_r} - 9'd1);
                                     fetch_skip_r <= 1'b1;
                                     call_phase_r <= CALL_PHASE_DONE;
@@ -1725,15 +1789,46 @@
                                 end
                                 // 56: _bi_heap_release(mark)
                                 6'd56: begin
+                                    // GC (plan §5.4): a mark from an older
+                                    // epoch, or below the current run, was
+                                    // superseded by a collection: no-op.
+                                    logic rel_superseded;
+                                    // Below the heap base is never a mark from
+                                    // `_bi_heap_mark` (INT 0 has epoch 0). A
+                                    // collection must not turn that into a
+                                    // superseded no-op (G7 (b) K=1).
+                                    // Mutant 40 (B14) drops the heap-base test.
+                                    rel_superseded = gc_en_sim &&
+                                        ((cont_rf_rs1_val[31:0] >=
+                                          heap_init_ptr_sim) ||
+                                         (gc_mutant_sim == 8'd40)) &&
+                                        ((cont_rf_rs1_val[63:32] != gc_epoch_r) ||
+                                         (cont_rf_rs1_val[31:0] < run_base_r));
                                     if ((cont_rf_rs1_tag != PY_TAG_INT) ||
-                                        (cont_rf_rs1_val[127:32] != 96'b0) ||
-                                        (cont_rf_rs1_val[31:0] <
-                                         heap_init_ptr_sim) ||
-                                        (cont_rf_rs1_val[31:0] >
-                                         heap_ptr_r)) begin
+                                        (cont_rf_rs1_val[127:64] != 64'b0) ||
+                                        (!gc_en_sim && (cont_rf_rs1_val[63:32] != 32'b0)) ||
+                                        (gc_en_sim && (cont_rf_rs1_val[3:0] != 4'b0)) ||
+                                        ((cont_rf_rs1_val[31:0] <
+                                          heap_init_ptr_sim) && (gc_mutant_sim != 8'd40)) ||
+                                        (!rel_superseded &&
+                                         (cont_rf_rs1_val[31:0] >
+                                          heap_ptr_r))) begin
                                         container_mem_fault_r <= 1'b1;
                                     end else begin
-                                        heap_ptr_r <= cont_rf_rs1_val[31:0];
+                                        if (rel_superseded)
+                                            gc_superseded_r <= gc_superseded_r + 32'd1;
+                                        else begin
+                                            heap_ptr_r <= cont_rf_rs1_val[31:0];
+                                            // gc.md invariant 6: the bytes handed
+                                            // back are zeroed at the boundary.
+                                            if (gc_en_sim && !gc_verify_only_sim &&
+                                                (cont_rf_rs1_val[31:0] < heap_ptr_r) &&
+                                                (gc_mutant_sim != 8'd46)) begin
+                                                gc_rel_zero_r <= 1'b1;
+                                                gc_zero_ptr_r <= cont_rf_rs1_val[31:0];
+                                                gc_zero_end_r <= heap_ptr_r;
+                                            end
+                                        end
                                         container_wb_we_r   <= 1'b1;
                                         container_wb_addr_r <= RF_AW'(
                                             {1'b0, tos_r} - 9'd3);
@@ -2075,9 +2170,8 @@
                                                         heap_ptr_r,
                                                         PYCORE_CODE_OBJECT_BYTES);
                                                     if (alloc_end >
-                                                            PYCORE_HEAP_LIMIT) begin
-                                                        container_mem_fault_r <=
-                                                            1'b1;
+                                                            heap_limit_r) begin
+                                                        `GC_CALL_OOM((alloc_end) - heap_ptr_r)
                                                     end else begin
                                                         container_buf_r <=
                                                             cont_obitem_raw[31:0];
@@ -2246,6 +2340,58 @@
                                     call_phase_r <= CALL_PHASE_DONE;
                                     call_sub_r   <= 6'd0;
                                 end
+                                // 65: _bi_gc_collect() -> INT live bytes. The
+                                // CALL completes here; the collection runs at
+                                // the boundary that follows (gc_explicit_r) and
+                                // then overwrites the result slot. GC_EN=0: 0.
+                                7'd65: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {1'b0, tos_r} - 9'd2);
+                                    container_wb_data_r <= pycore_int_entry(64'd0);
+                                    tos_r <= RF_AW'({1'b0, tos_r} - 9'd1);
+                                    fetch_skip_r <= 1'b1;
+                                    call_phase_r <= CALL_PHASE_DONE;
+                                    call_sub_r   <= 7'd0;
+                                    if (gc_en_sim) gc_explicit_r <= 1'b1;
+                                end
+                                // 66: _bi_heap_free() -> INT: bytes allocatable
+                                // without a collection (current run + list).
+                                7'd66: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {1'b0, tos_r} - 9'd2);
+                                    container_wb_data_r <= pycore_int_entry({32'd0,
+                                        (heap_limit_r - heap_ptr_r) + gc_list_free_r});
+                                    tos_r <= RF_AW'({1'b0, tos_r} - 9'd1);
+                                    fetch_skip_r <= 1'b1;
+                                    call_phase_r <= CALL_PHASE_DONE;
+                                    call_sub_r   <= 7'd0;
+                                end
+                                // 67: _bi_gc_stats(k) -> INT (gc.md).
+                                7'd67: begin
+                                    if (cont_rf_rs1_tag != PY_TAG_INT) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {1'b0, tos_r} - 9'd3);
+                                        unique case (cont_rf_rs1_val[2:0])
+                                            3'd0: container_wb_data_r <= pycore_int_entry({32'd0, gc_collections_r});
+                                            3'd1: container_wb_data_r <= pycore_int_entry({32'd0, gc_max_pause_r});
+                                            3'd2: container_wb_data_r <= pycore_int_entry({32'd0, gc_largest_last_r});
+                                            3'd3: container_wb_data_r <= pycore_int_entry({32'd0, gc_reclaimed_last_r});
+                                            3'd4: container_wb_data_r <= pycore_int_entry({32'd0, gc_run_pops_r});
+                                            3'd5: container_wb_data_r <= pycore_int_entry({32'd0, gc_superseded_r});
+                                            3'd6: container_wb_data_r <= pycore_int_entry({32'd0, gc_live_last_r});
+                                            default: container_wb_data_r <= pycore_int_entry({32'd0, gc_epoch_r});
+                                        endcase
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 7'd0;
+                                    end
+                                end
                                 default: call_filter_trap_r <= 1'b1;
                             endcase
                         end
@@ -2273,8 +2419,8 @@
                                             PYCORE_OBJ_INSTANCE_BYTES);
                                         alloc_end = inst_addr +
                                             PYCORE_OBJ_INSTANCE_BYTES;
-                                        if (alloc_end > PYCORE_HEAP_LIMIT) begin
-                                            container_mem_fault_r <= 1'b1;
+                                        if (alloc_end > heap_limit_r) begin
+                                            `GC_CALL_OOM((alloc_end) - heap_ptr_r)
                                         end else begin
                                             container_base_r   <= dict_obj;
                                             container_order_ptr_r <=
@@ -2545,6 +2691,8 @@
                                             container_wb_addr_r <= RF_AW'(
                                                 {1'b0, tos_r}
                                                 - {1'b0, cur_arg_r[7:0]} - 9'd1);
+                                            gc_undo_bm_r      <= 1'b1;
+                                            gc_undo_bm_slot_r <= 8'({1'b0, tos_r} - {1'b0, cur_arg_r[7:0]} - 9'd1);
                                             container_wb_data_r <= pycore_make_entry(
                                                 PY_TAG_OBJECT,
                                                 {{96{1'b0}}, call_inst_addr_r});
@@ -2611,8 +2759,8 @@
                                                 tup_bytes);
                                             alloc_end = tup_addr + tup_bytes;
                                         end
-                                        if (alloc_end > PYCORE_HEAP_LIMIT) begin
-                                            container_mem_fault_r <= 1'b1;
+                                        if (alloc_end > heap_limit_r) begin
+                                            `GC_CALL_OOM((alloc_end) - heap_ptr_r)
                                         end else begin
                                             call_inst_addr_r <= exc_obj;
                                             container_buf_r  <= tup_addr;
@@ -3018,7 +3166,7 @@
                                                             PY_TAG_TUPLE,
                                                             {64'd0,
                                                              {32'b0,
-                                                              heap_ptr_r}});
+                                                              gc_en_sim ? 32'd0 : heap_ptr_r}});
                                                     call_argcount_r <=
                                                         call_total_params_r + 16'd1;
                                                     call_sub_r <= 6'd24;
@@ -3026,8 +3174,8 @@
                                                         heap_ptr_r,
                                                         pycore_tuple_alloc_bytes(
                                                             {16'b0, extra})) >
-                                                        PYCORE_HEAP_LIMIT) begin
-                                                    container_mem_fault_r <= 1'b1;
+                                                        heap_limit_r) begin
+                                                    `GC_CALL_BINDER_OOM(pycore_tuple_alloc_bytes({16'b0, extra}) + 32'd64)
                                                 end else begin
                                                     container_count_r <= extra[6:0];
                                                     container_base_r  <=
@@ -3840,8 +3988,9 @@
                                             slots = pycore_dict_min_slots(n_kw);
                                             if (pycore_dict_place_end(
                                                     heap_ptr_r, slots) >
-                                                    PYCORE_HEAP_LIMIT) begin
-                                                container_mem_fault_r <= 1'b1;
+                                                    heap_limit_r) begin
+                                                `GC_CALL_BINDER_OOM(
+                                                    pycore_dict_place_end(32'd0, slots) + 32'd64)
                                             end else begin
                                                 heap_ptr_r <=
                                                     pycore_dict_place_end(
@@ -4291,6 +4440,7 @@
                                             {1'b0, tos_r} - 9'd1
                                             - {1'b0, cur_arg_r[7:0]} - 9'd2);
                                         tos_r <= tos_r - RF_AW'(1);
+                                        gc_undo_kw_r <= 1'b1;
                                         call_phase_r <= 5'd1;
                                     end
                                 end
@@ -4301,6 +4451,7 @@
                         // Phase 17–19: CALL_FUNCTION_EX
                         // --------------------------------------------------
                         CALL_PHASE_EX_KW: begin
+                            gc_ex_kw_r <= pycore_make_entry(cont_rf_rs1_tag, cont_rf_rs1_val);
                             if (pycore_is_null(
                                     cont_rf_rs1_tag, cont_rf_rs1_val)) begin
                                 call_n_kwargs_r <= 8'd0;
@@ -4316,13 +4467,94 @@
                                 tos_r <= tos_r - RF_AW'(1);
                                 container_rf_addr_r <= RF_AW'(
                                     {1'b0, tos_r} - 9'd2);
-                                call_phase_r <= CALL_PHASE_EX_ARGS;
+                                // GC slow path: only when the current run is
+                                // tight, read the dict's order_len so the
+                                // binder reservation is exact (phase 6).
+                                if (gc_en_sim && !gc_verify_only_sim &&
+                                    ((heap_limit_r - heap_ptr_r) < GC_CALL_FAST_BYTES)) begin
+                                    container_dmem_addr_r    <= pycore_dict_meta_addr(cont_rf_rs1_val[31:0]);
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    call_phase_r <= CALL_PHASE_GC_KWLEN;
+                                end else begin
+                                    call_phase_r <= CALL_PHASE_EX_ARGS;
+                                end
                             end else begin
                                 call_filter_trap_r <= 1'b1;
                             end
                         end
 
+                        // GC abort: put back what the prelude took off the
+                        // stack (one RF write per cycle), then hand the CALL to
+                        // S_GC_ALLOC for re-dispatch.
+                        CALL_PHASE_GC_UNWIND: begin
+                            unique case (gc_unwind_step_r)
+                                2'd0: begin
+                                    if (gc_undo_ex_r) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(call_tos_base_r + RF_AW'(2));
+                                        container_wb_data_r <= gc_ex_args_r;
+                                        gc_unwind_step_r    <= 2'd1;
+                                    end else begin
+                                        gc_unwind_step_r    <= 2'd2;
+                                    end
+                                end
+                                2'd1: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(call_tos_base_r + RF_AW'(3));
+                                    container_wb_data_r <= gc_ex_kw_r;
+                                    tos_r               <= RF_AW'(call_tos_base_r + RF_AW'(4));
+                                    gc_unwind_step_r    <= 2'd2;
+                                end
+                                default: begin
+                                    // One RF write per cycle: NULL sentinel
+                                    // first, then re-push the CALL_KW names
+                                    // tuple. TOS++ alone is not enough —
+                                    // later CALL phases overwrite the popped
+                                    // slot (img_gc_fuzz_13 / G8 seed 13).
+                                    if (gc_undo_len_r) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(gc_undo_len_slot_r);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_OBJECT, {{96{1'b0}}, call_obj_addr_r});
+                                        gc_undo_len_r       <= 1'b0;
+                                    end else if (gc_undo_bm_r) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(gc_undo_bm_slot_r);
+                                        container_wb_data_r <= pycore_make_control(PY_CTL_NULL);
+                                        gc_undo_bm_r        <= 1'b0;
+                                    end else begin
+                                        if (gc_undo_kw_r) begin
+                                            container_wb_we_r   <= 1'b1;
+                                            container_wb_addr_r <= RF_AW'(
+                                                gc_call_entry_tos_r - RF_AW'(1));
+                                            container_wb_data_r <= pycore_make_entry(
+                                                PY_TAG_TUPLE, call_kw_names_r);
+                                            tos_r               <= gc_call_entry_tos_r;
+                                        end
+                                        `GC_ABORT_COMMON(gc_need_bytes_r)
+                                        call_phase_r <= CALL_PHASE_GC_IDLE;
+                                    end
+                                end
+                            endcase
+                        end
+                        CALL_PHASE_GC_IDLE: ;
+
+                        // GC slow path: kwargs dict meta word -> order_len.
+                        CALL_PHASE_GC_KWLEN: begin
+                            if (!container_dmem_pending_r) begin
+                                gc_ex_kw_n_r <= (container_rd_data_r[63:7] != 57'd0)
+                                                ? 7'd127 : container_rd_data_r[6:0];
+                                gc_ex_kw_known_r <= 1'b1;
+                                call_phase_r <= CALL_PHASE_EX_ARGS;
+                            end
+                        end
+
                         CALL_PHASE_EX_ARGS: begin
+                            gc_ex_args_r <= pycore_make_entry(cont_rf_rs1_tag, cont_rf_rs1_val);
+                            if ((cont_rf_rs1_tag == PY_TAG_TUPLE) ||
+                                pycore_is_list(cont_rf_rs1_tag, cont_rf_rs1_val))
+                                gc_undo_ex_r <= 1'b1;
                             if (cont_rf_rs1_tag == PY_TAG_TUPLE) begin
                                 begin
                                     logic [63:0] tsz;
@@ -4735,6 +4967,7 @@
                                     container_rf_addr_r <=
                                         container_call_saved_tos_r;
                                     container_call_active_r <= 1'b0;
+                                    container_proto_iter_r <= '0;
                                     container_call_exc_unwind_r <= 1'b0;
                                     container_call_result_r <= rs1_r;
                                     container_call_return_valid_r <= 1'b1;
@@ -4857,6 +5090,7 @@
                                     container_rf_addr_r <=
                                         container_call_saved_tos_r;
                                     container_call_active_r <= 1'b0;
+                                    container_proto_iter_r <= '0;
                                     container_call_exc_unwind_r <= 1'b0;
                                     // Restore iterable/ITER under TOS; there
                                     // is no normal return value.

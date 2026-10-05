@@ -28,7 +28,8 @@ core waits.
 level — the bisect switch and the transparency-test control arm.
 
 Masters: fetch, MEM stage, container FSM, CALL/RETURN frame walk, exception
-stack, STRACC, excore (at L2, never at L1D).
+stack, STRACC, the garbage collector (`pycore_gc.sv`; see [`gc.md`](gc.md)),
+excore (at L2, never at L1D).
 
 ---
 

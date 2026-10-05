@@ -15,6 +15,7 @@ import inspect
 import opcode as _opcode_module
 import operator as _operator
 import pathlib
+import re
 import sys
 import types
 from dataclasses import dataclass, field
@@ -26,6 +27,9 @@ from encoding import (
     BI_CODE_ALLOC,
     BI_CODE_BLIT,
     BI_CODE_KIND,
+    BI_GC_COLLECT,
+    BI_GC_STATS,
+    BI_HEAP_FREE,
     BI_CODE_MARK,
     BI_CODE_NEW,
     BI_CODE_PATCH,
@@ -43,6 +47,10 @@ from encoding import (
     BI_RANGE,
     BI_SET,
     BI_TO_BYTES,
+    GC_COMPILER_CLEANUP,
+    GC_EXTRA_ROOTS,
+    GC_EXTRA_ROOTS_COUNT,
+    GC_COMPILER_CLEANUP_MAGIC,
     HEAP_BASE,
     NATIVE_METHOD_COUNT,
     OB_FLAG_EXC_TYPE,
@@ -70,6 +78,7 @@ from encoding import (
     make_none,
     make_range_inline,
     make_range_tuple,
+    mut_addr,
     range_fits_inline,
     tag_constant,
 )
@@ -79,6 +88,7 @@ from heap_image import (
     dict_min_slots,
     static_dict_slots,
 )
+import gc_static
 
 
 REQUIRED_PY = (3, 14)
@@ -258,6 +268,8 @@ class ImageBuildResult:
     # while the boot image stays in program_slots / ROM.
     code_ram_slots: list[str] = field(default_factory=list)
     code_ram_init_slot: int = CODE_RAM_SLOT_BASE
+    # No program path reaches a type's dict (gc_static.static_graph).
+    gc_frozen_type_dicts: bool = False
 
     @property
     def heap_init_ptr(self) -> int:
@@ -725,6 +737,10 @@ _OP_STORE_NAME = _OM["STORE_NAME"]
 _OP_LOAD_BUILD_CLASS = _OM["LOAD_BUILD_CLASS"]
 _OP_BUILD_MAP = _OM["BUILD_MAP"]
 _OP_BINARY_SLICE = _OM["BINARY_SLICE"]
+_OP_BUILD_LIST = _OM["BUILD_LIST"]
+_OP_LIST_EXTEND = _OM["LIST_EXTEND"]
+_OP_CALL_INTRINSIC_1 = _OM["CALL_INTRINSIC_1"]
+_INTRINSIC_LIST_TO_TUPLE = 6
 _SFA_FLAG_DEFAULTS = 1
 _SFA_FLAG_KWDEFAULTS = 2
 _SFA_FLAG_ANNOTATE = 16  # PEP 649 __annotate__; stripped, no runtime effect
@@ -1039,6 +1055,60 @@ def fold_slice_constants(module_code: types.CodeType) -> types.CodeType:
                     changed = True
         base = co.replace(co_consts=tuple(consts)) if changed else co
         return fold_slice_constants_one(base)
+
+    return fold_tree(module_code)
+
+
+def fold_list_to_tuple_one(co: types.CodeType) -> types.CodeType:
+    """NOP ``BUILD_LIST 0`` and ``LIST_EXTEND 1`` around the list load.
+
+    CPython 3.14 emits ``BUILD_LIST 0; LOAD_*; LIST_EXTEND 1;
+    CALL_INTRINSIC_1 6`` for ``(*lst,)``. LIST_EXTEND of a non-empty source
+    is a fatal trap on EXCORE_EN=0. The empty list is a temp: leaving
+    ``lst`` on TOS and executing only the intrinsic is the same result.
+    Length is unchanged (NOP-pad).
+    """
+    code = bytearray(co.co_code)
+    n = len(code)
+    rewritten = False
+    pos = 0
+    while pos + 7 < n:
+        # BUILD_LIST 0; LOAD_*; LIST_EXTEND 1; CALL_INTRINSIC_1 6
+        if (
+            code[pos] == _OP_BUILD_LIST
+            and code[pos + 1] == 0
+            and code[pos + 4] == _OP_LIST_EXTEND
+            and code[pos + 5] == 1
+            and code[pos + 6] == _OP_CALL_INTRINSIC_1
+            and code[pos + 7] == _INTRINSIC_LIST_TO_TUPLE
+        ):
+            code[pos] = _OP_NOP
+            code[pos + 1] = 0
+            code[pos + 4] = _OP_NOP
+            code[pos + 5] = 0
+            rewritten = True
+            pos += 8
+            continue
+        pos += 2
+    if not rewritten:
+        return co
+    return co.replace(co_code=bytes(code))
+
+
+def fold_list_to_tuple(module_code: types.CodeType) -> types.CodeType:
+    """Recursively fold ``(*lst,)`` to a bare LIST_TO_TUPLE intrinsic."""
+
+    def fold_tree(co: types.CodeType) -> types.CodeType:
+        consts = list(co.co_consts)
+        changed = False
+        for i, const in enumerate(consts):
+            if isinstance(const, types.CodeType):
+                new_c = fold_tree(const)
+                if new_c is not const:
+                    consts[i] = new_c
+                    changed = True
+        base = co.replace(co_consts=tuple(consts)) if changed else co
+        return fold_list_to_tuple_one(base)
 
     return fold_tree(module_code)
 
@@ -1483,6 +1553,14 @@ PACKAGE_RUNTIME_SEEDS: dict[str, object] = {
     "_hole_hi": [],
     "_hole_fin": [],
 }
+# Values in these slots are scratch references retained only so compiler
+# passes can communicate.  An idle compiler does not need them; the GC image
+# descriptor lets the collector replace them with INT 0 immediately before
+# tracing, without adding instructions to compile()'s GC_EN=0 path.
+PACKAGE_RUNTIME_CLEAR_NAMES = frozenset(
+    name for name, value in PACKAGE_RUNTIME_SEEDS.items()
+    if not isinstance(value, int)
+)
 # Only these tables.py names are LOAD_GLOBAL'd by firmware today; the rest
 # of tables.py would be payload with no reader. Seeding every TOK_* integer
 # once pushed _PYC_G to 113 of 128 keys and LOAD_GLOBAL started missing --
@@ -2813,10 +2891,13 @@ def seed_firmware_package(
                 serializer.kwdefaults_map[id(co)] = dict(kwdefaults)
             handle = serializer.serialize_code(co)
             pairs.append((tag_constant(name, serializer.heap), handle))
+        runtime_keys: dict[str, Tagged] = {}
         for name, value in PACKAGE_RUNTIME_SEEDS.items():
+            key = tag_constant(name, serializer.heap)
+            runtime_keys[name] = key
             pairs.append(
                 (
-                    tag_constant(name, serializer.heap),
+                    key,
                     serialize_package_constant(serializer, value),
                 )
             )
@@ -2829,6 +2910,23 @@ def seed_firmware_package(
     pyc_g = serializer.heap.alloc_dict(
         pairs, slot_count=_package_dict_slots(len(pairs))
     )
+    busy_addr = serializer.heap.dict_value_addr(pyc_g, runtime_keys["_busy"])
+    clear_addrs = [
+        serializer.heap.dict_value_addr(pyc_g, runtime_keys[name])
+        for name in PACKAGE_RUNTIME_SEEDS
+        if name in PACKAGE_RUNTIME_CLEAR_NAMES
+    ]
+    serializer.heap.words[GC_COMPILER_CLEANUP] = (
+        (GC_COMPILER_CLEANUP_MAGIC << 96)
+        | (len(clear_addrs) << 64)
+        | (busy_addr << 32)
+        | (mut_addr(pyc_g[1]) >> 4)
+    )
+    for i in range(0, len(clear_addrs), 4):
+        packed = 0
+        for lane, addr in enumerate(clear_addrs[i:i + 4]):
+            packed |= addr << (lane * 32)
+        serializer.heap.words[GC_COMPILER_CLEANUP + 16 + (i // 4) * 16] = packed
     return pyc_g, entry_handle
 
 
@@ -2897,7 +2995,111 @@ WAVE_A_EXCEPTION_TYPES: tuple[tuple[str, str | None], ...] = (
 )
 
 
-def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
+GC_BUILTIN_NAMES = frozenset({"_bi_gc_collect", "_bi_heap_free", "_bi_gc_stats"})
+_FIRMWARE_BUILTINS_DIR = pathlib.Path(__file__).resolve().parents[2] / "pycore_firmware" / "builtins"
+
+
+def _runtime_source_builtins() -> frozenset[str]:
+    """Builtins that compile source at run time: the primitives plus every
+    firmware builtin whose body calls one (`bios` runs `exec(payload)`)."""
+    out = {"compile", "exec", "eval", "_bi_exec_globals"}
+    texts = {p.stem: p.read_text(encoding="utf-8")
+             for p in sorted(_FIRMWARE_BUILTINS_DIR.glob("*.py"))}
+    while True:  # transitive: a builtin that calls `bios(...)` runs source too
+        call_re = re.compile(r"\b(" + "|".join(sorted(map(re.escape, out))) + r")\s*\(")
+        more = {name for name, text in texts.items() if name not in out and call_re.search(text)}
+        if not more:
+            return frozenset(out)
+        out |= more
+
+
+# Builtins that run code the image builder cannot see: source compiled at run
+# time, or code objects assembled from slots (`_bi_code_new`, whose co_names
+# are arbitrary). A program that names one of the first reaches whatever
+# names its string constants spell; one that assembles code reaches every
+# name (review rounds 2 and 3).
+RUNTIME_SOURCE_NAMES = _runtime_source_builtins()
+CODE_ASSEMBLY_NAMES = frozenset({"_bi_code_new", "_bi_code_blit", "_bi_code_patch"})
+# A program that names none of these cannot obtain a type's dict (STORE_ATTR
+# on a type traps; only `__dict__` or the firmware that uses it reaches the
+# table; compile/exec/eval could name it at run time), so the static prune
+# map may treat type dicts as immutable.
+TYPE_DICT_REACHING_NAMES = frozenset({
+    "__dict__", "setattr", "delattr", "vars",
+}) | RUNTIME_SOURCE_NAMES | CODE_ASSEMBLY_NAMES
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_CO_HAS_DOCSTRING = 0x4000000
+
+
+def _const_strings(value: object) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, (tuple, frozenset)):
+        for v in value:
+            yield from _const_strings(v)
+
+
+def _loaded_string_names(code: types.CodeType) -> set[str]:
+    """Identifiers spelled by the str constants of *code* and its nested code,
+    including strings inside tuple and frozenset constants (folded defaults,
+    literal tuples). Docstrings are not program text: a function's
+    `co_consts[0]` under CO_HAS_DOCSTRING, and a `LOAD_CONST; STORE_NAME
+    __doc__` pair in a module or class body."""
+    # CPython shares one co_consts slot between equal constants, so a
+    # docstring index is skipped only when no other instruction loads it.
+    skip: set[int] = set()
+    loaded: set[int] = set()
+    if code.co_flags & _CO_HAS_DOCSTRING and code.co_consts:
+        skip.add(0)
+    ins = list(dis.get_instructions(code))
+    for i, x in enumerate(ins):
+        if x.opname != "LOAD_CONST":
+            continue
+        nxt = ins[i + 1] if i + 1 < len(ins) else None
+        if nxt is not None and nxt.opname == "STORE_NAME" and nxt.argval == "__doc__":
+            skip.add(x.arg)
+        else:
+            loaded.add(x.arg)
+    skip -= loaded
+    out: set[str] = set()
+    for idx, c in enumerate(code.co_consts):
+        if isinstance(c, types.CodeType):
+            out |= _loaded_string_names(c)
+        elif idx not in skip:
+            for text in _const_strings(c):
+                out |= set(_IDENT_RE.findall(text))
+    return out
+
+
+def reachable_names(all_names: set[str], module_code: types.CodeType,
+                    extra_code: Iterable[types.CodeType] = ()) -> set[str] | None:
+    """Names the program can reach, or None when it can reach any name."""
+    if all_names & CODE_ASSEMBLY_NAMES:
+        return None
+    reach = set(all_names)
+    if all_names & RUNTIME_SOURCE_NAMES:
+        reach |= _loaded_string_names(module_code)
+        for c in extra_code:
+            reach |= _loaded_string_names(c)
+    return reach
+
+
+def _code_tree_names(code: types.CodeType) -> set[str]:
+    """Every co_names entry of *code* and its nested code objects."""
+    names = set(code.co_names)
+    for c in code.co_consts:
+        if isinstance(c, types.CodeType):
+            names |= _code_tree_names(c)
+    return names
+
+
+def build_builtins_dict(
+    serializer: _ImageSerializer,
+    *,
+    gc_builtins: bool = False,
+    memory_error: bool = False,
+    compiler_cleanup: bool = True,
+) -> Tagged:
     """Allocate the module builtins dict for the boot-record pair-2 slot.
 
     Entries:
@@ -2950,6 +3152,16 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
             tp_base=tp_base,
             flags=OB_FLAG_EXC_TYPE,
         )
+    if memory_error:
+        exc_handles["MemoryError"] = heap.alloc_type(
+            tag_constant("MemoryError", string_heap),
+            tp_base=exc_handles["Exception"],
+            flags=OB_FLAG_EXC_TYPE,
+        )
+        memory_error_instance = heap.alloc_exception(
+            exc_handles["MemoryError"], heap.alloc_tuple([])
+        )
+        heap.write_memory_error_instance(memory_error_instance)
     stop_iteration = exc_handles["StopIteration"]
     heap.write_iter_exhaust_type(stop_iteration)
     heap.write_native_method_table(seed_rom_native_methods(serializer))
@@ -3008,17 +3220,49 @@ def build_builtins_dict(serializer: _ImageSerializer) -> Tagged:
         (tag_constant("int", string_heap), int_type),
         (tag_constant("str", string_heap), str_type),
     ]
+    # GC builtins (pycore/docs/gc.md) are seeded only into images that name
+    # them, so every other image keeps its exact layout and cycle counts.
+    if gc_builtins:
+        pairs += [
+            (tag_constant("_bi_gc_collect", string_heap), heap.alloc_builtin(BI_GC_COLLECT)),
+            (tag_constant("_bi_heap_free", string_heap), heap.alloc_builtin(BI_HEAP_FREE)),
+            (tag_constant("_bi_gc_stats", string_heap), heap.alloc_builtin(BI_GC_STATS)),
+        ]
     pairs.extend(
         (tag_constant(name, string_heap), exc_handles[name])
         for name, _ in WAVE_A_EXCEPTION_TYPES
     )
+    if memory_error:
+        pairs.append((tag_constant("MemoryError", string_heap), exc_handles["MemoryError"]))
     pairs.extend(seed_rom_firmware_builtins(serializer))
     package = seed_firmware_package(serializer)
     if package is not None:
         pyc_g, pyc_entry = package
         pairs.append((tag_constant("_PYC_G", string_heap), pyc_g))
         pairs.append((tag_constant("_PYC_ENTRY", string_heap), pyc_entry))
-    return heap.alloc_dict(pairs, slot_count=_package_dict_slots(len(pairs)))
+    builtins_dict = heap.alloc_dict(
+        pairs, slot_count=_package_dict_slots(len(pairs))
+    )
+    # The low descriptor word packs two 16-byte-granule addresses.  Both
+    # dictionaries may be premarked only after idle scratch slots are cleared:
+    # builtins is the sole owner of _PYC_G, and _PYC_G owns the compiler arena.
+    cleanup = heap.words.get(GC_COMPILER_CLEANUP, 0)
+    if cleanup and not compiler_cleanup:
+        # The program touches _PYC_G itself: it may drive compiler passes
+        # (_bi_exec_globals on a _PYC_G entry point) and read their arenas
+        # back after they return with _busy still 0 (G7 (b) B19), or store
+        # into scratch slots without writing _busy, which the collector's
+        # cleanup-skip watch relies on. Those slots are its data: omit the
+        # descriptor.
+        count = (cleanup >> 64) & 0xFFFF_FFFF
+        heap.words.pop(GC_COMPILER_CLEANUP, None)
+        for i in range(0, count, 4):
+            heap.words.pop(GC_COMPILER_CLEANUP + 16 + (i // 4) * 16, None)
+    elif cleanup:
+        heap.words[GC_COMPILER_CLEANUP] = cleanup | (
+            (mut_addr(builtins_dict[1]) >> 4) << 16
+        )
+    return builtins_dict
 
 
 def build_image_from_code(
@@ -3073,7 +3317,17 @@ def build_image_from_code(
         globals_slot_count = dict_slot_count_for_stores(len(stored_names))
 
     # After module serialize so firmware bytecode appends to the same imem pool.
-    builtins_dict = build_builtins_dict(serializer)
+    # Class methods become seeded types, so their code is not under
+    # module_code; scan every code object serialized so far.
+    user_names = set().union(*(set(c.co_names) for c in serializer._keep_alive))
+    all_names = _code_tree_names(module_code) | user_names
+    reach = reachable_names(all_names, module_code, serializer._keep_alive)
+    builtins_dict = build_builtins_dict(
+        serializer,
+        gc_builtins=bool(all_names & GC_BUILTIN_NAMES),
+        memory_error="MemoryError" in all_names,
+        compiler_cleanup=reach is not None and "_PYC_G" not in reach,
+    )
     serializer.heap.write_boot_record(module_handle, globals_dict, builtins_dict)
 
     return ImageBuildResult(
@@ -3088,6 +3342,7 @@ def build_image_from_code(
         globals_slot_count=globals_slot_count,
         code_ram_slots=list(serializer.code_ram_slots),
         code_ram_init_slot=serializer.code_ram_init_slot(),
+        gc_frozen_type_dicts=reach is not None and not (reach & TYPE_DICT_REACHING_NAMES),
     )
 
 
@@ -3817,7 +4072,8 @@ def fold_module_classes(
 
 
 def build_image_from_source_text(
-    source_text: str, filename: str, *, slot_base: int = 0
+    source_text: str, filename: str, *, slot_base: int = 0,
+    fold_ltt: bool = False,
 ) -> ImageBuildResult:
     seeds = parse_seed_pragmas(source_text)
     module_code = compile(source_text, filename, "exec")
@@ -3826,6 +4082,10 @@ def build_image_from_source_text(
     module_code = apply_map_add_seq_injects(module_code, source_text)
     module_code, class_specs = fold_module_classes(module_code, source_text)
     module_code = fold_slice_constants(module_code)
+    # Opt-in: changes cycles of img_list_to_tuple (G1 twocore). G8 and
+    # fixtures that request it with `# pycore-fold: list-to-tuple`.
+    if fold_ltt or "# pycore-fold: list-to-tuple" in source_text:
+        module_code = fold_list_to_tuple(module_code)
     module_code, defaults_map, kwdefaults_map = fold_function_defaults(module_code)
     for spec in class_specs:
         for co_id, defaults in spec.method_defaults.items():
@@ -3902,8 +4162,40 @@ def write_image_outputs(
     # code_ram.hex; do not clobber it with the (empty) package bank.
     if ram_hex.resolve() != program_hex.resolve():
         write_program_hex(ram_hex, result.code_ram_slots)
+    result.heap.words.update(gc_static.prune_map(
+        result.heap.words, result.heap_init_ptr,
+        frozen_type_dicts=result.gc_frozen_type_dicts))
+    write_gc_extra_roots(result.heap.words, result.heap_init_ptr,
+                         result.gc_frozen_type_dicts)
     result.heap.write_hex(dmem_hex)
     write_meta(meta, result, expected_tag=expected_tag, expected_value=expected_value)
+
+
+def write_gc_extra_roots(words: dict[int, int], dyn_base: int,
+                         frozen_type_dicts: bool = False) -> None:
+    """List the builtins values the static prune map keeps (review round 1).
+
+    An idle collection premarks the builtins dict header so it does not
+    walk the whole table; anything mutable it reaches (`int` -> the mutable
+    int.__dict__) must then be a root of its own. The values go to
+    PYCORE_GC_EXTRA_ROOTS. If they do not fit, the descriptor's builtins
+    field is cleared and the engine traces the table instead.
+    """
+    header = words.get(GC_COMPILER_CLEANUP, 0)
+    if (header >> 96) != GC_COMPILER_CLEANUP_MAGIC:
+        return
+    builtins = ((header >> 16) & 0xFFFF) << 4
+    pyc_g = (header & 0xFFFF) << 4
+    if not builtins:
+        return
+    roots = gc_static.kept_dict_values(words, dyn_base, builtins, {pyc_g},
+                                       frozen_type_dicts)
+    if len(roots) > GC_EXTRA_ROOTS_COUNT:
+        words[GC_COMPILER_CLEANUP] = header & ~(0xFFFF << 16)
+        return
+    for i, (tag, val) in enumerate(roots):
+        words[GC_EXTRA_ROOTS + 32 * i] = val
+        words[GC_EXTRA_ROOTS + 32 * i + 16] = tag
 
 
 def image_from_source(

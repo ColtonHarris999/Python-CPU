@@ -1,5 +1,52 @@
 // pycore_cont_defs.svh — CONT_* / CP_* encodings for S_CONTAINER.
 // Included inside pycore_core. Widened to 6 bits in M0 for object-protocol headroom.
+
+// GC allocation abort (planning/gc_plan.md §3.4). An allocation that does not
+// fit the current run [heap_ptr_r, heap_limit_r) happens in a phase that has
+// committed nothing, so the instruction is abandoned: S_GC_ALLOC finds a run
+// of NEED (+ alignment slack) bytes, collecting if the list is empty, and the
+// instruction is re-dispatched. With GC off it is today's MEM_FAULT.
+`define GC_ABORT_COMMON(NEED) \
+        gc_abort_r       <= 1'b1; \
+        gc_need_bytes_r  <= (NEED); \
+        gc_alloc_phase_r <= 4'd0; \
+        gc_runsw_cnt_r   <= gc_runsw_cnt_r + 32'd1; \
+        gc_retry_count_r <= (cur_pc_r != gc_retry_pc_r) ? 2'd0 : \
+                            (gc_retry_count_r == 2'd3) ? 2'd3 : gc_retry_count_r + 2'd1; \
+        gc_retry_pc_r    <= cur_pc_r;
+// CALL: revert the prelude's commits (CALL_PHASE_GC_UNWIND), then abort.
+// The container-launched protocol CALL itself (below the protocol frame's
+// depth) has no undo record: out of memory. Ordinary CALLs in the protocol
+// method's body (depth >= target) unwind and collect like any other (review
+// round 2; mutant 47 restores the old whole-body test).
+`define GC_CALL_OOM(NEED) \
+    if (gc_en_sim && !gc_verify_only_sim && \
+        !(container_call_active_r && \
+          ((frame_active_depth < container_call_target_depth_r) || (gc_mutant_sim == 8'd47)))) begin \
+        gc_need_bytes_r  <= (NEED); \
+        gc_unwind_step_r <= 2'd0; \
+        call_phase_r     <= CALL_PHASE_GC_UNWIND; \
+    end else begin \
+        container_mem_fault_r <= 1'b1; \
+    end
+// Binder allocations are reserved before phase 14 on both the CODC-hit and
+// the CODC-miss path (gc_call_binder_need), so a binder placement that does
+// not fit is a reservation bug: the binder has already permuted argument
+// slots and cannot be unwound (B18). Plan §10.2 G6 invariant.
+`define GC_CALL_BINDER_OOM(NEED) \
+    if (gc_en_sim && !gc_verify_only_sim) begin \
+        $fatal(1, "[GC-INV] CALL binder allocation failed after its reservation (pc %0d, need %0d)", cur_pc_r, (NEED)); \
+        container_mem_fault_r <= 1'b1; \
+    end else begin \
+        container_mem_fault_r <= 1'b1; \
+    end
+`define GC_CONT_OOM(NEED) \
+    if (gc_en_sim && !gc_verify_only_sim) begin \
+        `GC_ABORT_COMMON(NEED) \
+        container_phase_r <= CP_DONE; \
+    end else begin \
+        container_mem_fault_r <= 1'b1; \
+    end
     // Container sub-operation codes (stored in container_op_r, 6-bit).
     localparam logic [5:0] CONT_BUILD_LIST = 6'd0;
     localparam logic [5:0] CONT_SUBSCR_LIST = 6'd1; // NB_SUBSCR on LIST
