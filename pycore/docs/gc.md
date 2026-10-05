@@ -140,7 +140,11 @@ Handbook*, 2nd ed.
   benchmark. Lazy sweeping is reconsidered only if that share exceeds 20 %.
   Headers now go to a sequential table at `PYCORE_GC_RUN_TABLE` (not
   in-place); the first 1024 listed runs stay on-chip so sweep pays no
-  header miss. `bench_full` sweep is 2172 cycles (P4 cap 5292).
+  header miss. `bench_full` sweep is 2172 cycles (P4 cap 5292). The table
+  holds 14,272 runs; past that the header goes in place, in the run's first
+  granule, so the list has no fixed limit (`img_gc_run_table_overflow`:
+  the sweep used to abort there and raise `MemoryError` with most of the
+  heap free).
 
 ### 7. Root region in memory that the unit reads (Maas) — already adopted
 
@@ -208,6 +212,13 @@ States, after the ordinary fetch/execute path:
    before it can fail. An explicit `_bi_gc_collect()` (`need = 0`)
    leaves the free run queued and does not zero it; the bytes are zeroed when
    a later allocation hands them out.
+
+A collection the engine abandons (mark-stack overflow, a dmem fault) raises
+`MemoryError` and leaves marks in the bitmap, so the next collection clears
+the whole bitmap first (`M_CLEAR`, one cycle per word). Without that clear a
+stale mark made the marker skip a live object that was pushed but never
+scanned, and the sweep freed its children (`img_gc_mark_overflow_recover`,
+caught by the shadow-heap checker).
 
 `GC_EN=0` never takes these states. A `NEED_HEAP` result from excore becomes
 `MEM_FAULT`, which is what the pre-GC out-of-memory goldens expect.
@@ -332,6 +343,10 @@ own root record. That stash traffic is not part of the pause targets.
 One bit in the extent bitmap is one 16-byte granule (`addr >> 4`). The bit
 is set when the granule belongs to a live allocation. The static image below
 `HEAP_INIT_PTR` is marked and then treated as permanently live by the sweep.
+The static prune map (`PYCORE_GC_STATIC_MAP`, 8 KB) has one bit per granule
+of the first 1 MB. Static objects above that are not pruned but traced each
+collection: the run table follows the map, and map words written past it
+were overwritten by run headers and read back as premarks.
 Child slots are those in the plan's §4.1 table, as implemented in
 `pycore_gc.sv` and `gc_model.py`:
 
@@ -384,8 +399,12 @@ mark bitmap 480 × 128 = 61,440 bits; run table 1,024 × 64 = 65,536 bits;
 mark stack 256 × 67 = 17,152 bits; static prune-map copy 256 × 128 =
 32,768 bits; total 176,896 bits (21.6 KB). The bitmap is sized from
 `PYCORE_HEAP_LIMIT`: on the 16 MB map it is 7,680 × 128 bits (120 KB),
-and the memory mark stack holds 16,384 entries. Both need re-sizing before
-the collector is on by default (`planning/master_plan.md`, known bugs). Above the plan's
+and the memory mark stack holds 16,384 entries. The mark stack overflows
+on a live list of more than 16,640 pushable elements, about 1 MB of a 15 MB
+heap, and the collection then raises `MemoryError` (`img_gc_wide_live_list`,
+in `[gc-long]`, fails until this is fixed). Both need re-sizing, and the
+stack an overflow fallback, before the collector is on by default
+(`planning/master_plan.md`, known bugs). Above the plan's
 16 KB guideline: the run table is what brought the `bench_full` sweep from
 7,784 to 2,172 cycles (P4), and the prune-map copy and the deeper stack
 are what bring `bench_churn` under 25% (P6b): per collection they removed

@@ -42,6 +42,7 @@ from encoding import (  # noqa: E402
     GC_RUN_TABLE,
     GC_RUN_TABLE_BYTES,
     GC_STATIC_MAP,
+    GC_STATIC_MAP_BYTES,
     HEAP_BASE,
     HEAP_LIMIT,
     ITER_EXHAUST_TYPE_ADDR,
@@ -446,9 +447,12 @@ def load_dump(path: pathlib.Path) -> Dump:
 
 
 def pruned_granules(words: dict[int, int]) -> set[int]:
-    """Granules whose map bit is set, from a memory image or dump."""
+    """Granules whose map bit is set, from a memory image or dump.
+
+    Only the GC_STATIC_MAP_BYTES region is a map: the engine reads no
+    further (the run table follows it)."""
     out = set()
-    for w in range(HEAP_LIMIT >> 11):
+    for w in range(min(HEAP_LIMIT >> 11, GC_STATIC_MAP_BYTES // 16)):
         bits = words.get(GC_STATIC_MAP + 16 * w, 0)
         while bits:
             b = bits & -bits

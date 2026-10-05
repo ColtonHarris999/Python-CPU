@@ -28,6 +28,7 @@ from encoding import (  # noqa: E402
     OBK_TYPE,
     BOOT_RECORD_ADDR,
     GC_STATIC_MAP,
+    GC_STATIC_MAP_BYTES,
     HEAP_BASE,
     ITER_EXHAUST_TYPE_ADDR,
     MEMORY_ERROR_INSTANCE_ADDR,
@@ -243,13 +244,20 @@ def kept_dict_values(words: dict[int, int], dyn_base: int, dict_addr: int,
 def prune_map(words: dict[int, int], dyn_base: int,
               extra_roots: list[tuple[int, int]] = (),
               frozen_type_dicts: bool = False) -> dict[int, int]:
-    """{map word address: 128-bit word} for the pruned static objects."""
+    """{map word address: 128-bit word} for the pruned static objects.
+
+    The map has one bit per granule below GC_STATIC_MAP_BYTES * 8 * 16
+    (1 MB). A static object above that is not pruned: the engine traces it.
+    Writing on would put map words in the run table, which the sweep
+    overwrites."""
     kind_of, keep = kept_objects(words, dyn_base, extra_roots, frozen_type_dicts)
     out: dict[int, int] = {}
     for a in kind_of:
         if a in keep:
             continue
         g = a >> 4
+        if 16 * (g >> 7) >= GC_STATIC_MAP_BYTES:
+            continue
         w = GC_STATIC_MAP + 16 * (g >> 7)
         out[w] = out.get(w, 0) | (1 << (g & 127))
     return out

@@ -29,7 +29,8 @@
 // to PYCORE_GC_MARK_STACK when it is full and refill when it is empty.
 // Free runs: the first 1024 listed runs stay on-chip (G13 P4); overflow
 // headers { FREE_MAGIC, size, next, base } live in PYCORE_GC_RUN_TABLE
-// after that window. Leftover headers may still sit in-place (base=0).
+// after that window; once the table is full they go in place, in the run's
+// first granule. Leftover headers may still sit in-place (base=0).
 module pycore_gc #(
     parameter int MSTACK_ONCHIP = 256,
     parameter int SPILL_BATCH   = 32,
@@ -1481,6 +1482,13 @@ module pycore_gc #(
                         (m_clr_r < 32'(SHADOW_WORDS))) begin
                         bm_q[m_clr_r[BM_AW-1:0]] <= shadow_q[m_clr_r[7:0]];
                         m_clr_r <= m_clr_r + 32'd1;
+                    end else if ((m_clr_r < ((dyn_base_r + 32'd2047) >> 11)) &&
+                                 (m_clr_r >= (PYCORE_GC_STATIC_MAP_BYTES >> 4))) begin
+                        // Past the map region (static image above 1 MB):
+                        // nothing is premarked, those objects are traced.
+                        // Reading on would return run-table headers.
+                        bm_q[m_clr_r[BM_AW-1:0]] <= '0;
+                        m_clr_r <= m_clr_r + 32'd1;
                     end else if (m_clr_r < ((dyn_base_r + 32'd2047) >> 11)) begin
                         m_want_r <= 1'b1;
                         m_we_r   <= 1'b0;
@@ -1713,9 +1721,14 @@ module pycore_gc #(
                 M_SW_SCAN: begin
                     logic        emit;
                     logic [31:0] run_end;
+                    logic [31:0] slot;
+                    logic        tbl_full;
                     logic        last_word;
                     emit = 1'b0;
                     run_end = '0;
+                    tbl_full = (sw_tbl_r + 32'd16 >
+                                PYCORE_GC_RUN_TABLE + PYCORE_GC_RUN_TABLE_BYTES);
+                    slot = tbl_full ? (sw_run_start_r << 4) : sw_tbl_r;
                     last_word = (sw_w == ((sw_g_end_r - 32'd1) >> 7));
                     if (sw_g_r >= sw_g_end_r) begin
                         m_st_r <= M_SW_LAST;
@@ -1748,10 +1761,6 @@ module pycore_gc #(
                             end else if ((poison_en_r || (run_onchip_n_r == 11'(RUN_ONCHIP)))
                                          && (swq_n_r == 3'd4)) begin
                                 // Poison / overflow-table write queue full.
-                            end else if ((run_onchip_n_r == 11'(RUN_ONCHIP)) &&
-                                         (sw_tbl_r + 32'd16 >
-                                          PYCORE_GC_RUN_TABLE + PYCORE_GC_RUN_TABLE_BYTES)) begin
-                                overflow_r <= 1'b1;
                             end else if (run_onchip_n_r != 11'(RUN_ONCHIP)) begin
                                 if (run_onchip_n_r == 11'd0)
                                     run_head_r <= PYCORE_GC_RUN_TABLE;
@@ -1784,24 +1793,30 @@ module pycore_gc #(
                                 sw_free_r <= 1'b0;
                                 sw_g_r    <= (run_end >= sw_g_end_r) ? sw_g_end_r : run_end;
                             end else begin
+                                // Overflow list. Once the sequential table is
+                                // full the header goes in place, in the run's
+                                // first granule (the allocator reads either
+                                // form). Aborting here instead left the rest
+                                // of the bitmap marked and raised MemoryError
+                                // with most of the heap free.
                                 if (sw_pend_r) begin
                                     sw_enq = 1'b1;
                                     swq_base_r[swq_n_r[1:0]] <= sw_pend_base_r;
                                     swq_size_r[swq_n_r[1:0]] <= sw_pend_size_r;
-                                    swq_next_r[swq_n_r[1:0]] <= sw_tbl_r;
+                                    swq_next_r[swq_n_r[1:0]] <= slot;
                                     swq_slot_r[swq_n_r[1:0]] <= sw_pend_slot_r;
                                     swq_hdr_r[swq_n_r[1:0]]  <= 1'b1;
                                     swq_n_r <= swq_n_r + 3'd1;
                                 end else if (run_head_r == 32'd0) begin
-                                    run_head_r <= sw_tbl_r;
+                                    run_head_r <= slot;
                                 end
                                 if (run_overflow_head_r == 32'd0)
-                                    run_overflow_head_r <= sw_tbl_r;
+                                    run_overflow_head_r <= slot;
                                 sw_pend_r      <= 1'b1;
                                 sw_pend_base_r <= sw_run_start_r << 4;
                                 sw_pend_size_r <= (run_end - sw_run_start_r) << 4;
-                                sw_pend_slot_r <= sw_tbl_r;
-                                sw_tbl_r       <= sw_tbl_r + 32'd16;
+                                sw_pend_slot_r <= slot;
+                                if (!tbl_full) sw_tbl_r <= sw_tbl_r + 32'd16;
                                 free_bytes_r   <= free_bytes_r + ((run_end - sw_run_start_r) << 4);
                                 runs_r         <= runs_r + 32'd1;
                                 if (((run_end - sw_run_start_r) << 4) > largest_size_r) begin
@@ -1951,6 +1966,11 @@ module pycore_gc #(
             end
 
             if (fault_r || overflow_r) begin
+                // An aborted collection leaves marks in the bitmap (and the
+                // sweep, if it had started, cleared only part of it). Clear
+                // it all before the next collection: a stale mark makes the
+                // marker skip a live object's children and free them.
+                if (phase_r != P_IDLE) bitmap_clean_r <= 1'b0;
                 if ((phase_r != P_IDLE) && (phase_r != P_FINISH) && (m_st_r != M_DONE)) begin
 `ifndef SYNTHESIS
                     if ($test$plusargs("GC_TRACE_DEC"))
