@@ -451,6 +451,55 @@ current commit.
 | P7 | mark-stack spills ≤ 5% of mark transactions | `bench_full` 256 spills / 30,164 transactions with 256 entries (1,024 with 64); 0 on `bench_churn` |
 | P8 | ≤ 0.05 run-list pops per allocation over the G8 corpus | 1.43 / 1.17 (measure / shrunk) at 10b2ba8; 0.011 on single-core seeds 0-9 with keep-run and next-fit |
 
+## Clock and timing
+
+`tools/gc_timing.sh` estimates the engine's logic depth: sv2v, every
+on-chip array shrunk to 16 entries, Yosys + ABC mapped to the SkyWater
+sky130 hd library (typical corner, no wire load). One sky130 FO4 is 80.5 ps.
+
+| Path | Delay | FO4 |
+| --- | --- | --- |
+| Worst register-to-register logic path, before the sweep-step fix | 9.02 ns | 112 |
+| Same, now (sweep: `sw_g_r` compares and adds into the run-emit write enables) | 7.23 ns | 90 |
+| Read mux of a 256 / 1,024 / 7,680-word flop array | 1.03 / 1.26 / 1.88 ns | 13 / 16 / 23 |
+
+Adding ~0.4 ns of flop overhead and ~25% for wires puts the engine at about
+9.5 ns, **roughly 100 MHz in sky130 at the typical corner** (less at the slow
+corner), for the logic alone. The arrays are the real limit:
+
+- The mark bitmap is 7,680 x 128 bits on the 16 MB map and is read
+  combinationally in up to four places in one cycle (marker test, marker
+  set, sweep scan, kept-run update before this revision). Built from flops
+  it would be about 20 mm2 of sky130. As SRAM it needs a registered read
+  port, so the marker's test-and-set becomes read-then-write (one extra cycle
+  per marked object, about 1% of a mark-bound pause) and the sweep reads the
+  next word a cycle ahead. The run table (1,024 x 64 bits, read
+  combinationally by the core's allocator through `run_peek`), the prune-map
+  copy and the mark-stack ring have the same property.
+
+### A separate clock
+
+Marking is memory-bound: the dmem port is busy 84-97% of the mark phase
+(blocking L1D/L2, one outstanding request). The part of a pause that the
+engine's own clock speeds up is small:
+
+| Benchmark | Live | Mark cycles | Port busy | Engine-only (mark + sweep) |
+| --- | --- | --- | --- | --- |
+| `bench_full` | 502 KB | 511,616 | 496,108 | 17,661 (3.4%) |
+| `bench_deep` | 320 KB | 381,349 | 321,108 | 60,596 (15.9%) |
+| `bench_wide` | 512 KB | 912,995 | 867,366 | 46,081 (5.0%) |
+| `bench_churn` | 30 KB | 23,645 | 22,356 | 1,934 (8.0%) |
+
+So the engine belongs on the memory hierarchy's clock, or a synchronous
+integer ratio of it. A faster asynchronous GC clock would save at most the
+engine-only share and pay a synchronizer on every dmem transaction (two or
+three cycles on ~20-60-cycle transactions). Its interfaces to the core are
+the dmem port, the root stream, the start/done handshake and `run_peek` (the
+core reads the on-chip run table combinationally in `S_GC_ALLOC`); a clock
+crossing would need the last moved to the core side or behind a handshake.
+For benchmarking at a clock `f` with memory latency in core cycles:
+pause ~= port-busy cycles / f_mem + engine-only cycles / f_gc.
+
 ## Testing
 
 | Tier | Command | What | When |
