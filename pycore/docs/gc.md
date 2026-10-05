@@ -467,7 +467,17 @@ FO4 is 80.5 ps.
 
 Adding ~0.4 ns of flop overhead and ~25% for wires puts the engine at about
 9.5 ns, **roughly 100 MHz in sky130 at the typical corner** (less at the slow
-corner), for the logic alone. The arrays are the real limit:
+corner), for the logic alone.
+
+On an FPGA the deep single-cycle paths cost far more. With every array at 16
+entries (bitmap, ring, run table and prune-map copy), `synth_ecp5` needs
+55,272 LUT4 and 10,186 flops, 71% of the logic of the largest ECP5 (LFE5U-85),
+and nextpnr's post-placement estimate is **11.3 MHz** (worst slack about
+-68 ns at a 50 MHz target; routing did not converge in an hour and was
+stopped). An FPGA prototype of the collector needs the sweep and marker
+paths pipelined before it is worth benchmarking at a useful clock.
+
+The arrays are the real limit:
 
 - The mark bitmap is 7,680 x 128 bits on the 16 MB map and is read
   combinationally in up to four places in one cycle (marker test, marker
