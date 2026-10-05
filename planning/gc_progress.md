@@ -2,6 +2,31 @@
 
 Status: IN PROGRESS            <!-- IN PROGRESS | DONE | BLOCKED -->
 
+## Active handoff — 2026-10-05 (GC branches merged)
+
+- One branch, `claude/gc-review-merge-7vj3d0`, holds the four GC follow-ups:
+  `gc/collector` after #139 (sweep skip, idle bitmap clear, compile suite
+  with the collector, timing record), `claude/pensive-brown-y1nikp`
+  (bounded marking: 128-slot chunked scans plus a rescan list),
+  `claude/ecstatic-ritchie-fwk33q` (gates on `hw_tests.toml`, G0 on the
+  16 MB map, nightly, G10 49/49). #141 (64-slot chunks, wide lists only) is
+  superseded by the bounded-marking branch, and #140 (the `gc_suite.py` port)
+  by the gate port.
+- `gc-wide-live-list` passes (6.7M cycles) and is in `[gc]` with no xfail
+  marker; `gc-deep-live-chain` is in `[gc-long]`. `[gc]` holds 64 programs.
+- G0 re-captured at `78860e7`. The compile-peak change there moves the boot
+  ROM, which put 36 of 372 G1 runs off the `cf929f8` baseline by a few
+  cycles (identical results; 0 differences with that change reverted).
+  `tools/gc_baseline.py` now skips the `gc` / `gc-long` areas, so a baseline
+  can be taken on a commit that has the collector.
+- `MODE=quick` on the merged tree: G0-G8 pass (G3 1200/1200, G4 300 dumps,
+  G8 50 seeds, coverage complete). Host tests 578 OK.
+- G13: P5 549,289 and P6b 25.8% still miss; with `PYCORE_L2_HIT_CYCLES = 1`
+  they are 343,209 and 24.0%. The cause is the 8-cycle L2 hit, not the map
+  size (master_plan.md, open hazards).
+- Next: decide P5/P6b (overlap mark requests, or restate the targets), then
+  `MODE=full`.
+
 ## Active handoff — 2026-10-05 (gates on hw_tests.toml, 16 MB map)
 
 - The gates no longer drive per-fixture make targets: each hardware gate is

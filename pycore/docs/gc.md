@@ -483,29 +483,34 @@ writes those slots.
 G13 targets, re-measured on the 16 MB map at CACHE_EN=1 MEM_LATENCY=4
 (`make pycore-gc-bench`; P1/P2 from G13's run of every existing single-core
 image test with `+GC_EN=1`; P8 over 50 single-core `pycore-gc-fuzz` seeds).
-The 1 MB-map value, where it differs, is in brackets. Since that measurement
-the map grew 16x (the sweep covers 7,680 bitmap words instead of 480) and
-`main` began modelling an 8-cycle L2 hit; which of the two moved P5 and P6b
-has not been isolated.
+The 1 MB-map value, where it differs, is in brackets. P3-P7 were re-measured
+after the sweep fix and bounded marking were merged (`make pycore-gc-bench`);
+P1, P2 and P8 are from the earlier full measurement.
+
+P5 and P6b miss because of the 8-cycle L2 hit (`PYCORE_L2_HIT_CYCLES`, from
+#137), not the map size: with the hit set back to 1 cycle on the same 16 MB
+map, `bench_full`'s max pause is 343,209 and `bench_churn`'s GC share 24.0%,
+both met. Marking is memory-bound (port busy 0.85-0.97 of the mark phase,
+one blocking request at a time), so every L2 hit adds directly to the pause.
 
 | ID | Target | Measured (16 MB map) | |
 | --- | --- | --- | --- |
 | P1 | no-collect tests match G0 cycles | 359 of 359 existing image tests run without a collection; 357 cycle-identical to `main`, the two release-zeroing tests within the revised bound (`heap-mark-release` 5610 vs G0 5468, zeroing 30 cycles over 2 lines; `compile-release-realloc` 781,887 vs 779,159, zeroing 5,056 over 361 lines) and identical with mutant 46. G1: all 372 single-core tests identical with `GC_EN=0` | met |
 | P2 | a collecting existing test adds only its pause (+0.5%) | no existing test collects at the default heap | — |
-| P3 | mark port utilisation ≥ 0.80 on `bench_full` | 0.970 | met |
-| P4 | sweep ≤ 4 cycles/bitmap word + 6/run | 9,430 cycles on `bench_full` (cap 4 × 7,680 + 6 × 562 = 34,092) [2,172, cap 5,292] | met |
-| P5 | max pause ≤ 400,000 cycles on `bench_full` | **560,333** [399,009] | missed |
-| P6a | GC share ≤ 2% on `img_gc_compile_loop` | 1,077,132 / 83,824,420 = 1.28% [1.92%] | met |
-| P6b | GC share ≤ 25% on `bench_churn` | **1,734,345 / 6,694,230 = 25.9%** [24.2%] | missed |
-| P7 | mark-stack spills ≤ 5% of mark transactions | `bench_full` 256 / 29,181 = 0.9%; `bench_deep` 0 / 40,331 | met |
+| P3 | mark port utilisation ≥ 0.80 on `bench_full` | 0.971 | met |
+| P4 | sweep ≤ 4 cycles/bitmap word + 6/run | 2,211 cycles on `bench_full` (cap 4 × 7,680 + 6 × 562 = 34,092; 9,430 before the sweep fix) [2,172, cap 5,292] | met |
+| P5 | max pause ≤ 400,000 cycles on `bench_full` | **549,289** (343,209 with a 1-cycle L2 hit) [399,009] | missed |
+| P6a | GC share ≤ 2% on `img_gc_compile_loop` | 1,023,427 / 83,812,730 = 1.22% [1.92%] | met |
+| P6b | GC share ≤ 25% on `bench_churn` | **1,726,595 / 6,686,740 = 25.8%** (24.0% with a 1-cycle L2 hit) [24.2%] | missed |
+| P7 | mark-stack spills ≤ 5% of mark transactions | `bench_full` 0 / 28,919; `bench_deep` 0 / 40,331 (chunked scans) | met |
 | P8 | ≤ 0.05 run-list pops per allocation over the G8 corpus | 1,493 / 102,431 = 0.0146 | met |
 
 Other counters (`bench_*`, two collections each unless noted): `bench_full`
-mark 1,050,932 cycles; `bench_deep` max pause 426,538; `bench_wide` max pause
-968,978, 31,104 spills / 79,437 mark transactions (a wide live list,
-expected to spill); `bench_churn` 47 collections, max pause 51,712.
-P5 and P6b are open (`planning/master_plan.md`, GC sizing); `MODE=full`
-fails G13 until they are met or the targets are revised for the 16 MB map.
+mark 1,051,606 cycles; `bench_deep` max pause 411,527; `bench_wide` max pause
+568,952 (968,978 before chunked scans), 0 spills / 47,967 mark transactions;
+`bench_churn` 47 collections, max pause 44,142.
+P5 and P6b are open (`planning/master_plan.md`); `MODE=full` fails G13 until
+the mark path hides L2 latency or the targets are restated for an 8-cycle L2.
 
 ## Clock and timing
 
@@ -615,9 +620,11 @@ hand, without the checks.
 | G8 | `gc_fuzz.py`, 50 seeds single-core (full: 1000 per top) | no failure; every kind and site covered |
 | G9-G16 | full only: site coverage, mutants, steady state, every memory config, P1-P8, `test-all` and warnings, review, docs/CI | see `planning/gc_plan.md` §10.2 |
 
-`make pycore-gc-baseline` regenerates G0 from a worktree of `main`
-(`tools/gc_baseline.py`: `main`'s own `hw_tests.py` under the test-hw and
-test-caching configs, plus its Verilator warnings and host steps).
+`make pycore-gc-baseline [BASELINE_REF=<commit>]` regenerates G0 from a
+worktree of that commit (`tools/gc_baseline.py`: its own `hw_tests.py` under
+the test-hw and test-caching configs, outside the `gc` and `gc-long` areas,
+with the collector off, plus its Verilator warnings and host steps). The
+current G0 is at `78860e7`.
 
 The on-device compiler is the largest Python program the hart runs, so the
 compile suite doubles as a collector test. `--plusargs` passes simulator
