@@ -10,6 +10,11 @@ on:
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
+  # TEMPORARY: workflow_dispatch needs the file on the default branch, so
+  # this runs the workflow once on its own branch before merge. Remove it.
+  push:
+    branches: [claude/ecstatic-ritchie-fwk33q]
+    paths: [.github/workflows/gc-nightly.yml]
 
 permissions:
   contents: read
