@@ -115,7 +115,7 @@ EXCORE_RTL_SRCS := \
 	pycore-rtl-unit pycore-str-accel pycore-codc pycore-gic docker-build \
 	docker-lint-file docker-run-file docker-exec-file docker-shell \
 	docker-all-tests test-host test-rtl-modules test-hw test-caching \
-	test-compiler-vs-cpython test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
+	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
 	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-fuzz pycore-gc-bench
 
 pycore-preprocess:
@@ -252,6 +252,15 @@ test-caching:
 
 test-compiler-vs-cpython:
 	$(PYTHON) pycore/tools/compile_suite.py --jobs $(TEST_JOBS)
+
+# The same suite with the collector on and a 512 KB heap: every program
+# collects 3-7 times, several of them in the middle of compile() (the
+# largest, cs_program, needs about 400 KB at its peak). The report adds the
+# live bytes compile() kept and the longest pause. pycore/docs/gc.md, Testing.
+COMPILER_GC_HEAP ?= 524288
+test-compiler-gc:
+	$(PYTHON) pycore/tools/compile_suite.py --jobs $(TEST_JOBS) --build-dir build/compile_suite_gc \
+		--plusargs "+GC_EN=1 +HEAP_DYN_BYTES=$(COMPILER_GC_HEAP)"
 
 test-all:
 	$(MAKE) test-host test-rtl-modules

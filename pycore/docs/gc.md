@@ -457,6 +457,7 @@ current commit.
 | --- | --- | --- | --- |
 | PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (61 programs, each under ~1M cycles) | every PR (CI `gc` area job) |
 | Long | `make test-gc-long` | the `[gc-long]` area: steady-state plateaus, allocation-site churn, benches, compile loops | nightly / on demand |
+| Compiler | `make test-compiler-gc` | the compile suite with the collector on and a 512 KB heap: 3-7 collections per program, several inside `compile()`; output must match CPython | nightly / on demand |
 | Fuzz | `make pycore-gc-fuzz SEEDS=0..49 TOP=single` | random programs checked against CPython and the oracle | nightly / on demand |
 | Acceptance | `make pycore-gc-acceptance MODE=full` | gates G0-G16 | before a collector design change |
 
