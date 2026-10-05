@@ -3767,6 +3767,10 @@ localparam logic [31:0] PYCORE_GC_RUN_TABLE_BYTES  = 32'h0003_7C00;
 localparam logic [31:0] PYCORE_GC_MARK_STACK       = 32'h00FC_0000;
 localparam logic [31:0] PYCORE_GC_MARK_STACK_BYTES = 32'h0004_0000;
 localparam logic [31:0] PYCORE_GC_MARK_STACK_ENTRIES = 32'd16384;
+// Tuples, list buffers, set tables and dict order buffers and tables are
+// scanned this many slots at a time; the rest waits on the mark stack as one
+// entry, so stack depth follows nesting, not container width.
+localparam logic [31:0] PYCORE_GC_SCAN_CHUNK       = 32'd64;
 localparam logic [31:0] PYCORE_GC_GRANULE_BYTES    = 32'd16;
 /* verilator lint_on UNUSEDPARAM */
 localparam logic [31:0] PYCORE_GC_BITMAP_WORDS     = PYCORE_HEAP_LIMIT >> 11;

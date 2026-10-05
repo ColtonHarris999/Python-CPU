@@ -654,8 +654,7 @@ gc-compile-syntaxerror-two-core = { core = "twocore", src = "gc_compile_syntaxer
 gc-bench-full = { src = "gc_bench_full", cycles = 40_000_000, plusargs = "+GC_EN=1" }
 gc-bench-deep = { src = "gc_bench_deep", cycles = 20_000_000, plusargs = "+GC_EN=1" }
 gc-bench-wide = { src = "gc_bench_wide", cycles = 40_000_000, plusargs = "+GC_EN=1" }
-# Known bug (planning/master_plan.md, GC sizing): fails, returns 2, until the
-# mark stack cannot overflow on a live list wider than 16,640 elements.
+# Returned 2 (MemoryError) before wide arrays were scanned in chunks.
 gc-wide-live-list = { src = "gc_wide_live_list", cycles = 60_000_000, plusargs = "+GC_EN=1" }
 gc-leak-check-full-heap-two-core = { core = "twocore", src = "gc_leak_check", cycles = 40_000_000, plusargs = "+GC_EN=1" }
 # Collector-resource and leak checks from review: 14M-45M cycles each, so

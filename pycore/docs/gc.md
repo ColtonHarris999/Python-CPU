@@ -39,15 +39,26 @@ Handbook*, 2nd ed.
   (`{kind[2:0], size[31:0], addr[31:0]}`, 67 bits). When a push finds it
   full, the engine spills the oldest 32 entries to the 512 KB region at
   `PYCORE_GC_MARK_STACK` (one 16 B slot each); when a pop finds it empty and
-  the memory part is non-empty, it refills 32. The memory part is sized for
-  the provable bound (§4.3 of the plan): at most 30,686 pending entries.
+  the memory part is non-empty, it refills 32. The memory part holds 16,384
+  entries (256 KB at `0xFC0000`).
+- **Chunked scans.** Tuples, list buffers, set tables, dict order buffers
+  and dict tables are scanned `PYCORE_GC_SCAN_CHUNK` (64) slots at a time.
+  Before a chunk the tracer queues a continuation, the rest of the array as
+  one unmarked entry (`K_TUPLE` for 32 B slots, `K_DTBL` for 64 B dict-table
+  slots), and the marker pushes it under the chunk's children. A container
+  therefore holds at most 65 pending entries however wide it is, and the
+  stack grows with nesting depth: overflow needs about 256 nested wide
+  containers each holding the next among its first 64 slots
+  (`img_gc_mark_overflow_recover`). An overflow still aborts the collection
+  and raises `MemoryError`; the bitmap is cleared before the next one.
 - **Why.** Maas (§V-C, §VI-B) keeps a 1,024-entry mark queue on chip and
   spills only when it is full: spilling was about 2 % of memory requests.
   Our draft (§4.5) made every push and pop a dmem transaction, which roughly
   doubles mark traffic. Depth-first marking of typical PyCore heaps stays
   shallow: a linked chain keeps one or two pending entries; only very wide
-  objects (a 16k-element list) overflow. The stack is LIFO, so spilling the
-  oldest entries is legal (marking is order-independent).
+  objects overflowed (a 16k-element list did, before chunked scans). The
+  stack is LIFO, so spilling the oldest entries is legal (marking is
+  order-independent).
 - **Expected effect.** Removes ~2 transactions per pushed object on normal
   heaps. Area: 256 × 67 bits = 17,152 bits.
 - **Measured.** At 64 entries `bench_churn` (a 200-entry live list of
@@ -91,13 +102,22 @@ Handbook*, 2nd ed.
 - **Confirmed by.** Mutant 25 (bitmap not cleared between collections) is
   killed; G4 checks the run list, not a post-sweep bitmap.
 
-### 4. Whole bitmap in on-chip SRAM (Bacon Mark Map) — evaluated
+### 4. Whole bitmap in on-chip SRAM (Bacon Mark Map) — adopted
 
-- **Decision.** Both variants are built behind the `GC_BITMAP_ONCHIP`
-  parameter: the 7,680 B bitmap either lives in dmem at
-  `PYCORE_GC_MARK_BITMAP` behind the slot cache, or in a 480 × 128-bit
-  on-chip array behind the same cache. The default is chosen by G13
-  measurement at the end of Phase 2 (plan default: dmem).
+- **Decision (2026-10-05).** The bitmap stays on chip, sized from
+  `PYCORE_HEAP_LIMIT`: 7,680 × 128 bits (120 KB) on the 16 MB map. The
+  dmem variant (`GC_BITMAP_ONCHIP` in the plan) is not built; its 8 KB slot
+  at `PYCORE_GC_MARK_BITMAP` now holds the extra roots.
+- **Why not dmem on the 16 MB map.** A 120 KB dmem bitmap does not fit the
+  512 KB GC region beside the 256 KB mark stack and the 223 KB run table,
+  and every bitmap word change would cost a writeback and a fill through
+  L1D/L2 during mark and sweep. PyCore is a simulation-first prototype
+  (`architecture.md`: FPGA use is a functional vehicle); 120 KB is about
+  27 36 Kb block RAMs, within mid-size FPGA parts.
+- **Revisit when** a synthesis target cannot spare the block RAM, or the
+  heap grows past 16 MB: then shrink the bitmap with the heap limit, or
+  put it in dmem behind the slot cache (decision 2), which the engine
+  already uses for every access.
 - **Why.** On chip, a mark costs one cycle and never pollutes L1D/L2; in
   dmem it costs port transactions on every word change but no dedicated
   storage.
@@ -353,7 +373,7 @@ Child slots are those in the plan's §4.1 table, as implemented in
 | Kind | Extent | Children |
 | --- | --- | --- |
 | LONG_STR | `16 + pad16(nbytes)` | none |
-| TUPLE | `size * 32`; size 0 allocates nothing | elements |
+| TUPLE | `size * 32`; size 0 allocates nothing | elements, 64 per chunk (decision 1) |
 | LIST | 32 B object plus `capacity * 32` buffer | elements `0 .. length-1` only |
 | DICT | 48 B object, order buffer, table | occupied slots' key and value; empty and tombstone slots skipped |
 | SET | 32 B object plus table | occupied slots |
@@ -398,13 +418,11 @@ On-chip storage (1 MB map, where the G13 numbers below were measured):
 mark bitmap 480 × 128 = 61,440 bits; run table 1,024 × 64 = 65,536 bits;
 mark stack 256 × 67 = 17,152 bits; static prune-map copy 256 × 128 =
 32,768 bits; total 176,896 bits (21.6 KB). The bitmap is sized from
-`PYCORE_HEAP_LIMIT`: on the 16 MB map it is 7,680 × 128 bits (120 KB),
-and the memory mark stack holds 16,384 entries. The mark stack overflows
-on a live list of more than 16,640 pushable elements, about 1 MB of a 15 MB
-heap, and the collection then raises `MemoryError` (`img_gc_wide_live_list`,
-in `[gc-long]`, fails until this is fixed). Both need re-sizing, and the
-stack an overflow fallback, before the collector is on by default
-(`planning/master_plan.md`, known bugs). Above the plan's
+`PYCORE_HEAP_LIMIT`: on the 16 MB map it is 7,680 × 128 bits (120 KB;
+kept on chip, decision 4), and the memory mark stack holds 16,384 entries.
+Chunked scans (decision 1) bound the stack by nesting depth, so a wide live
+list no longer overflows it (`img_gc_wide_live_list`, 18,000 tuples, in
+`[gc-long]`). Above the plan's
 16 KB guideline: the run table is what brought the `bench_full` sweep from
 7,784 to 2,172 cycles (P4), and the prune-map copy and the deeper stack
 are what bring `bench_churn` under 25% (P6b): per collection they removed
