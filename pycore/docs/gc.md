@@ -5,11 +5,10 @@ gates G0-G16 passed on the 1 MB memory map, except G9 (fixed afterwards,
 `img_gc_call_varargs`); the record is
 [`planning/gc_plan.md`](../../planning/gc_plan.md) and
 [`planning/gc_progress.md`](../../planning/gc_progress.md). On `main`'s
-16 MB map it passes the unit gate (G3) and the `gc` test area, and with it
-off every existing test is cycle-identical to `main`. It becomes the default
-after one full acceptance run on the 16 MB map; the acceptance runner
-(`tools/gc_acceptance.py`) still drives the old per-fixture make targets
-and is being ported to `hw_tests.toml`.
+16 MB map the gates run from `hw_tests.toml` (Testing, below): `MODE=quick`
+(G0-G8) and G10 (every mutant killed) pass, and with the collector off every
+existing test is cycle-identical to `main` (G1). It becomes the default
+after one `MODE=full` run on the 16 MB map.
 
 PyCore has a precise, stop-the-world, non-moving mark-and-sweep collector.
 The engine (`pycore/rtl/pycore_gc.sv`) is a core-side dmem master beside
@@ -448,7 +447,7 @@ mutator access.
 
 ## Performance
 
-On-chip storage (1 MB map, where the G13 numbers below were measured):
+On-chip storage on the 1 MB map:
 mark bitmap 480 × 128 = 61,440 bits; run table 1,024 × 64 = 65,536 bits;
 mark stack 256 × 67 = 17,152 bits; static prune-map copy 256 × 128 =
 32,768 bits; total 176,896 bits (21.6 KB). The bitmap is sized from
@@ -481,20 +480,32 @@ has written `_PYC_G["_busy"]` since the last loop; the image omits the
 cleanup descriptor for programs that name `_PYC_G`, so only `compile()`
 writes those slots.
 
-G13 targets, from measurements already recorded in this file and in
-`planning/gc_progress.md`. A blank cell has not been re-measured on the
-current commit.
+G13 targets, re-measured on the 16 MB map at CACHE_EN=1 MEM_LATENCY=4
+(`make pycore-gc-bench`; P1/P2 from G13's run of every existing single-core
+image test with `+GC_EN=1`; P8 over 50 single-core `pycore-gc-fuzz` seeds).
+The 1 MB-map value, where it differs, is in brackets. Since that measurement
+the map grew 16x (the sweep covers 7,680 bitmap words instead of 480) and
+`main` began modelling an 8-cycle L2 hit; which of the two moved P5 and P6b
+has not been isolated.
 
-| ID | Target | Measured |
-| --- | --- | --- |
-| P1 | no-collect fixtures match G0 cycles | G1 full pass at `c09384c` (cycle-identical with the collector off) |
-| P3 | mark port utilisation ≥ 0.80 on `bench_full` | line consume of PLAIN pairs, dict slots, and list/set headers |
-| P4 | sweep ≤ 4 cycles/bitmap slot + 6/run | 2172 cycles on `bench_full` (cap 5292) |
-| P5 | max pause ≤ 400000 cycles on `bench_full` | 399009 |
-| P6a | GC share ≤ 2% on `img_gc_compile_loop` | 910656 / 47506100 = 1.92% (was 1.963% before the cleanup skip and prune-map copy) |
-| P6b | GC share ≤ 25% on `bench_churn` | 1080241 / 4464246 = 0.242 (was 0.283: 256-entry stack, on-chip prune-map copy, cleanup skip) |
-| P7 | mark-stack spills ≤ 5% of mark transactions | `bench_full` 256 spills / 30,164 transactions with 256 entries (1,024 with 64); 0 on `bench_churn` |
-| P8 | ≤ 0.05 run-list pops per allocation over the G8 corpus | 1.43 / 1.17 (measure / shrunk) at 10b2ba8; 0.011 on single-core seeds 0-9 with keep-run and next-fit |
+| ID | Target | Measured (16 MB map) | |
+| --- | --- | --- | --- |
+| P1 | no-collect tests match G0 cycles | 359 of 359 existing image tests run without a collection; 357 cycle-identical to `main`, the two release-zeroing tests within the revised bound (`heap-mark-release` 5610 vs G0 5468, zeroing 30 cycles over 2 lines; `compile-release-realloc` 781,887 vs 779,159, zeroing 5,056 over 361 lines) and identical with mutant 46. G1: all 372 single-core tests identical with `GC_EN=0` | met |
+| P2 | a collecting existing test adds only its pause (+0.5%) | no existing test collects at the default heap | — |
+| P3 | mark port utilisation ≥ 0.80 on `bench_full` | 0.970 | met |
+| P4 | sweep ≤ 4 cycles/bitmap word + 6/run | 9,430 cycles on `bench_full` (cap 4 × 7,680 + 6 × 562 = 34,092) [2,172, cap 5,292] | met |
+| P5 | max pause ≤ 400,000 cycles on `bench_full` | **560,333** [399,009] | missed |
+| P6a | GC share ≤ 2% on `img_gc_compile_loop` | 1,077,132 / 83,824,420 = 1.28% [1.92%] | met |
+| P6b | GC share ≤ 25% on `bench_churn` | **1,734,345 / 6,694,230 = 25.9%** [24.2%] | missed |
+| P7 | mark-stack spills ≤ 5% of mark transactions | `bench_full` 256 / 29,181 = 0.9%; `bench_deep` 0 / 40,331 | met |
+| P8 | ≤ 0.05 run-list pops per allocation over the G8 corpus | 1,493 / 102,431 = 0.0146 | met |
+
+Other counters (`bench_*`, two collections each unless noted): `bench_full`
+mark 1,050,932 cycles; `bench_deep` max pause 426,538; `bench_wide` max pause
+968,978, 31,104 spills / 79,437 mark transactions (a wide live list,
+expected to spill); `bench_churn` 47 collections, max pause 51,712.
+P5 and P6b are open (`planning/master_plan.md`, GC sizing); `MODE=full`
+fails G13 until they are met or the targets are revised for the 16 MB map.
 
 ## Clock and timing
 
@@ -561,16 +572,52 @@ pause ~= port-busy cycles / f_mem + engine-only cycles / f_gc.
 
 | Tier | Command | What | When |
 | --- | --- | --- | --- |
-| PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (62 programs) | every PR (CI `gc` area job) |
-| Long | `make test-gc-long` | the `[gc-long]` area: steady-state plateaus, allocation-site churn, benches, compile loops | nightly / on demand |
+| PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (64 programs) | every PR (CI `gc` area job) |
+| Long | `make test-gc-long` | the `[gc-long]` area: steady-state plateaus, allocation-site churn, benches, compile loops | nightly (`.github/workflows/gc-nightly.yml`) / on demand |
 | Compiler | `make test-compiler-gc` | the compile suite with the collector on and a 512 KB heap: 3-7 collections per program, several inside `compile()`; output must match CPython | nightly / on demand |
-| Fuzz | `make pycore-gc-fuzz SEEDS=0..49 TOP=single` | random programs checked against CPython and the oracle | nightly / on demand |
-| Acceptance | `make pycore-gc-acceptance MODE=full` | gates G0-G16 | before a collector design change |
+| Fuzz | `make pycore-gc-fuzz SEEDS=0..49 TOP=single` | random programs checked against CPython and the oracle | nightly, both tops / on demand |
+| Acceptance | `make pycore-gc-acceptance MODE=quick` | gates G0-G8 | before merging a collector change |
+| Acceptance | `make pycore-gc-acceptance MODE=full` | gates G0-G16 | before a collector design change or turning it on by default |
+| Mutants | `make pycore-gc-mutants [MUTANTS=1,5]` | the quick gates against each of the 49 mutants (G10) | after a change to the gates or the RTL they cover |
 
 A new PR-tier program must stay under 2M cycles at the default config;
 anything longer goes in `[gc-long]`. The exception is `gc-wide-live-list`
 (6.7M cycles, almost all of it building a list wider than the mark stack),
-kept per PR because it guards the bounded-marking rules.
+kept per PR because it guards the bounded-marking rules. A known bug is
+marked `xfail = "<why>"` in `hw_tests.toml`: the run must fail, and the
+suite fails if it passes, so the marker comes off with the fix.
+
+The steady-state programs (`img_gc_steady_*`) check themselves, like
+`img_gc_leak_check`: live bytes from `_bi_gc_collect()` after a warm-up and
+again at the end; any growth returns minus the growth instead of the
+checksum.
+
+### Gates
+
+`tools/gc_acceptance.py` runs the gates in order and writes
+`build/gc_acceptance/status.json` and `report.md`; `tools/gc_gates.py` holds
+them. A gate that runs hardware tests takes its test set and plusargs from a
+`[gate.*]` table at the end of `pycore/programs/hw_tests.toml` and runs it
+through `hw_tests.py`, one log per run under
+`build/gc_acceptance/runs/<gate>/<test>/` (dumps beside it).
+`python3.14 pycore/tools/hw_tests.py --gate G4 [--mode full]` runs one set by
+hand, without the checks.
+
+| Gate | Runs | Passes when |
+| --- | --- | --- |
+| G0 | — | `pycore/tests/data/gc_baseline_cycles.tsv` covers every test and config `main` ran at its commit |
+| G1 | baseline tests, `+GC_EN=0` (quick: single-core, default config; full: every test-hw and test-caching config) | every result and cycle count equals G0 |
+| G2 | `pycore/tests/test_gc_model.py` | the oracle agrees with Python reachability |
+| G3 | `make pycore-gc` | 200 seeds × 6 configs exact |
+| G4 | `[gc]` + `gc-mutant-*` (full: + `[gc-long]`, CACHE_EN 0 and 1, and every existing image test with `+GC_AT_EXIT=1`), `+GC_DUMP_EACH` | every dump equals `gc_model.py` |
+| G5, G6 | the shadow self-test; every GC log so far | the self-test fires; no `[GC-SHADOW]` or `[GC-INV]` |
+| G7 | as G4, `+GC_EVERY_N_RUNS=1` in a 2.5×-peak heap (full: also `+GC_AT_BOUNDARY_EVERY=K` and poison) | goldens hold, dumps exact |
+| G8 | `gc_fuzz.py`, 50 seeds single-core (full: 1000 per top) | no failure; every kind and site covered |
+| G9-G16 | full only: site coverage, mutants, steady state, every memory config, P1-P8, `test-all` and warnings, review, docs/CI | see `planning/gc_plan.md` §10.2 |
+
+`make pycore-gc-baseline` regenerates G0 from a worktree of `main`
+(`tools/gc_baseline.py`: `main`'s own `hw_tests.py` under the test-hw and
+test-caching configs, plus its Verilator warnings and host steps).
 
 The on-device compiler is the largest Python program the hart runs, so the
 compile suite doubles as a collector test. `--plusargs` passes simulator
@@ -592,7 +639,8 @@ smallest heap a file compiles in.
 
 ## Debugging
 
-Plusargs the gates use:
+Plusargs the gates use (give any of them to a test with
+`hw_tests.py --plusargs`, e.g. `--plusargs "+GC_LOG=1"`):
 
 | Plusarg | Effect |
 | --- | --- |
@@ -607,7 +655,7 @@ Plusargs the gates use:
 | `+GC_EVERY_N_RUNS=1` | collect when a run cannot satisfy the allocation (G7 mode a) |
 | `+GC_AT_BOUNDARY_EVERY=K` | collect every K instructions (G7 mode b, G8 measure) |
 | `+HEAP_DYN_BYTES=N` | shrink the dynamic heap |
-| `+GC_MUTANT=n` | enable mutant n (`tools/gc_mutants.py`); 0 is inert |
+| `+GC_MUTANT=n` | enable mutant n (`make pycore-gc-mutants`); 0 is inert |
 | `+MAX_CYCLES_SCALE=k` | raise the cycle cap for a run that collects |
 
 `[GC-SHADOW]` is the shadow-heap checker (G5). `[GC-INV]` is an in-RTL

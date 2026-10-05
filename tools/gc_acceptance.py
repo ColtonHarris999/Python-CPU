@@ -1,9 +1,15 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """GC acceptance runner (planning/gc_plan.md §10.3).
 
 `make pycore-gc-acceptance MODE=quick|full` runs gates G0..G16 in order and
 writes `build/gc_acceptance/status.json`, one log per gate
 (`build/gc_acceptance/G<n>.log`) and `build/gc_acceptance/report.md`.
+MODE=quick runs G0-G8; MODE=full runs every gate.
+
+The gates that run hardware tests take their test sets and plusargs from the
+`[gate.*]` tables of pycore/programs/hw_tests.toml and run them through
+pycore/tools/hw_tests.py; each run logs to
+`build/gc_acceptance/runs/<gate>/<test>/` (tools/gc_gates.py).
 
 Rules (§10.3):
 - fails closed: a missing target, file, unparsable output, or crash is `fail`;
@@ -27,7 +33,6 @@ import traceback
 from dataclasses import dataclass, field
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import gc_suite  # noqa: E402
 import gc_gates  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -82,7 +87,7 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     # G5/G6 scan every log under runs/; leftover G7_b INV logs from a killed
     # MODE=full made MODE=quick G6 fail (f326e22 for-iter wild_ptr).
-    for sub in ("runs", "dumps"):
+    for sub in ("runs", "G8"):
         p = OUT / sub
         if p.is_dir():
             subprocess.run(["rm", "-rf", str(p)], check=True)
@@ -146,7 +151,7 @@ def main() -> int:
             return 2
     status["finished"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     flush()
-    lines = [f"# GC acceptance report\n", f"- mode: {mode}", f"- head: {head}",
+    lines = ["# GC acceptance report\n", f"- mode: {mode}", f"- head: {head}",
              f"- dirty: {status['dirty']}", f"- started: {started}",
              f"- finished: {status['finished']}\n", "| Gate | Status | Summary |", "| --- | --- | --- |"]
     for gate in GATES:
