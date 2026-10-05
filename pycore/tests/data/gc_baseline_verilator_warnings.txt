@@ -1,6 +1,7 @@
-# Verilator warnings of both shared simulator builds at cf929f843691203053206b98d8f2f2671bd84f25
+# Verilator warnings of both shared simulator builds at 78860e78f9a045ea5af0bb1bf42b58a62f78f1a7
 # code<TAB>file<TAB>message (line numbers dropped)
 BLKSEQ	pycore/rtl/pycore_regfile.sv	Blocking assignment '=' in sequential logic process
+BLKSEQ	pycore/tb/gc_shadow_check.sv	Blocking assignment '=' in sequential logic process
 BLKSEQ	pycore/tb/tb_container.sv	Blocking assignment '=' in sequential logic process
 CMPCONST	pycore/rtl/pycore_cont_object.svh	Comparison is constant due to limited range
 CMPCONST	pycore/rtl/pycore_cont_str.svh	Comparison is constant due to limited range
@@ -73,16 +74,12 @@ UNUSEDPARAM	pycore/rtl/pycore_core.sv	Parameter is not used: 'RF_RESERVE'
 UNUSEDPARAM	pycore/rtl/pycore_core.sv	Parameter is not used: 'STACK_BASE'
 UNUSEDPARAM	pycore/rtl/pycore_core.sv	Parameter is not used: 'STACK_TOP_MAX'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_BOOT_RECORD_BYTES'
-UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_CODE_NFIELDS'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_CODE_RAM_BLOCK_COUNT'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_DMEM_WSTRB_WIDTH'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_FTB_FRAMES'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_IMEM_WSTRB_WIDTH'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_LATIN1_SPACE'
-UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_OBJ_BUILTIN_BYTES'
-UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_OBJ_BYTEARRAY_BYTES'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_OBJ_HDR_BYTES'
-UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_OBJ_TYPE_BYTES'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_RAM_BEATS'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_RAM_T_FIRST'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_STRACC_FLAG_INTERNED'
@@ -95,12 +92,10 @@ UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_CACHE_LOAD_ATT
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_CACHE_STORE_ATTR'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_CACHE_UNPACK_SEQUENCE'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_MUT_DEQUE'
-UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_OBK_BYTEARRAY'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_OP_FORMAT_WITH_SPEC'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_PROMOTE_BOOL_TO_COMPLEX'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_PROMOTE_FLOAT_TO_COMPLEX'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_PROMOTE_INT_TO_COMPLEX'
-UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_TAG_BYTES'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_TAG_FRAME_OBJECT'
 UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_TAG_PTR'
 UNUSEDPARAM	pycore/rtl/pycore_excore_system.sv	Parameter is not used: 'BLOCK_SHIFT'
@@ -137,7 +132,6 @@ UNUSEDSIGNAL	pycore/rtl/pycore_call_fsm.svh	Bits of signal are not used: 'len_ty
 UNUSEDSIGNAL	pycore/rtl/pycore_call_fsm.svh	Bits of signal are not used: 'nksz'[63:16]
 UNUSEDSIGNAL	pycore/rtl/pycore_codc.sv	Bits of signal are not used: 'shifted'[31:1]
 UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_defaults_r'[127:32]
-UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_kw_names_r'[127:32]
 UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_kw_scratch_base_r'[15:8]
 UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_kw_val_base_r'[15:8]
 UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_varkw_dict_r'[127:64]
@@ -160,7 +154,6 @@ UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'cont_unpack_middle_a
 UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'exc_empty'
 UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'exc_full'
 UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'exc_pop_prev_ptr'
-UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'exc_sp'
 UNUSEDSIGNAL	pycore/rtl/pycore_decode.sv	Bits of signal are not used: 'cmp'[4:0]
 UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'addr'[31:6]
 UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'addr'[7:0]
@@ -529,4 +522,6 @@ WIDTHTRUNC	pycore/rtl/pycore_defs.svh	Operator ASSIGN expects 8 bits on the Assi
 WIDTHTRUNC	pycore/rtl/pycore_ram.sv	Bit extraction of array[1048575:0] requires 20 bit index, not 28 bits.
 WIDTHTRUNC	pycore/rtl/pycore_ram.sv	Bit extraction of array[69631:0] requires 17 bit index, not 28 bits.
 WIDTHTRUNC	pycore/rtl/pycore_ram.sv	Operator ASSIGNW expects 28 bits on the Assign RHS, but Assign RHS's SHIFTR generates 32 bits.
+WIDTHTRUNC	pycore/tb/tb_container.sv	Logical operator COND expects 1 bit on the Conditional Test, but Conditional Test's CMETHODHARD 'exists' generates 32 bits.
+WIDTHTRUNC	pycore/tb/tb_container.sv	Logical operator LOGNOT expects 1 bit on the LHS, but LHS's CMETHODHARD 'exists' generates 32 bits.
 WIDTHTRUNC	pycore/tb/tb_container.sv	Operator VAR 'EXCORE_EN' expects 1 bits on the Initial value, but Initial value's CONST '32'h1' generates 32 bits.

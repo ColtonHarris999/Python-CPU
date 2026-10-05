@@ -44,6 +44,9 @@ AUX_FILE = DATA / "gc_baseline_aux.tsv"
 # The configurations of `make test-hw` and `make test-caching`.
 CONFIGS = [hw_tests.config("1,4")] + [hw_tests.Config(*c) for c in hw_tests.CACHING_CONFIGS]
 AUX_STEPS = ["test-host", "test-rtl-modules", "excore-cpu-test"]
+# The collector's own areas: a baseline taken on a commit that has them
+# records only the rest (G0 is the collector-off reference).
+GC_AREAS = ("gc", "gc-long")
 TSV_HEADER = ["test", "area", "core", "cache_en", "mem_latency", "index", "kind", "code",
               "value", "cycles"]
 WARN_RE = re.compile(r"^%Warning-([A-Z0-9_]+): ([^:]+):\d+:\d+: (.*)$")
@@ -120,7 +123,8 @@ def main() -> int:
         "# code<TAB>file<TAB>message (line numbers dropped)\n" + "\n".join(warnings) + "\n",
         encoding="utf-8")
 
-    runs = {"default": ["--area", "all"], "caching": ["--caching"]}
+    skip_gc = [a for area in GC_AREAS for a in ("--exclude-area", area)]
+    runs = {"default": ["--area", "all", *skip_gc], "caching": ["--caching", *skip_gc]}
     for name, sel in runs.items():
         out = logs / f"hw_{name}.out"
         if args.reuse and out.exists():
@@ -137,7 +141,7 @@ def main() -> int:
     for name in runs:
         for line in (logs / f"hw_{name}.out").read_text(encoding="utf-8").splitlines():
             m = LINE_RE.match(line)
-            if not m or m.group(3) not in tests:
+            if not m or m.group(3) not in tests or tests[m.group(3)].area in GC_AREAS:
                 continue
             t = tests[m.group(3)]
             cfg = configs[(int(m.group(5)), int(m.group(6)))]

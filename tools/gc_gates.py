@@ -253,7 +253,8 @@ def gate_G0(ctx: Context) -> Result:
         path.write_text(manifest, encoding="utf-8")
         base_tests = hw_tests.load_manifest(path)
     need = [(t.name, str(c.cache_en), str(c.latency))
-            for t in base_tests for c in hw_tests.configs_for(t, gc_baseline.CONFIGS)]
+            for t in base_tests if t.area not in gc_baseline.GC_AREAS
+            for c in hw_tests.configs_for(t, gc_baseline.CONFIGS)]
     have = {(r["test"], r["cache_en"], r["mem_latency"]) for r in rows}
     missing = [n for n in need if n not in have]
     fails = [r for r in rows if r["kind"] == "fail"]
