@@ -393,7 +393,7 @@ mutator access.
 
 ## Performance
 
-On-chip storage (1 MB map, where the G13 numbers below were measured):
+On-chip storage on the 1 MB map:
 mark bitmap 480 × 128 = 61,440 bits; run table 1,024 × 64 = 65,536 bits;
 mark stack 256 × 67 = 17,152 bits; static prune-map copy 256 × 128 =
 32,768 bits; total 176,896 bits (21.6 KB). The bitmap is sized from
@@ -427,20 +427,32 @@ has written `_PYC_G["_busy"]` since the last loop; the image omits the
 cleanup descriptor for programs that name `_PYC_G`, so only `compile()`
 writes those slots.
 
-G13 targets, from measurements already recorded in this file and in
-`planning/gc_progress.md`. A blank cell has not been re-measured on the
-current commit.
+G13 targets, re-measured on the 16 MB map at CACHE_EN=1 MEM_LATENCY=4
+(`make pycore-gc-bench`; P1/P2 from G13's run of every existing single-core
+image test with `+GC_EN=1`; P8 over 50 single-core `pycore-gc-fuzz` seeds).
+The 1 MB-map value, where it differs, is in brackets. Since that measurement
+the map grew 16x (the sweep covers 7,680 bitmap words instead of 480) and
+`main` began modelling an 8-cycle L2 hit; which of the two moved P5 and P6b
+has not been isolated.
 
-| ID | Target | Measured |
-| --- | --- | --- |
-| P1 | no-collect fixtures match G0 cycles | G1 full pass at `c09384c` (cycle-identical with the collector off) |
-| P3 | mark port utilisation ≥ 0.80 on `bench_full` | line consume of PLAIN pairs, dict slots, and list/set headers |
-| P4 | sweep ≤ 4 cycles/bitmap slot + 6/run | 2172 cycles on `bench_full` (cap 5292) |
-| P5 | max pause ≤ 400000 cycles on `bench_full` | 399009 |
-| P6a | GC share ≤ 2% on `img_gc_compile_loop` | 910656 / 47506100 = 1.92% (was 1.963% before the cleanup skip and prune-map copy) |
-| P6b | GC share ≤ 25% on `bench_churn` | 1080241 / 4464246 = 0.242 (was 0.283: 256-entry stack, on-chip prune-map copy, cleanup skip) |
-| P7 | mark-stack spills ≤ 5% of mark transactions | `bench_full` 256 spills / 30,164 transactions with 256 entries (1,024 with 64); 0 on `bench_churn` |
-| P8 | ≤ 0.05 run-list pops per allocation over the G8 corpus | 1.43 / 1.17 (measure / shrunk) at 10b2ba8; 0.011 on single-core seeds 0-9 with keep-run and next-fit |
+| ID | Target | Measured (16 MB map) | |
+| --- | --- | --- | --- |
+| P1 | no-collect tests match G0 cycles | 359 of 359 existing image tests run without a collection; 357 cycle-identical to `main`, the two release-zeroing tests within the revised bound (`heap-mark-release` 5610 vs G0 5468, zeroing 30 cycles over 2 lines; `compile-release-realloc` 781,887 vs 779,159, zeroing 5,056 over 361 lines) and identical with mutant 46. G1: all 372 single-core tests identical with `GC_EN=0` | met |
+| P2 | a collecting existing test adds only its pause (+0.5%) | no existing test collects at the default heap | — |
+| P3 | mark port utilisation ≥ 0.80 on `bench_full` | 0.970 | met |
+| P4 | sweep ≤ 4 cycles/bitmap word + 6/run | 9,430 cycles on `bench_full` (cap 4 × 7,680 + 6 × 562 = 34,092) [2,172, cap 5,292] | met |
+| P5 | max pause ≤ 400,000 cycles on `bench_full` | **560,333** [399,009] | missed |
+| P6a | GC share ≤ 2% on `img_gc_compile_loop` | 1,077,132 / 83,824,420 = 1.28% [1.92%] | met |
+| P6b | GC share ≤ 25% on `bench_churn` | **1,734,345 / 6,694,230 = 25.9%** [24.2%] | missed |
+| P7 | mark-stack spills ≤ 5% of mark transactions | `bench_full` 256 / 29,181 = 0.9%; `bench_deep` 0 / 40,331 | met |
+| P8 | ≤ 0.05 run-list pops per allocation over the G8 corpus | 1,493 / 102,431 = 0.0146 | met |
+
+Other counters (`bench_*`, two collections each unless noted): `bench_full`
+mark 1,050,932 cycles; `bench_deep` max pause 426,538; `bench_wide` max pause
+968,978, 31,104 spills / 79,437 mark transactions (a wide live list,
+expected to spill); `bench_churn` 47 collections, max pause 51,712.
+P5 and P6b are open (`planning/master_plan.md`, GC sizing); `MODE=full`
+fails G13 until they are met or the targets are revised for the 16 MB map.
 
 ## Testing
 
