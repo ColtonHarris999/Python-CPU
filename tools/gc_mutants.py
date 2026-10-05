@@ -1,16 +1,24 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """G10 mutation testing (planning/gc_plan.md §10.2 G10).
 
 Every mutant is compiled into the RTL and selected with `+GC_MUTANT=<n>`
 (`+MUTANT=<n>` on the engine unit testbench). For each mutant this runs the
 quick gate subset (§10.3) in a fixed order and records the first gate that
 fails, i.e. killed the mutant. G1 runs the collector off, so it goes last:
-it only matters if every collector-on gate let the mutant through.
+it only matters if every collector-on gate let the mutant through. The
+hardware gates run their quick sets from pycore/programs/hw_tests.toml
+(`[gate.*]`: the [gc] area plus every gc-mutant-* fixture) with
+`+GC_MUTANT=<n>` added.
+
+Before any mutant, the same gates run once with no mutant: a kill only means
+something if the unmutated RTL passes them.
 
     python3.14 tools/gc_mutants.py [--only 1,5,20] [--jobs N]
+    make pycore-gc-mutants [MUTANTS=1,5,20]
 
-Writes <out>/results.tsv and prints
-`G10 mutants=<n> killed=<k> survived=[...] pending=[...]`.
+Writes <out>/results.tsv (default build/gc_mutants/) and prints
+`G10 mutants=<n> killed=<k> survived=[...] pending=[...]`. A survivor means
+the suite is too weak: add an img_gc_mutant_<n> fixture that it fails.
 """
 
 from __future__ import annotations
@@ -41,6 +49,7 @@ def run_mutant(n: int, out: pathlib.Path, jobs: int, head: str) -> tuple[str, st
     subprocess.run(["rm", "-rf", str(ctx.out)])
     ctx.out.mkdir(parents=True, exist_ok=True)
     for g in gates_available():
+        print(f"[gc_mutants] mutant {n}: {g}", flush=True)
         res = getattr(gc_gates, f"gate_{g}")(ctx)
         (ctx.out / f"{g}.log").write_text(
             f"{res.status}: {res.summary}\n" + "\n".join(res.lines) + "\n", encoding="utf-8")

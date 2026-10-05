@@ -1,0 +1,2220 @@
+# G0 baseline at cf929f843691203053206b98d8f2f2671bd84f25; tools/gc_baseline.py (16 MB memory map)
+test	area	core	cache_en	mem_latency	index	kind	code	value	cycles
+bitwise-calls	alu	single	1	4	0	return	1	2d	7018
+bitwise-calls	alu	single	1	30	0	return	1	2d	8708
+bitwise-calls	alu	single	0	1	0	return	1	2d	4011
+bitwise-calls	alu	single	0	4	0	return	1	2d	6048
+bitwise-calls	alu	single	0	30	0	return	1	2d	23702
+bitwise-calls-two-core	alu	twocore	1	4	0	return	1	2d	7018
+bitwise-calls-two-core	alu	twocore	1	30	0	return	1	2d	8708
+bitwise-calls-two-core	alu	twocore	0	1	0	return	1	2d	4011
+bitwise-calls-two-core	alu	twocore	0	4	0	return	1	2d	6048
+bitwise-calls-two-core	alu	twocore	0	30	0	return	1	2d	23702
+compare-op	alu	single	1	4	0	return	1	dfff	7005
+compare-op	alu	single	1	30	0	return	1	dfff	8617
+compare-op	alu	single	0	1	0	return	1	dfff	2533
+compare-op	alu	single	0	4	0	return	1	dfff	3691
+compare-op	alu	single	0	30	0	return	1	dfff	13727
+compare-op-type-trap	alu	single	1	4	0	trap	1		1507
+compare-op-type-trap	alu	single	1	30	0	trap	1		2001
+compare-op-type-trap	alu	single	0	1	0	trap	1		451
+compare-op-type-trap	alu	single	0	4	0	trap	1		679
+compare-op-type-trap	alu	single	0	30	0	trap	1		2655
+is-op	alu	single	1	4	0	return	1	fb	3928
+is-op	alu	single	1	30	0	return	1	fb	4890
+is-op	alu	single	0	1	0	return	1	fb	1401
+is-op	alu	single	0	4	0	return	1	fb	2022
+is-op	alu	single	0	30	0	return	1	fb	7404
+to-bool	alu	single	1	4	0	return	1	277e	3041
+to-bool	alu	single	1	30	0	return	1	277e	3847
+to-bool	alu	single	0	1	0	return	1	277e	952
+to-bool	alu	single	0	4	0	return	1	277e	1402
+to-bool	alu	single	0	30	0	return	1	277e	5302
+to-bool-containers	alu	single	1	4	0	return	1	18a92	3858
+to-bool-containers	alu	single	1	30	0	return	1	18a92	4924
+to-bool-containers	alu	single	0	1	0	return	1	18a92	1209
+to-bool-containers	alu	single	0	4	0	return	1	18a92	1809
+to-bool-containers	alu	single	0	30	0	return	1	18a92	7009
+to-bool-list-trap	alu	single	1	4	0	return	1	1	1761
+to-bool-list-trap	alu	single	1	30	0	return	1	1	2307
+to-bool-list-trap	alu	single	0	1	0	return	1	1	603
+to-bool-list-trap	alu	single	0	4	0	return	1	1	906
+to-bool-list-trap	alu	single	0	30	0	return	1	1	3532
+to-bool-none	alu	single	1	4	0	return	1	0	1740
+to-bool-none	alu	single	1	30	0	return	1	0	2286
+to-bool-none	alu	single	0	1	0	return	1	0	567
+to-bool-none	alu	single	0	4	0	return	1	0	852
+to-bool-none	alu	single	0	30	0	return	1	0	3322
+to-bool-str	alu	single	1	4	0	return	1	b	2331
+to-bool-str	alu	single	1	30	0	return	1	b	2981
+to-bool-str	alu	single	0	1	0	return	1	b	758
+to-bool-str	alu	single	0	4	0	return	1	b	1121
+to-bool-str	alu	single	0	30	0	return	1	b	4267
+to-bool-type-trap	alu	single	1	4	0	return	1	0	1740
+to-bool-type-trap	alu	single	1	30	0	return	1	0	2286
+to-bool-type-trap	alu	single	0	1	0	return	1	0	567
+to-bool-type-trap	alu	single	0	4	0	return	1	0	852
+to-bool-type-trap	alu	single	0	30	0	return	1	0	3322
+unary-invert	alu	single	1	4	0	return	1	fffffffffffffff8	1586
+unary-invert	alu	single	1	30	0	return	1	fffffffffffffff8	2080
+unary-invert	alu	single	0	1	0	return	1	fffffffffffffff8	502
+unary-invert	alu	single	0	4	0	return	1	fffffffffffffff8	748
+unary-invert	alu	single	0	30	0	return	1	fffffffffffffff8	2880
+unary-invert-float-trap	alu	single	1	4	0	trap	1		1393
+unary-invert-float-trap	alu	single	1	30	0	trap	1		1861
+unary-invert-float-trap	alu	single	0	1	0	trap	1		442
+unary-invert-float-trap	alu	single	0	4	0	trap	1		667
+unary-invert-float-trap	alu	single	0	30	0	trap	1		2617
+unary-negative	alu	single	1	4	0	return	1	7	2573
+unary-negative	alu	single	1	30	0	return	1	7	3275
+unary-negative	alu	single	0	1	0	return	1	7	876
+unary-negative	alu	single	0	4	0	return	1	7	1284
+unary-negative	alu	single	0	30	0	return	1	7	4820
+unary-not	alu	single	1	4	0	return	1	9	3012
+unary-not	alu	single	1	30	0	return	1	9	3792
+unary-not	alu	single	0	1	0	return	1	9	998
+unary-not	alu	single	0	4	0	return	1	9	1463
+unary-not	alu	single	0	30	0	return	1	9	5493
+algo-sort	builtins	single	1	4	0	return	1	152d	6812
+algo-sort	builtins	single	1	30	0	return	1	152d	8086
+algo-sort	builtins	single	0	1	0	return	1	152d	4823
+algo-sort	builtins	single	0	4	0	return	1	152d	7157
+algo-sort	builtins	single	0	30	0	return	1	152d	27385
+algo-sort-two-core	builtins	twocore	1	4	0	return	1	152d	6812
+algo-sort-two-core	builtins	twocore	1	30	0	return	1	152d	8086
+algo-sort-two-core	builtins	twocore	0	1	0	return	1	152d	4823
+algo-sort-two-core	builtins	twocore	0	4	0	return	1	152d	7157
+algo-sort-two-core	builtins	twocore	0	30	0	return	1	152d	27385
+builtin-chr	builtins	single	1	4	0	return	1	6f	3760
+builtin-chr	builtins	single	1	30	0	return	1	6f	4774
+builtin-chr	builtins	single	0	1	0	return	1	6f	1517
+builtin-chr	builtins	single	0	4	0	return	1	6f	2285
+builtin-chr	builtins	single	0	30	0	return	1	6f	8941
+builtin-chr-range-trap	builtins	single	1	4	0	trap	1		1845
+builtin-chr-range-trap	builtins	single	1	30	0	trap	1		2469
+builtin-chr-range-trap	builtins	single	0	1	0	trap	1		551
+builtin-chr-range-trap	builtins	single	0	4	0	trap	1		839
+builtin-chr-range-trap	builtins	single	0	30	0	trap	1		3335
+builtin-chr-surrogate-trap	builtins	single	1	4	0	return	1	1	2773
+builtin-chr-surrogate-trap	builtins	single	1	30	0	return	1	1	3657
+builtin-chr-surrogate-trap	builtins	single	0	1	0	return	1	1	909
+builtin-chr-surrogate-trap	builtins	single	0	4	0	return	1	1	1380
+builtin-chr-surrogate-trap	builtins	single	0	30	0	return	1	1	5462
+builtin-int	builtins	single	1	4	0	return	1	10f447	5345
+builtin-int	builtins	single	1	30	0	return	1	10f447	6723
+builtin-int	builtins	single	0	1	0	return	1	10f447	2364
+builtin-int	builtins	single	0	4	0	return	1	10f447	3585
+builtin-int	builtins	single	0	30	0	return	1	10f447	14167
+builtin-int-float	builtins	single	1	4	0	return	1	1b207	4936
+builtin-int-float	builtins	single	1	30	0	return	1	1b207	6236
+builtin-int-float	builtins	single	0	1	0	return	1	1b207	2123
+builtin-int-float	builtins	single	0	4	0	return	1	1b207	3218
+builtin-int-float	builtins	single	0	30	0	return	1	1b207	12708
+builtin-int-type-trap	builtins	single	1	4	0	trap	1		1897
+builtin-int-type-trap	builtins	single	1	30	0	trap	1		2547
+builtin-int-type-trap	builtins	single	0	1	0	trap	1		547
+builtin-int-type-trap	builtins	single	0	4	0	trap	1		835
+builtin-int-type-trap	builtins	single	0	30	0	trap	1		3331
+builtin-len-empty-range	builtins	single	1	4	0	return	1	0	2480
+builtin-len-empty-range	builtins	single	1	30	0	return	1	0	3286
+builtin-len-empty-range	builtins	single	0	1	0	return	1	0	794
+builtin-len-empty-range	builtins	single	0	4	0	return	1	0	1214
+builtin-len-empty-range	builtins	single	0	30	0	return	1	0	4854
+builtin-len-list	builtins	single	1	4	0	return	1	3	2122
+builtin-len-list	builtins	single	1	30	0	return	1	3	2824
+builtin-len-list	builtins	single	0	1	0	return	1	3	651
+builtin-len-list	builtins	single	0	4	0	return	1	3	993
+builtin-len-list	builtins	single	0	30	0	return	1	3	3957
+builtin-len-long-str	builtins	single	1	4	0	return	1	17	2134
+builtin-len-long-str	builtins	single	1	30	0	return	1	17	2836
+builtin-len-long-str	builtins	single	0	1	0	return	1	17	669
+builtin-len-long-str	builtins	single	0	4	0	return	1	17	1017
+builtin-len-long-str	builtins	single	0	30	0	return	1	17	4033
+builtin-len-obj	builtins	single	1	4	0	return	1	5	3263
+builtin-len-obj	builtins	single	1	30	0	return	1	5	4329
+builtin-len-obj	builtins	single	0	1	0	return	1	5	1069
+builtin-len-obj	builtins	single	0	4	0	return	1	5	1633
+builtin-len-obj	builtins	single	0	30	0	return	1	5	6521
+builtin-len-obj-missing	builtins	single	1	4	0	trap	15		2503
+builtin-len-obj-missing	builtins	single	1	30	0	trap	15		3361
+builtin-len-obj-missing	builtins	single	0	1	0	trap	15		729
+builtin-len-obj-missing	builtins	single	0	4	0	trap	15		1119
+builtin-len-obj-missing	builtins	single	0	30	0	trap	15		4499
+builtin-len-range	builtins	single	1	4	0	return	1	3	2486
+builtin-len-range	builtins	single	1	30	0	return	1	3	3292
+builtin-len-range	builtins	single	0	1	0	return	1	3	804
+builtin-len-range	builtins	single	0	4	0	return	1	3	1227
+builtin-len-range	builtins	single	0	30	0	return	1	3	4893
+builtin-max	builtins	single	1	4	0	return	1	7	1894
+builtin-max	builtins	single	1	30	0	return	1	7	2518
+builtin-max	builtins	single	0	1	0	return	1	7	552
+builtin-max	builtins	single	0	4	0	return	1	7	837
+builtin-max	builtins	single	0	30	0	return	1	7	3307
+builtin-max-float	builtins	single	1	4	0	return	1	1b207	4932
+builtin-max-float	builtins	single	1	30	0	return	1	1b207	6180
+builtin-max-float	builtins	single	0	1	0	return	1	1b207	2193
+builtin-max-float	builtins	single	0	4	0	return	1	1b207	3312
+builtin-max-float	builtins	single	0	30	0	return	1	1b207	13010
+builtin-ord	builtins	single	1	4	0	return	1	457	3911
+builtin-ord	builtins	single	1	30	0	return	1	457	4977
+builtin-ord	builtins	single	0	1	0	return	1	457	1627
+builtin-ord	builtins	single	0	4	0	return	1	457	2458
+builtin-ord	builtins	single	0	30	0	return	1	457	9660
+builtin-ord-len-trap	builtins	single	1	4	0	trap	1		1907
+builtin-ord-len-trap	builtins	single	1	30	0	trap	1		2557
+builtin-ord-len-trap	builtins	single	0	1	0	trap	1		561
+builtin-ord-len-trap	builtins	single	0	4	0	trap	1		855
+builtin-ord-len-trap	builtins	single	0	30	0	trap	1		3403
+builtin-ord-scan	builtins	single	1	4	0	return	1	21	5675
+builtin-ord-scan	builtins	single	1	30	0	return	1	21	6949
+builtin-ord-scan	builtins	single	0	1	0	return	1	21	3767
+builtin-ord-scan	builtins	single	0	4	0	return	1	21	5549
+builtin-ord-scan	builtins	single	0	30	0	return	1	21	20993
+builtin-ord-type-trap	builtins	single	1	4	0	trap	1		1901
+builtin-ord-type-trap	builtins	single	1	30	0	trap	1		2551
+builtin-ord-type-trap	builtins	single	0	1	0	trap	1		551
+builtin-ord-type-trap	builtins	single	0	4	0	trap	1		839
+builtin-ord-type-trap	builtins	single	0	30	0	trap	1		3335
+builtin-ord-unicode	builtins	single	1	4	0	return	1	10f447	6131
+builtin-ord-unicode	builtins	single	1	30	0	return	1	10f447	7691
+builtin-ord-unicode	builtins	single	0	1	0	return	1	10f447	2731
+builtin-ord-unicode	builtins	single	0	4	0	return	1	10f447	4135
+builtin-ord-unicode	builtins	single	0	30	0	return	1	10f447	16303
+builtin-str	builtins	single	1	4	0	return	1	10f447	5487
+builtin-str	builtins	single	1	30	0	return	1	10f447	6917
+builtin-str	builtins	single	0	1	0	return	1	10f447	2354
+builtin-str	builtins	single	0	4	0	return	1	10f447	3569
+builtin-str	builtins	single	0	30	0	return	1	10f447	14099
+builtin-str-type-trap	builtins	single	1	4	0	trap	1		1891
+builtin-str-type-trap	builtins	single	1	30	0	trap	1		2541
+builtin-str-type-trap	builtins	single	0	1	0	trap	1		537
+builtin-str-type-trap	builtins	single	0	4	0	trap	1		819
+builtin-str-type-trap	builtins	single	0	30	0	trap	1		3263
+firmware-filter-pred	builtins	twocore	1	4	0	return	1	9	10052
+firmware-filter-pred	builtins	twocore	1	30	0	return	1	9	11462
+firmware-filter-pred	builtins	twocore	0	1	0	return	1	9	4764
+firmware-filter-pred	builtins	twocore	0	4	0	return	1	9	6015
+firmware-filter-pred	builtins	twocore	0	30	0	return	1	9	17657
+firmware-isinstance	builtins	single	1	4	0	return	1	7f	11206
+firmware-isinstance	builtins	single	1	30	0	return	1	7f	13728
+firmware-isinstance	builtins	single	0	1	0	return	1	7f	6385
+firmware-isinstance	builtins	single	0	4	0	return	1	7f	9559
+firmware-isinstance	builtins	single	0	30	0	return	1	7f	37067
+firmware-iterators	builtins	twocore	1	4	0	return	1	4e	34239
+firmware-iterators	builtins	twocore	1	30	0	return	1	4e	37477
+firmware-iterators	builtins	twocore	0	1	0	return	1	4e	18244
+firmware-iterators	builtins	twocore	0	4	0	return	1	4e	21509
+firmware-iterators	builtins	twocore	0	30	0	return	1	4e	54099
+firmware-min-varargs	builtins	single	1	4	0	return	1	a	7346
+firmware-min-varargs	builtins	single	1	30	0	return	1	a	8906
+firmware-min-varargs	builtins	single	0	1	0	return	1	a	5111
+firmware-min-varargs	builtins	single	0	4	0	return	1	a	7532
+firmware-min-varargs	builtins	single	0	30	0	return	1	a	28514
+firmware-rom-subset	builtins	single	1	4	0	return	1	471	10392
+firmware-rom-subset	builtins	single	1	30	0	return	1	471	12992
+firmware-rom-subset	builtins	single	0	1	0	return	1	471	4626
+firmware-rom-subset	builtins	single	0	4	0	return	1	471	6867
+firmware-rom-subset	builtins	single	0	30	0	return	1	471	26289
+firmware-sorted-kw	builtins	twocore	1	4	0	return	1	1cc	25568
+firmware-sorted-kw	builtins	twocore	1	30	0	return	1	1cc	28166
+firmware-sorted-kw	builtins	twocore	0	1	0	return	1	1cc	16224
+firmware-sorted-kw	builtins	twocore	0	4	0	return	1	1cc	21028
+firmware-sorted-kw	builtins	twocore	0	30	0	return	1	1cc	65136
+firmware-tuple-empty	builtins	single	1	4	0	return	1	65	4052
+firmware-tuple-empty	builtins	single	1	30	0	return	1	65	5196
+firmware-tuple-empty	builtins	single	0	1	0	return	1	65	1583
+firmware-tuple-empty	builtins	single	0	4	0	return	1	65	2387
+firmware-tuple-empty	builtins	single	0	30	0	return	1	65	9355
+firmware-wave3-containers	builtins	twocore	1	4	0	return	1	15d	60352
+firmware-wave3-containers	builtins	twocore	1	30	0	return	1	15d	65706
+firmware-wave3-containers	builtins	twocore	0	1	0	return	1	15d	34977
+firmware-wave3-containers	builtins	twocore	0	4	0	return	1	15d	40929
+firmware-wave3-containers	builtins	twocore	0	30	0	return	1	15d	101833
+firmware-wave3-pow	builtins	single	1	4	0	return	1	a9	10527
+firmware-wave3-pow	builtins	single	1	30	0	return	1	a9	12919
+firmware-wave3-pow	builtins	single	0	1	0	return	1	a9	5400
+firmware-wave3-pow	builtins	single	0	4	0	return	1	a9	8025
+firmware-wave3-pow	builtins	single	0	30	0	return	1	a9	30775
+firmware-wave3-strings	builtins	single	1	4	0	return	1	6f	15961
+firmware-wave3-strings	builtins	single	1	30	0	return	1	6f	19523
+firmware-wave3-strings	builtins	single	0	1	0	return	1	6f	6932
+firmware-wave3-strings	builtins	single	0	4	0	return	1	6f	10037
+firmware-wave3-strings	builtins	single	0	30	0	return	1	6f	36947
+firmware-wave3a	builtins	single	1	4	0	return	1	1b0	22970
+firmware-wave3a	builtins	single	1	30	0	return	1	1b0	28274
+firmware-wave3a	builtins	single	0	1	0	return	1	1b0	8771
+firmware-wave3a	builtins	single	0	4	0	return	1	1b0	12890
+firmware-wave3a	builtins	single	0	30	0	return	1	1b0	48588
+fw-pow-neg-mod	builtins	single	1	4	0	return	1	2b	4160
+fw-pow-neg-mod	builtins	single	1	30	0	return	1	2b	5408
+fw-pow-neg-mod	builtins	single	0	1	0	return	1	2b	1291
+fw-pow-neg-mod	builtins	single	0	4	0	return	1	2b	1945
+fw-pow-neg-mod	builtins	single	0	30	0	return	1	2b	7613
+fw-range-zero-step	builtins	single	1	4	0	return	1	29	3898
+fw-range-zero-step	builtins	single	1	30	0	return	1	29	5094
+fw-range-zero-step	builtins	single	0	1	0	return	1	29	1297
+fw-range-zero-step	builtins	single	0	4	0	return	1	29	1957
+fw-range-zero-step	builtins	single	0	30	0	return	1	29	7677
+helper-containers	builtins	single	1	4	0	return	1	60	7517
+helper-containers	builtins	single	1	30	0	return	1	60	9571
+helper-containers	builtins	single	0	1	0	return	1	60	3020
+helper-containers	builtins	single	0	4	0	return	1	60	4583
+helper-containers	builtins	single	0	30	0	return	1	60	18129
+helper-containers-two-core	builtins	twocore	1	4	0	return	1	60	7517
+helper-containers-two-core	builtins	twocore	1	30	0	return	1	60	9571
+helper-containers-two-core	builtins	twocore	0	1	0	return	1	60	3020
+helper-containers-two-core	builtins	twocore	0	4	0	return	1	60	4583
+helper-containers-two-core	builtins	twocore	0	30	0	return	1	60	18129
+print-basic	builtins	twocore	1	4	0	return	1	0	21276
+print-basic	builtins	twocore	1	30	0	return	1	0	22868
+print-basic	builtins	twocore	0	1	0	return	1	0	11320
+print-basic	builtins	twocore	0	4	0	return	1	0	13502
+print-basic	builtins	twocore	0	30	0	return	1	0	33526
+print-bools	builtins	twocore	1	4	0	return	1	0	11049
+print-bools	builtins	twocore	1	30	0	return	1	0	12547
+print-bools	builtins	twocore	0	1	0	return	1	0	5390
+print-bools	builtins	twocore	0	4	0	return	1	0	6492
+print-bools	builtins	twocore	0	30	0	return	1	0	16436
+print-empty	builtins	twocore	1	4	0	return	1	0	5512
+print-empty	builtins	twocore	1	30	0	return	1	0	6796
+print-empty	builtins	twocore	0	1	0	return	1	0	2004
+print-empty	builtins	twocore	0	4	0	return	1	0	2646
+print-empty	builtins	twocore	0	30	0	return	1	0	8230
+print-end-only	builtins	twocore	1	4	0	return	1	0	17486
+print-end-only	builtins	twocore	1	30	0	return	1	0	19038
+print-end-only	builtins	twocore	0	1	0	return	1	0	9710
+print-end-only	builtins	twocore	0	4	0	return	1	0	11352
+print-end-only	builtins	twocore	0	30	0	return	1	0	26216
+print-many	builtins	twocore	1	4	0	return	1	0	23209
+print-many	builtins	twocore	1	30	0	return	1	0	24687
+print-many	builtins	twocore	0	1	0	return	1	0	14630
+print-many	builtins	twocore	0	4	0	return	1	0	16512
+print-many	builtins	twocore	0	30	0	return	1	0	33916
+print-neg	builtins	twocore	1	4	0	return	1	0	13119
+print-neg	builtins	twocore	1	30	0	return	1	0	14565
+print-neg	builtins	twocore	0	1	0	return	1	0	6532
+print-neg	builtins	twocore	0	4	0	return	1	0	7874
+print-neg	builtins	twocore	0	30	0	return	1	0	20218
+print-none-sep	builtins	twocore	1	4	0	return	1	0	14227
+print-none-sep	builtins	twocore	1	30	0	return	1	0	15765
+print-none-sep	builtins	twocore	0	1	0	return	1	0	7528
+print-none-sep	builtins	twocore	0	4	0	return	1	0	8890
+print-none-sep	builtins	twocore	0	30	0	return	1	0	21414
+print-sep-end	builtins	twocore	1	4	0	return	1	0	20477
+print-sep-end	builtins	twocore	1	30	0	return	1	0	22163
+print-sep-end	builtins	twocore	0	1	0	return	1	0	11190
+print-sep-end	builtins	twocore	0	4	0	return	1	0	13212
+print-sep-end	builtins	twocore	0	30	0	return	1	0	31516
+print-star	builtins	twocore	1	4	0	return	1	0	15954
+print-star	builtins	twocore	1	30	0	return	1	0	17478
+print-star	builtins	twocore	0	1	0	return	1	0	9238
+print-star	builtins	twocore	0	4	0	return	1	0	10591
+print-star	builtins	twocore	0	30	0	return	1	0	23077
+print-star-kw	builtins	twocore	1	4	0	return	1	0	16345
+print-star-kw	builtins	twocore	1	30	0	return	1	0	17983
+print-star-kw	builtins	twocore	0	1	0	return	1	0	9298
+print-star-kw	builtins	twocore	0	4	0	return	1	0	10711
+print-star-kw	builtins	twocore	0	30	0	return	1	0	23777
+print-type-trap	builtins	twocore	1	4	0	trap	1		5075
+print-type-trap	builtins	twocore	1	30	0	trap	1		6315
+print-type-trap	builtins	twocore	0	1	0	trap	1		1794
+print-type-trap	builtins	twocore	0	4	0	trap	1		2394
+print-type-trap	builtins	twocore	0	30	0	trap	1		7694
+sorted-str	builtins	twocore	1	4	0	return	1	1	15431
+sorted-str	builtins	twocore	1	30	0	return	1	1	17107
+sorted-str	builtins	twocore	0	1	0	return	1	1	9431
+sorted-str	builtins	twocore	0	4	0	return	1	1	11660
+sorted-str	builtins	twocore	0	30	0	return	1	1	33118
+bad-argc	calls	single	1	4	0	trap	6		1726
+bad-argc	calls	single	1	30	0	trap	6		2298
+bad-argc	calls	single	0	1	0	trap	6		540
+bad-argc	calls	single	0	4	0	trap	6		822
+bad-argc	calls	single	0	30	0	trap	6		3266
+bad-argc-two-core	calls	twocore	1	4	0	trap	6		1726
+bad-argc-two-core	calls	twocore	1	30	0	trap	6		2298
+bad-argc-two-core	calls	twocore	0	1	0	trap	6		540
+bad-argc-two-core	calls	twocore	0	4	0	trap	6		822
+bad-argc-two-core	calls	twocore	0	30	0	trap	6		3266
+call-chain	calls	single	1	4	0	return	1	2a	2954
+call-chain	calls	single	1	30	0	return	1	2a	3864
+call-chain	calls	single	0	1	0	return	1	2a	1033
+call-chain	calls	single	0	4	0	return	1	2a	1564
+call-chain	calls	single	0	30	0	return	1	2a	6166
+call-chain-two-core	calls	twocore	1	4	0	return	1	2a	2954
+call-chain-two-core	calls	twocore	1	30	0	return	1	2a	3864
+call-chain-two-core	calls	twocore	0	1	0	return	1	2a	1033
+call-chain-two-core	calls	twocore	0	4	0	return	1	2a	1564
+call-chain-two-core	calls	twocore	0	30	0	return	1	2a	6166
+call-function-ex	calls	single	1	4	0	return	1	141	2916
+call-function-ex	calls	single	1	30	0	return	1	141	3800
+call-function-ex	calls	single	0	1	0	return	1	141	991
+call-function-ex	calls	single	0	4	0	return	1	141	1504
+call-function-ex	calls	single	0	30	0	return	1	141	5950
+call-function-ex-kw	calls	single	1	4	0	return	1	38	4159
+call-function-ex-kw	calls	single	1	30	0	return	1	38	5381
+call-function-ex-kw	calls	single	0	1	0	return	1	38	1800
+call-function-ex-kw	calls	single	0	4	0	return	1	38	2733
+call-function-ex-kw	calls	single	0	30	0	return	1	38	10819
+call-kw	calls	single	1	4	0	return	1	28d	6050
+call-kw	calls	single	1	30	0	return	1	28d	7636
+call-kw	calls	single	0	1	0	return	1	28d	2773
+call-kw	calls	single	0	4	0	return	1	28d	4186
+call-kw	calls	single	0	30	0	return	1	28d	16432
+call-kw-unexpected	calls	single	1	4	0	trap	6		2393
+call-kw-unexpected	calls	single	1	30	0	trap	6		3199
+call-kw-unexpected	calls	single	0	1	0	trap	6		712
+call-kw-unexpected	calls	single	0	4	0	trap	6		1078
+call-kw-unexpected	calls	single	0	30	0	trap	6		4250
+container-call-spike	calls	single	1	4	0	return	1	3	3644
+container-call-spike	calls	single	1	30	0	return	1	3	4788
+container-call-spike	calls	single	0	1	0	return	1	3	1247
+container-call-spike	calls	single	0	4	0	return	1	3	1886
+container-call-spike	calls	single	0	30	0	return	1	3	7424
+deep-callgraph	calls	single	1	4	0	return	1	5a	20125
+deep-callgraph	calls	single	1	30	0	return	1	5a	24077
+deep-callgraph	calls	single	0	1	0	return	1	5a	14798
+deep-callgraph	calls	single	0	4	0	return	1	5a	22409
+deep-callgraph	calls	single	0	30	0	return	1	5a	88371
+deep-callgraph-two-core	calls	twocore	1	4	0	return	1	5a	20125
+deep-callgraph-two-core	calls	twocore	1	30	0	return	1	5a	24077
+deep-callgraph-two-core	calls	twocore	0	1	0	return	1	5a	14798
+deep-callgraph-two-core	calls	twocore	0	4	0	return	1	5a	22409
+deep-callgraph-two-core	calls	twocore	0	30	0	return	1	5a	88371
+default-arg	calls	single	1	4	0	return	1	9	2849
+default-arg	calls	single	1	30	0	return	1	9	3681
+default-arg	calls	single	0	1	0	return	1	9	1129
+default-arg	calls	single	0	4	0	return	1	9	1711
+default-arg	calls	single	0	30	0	return	1	9	6755
+default-arg-argc-trap	calls	single	1	4	0	trap	6		2113
+default-arg-argc-trap	calls	single	1	30	0	trap	6		2815
+default-arg-argc-trap	calls	single	0	1	0	trap	6		628
+default-arg-argc-trap	calls	single	0	4	0	trap	6		955
+default-arg-argc-trap	calls	single	0	30	0	trap	6		3789
+default-arg-too-many	calls	single	1	4	0	trap	6		2132
+default-arg-too-many	calls	single	1	30	0	trap	6		2834
+default-arg-too-many	calls	single	0	1	0	trap	6		655
+default-arg-too-many	calls	single	0	4	0	trap	6		991
+default-arg-too-many	calls	single	0	30	0	trap	6		3903
+default-call-ex-empty	calls	single	1	4	0	return	1	1c	4393
+default-call-ex-empty	calls	single	1	30	0	return	1	1c	5641
+default-call-ex-empty	calls	single	0	1	0	return	1	1c	1888
+default-call-ex-empty	calls	single	0	4	0	return	1	1c	2833
+default-call-ex-empty	calls	single	0	30	0	return	1	1c	11023
+default-empty-tuple	calls	single	1	4	0	return	1	8	3472
+default-empty-tuple	calls	single	1	30	0	return	1	8	4512
+default-empty-tuple	calls	single	0	1	0	return	1	8	1419
+default-empty-tuple	calls	single	0	4	0	return	1	8	2169
+default-empty-tuple	calls	single	0	30	0	return	1	8	8669
+default-false-zero	calls	single	1	4	0	return	1	12	3821
+default-false-zero	calls	single	1	30	0	return	1	12	4913
+default-false-zero	calls	single	0	1	0	return	1	12	1572
+default-false-zero	calls	single	0	4	0	return	1	12	2382
+default-false-zero	calls	single	0	30	0	return	1	12	9402
+default-kwonly-none	calls	single	1	4	0	return	1	b	3881
+default-kwonly-none	calls	single	1	30	0	return	1	b	4973
+default-kwonly-none	calls	single	0	1	0	return	1	b	1625
+default-kwonly-none	calls	single	0	4	0	return	1	b	2447
+default-kwonly-none	calls	single	0	30	0	return	1	b	9571
+default-multi-zero-argc	calls	single	1	4	0	return	1	7ed	3642
+default-multi-zero-argc	calls	single	1	30	0	return	1	7ed	4604
+default-multi-zero-argc	calls	single	0	1	0	return	1	7ed	1799
+default-multi-zero-argc	calls	single	0	4	0	return	1	7ed	2744
+default-multi-zero-argc	calls	single	0	30	0	return	1	7ed	10934
+default-nested	calls	single	1	4	0	return	1	15	3812
+default-nested	calls	single	1	30	0	return	1	15	4904
+default-nested	calls	single	0	1	0	return	1	15	1729
+default-nested	calls	single	0	4	0	return	1	15	2632
+default-nested	calls	single	0	30	0	return	1	15	10458
+default-none	calls	single	1	4	0	return	1	6e	3371
+default-none	calls	single	1	30	0	return	1	6e	4307
+default-none	calls	single	0	1	0	return	1	6e	1446
+default-none	calls	single	0	4	0	return	1	6e	2184
+default-none	calls	single	0	30	0	return	1	6e	8580
+default-partial-none	calls	single	1	4	0	return	1	19	3407
+default-partial-none	calls	single	1	30	0	return	1	19	4343
+default-partial-none	calls	single	0	1	0	return	1	19	1504
+default-partial-none	calls	single	0	4	0	return	1	19	2269
+default-partial-none	calls	single	0	30	0	return	1	19	8899
+noncallable	calls	single	1	4	0	trap	6		1333
+noncallable	calls	single	1	30	0	trap	6		1775
+noncallable	calls	single	0	1	0	trap	6		347
+noncallable	calls	single	0	4	0	trap	6		515
+noncallable	calls	single	0	30	0	trap	6		1971
+noncallable-two-core	calls	twocore	1	4	0	trap	6		1333
+noncallable-two-core	calls	twocore	1	30	0	trap	6		1775
+noncallable-two-core	calls	twocore	0	1	0	trap	6		347
+noncallable-two-core	calls	twocore	0	4	0	trap	6		515
+noncallable-two-core	calls	twocore	0	30	0	trap	6		1971
+posonly-kw-trap	calls	single	1	4	0	trap	6		2367
+posonly-kw-trap	calls	single	1	30	0	trap	6		3173
+posonly-kw-trap	calls	single	0	1	0	trap	6		674
+posonly-kw-trap	calls	single	0	4	0	trap	6		1025
+posonly-kw-trap	calls	single	0	30	0	trap	6		4067
+posonly-ok	calls	single	1	4	0	return	1	57	3622
+posonly-ok	calls	single	1	30	0	return	1	57	4636
+posonly-ok	calls	single	0	1	0	return	1	57	1605
+posonly-ok	calls	single	0	4	0	return	1	57	2433
+posonly-ok	calls	single	0	30	0	return	1	57	9609
+recursion	calls	single	1	4	0	return	1	37	26007
+recursion	calls	single	1	30	0	return	1	37	26943
+recursion	calls	single	0	1	0	return	1	37	52869
+recursion	calls	single	0	4	0	return	1	37	79395
+recursion	calls	single	0	30	0	return	1	37	309287
+recursion-two-core	calls	twocore	1	4	0	return	1	37	26007
+recursion-two-core	calls	twocore	1	30	0	return	1	37	26943
+recursion-two-core	calls	twocore	0	1	0	return	1	37	52869
+recursion-two-core	calls	twocore	0	4	0	return	1	37	79395
+recursion-two-core	calls	twocore	0	30	0	return	1	37	309287
+smoke	calls	single	1	4	0	return	1	2a	1254
+smoke	calls	single	1	30	0	return	1	2a	1670
+smoke	calls	single	0	1	0	return	1	2a	400
+smoke	calls	single	0	4	0	return	1	2a	601
+smoke	calls	single	0	30	0	return	1	2a	2343
+smoke-two-core	calls	twocore	1	4	0	return	1	2a	1254
+smoke-two-core	calls	twocore	1	30	0	return	1	2a	1670
+smoke-two-core	calls	twocore	0	1	0	return	1	2a	400
+smoke-two-core	calls	twocore	0	4	0	return	1	2a	601
+smoke-two-core	calls	twocore	0	30	0	return	1	2a	2343
+varargs-basic	calls	single	1	4	0	return	1	3	2995
+varargs-basic	calls	single	1	30	0	return	1	3	3957
+varargs-basic	calls	single	0	1	0	return	1	3	994
+varargs-basic	calls	single	0	4	0	return	1	3	1510
+varargs-basic	calls	single	0	30	0	return	1	3	5982
+varargs-call-ex	calls	single	1	4	0	return	1	2	2947
+varargs-call-ex	calls	single	1	30	0	return	1	2	3909
+varargs-call-ex	calls	single	0	1	0	return	1	2	995
+varargs-call-ex	calls	single	0	4	0	return	1	2	1511
+varargs-call-ex	calls	single	0	30	0	return	1	2	5983
+varargs-empty	calls	single	1	4	0	return	1	0	2844
+varargs-empty	calls	single	1	30	0	return	1	0	3754
+varargs-empty	calls	single	0	1	0	return	1	0	934
+varargs-empty	calls	single	0	4	0	return	1	0	1423
+varargs-empty	calls	single	0	30	0	return	1	0	5661
+varargs-ex-kw	calls	single	1	4	0	return	1	8fe	4305
+varargs-ex-kw	calls	single	1	30	0	return	1	8fe	5657
+varargs-ex-kw	calls	single	0	1	0	return	1	8fe	1444
+varargs-ex-kw	calls	single	0	4	0	return	1	8fe	2194
+varargs-ex-kw	calls	single	0	30	0	return	1	8fe	8694
+varargs-kwonly	calls	single	1	4	0	return	1	c	3512
+varargs-kwonly	calls	single	1	30	0	return	1	c	4630
+varargs-kwonly	calls	single	0	1	0	return	1	c	1133
+varargs-kwonly	calls	single	0	4	0	return	1	c	1715
+varargs-kwonly	calls	single	0	30	0	return	1	c	6759
+varargs-kwonly2	calls	single	1	4	0	return	1	900	3826
+varargs-kwonly2	calls	single	1	30	0	return	1	900	4996
+varargs-kwonly2	calls	single	0	1	0	return	1	900	1303
+varargs-kwonly2	calls	single	0	4	0	return	1	900	1969
+varargs-kwonly2	calls	single	0	30	0	return	1	900	7741
+varargs-kwonly2-partial	calls	single	1	4	0	return	1	8fe	4051
+varargs-kwonly2-partial	calls	single	1	30	0	return	1	8fe	5325
+varargs-kwonly2-partial	calls	single	0	1	0	return	1	8fe	1308
+varargs-kwonly2-partial	calls	single	0	4	0	return	1	8fe	1983
+varargs-kwonly2-partial	calls	single	0	30	0	return	1	8fe	7833
+varargs-pos-defaults	calls	single	1	4	0	return	1	1f	4027
+varargs-pos-defaults	calls	single	1	30	0	return	1	1f	5145
+varargs-pos-defaults	calls	single	0	1	0	return	1	1f	1979
+varargs-pos-defaults	calls	single	0	4	0	return	1	1f	3026
+varargs-pos-defaults	calls	single	0	30	0	return	1	1f	12100
+varkw-and-varargs	calls	single	1	4	0	return	1	82	5439
+varkw-and-varargs	calls	single	1	30	0	return	1	82	6921
+varkw-and-varargs	calls	single	0	1	0	return	1	82	2676
+varkw-and-varargs	calls	single	0	4	0	return	1	82	4107
+varkw-and-varargs	calls	single	0	30	0	return	1	82	16509
+varkw-basic	calls	single	1	4	0	return	1	1a	4486
+varkw-basic	calls	single	1	30	0	return	1	1a	5812
+varkw-basic	calls	single	0	1	0	return	1	1a	1676
+varkw-basic	calls	single	0	4	0	return	1	1a	2567
+varkw-basic	calls	single	0	30	0	return	1	1a	10289
+varkw-call-ex	calls	single	1	4	0	return	1	b	5323
+varkw-call-ex	calls	single	1	30	0	return	1	b	6857
+varkw-call-ex	calls	single	0	1	0	return	1	b	2421
+varkw-call-ex	calls	single	0	4	0	return	1	b	3687
+varkw-call-ex	calls	single	0	30	0	return	1	b	14659
+varkw-combo	calls	single	1	4	0	return	1	65c	6064
+varkw-combo	calls	single	1	30	0	return	1	65c	7702
+varkw-combo	calls	single	0	1	0	return	1	65c	3002
+varkw-combo	calls	single	0	4	0	return	1	65c	4601
+varkw-combo	calls	single	0	30	0	return	1	65c	18459
+varkw-dup-trap	calls	single	1	4	0	trap	6		2373
+varkw-dup-trap	calls	single	1	30	0	trap	6		3179
+varkw-dup-trap	calls	single	0	1	0	trap	6		683
+varkw-dup-trap	calls	single	0	4	0	trap	6		1037
+varkw-dup-trap	calls	single	0	30	0	trap	6		4105
+varkw-empty	calls	single	1	4	0	return	1	10	4733
+varkw-empty	calls	single	1	30	0	return	1	10	6111
+varkw-empty	calls	single	0	1	0	return	1	10	2076
+varkw-empty	calls	single	0	4	0	return	1	10	3183
+varkw-empty	calls	single	0	30	0	return	1	10	12777
+varkw-kwonly	calls	single	1	4	0	return	1	10	5105
+varkw-kwonly	calls	single	1	30	0	return	1	10	6561
+varkw-kwonly	calls	single	0	1	0	return	1	10	2291
+varkw-kwonly	calls	single	0	4	0	return	1	10	3503
+varkw-kwonly	calls	single	0	30	0	return	1	10	14007
+varkw-kwonly-missing-trap	calls	single	1	4	0	trap	6		2437
+varkw-kwonly-missing-trap	calls	single	1	30	0	trap	6		3269
+varkw-kwonly-missing-trap	calls	single	0	1	0	trap	6		696
+varkw-kwonly-missing-trap	calls	single	0	4	0	trap	6		1059
+varkw-kwonly-missing-trap	calls	single	0	30	0	trap	6		4205
+varkw-many	calls	single	1	4	0	return	1	8	4500
+varkw-many	calls	single	1	30	0	return	1	8	5930
+varkw-many	calls	single	0	1	0	return	1	8	1697
+varkw-many	calls	single	0	4	0	return	1	8	2591
+varkw-many	calls	single	0	30	0	return	1	8	10339
+varkw-name-collision	calls	single	1	4	0	return	1	f	4367
+varkw-name-collision	calls	single	1	30	0	return	1	f	5667
+varkw-name-collision	calls	single	0	1	0	return	1	f	1630
+varkw-name-collision	calls	single	0	4	0	return	1	f	2494
+varkw-name-collision	calls	single	0	30	0	return	1	f	9982
+varkw-no-wipe	calls	single	1	4	0	return	1	9	4212
+varkw-no-wipe	calls	single	1	30	0	return	1	9	5460
+varkw-no-wipe	calls	single	0	1	0	return	1	9	1714
+varkw-no-wipe	calls	single	0	4	0	return	1	9	2605
+varkw-no-wipe	calls	single	0	30	0	return	1	9	10327
+varkw-only	calls	single	1	4	0	return	1	2b	3347
+varkw-only	calls	single	1	30	0	return	1	2b	4361
+varkw-only	calls	single	0	1	0	return	1	2b	1237
+varkw-only	calls	single	0	4	0	return	1	2b	1888
+varkw-only	calls	single	0	30	0	return	1	2b	7530
+varkw-posonly	calls	single	1	4	0	return	1	f4	4925
+varkw-posonly	calls	single	1	30	0	return	1	f4	6329
+varkw-posonly	calls	single	0	1	0	return	1	f4	2037
+varkw-posonly	calls	single	0	4	0	return	1	f4	3099
+varkw-posonly	calls	single	0	30	0	return	1	f4	12303
+bios-exec	compiler	single	1	4	0	return	1	3	530211
+bios-exec	compiler	single	1	30	0	return	1	3	607743
+bios-exec-two-core	compiler	twocore	1	4	0	return	1	3	530211
+bios-exec-two-core	compiler	twocore	1	30	0	return	1	3	607743
+code-emit-then-call	compiler	single	1	4	0	return	1	11	6060
+code-emit-then-call	compiler	single	1	30	0	return	1	11	7776
+code-kind-tags	compiler	single	1	4	0	return	1	b2	2959
+code-kind-tags	compiler	single	1	30	0	return	1	b2	3817
+code-kind-tags-two-core	compiler	twocore	1	4	0	return	1	b2	2959
+code-kind-tags-two-core	compiler	twocore	1	30	0	return	1	b2	3817
+code-new-badfield-trap	compiler	single	1	4	0	trap	1		3755
+code-new-badfield-trap	compiler	single	1	30	0	trap	1		4977
+code-new-call	compiler	single	1	4	0	return	1	7	4829
+code-new-call	compiler	single	1	30	0	return	1	7	6285
+code-new-call	compiler	single	0	1	0	return	1	7	1743
+code-new-call	compiler	single	0	4	0	return	1	7	2643
+code-new-call	compiler	single	0	30	0	return	1	7	10443
+code-new-call-two-core	compiler	twocore	1	4	0	return	1	7	4829
+code-new-call-two-core	compiler	twocore	1	30	0	return	1	7	6285
+codegen-t1-expr	compiler	single	1	4	0	return	1	3	384243
+codegen-t1-expr	compiler	single	1	30	0	return	1	3	445863
+codegen-t1-expr-two-core	compiler	twocore	1	4	0	return	1	3	384243
+codegen-t1-expr-two-core	compiler	twocore	1	30	0	return	1	3	445863
+compile-assert	compiler	single	1	4	0	return	1	1	467008
+compile-assert	compiler	single	1	30	0	return	1	1	536532
+compile-assert-two-core	compiler	twocore	1	4	0	return	1	1	467008
+compile-assert-two-core	compiler	twocore	1	30	0	return	1	1	536532
+compile-closure	compiler	single	1	4	0	return	1	7	1772264
+compile-closure	compiler	single	1	30	0	return	1	7	1923012
+compile-closure-two-core	compiler	twocore	1	4	0	return	1	7	1772264
+compile-closure-two-core	compiler	twocore	1	30	0	return	1	7	1923012
+compile-const-pool	compiler	single	1	4	0	return	1	7	1437699
+compile-const-pool	compiler	single	1	30	0	return	1	7	1562889
+compile-const-pool-two-core	compiler	twocore	1	4	0	return	1	7	1437699
+compile-const-pool-two-core	compiler	twocore	1	30	0	return	1	7	1562889
+compile-decorator	compiler	single	1	4	0	return	1	7	1364291
+compile-decorator	compiler	single	1	30	0	return	1	7	1488675
+compile-decorator-two-core	compiler	twocore	1	4	0	return	1	7	1364291
+compile-decorator-two-core	compiler	twocore	1	30	0	return	1	7	1488675
+compile-deep-nesting	compiler	single	1	4	0	return	1	70b2cd3a	1168741
+compile-deep-nesting	compiler	single	1	30	0	return	1	70b2cd3a	1225915
+compile-deep-nesting-two-core	compiler	twocore	1	4	0	return	1	70b2cd3a	1168741
+compile-deep-nesting-two-core	compiler	twocore	1	30	0	return	1	70b2cd3a	1225915
+compile-eval-expr	compiler	single	1	4	0	return	1	3	388691
+compile-eval-expr	compiler	single	1	30	0	return	1	3	451585
+compile-eval-expr	compiler	single	0	1	0	return	1	3	198682
+compile-eval-expr	compiler	single	0	4	0	return	1	3	306955
+compile-eval-expr	compiler	single	0	30	0	return	1	3	1245321
+compile-eval-expr-two-core	compiler	twocore	1	4	0	return	1	3	388691
+compile-eval-expr-two-core	compiler	twocore	1	30	0	return	1	3	451585
+compile-exec-roundtrip	compiler	single	1	4	0	return	1	7	4843770
+compile-exec-roundtrip	compiler	single	1	30	0	return	1	7	5109776
+compile-exec-roundtrip-two-core	compiler	twocore	1	4	0	return	1	7	4843770
+compile-exec-roundtrip-two-core	compiler	twocore	1	30	0	return	1	7	5109776
+compile-fstring	compiler	single	1	4	0	return	1	1	610522
+compile-fstring	compiler	single	1	30	0	return	1	1	687274
+compile-fstring-two-core	compiler	twocore	1	4	0	return	1	1	610522
+compile-fstring-two-core	compiler	twocore	1	30	0	return	1	1	687274
+compile-grammar-two-core	compiler	twocore	1	4	0	return	1	7	4621017
+compile-grammar-two-core	compiler	twocore	1	30	0	return	1	7	4873841
+compile-kwargs	compiler	single	1	4	0	return	1	7	3044163
+compile-kwargs	compiler	single	1	30	0	return	1	7	3253177
+compile-kwargs-two-core	compiler	twocore	1	4	0	return	1	7	3044163
+compile-kwargs-two-core	compiler	twocore	1	30	0	return	1	7	3253177
+compile-lambda	compiler	single	1	4	0	return	1	7	905822
+compile-lambda	compiler	single	1	30	0	return	1	7	1007144
+compile-lambda-two-core	compiler	twocore	1	4	0	return	1	7	905822
+compile-lambda-two-core	compiler	twocore	1	30	0	return	1	7	1007144
+compile-list-comp-two-core	compiler	twocore	1	4	0	return	1	f	2300285
+compile-list-comp-two-core	compiler	twocore	1	30	0	return	1	f	2464879
+compile-mode-trap	compiler	single	1	4	0	return	1	3	8210
+compile-mode-trap	compiler	single	1	30	0	return	1	3	10602
+compile-mode-trap-two-core	compiler	twocore	1	4	0	return	1	3	8210
+compile-mode-trap-two-core	compiler	twocore	1	30	0	return	1	3	10602
+compile-ns-inherit	compiler	single	1	4	0	return	1	7	5910
+compile-ns-inherit	compiler	single	1	30	0	return	1	7	7626
+compile-raise	compiler	single	1	4	0	return	1	7	1316559
+compile-raise	compiler	single	1	30	0	return	1	7	1436939
+compile-raise-two-core	compiler	twocore	1	4	0	return	1	7	1316559
+compile-raise-two-core	compiler	twocore	1	30	0	return	1	7	1436939
+compile-reentrant	compiler	single	1	4	0	return	1	7	480020
+compile-reentrant	compiler	single	1	30	0	return	1	7	555940
+compile-reject-closure	compiler	single	1	4	0	return	1	1	1630737
+compile-reject-closure	compiler	single	1	30	0	return	1	1	1765833
+compile-reject-closure-two-core	compiler	twocore	1	4	0	return	1	1	1630737
+compile-reject-closure-two-core	compiler	twocore	1	30	0	return	1	1	1765833
+compile-reject-import	compiler	single	1	4	0	return	1	1	83450
+compile-reject-import	compiler	single	1	30	0	return	1	1	100376
+compile-reject-import-two-core	compiler	twocore	1	4	0	return	1	1	83450
+compile-reject-import-two-core	compiler	twocore	1	30	0	return	1	1	100376
+compile-reject-locals	compiler	single	1	4	0	return	1	1	6926045
+compile-reject-locals	compiler	single	1	30	0	return	1	1	7276785
+compile-reject-locals-two-core	compiler	twocore	1	4	0	return	1	1	6926045
+compile-reject-locals-two-core	compiler	twocore	1	30	0	return	1	1	7276785
+compile-release-realloc	compiler	single	1	4	0	return	1	25	779159
+compile-release-realloc	compiler	single	1	30	0	return	1	25	888645
+compile-release-realloc-two-core	compiler	twocore	1	4	0	return	1	25	779159
+compile-release-realloc-two-core	compiler	twocore	1	30	0	return	1	25	888645
+compile-repeat	compiler	single	1	4	0	return	1	1	3106331
+compile-repeat	compiler	single	1	30	0	return	1	1	3547577
+compile-repeat-two-core	compiler	twocore	1	4	0	return	1	1	3106331
+compile-repeat-two-core	compiler	twocore	1	30	0	return	1	1	3547577
+compile-str-slice	compiler	single	1	4	0	return	1	1	541754
+compile-str-slice	compiler	single	1	30	0	return	1	1	611356
+compile-str-slice-two-core	compiler	twocore	1	4	0	return	1	1	541754
+compile-str-slice-two-core	compiler	twocore	1	30	0	return	1	1	611356
+compile-try-else	compiler	single	1	4	0	return	1	3	1485206
+compile-try-else	compiler	single	1	30	0	return	1	3	1610188
+compile-try-else-two-core	compiler	twocore	1	4	0	return	1	3	1485206
+compile-try-else-two-core	compiler	twocore	1	30	0	return	1	3	1610188
+compile-try-except	compiler	single	1	4	0	return	1	7	1154238
+compile-try-except	compiler	single	1	30	0	return	1	7	1266870
+compile-try-except	compiler	single	0	1	0	return	1	7	729932
+compile-try-except	compiler	single	0	4	0	return	1	7	1125221
+compile-try-except	compiler	single	0	30	0	return	1	7	4551059
+compile-try-except-two-core	compiler	twocore	1	4	0	return	1	7	1154238
+compile-try-except-two-core	compiler	twocore	1	30	0	return	1	7	1266870
+compile-try-finally	compiler	single	1	4	0	return	1	c	1569769
+compile-try-finally	compiler	single	1	30	0	return	1	c	1697247
+compile-try-finally-two-core	compiler	twocore	1	4	0	return	1	c	1569769
+compile-try-finally-two-core	compiler	twocore	1	30	0	return	1	c	1697247
+eval-code-expr	compiler	single	1	4	0	return	1	29	4642
+eval-code-expr	compiler	single	1	30	0	return	1	29	6046
+eval-str-direct	compiler	single	1	4	0	return	1	3	389856
+eval-str-direct	compiler	single	1	30	0	return	1	3	452958
+eval-str-direct-two-core	compiler	twocore	1	4	0	return	1	3	389856
+eval-str-direct-two-core	compiler	twocore	1	30	0	return	1	3	452958
+eval-str-long	compiler	single	1	4	0	return	1	f	704119
+eval-str-long	compiler	single	1	30	0	return	1	f	771199
+eval-str-long-two-core	compiler	twocore	1	4	0	return	1	f	704119
+eval-str-long-two-core	compiler	twocore	1	30	0	return	1	f	771199
+exec-bad-arg-trap	compiler	single	1	4	0	trap	6		3142
+exec-bad-arg-trap	compiler	single	1	30	0	trap	6		4130
+exec-code-basic	compiler	single	1	4	0	return	1	21	5355
+exec-code-basic	compiler	single	1	30	0	return	1	21	6915
+exec-code-basic	compiler	single	0	1	0	return	1	21	1931
+exec-code-basic	compiler	single	0	4	0	return	1	21	2948
+exec-code-basic	compiler	single	0	30	0	return	1	21	11762
+exec-code-globals-rw	compiler	single	1	4	0	return	1	23	5064
+exec-code-globals-rw	compiler	single	1	30	0	return	1	23	6572
+exec-code-nested	compiler	single	1	4	0	return	1	2d	6548
+exec-code-nested	compiler	single	1	30	0	return	1	2d	8342
+exec-code-returns-none	compiler	single	1	4	0	return	1	6b	4958
+exec-code-returns-none	compiler	single	1	30	0	return	1	6b	6440
+exec-globals-dict	compiler	single	1	4	0	return	1	b1	5865
+exec-globals-dict	compiler	single	1	30	0	return	1	b1	7633
+exec-globals-nested	compiler	single	1	4	0	return	1	90a	9146
+exec-globals-nested	compiler	single	1	30	0	return	1	90a	11668
+exec-globals-read	compiler	single	1	4	0	return	1	29	5391
+exec-globals-read	compiler	single	1	30	0	return	1	29	7029
+exec-globals-restore	compiler	single	1	4	0	return	1	424	7881
+exec-globals-restore	compiler	single	1	30	0	return	1	424	10169
+exec-globals-type-trap	compiler	single	1	4	0	trap	1		3896
+exec-globals-type-trap	compiler	single	1	30	0	trap	1		5118
+exec-str-direct	compiler	single	1	4	0	return	1	3	530231
+exec-str-direct	compiler	single	1	30	0	return	1	3	607269
+exec-str-direct-two-core	compiler	twocore	1	4	0	return	1	3	530231
+exec-str-direct-two-core	compiler	twocore	1	30	0	return	1	3	607269
+lexer-count	compiler	single	1	4	0	return	1	11	146860
+lexer-count	compiler	single	1	30	0	return	1	11	161550
+lexer-count	compiler	single	0	1	0	return	1	11	106993
+lexer-count	compiler	single	0	4	0	return	1	11	163360
+lexer-count	compiler	single	0	30	0	return	1	11	651874
+lexer-count-two-core	compiler	twocore	1	4	0	return	1	11	146860
+lexer-count-two-core	compiler	twocore	1	30	0	return	1	11	161550
+parser-tiny-expr	compiler	single	1	4	0	return	1	4a7b4499	175031
+parser-tiny-expr	compiler	single	1	30	0	return	1	4a7b4499	202175
+parser-tiny-expr-two-core	compiler	twocore	1	4	0	return	1	4a7b4499	175031
+parser-tiny-expr-two-core	compiler	twocore	1	30	0	return	1	4a7b4499	202175
+pyc-package-call	compiler	single	1	4	0	return	1	2a	4304
+pyc-package-call	compiler	single	1	30	0	return	1	2a	5656
+pyc-package-call-two-core	compiler	twocore	1	4	0	return	1	2a	4304
+pyc-package-call-two-core	compiler	twocore	1	30	0	return	1	2a	5656
+startup-multiprogram-two-core	compiler	twocore	1	4	0	return	1	7	5239966
+startup-multiprogram-two-core	compiler	twocore	1	30	0	return	1	7	5753030
+symtab-closure	compiler	single	1	4	0	return	1	1	765576
+symtab-closure	compiler	single	1	30	0	return	1	1	837466
+symtab-closure-two-core	compiler	twocore	1	4	0	return	1	1	765576
+symtab-closure-two-core	compiler	twocore	1	30	0	return	1	1	837466
+symtab-locals	compiler	single	1	4	0	return	1	46db7f6	898280
+symtab-locals	compiler	single	1	30	0	return	1	46db7f6	980440
+symtab-locals-two-core	compiler	twocore	1	4	0	return	1	46db7f6	898280
+symtab-locals-two-core	compiler	twocore	1	30	0	return	1	46db7f6	980440
+container-build-index	containers	single	1	4	0	return	1	63	1849
+container-build-index	containers	single	1	30	0	return	1	63	2421
+container-build-index	containers	single	0	1	0	return	1	63	653
+container-build-index	containers	single	0	4	0	return	1	63	980
+container-build-index	containers	single	0	30	0	return	1	63	3814
+container-dict-collision	containers	single	1	4	0	return	1	1e	2443
+container-dict-collision	containers	single	1	30	0	return	1	1e	3145
+container-dict-collision	containers	single	0	1	0	return	1	1e	918
+container-dict-collision	containers	single	0	4	0	return	1	1e	1380
+container-dict-collision	containers	single	0	30	0	return	1	1e	5384
+container-dict-empty	containers	single	1	4	0	return	1	2	1931
+container-dict-empty	containers	single	1	30	0	return	1	2	2529
+container-dict-empty	containers	single	0	1	0	return	1	2	701
+container-dict-empty	containers	single	0	4	0	return	1	2	1061
+container-dict-empty	containers	single	0	30	0	return	1	2	4181
+container-dict-full-insert	containers	single	1	4	0	trap	11		2261
+container-dict-full-insert	containers	single	1	30	0	trap	11		2963
+container-dict-full-insert	containers	single	0	1	0	trap	11		765
+container-dict-full-insert	containers	single	0	4	0	trap	11		1140
+container-dict-full-insert	containers	single	0	30	0	trap	11		4390
+container-dict-insert-new-key	containers	single	1	4	0	return	1	14	2156
+container-dict-insert-new-key	containers	single	1	30	0	return	1	14	2806
+container-dict-insert-new-key	containers	single	0	1	0	return	1	14	794
+container-dict-insert-new-key	containers	single	0	4	0	return	1	14	1196
+container-dict-insert-new-key	containers	single	0	30	0	return	1	14	4680
+container-dict-lookup	containers	single	1	4	0	return	1	2a	1924
+container-dict-lookup	containers	single	1	30	0	return	1	2a	2522
+container-dict-lookup	containers	single	0	1	0	return	1	2a	686
+container-dict-lookup	containers	single	0	4	0	return	1	2a	1034
+container-dict-lookup	containers	single	0	30	0	return	1	2a	4050
+container-dict-missing-key	containers	single	1	4	0	trap	7		1858
+container-dict-missing-key	containers	single	1	30	0	trap	7		2456
+container-dict-missing-key	containers	single	0	1	0	trap	7		566
+container-dict-missing-key	containers	single	0	4	0	trap	7		848
+container-dict-missing-key	containers	single	0	30	0	trap	7		3292
+container-dict-multi-pair	containers	single	1	4	0	return	1	64	3374
+container-dict-multi-pair	containers	single	1	30	0	return	1	64	4284
+container-dict-multi-pair	containers	single	0	1	0	return	1	64	1300
+container-dict-multi-pair	containers	single	0	4	0	return	1	64	1948
+container-dict-multi-pair	containers	single	0	30	0	return	1	64	7564
+container-dict-store	containers	single	1	4	0	return	1	63	2095
+container-dict-store	containers	single	1	30	0	return	1	63	2719
+container-dict-store	containers	single	0	1	0	return	1	63	783
+container-dict-store	containers	single	0	4	0	return	1	63	1176
+container-dict-store	containers	single	0	30	0	return	1	63	4582
+container-list-append-fast	containers	single	1	4	0	return	1	11	916
+container-list-append-fast	containers	single	1	30	0	return	1	11	1202
+container-list-append-fast	containers	single	0	1	0	return	1	11	308
+container-list-append-fast	containers	single	0	4	0	return	1	11	458
+container-list-append-fast	containers	single	0	30	0	return	1	11	1758
+container-list-empty	containers	single	1	4	0	return	1	1	1833
+container-list-empty	containers	single	1	30	0	return	1	1	2405
+container-list-empty	containers	single	0	1	0	return	1	1	632
+container-list-empty	containers	single	0	4	0	return	1	1	953
+container-list-empty	containers	single	0	30	0	return	1	1	3735
+container-list-extend-empty	containers	single	1	4	0	return	1	2a	735
+container-list-extend-empty	containers	single	1	30	0	return	1	2a	995
+container-list-extend-empty	containers	single	0	1	0	return	1	2a	194
+container-list-extend-empty	containers	single	0	4	0	return	1	2a	290
+container-list-extend-empty	containers	single	0	30	0	return	1	2a	1122
+container-list-extend-fast	containers	single	1	4	0	trap	10		638
+container-list-extend-fast	containers	single	1	30	0	trap	10		872
+container-list-extend-fast	containers	single	0	1	0	trap	10		129
+container-list-extend-fast	containers	single	0	4	0	trap	10		195
+container-list-extend-fast	containers	single	0	30	0	trap	10		767
+container-list-extend-fast-tuple	containers	single	1	4	0	trap	10		580
+container-list-extend-fast-tuple	containers	single	1	30	0	trap	10		788
+container-list-extend-fast-tuple	containers	single	0	1	0	trap	10		125
+container-list-extend-fast-tuple	containers	single	0	4	0	trap	10		188
+container-list-extend-fast-tuple	containers	single	0	30	0	trap	10		734
+container-list-nested	containers	single	1	4	0	return	1	7	1983
+container-list-nested	containers	single	1	30	0	return	1	7	2581
+container-list-nested	containers	single	0	1	0	return	1	7	709
+container-list-nested	containers	single	0	4	0	return	1	7	1072
+container-list-nested	containers	single	0	30	0	return	1	7	4218
+container-list-oob-read	containers	single	1	4	0	trap	7		1524
+container-list-oob-read	containers	single	1	30	0	trap	7		2018
+container-list-oob-read	containers	single	0	1	0	trap	7		477
+container-list-oob-read	containers	single	0	4	0	trap	7		717
+container-list-oob-read	containers	single	0	30	0	trap	7		2797
+container-list-oob-write	containers	single	1	4	0	trap	7		1530
+container-list-oob-write	containers	single	1	30	0	trap	7		2024
+container-list-oob-write	containers	single	0	1	0	trap	7		486
+container-list-oob-write	containers	single	0	4	0	trap	7		729
+container-list-oob-write	containers	single	0	30	0	trap	7		2835
+container-store-subscr	containers	single	1	4	0	return	1	2a	2076
+container-store-subscr	containers	single	1	30	0	return	1	2a	2700
+container-store-subscr	containers	single	0	1	0	return	1	2a	751
+container-store-subscr	containers	single	0	4	0	return	1	2a	1120
+container-store-subscr	containers	single	0	30	0	return	1	2a	4318
+container-tuple-empty	containers	single	1	4	0	return	1	9	357
+container-tuple-empty	containers	single	1	30	0	return	1	9	435
+container-tuple-empty	containers	single	0	1	0	return	1	9	129
+container-tuple-empty	containers	single	0	4	0	return	1	9	183
+container-tuple-empty	containers	single	0	30	0	return	1	9	651
+container-tuple-index	containers	single	1	4	0	return	1	28	2250
+container-tuple-index	containers	single	1	30	0	return	1	28	2900
+container-tuple-index	containers	single	0	1	0	return	1	28	787
+container-tuple-index	containers	single	0	4	0	return	1	28	1174
+container-tuple-index	containers	single	0	30	0	return	1	28	4528
+container-tuple-store-trap	containers	single	1	4	0	trap	1		1556
+container-tuple-store-trap	containers	single	1	30	0	trap	1		2050
+container-tuple-store-trap	containers	single	0	1	0	trap	1		521
+container-tuple-store-trap	containers	single	0	4	0	trap	1		773
+container-tuple-store-trap	containers	single	0	30	0	trap	1		2957
+containers	containers	single	1	4	0	return	1	8d	2989
+containers	containers	single	1	30	0	return	1	8d	3847
+containers	containers	single	0	1	0	return	1	8d	1026
+containers	containers	single	0	4	0	return	1	8d	1539
+containers	containers	single	0	30	0	return	1	8d	5985
+containers-two-core	containers	twocore	1	4	0	return	1	8d	2989
+containers-two-core	containers	twocore	1	30	0	return	1	8d	3847
+containers-two-core	containers	twocore	0	1	0	return	1	8d	1026
+containers-two-core	containers	twocore	0	4	0	return	1	8d	1539
+containers-two-core	containers	twocore	0	30	0	return	1	8d	5985
+dict-bool-int-collision	containers	single	1	4	0	return	1	14	2155
+dict-bool-int-collision	containers	single	1	30	0	return	1	14	2805
+dict-bool-int-collision	containers	single	0	1	0	return	1	14	797
+dict-bool-int-collision	containers	single	0	4	0	return	1	14	1205
+dict-bool-int-collision	containers	single	0	30	0	return	1	14	4741
+dict-contains	containers	single	1	4	0	return	1	f	3388
+dict-contains	containers	single	1	30	0	return	1	f	4298
+dict-contains	containers	single	0	1	0	return	1	f	1318
+dict-contains	containers	single	0	4	0	return	1	f	1966
+dict-contains	containers	single	0	30	0	return	1	f	7582
+dict-contains-collision	containers	single	1	4	0	return	1	7	2902
+dict-contains-collision	containers	single	1	30	0	return	1	7	3708
+dict-contains-collision	containers	single	0	1	0	return	1	7	1053
+dict-contains-collision	containers	single	0	4	0	return	1	7	1569
+dict-contains-collision	containers	single	0	30	0	return	1	7	6041
+dict-del-collision	containers	single	1	4	0	return	1	0	2215
+dict-del-collision	containers	single	1	30	0	return	1	0	2891
+dict-del-collision	containers	single	0	1	0	return	1	0	793
+dict-del-collision	containers	single	0	4	0	return	1	0	1192
+dict-del-collision	containers	single	0	30	0	return	1	0	4650
+dict-del-simple	containers	single	1	4	0	return	1	7	3310
+dict-del-simple	containers	single	1	30	0	return	1	7	4194
+dict-del-simple	containers	single	0	1	0	return	1	7	1357
+dict-del-simple	containers	single	0	4	0	return	1	7	2029
+dict-del-simple	containers	single	0	30	0	return	1	7	7853
+dict-del-then-insert	containers	single	1	4	0	return	1	50	3173
+dict-del-then-insert	containers	single	1	30	0	return	1	50	4031
+dict-del-then-insert	containers	single	0	1	0	return	1	50	1338
+dict-del-then-insert	containers	single	0	4	0	return	1	50	2037
+dict-del-then-insert	containers	single	0	30	0	return	1	50	8095
+dict-del-trap	containers	single	1	4	0	return	1	0	2221
+dict-del-trap	containers	single	1	30	0	return	1	0	2897
+dict-del-trap	containers	single	0	1	0	return	1	0	801
+dict-del-trap	containers	single	0	4	0	return	1	0	1206
+dict-del-trap	containers	single	0	30	0	return	1	0	4716
+dict-false-zero	containers	single	1	4	0	return	1	7	2260
+dict-false-zero	containers	single	1	30	0	return	1	7	2936
+dict-false-zero	containers	single	0	1	0	return	1	7	794
+dict-false-zero	containers	single	0	4	0	return	1	7	1199
+dict-false-zero	containers	single	0	30	0	return	1	7	4709
+dict-hash-neg1	containers	single	1	4	0	return	1	1e	2576
+dict-hash-neg1	containers	single	1	30	0	return	1	1e	3330
+dict-hash-neg1	containers	single	0	1	0	return	1	1e	968
+dict-hash-neg1	containers	single	0	4	0	return	1	1e	1475
+dict-hash-neg1	containers	single	0	30	0	return	1	1e	5869
+dict-large-pycore	containers	single	1	4	0	return	1	24	5542
+dict-large-pycore	containers	single	1	30	0	return	1	24	6920
+dict-large-pycore	containers	single	0	1	0	return	1	24	2223
+dict-large-pycore	containers	single	0	4	0	return	1	24	3321
+dict-large-pycore	containers	single	0	30	0	return	1	24	12837
+dict-merge	containers	twocore	1	4	0	return	1	141	18726
+dict-merge	containers	twocore	1	30	0	return	1	141	20386
+dict-merge	containers	twocore	0	1	0	return	1	141	13341
+dict-merge	containers	twocore	0	4	0	return	1	141	14136
+dict-merge	containers	twocore	0	30	0	return	1	141	23786
+dict-methods	containers	twocore	1	4	0	return	1	10	25268
+dict-methods	containers	twocore	1	30	0	return	1	10	28432
+dict-methods	containers	twocore	0	1	0	return	1	10	11654
+dict-methods	containers	twocore	0	4	0	return	1	10	14396
+dict-methods	containers	twocore	0	30	0	return	1	10	40540
+dict-mixed-ops	containers	twocore	1	4	0	return	1	84	18718
+dict-mixed-ops	containers	twocore	1	30	0	return	1	84	20496
+dict-mixed-ops	containers	twocore	0	1	0	return	1	84	12419
+dict-mixed-ops	containers	twocore	0	4	0	return	1	84	13695
+dict-mixed-ops	containers	twocore	0	30	0	return	1	84	27467
+dict-overwrite	containers	single	1	4	0	return	1	63	2093
+dict-overwrite	containers	single	1	30	0	return	1	63	2717
+dict-overwrite	containers	single	0	1	0	return	1	63	787
+dict-overwrite	containers	single	0	4	0	return	1	63	1189
+dict-overwrite	containers	single	0	30	0	return	1	63	4673
+dict-store-lookup	containers	single	1	4	0	return	1	3c	2871
+dict-store-lookup	containers	single	1	30	0	return	1	3c	3677
+dict-store-lookup	containers	single	0	1	0	return	1	3c	1115
+dict-store-lookup	containers	single	0	4	0	return	1	3c	1697
+dict-store-lookup	containers	single	0	30	0	return	1	3c	6741
+dict-str-keys	containers	single	1	4	0	return	1	10	3767
+dict-str-keys	containers	single	1	30	0	return	1	10	4755
+dict-str-keys	containers	single	0	1	0	return	1	10	1604
+dict-str-keys	containers	single	0	4	0	return	1	10	2444
+dict-str-keys	containers	single	0	30	0	return	1	10	9724
+dict-update	containers	twocore	1	4	0	return	1	144	23714
+dict-update	containers	twocore	1	30	0	return	1	144	25378
+dict-update	containers	twocore	0	1	0	return	1	144	17620
+dict-update	containers	twocore	0	4	0	return	1	144	18336
+dict-update	containers	twocore	0	30	0	return	1	144	28888
+dict-update-obj	containers	twocore	1	4	0	return	1	a23e	7337
+dict-update-obj	containers	twocore	1	30	0	return	1	a23e	9469
+dict-update-obj	containers	twocore	0	1	0	return	1	a23e	3190
+dict-update-obj	containers	twocore	0	4	0	return	1	a23e	4990
+dict-update-obj	containers	twocore	0	30	0	return	1	a23e	20590
+list-comp-basic	containers	twocore	1	4	0	return	1	a	7764
+list-comp-basic	containers	twocore	1	30	0	return	1	a	8694
+list-comp-basic	containers	twocore	0	1	0	return	1	a	4287
+list-comp-basic	containers	twocore	0	4	0	return	1	a	5071
+list-comp-basic	containers	twocore	0	30	0	return	1	a	12759
+list-comp-fast-clear	containers	twocore	1	4	0	return	1	6a	4933
+list-comp-fast-clear	containers	twocore	1	30	0	return	1	6a	5861
+list-comp-fast-clear	containers	twocore	0	1	0	return	1	6a	2269
+list-comp-fast-clear	containers	twocore	0	4	0	return	1	6a	2996
+list-comp-fast-clear	containers	twocore	0	30	0	return	1	6a	9470
+list-concat	containers	single	1	4	0	return	1	4779	8835
+list-concat	containers	single	1	30	0	return	1	4779	11045
+list-concat	containers	single	0	1	0	return	1	4779	3476
+list-concat	containers	single	0	4	0	return	1	4779	5315
+list-concat	containers	single	0	30	0	return	1	4779	21253
+list-concat-type-trap	containers	single	1	4	0	trap	1		1569
+list-concat-type-trap	containers	single	1	30	0	trap	1		2089
+list-concat-type-trap	containers	single	0	1	0	trap	1		462
+list-concat-type-trap	containers	single	0	4	0	trap	1		699
+list-concat-type-trap	containers	single	0	30	0	trap	1		2753
+list-contains-simple	containers	single	1	4	0	return	1	1	2484
+list-contains-simple	containers	single	1	30	0	return	1	1	3186
+list-contains-simple	containers	single	0	1	0	return	1	1	887
+list-contains-simple	containers	single	0	4	0	return	1	1	1316
+list-contains-simple	containers	single	0	30	0	return	1	1	5034
+list-contains-types	containers	single	1	4	0	return	1	1f	3585
+list-contains-types	containers	single	1	30	0	return	1	1f	4495
+list-contains-types	containers	single	0	1	0	return	1	1f	1467
+list-contains-types	containers	single	0	4	0	return	1	1f	2178
+list-contains-types	containers	single	0	30	0	return	1	1f	8340
+list-del-contains	containers	twocore	1	4	0	return	1	7	5667
+list-del-contains	containers	twocore	1	30	0	return	1	7	6559
+list-del-contains	containers	twocore	0	1	0	return	1	7	2465
+list-del-contains	containers	twocore	0	4	0	return	1	7	3126
+list-del-contains	containers	twocore	0	30	0	return	1	7	9328
+list-del-contains-call	containers	single	1	4	0	return	1	2d	4003
+list-del-contains-call	containers	single	1	30	0	return	1	2d	5069
+list-del-contains-call	containers	single	0	1	0	return	1	2d	1530
+list-del-contains-call	containers	single	0	4	0	return	1	2d	2292
+list-del-contains-call	containers	single	0	30	0	return	1	2d	8896
+list-del-first-last	containers	twocore	1	4	0	return	1	5	4982
+list-del-first-last	containers	twocore	1	30	0	return	1	5	5692
+list-del-first-last	containers	twocore	0	1	0	return	1	5	2299
+list-del-first-last	containers	twocore	0	4	0	return	1	5	2729
+list-del-first-last	containers	twocore	0	30	0	return	1	5	7089
+list-del-last-only	containers	single	1	4	0	return	1	1e	2327
+list-del-last-only	containers	single	1	30	0	return	1	1e	3003
+list-del-last-only	containers	single	0	1	0	return	1	1e	824
+list-del-last-only	containers	single	0	4	0	return	1	1e	1235
+list-del-last-only	containers	single	0	30	0	return	1	1e	4797
+list-del-nested	containers	twocore	1	4	0	return	1	2c	4824
+list-del-nested	containers	twocore	1	30	0	return	1	2c	5614
+list-del-nested	containers	twocore	0	1	0	return	1	2c	1822
+list-del-nested	containers	twocore	0	4	0	return	1	2c	2323
+list-del-nested	containers	twocore	0	30	0	return	1	2c	7105
+list-del-oob	containers	single	1	4	0	trap	7		1614
+list-del-oob	containers	single	1	30	0	trap	7		2134
+list-del-oob	containers	single	0	1	0	trap	7		526
+list-del-oob	containers	single	0	4	0	trap	7		784
+list-del-oob	containers	single	0	30	0	trap	7		3020
+list-del-simple	containers	twocore	1	4	0	return	1	28	4053
+list-del-simple	containers	twocore	1	30	0	return	1	28	4737
+list-del-simple	containers	twocore	0	1	0	return	1	28	1606
+list-del-simple	containers	twocore	0	4	0	return	1	28	2021
+list-del-simple	containers	twocore	0	30	0	return	1	28	5831
+list-del-tuple-trap	containers	single	1	4	0	trap	1		1509
+list-del-tuple-trap	containers	single	1	30	0	trap	1		2003
+list-del-tuple-trap	containers	single	0	1	0	trap	1		453
+list-del-tuple-trap	containers	single	0	4	0	trap	1		681
+list-del-tuple-trap	containers	single	0	30	0	trap	1		2657
+list-extend-del-contains-two-core	containers	twocore	1	4	0	return	1	2b	7639
+list-extend-del-contains-two-core	containers	twocore	1	30	0	return	1	2b	8513
+list-extend-del-contains-two-core	containers	twocore	0	1	0	return	1	2b	4055
+list-extend-del-contains-two-core	containers	twocore	0	4	0	return	1	2b	4630
+list-extend-del-contains-two-core	containers	twocore	0	30	0	return	1	2b	11060
+list-extend-two-core	containers	twocore	1	4	0	return	1	28	9860
+list-extend-two-core	containers	twocore	1	30	0	return	1	28	10946
+list-extend-two-core	containers	twocore	0	1	0	return	1	28	5337
+list-extend-two-core	containers	twocore	0	4	0	return	1	28	6011
+list-extend-two-core	containers	twocore	0	30	0	return	1	28	13619
+list-method-missing	containers	single	1	4	0	trap	15		1565
+list-method-missing	containers	single	1	30	0	trap	15		2085
+list-method-missing	containers	single	0	1	0	trap	15		454
+list-method-missing	containers	single	0	4	0	trap	15		685
+list-method-missing	containers	single	0	30	0	trap	15		2687
+list-method-unbound	containers	twocore	1	4	0	return	1	7	5213
+list-method-unbound	containers	twocore	1	30	0	return	1	7	6097
+list-method-unbound	containers	twocore	0	1	0	return	1	7	2117
+list-method-unbound	containers	twocore	0	4	0	return	1	7	2618
+list-method-unbound	containers	twocore	0	30	0	return	1	7	7380
+list-methods	containers	twocore	1	4	0	return	1	a	17583
+list-methods	containers	twocore	1	30	0	return	1	a	19879
+list-methods	containers	twocore	0	1	0	return	1	a	7675
+list-methods	containers	twocore	0	4	0	return	1	a	9519
+list-methods	containers	twocore	0	30	0	return	1	a	26827
+list-pop	containers	single	1	4	0	return	1	3c	4541
+list-pop	containers	single	1	30	0	return	1	3c	5815
+list-pop	containers	single	0	1	0	return	1	3c	1442
+list-pop	containers	single	0	4	0	return	1	3c	2165
+list-pop	containers	single	0	30	0	return	1	3c	8431
+list-pop-empty	containers	single	1	4	0	return	1	9	4093
+list-pop-empty	containers	single	1	30	0	return	1	9	5367
+list-pop-empty	containers	single	0	1	0	return	1	9	1281
+list-pop-empty	containers	single	0	4	0	return	1	9	1947
+list-pop-empty	containers	single	0	30	0	return	1	9	7719
+list-repeat	containers	single	1	4	0	return	1	a98af3	10976
+list-repeat	containers	single	1	30	0	return	1	a98af3	13654
+list-repeat	containers	single	0	1	0	return	1	a98af3	4378
+list-repeat	containers	single	0	4	0	return	1	a98af3	6679
+list-repeat	containers	single	0	30	0	return	1	a98af3	26621
+list-repeat-type-trap	containers	single	1	4	0	return	1	6	2269
+list-repeat-type-trap	containers	single	1	30	0	return	1	6	2997
+list-repeat-type-trap	containers	single	0	1	0	return	1	6	716
+list-repeat-type-trap	containers	single	0	4	0	return	1	6	1085
+list-repeat-type-trap	containers	single	0	30	0	return	1	6	4283
+list-to-tuple	containers	twocore	1	4	0	return	1	6	5394
+list-to-tuple	containers	twocore	1	30	0	return	1	6	6150
+list-to-tuple	containers	twocore	0	1	0	return	1	6	2610
+list-to-tuple	containers	twocore	0	4	0	return	1	6	3029
+list-to-tuple	containers	twocore	0	30	0	return	1	6	7547
+map-add	containers	twocore	1	4	0	return	1	f	16308
+map-add	containers	twocore	1	30	0	return	1	f	17680
+map-add	containers	twocore	0	1	0	return	1	f	11427
+map-add	containers	twocore	0	4	0	return	1	f	12229
+map-add	containers	twocore	0	30	0	return	1	f	21933
+set-add-contains	containers	single	1	4	0	return	1	3	2353
+set-add-contains	containers	single	1	30	0	return	1	3	3029
+set-add-contains	containers	single	0	1	0	return	1	3	876
+set-add-contains	containers	single	0	4	0	return	1	3	1320
+set-add-contains	containers	single	0	30	0	return	1	3	5168
+set-bool-int	containers	single	1	4	0	return	1	1	1910
+set-bool-int	containers	single	1	30	0	return	1	1	2508
+set-bool-int	containers	single	0	1	0	return	1	1	657
+set-bool-int	containers	single	0	4	0	return	1	1	984
+set-bool-int	containers	single	0	30	0	return	1	1	3818
+set-build-simple	containers	single	1	4	0	return	1	4	3141
+set-build-simple	containers	single	1	30	0	return	1	4	3973
+set-build-simple	containers	single	0	1	0	return	1	4	1182
+set-build-simple	containers	single	0	4	0	return	1	4	1746
+set-build-simple	containers	single	0	30	0	return	1	4	6634
+set-hash-neg1	containers	single	1	4	0	return	1	3	2571
+set-hash-neg1	containers	single	1	30	0	return	1	3	3299
+set-hash-neg1	containers	single	0	1	0	return	1	3	946
+set-hash-neg1	containers	single	0	4	0	return	1	3	1411
+set-hash-neg1	containers	single	0	30	0	return	1	3	5441
+set-methods	containers	twocore	1	4	0	return	1	4	6638
+set-methods	containers	twocore	1	30	0	return	1	4	8328
+set-methods	containers	twocore	0	1	0	return	1	4	2738
+set-methods	containers	twocore	0	4	0	return	1	4	4085
+set-methods	containers	twocore	0	30	0	return	1	4	15759
+set-str	containers	single	1	4	0	return	1	7	2933
+set-str	containers	single	1	30	0	return	1	7	3739
+set-str	containers	single	0	1	0	return	1	7	1100
+set-str	containers	single	0	4	0	return	1	7	1640
+set-str	containers	single	0	30	0	return	1	7	6320
+set-update	containers	twocore	1	4	0	return	1	3	14031
+set-update	containers	twocore	1	30	0	return	1	3	15099
+set-update	containers	twocore	0	1	0	return	1	3	9914
+set-update	containers	twocore	0	4	0	return	1	3	10431
+set-update	containers	twocore	0	30	0	return	1	3	17205
+set-update-tuple	containers	twocore	1	4	0	return	1	21	7750
+set-update-tuple	containers	twocore	1	30	0	return	1	21	8994
+set-update-tuple	containers	twocore	0	1	0	return	1	21	3740
+set-update-tuple	containers	twocore	0	4	0	return	1	21	4471
+set-update-tuple	containers	twocore	0	30	0	return	1	21	11333
+slice-list-trap	containers	single	1	4	0	trap	1		2199
+slice-list-trap	containers	single	1	30	0	trap	1		2901
+slice-list-trap	containers	single	0	1	0	trap	1		672
+slice-list-trap	containers	single	0	4	0	trap	1		1002
+slice-list-trap	containers	single	0	30	0	trap	1		3862
+tuple-contains	containers	single	1	4	0	return	1	2a	2033
+tuple-contains	containers	single	1	30	0	return	1	2a	2657
+tuple-contains	containers	single	0	1	0	return	1	2a	683
+tuple-contains	containers	single	0	4	0	return	1	2a	1022
+tuple-contains	containers	single	0	30	0	return	1	2a	3960
+unpack-ex	containers	single	1	4	0	return	1	7	2494
+unpack-ex	containers	single	1	30	0	return	1	7	3300
+unpack-ex	containers	single	0	1	0	return	1	7	739
+unpack-ex	containers	single	0	4	0	return	1	7	1126
+unpack-ex	containers	single	0	30	0	return	1	7	4480
+unpack-len-trap	containers	single	1	4	0	trap	1		1503
+unpack-len-trap	containers	single	1	30	0	trap	1		1997
+unpack-len-trap	containers	single	0	1	0	trap	1		444
+unpack-len-trap	containers	single	0	4	0	trap	1		669
+unpack-len-trap	containers	single	0	30	0	trap	1		2619
+unpack-list	containers	single	1	4	0	return	1	9	1677
+unpack-list	containers	single	1	30	0	return	1	9	2197
+unpack-list	containers	single	0	1	0	return	1	9	560
+unpack-list	containers	single	0	4	0	return	1	9	839
+unpack-list	containers	single	0	30	0	return	1	9	3257
+unpack-tuple	containers	single	1	4	0	return	1	6	1841
+unpack-tuple	containers	single	1	30	0	return	1	6	2413
+unpack-tuple	containers	single	0	1	0	return	1	6	568
+unpack-tuple	containers	single	0	4	0	return	1	6	853
+unpack-tuple	containers	single	0	30	0	return	1	6	3323
+branchy	control-flow	single	1	4	0	return	1	18	3206
+branchy	control-flow	single	1	30	0	return	1	18	3804
+branchy	control-flow	single	0	1	0	return	1	18	2552
+branchy	control-flow	single	0	4	0	return	1	18	3767
+branchy	control-flow	single	0	30	0	return	1	18	14297
+branchy-two-core	control-flow	twocore	1	4	0	return	1	18	3206
+branchy-two-core	control-flow	twocore	1	30	0	return	1	18	3804
+branchy-two-core	control-flow	twocore	0	1	0	return	1	18	2552
+branchy-two-core	control-flow	twocore	0	4	0	return	1	18	3767
+branchy-two-core	control-flow	twocore	0	30	0	return	1	18	14297
+container-for-iter-end-for	control-flow	single	1	4	0	return	1	7	132
+container-for-iter-end-for	control-flow	single	1	30	0	return	1	7	158
+container-for-iter-end-for	control-flow	single	0	1	0	return	1	7	35
+container-for-iter-end-for	control-flow	single	0	4	0	return	1	7	47
+container-for-iter-end-for	control-flow	single	0	30	0	return	1	7	151
+extended-arg	control-flow	single	1	4	0	return	1	7b	1507
+extended-arg	control-flow	single	1	30	0	return	1	7b	1975
+extended-arg	control-flow	single	0	1	0	return	1	7b	462
+extended-arg	control-flow	single	0	4	0	return	1	7b	690
+extended-arg	control-flow	single	0	30	0	return	1	7b	2666
+extended-arg-two-core	control-flow	twocore	1	4	0	return	1	7b	1507
+extended-arg-two-core	control-flow	twocore	1	30	0	return	1	7b	1975
+extended-arg-two-core	control-flow	twocore	0	1	0	return	1	7b	462
+extended-arg-two-core	control-flow	twocore	0	4	0	return	1	7b	690
+extended-arg-two-core	control-flow	twocore	0	30	0	return	1	7b	2666
+for-call-toplevel	control-flow	single	1	4	0	return	1	9	4078
+for-call-toplevel	control-flow	single	1	30	0	return	1	9	5066
+for-call-toplevel	control-flow	single	0	1	0	return	1	9	2557
+for-call-toplevel	control-flow	single	0	4	0	return	1	9	3910
+for-call-toplevel	control-flow	single	0	30	0	return	1	9	15636
+for-iter	control-flow	single	1	4	0	return	1	f	3123
+for-iter	control-flow	single	1	30	0	return	1	f	3955
+for-iter	control-flow	single	0	1	0	return	1	f	1285
+for-iter	control-flow	single	0	4	0	return	1	f	1879
+for-iter	control-flow	single	0	30	0	return	1	f	7027
+for-iter-branch	control-flow	single	1	4	0	return	1	2	2308
+for-iter-branch	control-flow	single	1	30	0	return	1	2	2958
+for-iter-branch	control-flow	single	0	1	0	return	1	2	944
+for-iter-branch	control-flow	single	0	4	0	return	1	2	1382
+for-iter-branch	control-flow	single	0	30	0	return	1	2	5178
+for-iter-build-tuple	control-flow	single	1	4	0	return	1	9	2108
+for-iter-build-tuple	control-flow	single	1	30	0	return	1	9	2706
+for-iter-build-tuple	control-flow	single	0	1	0	return	1	9	802
+for-iter-build-tuple	control-flow	single	0	4	0	return	1	9	1183
+for-iter-build-tuple	control-flow	single	0	30	0	return	1	9	4485
+for-iter-clear	control-flow	twocore	1	4	0	return	1	1	2532
+for-iter-clear	control-flow	twocore	1	30	0	return	1	1	3234
+for-iter-clear	control-flow	twocore	0	1	0	return	1	1	941
+for-iter-clear	control-flow	twocore	0	4	0	return	1	1	1376
+for-iter-clear	control-flow	twocore	0	30	0	return	1	1	5146
+for-iter-delete	control-flow	twocore	1	4	0	return	1	8	4873
+for-iter-delete	control-flow	twocore	1	30	0	return	1	8	5565
+for-iter-delete	control-flow	twocore	0	1	0	return	1	8	2306
+for-iter-delete	control-flow	twocore	0	4	0	return	1	8	2864
+for-iter-delete	control-flow	twocore	0	30	0	return	1	8	8120
+for-iter-dict-delete	control-flow	single	1	4	0	trap	1		2107
+for-iter-dict-delete	control-flow	single	1	30	0	trap	1		2731
+for-iter-dict-delete	control-flow	single	0	1	0	trap	1		796
+for-iter-dict-delete	control-flow	single	0	4	0	trap	1		1192
+for-iter-dict-delete	control-flow	single	0	30	0	trap	1		4624
+for-iter-dict-empty	control-flow	single	1	4	0	return	1	7	1754
+for-iter-dict-empty	control-flow	single	1	30	0	return	1	7	2300
+for-iter-dict-empty	control-flow	single	0	1	0	return	1	7	580
+for-iter-dict-empty	control-flow	single	0	4	0	return	1	7	868
+for-iter-dict-empty	control-flow	single	0	30	0	return	1	7	3364
+for-iter-dict-keys	control-flow	single	1	4	0	return	1	d	2659
+for-iter-dict-keys	control-flow	single	1	30	0	return	1	d	3387
+for-iter-dict-keys	control-flow	single	0	1	0	return	1	d	1096
+for-iter-dict-keys	control-flow	single	0	4	0	return	1	d	1636
+for-iter-dict-keys	control-flow	single	0	30	0	return	1	d	6316
+for-iter-dict-str-keys	control-flow	single	1	4	0	return	1	2	2667
+for-iter-dict-str-keys	control-flow	single	1	30	0	return	1	2	3421
+for-iter-dict-str-keys	control-flow	single	0	1	0	return	1	2	1086
+for-iter-dict-str-keys	control-flow	single	0	4	0	return	1	2	1626
+for-iter-dict-str-keys	control-flow	single	0	30	0	return	1	2	6306
+for-iter-edges	control-flow	single	1	4	0	return	1	d	3025
+for-iter-edges	control-flow	single	1	30	0	return	1	d	3831
+for-iter-edges	control-flow	single	0	1	0	return	1	d	1132
+for-iter-edges	control-flow	single	0	4	0	return	1	d	1651
+for-iter-edges	control-flow	single	0	30	0	return	1	d	6149
+for-iter-mutate	control-flow	single	1	4	0	return	1	d	2686
+for-iter-mutate	control-flow	single	1	30	0	return	1	d	3388
+for-iter-mutate	control-flow	single	0	1	0	return	1	d	1202
+for-iter-mutate	control-flow	single	0	4	0	return	1	d	1757
+for-iter-mutate	control-flow	single	0	30	0	return	1	d	6567
+for-iter-mutate-visited	control-flow	single	1	4	0	return	1	60	3076
+for-iter-mutate-visited	control-flow	single	1	30	0	return	1	60	3856
+for-iter-mutate-visited	control-flow	single	0	1	0	return	1	60	1336
+for-iter-mutate-visited	control-flow	single	0	4	0	return	1	60	1966
+for-iter-mutate-visited	control-flow	single	0	30	0	return	1	60	7426
+for-iter-nested	control-flow	single	1	4	0	return	1	5a	2657
+for-iter-nested	control-flow	single	1	30	0	return	1	5a	3359
+for-iter-nested	control-flow	single	0	1	0	return	1	5a	1273
+for-iter-nested	control-flow	single	0	4	0	return	1	5a	1876
+for-iter-nested	control-flow	single	0	30	0	return	1	5a	7102
+for-iter-object-exhaust	control-flow	single	1	4	0	return	1	7	4184
+for-iter-object-exhaust	control-flow	single	1	30	0	return	1	7	5562
+for-iter-object-exhaust	control-flow	single	0	1	0	return	1	7	1372
+for-iter-object-exhaust	control-flow	single	0	4	0	return	1	7	2089
+for-iter-object-exhaust	control-flow	single	0	30	0	return	1	7	8303
+for-iter-object-list	control-flow	single	1	4	0	return	1	6	3509
+for-iter-object-list	control-flow	single	1	30	0	return	1	6	4575
+for-iter-object-list	control-flow	single	0	1	0	return	1	6	1364
+for-iter-object-list	control-flow	single	0	4	0	return	1	6	2036
+for-iter-object-list	control-flow	single	0	30	0	return	1	6	7860
+for-iter-object-nested	control-flow	single	1	4	0	return	1	9	4716
+for-iter-object-nested	control-flow	single	1	30	0	return	1	9	6016
+for-iter-object-nested	control-flow	single	0	1	0	return	1	9	2463
+for-iter-object-nested	control-flow	single	0	4	0	return	1	9	3684
+for-iter-object-nested	control-flow	single	0	30	0	return	1	9	14266
+for-iter-object-next	control-flow	single	1	4	0	return	1	6	6298
+for-iter-object-next	control-flow	single	1	30	0	return	1	6	7936
+for-iter-object-next	control-flow	single	0	1	0	return	1	6	3507
+for-iter-object-next	control-flow	single	0	4	0	return	1	6	5328
+for-iter-object-next	control-flow	single	0	30	0	return	1	6	21110
+for-iter-object-no-iter-trap	control-flow	single	1	4	0	trap	1		2187
+for-iter-object-no-iter-trap	control-flow	single	1	30	0	trap	1		2941
+for-iter-object-no-iter-trap	control-flow	single	0	1	0	trap	1		571
+for-iter-object-no-iter-trap	control-flow	single	0	4	0	trap	1		874
+for-iter-object-no-iter-trap	control-flow	single	0	30	0	trap	1		3500
+for-iter-object-raise-catch	control-flow	single	1	4	0	return	1	1	4832
+for-iter-object-raise-catch	control-flow	single	1	30	0	return	1	1	6392
+for-iter-object-raise-catch	control-flow	single	0	1	0	return	1	1	1622
+for-iter-object-raise-catch	control-flow	single	0	4	0	return	1	1	2474
+for-iter-object-raise-catch	control-flow	single	0	30	0	return	1	1	9858
+for-iter-range	control-flow	single	1	4	0	return	1	a	2565
+for-iter-range	control-flow	single	1	30	0	return	1	a	3293
+for-iter-range	control-flow	single	0	1	0	return	1	a	1113
+for-iter-range	control-flow	single	0	4	0	return	1	a	1647
+for-iter-range	control-flow	single	0	30	0	return	1	a	6275
+for-iter-range-bool	control-flow	single	1	4	0	return	1	2	3155
+for-iter-range-bool	control-flow	single	1	30	0	return	1	2	4039
+for-iter-range-bool	control-flow	single	0	1	0	return	1	2	1181
+for-iter-range-bool	control-flow	single	0	4	0	return	1	2	1772
+for-iter-range-bool	control-flow	single	0	30	0	return	1	2	6894
+for-iter-range-bounds	control-flow	single	1	4	0	return	1	33	3466
+for-iter-range-bounds	control-flow	single	1	30	0	return	1	33	4298
+for-iter-range-bounds	control-flow	single	0	1	0	return	1	33	1968
+for-iter-range-bounds	control-flow	single	0	4	0	return	1	33	2886
+for-iter-range-bounds	control-flow	single	0	30	0	return	1	33	10842
+for-iter-range-empty	control-flow	single	1	4	0	return	1	0	2718
+for-iter-range-empty	control-flow	single	1	30	0	return	1	0	3524
+for-iter-range-empty	control-flow	single	0	1	0	return	1	0	889
+for-iter-range-empty	control-flow	single	0	4	0	return	1	0	1339
+for-iter-range-empty	control-flow	single	0	30	0	return	1	0	5239
+for-iter-range-negative-step	control-flow	single	1	4	0	return	1	f	2638
+for-iter-range-negative-step	control-flow	single	1	30	0	return	1	f	3392
+for-iter-range-negative-step	control-flow	single	0	1	0	return	1	f	1143
+for-iter-range-negative-step	control-flow	single	0	4	0	return	1	f	1689
+for-iter-range-negative-step	control-flow	single	0	30	0	return	1	f	6421
+for-iter-range-step	control-flow	single	1	4	0	return	1	f	2478
+for-iter-range-step	control-flow	single	1	30	0	return	1	f	3206
+for-iter-range-step	control-flow	single	0	1	0	return	1	f	967
+for-iter-range-step	control-flow	single	0	4	0	return	1	f	1435
+for-iter-range-step	control-flow	single	0	30	0	return	1	f	5491
+for-iter-range-type-trap	control-flow	single	1	4	0	trap	1		2018
+for-iter-range-type-trap	control-flow	single	1	30	0	trap	1		2694
+for-iter-range-type-trap	control-flow	single	0	1	0	trap	1		565
+for-iter-range-type-trap	control-flow	single	0	4	0	trap	1		859
+for-iter-range-type-trap	control-flow	single	0	30	0	trap	1		3407
+for-iter-range-zero-step-trap	control-flow	single	1	4	0	trap	1		1971
+for-iter-range-zero-step-trap	control-flow	single	1	30	0	trap	1		2621
+for-iter-range-zero-step-trap	control-flow	single	0	1	0	trap	1		576
+for-iter-range-zero-step-trap	control-flow	single	0	4	0	trap	1		870
+for-iter-range-zero-step-trap	control-flow	single	0	30	0	trap	1		3418
+for-iter-rebind	control-flow	single	1	4	0	return	1	f	3016
+for-iter-rebind	control-flow	single	1	30	0	return	1	f	3796
+for-iter-rebind	control-flow	single	0	1	0	return	1	f	1309
+for-iter-rebind	control-flow	single	0	4	0	return	1	f	1921
+for-iter-rebind	control-flow	single	0	30	0	return	1	f	7225
+for-iter-set-basic	control-flow	single	1	4	0	return	1	f	4424
+for-iter-set-basic	control-flow	single	1	30	0	return	1	f	5698
+for-iter-set-basic	control-flow	single	0	1	0	return	1	f	1866
+for-iter-set-basic	control-flow	single	0	4	0	return	1	f	2799
+for-iter-set-basic	control-flow	single	0	30	0	return	1	f	10885
+for-iter-set-empty	control-flow	single	1	4	0	return	1	7	2397
+for-iter-set-empty	control-flow	single	1	30	0	return	1	7	3177
+for-iter-set-empty	control-flow	single	0	1	0	return	1	7	734
+for-iter-set-empty	control-flow	single	0	4	0	return	1	7	1112
+for-iter-set-empty	control-flow	single	0	30	0	return	1	7	4388
+for-iter-set-type-trap	control-flow	single	1	4	0	trap	1		1441
+for-iter-set-type-trap	control-flow	single	1	30	0	trap	1		1909
+for-iter-set-type-trap	control-flow	single	0	1	0	trap	1		434
+for-iter-set-type-trap	control-flow	single	0	4	0	trap	1		653
+for-iter-set-type-trap	control-flow	single	0	30	0	trap	1		2551
+for-iter-str-branch	control-flow	single	1	4	0	return	1	6f	3067
+for-iter-str-branch	control-flow	single	1	30	0	return	1	6f	3847
+for-iter-str-branch	control-flow	single	0	1	0	return	1	6f	1376
+for-iter-str-branch	control-flow	single	0	4	0	return	1	6f	1997
+for-iter-str-branch	control-flow	single	0	30	0	return	1	6f	7379
+for-iter-str-empty	control-flow	single	1	4	0	return	1	0	1746
+for-iter-str-empty	control-flow	single	1	30	0	return	1	0	2292
+for-iter-str-empty	control-flow	single	0	1	0	return	1	0	567
+for-iter-str-empty	control-flow	single	0	4	0	return	1	0	846
+for-iter-str-empty	control-flow	single	0	30	0	return	1	0	3264
+for-iter-str-long	control-flow	single	1	4	0	return	1	17	3313
+for-iter-str-long	control-flow	single	1	30	0	return	1	17	3911
+for-iter-str-long	control-flow	single	0	1	0	return	1	17	2844
+for-iter-str-long	control-flow	single	0	4	0	return	1	17	4089
+for-iter-str-long	control-flow	single	0	30	0	return	1	17	14879
+for-iter-str-short	control-flow	single	1	4	0	return	1	3	2096
+for-iter-str-short	control-flow	single	1	30	0	return	1	3	2694
+for-iter-str-short	control-flow	single	0	1	0	return	1	3	869
+for-iter-str-short	control-flow	single	0	4	0	return	1	3	1277
+for-iter-str-short	control-flow	single	0	30	0	return	1	3	4813
+for-iter-str-type-trap	control-flow	single	1	4	0	trap	1		1441
+for-iter-str-type-trap	control-flow	single	1	30	0	trap	1		1909
+for-iter-str-type-trap	control-flow	single	0	1	0	trap	1		434
+for-iter-str-type-trap	control-flow	single	0	4	0	trap	1		653
+for-iter-str-type-trap	control-flow	single	0	30	0	trap	1		2551
+for-iter-str-unicode	control-flow	single	1	4	0	return	1	b	2667
+for-iter-str-unicode	control-flow	single	1	30	0	return	1	b	3421
+for-iter-str-unicode	control-flow	single	0	1	0	return	1	b	923
+for-iter-str-unicode	control-flow	single	0	4	0	return	1	b	1361
+for-iter-str-unicode	control-flow	single	0	30	0	return	1	b	5157
+for-iter-subscr	control-flow	single	1	4	0	return	1	3c	2691
+for-iter-subscr	control-flow	single	1	30	0	return	1	3c	3445
+for-iter-subscr	control-flow	single	0	1	0	return	1	3c	1144
+for-iter-subscr	control-flow	single	0	4	0	return	1	3c	1699
+for-iter-subscr	control-flow	single	0	30	0	return	1	3c	6509
+for-iter-type-trap	control-flow	single	1	4	0	trap	1		1441
+for-iter-type-trap	control-flow	single	1	30	0	trap	1		1909
+for-iter-type-trap	control-flow	single	0	1	0	trap	1		434
+for-iter-type-trap	control-flow	single	0	4	0	trap	1		653
+for-iter-type-trap	control-flow	single	0	30	0	trap	1		2551
+nop	control-flow	single	1	4	0	return	1	7	1381
+nop	control-flow	single	1	30	0	return	1	7	1823
+nop	control-flow	single	0	1	0	return	1	7	427
+nop	control-flow	single	0	4	0	return	1	7	637
+nop	control-flow	single	0	30	0	return	1	7	2457
+pop-jump-if-none	control-flow	single	1	4	0	return	1	7	2455
+pop-jump-if-none	control-flow	single	1	30	0	return	1	7	3131
+pop-jump-if-none	control-flow	single	0	1	0	return	1	7	772
+pop-jump-if-none	control-flow	single	0	4	0	return	1	7	1132
+pop-jump-if-none	control-flow	single	0	30	0	return	1	7	4252
+return-true	control-flow	single	1	4	0	return	4	1	1598
+return-true	control-flow	single	1	30	0	return	4	1	2118
+return-true	control-flow	single	0	1	0	return	4	1	509
+return-true	control-flow	single	0	4	0	return	4	1	770
+return-true	control-flow	single	0	30	0	return	4	1	3032
+bare-raise	exceptions	single	1	4	0	return	1	d	3489
+bare-raise	exceptions	single	1	30	0	return	1	d	4555
+bare-raise	exceptions	single	0	1	0	return	1	d	1413
+bare-raise	exceptions	single	0	4	0	return	1	d	2148
+bare-raise	exceptions	single	0	30	0	return	1	d	8518
+bare-raise-no-active	exceptions	single	1	4	0	trap	17		1315
+bare-raise-no-active	exceptions	single	1	30	0	trap	17		1757
+bare-raise-no-active	exceptions	single	0	1	0	trap	17		407
+bare-raise-no-active	exceptions	single	0	4	0	trap	17		617
+bare-raise-no-active	exceptions	single	0	30	0	trap	17		2437
+exc-args	exceptions	single	1	4	0	return	1	2	4128
+exc-args	exceptions	single	1	30	0	return	1	2	5350
+exc-args	exceptions	single	0	1	0	return	1	2	1451
+exc-args	exceptions	single	0	4	0	return	1	2	2204
+exc-args	exceptions	single	0	30	0	return	1	2	8730
+fw-next-exhausted	exceptions	single	1	4	0	return	1	2a	4221
+fw-next-exhausted	exceptions	single	1	30	0	return	1	2a	5495
+fw-next-exhausted	exceptions	single	0	1	0	return	1	2a	1373
+fw-next-exhausted	exceptions	single	0	4	0	return	1	2a	2066
+fw-next-exhausted	exceptions	single	0	30	0	return	1	2a	8072
+raise-after-call-loop	exceptions	single	1	4	0	return	1	6	5168
+raise-after-call-loop	exceptions	single	1	30	0	return	1	6	6546
+raise-after-call-loop	exceptions	single	0	1	0	return	1	6	3131
+raise-after-call-loop	exceptions	single	0	4	0	return	1	6	4697
+raise-after-call-loop	exceptions	single	0	30	0	return	1	6	18269
+raise-instance	exceptions	single	1	4	0	return	1	16	2842
+raise-instance	exceptions	single	1	30	0	return	1	16	3752
+raise-instance	exceptions	single	0	1	0	return	1	16	1006
+raise-instance	exceptions	single	0	4	0	return	1	16	1528
+raise-instance	exceptions	single	0	30	0	return	1	16	6052
+raise-stopiteration-fatal	exceptions	single	1	4	0	trap	17		1923
+raise-stopiteration-fatal	exceptions	single	1	30	0	trap	17		2599
+raise-stopiteration-fatal	exceptions	single	0	1	0	trap	17		586
+raise-stopiteration-fatal	exceptions	single	0	4	0	trap	17		901
+raise-stopiteration-fatal	exceptions	single	0	30	0	trap	17		3631
+raise-syntaxerror-fatal	exceptions	single	1	4	0	trap	17		1923
+raise-syntaxerror-fatal	exceptions	single	1	30	0	trap	17		2599
+raise-syntaxerror-fatal	exceptions	single	0	1	0	trap	17		586
+raise-syntaxerror-fatal	exceptions	single	0	4	0	trap	17		901
+raise-syntaxerror-fatal	exceptions	single	0	30	0	trap	17		3631
+raise-typeerror-call	exceptions	single	1	4	0	return	1	15	2830
+raise-typeerror-call	exceptions	single	1	30	0	return	1	15	3740
+raise-typeerror-call	exceptions	single	0	1	0	return	1	15	988
+raise-typeerror-call	exceptions	single	0	4	0	return	1	15	1504
+raise-typeerror-call	exceptions	single	0	30	0	return	1	15	5976
+raise-varargs	exceptions	single	1	4	0	trap	1		1333
+raise-varargs	exceptions	single	1	30	0	trap	1		1775
+raise-varargs	exceptions	single	0	1	0	trap	1		434
+raise-varargs	exceptions	single	0	4	0	trap	1		653
+raise-varargs	exceptions	single	0	30	0	trap	1		2551
+try-after-call	exceptions	single	1	4	0	return	1	7	5887
+try-after-call	exceptions	single	1	30	0	return	1	7	7681
+try-after-call	exceptions	single	0	1	0	return	1	7	2290
+try-after-call	exceptions	single	0	4	0	return	1	7	3499
+try-after-call	exceptions	single	0	30	0	return	1	7	13977
+try-callee-unhandled	exceptions	single	1	4	0	trap	17		1991
+try-callee-unhandled	exceptions	single	1	30	0	trap	17		2693
+try-callee-unhandled	exceptions	single	0	1	0	trap	17		606
+try-callee-unhandled	exceptions	single	0	4	0	trap	17		933
+try-callee-unhandled	exceptions	single	0	30	0	trap	17		3767
+try-exc-cross-frame-fatal	exceptions	single	1	4	0	return	1	1	3607
+try-exc-cross-frame-fatal	exceptions	single	1	30	0	return	1	1	4751
+try-exc-cross-frame-fatal	exceptions	single	0	1	0	return	1	1	1180
+try-exc-cross-frame-fatal	exceptions	single	0	4	0	return	1	1	1798
+try-exc-cross-frame-fatal	exceptions	single	0	30	0	return	1	1	7154
+try-exc-types	exceptions	single	1	4	0	return	1	457	9983
+try-exc-types	exceptions	single	1	30	0	return	1	457	12869
+try-exc-types	exceptions	single	0	1	0	return	1	457	4447
+try-exc-types	exceptions	single	0	4	0	return	1	457	6838
+try-exc-types	exceptions	single	0	30	0	return	1	457	27560
+try-except-as	exceptions	single	1	4	0	return	1	7	3003
+try-except-as	exceptions	single	1	30	0	return	1	7	3965
+try-except-as	exceptions	single	0	1	0	return	1	7	994
+try-except-as	exceptions	single	0	4	0	return	1	7	1504
+try-except-as	exceptions	single	0	30	0	return	1	7	5924
+try-except-else	exceptions	single	1	4	0	return	1	b	4575
+try-except-else	exceptions	single	1	30	0	return	1	b	5927
+try-except-else	exceptions	single	0	1	0	return	1	b	1784
+try-except-else	exceptions	single	0	4	0	return	1	b	2699
+try-except-else	exceptions	single	0	30	0	return	1	b	10629
+try-except-miss	exceptions	single	1	4	0	trap	17		3461
+try-except-miss	exceptions	single	1	30	0	trap	17		4579
+try-except-miss	exceptions	single	0	1	0	trap	17		1182
+try-except-miss	exceptions	single	0	4	0	trap	17		1809
+try-except-miss	exceptions	single	0	30	0	trap	17		7243
+try-exception	exceptions	single	1	4	0	return	1	7	2879
+try-exception	exceptions	single	1	30	0	return	1	7	3815
+try-exception	exceptions	single	0	1	0	return	1	7	891
+try-exception	exceptions	single	0	4	0	return	1	7	1356
+try-exception	exceptions	single	0	30	0	return	1	7	5386
+try-finally	exceptions	single	1	4	0	return	1	2b67	4102
+try-finally	exceptions	single	1	30	0	return	1	2b67	5298
+try-finally	exceptions	single	0	1	0	return	1	2b67	1547
+try-finally	exceptions	single	0	4	0	return	1	2b67	2330
+try-finally	exceptions	single	0	30	0	return	1	2b67	9116
+try-lookuperror	exceptions	single	1	4	0	return	1	a	3995
+try-lookuperror	exceptions	single	1	30	0	return	1	a	5243
+try-lookuperror	exceptions	single	0	1	0	return	1	a	1333
+try-lookuperror	exceptions	single	0	4	0	return	1	a	2032
+try-lookuperror	exceptions	single	0	30	0	return	1	a	8090
+try-stopiteration	exceptions	single	1	4	0	return	1	7	2666
+try-stopiteration	exceptions	single	1	30	0	return	1	7	3524
+try-stopiteration	exceptions	single	0	1	0	return	1	7	881
+try-stopiteration	exceptions	single	0	4	0	return	1	7	1340
+try-stopiteration	exceptions	single	0	30	0	return	1	7	5318
+try-stopiteration-nested	exceptions	single	1	4	0	return	1	b	3505
+try-stopiteration-nested	exceptions	single	1	30	0	return	1	b	4571
+try-stopiteration-nested	exceptions	single	0	1	0	return	1	b	1473
+try-stopiteration-nested	exceptions	single	0	4	0	return	1	b	2244
+try-stopiteration-nested	exceptions	single	0	30	0	return	1	b	8926
+try-syntaxerror	exceptions	single	1	4	0	return	1	1	2817
+try-syntaxerror	exceptions	single	1	30	0	return	1	1	3701
+try-syntaxerror	exceptions	single	0	1	0	return	1	1	955
+try-syntaxerror	exceptions	single	0	4	0	return	1	1	1447
+try-syntaxerror	exceptions	single	0	30	0	return	1	1	5711
+try-syntaxerror-msg	exceptions	single	1	4	0	return	1	2	3586
+try-syntaxerror-msg	exceptions	single	1	30	0	return	1	2	4678
+try-syntaxerror-msg	exceptions	single	0	1	0	return	1	2	1256
+try-syntaxerror-msg	exceptions	single	0	4	0	return	1	2	1919
+try-syntaxerror-msg	exceptions	single	0	30	0	return	1	2	7665
+try-tuple-match	exceptions	single	1	4	0	return	1	9	3163
+try-tuple-match	exceptions	single	1	30	0	return	1	9	4203
+try-tuple-match	exceptions	single	0	1	0	return	1	9	1072
+try-tuple-match	exceptions	single	0	4	0	return	1	9	1642
+try-tuple-match	exceptions	single	0	30	0	return	1	9	6582
+try-typeerror	exceptions	single	1	4	0	return	1	8	2947
+try-typeerror	exceptions	single	1	30	0	return	1	8	3909
+try-typeerror	exceptions	single	0	1	0	return	1	8	911
+try-typeerror	exceptions	single	0	4	0	return	1	8	1388
+try-typeerror	exceptions	single	0	30	0	return	1	8	5522
+allocator-list	excore	twocore	1	4	0	return	1	3	3676806
+allocator-list	excore	twocore	1	30	0	return	1	3	3830550
+allocator-list	excore	twocore	0	1	0	return	1	3	2858531
+allocator-list	excore	twocore	0	4	0	return	1	3	2966491
+allocator-list	excore	twocore	0	30	0	return	1	3	5263931
+attr-grow-global	excore	twocore	1	4	0	return	1	63	19219
+attr-grow-global	excore	twocore	1	30	0	return	1	63	20857
+attr-grow-global	excore	twocore	0	1	0	return	1	63	13668
+attr-grow-global	excore	twocore	0	4	0	return	1	63	14566
+attr-grow-global	excore	twocore	0	30	0	return	1	63	25342
+compile-store-name-grow-loop-two-core	excore	twocore	1	4	0	return	1	6	3729444
+compile-store-name-grow-loop-two-core	excore	twocore	1	30	0	return	1	6	3907756
+compile-store-name-grow-loop-two-core	excore	twocore	0	1	0	return	1	6	2596200
+compile-store-name-grow-loop-two-core	excore	twocore	0	4	0	return	1	6	3994756
+compile-store-name-grow-loop-two-core	excore	twocore	0	30	0	return	1	6	16120728
+container-list-append-full-fatal	excore	single	1	4	0	trap	9		204
+container-list-append-full-fatal	excore	single	1	30	0	trap	9		256
+container-list-append-full-fatal	excore	single	0	1	0	trap	9		61
+container-list-append-full-fatal	excore	single	0	4	0	trap	9		88
+container-list-append-full-fatal	excore	single	0	30	0	trap	9		322
+container-list-extend-full-fatal	excore	single	1	4	0	trap	10		281
+container-list-extend-full-fatal	excore	single	1	30	0	trap	10		359
+container-list-extend-full-fatal	excore	single	0	1	0	trap	10		95
+container-list-extend-full-fatal	excore	single	0	4	0	trap	10		140
+container-list-extend-full-fatal	excore	single	0	30	0	trap	10		530
+container-list-extend-type-fatal	excore	single	1	4	0	trap	1		189
+container-list-extend-type-fatal	excore	single	1	30	0	trap	1		241
+container-list-extend-type-fatal	excore	single	0	1	0	trap	1		37
+container-list-extend-type-fatal	excore	single	0	4	0	trap	1		52
+container-list-extend-type-fatal	excore	single	0	30	0	trap	1		182
+dict-grow-basic	excore	twocore	1	4	0	return	1	a	15742
+dict-grow-basic	excore	twocore	1	30	0	return	1	a	17030
+dict-grow-basic	excore	twocore	0	1	0	return	1	a	11182
+dict-grow-basic	excore	twocore	0	4	0	return	1	a	11852
+dict-grow-basic	excore	twocore	0	30	0	return	1	a	20412
+dict-grow-fatal	excore	single	1	4	0	trap	11		2270
+dict-grow-fatal	excore	single	1	30	0	trap	11		2972
+dict-grow-fatal	excore	single	0	1	0	trap	11		790
+dict-grow-fatal	excore	single	0	4	0	trap	11		1189
+dict-grow-fatal	excore	single	0	30	0	trap	11		4647
+dict-grow-large	excore	twocore	1	4	0	return	1	d2	57969
+dict-grow-large	excore	twocore	1	30	0	return	1	d2	60823
+dict-grow-large	excore	twocore	0	1	0	return	1	d2	50318
+dict-grow-large	excore	twocore	0	4	0	return	1	d2	55281
+dict-grow-large	excore	twocore	0	30	0	return	1	d2	109927
+excore-alias-stability	excore	twocore	1	4	0	return	1	1e	2591
+excore-alias-stability	excore	twocore	1	30	0	return	1	1e	2889
+excore-alias-stability	excore	twocore	0	1	0	return	1	1e	1504
+excore-alias-stability	excore	twocore	0	4	0	return	1	1e	1720
+excore-alias-stability	excore	twocore	0	30	0	return	1	1e	3952
+excore-append-across-call	excore	twocore	1	4	0	return	1	4d	2335
+excore-append-across-call	excore	twocore	1	30	0	return	1	4d	2695
+excore-append-across-call	excore	twocore	0	1	0	return	1	4d	1052
+excore-append-across-call	excore	twocore	0	4	0	return	1	4d	1203
+excore-append-across-call	excore	twocore	0	30	0	return	1	4d	2725
+excore-disabled	excore	single	1	4	0	trap	9		517
+excore-disabled	excore	single	1	30	0	trap	9		699
+excore-disabled	excore	single	0	1	0	trap	9		114
+excore-disabled	excore	single	0	4	0	trap	9		171
+excore-disabled	excore	single	0	30	0	trap	9		665
+excore-extend-across-call	excore	twocore	1	4	0	return	1	58	3351
+excore-extend-across-call	excore	twocore	1	30	0	return	1	58	3771
+excore-extend-across-call	excore	twocore	0	1	0	return	1	58	1756
+excore-extend-across-call	excore	twocore	0	4	0	return	1	58	1907
+excore-extend-across-call	excore	twocore	0	30	0	return	1	58	3829
+excore-extend-disabled	excore	single	1	4	0	trap	10		638
+excore-extend-disabled	excore	single	1	30	0	trap	10		872
+excore-extend-disabled	excore	single	0	1	0	trap	10		129
+excore-extend-disabled	excore	single	0	4	0	trap	10		195
+excore-extend-disabled	excore	single	0	30	0	trap	10		767
+excore-extend-empty-noop	excore	twocore	1	4	0	return	1	7	735
+excore-extend-empty-noop	excore	twocore	1	30	0	return	1	7	995
+excore-extend-empty-noop	excore	twocore	0	1	0	return	1	7	194
+excore-extend-empty-noop	excore	twocore	0	4	0	return	1	7	290
+excore-extend-empty-noop	excore	twocore	0	30	0	return	1	7	1122
+excore-extend-fast-no-trap	excore	twocore	1	4	0	return	1	5	2696
+excore-extend-fast-no-trap	excore	twocore	1	30	0	return	1	5	3022
+excore-extend-fast-no-trap	excore	twocore	0	1	0	return	1	5	1526
+excore-extend-fast-no-trap	excore	twocore	0	4	0	return	1	5	1666
+excore-extend-fast-no-trap	excore	twocore	0	30	0	return	1	5	3266
+excore-extend-grow-list	excore	twocore	1	4	0	return	1	6	3310
+excore-extend-grow-list	excore	twocore	1	30	0	return	1	6	3636
+excore-extend-grow-list	excore	twocore	0	1	0	return	1	6	2064
+excore-extend-grow-list	excore	twocore	0	4	0	return	1	6	2234
+excore-extend-grow-list	excore	twocore	0	30	0	return	1	6	4294
+excore-extend-grow-to-fit	excore	twocore	1	4	0	return	1	92	7539
+excore-extend-grow-to-fit	excore	twocore	1	30	0	return	1	92	8155
+excore-extend-grow-to-fit	excore	twocore	0	1	0	return	1	92	5098
+excore-extend-grow-to-fit	excore	twocore	0	4	0	return	1	92	5514
+excore-extend-grow-to-fit	excore	twocore	0	30	0	return	1	92	10986
+excore-extend-grow-tuple	excore	twocore	1	4	0	return	1	3c	3062
+excore-extend-grow-tuple	excore	twocore	1	30	0	return	1	3c	3368
+excore-extend-grow-tuple	excore	twocore	0	1	0	return	1	3c	1916
+excore-extend-grow-tuple	excore	twocore	0	4	0	return	1	3c	2066
+excore-extend-grow-tuple	excore	twocore	0	30	0	return	1	3c	4046
+excore-extend-mixed-tags	excore	twocore	1	4	0	return	1	68d	3887
+excore-extend-mixed-tags	excore	twocore	1	30	0	return	1	68d	4285
+excore-extend-mixed-tags	excore	twocore	0	1	0	return	1	68d	2410
+excore-extend-mixed-tags	excore	twocore	0	4	0	return	1	68d	2598
+excore-extend-mixed-tags	excore	twocore	0	30	0	return	1	68d	4974
+excore-extend-oom-fatal	excore	twocore	1	4	0	trap	7		1467
+excore-extend-oom-fatal	excore	twocore	1	30	0	trap	7		1707
+excore-extend-oom-fatal	excore	twocore	0	1	0	trap	7		746
+excore-extend-oom-fatal	excore	twocore	0	4	0	trap	7		826
+excore-extend-oom-fatal	excore	twocore	0	30	0	trap	7		1546
+excore-extend-self	excore	twocore	1	4	0	return	1	3c	3607
+excore-extend-self	excore	twocore	1	30	0	return	1	3c	3939
+excore-extend-self	excore	twocore	0	1	0	return	1	3c	2296
+excore-extend-self	excore	twocore	0	4	0	return	1	3c	2476
+excore-extend-self	excore	twocore	0	30	0	return	1	3c	4876
+excore-fast-path-no-trap	excore	twocore	1	4	0	return	1	9	886
+excore-fast-path-no-trap	excore	twocore	1	30	0	return	1	9	1172
+excore-fast-path-no-trap	excore	twocore	0	1	0	return	1	9	261
+excore-fast-path-no-trap	excore	twocore	0	4	0	return	1	9	390
+excore-fast-path-no-trap	excore	twocore	0	30	0	return	1	9	1508
+excore-grow-from-zero	excore	twocore	1	4	0	return	1	37	1649
+excore-grow-from-zero	excore	twocore	1	30	0	return	1	37	1849
+excore-grow-from-zero	excore	twocore	0	1	0	return	1	37	928
+excore-grow-from-zero	excore	twocore	0	4	0	return	1	37	1018
+excore-grow-from-zero	excore	twocore	0	30	0	return	1	37	1998
+excore-grow-oom-fatal	excore	twocore	1	4	0	trap	7		1123
+excore-grow-oom-fatal	excore	twocore	1	30	0	trap	7		1323
+excore-grow-oom-fatal	excore	twocore	0	1	0	trap	7		502
+excore-grow-oom-fatal	excore	twocore	0	4	0	trap	7		562
+excore-grow-oom-fatal	excore	twocore	0	30	0	trap	7		1122
+excore-grow-repeated	excore	twocore	1	4	0	return	1	f0a	11042
+excore-grow-repeated	excore	twocore	1	30	0	return	1	f0a	11730
+excore-grow-repeated	excore	twocore	0	1	0	return	1	f0a	7286
+excore-grow-repeated	excore	twocore	0	4	0	return	1	f0a	7942
+excore-grow-repeated	excore	twocore	0	30	0	return	1	f0a	16374
+excore-mixed-tags-preserved	excore	twocore	1	4	0	return	1	68d	3329
+excore-mixed-tags-preserved	excore	twocore	1	30	0	return	1	68d	3667
+excore-mixed-tags-preserved	excore	twocore	0	1	0	return	1	68d	1992
+excore-mixed-tags-preserved	excore	twocore	0	4	0	return	1	68d	2160
+excore-mixed-tags-preserved	excore	twocore	0	30	0	return	1	68d	4296
+for-iter-dict-grow	excore	twocore	1	4	0	return	1	4d2	15494
+for-iter-dict-grow	excore	twocore	1	30	0	return	1	4d2	16704
+for-iter-dict-grow	excore	twocore	0	1	0	return	1	4d2	11454
+for-iter-dict-grow	excore	twocore	0	4	0	return	1	4d2	12217
+for-iter-dict-grow	excore	twocore	0	30	0	return	1	4d2	21583
+for-iter-grow	excore	twocore	1	4	0	return	1	6	5607
+for-iter-grow	excore	twocore	1	30	0	return	1	6	6339
+for-iter-grow	excore	twocore	0	1	0	return	1	6	2899
+for-iter-grow	excore	twocore	0	4	0	return	1	6	3455
+for-iter-grow	excore	twocore	0	30	0	return	1	6	8987
+list-del-shift-excore	excore	twocore	1	4	0	return	1	50	4777
+list-del-shift-excore	excore	twocore	1	30	0	return	1	50	5513
+list-del-shift-excore	excore	twocore	0	1	0	return	1	50	2050
+list-del-shift-excore	excore	twocore	0	4	0	return	1	50	2519
+list-del-shift-excore	excore	twocore	0	30	0	return	1	50	7057
+seed-grow-global	excore	twocore	1	4	0	return	1	63	18164
+seed-grow-global	excore	twocore	1	30	0	return	1	63	19556
+seed-grow-global	excore	twocore	0	1	0	return	1	63	13424
+seed-grow-global	excore	twocore	0	4	0	return	1	63	14220
+seed-grow-global	excore	twocore	0	30	0	return	1	63	24232
+set-grow-basic	excore	twocore	1	4	0	return	1	5	11183
+set-grow-basic	excore	twocore	1	30	0	return	1	5	12111
+set-grow-basic	excore	twocore	0	1	0	return	1	5	7665
+set-grow-basic	excore	twocore	0	4	0	return	1	5	8240
+set-grow-basic	excore	twocore	0	30	0	return	1	5	14810
+set-grow-fatal	excore	single	1	4	0	trap	13		1847
+set-grow-fatal	excore	single	1	30	0	trap	13		2419
+set-grow-fatal	excore	single	0	1	0	trap	13		639
+set-grow-fatal	excore	single	0	4	0	trap	13		957
+set-grow-fatal	excore	single	0	30	0	trap	13		3713
+align-mask	memory	single	1	4	0	return	1	c	1515
+align-mask	memory	single	1	30	0	return	1	c	1983
+align-mask	memory	single	0	1	0	return	1	c	476
+align-mask	memory	single	0	4	0	return	1	c	710
+align-mask	memory	single	0	30	0	return	1	c	2738
+code-alloc-oom-trap	memory	single	1	4	0	trap	7		1835
+code-alloc-oom-trap	memory	single	1	30	0	trap	7		2459
+code-alloc-oom-trap	memory	single	0	1	0	trap	7		537
+code-alloc-oom-trap	memory	single	0	4	0	trap	7		819
+code-alloc-oom-trap	memory	single	0	30	0	trap	7		3263
+code-mark-release	memory	single	1	4	0	return	1	6f	4094
+code-mark-release	memory	single	1	30	0	return	1	6f	5212
+code-mark-release	memory	single	0	1	0	return	1	6f	1704
+code-mark-release	memory	single	0	4	0	return	1	6f	2595
+code-mark-release	memory	single	0	30	0	return	1	6f	10317
+code-ram-call	memory	single	1	4	0	return	1	7d	6255
+code-ram-call	memory	single	1	30	0	return	1	7d	7789
+code-ram-call	memory	single	0	1	0	return	1	7d	3913
+code-ram-call	memory	single	0	4	0	return	1	7d	5896
+code-ram-call	memory	single	0	30	0	return	1	7d	23082
+code-ram-call-rom	memory	single	1	4	0	return	1	7d	6255
+code-ram-call-rom	memory	single	1	30	0	return	1	7d	7789
+code-ram-call-rom	memory	single	0	1	0	return	1	7d	3913
+code-ram-call-rom	memory	single	0	4	0	return	1	7d	5896
+code-ram-call-rom	memory	single	0	30	0	return	1	7d	23082
+code-release-stale-trap	memory	single	1	4	0	trap	7		2374
+code-release-stale-trap	memory	single	1	30	0	trap	7		3154
+code-release-stale-trap	memory	single	0	1	0	trap	7		716
+code-release-stale-trap	memory	single	0	4	0	trap	7		1097
+code-release-stale-trap	memory	single	0	30	0	trap	7		4399
+code-write-floor-trap	memory	single	1	4	0	trap	7		1911
+code-write-floor-trap	memory	single	1	30	0	trap	7		2561
+code-write-floor-trap	memory	single	0	1	0	trap	7		567
+code-write-floor-trap	memory	single	0	4	0	trap	7		864
+code-write-floor-trap	memory	single	0	30	0	trap	7		3438
+container-list-oom	memory	single	1	4	0	trap	7		284
+container-list-oom	memory	single	1	30	0	trap	7		336
+container-list-oom	memory	single	0	1	0	trap	7		99
+container-list-oom	memory	single	0	4	0	trap	7		132
+container-list-oom	memory	single	0	30	0	trap	7		418
+heap-mark-argc-trap	memory	single	1	4	0	trap	6		1828
+heap-mark-argc-trap	memory	single	1	30	0	trap	6		2452
+heap-mark-argc-trap	memory	single	0	1	0	trap	6		526
+heap-mark-argc-trap	memory	single	0	4	0	trap	6		802
+heap-mark-argc-trap	memory	single	0	30	0	trap	6		3194
+heap-mark-release	memory	single	1	4	0	return	1	2b67	5468
+heap-mark-release	memory	single	1	30	0	return	1	2b67	6898
+heap-mark-release	memory	single	0	1	0	return	1	2b67	2219
+heap-mark-release	memory	single	0	4	0	return	1	2b67	3356
+heap-mark-release	memory	single	0	30	0	return	1	2b67	13210
+heap-release-below-base-trap	memory	single	1	4	0	trap	7		1835
+heap-release-below-base-trap	memory	single	1	30	0	trap	7		2459
+heap-release-below-base-trap	memory	single	0	1	0	trap	7		537
+heap-release-below-base-trap	memory	single	0	4	0	trap	7		819
+heap-release-below-base-trap	memory	single	0	30	0	trap	7		3263
+heap-release-stale-trap	memory	single	1	4	0	trap	7		2318
+heap-release-stale-trap	memory	single	1	30	0	trap	7		3072
+heap-release-stale-trap	memory	single	0	1	0	trap	7		716
+heap-release-stale-trap	memory	single	0	4	0	trap	7		1097
+heap-release-stale-trap	memory	single	0	30	0	trap	7		4399
+locals-40-uninit	memory	single	1	4	0	trap	7		2762
+locals-40-uninit	memory	single	1	30	0	trap	7		3438
+locals-40-uninit	memory	single	0	1	0	trap	7		1019
+locals-40-uninit	memory	single	0	4	0	trap	7		1412
+locals-40-uninit	memory	single	0	30	0	trap	7		4818
+locals-40-uninit-two-core	memory	twocore	1	4	0	trap	7		2762
+locals-40-uninit-two-core	memory	twocore	1	30	0	trap	7		3438
+locals-40-uninit-two-core	memory	twocore	0	1	0	trap	7		1019
+locals-40-uninit-two-core	memory	twocore	0	4	0	trap	7		1412
+locals-40-uninit-two-core	memory	twocore	0	30	0	trap	7		4818
+locals-64	memory	single	1	4	0	return	1	7e0	13594
+locals-64	memory	single	1	30	0	return	1	7e0	16324
+locals-64	memory	single	0	1	0	return	1	7e0	5157
+locals-64	memory	single	0	4	0	return	1	7e0	7476
+locals-64	memory	single	0	30	0	return	1	7e0	27574
+locals-64-two-core	memory	twocore	1	4	0	return	1	7e0	13594
+locals-64-two-core	memory	twocore	1	30	0	return	1	7e0	16324
+locals-64-two-core	memory	twocore	0	1	0	return	1	7e0	5157
+locals-64-two-core	memory	twocore	0	4	0	return	1	7e0	7476
+locals-64-two-core	memory	twocore	0	30	0	return	1	7e0	27574
+rf-deep-recursion	memory	single	1	4	0	return	1	1f4	223159
+rf-deep-recursion	memory	single	1	30	0	return	1	1f4	246741
+rf-deep-recursion	memory	single	0	1	0	return	1	1f4	181777
+rf-deep-recursion	memory	single	0	4	0	return	1	1f4	275245
+rf-deep-recursion	memory	single	0	30	0	return	1	1f4	1085301
+rf-spill-oom-trap	memory	single	1	4	0	trap	7		624174
+rf-spill-oom-trap	memory	single	1	30	0	trap	7		787428
+rf-spill-oom-trap	memory	single	0	1	0	trap	7		242918
+rf-spill-oom-trap	memory	single	0	4	0	trap	7		348242
+rf-spill-oom-trap	memory	single	0	30	0	trap	7		1261050
+rf-spill-refill	memory	single	1	4	0	return	1	b3	31289
+rf-spill-refill	memory	single	1	30	0	return	1	b3	35657
+rf-spill-refill	memory	single	0	1	0	return	1	b3	41074
+rf-spill-refill	memory	single	0	4	0	return	1	b3	61990
+rf-spill-refill	memory	single	0	30	0	return	1	b3	243262
+rf-thrash	memory	single	1	4	0	return	1	3e8	188409
+rf-thrash	memory	single	1	30	0	return	1	3e8	190593
+rf-thrash	memory	single	0	1	0	return	1	3e8	383185
+rf-thrash	memory	single	0	4	0	return	1	3e8	570799
+rf-thrash	memory	single	0	30	0	return	1	3e8	2196787
+rf-window-too-big-trap	memory	single	1	4	0	trap	6		1719
+rf-window-too-big-trap	memory	single	1	30	0	trap	6		2291
+rf-window-too-big-trap	memory	single	0	1	0	trap	6		531
+rf-window-too-big-trap	memory	single	0	4	0	trap	6		810
+rf-window-too-big-trap	memory	single	0	30	0	trap	6		3228
+attr-basic	objects	single	1	4	0	return	1	c	3118
+attr-basic	objects	single	1	30	0	return	1	c	4028
+attr-basic	objects	single	0	1	0	return	1	c	1241
+attr-basic	objects	single	0	4	0	return	1	c	1943
+attr-basic	objects	single	0	30	0	return	1	c	8027
+attr-del	objects	single	1	4	0	trap	15		2103
+attr-del	objects	single	1	30	0	trap	15		2805
+attr-del	objects	single	0	1	0	trap	15		667
+attr-del	objects	single	0	4	0	trap	15		1030
+attr-del	objects	single	0	30	0	trap	15		4176
+attr-del-reinsert	objects	single	1	4	0	return	1	2a	2639
+attr-del-reinsert	objects	single	1	30	0	return	1	2a	3445
+attr-del-reinsert	objects	single	0	1	0	return	1	2a	995
+attr-del-reinsert	objects	single	0	4	0	return	1	2a	1547
+attr-del-reinsert	objects	single	0	30	0	return	1	2a	6331
+attr-dunder-base	objects	single	1	4	0	return	1	7	3708
+attr-dunder-base	objects	single	1	30	0	return	1	7	4722
+attr-dunder-base	objects	single	0	1	0	return	1	7	1471
+attr-dunder-base	objects	single	0	4	0	return	1	7	2272
+attr-dunder-base	objects	single	0	30	0	return	1	7	9214
+attr-dunder-class	objects	single	1	4	0	return	1	1	2261
+attr-dunder-class	objects	single	1	30	0	return	1	1	2963
+attr-dunder-class	objects	single	0	1	0	return	1	1	731
+attr-dunder-class	objects	single	0	4	0	return	1	1	1121
+attr-dunder-class	objects	single	0	30	0	return	1	1	4501
+attr-dunder-del-trap	objects	single	1	4	0	trap	1		1637
+attr-dunder-del-trap	objects	single	1	30	0	trap	1		2183
+attr-dunder-del-trap	objects	single	0	1	0	trap	1		492
+attr-dunder-del-trap	objects	single	0	4	0	trap	1		753
+attr-dunder-del-trap	objects	single	0	30	0	trap	1		3015
+attr-dunder-dict	objects	single	1	4	0	return	1	c	3253
+attr-dunder-dict	objects	single	1	30	0	return	1	c	4215
+attr-dunder-dict	objects	single	0	1	0	return	1	c	1228
+attr-dunder-dict	objects	single	0	4	0	return	1	c	1909
+attr-dunder-dict	objects	single	0	30	0	return	1	c	7811
+attr-dunder-store-trap	objects	single	1	4	0	trap	1		1637
+attr-dunder-store-trap	objects	single	1	30	0	trap	1		2183
+attr-dunder-store-trap	objects	single	0	1	0	trap	1		491
+attr-dunder-store-trap	objects	single	0	4	0	trap	1		749
+attr-dunder-store-trap	objects	single	0	30	0	trap	1		2985
+attr-many	objects	twocore	1	4	0	return	1	24	22648
+attr-many	objects	twocore	1	30	0	return	1	24	24754
+attr-many	objects	twocore	0	1	0	return	1	24	16030
+attr-many	objects	twocore	0	4	0	return	1	24	18401
+attr-many	objects	twocore	0	30	0	return	1	24	42063
+attr-missing	objects	single	1	4	0	trap	15		1818
+attr-missing	objects	single	1	30	0	trap	15		2442
+attr-missing	objects	single	0	1	0	trap	15		513
+attr-missing	objects	single	0	4	0	trap	15		786
+attr-missing	objects	single	0	30	0	trap	15		3152
+attr-mro	objects	single	1	4	0	return	1	63	2251
+attr-mro	objects	single	1	30	0	return	1	63	3005
+attr-mro	objects	single	0	1	0	return	1	63	697
+attr-mro	objects	single	0	4	0	return	1	63	1075
+attr-mro	objects	single	0	30	0	return	1	63	4351
+attr-overwrite	objects	single	1	4	0	return	1	9	2587
+attr-overwrite	objects	single	1	30	0	return	1	9	3367
+attr-overwrite	objects	single	0	1	0	return	1	9	1011
+attr-overwrite	objects	single	0	4	0	return	1	9	1572
+attr-overwrite	objects	single	0	30	0	return	1	9	6434
+attr-shadow	objects	single	1	4	0	return	1	5	2064
+attr-shadow	objects	single	1	30	0	return	1	5	2740
+attr-shadow	objects	single	0	1	0	return	1	5	666
+attr-shadow	objects	single	0	4	0	return	1	5	1026
+attr-shadow	objects	single	0	30	0	return	1	5	4146
+attr-type-trap	objects	single	1	4	0	trap	1		1503
+attr-type-trap	objects	single	1	30	0	trap	1		1997
+attr-type-trap	objects	single	0	1	0	trap	1		444
+attr-type-trap	objects	single	0	4	0	trap	1		669
+attr-type-trap	objects	single	0	30	0	trap	1		2619
+bound-method-obj	objects	single	1	4	0	return	1	2	3244
+bound-method-obj	objects	single	1	30	0	return	1	2	4284
+bound-method-obj	objects	single	0	1	0	return	1	2	1061
+bound-method-obj	objects	single	0	4	0	return	1	2	1622
+bound-method-obj	objects	single	0	30	0	return	1	2	6484
+class-const	objects	single	1	4	0	return	1	8	3494
+class-const	objects	single	1	30	0	return	1	8	4586
+class-const	objects	single	0	1	0	return	1	8	1210
+class-const	objects	single	0	4	0	return	1	8	1852
+class-const	objects	single	0	30	0	return	1	8	7416
+class-simple	objects	single	1	4	0	return	1	7	4516
+class-simple	objects	single	1	30	0	return	1	7	5868
+class-simple	objects	single	0	1	0	return	1	7	1645
+class-simple	objects	single	0	4	0	return	1	7	2518
+class-simple	objects	single	0	30	0	return	1	7	10084
+class-two-instances	objects	single	1	4	0	return	1	1e	5949
+class-two-instances	objects	single	1	30	0	return	1	1e	7587
+class-two-instances	objects	single	0	1	0	return	1	1e	2638
+class-two-instances	objects	single	0	4	0	return	1	1e	4060
+class-two-instances	objects	single	0	30	0	return	1	1e	16384
+ctor-init	objects	single	1	4	0	return	1	b	3287
+ctor-init	objects	single	1	30	0	return	1	b	4327
+ctor-init	objects	single	0	1	0	return	1	b	1130
+ctor-init	objects	single	0	4	0	return	1	b	1733
+ctor-init	objects	single	0	30	0	return	1	b	6959
+ctor-noinit	objects	single	1	4	0	return	1	7	2641
+ctor-noinit	objects	single	1	30	0	return	1	7	3473
+ctor-noinit	objects	single	0	1	0	return	1	7	896
+ctor-noinit	objects	single	0	4	0	return	1	7	1379
+ctor-noinit	objects	single	0	30	0	return	1	7	5565
+firmware-attr-helpers	objects	single	1	4	0	return	1	1f	9619
+firmware-attr-helpers	objects	single	1	30	0	return	1	1f	12089
+firmware-attr-helpers	objects	single	0	1	0	return	1	1f	4484
+firmware-attr-helpers	objects	single	0	4	0	return	1	1f	6830
+firmware-attr-helpers	objects	single	0	30	0	return	1	1f	27162
+method-call	objects	single	1	4	0	return	1	2	3080
+method-call	objects	single	1	30	0	return	1	2	4068
+method-call	objects	single	0	1	0	return	1	2	979
+method-call	objects	single	0	4	0	return	1	2	1498
+method-call	objects	single	0	30	0	return	1	2	5996
+method-call-kw	objects	single	1	4	0	return	1	37	4401
+method-call-kw	objects	single	1	30	0	return	1	37	5701
+method-call-kw	objects	single	0	1	0	return	1	37	1723
+method-call-kw	objects	single	0	4	0	return	1	37	2632
+method-call-kw	objects	single	0	30	0	return	1	37	10510
+method-default	objects	single	1	4	0	return	1	9	3653
+method-default	objects	single	1	30	0	return	1	9	4745
+method-default	objects	single	0	1	0	return	1	9	1409
+method-default	objects	single	0	4	0	return	1	9	2165
+method-default	objects	single	0	30	0	return	1	9	8717
+method-nested	objects	single	1	4	0	return	1	8	4172
+method-nested	objects	single	1	30	0	return	1	8	5446
+method-nested	objects	single	0	1	0	return	1	8	1499
+method-nested	objects	single	0	4	0	return	1	8	2306
+method-nested	objects	single	0	30	0	return	1	8	9300
+staticmethod	objects	single	1	4	0	return	1	7	3435
+staticmethod	objects	single	1	30	0	return	1	7	4501
+staticmethod	objects	single	0	1	0	return	1	7	1191
+staticmethod	objects	single	0	4	0	return	1	7	1809
+staticmethod	objects	single	0	30	0	return	1	7	7165
+varkw-method	objects	single	1	4	0	return	1	d	5768
+varkw-method	objects	single	1	30	0	return	1	d	7432
+varkw-method	objects	single	0	1	0	return	1	d	2554
+varkw-method	objects	single	0	4	0	return	1	d	3934
+varkw-method	objects	single	0	30	0	return	1	d	15894
+build-string	strings	single	1	4	0	return	1	6	2648
+build-string	strings	single	1	30	0	return	1	6	3324
+build-string	strings	single	0	1	0	return	1	6	1316
+build-string	strings	single	0	4	0	return	1	6	1904
+build-string	strings	single	0	30	0	return	1	6	7000
+convert-repr-str	strings	single	1	4	0	return	1	4	2299
+convert-repr-str	strings	single	1	30	0	return	1	4	2923
+convert-repr-str	strings	single	0	1	0	return	1	4	1022
+convert-repr-str	strings	single	0	4	0	return	1	4	1490
+convert-repr-str	strings	single	0	30	0	return	1	4	5546
+convert-value	strings	single	1	4	0	return	1	3	2383
+convert-value	strings	single	1	30	0	return	1	3	3033
+convert-value	strings	single	0	1	0	return	1	3	972
+convert-value	strings	single	0	4	0	return	1	3	1413
+convert-value	strings	single	0	30	0	return	1	3	5235
+format-simple	strings	single	1	4	0	return	1	4	2311
+format-simple	strings	single	1	30	0	return	1	4	2935
+format-simple	strings	single	0	1	0	return	1	4	1033
+format-simple	strings	single	0	4	0	return	1	4	1504
+format-simple	strings	single	0	30	0	return	1	4	5586
+jaro-window	strings	single	1	4	0	return	1	c9	14886
+jaro-window	strings	single	1	30	0	return	1	c9	18292
+jaro-window	strings	single	0	1	0	return	1	c9	8616
+jaro-window	strings	single	0	4	0	return	1	c9	13071
+jaro-window	strings	single	0	30	0	return	1	c9	51681
+list-concat-damerau	strings	single	1	4	0	return	1	70	5587
+list-concat-damerau	strings	single	1	30	0	return	1	70	7069
+list-concat-damerau	strings	single	0	1	0	return	1	70	2171
+list-concat-damerau	strings	single	0	4	0	return	1	70	3191
+list-concat-damerau	strings	single	0	30	0	return	1	70	12031
+list-repeat-jaro	strings	single	1	4	0	return	1	86	7294
+list-repeat-jaro	strings	single	1	30	0	return	1	86	9036
+list-repeat-jaro	strings	single	0	1	0	return	1	86	3325
+list-repeat-jaro	strings	single	0	4	0	return	1	86	4993
+list-repeat-jaro	strings	single	0	30	0	return	1	86	19449
+slice-damerau	strings	single	1	4	0	return	1	6f	3354
+slice-damerau	strings	single	1	30	0	return	1	6f	4238
+slice-damerau	strings	single	0	1	0	return	1	6f	1226
+slice-damerau	strings	single	0	4	0	return	1	6f	1778
+slice-damerau	strings	single	0	30	0	return	1	6f	6562
+slice-str	strings	single	1	4	0	return	1	1b207	4028
+slice-str	strings	single	1	30	0	return	1	1b207	5016
+slice-str	strings	single	0	1	0	return	1	1b207	1545
+slice-str	strings	single	0	4	0	return	1	1b207	2232
+slice-str	strings	single	0	30	0	return	1	1b207	8186
+slice-str-clamp	strings	single	1	4	0	return	1	2b67	3657
+slice-str-clamp	strings	single	1	30	0	return	1	2b67	4567
+slice-str-clamp	strings	single	0	1	0	return	1	2b67	1385
+slice-str-clamp	strings	single	0	4	0	return	1	2b67	2006
+slice-str-clamp	strings	single	0	30	0	return	1	2b67	7388
+slice-str-const	strings	single	1	4	0	return	1	2b67	4216
+slice-str-const	strings	single	1	30	0	return	1	2b67	5282
+slice-str-const	strings	single	0	1	0	return	1	2b67	1561
+slice-str-const	strings	single	0	4	0	return	1	2b67	2251
+slice-str-const	strings	single	0	30	0	return	1	2b67	8231
+slice-str-empty	strings	single	1	4	0	return	1	457	3159
+slice-str-empty	strings	single	1	30	0	return	1	457	3965
+slice-str-empty	strings	single	0	1	0	return	1	457	1201
+slice-str-empty	strings	single	0	4	0	return	1	457	1750
+slice-str-empty	strings	single	0	30	0	return	1	457	6508
+slice-str-long	strings	single	1	4	0	return	1	a98ac7	6152
+slice-str-long	strings	single	1	30	0	return	1	a98ac7	7660
+slice-str-long	strings	single	0	1	0	return	1	a98ac7	2486
+slice-str-long	strings	single	0	4	0	return	1	a98ac7	3635
+slice-str-long	strings	single	0	30	0	return	1	a98ac7	13593
+slice-str-neg-trap	strings	single	1	4	0	return	1	3	2293
+slice-str-neg-trap	strings	single	1	30	0	return	1	3	3021
+slice-str-neg-trap	strings	single	0	1	0	return	1	3	741
+slice-str-neg-trap	strings	single	0	4	0	return	1	3	1113
+slice-str-neg-trap	strings	single	0	30	0	return	1	3	4337
+slice-str-open	strings	single	1	4	0	return	1	2b03	3303
+slice-str-open	strings	single	1	30	0	return	1	2b03	4161
+slice-str-open	strings	single	0	1	0	return	1	2b03	1245
+slice-str-open	strings	single	0	4	0	return	1	2b03	1815
+slice-str-open	strings	single	0	30	0	return	1	2b03	6755
+slice-str-scan	strings	single	1	4	0	return	1	49	6177
+slice-str-scan	strings	single	1	30	0	return	1	49	7243
+slice-str-scan	strings	single	0	1	0	return	1	49	5143
+slice-str-scan	strings	single	0	4	0	return	1	49	7498
+slice-str-scan	strings	single	0	30	0	return	1	49	27908
+slice-str-unicode	strings	single	1	4	0	return	1	2b67	3593
+slice-str-unicode	strings	single	1	30	0	return	1	2b67	4503
+slice-str-unicode	strings	single	0	1	0	return	1	2b67	1362
+slice-str-unicode	strings	single	0	4	0	return	1	2b67	1971
+slice-str-unicode	strings	single	0	30	0	return	1	2b67	7249
+str-consts	strings	single	1	4	0	return	1	2a	2391
+str-consts	strings	single	1	30	0	return	1	2a	3093
+str-consts	strings	single	0	1	0	return	1	2a	849
+str-consts	strings	single	0	4	0	return	1	2a	1290
+str-consts	strings	single	0	30	0	return	1	2a	5112
+str-consts-two-core	strings	twocore	1	4	0	return	1	2a	2391
+str-consts-two-core	strings	twocore	1	30	0	return	1	2a	3093
+str-consts-two-core	strings	twocore	0	1	0	return	1	2a	849
+str-consts-two-core	strings	twocore	0	4	0	return	1	2a	1290
+str-consts-two-core	strings	twocore	0	30	0	return	1	2a	5112
+str-dict-key-runtime	strings	single	1	4	0	return	1	1	4471
+str-dict-key-runtime	strings	single	1	30	0	return	1	1	5563
+str-dict-key-runtime	strings	single	0	1	0	return	1	1	2082
+str-dict-key-runtime	strings	single	0	4	0	return	1	1	3054
+str-dict-key-runtime	strings	single	0	30	0	return	1	1	11478
+str-dict-key-runtime-del	strings	single	1	4	0	return	1	1	6801
+str-dict-key-runtime-del	strings	single	1	30	0	return	1	1	8543
+str-dict-key-runtime-del	strings	single	0	1	0	return	1	1	2982
+str-dict-key-runtime-del	strings	single	0	4	0	return	1	1	4455
+str-dict-key-runtime-del	strings	single	0	30	0	return	1	1	17221
+str-eq	strings	single	1	4	0	return	1	7	2511
+str-eq	strings	single	1	30	0	return	1	7	3187
+str-eq	strings	single	0	1	0	return	1	7	864
+str-eq	strings	single	0	4	0	return	1	7	1266
+str-eq	strings	single	0	30	0	return	1	7	4750
+str-eq-runtime-long	strings	single	1	4	0	return	1	3f	3910
+str-eq-runtime-long	strings	single	1	30	0	return	1	3f	4872
+str-eq-runtime-long	strings	single	0	1	0	return	1	3f	1459
+str-eq-runtime-long	strings	single	0	4	0	return	1	3f	2113
+str-eq-runtime-long	strings	single	0	30	0	return	1	3f	7781
+str-lt	strings	single	1	4	0	return	1	1f	3461
+str-lt	strings	single	1	30	0	return	1	1f	4345
+str-lt	strings	single	0	1	0	return	1	1f	1291
+str-lt	strings	single	0	4	0	return	1	1f	1912
+str-lt	strings	single	0	30	0	return	1	1f	7294
+str-methods	strings	single	1	4	0	return	1	14b	5015
+str-methods	strings	single	1	30	0	return	1	14b	6289
+str-methods	strings	single	0	1	0	return	1	14b	1835
+str-methods	strings	single	0	4	0	return	1	14b	2738
+str-methods	strings	single	0	30	0	return	1	14b	10564
+str-p5e-batch2	strings	single	1	4	0	return	1	fffffff	19299
+str-p5e-batch2	strings	single	1	30	0	return	1	fffffff	23693
+str-p5e-batch2	strings	single	0	1	0	return	1	fffffff	7199
+str-p5e-batch2	strings	single	0	4	0	return	1	fffffff	10745
+str-p5e-batch2	strings	single	0	30	0	return	1	fffffff	41477
+str-p5e-batch3	strings	single	1	4	0	return	1	ffffff	33653
+str-p5e-batch3	strings	single	1	30	0	return	1	ffffff	40933
+str-p5e-batch3	strings	single	0	1	0	return	1	ffffff	14780
+str-p5e-batch3	strings	single	0	4	0	return	1	ffffff	22106
+str-p5e-batch3	strings	single	0	30	0	return	1	ffffff	85598
+str-search-methods	strings	single	1	4	0	return	1	1fff	10511
+str-search-methods	strings	single	1	30	0	return	1	1fff	12955
+str-search-methods	strings	single	0	1	0	return	1	1fff	3974
+str-search-methods	strings	single	0	4	0	return	1	1fff	5858
+str-search-methods	strings	single	0	30	0	return	1	1fff	22186
+str-subscr	strings	single	1	4	0	return	1	6f	3198
+str-subscr	strings	single	1	30	0	return	1	6f	4030
+str-subscr	strings	single	0	1	0	return	1	6f	1125
+str-subscr	strings	single	0	4	0	return	1	6f	1665
+str-subscr	strings	single	0	30	0	return	1	6f	6345
+str-subscr-char-oob-trap	strings	single	1	4	0	trap	7		1511
+str-subscr-char-oob-trap	strings	single	1	30	0	trap	7		2005
+str-subscr-char-oob-trap	strings	single	0	1	0	trap	7		455
+str-subscr-char-oob-trap	strings	single	0	4	0	trap	7		683
+str-subscr-char-oob-trap	strings	single	0	30	0	trap	7		2659
+str-subscr-long	strings	single	1	4	0	return	1	6f	2991
+str-subscr-long	strings	single	1	30	0	return	1	6f	3797
+str-subscr-long	strings	single	0	1	0	return	1	6f	1046
+str-subscr-long	strings	single	0	4	0	return	1	6f	1553
+str-subscr-long	strings	single	0	30	0	return	1	6f	5947
+str-subscr-loop	strings	single	1	4	0	return	1	3	3767
+str-subscr-loop	strings	single	1	30	0	return	1	3	4729
+str-subscr-loop	strings	single	0	1	0	return	1	3	1931
+str-subscr-loop	strings	single	0	4	0	return	1	3	2840
+str-subscr-loop	strings	single	0	30	0	return	1	3	10718
+str-subscr-oob-trap	strings	single	1	4	0	trap	7		1511
+str-subscr-oob-trap	strings	single	1	30	0	trap	7		2005
+str-subscr-oob-trap	strings	single	0	1	0	trap	7		455
+str-subscr-oob-trap	strings	single	0	4	0	trap	7		683
+str-subscr-oob-trap	strings	single	0	30	0	trap	7		2659
+str-subscr-unicode	strings	single	1	4	0	return	1	457	3404
+str-subscr-unicode	strings	single	1	30	0	return	1	457	4288
+str-subscr-unicode	strings	single	0	1	0	return	1	457	1203
+str-subscr-unicode	strings	single	0	4	0	return	1	457	1782
+str-subscr-unicode	strings	single	0	30	0	return	1	457	6800
+string-ops	strings	single	1	4	0	return	1	23	4587
+string-ops	strings	single	1	30	0	return	1	23	5887
+string-ops	strings	single	0	1	0	return	1	23	1769
+string-ops	strings	single	0	4	0	return	1	23	2687
+string-ops	strings	single	0	30	0	return	1	23	10643
+string-ops-two-core	strings	twocore	1	4	0	return	1	23	4587
+string-ops-two-core	strings	twocore	1	30	0	return	1	23	5887
+string-ops-two-core	strings	twocore	0	1	0	return	1	23	1769
+string-ops-two-core	strings	twocore	0	4	0	return	1	23	2687
+string-ops-two-core	strings	twocore	0	30	0	return	1	23	10643
+builtins-fallback	variables	single	1	4	0	return	1	4	2122
+builtins-fallback	variables	single	1	30	0	return	1	4	2824
+builtins-fallback	variables	single	0	1	0	return	1	4	651
+builtins-fallback	variables	single	0	4	0	return	1	4	993
+builtins-fallback	variables	single	0	30	0	return	1	4	3957
+builtins-null-bit	variables	single	1	4	0	return	1	7	2067
+builtins-null-bit	variables	single	1	30	0	return	1	7	2743
+builtins-null-bit	variables	single	0	1	0	return	1	7	651
+builtins-null-bit	variables	single	0	4	0	return	1	7	990
+builtins-null-bit	variables	single	0	30	0	return	1	7	3928
+builtins-shadow	variables	single	1	4	0	return	1	63	2386
+builtins-shadow	variables	single	1	30	0	return	1	63	3140
+builtins-shadow	variables	single	0	1	0	return	1	63	809
+builtins-shadow	variables	single	0	4	0	return	1	63	1226
+builtins-shadow	variables	single	0	30	0	return	1	63	4840
+copy	variables	single	1	4	0	return	1	5	1843
+copy	variables	single	1	30	0	return	1	5	2441
+copy	variables	single	0	1	0	return	1	5	644
+copy	variables	single	0	4	0	return	1	5	983
+copy	variables	single	0	30	0	return	1	5	3921
+delete-fast	variables	single	1	4	0	return	1	2	1392
+delete-fast	variables	single	1	30	0	return	1	2	1834
+delete-fast	variables	single	0	1	0	return	1	2	445
+delete-fast	variables	single	0	4	0	return	1	2	661
+delete-fast	variables	single	0	30	0	return	1	2	2533
+delete-fast-unbound	variables	single	1	4	0	trap	7		1214
+delete-fast-unbound	variables	single	1	30	0	trap	7		1630
+delete-fast-unbound	variables	single	0	1	0	trap	7		333
+delete-fast-unbound	variables	single	0	4	0	trap	7		498
+delete-fast-unbound	variables	single	0	30	0	trap	7		1928
+globals-accum	variables	single	1	4	0	return	1	142	6030
+globals-accum	variables	single	1	30	0	return	1	142	7460
+globals-accum	variables	single	0	1	0	return	1	142	3359
+globals-accum	variables	single	0	4	0	return	1	142	5114
+globals-accum	variables	single	0	30	0	return	1	142	20324
+globals-accum-two-core	variables	twocore	1	4	0	return	1	142	6030
+globals-accum-two-core	variables	twocore	1	30	0	return	1	142	7460
+globals-accum-two-core	variables	twocore	0	1	0	return	1	142	3359
+globals-accum-two-core	variables	twocore	0	4	0	return	1	142	5114
+globals-accum-two-core	variables	twocore	0	30	0	return	1	142	20324
+load-fast-and-clear	variables	single	1	4	0	return	1	7	1522
+load-fast-and-clear	variables	single	1	30	0	return	1	7	1990
+load-fast-and-clear	variables	single	0	1	0	return	1	7	486
+load-fast-and-clear	variables	single	0	4	0	return	1	7	723
+load-fast-and-clear	variables	single	0	30	0	return	1	7	2777
+load-fast-and-clear-cleared	variables	single	1	4	0	trap	7		1232
+load-fast-and-clear-cleared	variables	single	1	30	0	trap	7		1648
+load-fast-and-clear-cleared	variables	single	0	1	0	trap	7		361
+load-fast-and-clear-cleared	variables	single	0	4	0	trap	7		535
+load-fast-and-clear-cleared	variables	single	0	30	0	trap	7		2043
+load-fast-borrow-load-fast-borrow	variables	single	1	4	0	return	1	7	1509
+load-fast-borrow-load-fast-borrow	variables	single	1	30	0	return	1	7	1977
+load-fast-borrow-load-fast-borrow	variables	single	0	1	0	return	1	7	467
+load-fast-borrow-load-fast-borrow	variables	single	0	4	0	return	1	7	698
+load-fast-borrow-load-fast-borrow	variables	single	0	30	0	return	1	7	2700
+load-fast-check	variables	single	1	4	0	return	1	7	1524
+load-fast-check	variables	single	1	30	0	return	1	7	1992
+load-fast-check	variables	single	0	1	0	return	1	7	488
+load-fast-check	variables	single	0	4	0	return	1	7	725
+load-fast-check	variables	single	0	30	0	return	1	7	2779
+load-fast-check-unbound	variables	single	1	4	0	trap	7		1214
+load-fast-check-unbound	variables	single	1	30	0	trap	7		1630
+load-fast-check-unbound	variables	single	0	1	0	trap	7		333
+load-fast-check-unbound	variables	single	0	4	0	trap	7		498
+load-fast-check-unbound	variables	single	0	30	0	trap	7		1928
+load-fast-load-fast	variables	single	1	4	0	return	1	2	1401
+load-fast-load-fast	variables	single	1	30	0	return	1	2	1843
+load-fast-load-fast	variables	single	0	1	0	return	1	2	457
+load-fast-load-fast	variables	single	0	4	0	return	1	2	676
+load-fast-load-fast	variables	single	0	30	0	return	1	2	2574
+load-global-namei	variables	single	1	4	0	return	1	6	2855
+load-global-namei	variables	single	1	30	0	return	1	6	3687
+load-global-namei	variables	single	0	1	0	return	1	6	1170
+load-global-namei	variables	single	0	4	0	return	1	6	1815
+load-global-namei	variables	single	0	30	0	return	1	6	7405
+load-name-builtin	variables	single	1	4	0	return	1	4	2078
+load-name-builtin	variables	single	1	30	0	return	1	4	2754
+load-name-builtin	variables	single	0	1	0	return	1	4	669
+load-name-builtin	variables	single	0	4	0	return	1	4	1017
+load-name-builtin	variables	single	0	30	0	return	1	4	4033
+store-fast-load-fast	variables	single	1	4	0	return	1	b	1520
+store-fast-load-fast	variables	single	1	30	0	return	1	b	1988
+store-fast-load-fast	variables	single	0	1	0	return	1	b	484
+store-fast-load-fast	variables	single	0	4	0	return	1	b	721
+store-fast-load-fast	variables	single	0	30	0	return	1	b	2775
+swap	variables	single	1	4	0	return	1	6	1971
+swap	variables	single	1	30	0	return	1	6	2543
+swap	variables	single	0	1	0	return	1	6	701
+swap	variables	single	0	4	0	return	1	6	1052
+swap	variables	single	0	30	0	return	1	6	4094
+undef-global	variables	single	1	4	0	trap	7		1560
+undef-global	variables	single	1	30	0	trap	7		2106
+undef-global	variables	single	0	1	0	trap	7		358
+undef-global	variables	single	0	4	0	trap	7		544
+undef-global	variables	single	0	30	0	trap	7		2156
+undef-global-two-core	variables	twocore	1	4	0	trap	7		1560
+undef-global-two-core	variables	twocore	1	30	0	trap	7		2106
+undef-global-two-core	variables	twocore	0	1	0	trap	7		358
+undef-global-two-core	variables	twocore	0	4	0	trap	7		544
+undef-global-two-core	variables	twocore	0	30	0	trap	7		2156

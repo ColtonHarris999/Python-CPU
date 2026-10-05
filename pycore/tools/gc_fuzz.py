@@ -633,7 +633,7 @@ def main() -> int:
               f"min_allocs={need_n}")
     for ln in gc_sites.table(rows, wanted):
         print(f"G8 site {ln}")
-    return 1 if failing else 0
+    return 1 if failing or miss_kinds or miss_rows else 0
 
 
 if __name__ == "__main__":

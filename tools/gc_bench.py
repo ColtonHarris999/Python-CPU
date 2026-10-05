@@ -1,8 +1,14 @@
-#!/usr/bin/env python3
-"""G13 benchmark table (planning/gc_plan.md §10.2).
+#!/usr/bin/env python3.14
+"""G13 benchmark table (planning/gc_plan.md §10.2; pycore/docs/gc.md, Performance).
 
-Runs the img_gc_bench_* fixtures at CACHE_EN=1 MEM_LATENCY=4 and prints the
-counter-line metrics. The acceptance gate scores those numbers as P3-P8.
+Runs the G13 set of pycore/programs/hw_tests.toml (`[gate.G13]`: the
+gc-bench-* tests and gc-compile-loop) at CACHE_EN=1 MEM_LATENCY=4 with the
+collector on and `+GC_LOG=1`, prints each test's counter line and scores
+P3-P7. With `--fuzz-out DIR` (a gc_fuzz.py --out directory) it also scores
+P8 over that corpus.
+
+    python3.14 tools/gc_bench.py [--jobs N] [--fuzz-out build/gc_fuzz]
+    make pycore-gc-bench
 """
 
 from __future__ import annotations
@@ -10,47 +16,52 @@ from __future__ import annotations
 import argparse
 import os
 import pathlib
-import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import gc_gates  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CYC_RE = re.compile(r"cycles=(\d+)")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--jobs", type=int, default=int(os.environ.get("TEST_JOBS", os.cpu_count() or 2)))
     ap.add_argument("--out", default=str(ROOT / "build" / "gc_bench"))
+    ap.add_argument("--fuzz-out", help="gc_fuzz.py output directory to score P8 over")
     args = ap.parse_args()
     out = pathlib.Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     ctx = gc_gates.Context(root=ROOT, out=out, mode="full", jobs=args.jobs, head="")
-    targets = list(gc_gates.BENCH.values())
-    res, _ = gc_gates.gc_runs(ctx, "bench", targets, 1, 4, "+GC_LOG=1", dump=False)
-    print(f"{'fixture':<28} collections live     free  max_pause total_pause "
-          f"mark_cyc sweep_cyc port_util")
-    rc = 0
-    for x in res:
-        text = pathlib.Path(x.log).read_text(encoding="utf-8", errors="replace")
-        gc = gc_gates.parse_gc_line(text)
-        cyc = CYC_RE.search(text)
-        if x.status != "pass" or not gc:
-            print(f"{x.target:<28} FAIL {x.detail}")
-            rc = 1
+    res = gc_gates.gate_runs(ctx, "G13")
+    print(f"{'test':<18} {'cycles':>10} {'colls':>5} {'live':>8} {'max_pause':>9} "
+          f"{'total_pause':>11} {'mark_cyc':>9} {'sweep_cyc':>9} {'port_util':>9} "
+          f"{'spills':>6} {'mark_xacts':>10} {'share':>6}")
+    for r in sorted(res, key=lambda r: r.test.name):
+        gc = gc_gates.parse_gc_line(r.text())
+        if not r.passed or not gc:
+            print(f"{r.test.name:<18} FAIL {r.detail}")
             continue
-        util = gc["port_busy_mark"] / max(1, gc["mark_cyc"])
-        print(f"{x.target:<28} {gc['collections']:11d} {gc['live']:8d} {gc['free']:8d} "
-              f"{gc['max_pause']:9d} {gc['total_pause']:11d} {gc['mark_cyc']:8d} "
-              f"{gc['sweep_cyc']:9d} {util:8.3f}")
-        if cyc:
-            share = gc["total_pause"] / max(1, int(cyc.group(1)))
-            print(f"  cycles={cyc.group(1)} GC_share={share:.3f} "
-                  f"spills={gc['stack_spills']} mark_xacts={gc['mark_xacts']} "
-                  f"run_pops={gc['run_pops']}")
-    return rc
+        cyc = r.cycles or 1
+        print(f"{r.test.name:<18} {cyc:>10} {gc['collections']:>5} {gc['live']:>8} "
+              f"{gc['max_pause']:>9} {gc['total_pause']:>11} {gc['mark_cyc']:>9} "
+              f"{gc['sweep_cyc']:>9} {gc['port_busy_mark'] / max(1, gc['mark_cyc']):>9.3f} "
+              f"{gc['stack_spills']:>6} {gc['mark_xacts']:>10} {gc['total_pause'] / cyc:>6.3f}")
+    _, lines, problems = gc_gates.perf_metrics(res)
+    print()
+    for ln in lines:
+        if ln.startswith("P"):
+            print(ln)
+    if args.fuzz_out:
+        fuzz = pathlib.Path(args.fuzz_out).resolve()
+        pops, allocs = gc_gates.p8_rate(fuzz)
+        rate = pops / allocs if allocs else float("nan")
+        print(f"P8 run pops/alloc {rate:.4f} ({pops}/{allocs}) over {fuzz}")
+        if not allocs or rate > 0.05:
+            problems.append(f"P8 run-list pops per allocation {rate:.4f} > 0.05 or no corpus")
+    for p in problems:
+        print(f"MISSED {p}")
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

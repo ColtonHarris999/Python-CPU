@@ -1,0 +1,532 @@
+# Verilator warnings of both shared simulator builds at cf929f843691203053206b98d8f2f2671bd84f25
+# code<TAB>file<TAB>message (line numbers dropped)
+BLKSEQ	pycore/rtl/pycore_regfile.sv	Blocking assignment '=' in sequential logic process
+BLKSEQ	pycore/tb/tb_container.sv	Blocking assignment '=' in sequential logic process
+CMPCONST	pycore/rtl/pycore_cont_object.svh	Comparison is constant due to limited range
+CMPCONST	pycore/rtl/pycore_cont_str.svh	Comparison is constant due to limited range
+PINCONNECTEMPTY	pycore/rtl/pycore_codc.sv	Cell pin connected by name with empty reference: 'victim_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'buf_hit_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'bytes_scanned_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'bytes_written_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'cmd_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'decoded_pc_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'decoded_valid_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'head_ptr_out_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'locals_base_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'mem_req_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'pop_stack_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'push_stack_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'resident_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'stack_fault_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'tail_ptr_out_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'tos_ptr_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'trap_code_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'trap_pc_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'trap_rs1_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_core.sv	Cell pin connected by name with empty reference: 'trap_rs2_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_excore_system.sv	Cell pin connected by name with empty reference: 'codc_fill_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_excore_system.sv	Cell pin connected by name with empty reference: 'codc_flush_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_excore_system.sv	Cell pin connected by name with empty reference: 'codc_hit_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_excore_system.sv	Cell pin connected by name with empty reference: 'codc_miss_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_excore_system.sv	Cell pin connected by name with empty reference: 'gic_fill_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_excore_system.sv	Cell pin connected by name with empty reference: 'gic_flush_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_excore_system.sv	Cell pin connected by name with empty reference: 'gic_hit_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_excore_system.sv	Cell pin connected by name with empty reference: 'gic_miss_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_excore_system.sv	Cell pin connected by name with empty reference: 'l1d_idle_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_gic.sv	Cell pin connected by name with empty reference: 'victim_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'down_line_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'down_wline_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'flush_busy_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'flush_done_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'idle_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'inv_busy_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'inv_done_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'rdata_line_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'region_hit_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'region_miss_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_mem_hier.sv	Cell pin connected by name with empty reference: 'writeback_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'excore_ack_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'excore_fault_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'excore_rdata_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'flush_done_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'inv_done_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'l1d_idle_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'trap_req_code_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'trap_req_entries_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'trap_req_entry_count_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'trap_req_heap_ptr_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'trap_req_instr_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'trap_req_pc_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'trap_req_valid_o'
+PINCONNECTEMPTY	pycore/rtl/pycore_system.sv	Cell pin connected by name with empty reference: 'trap_res_ready_o'
+SYNCASYNCNET	pycore/rtl/pycore_excore_system.sv	Signal flopped as both synchronous and async: 'tb_container.g_dut.dut.rst_n_i'
+SYNCASYNCNET	pycore/rtl/pycore_system.sv	Signal flopped as both synchronous and async: 'tb_container.g_dut.dut.rst_n_i'
+UNUSEDPARAM	excore/rtl/excore_mmio.sv	Parameter is not used: 'OFF_CONSOLE_TX'
+UNUSEDPARAM	excore/rtl/singlecore/base.sv	Parameter is not used: 'one'
+UNUSEDPARAM	excore/rtl/singlecore/base.sv	Parameter is not used: 'zero'
+UNUSEDPARAM	excore/rtl/singlecore/memory_io.sv	Parameter is not used: 'memory_io_no_req64'
+UNUSEDPARAM	excore/rtl/singlecore/memory_io.sv	Parameter is not used: 'memory_io_no_rsp64'
+UNUSEDPARAM	excore/rtl/singlecore/riscv32_common.sv	Parameter is not used: 'f7_add'
+UNUSEDPARAM	excore/rtl/singlecore/riscv32_common.sv	Parameter is not used: 'f7_ext_mul'
+UNUSEDPARAM	excore/rtl/singlecore/riscv32_common.sv	Parameter is not used: 'f7_sub'
+UNUSEDPARAM	pycore/rtl/pycore_core.sv	Parameter is not used: 'RF_RESERVE'
+UNUSEDPARAM	pycore/rtl/pycore_core.sv	Parameter is not used: 'STACK_BASE'
+UNUSEDPARAM	pycore/rtl/pycore_core.sv	Parameter is not used: 'STACK_TOP_MAX'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_BOOT_RECORD_BYTES'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_CODE_NFIELDS'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_CODE_RAM_BLOCK_COUNT'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_DMEM_WSTRB_WIDTH'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_FTB_FRAMES'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_IMEM_WSTRB_WIDTH'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_LATIN1_SPACE'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_OBJ_BUILTIN_BYTES'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_OBJ_BYTEARRAY_BYTES'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_OBJ_HDR_BYTES'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_OBJ_TYPE_BYTES'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_RAM_BEATS'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_RAM_T_FIRST'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PYCORE_STRACC_FLAG_INTERNED'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_BI_BYTEARRAY'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_BI_FROM_BYTES'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_BI_PRINT'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_BI_STATICMETHOD'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_BI_TO_BYTES'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_CACHE_LOAD_ATTR'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_CACHE_STORE_ATTR'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_CACHE_UNPACK_SEQUENCE'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_MUT_DEQUE'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_OBK_BYTEARRAY'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_OP_FORMAT_WITH_SPEC'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_PROMOTE_BOOL_TO_COMPLEX'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_PROMOTE_FLOAT_TO_COMPLEX'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_PROMOTE_INT_TO_COMPLEX'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_TAG_BYTES'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_TAG_FRAME_OBJECT'
+UNUSEDPARAM	pycore/rtl/pycore_defs.svh	Parameter is not used: 'PY_TAG_PTR'
+UNUSEDPARAM	pycore/rtl/pycore_excore_system.sv	Parameter is not used: 'BLOCK_SHIFT'
+UNUSEDPARAM	pycore/rtl/pycore_excore_system.sv	Parameter is not used: 'DMEM_BLOCK_COUNT'
+UNUSEDPARAM	pycore/rtl/pycore_excore_system.sv	Parameter is not used: 'IMEM_BLOCK_COUNT'
+UNUSEDPARAM	pycore/rtl/pycore_frame.sv	Parameter is not used: 'RF_BASE'
+UNUSEDPARAM	pycore/rtl/pycore_system.sv	Parameter is not used: 'BLOCK_SHIFT'
+UNUSEDPARAM	pycore/rtl/pycore_system.sv	Parameter is not used: 'DMEM_BLOCK_COUNT'
+UNUSEDPARAM	pycore/rtl/pycore_system.sv	Parameter is not used: 'IMEM_BLOCK_COUNT'
+UNUSEDSIGNAL	excore/rtl/excore_cpu.sv	Bits of signal are not used: 'data_mem_req'[18:16]
+UNUSEDSIGNAL	excore/rtl/excore_cpu.sv	Bits of signal are not used: 'inst_mem_req'[59:28,23:20,18:16]
+UNUSEDSIGNAL	excore/rtl/excore_cpu.sv	Signal is not used: 'data_is_oob'
+UNUSEDSIGNAL	excore/rtl/excore_mmio.sv	Bits of signal are not used: 'cpu_addr_i'[31:8]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'in'[31:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'in'[32,30:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'in'[32]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'in'[6,4:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'instr'[24:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'instr'[31:12,6:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'instr'[31:15,11:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'instr'[31:20,14:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'instr'[31:25,19:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'instr'[31:2]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'instr'[31:7,1:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'instr'[31:7]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'instr'[6:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'low_addr'[31:2]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv32_common.sv	Bits of signal are not used: 'rd1'[32]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv_multicycle.sv	Bits of signal are not used: 'data_mem_rsp'[83:52,17:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv_multicycle.sv	Bits of signal are not used: 'inst_mem_rsp'[17:0]
+UNUSEDSIGNAL	excore/rtl/singlecore/riscv_multicycle.sv	Signal is not driven, nor used: 'is_memory_op'
+UNUSEDSIGNAL	pycore/rtl/pycore_cache.sv	Bits of signal are not used: 'a'[5:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_call_fsm.svh	Bits of signal are not used: 'len_type_addr'[63:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_call_fsm.svh	Bits of signal are not used: 'nksz'[63:16]
+UNUSEDSIGNAL	pycore/rtl/pycore_codc.sv	Bits of signal are not used: 'shifted'[31:1]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_defaults_r'[127:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_kw_names_r'[127:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_kw_scratch_base_r'[15:8]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_kw_val_base_r'[15:8]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_varkw_dict_r'[127:64]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'call_varnames_r'[127:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'code_write_slot_r'[31:29]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'consts_base_r'[63:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'cont_ext_hdr_len'[63:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'cont_list_append_idx_raw'[63:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'cont_obitem_raw'[63:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'container_dst_rf_addr_r'[8]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'ex_rs1_int'[63:1]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'names_base_r'[63:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Bits of signal are not used: 'next_tos'[9:8]
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'call_args_is_list_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'call_kwonly_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'code_new_flags_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'cont_bl_alloc'
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'cont_dict_hash'
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'cont_unpack_middle_alloc'
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'exc_empty'
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'exc_full'
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'exc_pop_prev_ptr'
+UNUSEDSIGNAL	pycore/rtl/pycore_core.sv	Signal is not used: 'exc_sp'
+UNUSEDSIGNAL	pycore/rtl/pycore_decode.sv	Bits of signal are not used: 'cmp'[4:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'addr'[31:6]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'addr'[7:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'byte_value'[5:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'bytes'[31:30,23:22,15:14,7]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'cp'[31:21]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'entry'[127:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'entry'[131:128]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'head'[127:64]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'head'[127:96,63:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'head'[95:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'header'[127:64]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'header'[63:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'iter_val'[127:99,95:64]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'lead_byte'[2:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'meta'[127:16]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'meta'[127:32,15:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'meta'[127:48,31:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'meta'[127:64,47:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'meta'[127:64]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'meta'[127:65,63:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'meta'[127:66,64:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'meta'[127:82,65:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'meta'[63:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'nbytes'[31:24]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'slot'[127:64]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'v'[121:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'v'[127:120,95:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'v'[127:122,119:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'v'[127:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'v'[127:64,31:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'v'[127:96,63:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'val'[127:64]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[123:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[127:116,95:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[127:120,115:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[127:124,3:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[127:32]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[127:4]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[127:64,31:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[127:64]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[127:96,63:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[127:96]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Bits of signal are not used: 'value'[63:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Signal is not used: 'val_a'
+UNUSEDSIGNAL	pycore/rtl/pycore_defs.svh	Signal is not used: 'val_b'
+UNUSEDSIGNAL	pycore/rtl/pycore_div.sv	Signal is not driven, nor used: 'busy_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_div.sv	Signal is not driven, nor used: 'cycles_left_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_div.sv	Signal is not driven, nor used: 'result_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_div.sv	Signal is not used: 'clk_i'
+UNUSEDSIGNAL	pycore/rtl/pycore_div.sv	Signal is not used: 'rst_n_i'
+UNUSEDSIGNAL	pycore/rtl/pycore_exc_stack.sv	Bits of signal are not used: 'dmem_rdata_i'[126:124,119:64]
+UNUSEDSIGNAL	pycore/rtl/pycore_exc_stack.sv	Signal is not used: 'push_prev_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_exec.sv	Signal is not used: 'div_done'
+UNUSEDSIGNAL	pycore/rtl/pycore_exec.sv	Signal is not used: 'fpu_done'
+UNUSEDSIGNAL	pycore/rtl/pycore_exec.sv	Signal is not used: 'int_overflow'
+UNUSEDSIGNAL	pycore/rtl/pycore_exec.sv	Signal is not used: 'int_zero'
+UNUSEDSIGNAL	pycore/rtl/pycore_exec.sv	Signal is not used: 'mul_done'
+UNUSEDSIGNAL	pycore/rtl/pycore_fetch.sv	Bits of signal are not used: 'slot_bits'[63:40]
+UNUSEDSIGNAL	pycore/rtl/pycore_fpu.sv	Signal is not driven, nor used: 'busy_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_fpu.sv	Signal is not driven, nor used: 'cycles_left_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_fpu.sv	Signal is not driven, nor used: 'exception_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_fpu.sv	Signal is not driven, nor used: 'result_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_fpu.sv	Signal is not used: 'clk_i'
+UNUSEDSIGNAL	pycore/rtl/pycore_fpu.sv	Signal is not used: 'rst_n_i'
+UNUSEDSIGNAL	pycore/rtl/pycore_frame.sv	Bits of signal are not used: 'globals_base_in_i'[31]
+UNUSEDSIGNAL	pycore/rtl/pycore_gic.sv	Bits of signal are not used: 'key'[47:3]
+UNUSEDSIGNAL	pycore/rtl/pycore_int_alu.sv	Bits of signal are not used: 'add_ext'[62:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_int_alu.sv	Bits of signal are not used: 'sub_ext'[62:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_mem_xbar.sv	Bits of signal are not used: 'imem_uaddr'[2:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_mem_xbar.sv	Signal is not used: 'imem_wstrb_i'
+UNUSEDSIGNAL	pycore/rtl/pycore_mul.sv	Bits of signal are not used: 'product'[127:64]
+UNUSEDSIGNAL	pycore/rtl/pycore_mul.sv	Signal is not driven, nor used: 'busy_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_mul.sv	Signal is not driven, nor used: 'cycles_left_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_mul.sv	Signal is not driven, nor used: 'result_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_mul.sv	Signal is not used: 'clk_i'
+UNUSEDSIGNAL	pycore/rtl/pycore_mul.sv	Signal is not used: 'rst_n_i'
+UNUSEDSIGNAL	pycore/rtl/pycore_ram.sv	Bits of signal are not used: 'base'[5:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_ram.sv	Bits of signal are not used: 'wi'[31:17]
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Bits of signal are not used: 'addr'[3:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Bits of signal are not used: 'byte_addr'[3:0]
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Bits of signal are not used: 'dst_nbytes_r'[31:24]
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'bi'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'boff'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'byte_addr'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'e64'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'end_addr'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'nbytes'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'next_hash'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'next_off'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'next_word'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'obj_bytes'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'place'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'saddr'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'sidx'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'skind'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'sshort'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'sval'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'trim_cs_done_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'u_a'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'u_b'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not driven, nor used: 'word_addr'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not used: 'a_flags_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not used: 'cased'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not used: 'join_is_str_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not used: 'last_i'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not used: 'nch'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not used: 'repeat_left_r'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not used: 'right'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not used: 'slice_base'
+UNUSEDSIGNAL	pycore/rtl/pycore_str_accel.sv	Signal is not used: 'src_sel_r'
+UNUSEDSIGNAL	pycore/tb/tb_container.sv	Signal is not used: 'dbg_wb_addr'
+UNUSEDSIGNAL	pycore/tb/tb_container.sv	Signal is not used: 'dbg_wb_entry'
+UNUSEDSIGNAL	pycore/tb/tb_container.sv	Signal is not used: 'dbg_wb_we'
+WIDTHEXPAND	excore/rtl/excore_mmio.sv	Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'OFF_MB_ENTRY_BASE' generates 8 bits.
+WIDTHEXPAND	excore/rtl/excore_mmio.sv	Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'OFF_RES_ENTRY_BASE' generates 8 bits.
+WIDTHEXPAND	excore/rtl/excore_mmio.sv	Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'off' generates 8 bits.
+WIDTHEXPAND	excore/rtl/excore_mmio.sv	Operator VAR 'MB_ENTRY_STRIDE' expects 32 bits on the Initial value, but Initial value's CONST '8'h14' generates 8 bits.
+WIDTHEXPAND	excore/rtl/excore_mmio.sv	Operator VAR 'RES_ENTRY_STRIDE' expects 32 bits on the Initial value, but Initial value's CONST '8'h14' generates 8 bits.
+WIDTHEXPAND	excore/rtl/trap_mailbox.sv	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'h0' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_branch.sv	Operator NEQ expects 128 bits on the RHS, but RHS's CONST '64'h0' generates 64 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cache.sv	Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's REPLICATE generates 24 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cache.sv	Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's REPLICATE generates 27 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Bit extraction of var[127:0] requires 7 bit index, not 5 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ADD expects 17 bits on the RHS, but RHS's CONST '9'h1' generates 9 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'h3' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'h4' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'h5' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'h6' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'h7' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'h9' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'ha' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'hb' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'hc' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'hd' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 5 bits on the Assign RHS, but Assign RHS's CONST '4'he' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h0' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h1' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h10' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h11' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h12' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h13' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h14' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h15' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h16' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h17' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h18' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h19' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h1a' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h1b' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h1c' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h1d' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h1e' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h1f' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h2' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h20' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h21' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h22' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h23' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h24' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h25' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h26' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h27' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h28' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h29' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h2a' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h2b' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h2c' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h2d' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h2e' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h2f' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h3' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h30' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h31' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h32' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h33' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h34' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h35' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h36' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h37' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h38' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h39' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h3a' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h3b' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h3c' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h3d' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h3e' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h3f' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h4' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h5' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h6' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h7' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h8' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h9' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'ha' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'hb' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'hc' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'hd' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'he' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'hf' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's VARREF 'call_after_varargs_sub_r' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's CONST '7'h0' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's SEL generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'h3' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'h4' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'h5' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'h6' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'h7' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'h8' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'h9' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'ha' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'hb' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'hc' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'hd' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 5 bits on the Case Item, but Case Item's CONST '4'he' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h0' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h1' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h10' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h11' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h12' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h13' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h14' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h15' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h16' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h17' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h18' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h19' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h1a' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h1b' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h1c' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h1d' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h1e' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h1f' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h2' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h20' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h21' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h22' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h23' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h24' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h25' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h26' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h27' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h28' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h29' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h2a' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h2b' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h2c' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h2d' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h2e' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h2f' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h3' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h30' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h31' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h32' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h33' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h34' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h35' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h36' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h37' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h38' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h39' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h3a' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h3b' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h3c' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h3d' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h3e' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h3f' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h4' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h5' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h6' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h7' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h8' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'h9' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'ha' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'hb' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'hc' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'hd' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'he' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator CASE expects 7 bits on the Case Item, but Case Item's CONST '6'hf' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator COND expects 7 bits on the Conditional False, but Conditional False's CONST '6'h1d' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator COND expects 7 bits on the Conditional False, but Conditional False's CONST '6'h37' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator COND expects 7 bits on the Conditional False, but Conditional False's CONST '6'h39' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator COND expects 7 bits on the Conditional True, but Conditional True's CONST '6'h1f' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator COND expects 7 bits on the Conditional True, but Conditional True's CONST '6'h36' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator COND expects 7 bits on the Conditional True, but Conditional True's CONST '6'h38' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator EQ expects 7 bits on the RHS, but RHS's CONST '6'h0' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator EQ expects 7 bits on the RHS, but RHS's CONST '6'h1' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator EQ expects 7 bits on the RHS, but RHS's CONST '6'h2' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator EQ expects 7 bits on the RHS, but RHS's CONST '6'h34' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator FUNCREF 'pycore_make_entry' expects 128 bits on the Function Argument, but Function Argument's REPLICATE generates 124 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator GTE expects 17 bits on the RHS, but RHS's REPLICATE generates 9 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator GTE expects 8 bits on the RHS, but RHS's SEL generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator GTE expects 9 bits on the RHS, but RHS's VARREF 'call_n_kwargs_r' generates 8 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator GTE expects 9 bits on the RHS, but RHS's VARREF 'call_n_pos_r' generates 8 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator LT expects 17 bits on the RHS, but RHS's REPLICATE generates 9 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator LT expects 8 bits on the RHS, but RHS's VARREF 'container_count_r' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_call_fsm.svh	Operator SUB expects 32 bits on the LHS, but LHS's REPLICATE generates 24 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_dict.svh	Operator ADD expects 10 bits on the RHS, but RHS's CONST '7'h1' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_dict.svh	Operator ADD expects 9 bits on the RHS, but RHS's CONST '7'h1' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_dict.svh	Operator LT expects 8 bits on the RHS, but RHS's VARREF 'container_count_r' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_dict.svh	Operator SUB expects 10 bits on the LHS, but LHS's VARREF 'tos_r' generates 8 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_exc.svh	Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's CONST '7'h0' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_list.svh	Operator ADD expects 9 bits on the RHS, but RHS's CONST '7'h1' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_list.svh	Operator ASSIGNDLY expects 128 bits on the Assign RHS, but Assign RHS's REPLICATE generates 96 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_list.svh	Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's CONST '7'h0' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_list.svh	Operator EQ expects 8 bits on the RHS, but RHS's CONST '7'h0' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_list.svh	Operator LT expects 8 bits on the RHS, but RHS's VARREF 'container_count_r' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_object.svh	Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's SEL generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_object.svh	Operator GT expects 32 bits on the LHS, but LHS's FUNCREF 'pycore_short_str_size' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_str.svh	Operator ADD expects 32 or 7 bits on the LHS, but LHS's VARREF 'slen' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_str.svh	Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's CONST '7'h1' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_str.svh	Operator GT expects 32 bits on the LHS, but LHS's VARREF 'la' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_str.svh	Operator GT expects 32 bits on the LHS, but LHS's VARREF 'lb' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_str.svh	Operator GT expects 32 bits on the LHS, but LHS's VARREF 'slen' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_str.svh	Operator GTE expects 8 bits on the RHS, but RHS's VARREF 'container_count_r' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_cont_str.svh	Operator SUB expects 32 bits on the RHS, but RHS's VARREF 'la' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator ADD expects 10 bits on the RHS, but RHS's VARREF 'id_tos_delta' generates 3 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator ASSIGNDLY expects 7 bits on the Assign RHS, but Assign RHS's CONST '6'h0' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's CONST '7'h0' generates 7 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator EQ expects 7 bits on the RHS, but RHS's CONST '6'h38' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator EQ expects 7 bits on the RHS, but RHS's CONST '6'h39' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator EQ expects 7 bits on the RHS, but RHS's CONST '6'h3d' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator EQ expects 7 bits on the RHS, but RHS's CONST '6'h3e' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator EQ expects 7 bits on the RHS, but RHS's CONST '6'h3f' generates 6 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator GTE expects 3 bits on the LHS, but LHS's VARREF 'trap_wait_push_idx_r' generates 2 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator LT expects 3 bits on the LHS, but LHS's VARREF 'trap_wait_push_idx_r' generates 2 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_BOOT' expects 5 bits on the Initial value, but Initial value's CONST '4'h9' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_CALL' expects 5 bits on the Initial value, but Initial value's CONST '4'h6' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_CONTAINER' expects 5 bits on the Initial value, but Initial value's CONST '4'h8' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_DECODE' expects 5 bits on the Initial value, but Initial value's CONST '4'h1' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_EXEC' expects 5 bits on the Initial value, but Initial value's CONST '4'h2' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_FETCH' expects 5 bits on the Initial value, but Initial value's CONST '4'h0' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_HALT' expects 5 bits on the Initial value, but Initial value's CONST '4'h5' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_MEM' expects 5 bits on the Initial value, but Initial value's CONST '4'h3' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_RETURN' expects 5 bits on the Initial value, but Initial value's CONST '4'h7' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_TRAP_MARSHAL' expects 5 bits on the Initial value, but Initial value's CONST '4'ha' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_TRAP_WAIT' expects 5 bits on the Initial value, but Initial value's CONST '4'hb' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_core.sv	Operator VAR 'S_WB' expects 5 bits on the Initial value, but Initial value's CONST '4'h4' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_defs.svh	Operator ADD expects 64 bits on the LHS, but LHS's CONST '8'h30' generates 8 bits.
+WIDTHEXPAND	pycore/rtl/pycore_defs.svh	Operator FUNCREF 'pycore_short_str_byte' expects 32 bits on the Function Argument, but Function Argument's SEL generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_defs.svh	Operator SUB expects 32 bits on the LHS, but LHS's VARREF 'ndigits' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_defs.svh	Operator SUB expects 32 bits on the RHS, but RHS's VARREF 'la' generates 4 bits.
+WIDTHEXPAND	pycore/rtl/pycore_fetch.sv	Operator OR expects 32 bits on the RHS, but RHS's SEL generates 8 bits.
+WIDTHEXPAND	pycore/rtl/pycore_ram.sv	Operator LT expects 32 bits on the LHS, but LHS's VARREF 'cap_code_idx' generates 28 bits.
+WIDTHEXPAND	pycore/rtl/pycore_ram.sv	Operator LT expects 32 bits on the LHS, but LHS's VARREF 'cap_data_idx' generates 28 bits.
+WIDTHEXPAND	pycore/rtl/pycore_ram.sv	Operator LT expects 32 bits on the LHS, but LHS's VARREF 'idle_code_idx' generates 28 bits.
+WIDTHEXPAND	pycore/rtl/pycore_ram.sv	Operator LT expects 32 bits on the LHS, but LHS's VARREF 'idle_data_idx' generates 28 bits.
+WIDTHEXPAND	pycore/tb/tb_container.sv	Operator EQ expects 11 bits on the RHS, but RHS's CONST '8'h0' generates 8 bits.
+WIDTHEXPAND	pycore/tb/tb_container.sv	Operator EQ expects 11 bits on the RHS, but RHS's CONST '8'h1' generates 8 bits.
+WIDTHEXPAND	pycore/tb/tb_container.sv	Operator EQ expects 5 bits on the RHS, but RHS's VARREF 'CORE_S_WB' generates 4 bits.
+WIDTHTRUNC	pycore/rtl/pycore_call_fsm.svh	Bit extraction of var[127:0] requires 7 bit index, not 8 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_bulk.svh	Operator ASSIGNDLY expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'pycore_dict_slot_count_from_hdr' generates 64 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_bulk.svh	Operator ASSIGNDLY expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'pycore_list_length' generates 64 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_bulk.svh	Operator ASSIGNDLY expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'pycore_list_obitem' generates 64 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_bulk.svh	Operator ASSIGNDLY expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'pycore_tuple_size' generates 64 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_bulk.svh	Operator ASSIGNDLY expects 9 bits on the Assign RHS, but Assign RHS's SUB generates 10 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_dict.svh	Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's ADD generates 10 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_dict.svh	Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's ADD generates 9 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_list.svh	Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's ADD generates 9 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_list.svh	Operator FUNCREF 'pycore_list_val_addr' expects 32 bits on the Function Argument, but Function Argument's REPLICATE generates 33 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_list.svh	Operator FUNCREF 'pycore_list_val_addr' expects 32 bits on the Function Argument, but Function Argument's SUB generates 33 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_list.svh	Operator FUNCREF 'pycore_tuple_val_addr' expects 32 bits on the Function Argument, but Function Argument's REPLICATE generates 33 bits.
+WIDTHTRUNC	pycore/rtl/pycore_cont_list.svh	Operator FUNCREF 'pycore_tuple_val_addr' expects 32 bits on the Function Argument, but Function Argument's SUB generates 33 bits.
+WIDTHTRUNC	pycore/rtl/pycore_core.sv	Bit extraction of array[1:0] requires 1 bit index, not 2 bits.
+WIDTHTRUNC	pycore/rtl/pycore_defs.svh	Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's ADD generates 64 bits.
+WIDTHTRUNC	pycore/rtl/pycore_ram.sv	Bit extraction of array[1048575:0] requires 20 bit index, not 28 bits.
+WIDTHTRUNC	pycore/rtl/pycore_ram.sv	Bit extraction of array[69631:0] requires 17 bit index, not 28 bits.
+WIDTHTRUNC	pycore/rtl/pycore_ram.sv	Operator ASSIGNW expects 28 bits on the Assign RHS, but Assign RHS's SHIFTR generates 32 bits.
+WIDTHTRUNC	pycore/tb/tb_container.sv	Operator VAR 'EXCORE_EN' expects 1 bits on the Initial value, but Initial value's CONST '32'h1' generates 32 bits.
