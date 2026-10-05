@@ -11,6 +11,7 @@
 //   +RUNS=<n>                back-to-back collections (default 2: the second
 //                            must see a clean bitmap and give the same result)
 //   +STASH=1 +POISON=1 +ONCHIP=<entries> +STACK_LIMIT=<entries> +MUTANT=<n>
+//   +RESCAN_LIMIT=<entries>
 //   +CACHE_EN= +MEM_LATENCY= +MAX_CYCLES=
 module tb_gc;
     logic clk;
@@ -61,7 +62,7 @@ module tb_gc;
     logic [31:0]  cfg_dyn_base, cfg_heap_limit, cfg_spill_sp, cfg_exc_sp, cfg_frame_depth;
     logic [31:0]  cfg_keep_lo, cfg_keep_hi, cfg_rover_addr;
     logic         cfg_stash, cfg_poison;
-    logic [31:0]  cfg_stack_limit;
+    logic [31:0]  cfg_stack_limit, cfg_rescan_limit;
     logic [7:0]   cfg_onchip, cfg_mutant;
     logic         root_valid, roots_done, root_ready;
     logic [PYCORE_ENTRY_WIDTH-1:0] root_entry;
@@ -69,6 +70,7 @@ module tb_gc;
     logic [31:0]  run_onchip_n, run_ovf_head, run_peek_base, run_peek_size;
     logic         ovf, flt;
     logic [31:0]  mark_cyc, sweep_cyc, busy_mark, mark_x, spill_x, stack_hw, stash_cyc, objs, nroots;
+    logic [31:0]  rescans;
     logic         fr_valid;
     logic [31:0]  fr_base, fr_len;
 
@@ -77,7 +79,8 @@ module tb_gc;
         .dyn_base_i(cfg_dyn_base), .heap_limit_i(cfg_heap_limit), .spill_sp_i(cfg_spill_sp),
         .exc_sp_i(cfg_exc_sp), .frame_depth_i(cfg_frame_depth),
         .stash_en_i(cfg_stash), .poison_en_i(cfg_poison), .line_wr_ok_i(1'b0), .zero_base_i(cfg_heap_limit), .keep_lo_i(cfg_keep_lo), .keep_hi_i(cfg_keep_hi), .rover_addr_i(cfg_rover_addr), .clean_skip_i(1'b0), .extra_roots_i(1'b1), .clean_busy_addr_o(), .clean_done_o(),
-        .stack_limit_i(cfg_stack_limit), .onchip_limit_i(cfg_onchip), .mutant_i(cfg_mutant),
+        .stack_limit_i(cfg_stack_limit), .onchip_limit_i(cfg_onchip),
+        .rescan_limit_i(cfg_rescan_limit), .mutant_i(cfg_mutant),
         .root_valid_i(root_valid), .root_entry_i(root_entry), .roots_done_i(roots_done),
         .root_ready_o(root_ready),
         .req_o(d_req), .we_o(d_we), .line_o(d_line), .addr_o(d_addr),
@@ -93,6 +96,7 @@ module tb_gc;
         .wild_ptr_o(wild), .mark_cyc_o(mark_cyc), .sweep_cyc_o(sweep_cyc),
         .port_busy_mark_o(busy_mark), .mark_xacts_o(mark_x), .spill_xacts_o(spill_x),
         .stack_hw_o(stack_hw), .stash_cyc_o(stash_cyc), .objects_o(objs), .roots_o(nroots),
+        .rescans_o(rescans),
         .dirty_hi_o(),
         .free_range_valid_o(fr_valid), .free_range_base_o(fr_base), .free_range_len_o(fr_len)
     );
@@ -113,7 +117,7 @@ module tb_gc;
         cfg_keep_lo = '0; cfg_keep_hi = '0; cfg_rover_addr = '0;
         cfg_spill_sp = PYCORE_RF_SPILL_BASE; cfg_exc_sp = PYCORE_EXC_STACK_BASE;
         cfg_frame_depth = 0; cfg_stash = 1'b1; cfg_poison = 1'b0;
-        cfg_stack_limit = 0; cfg_onchip = 0; cfg_mutant = 0;
+        cfg_stack_limit = 0; cfg_rescan_limit = 0; cfg_onchip = 0; cfg_mutant = 0;
         runs_n = 2; max_cycles = 20000000;
         if ($value$plusargs("DYN_BASE=%d", v)) cfg_dyn_base = v;
         if ($value$plusargs("HEAP_LIMIT=%d", v)) cfg_heap_limit = v;
@@ -123,6 +127,7 @@ module tb_gc;
         if ($value$plusargs("STASH=%d", v)) cfg_stash = (v != 0);
         if ($value$plusargs("POISON=%d", v)) cfg_poison = (v != 0);
         if ($value$plusargs("STACK_LIMIT=%d", v)) cfg_stack_limit = v;
+        if ($value$plusargs("RESCAN_LIMIT=%d", v)) cfg_rescan_limit = v;
         if ($value$plusargs("ONCHIP=%d", v)) cfg_onchip = 8'(v);
         if ($value$plusargs("MUTANT=%d", v)) cfg_mutant = 8'(v);
         if ($value$plusargs("KEEP_LO=%d", v)) cfg_keep_lo = v;
@@ -185,7 +190,8 @@ module tb_gc;
             $fwrite(fd, "meta roots %0d\nmeta objects %0d\nmeta stack_hw %0d\nmeta overflow %0d\n", nroots, objs, stack_hw, ovf);
             $fwrite(fd, "meta bad_kind %0d\nmeta reserved %0d\nmeta wild %0d\nmeta fault %0d\nmeta stash_en %0d\n",
                     badk, resv, wild, flt, cfg_stash);
-            if (cfg_stack_limit != 0) $fwrite(fd, "meta stack_limit %0d\n", cfg_stack_limit);
+            $fwrite(fd, "meta stack_limit %0d\nmeta rescan_limit %0d\nmeta rescans %0d\n",
+                    gc.stack_limit_r, gc.rescan_limit_r, rescans);
             $fwrite(fd, "meta onchip %0d\n", gc.onchip_limit_r);
             $fwrite(fd, "meta keep_lo %0d\nmeta keep_hi %0d\nmeta rover_addr %0d\nmeta rover %0d\nmeta onchip_runs %0d\n",
                     gc.keep_lo_r, gc.keep_hi_r, gc.rover_addr_r, gc.run_rover_r, gc.run_onchip_n_r);
@@ -207,8 +213,8 @@ module tb_gc;
                 end
             end
             $fclose(fd);
-            $display("TB_GC run=%0d live=%0d free=%0d largest=%0d runs=%0d objects=%0d stack_hw=%0d pause=%0d mark_cyc=%0d sweep_cyc=%0d port_busy_mark=%0d overflow=%0d",
-                     run, live, free_b, lsize, runs, objs, stack_hw, cyc, mark_cyc, sweep_cyc, busy_mark, ovf);
+            $display("TB_GC run=%0d live=%0d free=%0d largest=%0d runs=%0d objects=%0d stack_hw=%0d rescans=%0d pause=%0d mark_cyc=%0d sweep_cyc=%0d port_busy_mark=%0d overflow=%0d",
+                     run, live, free_b, lsize, runs, objs, stack_hw, rescans, cyc, mark_cyc, sweep_cyc, busy_mark, ovf);
             if (flt) $fatal(1, "tb_gc: memory fault during collection");
             if (ovf) break;
         end

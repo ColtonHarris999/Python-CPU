@@ -616,6 +616,7 @@ gc-mutant-36 = { kind = "trap", src = "gc_mutant_36", trap = 7, cycles = 2_000_0
 gc-excore-need-heap = { core = "twocore", file = "img_gc_excore_need_heap.py", cycles = 2_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192", caching = true }
 gc-growth-paths = { core = "twocore", file = "img_gc_growth_paths.py", cycles = 4_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192", caching = true }
 gc-excore-churn = { core = "twocore", file = "img_gc_excore_churn.py", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-wide-live-list = { src = "gc_wide_live_list", cycles = 10_000_000, plusargs = "+GC_EN=1" }
 
 # Long GC loops: steady-state plateaus, allocation-site churn, benches and
 # compile loops (millions of cycles each, up to ~150M uncached). Not in
@@ -654,13 +655,11 @@ gc-compile-syntaxerror-two-core = { core = "twocore", src = "gc_compile_syntaxer
 gc-bench-full = { src = "gc_bench_full", cycles = 40_000_000, plusargs = "+GC_EN=1" }
 gc-bench-deep = { src = "gc_bench_deep", cycles = 20_000_000, plusargs = "+GC_EN=1" }
 gc-bench-wide = { src = "gc_bench_wide", cycles = 40_000_000, plusargs = "+GC_EN=1" }
-# Known bug (planning/master_plan.md, GC sizing): fails, returns 2, until the
-# mark stack cannot overflow on a live list wider than 16,640 elements.
-gc-wide-live-list = { src = "gc_wide_live_list", cycles = 60_000_000, plusargs = "+GC_EN=1" }
+gc-deep-live-chain = { src = "gc_deep_live_chain", cycles = 200_000_000, plusargs = "+GC_EN=1" }
 gc-leak-check-full-heap-two-core = { core = "twocore", src = "gc_leak_check", cycles = 40_000_000, plusargs = "+GC_EN=1" }
 # Collector-resource and leak checks from review: 14M-45M cycles each, so
 # they stay out of the per-PR [gc] job and the caching gate.
-gc-mark-overflow-recover = { src = "gc_mark_overflow_recover", cycles = 24_000_000, plusargs = "+GC_EN=1" }
+gc-mark-overflow-recover = { src = "gc_mark_overflow_recover", cycles = 24_000_000, plusargs = "+GC_EN=1 +GC_ONCHIP=32 +GC_STACK_LIMIT=32 +GC_RESCAN_LIMIT=64" }
 gc-run-table-overflow = { src = "gc_run_table_overflow", cycles = 64_000_000, plusargs = "+GC_EN=1" }
 gc-leak-check-two-core = { core = "twocore", src = "gc_leak_check", cycles = 40_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=65536" }
 gc-bench-churn = { src = "gc_bench_churn", cycles = 40_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=81920" }

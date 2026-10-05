@@ -253,7 +253,7 @@ def gate_G3(ctx: Context) -> Result:
     if rc != 0 or failing or seeds < 200 or configs < 6 or m.group(5) != "ok" or m.group(6) != "ok":
         return Result("fail", f"G3: {m.group(0)}", lines)
     return Result("pass", f"{seeds} seeds x {configs} memory configs ({runs_n} runs) exact vs gc_model; "
-                  "overflow guard fires; spill/refill exercised", lines)
+                  "bounded-stack and abandon cases exact; spill/refill exercised", lines)
 
 
 # --------------------------------------------------------------------------
