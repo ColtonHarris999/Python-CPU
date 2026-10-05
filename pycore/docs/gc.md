@@ -492,13 +492,15 @@ current commit.
 
 | Tier | Command | What | When |
 | --- | --- | --- | --- |
-| PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (61 programs, each under ~1M cycles) | every PR (CI `gc` area job) |
+| PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (62 programs) | every PR (CI `gc` area job) |
 | Long | `make test-gc-long` | the `[gc-long]` area: steady-state plateaus, allocation-site churn, benches, compile loops | nightly / on demand |
 | Fuzz | `make pycore-gc-fuzz SEEDS=0..49 TOP=single` | random programs checked against CPython and the oracle | nightly / on demand |
 | Acceptance | `make pycore-gc-acceptance MODE=full` | gates G0-G16 | before a collector design change |
 
 A new PR-tier program must stay under 2M cycles at the default config;
-anything longer goes in `[gc-long]`.
+anything longer goes in `[gc-long]`. The exception is `gc-wide-live-list`
+(6.7M cycles, almost all of it building a list wider than the mark stack),
+kept per PR because it guards the bounded-marking rules.
 
 ## Debugging
 
