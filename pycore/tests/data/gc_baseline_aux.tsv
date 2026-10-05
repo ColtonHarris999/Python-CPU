@@ -1,0 +1,7 @@
+step	status
+pycore-python-tests	pass
+pycore-size-report	pass
+excore-asm-tests	pass
+pycore-allocator-host	pass
+pycore-rtl-unit	pass
+excore-cpu-test	pass

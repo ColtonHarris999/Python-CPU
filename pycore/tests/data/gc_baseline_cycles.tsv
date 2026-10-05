@@ -1,0 +1,2220 @@
+# G0 baseline at 99aaa7c0e7ec3b0c9641e22dd6dc00715b5a4351; tools/gc_baseline.py
+target	top	cache_en	mem_latency	kind	tag_or_trap_code	value	cycles
+bitwise-calls	single	1	4	return	1	2d	7018
+to-bool	single	1	4	return	1	277e	3041
+to-bool-type-trap	single	1	4	return	1	0	1740
+to-bool-str	single	1	4	return	1	b	2331
+to-bool-list-trap	single	1	4	return	1	1	1761
+unary-not	single	1	4	return	1	9	3012
+unary-invert	single	1	4	return	1	fffffffffffffff8	1586
+unary-negative	single	1	4	return	1	7	2573
+unary-invert-float-trap	single	1	4	trap	1		1393
+is-op	single	1	4	return	1	fb	3928
+compare-op	single	1	4	return	1	dfff	7005
+compare-op-type-trap	single	1	4	trap	1		1507
+to-bool-none	single	1	4	return	1	0	1740
+to-bool-containers	single	1	4	return	1	18a92	3858
+bitwise-calls-two-core	twocore	1	4	return	1	2d	7018
+slice-str	single	1	4	return	1	1b207	4028
+slice-str-open	single	1	4	return	1	2b03	3303
+slice-str-clamp	single	1	4	return	1	2b67	3657
+slice-str-long	single	1	4	return	1	a98ac7	6152
+slice-str-unicode	single	1	4	return	1	2b67	3593
+slice-str-empty	single	1	4	return	1	457	3159
+slice-str-scan	single	1	4	return	1	49	6177
+slice-str-neg-trap	single	1	4	return	1	3	2293
+slice-str-const	single	1	4	return	1	2b67	4216
+slice-damerau	single	1	4	return	1	6f	3354
+str-eq-runtime-long	single	1	4	return	1	3f	3910
+str-consts	single	1	4	return	1	2a	2391
+string-ops	single	1	4	return	1	23	4587
+list-repeat-jaro	single	1	4	return	1	86	7294
+list-concat-damerau	single	1	4	return	1	70	5587
+str-eq	single	1	4	return	1	7	2511
+str-lt	single	1	4	return	1	1f	3461
+format-simple	single	1	4	return	1	4	2311
+convert-value	single	1	4	return	1	3	2383
+convert-repr-str	single	1	4	return	1	4	2299
+build-string	single	1	4	return	1	6	2648
+str-subscr	single	1	4	return	1	6f	3198
+str-subscr-long	single	1	4	return	1	6f	2991
+str-subscr-unicode	single	1	4	return	1	457	3404
+str-subscr-loop	single	1	4	return	1	3	3767
+str-subscr-oob-trap	single	1	4	trap	7		1511
+str-subscr-char-oob-trap	single	1	4	trap	7		1511
+str-dict-key-runtime	single	1	4	return	1	1	4471
+str-dict-key-runtime-del	single	1	4	return	1	1	6801
+jaro-window	single	1	4	return	1	c9	14886
+str-methods	single	1	4	return	1	14b	5015
+str-search-methods	single	1	4	return	1	1fff	10511
+str-p5e-batch2	single	1	4	return	1	fffffff	19299
+str-p5e-batch3	single	1	4	return	1	ffffff	33653
+str-consts-two-core	twocore	1	4	return	1	2a	2391
+string-ops-two-core	twocore	1	4	return	1	23	4587
+slice-list-trap	single	1	4	trap	1		2199
+containers	single	1	4	return	1	8d	2989
+unpack-tuple	single	1	4	return	1	6	1841
+unpack-list	single	1	4	return	1	9	1677
+unpack-len-trap	single	1	4	trap	1		1503
+unpack-ex	single	1	4	return	1	7	2494
+list-to-tuple	twocore	1	4	return	1	6	5394
+list-repeat	single	1	4	return	1	a98af3	10976
+list-repeat-type-trap	single	1	4	return	1	6	2269
+list-concat	single	1	4	return	1	4779	8835
+list-concat-type-trap	single	1	4	trap	1		1569
+list-comp-basic	twocore	1	4	return	1	a	7764
+list-comp-fast-clear	twocore	1	4	return	1	6a	4933
+list-del-last-only	single	1	4	return	1	1e	2327
+list-contains-simple	single	1	4	return	1	1	2484
+list-contains-types	single	1	4	return	1	1f	3585
+tuple-contains	single	1	4	return	1	2a	2033
+dict-contains	single	1	4	return	1	f	3388
+list-del-contains-call	single	1	4	return	1	2d	4003
+list-del-oob	single	1	4	trap	7		1614
+list-del-tuple-trap	single	1	4	trap	1		1509
+dict-del-trap	single	1	4	return	1	0	2221
+dict-store-lookup	single	1	4	return	1	3c	2871
+dict-overwrite	single	1	4	return	1	63	2093
+dict-del-simple	single	1	4	return	1	7	3310
+dict-del-then-insert	single	1	4	return	1	50	3173
+dict-hash-neg1	single	1	4	return	1	1e	2576
+dict-str-keys	single	1	4	return	1	10	3767
+dict-large-pycore	single	1	4	return	1	24	5542
+dict-bool-int-collision	single	1	4	return	1	14	2155
+dict-false-zero	single	1	4	return	1	7	2260
+dict-del-collision	single	1	4	return	1	0	2215
+dict-contains-collision	single	1	4	return	1	7	2902
+set-build-simple	single	1	4	return	1	4	3141
+set-add-contains	single	1	4	return	1	3	2353
+set-bool-int	single	1	4	return	1	1	1910
+set-hash-neg1	single	1	4	return	1	3	2571
+set-str	single	1	4	return	1	7	2933
+list-pop	single	1	4	return	1	3c	4541
+list-pop-empty	single	1	4	return	1	9	4093
+list-method-missing	single	1	4	trap	15		1565
+list-methods	twocore	1	4	return	1	a	17583
+list-method-unbound	twocore	1	4	return	1	7	5213
+dict-methods	twocore	1	4	return	1	10	25268
+set-methods	twocore	1	4	return	1	4	6638
+containers-two-core	twocore	1	4	return	1	8d	2989
+list-extend-two-core	twocore	1	4	return	1	28	9860
+list-extend-del-contains-two-core	twocore	1	4	return	1	2b	7639
+list-del-simple	twocore	1	4	return	1	28	4053
+list-del-first-last	twocore	1	4	return	1	5	4982
+list-del-contains	twocore	1	4	return	1	7	5667
+list-del-nested	twocore	1	4	return	1	2c	4824
+dict-mixed-ops	twocore	1	4	return	1	84	18718
+set-update	twocore	1	4	return	1	3	14031
+set-update-tuple	twocore	1	4	return	1	21	7750
+map-add	twocore	1	4	return	1	f	16308
+dict-update	twocore	1	4	return	1	144	23714
+dict-update-obj	twocore	1	4	return	1	a23e	7337
+dict-merge	twocore	1	4	return	1	141	18726
+container-build-index	single	1	4	return	1	63	1849
+container-store-subscr	single	1	4	return	1	2a	2076
+container-dict-lookup	single	1	4	return	1	2a	1924
+container-dict-store	single	1	4	return	1	63	2095
+container-list-empty	single	1	4	return	1	1	1833
+container-dict-multi-pair	single	1	4	return	1	64	3374
+container-dict-collision	single	1	4	return	1	1e	2443
+container-dict-insert-new-key	single	1	4	return	1	14	2156
+container-dict-empty	single	1	4	return	1	2	1931
+container-list-nested	single	1	4	return	1	7	1983
+container-tuple-index	single	1	4	return	1	28	2250
+container-tuple-empty	single	1	4	return	1	9	357
+container-list-oob-read	single	1	4	trap	7		1524
+container-list-oob-write	single	1	4	trap	7		1530
+container-dict-missing-key	single	1	4	trap	7		1858
+container-tuple-store-trap	single	1	4	trap	1		1556
+container-dict-full-insert	single	1	4	trap	11		2261
+container-list-append-fast	single	1	4	return	1	11	916
+container-list-extend-fast	single	1	4	trap	10		638
+container-list-extend-fast-tuple	single	1	4	trap	10		580
+container-list-extend-empty	single	1	4	return	1	2a	735
+extended-arg	single	1	4	return	1	7b	1507
+branchy	single	1	4	return	1	18	3206
+pop-jump-if-none	single	1	4	return	1	7	2455
+for-iter	single	1	4	return	1	f	3123
+for-iter-type-trap	single	1	4	trap	1		1441
+for-iter-nested	single	1	4	return	1	5a	2657
+for-iter-edges	single	1	4	return	1	d	3025
+for-iter-branch	single	1	4	return	1	2	2308
+for-iter-mutate	single	1	4	return	1	d	2686
+for-iter-mutate-visited	single	1	4	return	1	60	3076
+for-iter-rebind	single	1	4	return	1	f	3016
+for-iter-delete	twocore	1	4	return	1	8	4873
+for-iter-clear	twocore	1	4	return	1	1	2532
+for-iter-subscr	single	1	4	return	1	3c	2691
+for-iter-build-tuple	single	1	4	return	1	9	2108
+for-iter-range	single	1	4	return	1	a	2565
+for-iter-range-bounds	single	1	4	return	1	33	3466
+for-iter-range-step	single	1	4	return	1	f	2478
+for-iter-range-empty	single	1	4	return	1	0	2718
+for-iter-range-negative-step	single	1	4	return	1	f	2638
+for-iter-range-type-trap	single	1	4	trap	1		2018
+for-iter-range-bool	single	1	4	return	1	2	3155
+for-iter-range-zero-step-trap	single	1	4	trap	1		1971
+for-iter-str-short	single	1	4	return	1	3	2096
+for-iter-str-empty	single	1	4	return	1	0	1746
+for-iter-str-long	single	1	4	return	1	17	3313
+for-iter-str-unicode	single	1	4	return	1	b	2667
+for-iter-str-branch	single	1	4	return	1	6f	3067
+for-iter-str-type-trap	single	1	4	trap	1		1441
+for-iter-dict-keys	single	1	4	return	1	d	2659
+for-iter-dict-empty	single	1	4	return	1	7	1754
+for-iter-dict-delete	single	1	4	trap	1		2107
+for-iter-dict-str-keys	single	1	4	return	1	2	2667
+for-iter-set-basic	single	1	4	return	1	f	4424
+for-iter-set-empty	single	1	4	return	1	7	2397
+for-iter-set-type-trap	single	1	4	trap	1		1441
+for-iter-object-list	single	1	4	return	1	6	3509
+for-iter-object-next	single	1	4	return	1	6	6298
+for-iter-object-exhaust	single	1	4	return	1	7	4184
+for-iter-object-no-iter-trap	single	1	4	trap	1		2187
+for-iter-object-nested	single	1	4	return	1	9	4716
+container-for-iter-end-for	single	1	4	return	1	7	132
+for-iter-object-raise-catch	single	1	4	return	1	1	4832
+nop	single	1	4	return	1	7	1381
+for-call-toplevel	single	1	4	return	1	9	4078
+return-true	single	1	4	return	4	1	1598
+extended-arg-two-core	twocore	1	4	return	1	7b	1507
+branchy-two-core	twocore	1	4	return	1	18	3206
+smoke	single	1	4	return	1	2a	1254
+call-chain	single	1	4	return	1	2a	2954
+recursion	single	1	4	return	1	37	26007
+noncallable	single	1	4	trap	6		1333
+bad-argc	single	1	4	trap	6		1726
+deep-callgraph	single	1	4	return	1	5a	20125
+container-call-spike	single	1	4	return	1	3	3644
+default-arg	single	1	4	return	1	9	2849
+default-arg-argc-trap	single	1	4	trap	6		2113
+default-none	single	1	4	return	1	6e	3371
+default-false-zero	single	1	4	return	1	12	3821
+default-empty-tuple	single	1	4	return	1	8	3472
+default-multi-zero-argc	single	1	4	return	1	7ed	3642
+default-arg-too-many	single	1	4	trap	6		2132
+default-kwonly-none	single	1	4	return	1	b	3881
+default-partial-none	single	1	4	return	1	19	3407
+default-call-ex-empty	single	1	4	return	1	1c	4393
+default-nested	single	1	4	return	1	15	3812
+varargs-pos-defaults	single	1	4	return	1	1f	4027
+call-kw	single	1	4	return	1	28d	6050
+call-kw-unexpected	single	1	4	trap	6		2393
+call-function-ex	single	1	4	return	1	141	2916
+call-function-ex-kw	single	1	4	return	1	38	4159
+varargs-basic	single	1	4	return	1	3	2995
+varargs-empty	single	1	4	return	1	0	2844
+varargs-kwonly	single	1	4	return	1	c	3512
+varargs-kwonly2	single	1	4	return	1	900	3826
+varargs-kwonly2-partial	single	1	4	return	1	8fe	4051
+varargs-ex-kw	single	1	4	return	1	8fe	4305
+varargs-call-ex	single	1	4	return	1	2	2947
+varkw-basic	single	1	4	return	1	1a	4486
+varkw-empty	single	1	4	return	1	10	4733
+varkw-only	single	1	4	return	1	2b	3347
+varkw-and-varargs	single	1	4	return	1	82	5439
+varkw-call-ex	single	1	4	return	1	b	5323
+varkw-posonly	single	1	4	return	1	f4	4925
+posonly-kw-trap	single	1	4	trap	6		2367
+posonly-ok	single	1	4	return	1	57	3622
+varkw-name-collision	single	1	4	return	1	f	4367
+varkw-no-wipe	single	1	4	return	1	9	4212
+varkw-many	single	1	4	return	1	8	4500
+varkw-kwonly	single	1	4	return	1	10	5105
+varkw-combo	single	1	4	return	1	65c	6064
+varkw-dup-trap	single	1	4	trap	6		2373
+varkw-kwonly-missing-trap	single	1	4	trap	6		2437
+smoke-two-core	twocore	1	4	return	1	2a	1254
+call-chain-two-core	twocore	1	4	return	1	2a	2954
+recursion-two-core	twocore	1	4	return	1	37	26007
+noncallable-two-core	twocore	1	4	trap	6		1333
+bad-argc-two-core	twocore	1	4	trap	6		1726
+deep-callgraph-two-core	twocore	1	4	return	1	5a	20125
+attr-basic	single	1	4	return	1	c	3118
+attr-overwrite	single	1	4	return	1	9	2587
+attr-many	twocore	1	4	return	1	24	22648
+attr-missing	single	1	4	trap	15		1818
+attr-type-trap	single	1	4	trap	1		1503
+attr-del	single	1	4	trap	15		2103
+attr-del-reinsert	single	1	4	return	1	2a	2639
+attr-shadow	single	1	4	return	1	5	2064
+attr-mro	single	1	4	return	1	63	2251
+attr-dunder-dict	single	1	4	return	1	c	3253
+attr-dunder-class	single	1	4	return	1	1	2261
+attr-dunder-base	single	1	4	return	1	7	3708
+attr-dunder-store-trap	single	1	4	trap	1		1637
+attr-dunder-del-trap	single	1	4	trap	1		1637
+firmware-attr-helpers	single	1	4	return	1	1f	9619
+method-call	single	1	4	return	1	2	3080
+method-nested	single	1	4	return	1	8	4172
+ctor-noinit	single	1	4	return	1	7	2641
+ctor-init	single	1	4	return	1	b	3287
+method-default	single	1	4	return	1	9	3653
+varkw-method	single	1	4	return	1	d	5768
+method-call-kw	single	1	4	return	1	37	4401
+bound-method-obj	single	1	4	return	1	2	3244
+class-simple	single	1	4	return	1	7	4516
+class-const	single	1	4	return	1	8	3494
+staticmethod	single	1	4	return	1	7	3435
+class-two-instances	single	1	4	return	1	1e	5949
+undef-global	single	1	4	trap	7		1560
+globals-accum	single	1	4	return	1	142	6030
+copy	single	1	4	return	1	5	1843
+swap	single	1	4	return	1	6	1971
+delete-fast	single	1	4	return	1	2	1392
+delete-fast-unbound	single	1	4	trap	7		1214
+store-fast-load-fast	single	1	4	return	1	b	1520
+load-fast-load-fast	single	1	4	return	1	2	1401
+load-fast-borrow-load-fast-borrow	single	1	4	return	1	7	1509
+load-fast-and-clear	single	1	4	return	1	7	1522
+load-fast-and-clear-cleared	single	1	4	trap	7		1232
+load-fast-check	single	1	4	return	1	7	1524
+load-fast-check-unbound	single	1	4	trap	7		1214
+load-global-namei	single	1	4	return	1	6	2855
+builtins-fallback	single	1	4	return	1	4	2122
+builtins-shadow	single	1	4	return	1	63	2386
+builtins-null-bit	single	1	4	return	1	7	2067
+load-name-builtin	single	1	4	return	1	4	2078
+undef-global-two-core	twocore	1	4	trap	7		1560
+globals-accum-two-core	twocore	1	4	return	1	142	6030
+try-syntaxerror	single	1	4	return	1	1	2817
+try-exc-types	single	1	4	return	1	457	9983
+try-syntaxerror-msg	single	1	4	return	1	2	3586
+raise-syntaxerror-fatal	single	1	4	trap	17		1923
+try-exc-cross-frame-fatal	single	1	4	return	1	1	3607
+try-stopiteration	single	1	4	return	1	7	2666
+try-stopiteration-nested	single	1	4	return	1	b	3505
+raise-stopiteration-fatal	single	1	4	trap	17		1923
+try-exception	single	1	4	return	1	7	2879
+try-after-call	single	1	4	return	1	7	5887
+try-typeerror	single	1	4	return	1	8	2947
+raise-typeerror-call	single	1	4	return	1	15	2830
+raise-instance	single	1	4	return	1	16	2842
+try-tuple-match	single	1	4	return	1	9	3163
+try-lookuperror	single	1	4	return	1	a	3995
+try-except-miss	single	1	4	trap	17		3461
+bare-raise	single	1	4	return	1	d	3489
+bare-raise-no-active	single	1	4	trap	17		1315
+try-except-else	single	1	4	return	1	b	4575
+try-finally	single	1	4	return	1	2b67	4102
+try-except-as	single	1	4	return	1	7	3003
+try-callee-unhandled	single	1	4	trap	17		1991
+fw-next-exhausted	single	1	4	return	1	2a	4221
+exc-args	single	1	4	return	1	2	4128
+raise-varargs	single	1	4	trap	1		1333
+raise-after-call-loop	single	1	4	return	1	6	5168
+helper-containers	single	1	4	return	1	60	7517
+algo-sort	single	1	4	return	1	152d	6812
+sorted-str	twocore	1	4	return	1	1	15431
+fw-range-zero-step	single	1	4	return	1	29	3898
+fw-pow-neg-mod	single	1	4	return	1	2b	4160
+builtin-max	single	1	4	return	1	7	1894
+builtin-len-list	single	1	4	return	1	3	2122
+builtin-len-long-str	single	1	4	return	1	17	2134
+builtin-len-range	single	1	4	return	1	3	2486
+builtin-len-empty-range	single	1	4	return	1	0	2480
+builtin-len-obj	single	1	4	return	1	5	3263
+builtin-len-obj-missing	single	1	4	trap	15		2503
+builtin-ord	single	1	4	return	1	457	3911
+builtin-chr	single	1	4	return	1	6f	3760
+builtin-ord-unicode	single	1	4	return	1	10f447	6131
+builtin-ord-scan	single	1	4	return	1	21	5675
+builtin-ord-len-trap	single	1	4	trap	1		1907
+builtin-ord-type-trap	single	1	4	trap	1		1901
+builtin-chr-range-trap	single	1	4	trap	1		1845
+builtin-chr-surrogate-trap	single	1	4	return	1	1	2773
+builtin-int	single	1	4	return	1	10f447	5345
+builtin-int-type-trap	single	1	4	trap	1		1897
+builtin-int-float	single	1	4	return	1	1b207	4936
+builtin-max-float	single	1	4	return	1	1b207	4932
+builtin-str	single	1	4	return	1	10f447	5487
+builtin-str-type-trap	single	1	4	trap	1		1891
+firmware-rom-subset	single	1	4	return	1	471	10392
+firmware-iterators	twocore	1	4	return	1	4e	34239
+firmware-wave3a	single	1	4	return	1	1b0	22970
+firmware-wave3-strings	single	1	4	return	1	6f	15961
+firmware-wave3-pow	single	1	4	return	1	a9	10527
+firmware-wave3-containers	twocore	1	4	return	1	15d	60352
+firmware-sorted-kw	twocore	1	4	return	1	1cc	25568
+firmware-filter-pred	twocore	1	4	return	1	9	10052
+firmware-isinstance	single	1	4	return	1	7f	11206
+firmware-tuple-empty	single	1	4	return	1	65	4052
+firmware-min-varargs	single	1	4	return	1	a	7346
+print-empty	twocore	1	4	return	1	0	5512
+print-basic	twocore	1	4	return	1	0	21276
+print-sep-end	twocore	1	4	return	1	0	20477
+print-end-only	twocore	1	4	return	1	0	17486
+print-none-sep	twocore	1	4	return	1	0	14227
+print-many	twocore	1	4	return	1	0	23209
+print-star	twocore	1	4	return	1	0	15954
+print-star-kw	twocore	1	4	return	1	0	16345
+print-neg	twocore	1	4	return	1	0	13119
+print-bools	twocore	1	4	return	1	0	11049
+print-type-trap	twocore	1	4	trap	1		5075
+helper-containers-two-core	twocore	1	4	return	1	60	7517
+algo-sort-two-core	twocore	1	4	return	1	152d	6812
+code-ram-call-rom	single	1	4	return	1	7d	6255
+code-ram-call	single	1	4	return	1	7d	6255
+heap-mark-release	single	1	4	return	1	2b67	5468
+code-mark-release	single	1	4	return	1	6f	4094
+heap-release-stale-trap	single	1	4	trap	7		2318
+heap-release-below-base-trap	single	1	4	trap	7		1835
+code-release-stale-trap	single	1	4	trap	7		2374
+heap-mark-argc-trap	single	1	4	trap	6		1828
+code-alloc-oom-trap	single	1	4	trap	7		1835
+code-write-floor-trap	single	1	4	trap	7		1911
+locals-40-uninit	single	1	4	trap	7		2762
+locals-64	single	1	4	return	1	7e0	13594
+rf-deep-recursion	single	1	4	return	1	1f4	223159
+rf-spill-refill	single	1	4	return	1	b3	31289
+rf-thrash	single	1	4	return	1	3e8	188409
+rf-window-too-big-trap	single	1	4	trap	6		1719
+rf-spill-oom-trap	single	1	4	trap	7		624174
+align-mask	single	1	4	return	1	c	1515
+locals-40-uninit-two-core	twocore	1	4	trap	7		2762
+locals-64-two-core	twocore	1	4	return	1	7e0	13594
+container-list-oom	single	1	4	trap	7		284
+for-iter-grow	twocore	1	4	return	1	6	5607
+for-iter-dict-grow	twocore	1	4	return	1	4d2	15494
+dict-grow-fatal	single	1	4	trap	11		2270
+set-grow-fatal	single	1	4	trap	13		1847
+attr-grow-global	twocore	1	4	return	1	63	19219
+seed-grow-global	twocore	1	4	return	1	63	18164
+allocator-list	twocore	1	4	return	1	3	3676806
+compile-store-name-grow-loop-two-core	twocore	1	4	return	1	6	3729444
+list-del-shift-excore	twocore	1	4	return	1	50	4777
+dict-grow-basic	twocore	1	4	return	1	a	15742
+dict-grow-large	twocore	1	4	return	1	d2	57969
+set-grow-basic	twocore	1	4	return	1	5	11183
+container-list-append-full-fatal	single	1	4	trap	9		204
+container-list-extend-full-fatal	single	1	4	trap	10		281
+container-list-extend-type-fatal	single	1	4	trap	1		189
+excore-grow-from-zero	twocore	1	4	return	1	37	1649
+excore-fast-path-no-trap	twocore	1	4	return	1	9	886
+excore-grow-oom-fatal	twocore	1	4	trap	7		1123
+excore-alias-stability	twocore	1	4	return	1	1e	2591
+excore-mixed-tags-preserved	twocore	1	4	return	1	68d	3329
+excore-grow-repeated	twocore	1	4	return	1	f0a	11042
+excore-append-across-call	twocore	1	4	return	1	4d	2335
+excore-disabled	single	1	4	trap	9		517
+excore-extend-grow-list	twocore	1	4	return	1	6	3310
+excore-extend-grow-tuple	twocore	1	4	return	1	3c	3062
+excore-extend-fast-no-trap	twocore	1	4	return	1	5	2696
+excore-extend-empty-noop	twocore	1	4	return	1	7	735
+excore-extend-self	twocore	1	4	return	1	3c	3607
+excore-extend-mixed-tags	twocore	1	4	return	1	68d	3887
+excore-extend-grow-to-fit	twocore	1	4	return	1	92	7539
+excore-extend-oom-fatal	twocore	1	4	trap	7		1467
+excore-extend-across-call	twocore	1	4	return	1	58	3351
+excore-extend-disabled	single	1	4	trap	10		638
+exec-code-basic	single	1	4	return	1	21	5355
+exec-code-globals-rw	single	1	4	return	1	23	5064
+exec-code-returns-none	single	1	4	return	1	6b	4958
+exec-code-nested	single	1	4	return	1	2d	6548
+eval-code-expr	single	1	4	return	1	29	4642
+exec-bad-arg-trap	single	1	4	trap	6		3142
+exec-globals-dict	single	1	4	return	1	b1	5865
+exec-globals-read	single	1	4	return	1	29	5391
+exec-globals-restore	single	1	4	return	1	424	7881
+exec-globals-nested	single	1	4	return	1	90a	9146
+exec-globals-type-trap	single	1	4	trap	1		3896
+code-new-call	single	1	4	return	1	7	4829
+code-emit-then-call	single	1	4	return	1	11	6060
+code-new-badfield-trap	single	1	4	trap	1		3755
+code-kind-tags	single	1	4	return	1	b2	2959
+pyc-package-call	single	1	4	return	1	2a	4304
+lexer-count	single	1	4	return	1	11	146860
+parser-tiny-expr	single	1	4	return	1	4a7b4499	175031
+compile-deep-nesting	single	1	4	return	1	70b2cd3a	1168741
+symtab-locals	single	1	4	return	1	46db7f6	898280
+symtab-closure	single	1	4	return	1	1	765576
+codegen-t1-expr	single	1	4	return	1	3	384243
+compile-eval-expr	single	1	4	return	1	3	388691
+compile-mode-trap	single	1	4	return	1	3	8210
+compile-reject-import	single	1	4	return	1	1	83450
+compile-reject-closure	single	1	4	return	1	1	1630737
+compile-closure	single	1	4	return	1	7	1772264
+compile-exec-roundtrip	single	1	4	return	1	7	4843770
+compile-kwargs	single	1	4	return	1	7	3044163
+compile-reentrant	single	1	4	return	1	7	480020
+compile-ns-inherit	single	1	4	return	1	7	5910
+compile-reject-locals	single	1	4	return	1	1	6926045
+compile-repeat	single	1	4	return	1	1	3099503
+compile-release-realloc	single	1	4	return	1	25	779159
+compile-try-except	single	1	4	return	1	7	1154238
+compile-try-else	single	1	4	return	1	3	1485206
+compile-try-finally	single	1	4	return	1	c	1569769
+compile-raise	single	1	4	return	1	7	1316559
+compile-str-slice	single	1	4	return	1	1	541754
+compile-lambda	single	1	4	return	1	7	905822
+compile-assert	single	1	4	return	1	1	467008
+compile-decorator	single	1	4	return	1	7	1364291
+compile-fstring	single	1	4	return	1	1	610522
+compile-const-pool	single	1	4	return	1	7	1437699
+eval-str-direct	single	1	4	return	1	3	389856
+eval-str-long	single	1	4	return	1	f	704119
+exec-str-direct	single	1	4	return	1	3	530231
+bios-exec	single	1	4	return	1	3	530211
+code-new-call-two-core	twocore	1	4	return	1	7	4829
+code-kind-tags-two-core	twocore	1	4	return	1	b2	2959
+pyc-package-call-two-core	twocore	1	4	return	1	2a	4304
+lexer-count-two-core	twocore	1	4	return	1	11	146860
+parser-tiny-expr-two-core	twocore	1	4	return	1	4a7b4499	175031
+compile-deep-nesting-two-core	twocore	1	4	return	1	70b2cd3a	1168741
+symtab-locals-two-core	twocore	1	4	return	1	46db7f6	898280
+symtab-closure-two-core	twocore	1	4	return	1	1	765576
+codegen-t1-expr-two-core	twocore	1	4	return	1	3	384243
+compile-eval-expr-two-core	twocore	1	4	return	1	3	388691
+compile-mode-trap-two-core	twocore	1	4	return	1	3	8210
+compile-reject-import-two-core	twocore	1	4	return	1	1	83450
+compile-reject-closure-two-core	twocore	1	4	return	1	1	1630737
+compile-closure-two-core	twocore	1	4	return	1	7	1772264
+compile-exec-roundtrip-two-core	twocore	1	4	return	1	7	4843770
+compile-kwargs-two-core	twocore	1	4	return	1	7	3044163
+compile-grammar-two-core	twocore	1	4	return	1	7	4621017
+startup-multiprogram-two-core	twocore	1	4	return	1	7	5239966
+compile-reject-locals-two-core	twocore	1	4	return	1	1	6926045
+compile-repeat-two-core	twocore	1	4	return	1	1	3099503
+compile-release-realloc-two-core	twocore	1	4	return	1	25	779159
+compile-try-except-two-core	twocore	1	4	return	1	7	1154238
+compile-try-else-two-core	twocore	1	4	return	1	3	1485206
+compile-try-finally-two-core	twocore	1	4	return	1	c	1569769
+compile-raise-two-core	twocore	1	4	return	1	7	1316559
+compile-str-slice-two-core	twocore	1	4	return	1	1	541754
+compile-list-comp-two-core	twocore	1	4	return	1	f	2300285
+compile-lambda-two-core	twocore	1	4	return	1	7	905822
+compile-assert-two-core	twocore	1	4	return	1	1	467008
+compile-decorator-two-core	twocore	1	4	return	1	7	1364291
+compile-fstring-two-core	twocore	1	4	return	1	1	610522
+compile-const-pool-two-core	twocore	1	4	return	1	7	1437699
+eval-str-direct-two-core	twocore	1	4	return	1	3	389856
+eval-str-long-two-core	twocore	1	4	return	1	f	704119
+exec-str-direct-two-core	twocore	1	4	return	1	3	530231
+bios-exec-two-core	twocore	1	4	return	1	3	530211
+bitwise-calls	single	0	1	return	1	2d	4011
+to-bool	single	0	1	return	1	277e	952
+to-bool-type-trap	single	0	1	return	1	0	567
+to-bool-str	single	0	1	return	1	b	758
+to-bool-list-trap	single	0	1	return	1	1	603
+unary-not	single	0	1	return	1	9	998
+unary-invert	single	0	1	return	1	fffffffffffffff8	502
+unary-negative	single	0	1	return	1	7	876
+unary-invert-float-trap	single	0	1	trap	1		442
+is-op	single	0	1	return	1	fb	1401
+compare-op	single	0	1	return	1	dfff	2533
+compare-op-type-trap	single	0	1	trap	1		451
+to-bool-none	single	0	1	return	1	0	567
+to-bool-containers	single	0	1	return	1	18a92	1209
+bitwise-calls-two-core	twocore	0	1	return	1	2d	4011
+slice-str	single	0	1	return	1	1b207	1545
+slice-str-open	single	0	1	return	1	2b03	1245
+slice-str-clamp	single	0	1	return	1	2b67	1385
+slice-str-long	single	0	1	return	1	a98ac7	2486
+slice-str-unicode	single	0	1	return	1	2b67	1362
+slice-str-empty	single	0	1	return	1	457	1201
+slice-str-scan	single	0	1	return	1	49	5143
+slice-str-neg-trap	single	0	1	return	1	3	741
+slice-str-const	single	0	1	return	1	2b67	1561
+slice-damerau	single	0	1	return	1	6f	1226
+str-eq-runtime-long	single	0	1	return	1	3f	1459
+str-consts	single	0	1	return	1	2a	849
+string-ops	single	0	1	return	1	23	1769
+list-repeat-jaro	single	0	1	return	1	86	3325
+list-concat-damerau	single	0	1	return	1	70	2171
+str-eq	single	0	1	return	1	7	864
+str-lt	single	0	1	return	1	1f	1291
+format-simple	single	0	1	return	1	4	1033
+convert-value	single	0	1	return	1	3	972
+convert-repr-str	single	0	1	return	1	4	1022
+build-string	single	0	1	return	1	6	1316
+str-subscr	single	0	1	return	1	6f	1125
+str-subscr-long	single	0	1	return	1	6f	1046
+str-subscr-unicode	single	0	1	return	1	457	1203
+str-subscr-loop	single	0	1	return	1	3	1931
+str-subscr-oob-trap	single	0	1	trap	7		455
+str-subscr-char-oob-trap	single	0	1	trap	7		455
+str-dict-key-runtime	single	0	1	return	1	1	2082
+str-dict-key-runtime-del	single	0	1	return	1	1	2982
+jaro-window	single	0	1	return	1	c9	8616
+str-methods	single	0	1	return	1	14b	1835
+str-search-methods	single	0	1	return	1	1fff	3974
+str-p5e-batch2	single	0	1	return	1	fffffff	7199
+str-p5e-batch3	single	0	1	return	1	ffffff	14780
+str-consts-two-core	twocore	0	1	return	1	2a	849
+string-ops-two-core	twocore	0	1	return	1	23	1769
+slice-list-trap	single	0	1	trap	1		672
+containers	single	0	1	return	1	8d	1026
+unpack-tuple	single	0	1	return	1	6	568
+unpack-list	single	0	1	return	1	9	560
+unpack-len-trap	single	0	1	trap	1		444
+unpack-ex	single	0	1	return	1	7	739
+list-to-tuple	twocore	0	1	return	1	6	2610
+list-repeat	single	0	1	return	1	a98af3	4378
+list-repeat-type-trap	single	0	1	return	1	6	716
+list-concat	single	0	1	return	1	4779	3476
+list-concat-type-trap	single	0	1	trap	1		462
+list-comp-basic	twocore	0	1	return	1	a	4287
+list-comp-fast-clear	twocore	0	1	return	1	6a	2269
+list-del-last-only	single	0	1	return	1	1e	824
+list-contains-simple	single	0	1	return	1	1	887
+list-contains-types	single	0	1	return	1	1f	1467
+tuple-contains	single	0	1	return	1	2a	683
+dict-contains	single	0	1	return	1	f	1318
+list-del-contains-call	single	0	1	return	1	2d	1530
+list-del-oob	single	0	1	trap	7		526
+list-del-tuple-trap	single	0	1	trap	1		453
+dict-del-trap	single	0	1	return	1	0	801
+dict-store-lookup	single	0	1	return	1	3c	1115
+dict-overwrite	single	0	1	return	1	63	787
+dict-del-simple	single	0	1	return	1	7	1357
+dict-del-then-insert	single	0	1	return	1	50	1338
+dict-hash-neg1	single	0	1	return	1	1e	968
+dict-str-keys	single	0	1	return	1	10	1604
+dict-large-pycore	single	0	1	return	1	24	2223
+dict-bool-int-collision	single	0	1	return	1	14	797
+dict-false-zero	single	0	1	return	1	7	794
+dict-del-collision	single	0	1	return	1	0	793
+dict-contains-collision	single	0	1	return	1	7	1053
+set-build-simple	single	0	1	return	1	4	1182
+set-add-contains	single	0	1	return	1	3	876
+set-bool-int	single	0	1	return	1	1	657
+set-hash-neg1	single	0	1	return	1	3	946
+set-str	single	0	1	return	1	7	1100
+list-pop	single	0	1	return	1	3c	1442
+list-pop-empty	single	0	1	return	1	9	1281
+list-method-missing	single	0	1	trap	15		454
+list-methods	twocore	0	1	return	1	a	7675
+list-method-unbound	twocore	0	1	return	1	7	2117
+dict-methods	twocore	0	1	return	1	10	11654
+set-methods	twocore	0	1	return	1	4	2738
+containers-two-core	twocore	0	1	return	1	8d	1026
+list-extend-two-core	twocore	0	1	return	1	28	5337
+list-extend-del-contains-two-core	twocore	0	1	return	1	2b	4055
+list-del-simple	twocore	0	1	return	1	28	1606
+list-del-first-last	twocore	0	1	return	1	5	2299
+list-del-contains	twocore	0	1	return	1	7	2465
+list-del-nested	twocore	0	1	return	1	2c	1822
+dict-mixed-ops	twocore	0	1	return	1	84	12419
+set-update	twocore	0	1	return	1	3	9914
+set-update-tuple	twocore	0	1	return	1	21	3740
+map-add	twocore	0	1	return	1	f	11427
+dict-update	twocore	0	1	return	1	144	17620
+dict-update-obj	twocore	0	1	return	1	a23e	3190
+dict-merge	twocore	0	1	return	1	141	13341
+container-build-index	single	0	1	return	1	63	653
+container-store-subscr	single	0	1	return	1	2a	751
+container-dict-lookup	single	0	1	return	1	2a	686
+container-dict-store	single	0	1	return	1	63	783
+container-list-empty	single	0	1	return	1	1	632
+container-dict-multi-pair	single	0	1	return	1	64	1300
+container-dict-collision	single	0	1	return	1	1e	918
+container-dict-insert-new-key	single	0	1	return	1	14	794
+container-dict-empty	single	0	1	return	1	2	701
+container-list-nested	single	0	1	return	1	7	709
+container-tuple-index	single	0	1	return	1	28	787
+container-tuple-empty	single	0	1	return	1	9	129
+container-list-oob-read	single	0	1	trap	7		477
+container-list-oob-write	single	0	1	trap	7		486
+container-dict-missing-key	single	0	1	trap	7		566
+container-tuple-store-trap	single	0	1	trap	1		521
+container-dict-full-insert	single	0	1	trap	11		765
+container-list-append-fast	single	0	1	return	1	11	308
+container-list-extend-fast	single	0	1	trap	10		129
+container-list-extend-fast-tuple	single	0	1	trap	10		125
+container-list-extend-empty	single	0	1	return	1	2a	194
+extended-arg	single	0	1	return	1	7b	462
+branchy	single	0	1	return	1	18	2552
+pop-jump-if-none	single	0	1	return	1	7	772
+for-iter	single	0	1	return	1	f	1285
+for-iter-type-trap	single	0	1	trap	1		434
+for-iter-nested	single	0	1	return	1	5a	1273
+for-iter-edges	single	0	1	return	1	d	1132
+for-iter-branch	single	0	1	return	1	2	944
+for-iter-mutate	single	0	1	return	1	d	1202
+for-iter-mutate-visited	single	0	1	return	1	60	1336
+for-iter-rebind	single	0	1	return	1	f	1309
+for-iter-delete	twocore	0	1	return	1	8	2306
+for-iter-clear	twocore	0	1	return	1	1	941
+for-iter-subscr	single	0	1	return	1	3c	1144
+for-iter-build-tuple	single	0	1	return	1	9	802
+for-iter-range	single	0	1	return	1	a	1113
+for-iter-range-bounds	single	0	1	return	1	33	1968
+for-iter-range-step	single	0	1	return	1	f	967
+for-iter-range-empty	single	0	1	return	1	0	889
+for-iter-range-negative-step	single	0	1	return	1	f	1143
+for-iter-range-type-trap	single	0	1	trap	1		565
+for-iter-range-bool	single	0	1	return	1	2	1181
+for-iter-range-zero-step-trap	single	0	1	trap	1		576
+for-iter-str-short	single	0	1	return	1	3	869
+for-iter-str-empty	single	0	1	return	1	0	567
+for-iter-str-long	single	0	1	return	1	17	2844
+for-iter-str-unicode	single	0	1	return	1	b	923
+for-iter-str-branch	single	0	1	return	1	6f	1376
+for-iter-str-type-trap	single	0	1	trap	1		434
+for-iter-dict-keys	single	0	1	return	1	d	1096
+for-iter-dict-empty	single	0	1	return	1	7	580
+for-iter-dict-delete	single	0	1	trap	1		796
+for-iter-dict-str-keys	single	0	1	return	1	2	1086
+for-iter-set-basic	single	0	1	return	1	f	1866
+for-iter-set-empty	single	0	1	return	1	7	734
+for-iter-set-type-trap	single	0	1	trap	1		434
+for-iter-object-list	single	0	1	return	1	6	1364
+for-iter-object-next	single	0	1	return	1	6	3507
+for-iter-object-exhaust	single	0	1	return	1	7	1372
+for-iter-object-no-iter-trap	single	0	1	trap	1		571
+for-iter-object-nested	single	0	1	return	1	9	2463
+container-for-iter-end-for	single	0	1	return	1	7	35
+for-iter-object-raise-catch	single	0	1	return	1	1	1622
+nop	single	0	1	return	1	7	427
+for-call-toplevel	single	0	1	return	1	9	2557
+return-true	single	0	1	return	4	1	509
+extended-arg-two-core	twocore	0	1	return	1	7b	462
+branchy-two-core	twocore	0	1	return	1	18	2552
+smoke	single	0	1	return	1	2a	400
+call-chain	single	0	1	return	1	2a	1033
+recursion	single	0	1	return	1	37	52869
+noncallable	single	0	1	trap	6		347
+bad-argc	single	0	1	trap	6		540
+deep-callgraph	single	0	1	return	1	5a	14798
+container-call-spike	single	0	1	return	1	3	1247
+default-arg	single	0	1	return	1	9	1129
+default-arg-argc-trap	single	0	1	trap	6		628
+default-none	single	0	1	return	1	6e	1446
+default-false-zero	single	0	1	return	1	12	1572
+default-empty-tuple	single	0	1	return	1	8	1419
+default-multi-zero-argc	single	0	1	return	1	7ed	1799
+default-arg-too-many	single	0	1	trap	6		655
+default-kwonly-none	single	0	1	return	1	b	1625
+default-partial-none	single	0	1	return	1	19	1504
+default-call-ex-empty	single	0	1	return	1	1c	1888
+default-nested	single	0	1	return	1	15	1729
+varargs-pos-defaults	single	0	1	return	1	1f	1979
+call-kw	single	0	1	return	1	28d	2773
+call-kw-unexpected	single	0	1	trap	6		712
+call-function-ex	single	0	1	return	1	141	991
+call-function-ex-kw	single	0	1	return	1	38	1800
+varargs-basic	single	0	1	return	1	3	994
+varargs-empty	single	0	1	return	1	0	934
+varargs-kwonly	single	0	1	return	1	c	1133
+varargs-kwonly2	single	0	1	return	1	900	1303
+varargs-kwonly2-partial	single	0	1	return	1	8fe	1308
+varargs-ex-kw	single	0	1	return	1	8fe	1444
+varargs-call-ex	single	0	1	return	1	2	995
+varkw-basic	single	0	1	return	1	1a	1676
+varkw-empty	single	0	1	return	1	10	2076
+varkw-only	single	0	1	return	1	2b	1237
+varkw-and-varargs	single	0	1	return	1	82	2676
+varkw-call-ex	single	0	1	return	1	b	2421
+varkw-posonly	single	0	1	return	1	f4	2037
+posonly-kw-trap	single	0	1	trap	6		674
+posonly-ok	single	0	1	return	1	57	1605
+varkw-name-collision	single	0	1	return	1	f	1630
+varkw-no-wipe	single	0	1	return	1	9	1714
+varkw-many	single	0	1	return	1	8	1697
+varkw-kwonly	single	0	1	return	1	10	2291
+varkw-combo	single	0	1	return	1	65c	3002
+varkw-dup-trap	single	0	1	trap	6		683
+varkw-kwonly-missing-trap	single	0	1	trap	6		696
+smoke-two-core	twocore	0	1	return	1	2a	400
+call-chain-two-core	twocore	0	1	return	1	2a	1033
+recursion-two-core	twocore	0	1	return	1	37	52869
+noncallable-two-core	twocore	0	1	trap	6		347
+bad-argc-two-core	twocore	0	1	trap	6		540
+deep-callgraph-two-core	twocore	0	1	return	1	5a	14798
+attr-basic	single	0	1	return	1	c	1241
+attr-overwrite	single	0	1	return	1	9	1011
+attr-many	twocore	0	1	return	1	24	16030
+attr-missing	single	0	1	trap	15		513
+attr-type-trap	single	0	1	trap	1		444
+attr-del	single	0	1	trap	15		667
+attr-del-reinsert	single	0	1	return	1	2a	995
+attr-shadow	single	0	1	return	1	5	666
+attr-mro	single	0	1	return	1	63	697
+attr-dunder-dict	single	0	1	return	1	c	1228
+attr-dunder-class	single	0	1	return	1	1	731
+attr-dunder-base	single	0	1	return	1	7	1471
+attr-dunder-store-trap	single	0	1	trap	1		491
+attr-dunder-del-trap	single	0	1	trap	1		492
+firmware-attr-helpers	single	0	1	return	1	1f	4484
+method-call	single	0	1	return	1	2	979
+method-nested	single	0	1	return	1	8	1499
+ctor-noinit	single	0	1	return	1	7	896
+ctor-init	single	0	1	return	1	b	1130
+method-default	single	0	1	return	1	9	1409
+varkw-method	single	0	1	return	1	d	2554
+method-call-kw	single	0	1	return	1	37	1723
+bound-method-obj	single	0	1	return	1	2	1061
+class-simple	single	0	1	return	1	7	1645
+class-const	single	0	1	return	1	8	1210
+staticmethod	single	0	1	return	1	7	1191
+class-two-instances	single	0	1	return	1	1e	2638
+undef-global	single	0	1	trap	7		358
+globals-accum	single	0	1	return	1	142	3359
+copy	single	0	1	return	1	5	644
+swap	single	0	1	return	1	6	701
+delete-fast	single	0	1	return	1	2	445
+delete-fast-unbound	single	0	1	trap	7		333
+store-fast-load-fast	single	0	1	return	1	b	484
+load-fast-load-fast	single	0	1	return	1	2	457
+load-fast-borrow-load-fast-borrow	single	0	1	return	1	7	467
+load-fast-and-clear	single	0	1	return	1	7	486
+load-fast-and-clear-cleared	single	0	1	trap	7		361
+load-fast-check	single	0	1	return	1	7	488
+load-fast-check-unbound	single	0	1	trap	7		333
+load-global-namei	single	0	1	return	1	6	1170
+builtins-fallback	single	0	1	return	1	4	651
+builtins-shadow	single	0	1	return	1	63	809
+builtins-null-bit	single	0	1	return	1	7	651
+load-name-builtin	single	0	1	return	1	4	669
+undef-global-two-core	twocore	0	1	trap	7		358
+globals-accum-two-core	twocore	0	1	return	1	142	3359
+try-syntaxerror	single	0	1	return	1	1	955
+try-exc-types	single	0	1	return	1	457	4447
+try-syntaxerror-msg	single	0	1	return	1	2	1256
+raise-syntaxerror-fatal	single	0	1	trap	17		586
+try-exc-cross-frame-fatal	single	0	1	return	1	1	1180
+try-stopiteration	single	0	1	return	1	7	881
+try-stopiteration-nested	single	0	1	return	1	b	1473
+raise-stopiteration-fatal	single	0	1	trap	17		586
+try-exception	single	0	1	return	1	7	891
+try-after-call	single	0	1	return	1	7	2290
+try-typeerror	single	0	1	return	1	8	911
+raise-typeerror-call	single	0	1	return	1	15	988
+raise-instance	single	0	1	return	1	16	1006
+try-tuple-match	single	0	1	return	1	9	1072
+try-lookuperror	single	0	1	return	1	a	1333
+try-except-miss	single	0	1	trap	17		1182
+bare-raise	single	0	1	return	1	d	1413
+bare-raise-no-active	single	0	1	trap	17		407
+try-except-else	single	0	1	return	1	b	1784
+try-finally	single	0	1	return	1	2b67	1547
+try-except-as	single	0	1	return	1	7	994
+try-callee-unhandled	single	0	1	trap	17		606
+fw-next-exhausted	single	0	1	return	1	2a	1373
+exc-args	single	0	1	return	1	2	1451
+raise-varargs	single	0	1	trap	1		434
+raise-after-call-loop	single	0	1	return	1	6	3131
+helper-containers	single	0	1	return	1	60	3020
+algo-sort	single	0	1	return	1	152d	4823
+sorted-str	twocore	0	1	return	1	1	9431
+fw-range-zero-step	single	0	1	return	1	29	1297
+fw-pow-neg-mod	single	0	1	return	1	2b	1291
+builtin-max	single	0	1	return	1	7	552
+builtin-len-list	single	0	1	return	1	3	651
+builtin-len-long-str	single	0	1	return	1	17	669
+builtin-len-range	single	0	1	return	1	3	804
+builtin-len-empty-range	single	0	1	return	1	0	794
+builtin-len-obj	single	0	1	return	1	5	1069
+builtin-len-obj-missing	single	0	1	trap	15		729
+builtin-ord	single	0	1	return	1	457	1627
+builtin-chr	single	0	1	return	1	6f	1517
+builtin-ord-unicode	single	0	1	return	1	10f447	2731
+builtin-ord-scan	single	0	1	return	1	21	3767
+builtin-ord-len-trap	single	0	1	trap	1		561
+builtin-ord-type-trap	single	0	1	trap	1		551
+builtin-chr-range-trap	single	0	1	trap	1		551
+builtin-chr-surrogate-trap	single	0	1	return	1	1	909
+builtin-int	single	0	1	return	1	10f447	2364
+builtin-int-type-trap	single	0	1	trap	1		547
+builtin-int-float	single	0	1	return	1	1b207	2123
+builtin-max-float	single	0	1	return	1	1b207	2193
+builtin-str	single	0	1	return	1	10f447	2354
+builtin-str-type-trap	single	0	1	trap	1		537
+firmware-rom-subset	single	0	1	return	1	471	4626
+firmware-iterators	twocore	0	1	return	1	4e	18244
+firmware-wave3a	single	0	1	return	1	1b0	8771
+firmware-wave3-strings	single	0	1	return	1	6f	6932
+firmware-wave3-pow	single	0	1	return	1	a9	5400
+firmware-wave3-containers	twocore	0	1	return	1	15d	34977
+firmware-sorted-kw	twocore	0	1	return	1	1cc	16224
+firmware-filter-pred	twocore	0	1	return	1	9	4764
+firmware-isinstance	single	0	1	return	1	7f	6385
+firmware-tuple-empty	single	0	1	return	1	65	1583
+firmware-min-varargs	single	0	1	return	1	a	5111
+print-empty	twocore	0	1	return	1	0	2004
+print-basic	twocore	0	1	return	1	0	11320
+print-sep-end	twocore	0	1	return	1	0	11190
+print-end-only	twocore	0	1	return	1	0	9710
+print-none-sep	twocore	0	1	return	1	0	7528
+print-many	twocore	0	1	return	1	0	14630
+print-star	twocore	0	1	return	1	0	9238
+print-star-kw	twocore	0	1	return	1	0	9298
+print-neg	twocore	0	1	return	1	0	6532
+print-bools	twocore	0	1	return	1	0	5390
+print-type-trap	twocore	0	1	trap	1		1794
+helper-containers-two-core	twocore	0	1	return	1	60	3020
+algo-sort-two-core	twocore	0	1	return	1	152d	4823
+code-ram-call-rom	single	0	1	return	1	7d	3913
+code-ram-call	single	0	1	return	1	7d	3913
+heap-mark-release	single	0	1	return	1	2b67	2219
+code-mark-release	single	0	1	return	1	6f	1704
+heap-release-stale-trap	single	0	1	trap	7		716
+heap-release-below-base-trap	single	0	1	trap	7		537
+code-release-stale-trap	single	0	1	trap	7		716
+heap-mark-argc-trap	single	0	1	trap	6		526
+code-alloc-oom-trap	single	0	1	trap	7		537
+code-write-floor-trap	single	0	1	trap	7		567
+locals-40-uninit	single	0	1	trap	7		1019
+locals-64	single	0	1	return	1	7e0	5157
+rf-deep-recursion	single	0	1	return	1	1f4	181777
+rf-spill-refill	single	0	1	return	1	b3	41074
+rf-thrash	single	0	1	return	1	3e8	383185
+rf-window-too-big-trap	single	0	1	trap	6		531
+rf-spill-oom-trap	single	0	1	trap	7		242918
+align-mask	single	0	1	return	1	c	476
+locals-40-uninit-two-core	twocore	0	1	trap	7		1019
+locals-64-two-core	twocore	0	1	return	1	7e0	5157
+container-list-oom	single	0	1	trap	7		99
+for-iter-grow	twocore	0	1	return	1	6	2899
+for-iter-dict-grow	twocore	0	1	return	1	4d2	11454
+dict-grow-fatal	single	0	1	trap	11		790
+set-grow-fatal	single	0	1	trap	13		639
+attr-grow-global	twocore	0	1	return	1	63	13668
+seed-grow-global	twocore	0	1	return	1	63	13424
+allocator-list	twocore	0	1	return	1	3	2858531
+compile-store-name-grow-loop-two-core	twocore	0	1	return	1	6	2596200
+list-del-shift-excore	twocore	0	1	return	1	50	2050
+dict-grow-basic	twocore	0	1	return	1	a	11182
+dict-grow-large	twocore	0	1	return	1	d2	50318
+set-grow-basic	twocore	0	1	return	1	5	7665
+container-list-append-full-fatal	single	0	1	trap	9		61
+container-list-extend-full-fatal	single	0	1	trap	10		95
+container-list-extend-type-fatal	single	0	1	trap	1		37
+excore-grow-from-zero	twocore	0	1	return	1	37	928
+excore-fast-path-no-trap	twocore	0	1	return	1	9	261
+excore-grow-oom-fatal	twocore	0	1	trap	7		502
+excore-alias-stability	twocore	0	1	return	1	1e	1504
+excore-mixed-tags-preserved	twocore	0	1	return	1	68d	1992
+excore-grow-repeated	twocore	0	1	return	1	f0a	7286
+excore-append-across-call	twocore	0	1	return	1	4d	1052
+excore-disabled	single	0	1	trap	9		114
+excore-extend-grow-list	twocore	0	1	return	1	6	2064
+excore-extend-grow-tuple	twocore	0	1	return	1	3c	1916
+excore-extend-fast-no-trap	twocore	0	1	return	1	5	1526
+excore-extend-empty-noop	twocore	0	1	return	1	7	194
+excore-extend-self	twocore	0	1	return	1	3c	2296
+excore-extend-mixed-tags	twocore	0	1	return	1	68d	2410
+excore-extend-grow-to-fit	twocore	0	1	return	1	92	5098
+excore-extend-oom-fatal	twocore	0	1	trap	7		746
+excore-extend-across-call	twocore	0	1	return	1	58	1756
+excore-extend-disabled	single	0	1	trap	10		129
+exec-code-basic	single	0	1	return	1	21	1931
+code-new-call	single	0	1	return	1	7	1743
+lexer-count	single	0	1	return	1	11	106993
+compile-eval-expr	single	0	1	return	1	3	198682
+compile-try-except	single	0	1	return	1	7	729932
+bitwise-calls	single	0	4	return	1	2d	6048
+to-bool	single	0	4	return	1	277e	1402
+to-bool-type-trap	single	0	4	return	1	0	852
+to-bool-str	single	0	4	return	1	b	1121
+to-bool-list-trap	single	0	4	return	1	1	906
+unary-not	single	0	4	return	1	9	1463
+unary-invert	single	0	4	return	1	fffffffffffffff8	748
+unary-negative	single	0	4	return	1	7	1284
+unary-invert-float-trap	single	0	4	trap	1		667
+is-op	single	0	4	return	1	fb	2022
+compare-op	single	0	4	return	1	dfff	3691
+compare-op-type-trap	single	0	4	trap	1		679
+to-bool-none	single	0	4	return	1	0	852
+to-bool-containers	single	0	4	return	1	18a92	1809
+bitwise-calls-two-core	twocore	0	4	return	1	2d	6048
+slice-str	single	0	4	return	1	1b207	2232
+slice-str-open	single	0	4	return	1	2b03	1815
+slice-str-clamp	single	0	4	return	1	2b67	2006
+slice-str-long	single	0	4	return	1	a98ac7	3635
+slice-str-unicode	single	0	4	return	1	2b67	1971
+slice-str-empty	single	0	4	return	1	457	1750
+slice-str-scan	single	0	4	return	1	49	7498
+slice-str-neg-trap	single	0	4	return	1	3	1113
+slice-str-const	single	0	4	return	1	2b67	2251
+slice-damerau	single	0	4	return	1	6f	1778
+str-eq-runtime-long	single	0	4	return	1	3f	2113
+str-consts	single	0	4	return	1	2a	1290
+string-ops	single	0	4	return	1	23	2687
+list-repeat-jaro	single	0	4	return	1	86	4993
+list-concat-damerau	single	0	4	return	1	70	3191
+str-eq	single	0	4	return	1	7	1266
+str-lt	single	0	4	return	1	1f	1912
+format-simple	single	0	4	return	1	4	1504
+convert-value	single	0	4	return	1	3	1413
+convert-repr-str	single	0	4	return	1	4	1490
+build-string	single	0	4	return	1	6	1904
+str-subscr	single	0	4	return	1	6f	1665
+str-subscr-long	single	0	4	return	1	6f	1553
+str-subscr-unicode	single	0	4	return	1	457	1782
+str-subscr-loop	single	0	4	return	1	3	2840
+str-subscr-oob-trap	single	0	4	trap	7		683
+str-subscr-char-oob-trap	single	0	4	trap	7		683
+str-dict-key-runtime	single	0	4	return	1	1	3054
+str-dict-key-runtime-del	single	0	4	return	1	1	4455
+jaro-window	single	0	4	return	1	c9	13071
+str-methods	single	0	4	return	1	14b	2738
+str-search-methods	single	0	4	return	1	1fff	5858
+str-p5e-batch2	single	0	4	return	1	fffffff	10745
+str-p5e-batch3	single	0	4	return	1	ffffff	22106
+str-consts-two-core	twocore	0	4	return	1	2a	1290
+string-ops-two-core	twocore	0	4	return	1	23	2687
+slice-list-trap	single	0	4	trap	1		1002
+containers	single	0	4	return	1	8d	1539
+unpack-tuple	single	0	4	return	1	6	853
+unpack-list	single	0	4	return	1	9	839
+unpack-len-trap	single	0	4	trap	1		669
+unpack-ex	single	0	4	return	1	7	1126
+list-to-tuple	twocore	0	4	return	1	6	3029
+list-repeat	single	0	4	return	1	a98af3	6679
+list-repeat-type-trap	single	0	4	return	1	6	1085
+list-concat	single	0	4	return	1	4779	5315
+list-concat-type-trap	single	0	4	trap	1		699
+list-comp-basic	twocore	0	4	return	1	a	5071
+list-comp-fast-clear	twocore	0	4	return	1	6a	2996
+list-del-last-only	single	0	4	return	1	1e	1235
+list-contains-simple	single	0	4	return	1	1	1316
+list-contains-types	single	0	4	return	1	1f	2178
+tuple-contains	single	0	4	return	1	2a	1022
+dict-contains	single	0	4	return	1	f	1966
+list-del-contains-call	single	0	4	return	1	2d	2292
+list-del-oob	single	0	4	trap	7		784
+list-del-tuple-trap	single	0	4	trap	1		681
+dict-del-trap	single	0	4	return	1	0	1206
+dict-store-lookup	single	0	4	return	1	3c	1697
+dict-overwrite	single	0	4	return	1	63	1189
+dict-del-simple	single	0	4	return	1	7	2029
+dict-del-then-insert	single	0	4	return	1	50	2037
+dict-hash-neg1	single	0	4	return	1	1e	1475
+dict-str-keys	single	0	4	return	1	10	2444
+dict-large-pycore	single	0	4	return	1	24	3321
+dict-bool-int-collision	single	0	4	return	1	14	1205
+dict-false-zero	single	0	4	return	1	7	1199
+dict-del-collision	single	0	4	return	1	0	1192
+dict-contains-collision	single	0	4	return	1	7	1569
+set-build-simple	single	0	4	return	1	4	1746
+set-add-contains	single	0	4	return	1	3	1320
+set-bool-int	single	0	4	return	1	1	984
+set-hash-neg1	single	0	4	return	1	3	1411
+set-str	single	0	4	return	1	7	1640
+list-pop	single	0	4	return	1	3c	2165
+list-pop-empty	single	0	4	return	1	9	1947
+list-method-missing	single	0	4	trap	15		685
+list-methods	twocore	0	4	return	1	a	9519
+list-method-unbound	twocore	0	4	return	1	7	2618
+dict-methods	twocore	0	4	return	1	10	14396
+set-methods	twocore	0	4	return	1	4	4085
+containers-two-core	twocore	0	4	return	1	8d	1539
+list-extend-two-core	twocore	0	4	return	1	28	6011
+list-extend-del-contains-two-core	twocore	0	4	return	1	2b	4630
+list-del-simple	twocore	0	4	return	1	28	2021
+list-del-first-last	twocore	0	4	return	1	5	2729
+list-del-contains	twocore	0	4	return	1	7	3126
+list-del-nested	twocore	0	4	return	1	2c	2323
+dict-mixed-ops	twocore	0	4	return	1	84	13695
+set-update	twocore	0	4	return	1	3	10431
+set-update-tuple	twocore	0	4	return	1	21	4471
+map-add	twocore	0	4	return	1	f	12229
+dict-update	twocore	0	4	return	1	144	18336
+dict-update-obj	twocore	0	4	return	1	a23e	4990
+dict-merge	twocore	0	4	return	1	141	14136
+container-build-index	single	0	4	return	1	63	980
+container-store-subscr	single	0	4	return	1	2a	1120
+container-dict-lookup	single	0	4	return	1	2a	1034
+container-dict-store	single	0	4	return	1	63	1176
+container-list-empty	single	0	4	return	1	1	953
+container-dict-multi-pair	single	0	4	return	1	64	1948
+container-dict-collision	single	0	4	return	1	1e	1380
+container-dict-insert-new-key	single	0	4	return	1	14	1196
+container-dict-empty	single	0	4	return	1	2	1061
+container-list-nested	single	0	4	return	1	7	1072
+container-tuple-index	single	0	4	return	1	28	1174
+container-tuple-empty	single	0	4	return	1	9	183
+container-list-oob-read	single	0	4	trap	7		717
+container-list-oob-write	single	0	4	trap	7		729
+container-dict-missing-key	single	0	4	trap	7		848
+container-tuple-store-trap	single	0	4	trap	1		773
+container-dict-full-insert	single	0	4	trap	11		1140
+container-list-append-fast	single	0	4	return	1	11	458
+container-list-extend-fast	single	0	4	trap	10		195
+container-list-extend-fast-tuple	single	0	4	trap	10		188
+container-list-extend-empty	single	0	4	return	1	2a	290
+extended-arg	single	0	4	return	1	7b	690
+branchy	single	0	4	return	1	18	3767
+pop-jump-if-none	single	0	4	return	1	7	1132
+for-iter	single	0	4	return	1	f	1879
+for-iter-type-trap	single	0	4	trap	1		653
+for-iter-nested	single	0	4	return	1	5a	1876
+for-iter-edges	single	0	4	return	1	d	1651
+for-iter-branch	single	0	4	return	1	2	1382
+for-iter-mutate	single	0	4	return	1	d	1757
+for-iter-mutate-visited	single	0	4	return	1	60	1966
+for-iter-rebind	single	0	4	return	1	f	1921
+for-iter-delete	twocore	0	4	return	1	8	2864
+for-iter-clear	twocore	0	4	return	1	1	1376
+for-iter-subscr	single	0	4	return	1	3c	1699
+for-iter-build-tuple	single	0	4	return	1	9	1183
+for-iter-range	single	0	4	return	1	a	1647
+for-iter-range-bounds	single	0	4	return	1	33	2886
+for-iter-range-step	single	0	4	return	1	f	1435
+for-iter-range-empty	single	0	4	return	1	0	1339
+for-iter-range-negative-step	single	0	4	return	1	f	1689
+for-iter-range-type-trap	single	0	4	trap	1		859
+for-iter-range-bool	single	0	4	return	1	2	1772
+for-iter-range-zero-step-trap	single	0	4	trap	1		870
+for-iter-str-short	single	0	4	return	1	3	1277
+for-iter-str-empty	single	0	4	return	1	0	846
+for-iter-str-long	single	0	4	return	1	17	4089
+for-iter-str-unicode	single	0	4	return	1	b	1361
+for-iter-str-branch	single	0	4	return	1	6f	1997
+for-iter-str-type-trap	single	0	4	trap	1		653
+for-iter-dict-keys	single	0	4	return	1	d	1636
+for-iter-dict-empty	single	0	4	return	1	7	868
+for-iter-dict-delete	single	0	4	trap	1		1192
+for-iter-dict-str-keys	single	0	4	return	1	2	1626
+for-iter-set-basic	single	0	4	return	1	f	2799
+for-iter-set-empty	single	0	4	return	1	7	1112
+for-iter-set-type-trap	single	0	4	trap	1		653
+for-iter-object-list	single	0	4	return	1	6	2036
+for-iter-object-next	single	0	4	return	1	6	5328
+for-iter-object-exhaust	single	0	4	return	1	7	2089
+for-iter-object-no-iter-trap	single	0	4	trap	1		874
+for-iter-object-nested	single	0	4	return	1	9	3684
+container-for-iter-end-for	single	0	4	return	1	7	47
+for-iter-object-raise-catch	single	0	4	return	1	1	2474
+nop	single	0	4	return	1	7	637
+for-call-toplevel	single	0	4	return	1	9	3910
+return-true	single	0	4	return	4	1	770
+extended-arg-two-core	twocore	0	4	return	1	7b	690
+branchy-two-core	twocore	0	4	return	1	18	3767
+smoke	single	0	4	return	1	2a	601
+call-chain	single	0	4	return	1	2a	1564
+recursion	single	0	4	return	1	37	79395
+noncallable	single	0	4	trap	6		515
+bad-argc	single	0	4	trap	6		822
+deep-callgraph	single	0	4	return	1	5a	22409
+container-call-spike	single	0	4	return	1	3	1886
+default-arg	single	0	4	return	1	9	1711
+default-arg-argc-trap	single	0	4	trap	6		955
+default-none	single	0	4	return	1	6e	2184
+default-false-zero	single	0	4	return	1	12	2382
+default-empty-tuple	single	0	4	return	1	8	2169
+default-multi-zero-argc	single	0	4	return	1	7ed	2744
+default-arg-too-many	single	0	4	trap	6		991
+default-kwonly-none	single	0	4	return	1	b	2447
+default-partial-none	single	0	4	return	1	19	2269
+default-call-ex-empty	single	0	4	return	1	1c	2833
+default-nested	single	0	4	return	1	15	2632
+varargs-pos-defaults	single	0	4	return	1	1f	3026
+call-kw	single	0	4	return	1	28d	4186
+call-kw-unexpected	single	0	4	trap	6		1078
+call-function-ex	single	0	4	return	1	141	1504
+call-function-ex-kw	single	0	4	return	1	38	2733
+varargs-basic	single	0	4	return	1	3	1510
+varargs-empty	single	0	4	return	1	0	1423
+varargs-kwonly	single	0	4	return	1	c	1715
+varargs-kwonly2	single	0	4	return	1	900	1969
+varargs-kwonly2-partial	single	0	4	return	1	8fe	1983
+varargs-ex-kw	single	0	4	return	1	8fe	2194
+varargs-call-ex	single	0	4	return	1	2	1511
+varkw-basic	single	0	4	return	1	1a	2567
+varkw-empty	single	0	4	return	1	10	3183
+varkw-only	single	0	4	return	1	2b	1888
+varkw-and-varargs	single	0	4	return	1	82	4107
+varkw-call-ex	single	0	4	return	1	b	3687
+varkw-posonly	single	0	4	return	1	f4	3099
+posonly-kw-trap	single	0	4	trap	6		1025
+posonly-ok	single	0	4	return	1	57	2433
+varkw-name-collision	single	0	4	return	1	f	2494
+varkw-no-wipe	single	0	4	return	1	9	2605
+varkw-many	single	0	4	return	1	8	2591
+varkw-kwonly	single	0	4	return	1	10	3503
+varkw-combo	single	0	4	return	1	65c	4601
+varkw-dup-trap	single	0	4	trap	6		1037
+varkw-kwonly-missing-trap	single	0	4	trap	6		1059
+smoke-two-core	twocore	0	4	return	1	2a	601
+call-chain-two-core	twocore	0	4	return	1	2a	1564
+recursion-two-core	twocore	0	4	return	1	37	79395
+noncallable-two-core	twocore	0	4	trap	6		515
+bad-argc-two-core	twocore	0	4	trap	6		822
+deep-callgraph-two-core	twocore	0	4	return	1	5a	22409
+attr-basic	single	0	4	return	1	c	1943
+attr-overwrite	single	0	4	return	1	9	1572
+attr-many	twocore	0	4	return	1	24	18401
+attr-missing	single	0	4	trap	15		786
+attr-type-trap	single	0	4	trap	1		669
+attr-del	single	0	4	trap	15		1030
+attr-del-reinsert	single	0	4	return	1	2a	1547
+attr-shadow	single	0	4	return	1	5	1026
+attr-mro	single	0	4	return	1	63	1075
+attr-dunder-dict	single	0	4	return	1	c	1909
+attr-dunder-class	single	0	4	return	1	1	1121
+attr-dunder-base	single	0	4	return	1	7	2272
+attr-dunder-store-trap	single	0	4	trap	1		749
+attr-dunder-del-trap	single	0	4	trap	1		753
+firmware-attr-helpers	single	0	4	return	1	1f	6830
+method-call	single	0	4	return	1	2	1498
+method-nested	single	0	4	return	1	8	2306
+ctor-noinit	single	0	4	return	1	7	1379
+ctor-init	single	0	4	return	1	b	1733
+method-default	single	0	4	return	1	9	2165
+varkw-method	single	0	4	return	1	d	3934
+method-call-kw	single	0	4	return	1	37	2632
+bound-method-obj	single	0	4	return	1	2	1622
+class-simple	single	0	4	return	1	7	2518
+class-const	single	0	4	return	1	8	1852
+staticmethod	single	0	4	return	1	7	1809
+class-two-instances	single	0	4	return	1	1e	4060
+undef-global	single	0	4	trap	7		544
+globals-accum	single	0	4	return	1	142	5114
+copy	single	0	4	return	1	5	983
+swap	single	0	4	return	1	6	1052
+delete-fast	single	0	4	return	1	2	661
+delete-fast-unbound	single	0	4	trap	7		498
+store-fast-load-fast	single	0	4	return	1	b	721
+load-fast-load-fast	single	0	4	return	1	2	676
+load-fast-borrow-load-fast-borrow	single	0	4	return	1	7	698
+load-fast-and-clear	single	0	4	return	1	7	723
+load-fast-and-clear-cleared	single	0	4	trap	7		535
+load-fast-check	single	0	4	return	1	7	725
+load-fast-check-unbound	single	0	4	trap	7		498
+load-global-namei	single	0	4	return	1	6	1815
+builtins-fallback	single	0	4	return	1	4	993
+builtins-shadow	single	0	4	return	1	63	1226
+builtins-null-bit	single	0	4	return	1	7	990
+load-name-builtin	single	0	4	return	1	4	1017
+undef-global-two-core	twocore	0	4	trap	7		544
+globals-accum-two-core	twocore	0	4	return	1	142	5114
+try-syntaxerror	single	0	4	return	1	1	1447
+try-exc-types	single	0	4	return	1	457	6838
+try-syntaxerror-msg	single	0	4	return	1	2	1919
+raise-syntaxerror-fatal	single	0	4	trap	17		901
+try-exc-cross-frame-fatal	single	0	4	return	1	1	1798
+try-stopiteration	single	0	4	return	1	7	1340
+try-stopiteration-nested	single	0	4	return	1	b	2244
+raise-stopiteration-fatal	single	0	4	trap	17		901
+try-exception	single	0	4	return	1	7	1356
+try-after-call	single	0	4	return	1	7	3499
+try-typeerror	single	0	4	return	1	8	1388
+raise-typeerror-call	single	0	4	return	1	15	1504
+raise-instance	single	0	4	return	1	16	1528
+try-tuple-match	single	0	4	return	1	9	1642
+try-lookuperror	single	0	4	return	1	a	2032
+try-except-miss	single	0	4	trap	17		1809
+bare-raise	single	0	4	return	1	d	2148
+bare-raise-no-active	single	0	4	trap	17		617
+try-except-else	single	0	4	return	1	b	2699
+try-finally	single	0	4	return	1	2b67	2330
+try-except-as	single	0	4	return	1	7	1504
+try-callee-unhandled	single	0	4	trap	17		933
+fw-next-exhausted	single	0	4	return	1	2a	2066
+exc-args	single	0	4	return	1	2	2204
+raise-varargs	single	0	4	trap	1		653
+raise-after-call-loop	single	0	4	return	1	6	4697
+helper-containers	single	0	4	return	1	60	4583
+algo-sort	single	0	4	return	1	152d	7157
+sorted-str	twocore	0	4	return	1	1	11660
+fw-range-zero-step	single	0	4	return	1	29	1957
+fw-pow-neg-mod	single	0	4	return	1	2b	1945
+builtin-max	single	0	4	return	1	7	837
+builtin-len-list	single	0	4	return	1	3	993
+builtin-len-long-str	single	0	4	return	1	17	1017
+builtin-len-range	single	0	4	return	1	3	1227
+builtin-len-empty-range	single	0	4	return	1	0	1214
+builtin-len-obj	single	0	4	return	1	5	1633
+builtin-len-obj-missing	single	0	4	trap	15		1119
+builtin-ord	single	0	4	return	1	457	2458
+builtin-chr	single	0	4	return	1	6f	2285
+builtin-ord-unicode	single	0	4	return	1	10f447	4135
+builtin-ord-scan	single	0	4	return	1	21	5549
+builtin-ord-len-trap	single	0	4	trap	1		855
+builtin-ord-type-trap	single	0	4	trap	1		839
+builtin-chr-range-trap	single	0	4	trap	1		839
+builtin-chr-surrogate-trap	single	0	4	return	1	1	1380
+builtin-int	single	0	4	return	1	10f447	3585
+builtin-int-type-trap	single	0	4	trap	1		835
+builtin-int-float	single	0	4	return	1	1b207	3218
+builtin-max-float	single	0	4	return	1	1b207	3312
+builtin-str	single	0	4	return	1	10f447	3569
+builtin-str-type-trap	single	0	4	trap	1		819
+firmware-rom-subset	single	0	4	return	1	471	6867
+firmware-iterators	twocore	0	4	return	1	4e	21509
+firmware-wave3a	single	0	4	return	1	1b0	12890
+firmware-wave3-strings	single	0	4	return	1	6f	10037
+firmware-wave3-pow	single	0	4	return	1	a9	8025
+firmware-wave3-containers	twocore	0	4	return	1	15d	40929
+firmware-sorted-kw	twocore	0	4	return	1	1cc	21028
+firmware-filter-pred	twocore	0	4	return	1	9	6015
+firmware-isinstance	single	0	4	return	1	7f	9559
+firmware-tuple-empty	single	0	4	return	1	65	2387
+firmware-min-varargs	single	0	4	return	1	a	7532
+print-empty	twocore	0	4	return	1	0	2646
+print-basic	twocore	0	4	return	1	0	13502
+print-sep-end	twocore	0	4	return	1	0	13212
+print-end-only	twocore	0	4	return	1	0	11352
+print-none-sep	twocore	0	4	return	1	0	8890
+print-many	twocore	0	4	return	1	0	16512
+print-star	twocore	0	4	return	1	0	10591
+print-star-kw	twocore	0	4	return	1	0	10711
+print-neg	twocore	0	4	return	1	0	7874
+print-bools	twocore	0	4	return	1	0	6492
+print-type-trap	twocore	0	4	trap	1		2394
+helper-containers-two-core	twocore	0	4	return	1	60	4583
+algo-sort-two-core	twocore	0	4	return	1	152d	7157
+code-ram-call-rom	single	0	4	return	1	7d	5896
+code-ram-call	single	0	4	return	1	7d	5896
+heap-mark-release	single	0	4	return	1	2b67	3356
+code-mark-release	single	0	4	return	1	6f	2595
+heap-release-stale-trap	single	0	4	trap	7		1097
+heap-release-below-base-trap	single	0	4	trap	7		819
+code-release-stale-trap	single	0	4	trap	7		1097
+heap-mark-argc-trap	single	0	4	trap	6		802
+code-alloc-oom-trap	single	0	4	trap	7		819
+code-write-floor-trap	single	0	4	trap	7		864
+locals-40-uninit	single	0	4	trap	7		1412
+locals-64	single	0	4	return	1	7e0	7476
+rf-deep-recursion	single	0	4	return	1	1f4	275245
+rf-spill-refill	single	0	4	return	1	b3	61990
+rf-thrash	single	0	4	return	1	3e8	570799
+rf-window-too-big-trap	single	0	4	trap	6		810
+rf-spill-oom-trap	single	0	4	trap	7		348242
+align-mask	single	0	4	return	1	c	710
+locals-40-uninit-two-core	twocore	0	4	trap	7		1412
+locals-64-two-core	twocore	0	4	return	1	7e0	7476
+container-list-oom	single	0	4	trap	7		132
+for-iter-grow	twocore	0	4	return	1	6	3455
+for-iter-dict-grow	twocore	0	4	return	1	4d2	12217
+dict-grow-fatal	single	0	4	trap	11		1189
+set-grow-fatal	single	0	4	trap	13		957
+attr-grow-global	twocore	0	4	return	1	63	14566
+seed-grow-global	twocore	0	4	return	1	63	14220
+allocator-list	twocore	0	4	return	1	3	2966491
+compile-store-name-grow-loop-two-core	twocore	0	4	return	1	6	3994756
+list-del-shift-excore	twocore	0	4	return	1	50	2519
+dict-grow-basic	twocore	0	4	return	1	a	11852
+dict-grow-large	twocore	0	4	return	1	d2	55281
+set-grow-basic	twocore	0	4	return	1	5	8240
+container-list-append-full-fatal	single	0	4	trap	9		88
+container-list-extend-full-fatal	single	0	4	trap	10		140
+container-list-extend-type-fatal	single	0	4	trap	1		52
+excore-grow-from-zero	twocore	0	4	return	1	37	1018
+excore-fast-path-no-trap	twocore	0	4	return	1	9	390
+excore-grow-oom-fatal	twocore	0	4	trap	7		562
+excore-alias-stability	twocore	0	4	return	1	1e	1720
+excore-mixed-tags-preserved	twocore	0	4	return	1	68d	2160
+excore-grow-repeated	twocore	0	4	return	1	f0a	7942
+excore-append-across-call	twocore	0	4	return	1	4d	1203
+excore-disabled	single	0	4	trap	9		171
+excore-extend-grow-list	twocore	0	4	return	1	6	2234
+excore-extend-grow-tuple	twocore	0	4	return	1	3c	2066
+excore-extend-fast-no-trap	twocore	0	4	return	1	5	1666
+excore-extend-empty-noop	twocore	0	4	return	1	7	290
+excore-extend-self	twocore	0	4	return	1	3c	2476
+excore-extend-mixed-tags	twocore	0	4	return	1	68d	2598
+excore-extend-grow-to-fit	twocore	0	4	return	1	92	5514
+excore-extend-oom-fatal	twocore	0	4	trap	7		826
+excore-extend-across-call	twocore	0	4	return	1	58	1907
+excore-extend-disabled	single	0	4	trap	10		195
+exec-code-basic	single	0	4	return	1	21	2948
+code-new-call	single	0	4	return	1	7	2643
+lexer-count	single	0	4	return	1	11	163360
+compile-eval-expr	single	0	4	return	1	3	306955
+compile-try-except	single	0	4	return	1	7	1125221
+bitwise-calls	single	0	30	return	1	2d	23702
+to-bool	single	0	30	return	1	277e	5302
+to-bool-type-trap	single	0	30	return	1	0	3322
+to-bool-str	single	0	30	return	1	b	4267
+to-bool-list-trap	single	0	30	return	1	1	3532
+unary-not	single	0	30	return	1	9	5493
+unary-invert	single	0	30	return	1	fffffffffffffff8	2880
+unary-negative	single	0	30	return	1	7	4820
+unary-invert-float-trap	single	0	30	trap	1		2617
+is-op	single	0	30	return	1	fb	7404
+compare-op	single	0	30	return	1	dfff	13727
+compare-op-type-trap	single	0	30	trap	1		2655
+to-bool-none	single	0	30	return	1	0	3322
+to-bool-containers	single	0	30	return	1	18a92	7009
+bitwise-calls-two-core	twocore	0	30	return	1	2d	23702
+slice-str	single	0	30	return	1	1b207	8186
+slice-str-open	single	0	30	return	1	2b03	6755
+slice-str-clamp	single	0	30	return	1	2b67	7388
+slice-str-long	single	0	30	return	1	a98ac7	13593
+slice-str-unicode	single	0	30	return	1	2b67	7249
+slice-str-empty	single	0	30	return	1	457	6508
+slice-str-scan	single	0	30	return	1	49	27908
+slice-str-neg-trap	single	0	30	return	1	3	4337
+slice-str-const	single	0	30	return	1	2b67	8231
+slice-damerau	single	0	30	return	1	6f	6562
+str-eq-runtime-long	single	0	30	return	1	3f	7781
+str-consts	single	0	30	return	1	2a	5112
+string-ops	single	0	30	return	1	23	10643
+list-repeat-jaro	single	0	30	return	1	86	19449
+list-concat-damerau	single	0	30	return	1	70	12031
+str-eq	single	0	30	return	1	7	4750
+str-lt	single	0	30	return	1	1f	7294
+format-simple	single	0	30	return	1	4	5586
+convert-value	single	0	30	return	1	3	5235
+convert-repr-str	single	0	30	return	1	4	5546
+build-string	single	0	30	return	1	6	7000
+str-subscr	single	0	30	return	1	6f	6345
+str-subscr-long	single	0	30	return	1	6f	5947
+str-subscr-unicode	single	0	30	return	1	457	6800
+str-subscr-loop	single	0	30	return	1	3	10718
+str-subscr-oob-trap	single	0	30	trap	7		2659
+str-subscr-char-oob-trap	single	0	30	trap	7		2659
+str-dict-key-runtime	single	0	30	return	1	1	11478
+str-dict-key-runtime-del	single	0	30	return	1	1	17221
+jaro-window	single	0	30	return	1	c9	51681
+str-methods	single	0	30	return	1	14b	10564
+str-search-methods	single	0	30	return	1	1fff	22186
+str-p5e-batch2	single	0	30	return	1	fffffff	41477
+str-p5e-batch3	single	0	30	return	1	ffffff	85598
+str-consts-two-core	twocore	0	30	return	1	2a	5112
+string-ops-two-core	twocore	0	30	return	1	23	10643
+slice-list-trap	single	0	30	trap	1		3862
+containers	single	0	30	return	1	8d	5985
+unpack-tuple	single	0	30	return	1	6	3323
+unpack-list	single	0	30	return	1	9	3257
+unpack-len-trap	single	0	30	trap	1		2619
+unpack-ex	single	0	30	return	1	7	4480
+list-to-tuple	twocore	0	30	return	1	6	7547
+list-repeat	single	0	30	return	1	a98af3	26621
+list-repeat-type-trap	single	0	30	return	1	6	4283
+list-concat	single	0	30	return	1	4779	21253
+list-concat-type-trap	single	0	30	trap	1		2753
+list-comp-basic	twocore	0	30	return	1	a	12759
+list-comp-fast-clear	twocore	0	30	return	1	6a	9470
+list-del-last-only	single	0	30	return	1	1e	4797
+list-contains-simple	single	0	30	return	1	1	5034
+list-contains-types	single	0	30	return	1	1f	8340
+tuple-contains	single	0	30	return	1	2a	3960
+dict-contains	single	0	30	return	1	f	7582
+list-del-contains-call	single	0	30	return	1	2d	8896
+list-del-oob	single	0	30	trap	7		3020
+list-del-tuple-trap	single	0	30	trap	1		2657
+dict-del-trap	single	0	30	return	1	0	4716
+dict-store-lookup	single	0	30	return	1	3c	6741
+dict-overwrite	single	0	30	return	1	63	4673
+dict-del-simple	single	0	30	return	1	7	7853
+dict-del-then-insert	single	0	30	return	1	50	8095
+dict-hash-neg1	single	0	30	return	1	1e	5869
+dict-str-keys	single	0	30	return	1	10	9724
+dict-large-pycore	single	0	30	return	1	24	12837
+dict-bool-int-collision	single	0	30	return	1	14	4741
+dict-false-zero	single	0	30	return	1	7	4709
+dict-del-collision	single	0	30	return	1	0	4650
+dict-contains-collision	single	0	30	return	1	7	6041
+set-build-simple	single	0	30	return	1	4	6634
+set-add-contains	single	0	30	return	1	3	5168
+set-bool-int	single	0	30	return	1	1	3818
+set-hash-neg1	single	0	30	return	1	3	5441
+set-str	single	0	30	return	1	7	6320
+list-pop	single	0	30	return	1	3c	8431
+list-pop-empty	single	0	30	return	1	9	7719
+list-method-missing	single	0	30	trap	15		2687
+list-methods	twocore	0	30	return	1	a	26827
+list-method-unbound	twocore	0	30	return	1	7	7380
+dict-methods	twocore	0	30	return	1	10	40540
+set-methods	twocore	0	30	return	1	4	15759
+containers-two-core	twocore	0	30	return	1	8d	5985
+list-extend-two-core	twocore	0	30	return	1	28	13619
+list-extend-del-contains-two-core	twocore	0	30	return	1	2b	11060
+list-del-simple	twocore	0	30	return	1	28	5831
+list-del-first-last	twocore	0	30	return	1	5	7089
+list-del-contains	twocore	0	30	return	1	7	9328
+list-del-nested	twocore	0	30	return	1	2c	7105
+dict-mixed-ops	twocore	0	30	return	1	84	27467
+set-update	twocore	0	30	return	1	3	17205
+set-update-tuple	twocore	0	30	return	1	21	11333
+map-add	twocore	0	30	return	1	f	21933
+dict-update	twocore	0	30	return	1	144	28888
+dict-update-obj	twocore	0	30	return	1	a23e	20590
+dict-merge	twocore	0	30	return	1	141	23786
+container-build-index	single	0	30	return	1	63	3814
+container-store-subscr	single	0	30	return	1	2a	4318
+container-dict-lookup	single	0	30	return	1	2a	4050
+container-dict-store	single	0	30	return	1	63	4582
+container-list-empty	single	0	30	return	1	1	3735
+container-dict-multi-pair	single	0	30	return	1	64	7564
+container-dict-collision	single	0	30	return	1	1e	5384
+container-dict-insert-new-key	single	0	30	return	1	14	4680
+container-dict-empty	single	0	30	return	1	2	4181
+container-list-nested	single	0	30	return	1	7	4218
+container-tuple-index	single	0	30	return	1	28	4528
+container-tuple-empty	single	0	30	return	1	9	651
+container-list-oob-read	single	0	30	trap	7		2797
+container-list-oob-write	single	0	30	trap	7		2835
+container-dict-missing-key	single	0	30	trap	7		3292
+container-tuple-store-trap	single	0	30	trap	1		2957
+container-dict-full-insert	single	0	30	trap	11		4390
+container-list-append-fast	single	0	30	return	1	11	1758
+container-list-extend-fast	single	0	30	trap	10		767
+container-list-extend-fast-tuple	single	0	30	trap	10		734
+container-list-extend-empty	single	0	30	return	1	2a	1122
+extended-arg	single	0	30	return	1	7b	2666
+branchy	single	0	30	return	1	18	14297
+pop-jump-if-none	single	0	30	return	1	7	4252
+for-iter	single	0	30	return	1	f	7027
+for-iter-type-trap	single	0	30	trap	1		2551
+for-iter-nested	single	0	30	return	1	5a	7102
+for-iter-edges	single	0	30	return	1	d	6149
+for-iter-branch	single	0	30	return	1	2	5178
+for-iter-mutate	single	0	30	return	1	d	6567
+for-iter-mutate-visited	single	0	30	return	1	60	7426
+for-iter-rebind	single	0	30	return	1	f	7225
+for-iter-delete	twocore	0	30	return	1	8	8120
+for-iter-clear	twocore	0	30	return	1	1	5146
+for-iter-subscr	single	0	30	return	1	3c	6509
+for-iter-build-tuple	single	0	30	return	1	9	4485
+for-iter-range	single	0	30	return	1	a	6275
+for-iter-range-bounds	single	0	30	return	1	33	10842
+for-iter-range-step	single	0	30	return	1	f	5491
+for-iter-range-empty	single	0	30	return	1	0	5239
+for-iter-range-negative-step	single	0	30	return	1	f	6421
+for-iter-range-type-trap	single	0	30	trap	1		3407
+for-iter-range-bool	single	0	30	return	1	2	6894
+for-iter-range-zero-step-trap	single	0	30	trap	1		3418
+for-iter-str-short	single	0	30	return	1	3	4813
+for-iter-str-empty	single	0	30	return	1	0	3264
+for-iter-str-long	single	0	30	return	1	17	14879
+for-iter-str-unicode	single	0	30	return	1	b	5157
+for-iter-str-branch	single	0	30	return	1	6f	7379
+for-iter-str-type-trap	single	0	30	trap	1		2551
+for-iter-dict-keys	single	0	30	return	1	d	6316
+for-iter-dict-empty	single	0	30	return	1	7	3364
+for-iter-dict-delete	single	0	30	trap	1		4624
+for-iter-dict-str-keys	single	0	30	return	1	2	6306
+for-iter-set-basic	single	0	30	return	1	f	10885
+for-iter-set-empty	single	0	30	return	1	7	4388
+for-iter-set-type-trap	single	0	30	trap	1		2551
+for-iter-object-list	single	0	30	return	1	6	7860
+for-iter-object-next	single	0	30	return	1	6	21110
+for-iter-object-exhaust	single	0	30	return	1	7	8303
+for-iter-object-no-iter-trap	single	0	30	trap	1		3500
+for-iter-object-nested	single	0	30	return	1	9	14266
+container-for-iter-end-for	single	0	30	return	1	7	151
+for-iter-object-raise-catch	single	0	30	return	1	1	9858
+nop	single	0	30	return	1	7	2457
+for-call-toplevel	single	0	30	return	1	9	15636
+return-true	single	0	30	return	4	1	3032
+extended-arg-two-core	twocore	0	30	return	1	7b	2666
+branchy-two-core	twocore	0	30	return	1	18	14297
+smoke	single	0	30	return	1	2a	2343
+call-chain	single	0	30	return	1	2a	6166
+recursion	single	0	30	return	1	37	309287
+noncallable	single	0	30	trap	6		1971
+bad-argc	single	0	30	trap	6		3266
+deep-callgraph	single	0	30	return	1	5a	88371
+container-call-spike	single	0	30	return	1	3	7424
+default-arg	single	0	30	return	1	9	6755
+default-arg-argc-trap	single	0	30	trap	6		3789
+default-none	single	0	30	return	1	6e	8580
+default-false-zero	single	0	30	return	1	12	9402
+default-empty-tuple	single	0	30	return	1	8	8669
+default-multi-zero-argc	single	0	30	return	1	7ed	10934
+default-arg-too-many	single	0	30	trap	6		3903
+default-kwonly-none	single	0	30	return	1	b	9571
+default-partial-none	single	0	30	return	1	19	8899
+default-call-ex-empty	single	0	30	return	1	1c	11023
+default-nested	single	0	30	return	1	15	10458
+varargs-pos-defaults	single	0	30	return	1	1f	12100
+call-kw	single	0	30	return	1	28d	16432
+call-kw-unexpected	single	0	30	trap	6		4250
+call-function-ex	single	0	30	return	1	141	5950
+call-function-ex-kw	single	0	30	return	1	38	10819
+varargs-basic	single	0	30	return	1	3	5982
+varargs-empty	single	0	30	return	1	0	5661
+varargs-kwonly	single	0	30	return	1	c	6759
+varargs-kwonly2	single	0	30	return	1	900	7741
+varargs-kwonly2-partial	single	0	30	return	1	8fe	7833
+varargs-ex-kw	single	0	30	return	1	8fe	8694
+varargs-call-ex	single	0	30	return	1	2	5983
+varkw-basic	single	0	30	return	1	1a	10289
+varkw-empty	single	0	30	return	1	10	12777
+varkw-only	single	0	30	return	1	2b	7530
+varkw-and-varargs	single	0	30	return	1	82	16509
+varkw-call-ex	single	0	30	return	1	b	14659
+varkw-posonly	single	0	30	return	1	f4	12303
+posonly-kw-trap	single	0	30	trap	6		4067
+posonly-ok	single	0	30	return	1	57	9609
+varkw-name-collision	single	0	30	return	1	f	9982
+varkw-no-wipe	single	0	30	return	1	9	10327
+varkw-many	single	0	30	return	1	8	10339
+varkw-kwonly	single	0	30	return	1	10	14007
+varkw-combo	single	0	30	return	1	65c	18459
+varkw-dup-trap	single	0	30	trap	6		4105
+varkw-kwonly-missing-trap	single	0	30	trap	6		4205
+smoke-two-core	twocore	0	30	return	1	2a	2343
+call-chain-two-core	twocore	0	30	return	1	2a	6166
+recursion-two-core	twocore	0	30	return	1	37	309287
+noncallable-two-core	twocore	0	30	trap	6		1971
+bad-argc-two-core	twocore	0	30	trap	6		3266
+deep-callgraph-two-core	twocore	0	30	return	1	5a	88371
+attr-basic	single	0	30	return	1	c	8027
+attr-overwrite	single	0	30	return	1	9	6434
+attr-many	twocore	0	30	return	1	24	42063
+attr-missing	single	0	30	trap	15		3152
+attr-type-trap	single	0	30	trap	1		2619
+attr-del	single	0	30	trap	15		4176
+attr-del-reinsert	single	0	30	return	1	2a	6331
+attr-shadow	single	0	30	return	1	5	4146
+attr-mro	single	0	30	return	1	63	4351
+attr-dunder-dict	single	0	30	return	1	c	7811
+attr-dunder-class	single	0	30	return	1	1	4501
+attr-dunder-base	single	0	30	return	1	7	9214
+attr-dunder-store-trap	single	0	30	trap	1		2985
+attr-dunder-del-trap	single	0	30	trap	1		3015
+firmware-attr-helpers	single	0	30	return	1	1f	27162
+method-call	single	0	30	return	1	2	5996
+method-nested	single	0	30	return	1	8	9300
+ctor-noinit	single	0	30	return	1	7	5565
+ctor-init	single	0	30	return	1	b	6959
+method-default	single	0	30	return	1	9	8717
+varkw-method	single	0	30	return	1	d	15894
+method-call-kw	single	0	30	return	1	37	10510
+bound-method-obj	single	0	30	return	1	2	6484
+class-simple	single	0	30	return	1	7	10084
+class-const	single	0	30	return	1	8	7416
+staticmethod	single	0	30	return	1	7	7165
+class-two-instances	single	0	30	return	1	1e	16384
+undef-global	single	0	30	trap	7		2156
+globals-accum	single	0	30	return	1	142	20324
+copy	single	0	30	return	1	5	3921
+swap	single	0	30	return	1	6	4094
+delete-fast	single	0	30	return	1	2	2533
+delete-fast-unbound	single	0	30	trap	7		1928
+store-fast-load-fast	single	0	30	return	1	b	2775
+load-fast-load-fast	single	0	30	return	1	2	2574
+load-fast-borrow-load-fast-borrow	single	0	30	return	1	7	2700
+load-fast-and-clear	single	0	30	return	1	7	2777
+load-fast-and-clear-cleared	single	0	30	trap	7		2043
+load-fast-check	single	0	30	return	1	7	2779
+load-fast-check-unbound	single	0	30	trap	7		1928
+load-global-namei	single	0	30	return	1	6	7405
+builtins-fallback	single	0	30	return	1	4	3957
+builtins-shadow	single	0	30	return	1	63	4840
+builtins-null-bit	single	0	30	return	1	7	3928
+load-name-builtin	single	0	30	return	1	4	4033
+undef-global-two-core	twocore	0	30	trap	7		2156
+globals-accum-two-core	twocore	0	30	return	1	142	20324
+try-syntaxerror	single	0	30	return	1	1	5711
+try-exc-types	single	0	30	return	1	457	27560
+try-syntaxerror-msg	single	0	30	return	1	2	7665
+raise-syntaxerror-fatal	single	0	30	trap	17		3631
+try-exc-cross-frame-fatal	single	0	30	return	1	1	7154
+try-stopiteration	single	0	30	return	1	7	5318
+try-stopiteration-nested	single	0	30	return	1	b	8926
+raise-stopiteration-fatal	single	0	30	trap	17		3631
+try-exception	single	0	30	return	1	7	5386
+try-after-call	single	0	30	return	1	7	13977
+try-typeerror	single	0	30	return	1	8	5522
+raise-typeerror-call	single	0	30	return	1	15	5976
+raise-instance	single	0	30	return	1	16	6052
+try-tuple-match	single	0	30	return	1	9	6582
+try-lookuperror	single	0	30	return	1	a	8090
+try-except-miss	single	0	30	trap	17		7243
+bare-raise	single	0	30	return	1	d	8518
+bare-raise-no-active	single	0	30	trap	17		2437
+try-except-else	single	0	30	return	1	b	10629
+try-finally	single	0	30	return	1	2b67	9116
+try-except-as	single	0	30	return	1	7	5924
+try-callee-unhandled	single	0	30	trap	17		3767
+fw-next-exhausted	single	0	30	return	1	2a	8072
+exc-args	single	0	30	return	1	2	8730
+raise-varargs	single	0	30	trap	1		2551
+raise-after-call-loop	single	0	30	return	1	6	18269
+helper-containers	single	0	30	return	1	60	18129
+algo-sort	single	0	30	return	1	152d	27385
+sorted-str	twocore	0	30	return	1	1	33118
+fw-range-zero-step	single	0	30	return	1	29	7677
+fw-pow-neg-mod	single	0	30	return	1	2b	7613
+builtin-max	single	0	30	return	1	7	3307
+builtin-len-list	single	0	30	return	1	3	3957
+builtin-len-long-str	single	0	30	return	1	17	4033
+builtin-len-range	single	0	30	return	1	3	4893
+builtin-len-empty-range	single	0	30	return	1	0	4854
+builtin-len-obj	single	0	30	return	1	5	6521
+builtin-len-obj-missing	single	0	30	trap	15		4499
+builtin-ord	single	0	30	return	1	457	9660
+builtin-chr	single	0	30	return	1	6f	8941
+builtin-ord-unicode	single	0	30	return	1	10f447	16303
+builtin-ord-scan	single	0	30	return	1	21	20993
+builtin-ord-len-trap	single	0	30	trap	1		3403
+builtin-ord-type-trap	single	0	30	trap	1		3335
+builtin-chr-range-trap	single	0	30	trap	1		3335
+builtin-chr-surrogate-trap	single	0	30	return	1	1	5462
+builtin-int	single	0	30	return	1	10f447	14167
+builtin-int-type-trap	single	0	30	trap	1		3331
+builtin-int-float	single	0	30	return	1	1b207	12708
+builtin-max-float	single	0	30	return	1	1b207	13010
+builtin-str	single	0	30	return	1	10f447	14099
+builtin-str-type-trap	single	0	30	trap	1		3263
+firmware-rom-subset	single	0	30	return	1	471	26289
+firmware-iterators	twocore	0	30	return	1	4e	54099
+firmware-wave3a	single	0	30	return	1	1b0	48588
+firmware-wave3-strings	single	0	30	return	1	6f	36947
+firmware-wave3-pow	single	0	30	return	1	a9	30775
+firmware-wave3-containers	twocore	0	30	return	1	15d	101833
+firmware-sorted-kw	twocore	0	30	return	1	1cc	65136
+firmware-filter-pred	twocore	0	30	return	1	9	17657
+firmware-isinstance	single	0	30	return	1	7f	37067
+firmware-tuple-empty	single	0	30	return	1	65	9355
+firmware-min-varargs	single	0	30	return	1	a	28514
+print-empty	twocore	0	30	return	1	0	8230
+print-basic	twocore	0	30	return	1	0	33526
+print-sep-end	twocore	0	30	return	1	0	31516
+print-end-only	twocore	0	30	return	1	0	26216
+print-none-sep	twocore	0	30	return	1	0	21414
+print-many	twocore	0	30	return	1	0	33916
+print-star	twocore	0	30	return	1	0	23077
+print-star-kw	twocore	0	30	return	1	0	23777
+print-neg	twocore	0	30	return	1	0	20218
+print-bools	twocore	0	30	return	1	0	16436
+print-type-trap	twocore	0	30	trap	1		7694
+helper-containers-two-core	twocore	0	30	return	1	60	18129
+algo-sort-two-core	twocore	0	30	return	1	152d	27385
+code-ram-call-rom	single	0	30	return	1	7d	23082
+code-ram-call	single	0	30	return	1	7d	23082
+heap-mark-release	single	0	30	return	1	2b67	13210
+code-mark-release	single	0	30	return	1	6f	10317
+heap-release-stale-trap	single	0	30	trap	7		4399
+heap-release-below-base-trap	single	0	30	trap	7		3263
+code-release-stale-trap	single	0	30	trap	7		4399
+heap-mark-argc-trap	single	0	30	trap	6		3194
+code-alloc-oom-trap	single	0	30	trap	7		3263
+code-write-floor-trap	single	0	30	trap	7		3438
+locals-40-uninit	single	0	30	trap	7		4818
+locals-64	single	0	30	return	1	7e0	27574
+rf-deep-recursion	single	0	30	return	1	1f4	1085301
+rf-spill-refill	single	0	30	return	1	b3	243262
+rf-thrash	single	0	30	return	1	3e8	2196787
+rf-window-too-big-trap	single	0	30	trap	6		3228
+rf-spill-oom-trap	single	0	30	trap	7		1261050
+align-mask	single	0	30	return	1	c	2738
+locals-40-uninit-two-core	twocore	0	30	trap	7		4818
+locals-64-two-core	twocore	0	30	return	1	7e0	27574
+container-list-oom	single	0	30	trap	7		418
+for-iter-grow	twocore	0	30	return	1	6	8987
+for-iter-dict-grow	twocore	0	30	return	1	4d2	21583
+dict-grow-fatal	single	0	30	trap	11		4647
+set-grow-fatal	single	0	30	trap	13		3713
+attr-grow-global	twocore	0	30	return	1	63	25342
+seed-grow-global	twocore	0	30	return	1	63	24232
+allocator-list	twocore	0	30	return	1	3	5263931
+compile-store-name-grow-loop-two-core	twocore	0	30	return	1	6	16120728
+list-del-shift-excore	twocore	0	30	return	1	50	7057
+dict-grow-basic	twocore	0	30	return	1	a	20412
+dict-grow-large	twocore	0	30	return	1	d2	109927
+set-grow-basic	twocore	0	30	return	1	5	14810
+container-list-append-full-fatal	single	0	30	trap	9		322
+container-list-extend-full-fatal	single	0	30	trap	10		530
+container-list-extend-type-fatal	single	0	30	trap	1		182
+excore-grow-from-zero	twocore	0	30	return	1	37	1998
+excore-fast-path-no-trap	twocore	0	30	return	1	9	1508
+excore-grow-oom-fatal	twocore	0	30	trap	7		1122
+excore-alias-stability	twocore	0	30	return	1	1e	3952
+excore-mixed-tags-preserved	twocore	0	30	return	1	68d	4296
+excore-grow-repeated	twocore	0	30	return	1	f0a	16374
+excore-append-across-call	twocore	0	30	return	1	4d	2725
+excore-disabled	single	0	30	trap	9		665
+excore-extend-grow-list	twocore	0	30	return	1	6	4294
+excore-extend-grow-tuple	twocore	0	30	return	1	3c	4046
+excore-extend-fast-no-trap	twocore	0	30	return	1	5	3266
+excore-extend-empty-noop	twocore	0	30	return	1	7	1122
+excore-extend-self	twocore	0	30	return	1	3c	4876
+excore-extend-mixed-tags	twocore	0	30	return	1	68d	4974
+excore-extend-grow-to-fit	twocore	0	30	return	1	92	10986
+excore-extend-oom-fatal	twocore	0	30	trap	7		1546
+excore-extend-across-call	twocore	0	30	return	1	58	3829
+excore-extend-disabled	single	0	30	trap	10		767
+exec-code-basic	single	0	30	return	1	21	11762
+code-new-call	single	0	30	return	1	7	10443
+lexer-count	single	0	30	return	1	11	651874
+compile-eval-expr	single	0	30	return	1	3	1245321
+compile-try-except	single	0	30	return	1	7	4551059
+bitwise-calls	single	1	30	return	1	2d	8708
+to-bool	single	1	30	return	1	277e	3847
+to-bool-type-trap	single	1	30	return	1	0	2286
+to-bool-str	single	1	30	return	1	b	2981
+to-bool-list-trap	single	1	30	return	1	1	2307
+unary-not	single	1	30	return	1	9	3792
+unary-invert	single	1	30	return	1	fffffffffffffff8	2080
+unary-negative	single	1	30	return	1	7	3275
+unary-invert-float-trap	single	1	30	trap	1		1861
+is-op	single	1	30	return	1	fb	4890
+compare-op	single	1	30	return	1	dfff	8617
+compare-op-type-trap	single	1	30	trap	1		2001
+to-bool-none	single	1	30	return	1	0	2286
+to-bool-containers	single	1	30	return	1	18a92	4924
+bitwise-calls-two-core	twocore	1	30	return	1	2d	8708
+slice-str	single	1	30	return	1	1b207	5016
+slice-str-open	single	1	30	return	1	2b03	4161
+slice-str-clamp	single	1	30	return	1	2b67	4567
+slice-str-long	single	1	30	return	1	a98ac7	7660
+slice-str-unicode	single	1	30	return	1	2b67	4503
+slice-str-empty	single	1	30	return	1	457	3965
+slice-str-scan	single	1	30	return	1	49	7243
+slice-str-neg-trap	single	1	30	return	1	3	3021
+slice-str-const	single	1	30	return	1	2b67	5282
+slice-damerau	single	1	30	return	1	6f	4238
+str-eq-runtime-long	single	1	30	return	1	3f	4872
+str-consts	single	1	30	return	1	2a	3093
+string-ops	single	1	30	return	1	23	5887
+list-repeat-jaro	single	1	30	return	1	86	9036
+list-concat-damerau	single	1	30	return	1	70	7069
+str-eq	single	1	30	return	1	7	3187
+str-lt	single	1	30	return	1	1f	4345
+format-simple	single	1	30	return	1	4	2935
+convert-value	single	1	30	return	1	3	3033
+convert-repr-str	single	1	30	return	1	4	2923
+build-string	single	1	30	return	1	6	3324
+str-subscr	single	1	30	return	1	6f	4030
+str-subscr-long	single	1	30	return	1	6f	3797
+str-subscr-unicode	single	1	30	return	1	457	4288
+str-subscr-loop	single	1	30	return	1	3	4729
+str-subscr-oob-trap	single	1	30	trap	7		2005
+str-subscr-char-oob-trap	single	1	30	trap	7		2005
+str-dict-key-runtime	single	1	30	return	1	1	5563
+str-dict-key-runtime-del	single	1	30	return	1	1	8543
+jaro-window	single	1	30	return	1	c9	18292
+str-methods	single	1	30	return	1	14b	6289
+str-search-methods	single	1	30	return	1	1fff	12955
+str-p5e-batch2	single	1	30	return	1	fffffff	23693
+str-p5e-batch3	single	1	30	return	1	ffffff	40933
+str-consts-two-core	twocore	1	30	return	1	2a	3093
+string-ops-two-core	twocore	1	30	return	1	23	5887
+slice-list-trap	single	1	30	trap	1		2901
+containers	single	1	30	return	1	8d	3847
+unpack-tuple	single	1	30	return	1	6	2413
+unpack-list	single	1	30	return	1	9	2197
+unpack-len-trap	single	1	30	trap	1		1997
+unpack-ex	single	1	30	return	1	7	3300
+list-to-tuple	twocore	1	30	return	1	6	6150
+list-repeat	single	1	30	return	1	a98af3	13654
+list-repeat-type-trap	single	1	30	return	1	6	2997
+list-concat	single	1	30	return	1	4779	11045
+list-concat-type-trap	single	1	30	trap	1		2089
+list-comp-basic	twocore	1	30	return	1	a	8694
+list-comp-fast-clear	twocore	1	30	return	1	6a	5861
+list-del-last-only	single	1	30	return	1	1e	3003
+list-contains-simple	single	1	30	return	1	1	3186
+list-contains-types	single	1	30	return	1	1f	4495
+tuple-contains	single	1	30	return	1	2a	2657
+dict-contains	single	1	30	return	1	f	4298
+list-del-contains-call	single	1	30	return	1	2d	5069
+list-del-oob	single	1	30	trap	7		2134
+list-del-tuple-trap	single	1	30	trap	1		2003
+dict-del-trap	single	1	30	return	1	0	2897
+dict-store-lookup	single	1	30	return	1	3c	3677
+dict-overwrite	single	1	30	return	1	63	2717
+dict-del-simple	single	1	30	return	1	7	4194
+dict-del-then-insert	single	1	30	return	1	50	4031
+dict-hash-neg1	single	1	30	return	1	1e	3330
+dict-str-keys	single	1	30	return	1	10	4755
+dict-large-pycore	single	1	30	return	1	24	6920
+dict-bool-int-collision	single	1	30	return	1	14	2805
+dict-false-zero	single	1	30	return	1	7	2936
+dict-del-collision	single	1	30	return	1	0	2891
+dict-contains-collision	single	1	30	return	1	7	3708
+set-build-simple	single	1	30	return	1	4	3973
+set-add-contains	single	1	30	return	1	3	3029
+set-bool-int	single	1	30	return	1	1	2508
+set-hash-neg1	single	1	30	return	1	3	3299
+set-str	single	1	30	return	1	7	3739
+list-pop	single	1	30	return	1	3c	5815
+list-pop-empty	single	1	30	return	1	9	5367
+list-method-missing	single	1	30	trap	15		2085
+list-methods	twocore	1	30	return	1	a	19879
+list-method-unbound	twocore	1	30	return	1	7	6097
+dict-methods	twocore	1	30	return	1	10	28432
+set-methods	twocore	1	30	return	1	4	8328
+containers-two-core	twocore	1	30	return	1	8d	3847
+list-extend-two-core	twocore	1	30	return	1	28	10946
+list-extend-del-contains-two-core	twocore	1	30	return	1	2b	8513
+list-del-simple	twocore	1	30	return	1	28	4737
+list-del-first-last	twocore	1	30	return	1	5	5692
+list-del-contains	twocore	1	30	return	1	7	6559
+list-del-nested	twocore	1	30	return	1	2c	5614
+dict-mixed-ops	twocore	1	30	return	1	84	20496
+set-update	twocore	1	30	return	1	3	15099
+set-update-tuple	twocore	1	30	return	1	21	8994
+map-add	twocore	1	30	return	1	f	17680
+dict-update	twocore	1	30	return	1	144	25378
+dict-update-obj	twocore	1	30	return	1	a23e	9469
+dict-merge	twocore	1	30	return	1	141	20386
+container-build-index	single	1	30	return	1	63	2421
+container-store-subscr	single	1	30	return	1	2a	2700
+container-dict-lookup	single	1	30	return	1	2a	2522
+container-dict-store	single	1	30	return	1	63	2719
+container-list-empty	single	1	30	return	1	1	2405
+container-dict-multi-pair	single	1	30	return	1	64	4284
+container-dict-collision	single	1	30	return	1	1e	3145
+container-dict-insert-new-key	single	1	30	return	1	14	2806
+container-dict-empty	single	1	30	return	1	2	2529
+container-list-nested	single	1	30	return	1	7	2581
+container-tuple-index	single	1	30	return	1	28	2900
+container-tuple-empty	single	1	30	return	1	9	435
+container-list-oob-read	single	1	30	trap	7		2018
+container-list-oob-write	single	1	30	trap	7		2024
+container-dict-missing-key	single	1	30	trap	7		2456
+container-tuple-store-trap	single	1	30	trap	1		2050
+container-dict-full-insert	single	1	30	trap	11		2963
+container-list-append-fast	single	1	30	return	1	11	1202
+container-list-extend-fast	single	1	30	trap	10		872
+container-list-extend-fast-tuple	single	1	30	trap	10		788
+container-list-extend-empty	single	1	30	return	1	2a	995
+extended-arg	single	1	30	return	1	7b	1975
+branchy	single	1	30	return	1	18	3804
+pop-jump-if-none	single	1	30	return	1	7	3131
+for-iter	single	1	30	return	1	f	3955
+for-iter-type-trap	single	1	30	trap	1		1909
+for-iter-nested	single	1	30	return	1	5a	3359
+for-iter-edges	single	1	30	return	1	d	3831
+for-iter-branch	single	1	30	return	1	2	2958
+for-iter-mutate	single	1	30	return	1	d	3388
+for-iter-mutate-visited	single	1	30	return	1	60	3856
+for-iter-rebind	single	1	30	return	1	f	3796
+for-iter-delete	twocore	1	30	return	1	8	5565
+for-iter-clear	twocore	1	30	return	1	1	3234
+for-iter-subscr	single	1	30	return	1	3c	3445
+for-iter-build-tuple	single	1	30	return	1	9	2706
+for-iter-range	single	1	30	return	1	a	3293
+for-iter-range-bounds	single	1	30	return	1	33	4298
+for-iter-range-step	single	1	30	return	1	f	3206
+for-iter-range-empty	single	1	30	return	1	0	3524
+for-iter-range-negative-step	single	1	30	return	1	f	3392
+for-iter-range-type-trap	single	1	30	trap	1		2694
+for-iter-range-bool	single	1	30	return	1	2	4039
+for-iter-range-zero-step-trap	single	1	30	trap	1		2621
+for-iter-str-short	single	1	30	return	1	3	2694
+for-iter-str-empty	single	1	30	return	1	0	2292
+for-iter-str-long	single	1	30	return	1	17	3911
+for-iter-str-unicode	single	1	30	return	1	b	3421
+for-iter-str-branch	single	1	30	return	1	6f	3847
+for-iter-str-type-trap	single	1	30	trap	1		1909
+for-iter-dict-keys	single	1	30	return	1	d	3387
+for-iter-dict-empty	single	1	30	return	1	7	2300
+for-iter-dict-delete	single	1	30	trap	1		2731
+for-iter-dict-str-keys	single	1	30	return	1	2	3421
+for-iter-set-basic	single	1	30	return	1	f	5698
+for-iter-set-empty	single	1	30	return	1	7	3177
+for-iter-set-type-trap	single	1	30	trap	1		1909
+for-iter-object-list	single	1	30	return	1	6	4575
+for-iter-object-next	single	1	30	return	1	6	7936
+for-iter-object-exhaust	single	1	30	return	1	7	5562
+for-iter-object-no-iter-trap	single	1	30	trap	1		2941
+for-iter-object-nested	single	1	30	return	1	9	6016
+container-for-iter-end-for	single	1	30	return	1	7	158
+for-iter-object-raise-catch	single	1	30	return	1	1	6392
+nop	single	1	30	return	1	7	1823
+for-call-toplevel	single	1	30	return	1	9	5066
+return-true	single	1	30	return	4	1	2118
+extended-arg-two-core	twocore	1	30	return	1	7b	1975
+branchy-two-core	twocore	1	30	return	1	18	3804
+smoke	single	1	30	return	1	2a	1670
+call-chain	single	1	30	return	1	2a	3864
+recursion	single	1	30	return	1	37	26943
+noncallable	single	1	30	trap	6		1775
+bad-argc	single	1	30	trap	6		2298
+deep-callgraph	single	1	30	return	1	5a	24077
+container-call-spike	single	1	30	return	1	3	4788
+default-arg	single	1	30	return	1	9	3681
+default-arg-argc-trap	single	1	30	trap	6		2815
+default-none	single	1	30	return	1	6e	4307
+default-false-zero	single	1	30	return	1	12	4913
+default-empty-tuple	single	1	30	return	1	8	4512
+default-multi-zero-argc	single	1	30	return	1	7ed	4604
+default-arg-too-many	single	1	30	trap	6		2834
+default-kwonly-none	single	1	30	return	1	b	4973
+default-partial-none	single	1	30	return	1	19	4343
+default-call-ex-empty	single	1	30	return	1	1c	5641
+default-nested	single	1	30	return	1	15	4904
+varargs-pos-defaults	single	1	30	return	1	1f	5145
+call-kw	single	1	30	return	1	28d	7636
+call-kw-unexpected	single	1	30	trap	6		3199
+call-function-ex	single	1	30	return	1	141	3800
+call-function-ex-kw	single	1	30	return	1	38	5381
+varargs-basic	single	1	30	return	1	3	3957
+varargs-empty	single	1	30	return	1	0	3754
+varargs-kwonly	single	1	30	return	1	c	4630
+varargs-kwonly2	single	1	30	return	1	900	4996
+varargs-kwonly2-partial	single	1	30	return	1	8fe	5325
+varargs-ex-kw	single	1	30	return	1	8fe	5657
+varargs-call-ex	single	1	30	return	1	2	3909
+varkw-basic	single	1	30	return	1	1a	5812
+varkw-empty	single	1	30	return	1	10	6111
+varkw-only	single	1	30	return	1	2b	4361
+varkw-and-varargs	single	1	30	return	1	82	6921
+varkw-call-ex	single	1	30	return	1	b	6857
+varkw-posonly	single	1	30	return	1	f4	6329
+posonly-kw-trap	single	1	30	trap	6		3173
+posonly-ok	single	1	30	return	1	57	4636
+varkw-name-collision	single	1	30	return	1	f	5667
+varkw-no-wipe	single	1	30	return	1	9	5460
+varkw-many	single	1	30	return	1	8	5930
+varkw-kwonly	single	1	30	return	1	10	6561
+varkw-combo	single	1	30	return	1	65c	7702
+varkw-dup-trap	single	1	30	trap	6		3179
+varkw-kwonly-missing-trap	single	1	30	trap	6		3269
+smoke-two-core	twocore	1	30	return	1	2a	1670
+call-chain-two-core	twocore	1	30	return	1	2a	3864
+recursion-two-core	twocore	1	30	return	1	37	26943
+noncallable-two-core	twocore	1	30	trap	6		1775
+bad-argc-two-core	twocore	1	30	trap	6		2298
+deep-callgraph-two-core	twocore	1	30	return	1	5a	24077
+attr-basic	single	1	30	return	1	c	4028
+attr-overwrite	single	1	30	return	1	9	3367
+attr-many	twocore	1	30	return	1	24	24754
+attr-missing	single	1	30	trap	15		2442
+attr-type-trap	single	1	30	trap	1		1997
+attr-del	single	1	30	trap	15		2805
+attr-del-reinsert	single	1	30	return	1	2a	3445
+attr-shadow	single	1	30	return	1	5	2740
+attr-mro	single	1	30	return	1	63	3005
+attr-dunder-dict	single	1	30	return	1	c	4215
+attr-dunder-class	single	1	30	return	1	1	2963
+attr-dunder-base	single	1	30	return	1	7	4722
+attr-dunder-store-trap	single	1	30	trap	1		2183
+attr-dunder-del-trap	single	1	30	trap	1		2183
+firmware-attr-helpers	single	1	30	return	1	1f	12089
+method-call	single	1	30	return	1	2	4068
+method-nested	single	1	30	return	1	8	5446
+ctor-noinit	single	1	30	return	1	7	3473
+ctor-init	single	1	30	return	1	b	4327
+method-default	single	1	30	return	1	9	4745
+varkw-method	single	1	30	return	1	d	7432
+method-call-kw	single	1	30	return	1	37	5701
+bound-method-obj	single	1	30	return	1	2	4284
+class-simple	single	1	30	return	1	7	5868
+class-const	single	1	30	return	1	8	4586
+staticmethod	single	1	30	return	1	7	4501
+class-two-instances	single	1	30	return	1	1e	7587
+undef-global	single	1	30	trap	7		2106
+globals-accum	single	1	30	return	1	142	7460
+copy	single	1	30	return	1	5	2441
+swap	single	1	30	return	1	6	2543
+delete-fast	single	1	30	return	1	2	1834
+delete-fast-unbound	single	1	30	trap	7		1630
+store-fast-load-fast	single	1	30	return	1	b	1988
+load-fast-load-fast	single	1	30	return	1	2	1843
+load-fast-borrow-load-fast-borrow	single	1	30	return	1	7	1977
+load-fast-and-clear	single	1	30	return	1	7	1990
+load-fast-and-clear-cleared	single	1	30	trap	7		1648
+load-fast-check	single	1	30	return	1	7	1992
+load-fast-check-unbound	single	1	30	trap	7		1630
+load-global-namei	single	1	30	return	1	6	3687
+builtins-fallback	single	1	30	return	1	4	2824
+builtins-shadow	single	1	30	return	1	63	3140
+builtins-null-bit	single	1	30	return	1	7	2743
+load-name-builtin	single	1	30	return	1	4	2754
+undef-global-two-core	twocore	1	30	trap	7		2106
+globals-accum-two-core	twocore	1	30	return	1	142	7460
+try-syntaxerror	single	1	30	return	1	1	3701
+try-exc-types	single	1	30	return	1	457	12869
+try-syntaxerror-msg	single	1	30	return	1	2	4678
+raise-syntaxerror-fatal	single	1	30	trap	17		2599
+try-exc-cross-frame-fatal	single	1	30	return	1	1	4751
+try-stopiteration	single	1	30	return	1	7	3524
+try-stopiteration-nested	single	1	30	return	1	b	4571
+raise-stopiteration-fatal	single	1	30	trap	17		2599
+try-exception	single	1	30	return	1	7	3815
+try-after-call	single	1	30	return	1	7	7681
+try-typeerror	single	1	30	return	1	8	3909
+raise-typeerror-call	single	1	30	return	1	15	3740
+raise-instance	single	1	30	return	1	16	3752
+try-tuple-match	single	1	30	return	1	9	4203
+try-lookuperror	single	1	30	return	1	a	5243
+try-except-miss	single	1	30	trap	17		4579
+bare-raise	single	1	30	return	1	d	4555
+bare-raise-no-active	single	1	30	trap	17		1757
+try-except-else	single	1	30	return	1	b	5927
+try-finally	single	1	30	return	1	2b67	5298
+try-except-as	single	1	30	return	1	7	3965
+try-callee-unhandled	single	1	30	trap	17		2693
+fw-next-exhausted	single	1	30	return	1	2a	5495
+exc-args	single	1	30	return	1	2	5350
+raise-varargs	single	1	30	trap	1		1775
+raise-after-call-loop	single	1	30	return	1	6	6546
+helper-containers	single	1	30	return	1	60	9571
+algo-sort	single	1	30	return	1	152d	8086
+sorted-str	twocore	1	30	return	1	1	17107
+fw-range-zero-step	single	1	30	return	1	29	5094
+fw-pow-neg-mod	single	1	30	return	1	2b	5408
+builtin-max	single	1	30	return	1	7	2518
+builtin-len-list	single	1	30	return	1	3	2824
+builtin-len-long-str	single	1	30	return	1	17	2836
+builtin-len-range	single	1	30	return	1	3	3292
+builtin-len-empty-range	single	1	30	return	1	0	3286
+builtin-len-obj	single	1	30	return	1	5	4329
+builtin-len-obj-missing	single	1	30	trap	15		3361
+builtin-ord	single	1	30	return	1	457	4977
+builtin-chr	single	1	30	return	1	6f	4774
+builtin-ord-unicode	single	1	30	return	1	10f447	7691
+builtin-ord-scan	single	1	30	return	1	21	6949
+builtin-ord-len-trap	single	1	30	trap	1		2557
+builtin-ord-type-trap	single	1	30	trap	1		2551
+builtin-chr-range-trap	single	1	30	trap	1		2469
+builtin-chr-surrogate-trap	single	1	30	return	1	1	3657
+builtin-int	single	1	30	return	1	10f447	6723
+builtin-int-type-trap	single	1	30	trap	1		2547
+builtin-int-float	single	1	30	return	1	1b207	6236
+builtin-max-float	single	1	30	return	1	1b207	6180
+builtin-str	single	1	30	return	1	10f447	6917
+builtin-str-type-trap	single	1	30	trap	1		2541
+firmware-rom-subset	single	1	30	return	1	471	12992
+firmware-iterators	twocore	1	30	return	1	4e	37477
+firmware-wave3a	single	1	30	return	1	1b0	28274
+firmware-wave3-strings	single	1	30	return	1	6f	19523
+firmware-wave3-pow	single	1	30	return	1	a9	12919
+firmware-wave3-containers	twocore	1	30	return	1	15d	65706
+firmware-sorted-kw	twocore	1	30	return	1	1cc	28166
+firmware-filter-pred	twocore	1	30	return	1	9	11462
+firmware-isinstance	single	1	30	return	1	7f	13728
+firmware-tuple-empty	single	1	30	return	1	65	5196
+firmware-min-varargs	single	1	30	return	1	a	8906
+print-empty	twocore	1	30	return	1	0	6796
+print-basic	twocore	1	30	return	1	0	22868
+print-sep-end	twocore	1	30	return	1	0	22163
+print-end-only	twocore	1	30	return	1	0	19038
+print-none-sep	twocore	1	30	return	1	0	15765
+print-many	twocore	1	30	return	1	0	24687
+print-star	twocore	1	30	return	1	0	17478
+print-star-kw	twocore	1	30	return	1	0	17983
+print-neg	twocore	1	30	return	1	0	14565
+print-bools	twocore	1	30	return	1	0	12547
+print-type-trap	twocore	1	30	trap	1		6315
+helper-containers-two-core	twocore	1	30	return	1	60	9571
+algo-sort-two-core	twocore	1	30	return	1	152d	8086
+code-ram-call-rom	single	1	30	return	1	7d	7789
+code-ram-call	single	1	30	return	1	7d	7789
+heap-mark-release	single	1	30	return	1	2b67	6898
+code-mark-release	single	1	30	return	1	6f	5212
+heap-release-stale-trap	single	1	30	trap	7		3072
+heap-release-below-base-trap	single	1	30	trap	7		2459
+code-release-stale-trap	single	1	30	trap	7		3154
+heap-mark-argc-trap	single	1	30	trap	6		2452
+code-alloc-oom-trap	single	1	30	trap	7		2459
+code-write-floor-trap	single	1	30	trap	7		2561
+locals-40-uninit	single	1	30	trap	7		3438
+locals-64	single	1	30	return	1	7e0	16324
+rf-deep-recursion	single	1	30	return	1	1f4	246741
+rf-spill-refill	single	1	30	return	1	b3	35657
+rf-thrash	single	1	30	return	1	3e8	190593
+rf-window-too-big-trap	single	1	30	trap	6		2291
+rf-spill-oom-trap	single	1	30	trap	7		787428
+align-mask	single	1	30	return	1	c	1983
+locals-40-uninit-two-core	twocore	1	30	trap	7		3438
+locals-64-two-core	twocore	1	30	return	1	7e0	16324
+container-list-oom	single	1	30	trap	7		336
+for-iter-grow	twocore	1	30	return	1	6	6339
+for-iter-dict-grow	twocore	1	30	return	1	4d2	16704
+dict-grow-fatal	single	1	30	trap	11		2972
+set-grow-fatal	single	1	30	trap	13		2419
+attr-grow-global	twocore	1	30	return	1	63	20857
+seed-grow-global	twocore	1	30	return	1	63	19556
+allocator-list	twocore	1	30	return	1	3	3830550
+compile-store-name-grow-loop-two-core	twocore	1	30	return	1	6	3907756
+list-del-shift-excore	twocore	1	30	return	1	50	5513
+dict-grow-basic	twocore	1	30	return	1	a	17030
+dict-grow-large	twocore	1	30	return	1	d2	60823
+set-grow-basic	twocore	1	30	return	1	5	12111
+container-list-append-full-fatal	single	1	30	trap	9		256
+container-list-extend-full-fatal	single	1	30	trap	10		359
+container-list-extend-type-fatal	single	1	30	trap	1		241
+excore-grow-from-zero	twocore	1	30	return	1	37	1849
+excore-fast-path-no-trap	twocore	1	30	return	1	9	1172
+excore-grow-oom-fatal	twocore	1	30	trap	7		1323
+excore-alias-stability	twocore	1	30	return	1	1e	2889
+excore-mixed-tags-preserved	twocore	1	30	return	1	68d	3667
+excore-grow-repeated	twocore	1	30	return	1	f0a	11730
+excore-append-across-call	twocore	1	30	return	1	4d	2695
+excore-disabled	single	1	30	trap	9		699
+excore-extend-grow-list	twocore	1	30	return	1	6	3636
+excore-extend-grow-tuple	twocore	1	30	return	1	3c	3368
+excore-extend-fast-no-trap	twocore	1	30	return	1	5	3022
+excore-extend-empty-noop	twocore	1	30	return	1	7	995
+excore-extend-self	twocore	1	30	return	1	3c	3939
+excore-extend-mixed-tags	twocore	1	30	return	1	68d	4285
+excore-extend-grow-to-fit	twocore	1	30	return	1	92	8155
+excore-extend-oom-fatal	twocore	1	30	trap	7		1707
+excore-extend-across-call	twocore	1	30	return	1	58	3771
+excore-extend-disabled	single	1	30	trap	10		872
+exec-code-basic	single	1	30	return	1	21	6915
+exec-code-globals-rw	single	1	30	return	1	23	6572
+exec-code-returns-none	single	1	30	return	1	6b	6440
+exec-code-nested	single	1	30	return	1	2d	8342
+eval-code-expr	single	1	30	return	1	29	6046
+exec-bad-arg-trap	single	1	30	trap	6		4130
+exec-globals-dict	single	1	30	return	1	b1	7633
+exec-globals-read	single	1	30	return	1	29	7029
+exec-globals-restore	single	1	30	return	1	424	10169
+exec-globals-nested	single	1	30	return	1	90a	11668
+exec-globals-type-trap	single	1	30	trap	1		5118
+code-new-call	single	1	30	return	1	7	6285
+code-emit-then-call	single	1	30	return	1	11	7776
+code-new-badfield-trap	single	1	30	trap	1		4977
+code-kind-tags	single	1	30	return	1	b2	3817
+pyc-package-call	single	1	30	return	1	2a	5656
+lexer-count	single	1	30	return	1	11	161550
+parser-tiny-expr	single	1	30	return	1	4a7b4499	202175
+compile-deep-nesting	single	1	30	return	1	70b2cd3a	1225915
+symtab-locals	single	1	30	return	1	46db7f6	980440
+symtab-closure	single	1	30	return	1	1	837466
+codegen-t1-expr	single	1	30	return	1	3	445863
+compile-eval-expr	single	1	30	return	1	3	451585
+compile-mode-trap	single	1	30	return	1	3	10602
+compile-reject-import	single	1	30	return	1	1	100376
+compile-reject-closure	single	1	30	return	1	1	1765833
+compile-closure	single	1	30	return	1	7	1923012
+compile-exec-roundtrip	single	1	30	return	1	7	5109776
+compile-kwargs	single	1	30	return	1	7	3253177
+compile-reentrant	single	1	30	return	1	7	555940
+compile-ns-inherit	single	1	30	return	1	7	7626
+compile-reject-locals	single	1	30	return	1	1	7276785
+compile-repeat	single	1	30	return	1	1	3540411
+compile-release-realloc	single	1	30	return	1	25	888645
+compile-try-except	single	1	30	return	1	7	1266870
+compile-try-else	single	1	30	return	1	3	1610188
+compile-try-finally	single	1	30	return	1	c	1697247
+compile-raise	single	1	30	return	1	7	1436939
+compile-str-slice	single	1	30	return	1	1	611356
+compile-lambda	single	1	30	return	1	7	1007144
+compile-assert	single	1	30	return	1	1	536532
+compile-decorator	single	1	30	return	1	7	1488675
+compile-fstring	single	1	30	return	1	1	687274
+compile-const-pool	single	1	30	return	1	7	1562889
+eval-str-direct	single	1	30	return	1	3	452958
+eval-str-long	single	1	30	return	1	f	771199
+exec-str-direct	single	1	30	return	1	3	607269
+bios-exec	single	1	30	return	1	3	607743
+code-new-call-two-core	twocore	1	30	return	1	7	6285
+code-kind-tags-two-core	twocore	1	30	return	1	b2	3817
+pyc-package-call-two-core	twocore	1	30	return	1	2a	5656
+lexer-count-two-core	twocore	1	30	return	1	11	161550
+parser-tiny-expr-two-core	twocore	1	30	return	1	4a7b4499	202175
+compile-deep-nesting-two-core	twocore	1	30	return	1	70b2cd3a	1225915
+symtab-locals-two-core	twocore	1	30	return	1	46db7f6	980440
+symtab-closure-two-core	twocore	1	30	return	1	1	837466
+codegen-t1-expr-two-core	twocore	1	30	return	1	3	445863
+compile-eval-expr-two-core	twocore	1	30	return	1	3	451585
+compile-mode-trap-two-core	twocore	1	30	return	1	3	10602
+compile-reject-import-two-core	twocore	1	30	return	1	1	100376
+compile-reject-closure-two-core	twocore	1	30	return	1	1	1765833
+compile-closure-two-core	twocore	1	30	return	1	7	1923012
+compile-exec-roundtrip-two-core	twocore	1	30	return	1	7	5109776
+compile-kwargs-two-core	twocore	1	30	return	1	7	3253177
+compile-grammar-two-core	twocore	1	30	return	1	7	4873841
+startup-multiprogram-two-core	twocore	1	30	return	1	7	5753030
+compile-reject-locals-two-core	twocore	1	30	return	1	1	7276785
+compile-repeat-two-core	twocore	1	30	return	1	1	3540411
+compile-release-realloc-two-core	twocore	1	30	return	1	25	888645
+compile-try-except-two-core	twocore	1	30	return	1	7	1266870
+compile-try-else-two-core	twocore	1	30	return	1	3	1610188
+compile-try-finally-two-core	twocore	1	30	return	1	c	1697247
+compile-raise-two-core	twocore	1	30	return	1	7	1436939
+compile-str-slice-two-core	twocore	1	30	return	1	1	611356
+compile-list-comp-two-core	twocore	1	30	return	1	f	2464879
+compile-lambda-two-core	twocore	1	30	return	1	7	1007144
+compile-assert-two-core	twocore	1	30	return	1	1	536532
+compile-decorator-two-core	twocore	1	30	return	1	7	1488675
+compile-fstring-two-core	twocore	1	30	return	1	1	687274
+compile-const-pool-two-core	twocore	1	30	return	1	7	1562889
+eval-str-direct-two-core	twocore	1	30	return	1	3	452958
+eval-str-long-two-core	twocore	1	30	return	1	f	771199
+exec-str-direct-two-core	twocore	1	30	return	1	3	607269
+bios-exec-two-core	twocore	1	30	return	1	3	607743

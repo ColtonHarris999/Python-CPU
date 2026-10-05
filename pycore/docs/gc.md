@@ -7,9 +7,10 @@ gates G0-G16 passed on the 1 MB memory map, except G9 (fixed afterwards,
 [`planning/gc_progress.md`](../../planning/gc_progress.md). On `main`'s
 16 MB map it passes the unit gate (G3) and the `gc` test area, and with it
 off every existing test is cycle-identical to `main`. It becomes the default
-after one full acceptance run on the 16 MB map; the acceptance runner
-(`tools/gc_acceptance.py`) still drives the old per-fixture make targets
-and is being ported to `hw_tests.toml`.
+after one full acceptance run on the 16 MB map. The acceptance runner
+(`tools/gc_acceptance.py`) runs the tests of `hw_tests.toml` and compares
+against the G0 baseline in `pycore/tests/data/`, re-captured on `main`
+with `tools/gc_baseline.py`.
 
 PyCore has a precise, stop-the-world, non-moving mark-and-sweep collector.
 The engine (`pycore/rtl/pycore_gc.sv`) is a core-side dmem master beside
@@ -450,7 +451,7 @@ current commit.
 | PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (61 programs, each under ~1M cycles) | every PR (CI `gc` area job) |
 | Long | `make test-gc-long` | the `[gc-long]` area: steady-state plateaus, allocation-site churn, benches, compile loops | nightly / on demand |
 | Fuzz | `make pycore-gc-fuzz SEEDS=0..49 TOP=single` | random programs checked against CPython and the oracle | nightly / on demand |
-| Acceptance | `make pycore-gc-acceptance MODE=full` | gates G0-G16 | before a collector design change |
+| Acceptance | `make pycore-gc-acceptance MODE=full` | gates G0-G16 over the `hw_tests.toml` tests: `MODE=quick` uses the `[gc]` area, `MODE=full` both GC areas and every image test | before a collector design change |
 
 A new PR-tier program must stay under 2M cycles at the default config;
 anything longer goes in `[gc-long]`.

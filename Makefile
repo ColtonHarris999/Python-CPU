@@ -283,9 +283,10 @@ pycore-gc: $(PYCORE_TB_GC_BIN)
 pycore-gc-mutants: $(PYCORE_TB_GC_BIN)
 	$(PYTHON) tools/gc_mutants.py --jobs $(TEST_JOBS) $(if $(MUTANTS),--only $(MUTANTS))
 
-# GC acceptance (planning/gc_plan.md §10.3): gates G0..G16, written to
-# build/gc_acceptance/status.json. Being ported to the hw_tests.toml runner;
-# see pycore/docs/gc.md, Testing.
+# GC acceptance (planning/gc_plan.md §10.3): gates G0..G16 over the
+# hw_tests.toml tests, written to build/gc_acceptance/status.json; see
+# pycore/docs/gc.md, Testing. `$(PYTHON) tools/gc_baseline.py` re-captures
+# the G0 baseline (pycore/tests/data/gc_baseline_*).
 pycore-gc-acceptance:
 	$(PYTHON) tools/gc_acceptance.py --mode $(MODE) --jobs $(TEST_JOBS)
 
