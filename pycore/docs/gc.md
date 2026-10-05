@@ -77,9 +77,17 @@ Handbook*, 2nd ed.
 
 - **Decision.** The sweep reads every bitmap word it covers and writes zero
   back to each non-zero word, including the pinned static range below
-  `heap_dyn_base`. There is no separate `CLEAR` phase except on the first
-  collection after reset (RAM contents are not guaranteed), tracked by a
-  `bitmap_clean_r` flag.
+  `heap_dyn_base`. Words above the highest word this collection marked
+  (`mark_hi_w_r`) are already zero, so the sweep lists everything above it
+  as one run without reading it, and it jumps over a kept run
+  (`[keep_lo, keep_hi)`) instead of painting it into the bitmap. On the
+  16 MB map a collection with little live data swept 7,680 bitmap words
+  (15,000+ cycles with a kept run); it now sweeps 200-600 cycles
+  (`cs_control` boundary collections: 15,125 -> 419). There is no separate
+  `CLEAR` phase in the pause: after reset (RAM contents are not guaranteed)
+  and after an aborted collection the idle engine clears the bitmap in the
+  background, one word per cycle (`bg_clr_r`); a collection that starts
+  first finishes the clear. `bitmap_clean_r` tracks it.
 - **Why.** Clearing marks during the sweep lets the next collection start
   from a clean map for free. The plan attributes this to Bacon, but Bacon's
   sweep zeroes object data and never states that it clears the Mark Map;
@@ -455,6 +463,24 @@ current commit.
 A new PR-tier program must stay under 2M cycles at the default config;
 anything longer goes in `[gc-long]`.
 
+The on-device compiler is the largest Python program the hart runs, so the
+compile suite doubles as a collector test. `--plusargs` passes simulator
+plusargs through `pycore_cli.py run` and `compile_suite.py`; with `+GC_EN=1`
+the exec harness also calls `_bi_gc_collect()` before compile, after compile
+and after the run, and the report gives exact live bytes (what `compile()`
+kept), the number of collections and the longest pause:
+
+```bash
+python3.14 pycore/tools/compile_suite.py --jobs 4 --plusargs "+GC_EN=1 +HEAP_DYN_BYTES=524288"
+python3.14 pycore/tools/pycore_cli.py run FILE.py --plusargs "+GC_EN=1 +GC_PHASE_PROF=1"
+```
+
+A small `+HEAP_DYN_BYTES` makes the collector run inside every compile.
+`compile()` keeps only its code object (2-10 KB per suite program); its
+working set is reclaimed. The peak live set during a compile (tokens plus
+AST at the end of parsing, about 190 KB for the 65-line `cs_control`) is the
+smallest heap a file compiles in.
+
 ## Debugging
 
 Plusargs the gates use:
@@ -466,6 +492,7 @@ Plusargs the gates use:
 | `+GC_SITE_STATS=1` | one `[GC-SITE]` line per allocation site at exit (G9) |
 | `+GC_DUMP_EACH=<dir>` | coherent dump after each collection, checked by `gc_model.py` |
 | `+GC_ROOT_STASH=1` | write the streamed roots for the oracle |
+| `+GC_PHASE_PROF=1` | one `[GC-PHASE]` line per collection: cycles in each engine phase (clear, cleanup, preload, roots, mark, sweep), objects, mark transactions |
 | `+GC_POISON=1` | poison reclaimed granules so a use-after-free faults (the sweep writes whole aligned 64 B lines in one line write when `CACHE_EN=1`, 16 B words otherwise) |
 | `+GC_AT_EXIT=1` | collect once at halt |
 | `+GC_EVERY_N_RUNS=1` | collect when a run cannot satisfy the allocation (G7 mode a) |

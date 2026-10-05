@@ -159,13 +159,22 @@ module pycore_gc #(
 
     // Latched configuration.
     logic [31:0] dyn_base_r, heap_limit_r, spill_sp_r, exc_sp_r, frame_depth_r;
-    logic [31:0] keep_lo_r, keep_hi_r, keep_w_r, rover_addr_r;
+    logic [31:0] keep_lo_r, keep_hi_r, rover_addr_r;
+    // Highest bitmap word this collection marked (dynamic heap); the sweep
+    // lists everything above it as one free run without scanning it.
+    logic [31:0] mark_hi_w_r;
     logic        extra_roots_r;
     logic        stash_en_r, poison_en_r;
     logic [31:0] stack_limit_r;
     logic [8:0]  onchip_limit_r;
     logic [7:0]  mut_r;
     logic        bitmap_clean_r;
+    // Next bitmap word for the idle-time clear: after reset (RAM contents are
+    // undefined) and after an aborted collection the engine clears the bitmap
+    // while it waits, so the next collection does not pay M_CLEAR's one cycle
+    // per word (7,680 on the 16 MB map). A collection that starts first
+    // finishes the clear from here.
+    logic [31:0] bg_clr_r;
 
     // ---------------------------------------------------------------------
     // Helpers
@@ -583,16 +592,32 @@ module pycore_gc #(
     assign sw_w    = sw_g_r >> 7;
     assign sw_b    = sw_g_r[6:0];
     assign sw_word = bm_q[sw_w[BM_AW-1:0]];
-    assign sw_lim  = (sw_w == ((sw_g_end_r - 32'd1) >> 7))
-                     ? 8'(sw_g_end_r - (sw_w << 7)) : 8'd128;
+    // Last bitmap word of the sweep and its exclusive bit limit (1..128),
+    // fixed for a sweep: latched at sweep start so the scan step does not
+    // subtract per cycle (it was the start of the engine's critical path).
+    logic [31:0]  sw_end_w_r;
+    logic [7:0]   sw_end_lim_r;
+    assign sw_lim  = (sw_w == sw_end_w_r) ? sw_end_lim_r : 8'd128;
     // First bit at or after sw_b (below sw_lim) that differs from sw_free_r's
     // "looking for" value: in a free run look for a 1, otherwise for a 0.
     // Candidates: bits in [sw_b, sw_lim) equal to sw_free_r; sw_q is the
-    // lowest. Mask and one-hot encode instead of a 128-step loop.
-    logic [127:0] sw_cand, sw_lsb;
+    // lowest. Mask and one-hot encode instead of a 128-step loop; the lowest
+    // set bit comes from a log-depth prefix OR, not cand & -cand (a 128-bit
+    // carry chain).
+    logic [127:0] sw_cand, sw_lsb, sw_pre;
     assign sw_cand = (sw_free_r ? sw_word : ~sw_word) & ({128{1'b1}} << sw_b) &
-                     ((sw_lim[7]) ? {128{1'b1}} : ((128'd1 << sw_lim[6:0]) - 128'd1));
-    assign sw_lsb  = sw_cand & (~sw_cand + 128'd1);
+                     ((sw_lim[7]) ? {128{1'b1}} : ~({128{1'b1}} << sw_lim[6:0]));
+    always_comb begin
+        sw_pre = sw_cand;
+        sw_pre = sw_pre | (sw_pre << 1);
+        sw_pre = sw_pre | (sw_pre << 2);
+        sw_pre = sw_pre | (sw_pre << 4);
+        sw_pre = sw_pre | (sw_pre << 8);
+        sw_pre = sw_pre | (sw_pre << 16);
+        sw_pre = sw_pre | (sw_pre << 32);
+        sw_pre = sw_pre | (sw_pre << 64);
+    end
+    assign sw_lsb  = sw_cand & ~(sw_pre << 1);
     always_comb begin
         sw_found = |sw_cand;
         sw_q[0] = |(sw_lsb & 128'haaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);
@@ -612,15 +637,14 @@ module pycore_gc #(
         logic [QW-1:0] i1, i2, i3;
         p1 = 1'b0; p2 = 1'b0; p3 = 1'b0; sw_enq = 1'b0;
         i1 = '0; i2 = '0; i3 = '0;
-        if (rst_n_i) clean_done_r <= 1'b0;
         if (!rst_n_i) begin
             phase_r <= P_IDLE;
             dyn_base_r <= '0; heap_limit_r <= '0; spill_sp_r <= '0; exc_sp_r <= '0;
-            keep_lo_r <= '0; keep_hi_r <= '0; keep_w_r <= '0; rover_addr_r <= '0;
+            keep_lo_r <= '0; keep_hi_r <= '0; rover_addr_r <= '0; mark_hi_w_r <= '0;
             extra_roots_r <= 1'b0;
             frame_depth_r <= '0; stash_en_r <= 1'b0; poison_en_r <= 1'b0;
             stack_limit_r <= STACK_ENTRIES; onchip_limit_r <= 9'(MSTACK_ONCHIP);
-            mut_r <= '0; bitmap_clean_r <= 1'b0; shadow_ok_r <= 1'b0;
+            mut_r <= '0; bitmap_clean_r <= 1'b0; shadow_ok_r <= 1'b0; bg_clr_r <= '0;
             clean_busy_addr_r <= '0; clean_done_r <= 1'b0;
             out_r <= 1'b0; out_owner_r <= 1'b0;
             t_want_r <= 1'b0; t_line_r <= 1'b0; t_addr_r <= '0;
@@ -645,6 +669,7 @@ module pycore_gc #(
             m_clean_builtins_r <= '0;
             m_clean_idle_r <= 1'b0;
             sw_g_r <= '0; sw_g_end_r <= '0; sw_run_start_r <= '0; sw_free_r <= 1'b0;
+            sw_end_w_r <= '0; sw_end_lim_r <= '0;
             sw_pend_r <= 1'b0; sw_pend_base_r <= '0; sw_pend_size_r <= '0;
             sw_wr_base_r <= '0; sw_wr_size_r <= '0; sw_wr_next_r <= '0; sw_wr_off_r <= '0;
             sw_wr_busy_r <= 1'b0;
@@ -659,6 +684,7 @@ module pycore_gc #(
             free_range_valid_o <= 1'b0; free_range_base_o <= '0; free_range_len_o <= '0;
         end else begin
             done_r <= 1'b0;
+            clean_done_r <= 1'b0;
             pop_give_r <= 1'b0;
             free_range_valid_o <= 1'b0;
 
@@ -702,6 +728,7 @@ module pycore_gc #(
                 dyn_base_r    <= dyn_base_i;
                 heap_limit_r  <= heap_limit_i;
                 keep_lo_r     <= keep_lo_i;
+                mark_hi_w_r   <= dyn_base_i >> 11;
                 rover_addr_r  <= rover_addr_i;
                 extra_roots_r <= extra_roots_i;
                 keep_hi_r     <= (keep_hi_i > keep_lo_i) ? keep_hi_i : keep_lo_i;
@@ -725,7 +752,7 @@ module pycore_gc #(
                 spill_xacts_r <= '0; stash_cyc_r <= '0; objects_r <= '0; roots_r <= '0;
                 stash_cnt_r <= '0; stack_hw_r <= '0; mark_done_r <= 1'b0;
                 bot_r <= '0; cnt_r <= '0; mem_cnt_r <= '0;
-                m_clr_r <= '0;
+                m_clr_r <= bitmap_clean_r ? 32'd0 : bg_clr_r;
                 m_clean_count_r <= '0;
                 m_clean_idx_r <= '0;
                 m_clean_idle_r <= 1'b0;
@@ -735,6 +762,16 @@ module pycore_gc #(
                 end else begin
                     phase_r <= P_CLEAR;
                     m_st_r  <= M_CLEAR;
+                end
+            end
+            // Idle-time bitmap clear (see bg_clr_r).
+            if ((phase_r == P_IDLE) && !start_i && !bitmap_clean_r) begin
+                bm_q[bg_clr_r[BM_AW-1:0]] <= '0;
+                if (bg_clr_r == 32'(BM_WORDS - 1)) begin
+                    bitmap_clean_r <= 1'b1;
+                    bg_clr_r       <= 32'd0;
+                end else begin
+                    bg_clr_r <= bg_clr_r + 32'd1;
                 end
             end
             if ((phase_r == P_ROOTS_REG) && roots_done_i && !root_valid_i) begin
@@ -1322,8 +1359,10 @@ module pycore_gc #(
                             phase_r     <= P_SWEEP;
                             m_clr_r     <= 32'd0;
                             m_st_r      <= (keep_hi_r > keep_lo_r) ? M_SW_KEEP : M_SW_PRE;
-                            keep_w_r    <= keep_lo_r >> 11;
                             sw_g_end_r  <= heap_limit_r >> 4;
+                            sw_end_w_r  <= ((heap_limit_r >> 4) - 32'd1) >> 7;
+                            sw_end_lim_r <= 8'((heap_limit_r >> 4) -
+                                (((heap_limit_r >> 4) - 32'd1) >> 7 << 7));
                             sw_g_r      <= dyn_base_r >> 4;
                             sw_free_r   <= 1'b0;
                             sw_pend_r   <= 1'b0;
@@ -1341,6 +1380,7 @@ module pycore_gc #(
                     bm_q[m_clr_r[BM_AW-1:0]] <= '0;
                     if (m_clr_r == 32'(BM_WORDS - 1)) begin
                         bitmap_clean_r <= 1'b1;
+                        bg_clr_r <= 32'd0;
                         phase_r <= P_CLEANUP;
                         m_st_r  <= M_CLEAN_HDR;
                         m_clr_r <= 32'd0;
@@ -1576,6 +1616,7 @@ module pycore_gc #(
                         m_st_r <= M_IDLE;
                     end else begin
                         bm_q[d_ww[BM_AW-1:0]] <= d_bword | d_mask;
+                        if (d_we > mark_hi_w_r) mark_hi_w_r <= d_we;
                         if (d_one_word) begin
                             if (d_act == 2'd3) begin
                                 if (cnt_r < (OC_AW+1)'(onchip_limit_r)) begin
@@ -1683,29 +1724,17 @@ module pycore_gc #(
                 // ---- sweep ----
                 // Kept current run: set its bits so the scan splits runs
                 // around it (one bitmap word per cycle), and count it free.
+                // Kept current run: count it free. The sweep treats
+                // [keep_lo, keep_hi) as allocated and jumps over it, so the
+                // run is never painted into the bitmap (that cost one cycle
+                // per 2 KB of a kept tail, ~7.7k cycles on the 16 MB map).
                 M_SW_KEEP: begin
-                    logic [31:0]  lo_g, hi_g, w0g;
-                    logic [128:0] hi_m, lo_m;
-                    lo_g = keep_lo_r >> 4;
-                    hi_g = keep_hi_r >> 4;
-                    w0g  = keep_w_r << 7;
-                    hi_m = (hi_g >= w0g + 32'd128) ? {1'b0, {128{1'b1}}}
-                         : ((129'd1 << (hi_g - w0g)) - 129'd1);
-                    lo_m = (lo_g <= w0g) ? 129'd0
-                         : ((129'd1 << (lo_g - w0g)) - 129'd1);
-                    // Mutant 42 also lists the kept run (double booking).
-                    if (mut_r != 8'd42)
-                        bm_q[keep_w_r[BM_AW-1:0]] <= bm_q[keep_w_r[BM_AW-1:0]] | (hi_m[127:0] & ~lo_m[127:0]);
-                    if (keep_w_r >= ((hi_g - 32'd1) >> 7)) begin
-                        free_bytes_r <= free_bytes_r + (keep_hi_r - keep_lo_r);
-                        if ((keep_hi_r - keep_lo_r) > largest_size_r) begin
-                            largest_size_r <= keep_hi_r - keep_lo_r;
-                            largest_base_r <= keep_lo_r;
-                        end
-                        m_st_r <= M_SW_PRE;
-                    end else begin
-                        keep_w_r <= keep_w_r + 32'd1;
+                    free_bytes_r <= free_bytes_r + (keep_hi_r - keep_lo_r);
+                    if ((keep_hi_r - keep_lo_r) > largest_size_r) begin
+                        largest_size_r <= keep_hi_r - keep_lo_r;
+                        largest_base_r <= keep_lo_r;
                     end
+                    m_st_r <= M_SW_PRE;
                 end
                 // Clear the bitmap words wholly below the dynamic heap.
                 M_SW_PRE: begin
@@ -1724,16 +1753,35 @@ module pycore_gc #(
                     logic [31:0] slot;
                     logic        tbl_full;
                     logic        last_word;
+                    logic        keep_on, keep_ahead, keep_here, skip_rest;
+                    logic [31:0] kg_lo, kg_hi, fpos, k_next;
                     emit = 1'b0;
                     run_end = '0;
+                    // Mutant 42 also lists the kept run (double booking).
+                    keep_on    = (keep_hi_r > keep_lo_r) && (mut_r != 8'd42);
+                    kg_lo      = keep_lo_r >> 4;
+                    kg_hi      = keep_hi_r >> 4;
+                    k_next     = (kg_hi >= sw_g_end_r) ? sw_g_end_r : kg_hi;
+                    keep_ahead = keep_on && (kg_lo >= sw_g_r);
+                    keep_here  = keep_ahead && ((kg_lo >> 7) == sw_w);
+                    fpos       = (sw_w << 7) + {25'd0, sw_q};
+                    // No mark at or above this word: the rest of the heap
+                    // is free (the bitmap is clean between collections).
+                    skip_rest  = (sw_w > mark_hi_w_r);
                     tbl_full = (sw_tbl_r + 32'd16 >
                                 PYCORE_GC_RUN_TABLE + PYCORE_GC_RUN_TABLE_BYTES);
                     slot = tbl_full ? (sw_run_start_r << 4) : sw_tbl_r;
-                    last_word = (sw_w == ((sw_g_end_r - 32'd1) >> 7));
+                    last_word = (sw_w == sw_end_w_r);
                     if (sw_g_r >= sw_g_end_r) begin
                         m_st_r <= M_SW_LAST;
                     end else if (sw_free_r) begin
-                        if (sw_found) begin
+                        if (skip_rest) begin
+                            run_end = keep_ahead ? kg_lo : sw_g_end_r;
+                            emit = 1'b1;
+                        end else if (keep_here && (!sw_found || (kg_lo <= fpos))) begin
+                            run_end = kg_lo;
+                            emit = 1'b1;
+                        end else if (sw_found) begin
                             run_end = (sw_w << 7) + {25'd0, sw_q};
                             if (mut_r == 8'd24) run_end = run_end + 32'd1;
                             emit = 1'b1;
@@ -1831,7 +1879,15 @@ module pycore_gc #(
                             end
                         end
                     end else begin
-                        if (sw_found) begin
+                        if ((keep_on && (sw_g_r >= kg_lo) && (sw_g_r < kg_hi)) ||
+                            (sw_found && keep_on && (fpos == kg_lo))) begin
+                            // At the kept run: jump over it. Leaving this
+                            // word, clear it (only granules below the run,
+                            // already swept, can be marked).
+                            if (((k_next >> 7) != sw_w) && (mut_r != 8'd25))
+                                bm_q[sw_w[BM_AW-1:0]] <= '0;
+                            sw_g_r <= k_next;
+                        end else if (sw_found) begin
                             sw_run_start_r <= (sw_w << 7) + {25'd0, sw_q};
                             sw_free_r <= 1'b1;
                             sw_g_r    <= (sw_w << 7) + {25'd0, sw_q};
@@ -1846,7 +1902,7 @@ module pycore_gc #(
 
                 // Clear the last word, then write the final pending header.
                 M_SW_LAST: begin
-                    if (mut_r != 8'd25) bm_q[BM_AW'((sw_g_end_r - 32'd1) >> 7)] <= '0;
+                    if (mut_r != 8'd25) bm_q[sw_end_w_r[BM_AW-1:0]] <= '0;
                     if (sw_pend_r && (swq_n_r != 3'd4)) begin
                         sw_enq = 1'b1;
                         swq_base_r[swq_n_r[1:0]] <= sw_pend_base_r;
@@ -1970,7 +2026,10 @@ module pycore_gc #(
                 // sweep, if it had started, cleared only part of it). Clear
                 // it all before the next collection: a stale mark makes the
                 // marker skip a live object's children and free them.
-                if (phase_r != P_IDLE) bitmap_clean_r <= 1'b0;
+                if (phase_r != P_IDLE) begin
+                    bitmap_clean_r <= 1'b0;
+                    bg_clr_r       <= 32'd0;
+                end
                 if ((phase_r != P_IDLE) && (phase_r != P_FINISH) && (m_st_r != M_DONE)) begin
 `ifndef SYNTHESIS
                     if ($test$plusargs("GC_TRACE_DEC"))
@@ -1992,6 +2051,28 @@ module pycore_gc #(
     assign pop_req = (t_st_r == T_POP);
 
 `ifndef SYNTHESIS
+    // +GC_PHASE_PROF=1: cycles per engine phase, one [GC-PHASE] line per
+    // collection (where a pause goes; not part of any gate).
+    int unsigned prof_cyc [0:8];
+    bit          prof_en;
+    initial begin
+        prof_en = $test$plusargs("GC_PHASE_PROF=1");
+        for (int i = 0; i < 9; i++) prof_cyc[i] = 0;
+    end
+    always @(posedge clk_i) begin
+        if (rst_n_i && prof_en) begin
+            if (phase_r != P_IDLE) prof_cyc[phase_r] = prof_cyc[phase_r] + 1;
+            if (done_r) begin
+                $display("[GC-PHASE] clear=%0d cleanup=%0d preload=%0d roots_reg=%0d roots_mem=%0d mark=%0d sweep=%0d finish=%0d objects=%0d xacts=%0d spill=%0d",
+                         prof_cyc[P_CLEAR], prof_cyc[P_CLEANUP], prof_cyc[P_PRELOAD],
+                         prof_cyc[P_ROOTS_REG], prof_cyc[P_ROOTS_MEM], prof_cyc[P_MARK],
+                         prof_cyc[P_SWEEP], prof_cyc[P_FINISH], objects_r, mark_xacts_r,
+                         spill_xacts_r);
+                for (int i = 0; i < 9; i++) prof_cyc[i] = 0;
+            end
+        end
+    end
+
     // G6 invariants that belong to the engine.
     always @(posedge clk_i) begin
         if (rst_n_i) begin
