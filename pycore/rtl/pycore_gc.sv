@@ -27,6 +27,11 @@
 // Bitmap: BM_WORDS (heap limit / 2 KB) x 128-bit on-chip words; bit g <=> granule g = addr >> 4.
 // Mark stack: MSTACK_ONCHIP-entry ring; the oldest SPILL_BATCH entries spill
 // to PYCORE_GC_MARK_STACK when it is full and refill when it is empty.
+// Tuples, list buffers, set tables, dict order buffers and dict tables are
+// scanned PYCORE_GC_SCAN_CHUNK slots at a time: before a chunk the tracer
+// queues a continuation (the rest of the array as a K_TUPLE or K_DTBL entry)
+// that the marker pushes under the chunk's children, so the stack grows with
+// nesting depth, not container width.
 // Free runs: the first 1024 listed runs stay on-chip (G13 P4); overflow
 // headers { FREE_MAGIC, size, next, base } live in PYCORE_GC_RUN_TABLE
 // after that window; once the table is full they go in place, in the run's
@@ -156,6 +161,7 @@ module pycore_gc #(
     localparam logic [2:0] K_SET   = 3'd4;
     localparam logic [2:0] K_OBJ   = 3'd5;
     localparam logic [2:0] K_STR   = 3'd6;
+    localparam logic [2:0] K_DTBL  = 3'd7;   // dict-table slice (continuations only)
 
     // Latched configuration.
     logic [31:0] dyn_base_r, heap_limit_r, spill_sp_r, exc_sp_r, frame_depth_r;
@@ -334,6 +340,18 @@ module pycore_gc #(
     function automatic logic [QW-1:0] qraw(input logic [31:0] a, input logic [31:0] len);
         qraw = {1'b0, 1'b1, 4'd0, 32'd0, len, 32'd0, a};
     endfunction
+    // Continuation of an n-slot array at a whose first chunk the tracer
+    // scans now: push {kind, n - chunk, a + chunk * slot} unmarked. K_TUPLE
+    // slices are plain 32 B slots; K_DTBL slices are 64 B dict-table slots.
+    localparam logic [3:0] Q_CONT = 4'hF;   // raw items otherwise carry tag 0
+    function automatic logic [QW-1:0] qcont(input logic [2:0] k, input logic [31:0] a,
+                                            input logic [31:0] n);
+        qcont = {1'b0, 1'b1, Q_CONT, 61'd0, k, n - PYCORE_GC_SCAN_CHUNK,
+                 a + (PYCORE_GC_SCAN_CHUNK << ((k == K_DTBL) ? 6 : 5))};
+    endfunction
+    function automatic logic [31:0] chunk(input logic [31:0] n);
+        chunk = (n > PYCORE_GC_SCAN_CHUNK) ? PYCORE_GC_SCAN_CHUNK : n;
+    endfunction
 
     // Drain one pending item per cycle into the queue when there is room and
     // the root stream is not using the queue input.
@@ -377,6 +395,7 @@ module pycore_gc #(
     logic [3:0]   d_tag;
     logic [127:0] d_val;
     logic         d_raw;
+    logic         d_cont;    // queued continuation: push d_val[66:0], no marking
     logic [1:0]   d_act;     // 0 none, 1 raw set, 2 test+set (leaf), 3 test+set+push
     logic [31:0]  d_addr, d_len;
     logic [2:0]   d_kind;
@@ -389,6 +408,7 @@ module pycore_gc #(
         d_tag = m_ent_r[131:128];
         d_val = m_ent_r[127:0];
         d_raw = m_ent_r[132];
+        d_cont = d_raw && (d_tag == Q_CONT);
         d_act = 2'd0;
         d_addr = 32'd0;
         d_len = 32'd0;
@@ -400,7 +420,9 @@ module pycore_gc #(
         mk = d_val[127:124];
         ik = d_val[119:116];
         ia = d_val[31:0];
-        if (d_raw) begin
+        if (d_cont) begin
+            // d_act stays 0: nothing to mark, M_DEC pushes the entry.
+        end else if (d_raw) begin
             d_addr = d_val[31:0];
             d_len  = d_val[95:64];
             d_act  = (d_len != 32'd0) ? 2'd1 : 2'd0;
@@ -804,10 +826,18 @@ module pycore_gc #(
                 T_SCAN: begin
                     if (t_left_r == 32'd0) begin
                         if (t_cont_r) begin
-                            t_cont_r <= 1'b0;
-                            t_mode_r <= SM_DICTT;
-                            t_ptr_r  <= t_cont_ptr_r;
-                            t_left_r <= t_cont_left_r;
+                            // A wide table queues its continuation first,
+                            // so wait for a free pending slot.
+                            if ((t_cont_left_r <= PYCORE_GC_SCAN_CHUNK) || (tp_cnt_r < 2'd3)) begin
+                                if (t_cont_left_r > PYCORE_GC_SCAN_CHUNK) begin
+                                    p1 = 1'b1;
+                                    i1 = qcont(K_DTBL, t_cont_ptr_r, t_cont_left_r);
+                                end
+                                t_cont_r <= 1'b0;
+                                t_mode_r <= SM_DICTT;
+                                t_ptr_r  <= t_cont_ptr_r;
+                                t_left_r <= chunk(t_cont_left_r);
+                            end
                         end else if (phase_r == P_ROOTS_MEM) begin
                             t_st_r <= T_MEMROOT;
                         end else begin
@@ -990,9 +1020,17 @@ module pycore_gc #(
                         unique case (pop_ent_r[66:64])
                             K_TUPLE: begin
                                 t_ptr_r  <= pop_ent_r[31:0];
-                                t_left_r <= pop_ent_r[63:32];
+                                t_left_r <= chunk(pop_ent_r[63:32]);
+                                if (pop_ent_r[63:32] > PYCORE_GC_SCAN_CHUNK) begin
+                                    p1 = 1'b1;
+                                    i1 = qcont(K_TUPLE, pop_ent_r[31:0], pop_ent_r[63:32]);
+                                end
+                                // A continuation takes one pending slot; the
+                                // line read adds two more when it returns.
                                 if (cache_en_i && (pop_ent_r[5:0] == 6'd0) &&
-                                    (pop_ent_r[63:32] >= 32'd2) && (tp_cnt_r < 2'd2)) begin
+                                    (pop_ent_r[63:32] >= 32'd2) &&
+                                    (tp_cnt_r < ((pop_ent_r[63:32] > PYCORE_GC_SCAN_CHUNK)
+                                                 ? 2'd1 : 2'd2))) begin
                                     t_want_r <= 1'b1;
                                     t_line_r <= 1'b0;
                                     t_addr_r <= pop_ent_r[31:0] + 32'd16;
@@ -1000,6 +1038,16 @@ module pycore_gc #(
                                 end else begin
                                     t_st_r   <= T_SCAN;
                                 end
+                            end
+                            K_DTBL: begin
+                                t_mode_r <= SM_DICTT;
+                                t_ptr_r  <= pop_ent_r[31:0];
+                                t_left_r <= chunk(pop_ent_r[63:32]);
+                                if (pop_ent_r[63:32] > PYCORE_GC_SCAN_CHUNK) begin
+                                    p1 = 1'b1;
+                                    i1 = qcont(K_DTBL, pop_ent_r[31:0], pop_ent_r[63:32]);
+                                end
+                                t_st_r <= T_SCAN;
                             end
                             K_CODE: begin
                                 logic [31:0] cptr, cleft;
@@ -1110,6 +1158,7 @@ module pycore_gc #(
                 // Second header word: list ob_item / set table / dict meta.
                 T_HDR2_W: begin
                     if (t_ack) begin
+                        logic [31:0] n;
                         unique case (t_kind)
                             K_LIST: begin
                                 if ((t_a_r != 32'd0) && (rdata_i[31:0] != 32'd0)) begin
@@ -1117,8 +1166,13 @@ module pycore_gc #(
                                     i1 = qraw(rdata_i[31:0],
                                                        (mut_r == 8'd14) ? (t_b_r << 5) : (t_a_r << 5));
                                 end
+                                n = ((mut_r == 8'd13) && (t_b_r != 32'd0)) ? (t_b_r - 32'd1) : t_b_r;
+                                if (n > PYCORE_GC_SCAN_CHUNK) begin
+                                    p2 = 1'b1;
+                                    i2 = qcont(K_TUPLE, rdata_i[31:0], n);
+                                end
                                 t_ptr_r  <= rdata_i[31:0];
-                                t_left_r <= ((mut_r == 8'd13) && (t_b_r != 32'd0)) ? (t_b_r - 32'd1) : t_b_r;
+                                t_left_r <= chunk(n);
                                 t_st_r   <= T_SCAN;
                             end
                             K_SET: begin
@@ -1127,8 +1181,12 @@ module pycore_gc #(
                                         p1 = 1'b1;
                                         i1 = qraw(rdata_i[31:0], t_a_r << 5);
                                     end
+                                    if (t_a_r > PYCORE_GC_SCAN_CHUNK) begin
+                                        p2 = 1'b1;
+                                        i2 = qcont(K_TUPLE, rdata_i[31:0], t_a_r);
+                                    end
                                     t_ptr_r  <= rdata_i[31:0];
-                                    t_left_r <= t_a_r;
+                                    t_left_r <= chunk(t_a_r);
                                 end else begin
                                     t_left_r <= 32'd0;
                                 end
@@ -1158,8 +1216,12 @@ module pycore_gc #(
                             t_cont_ptr_r  <= rdata_i[31:0];
                             t_cont_left_r <= t_a_r;
                         end
+                        if ((rdata_i[95:64] != 32'd0) && (t_b_r > PYCORE_GC_SCAN_CHUNK)) begin
+                            p3 = 1'b1;
+                            i3 = qcont(K_TUPLE, rdata_i[95:64], t_b_r);
+                        end
                         t_ptr_r  <= rdata_i[95:64];
-                        t_left_r <= (rdata_i[95:64] != 32'd0) ? t_b_r : 32'd0;
+                        t_left_r <= (rdata_i[95:64] != 32'd0) ? chunk(t_b_r) : 32'd0;
                         t_st_r   <= T_SCAN;
                     end
                 end
@@ -1268,10 +1330,17 @@ module pycore_gc #(
                                 i1 = qraw(item, (mut_r == 8'd14)
                                           ? (w0[31:0] << 5) : (w0[95:64] << 5));
                             end
+                            if (leftn > PYCORE_GC_SCAN_CHUNK) begin
+                                p2 = 1'b1;
+                                i2 = qcont(K_TUPLE, item, leftn);
+                            end
                             t_ptr_r  <= item;
-                            t_left_r <= leftn;
+                            t_left_r <= chunk(leftn);
+                            // With the buffer mark and a continuation already
+                            // pending, T_SCAN issues the line once one drains.
                             if (cache_en_i && (item[5:0] == 6'd0) &&
-                                (leftn >= 32'd2) && (tp_cnt_r < 2'd2)) begin
+                                (leftn >= 32'd2) && (leftn <= PYCORE_GC_SCAN_CHUNK) &&
+                                (tp_cnt_r < 2'd2)) begin
                                 t_want_r <= 1'b1;
                                 t_line_r <= 1'b0;
                                 t_addr_r <= item + 32'd16;
@@ -1286,8 +1355,12 @@ module pycore_gc #(
                                     p1 = 1'b1;
                                     i1 = qraw(item, w0[95:64] << 5);
                                 end
+                                if (w0[95:64] > PYCORE_GC_SCAN_CHUNK) begin
+                                    p2 = 1'b1;
+                                    i2 = qcont(K_TUPLE, item, w0[95:64]);
+                                end
                                 t_ptr_r  <= item;
-                                t_left_r <= w0[95:64];
+                                t_left_r <= chunk(w0[95:64]);
                             end else begin
                                 t_left_r <= 32'd0;
                             end
@@ -1570,7 +1643,10 @@ module pycore_gc #(
                     m_g_end_r <= d_ge;
                     m_push_r  <= (d_act == 2'd3);
                     m_pent_r  <= {d_kind, d_size, d_addr};
-                    if (d_act == 2'd0) begin
+                    if (d_cont) begin
+                        m_pent_r <= d_val[66:0];
+                        m_st_r   <= M_PUSH;
+                    end else if (d_act == 2'd0) begin
                         m_st_r <= M_IDLE;
                     end else if ((d_act != 2'd1) && d_marked) begin
                         m_st_r <= M_IDLE;

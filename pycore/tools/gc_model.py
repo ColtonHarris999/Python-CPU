@@ -6,6 +6,8 @@ Given a dmem image (a `$readmemh` hex or a collector dump) and a root set,
 engine's deterministic order (every root, then every memory-root range, then
 depth-first: pop the newest entry, discover its children in slot order). The
 order matters only for the mark-stack high-water mark, which G3 compares.
+Wide tuples, lists, sets and dicts are scanned in GC_SCAN_CHUNK-slot chunks
+with the remainder pushed as one entry, as the engine does.
 
 `check_dump()` verifies one collector dump (G3 unit runs and G4 system runs):
 the free-run list against the complement of the reachable granules, the
@@ -41,6 +43,7 @@ from encoding import (  # noqa: E402
     GC_ROOT_STASH,
     GC_RUN_TABLE,
     GC_RUN_TABLE_BYTES,
+    GC_SCAN_CHUNK,
     GC_STATIC_MAP,
     GC_STATIC_MAP_BYTES,
     HEAP_BASE,
@@ -66,7 +69,10 @@ OBK_BYTEARRAY = 5
 CTL_UNINIT = 0
 
 K_TUPLE, K_CODE, K_LIST, K_DICT, K_SET, K_OBJ, K_STR = range(7)
-KIND_NAMES = ["TUPLE", "CODE", "LIST", "DICT", "SET", "OBJ", "STR"]
+# Continuations of chunked arrays (the engine encodes K_CONT as K_TUPLE and
+# K_DTBL as kind 7; they are kept apart here so kinds_seen counts real objects).
+K_CONT, K_DTBL = 7, 8
+KIND_NAMES = ["TUPLE", "CODE", "LIST", "DICT", "SET", "OBJ", "STR", "CONT", "DTBL"]
 M64 = (1 << 64) - 1
 M32 = (1 << 32) - 1
 
@@ -166,12 +172,15 @@ def trace(
         mark_range(addr, length, what)
         return True
 
+    def push_entry(kind: int, addr: int, size: int) -> None:
+        stack.append((kind, addr, size))
+        res.stack_hw = max(res.stack_hw, len(stack))
+        if stack_limit is not None and len(stack) > onchip + stack_limit:
+            res.overflow = True
+
     def push(kind: int, addr: int, size: int, length: int, what: str) -> None:
         if test_set(addr, length, what):
-            stack.append((kind, addr, size))
-            res.stack_hw = max(res.stack_hw, len(stack))
-            if stack_limit is not None and len(stack) > onchip + stack_limit:
-                res.overflow = True
+            push_entry(kind, addr, size)
 
     def discover(tag: int, val: int) -> None:
         a32 = val & M32
@@ -262,8 +271,24 @@ def trace(
             if tag in PTR_TAGS:
                 discover(tag, mem.rd(base + 32 * i))
 
+    def scan_array(base: int, count: int) -> None:
+        # Tuples, list buffers, set tables and dict order buffers: the engine
+        # queues the rest of a wide array as one unmarked entry, pushed before
+        # the first chunk's children, so the stack grows with nesting, not
+        # width. Dict tables do the same in 64 B slots (scan_dict_chunked).
+        if count > GC_SCAN_CHUNK:
+            push_entry(K_CONT, base + 32 * GC_SCAN_CHUNK, count - GC_SCAN_CHUNK)
+            count = GC_SCAN_CHUNK
+        scan_plain(base, count)
+
     def slot_empty(tag_word: int) -> bool:
         return tag_word == 0 or ((tag_word & 0xF) == TAG_CONTROL and ((tag_word >> 4) & 0xF) == CTL_UNINIT)
+
+    def scan_dict_chunked(base: int, slots: int) -> None:
+        if slots > GC_SCAN_CHUNK:
+            push_entry(K_DTBL, base + 64 * GC_SCAN_CHUNK, slots - GC_SCAN_CHUNK)
+            slots = GC_SCAN_CHUNK
+        scan_dict_table(base, slots)
 
     def scan_dict_table(base: int, slots: int) -> None:
         for i in range(slots):
@@ -326,8 +351,10 @@ def trace(
         kind, addr, size = stack.pop()
         res.objects += 1
         res.kinds_seen.add(KIND_NAMES[kind])
-        if kind == K_TUPLE:
-            scan_plain(addr, size)
+        if kind in (K_TUPLE, K_CONT):
+            scan_array(addr, size)
+        elif kind == K_DTBL:
+            scan_dict_chunked(addr, size)
         elif kind == K_CODE:
             if mutant == 20:
                 scan_plain(addr + 64, 6)
@@ -343,7 +370,7 @@ def trace(
                 raw(buf, (length if mutant == 14 else cap) * 32, "LIST_BUF")
             n = length - 1 if (mutant == 13 and length) else length
             if in_heap(buf, n * 32):
-                scan_plain(buf, n)
+                scan_array(buf, n)
         elif kind == K_SET:
             slots = (mem.rd(addr) >> 64) & M32
             table = mem.rd(addr + 16) & M32
@@ -351,7 +378,7 @@ def trace(
                 if mutant != 18:
                     raw(table, slots * 32, "SET_TABLE")
                 if in_heap(table, slots * 32):
-                    scan_plain(table, slots)
+                    scan_array(table, slots)
         elif kind == K_DICT:
             slots = (mem.rd(addr) >> 64) & M32
             order_len = mem.rd(addr + 16) & M32
@@ -362,9 +389,9 @@ def trace(
             if slots and table:
                 raw(table, slots * 64, "DICT_TABLE")
             if order and in_heap(order, order_len * 32):
-                scan_plain(order, order_len)
+                scan_array(order, order_len)
             if slots and table and in_heap(table, slots * 64):
-                scan_dict_table(table, slots)
+                scan_dict_chunked(table, slots)
         elif kind == K_OBJ:
             head = mem.rd(addr)
             ob_kind = head >> 96
