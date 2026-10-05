@@ -82,7 +82,7 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     # G5/G6 scan every log under runs/; leftover G7_b INV logs from a killed
     # MODE=full made MODE=quick G6 fail (f326e22 for-iter wild_ptr).
-    for sub in ("runs", "dumps"):
+    for sub in ("runs", "dumps", "G5_selftest"):
         p = OUT / sub
         if p.is_dir():
             subprocess.run(["rm", "-rf", str(p)], check=True)

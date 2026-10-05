@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
-"""Run Makefile fixture suites one leaf target at a time (planning/gc_plan.md §10).
+"""Run hardware tests one result per run, for the GC gates (planning/gc_plan.md §10).
 
-`make all-tests` interleaves hundreds of simulator runs in one log, and the
-`PASS:` line names only the program hex, not the top or the memory settings.
-The GC gates need every result attributed exactly, so this module:
+The GC gates need every simulator result attributed exactly: test, top,
+CACHE_EN, MEM_LATENCY, return or trap, tag/value or trap code, cycles, and
+the GC counter line. The tests are the entries of
+`pycore/programs/hw_tests.toml`; this module selects them, builds each image
+once per process with `pycore/tools/hw_tests.py`'s runner, and runs each test
+with the gate's plusargs ahead of the test's own (the first `+NAME=` wins in
+`$value$plusargs`, so a gate's `+HEAP_DYN_BYTES=` replaces the manifest's).
+Every run gets its own log under the gate's log directory.
 
-1. parses the Makefile rule graph and expands a suite target (`pycore-img`,
-   `pycore-img-two-core`, ...) into its leaf targets (rules with a recipe);
-2. runs the phony prerequisites of those leaves (`excore-fw`, fixture
-   generators) once, then runs every leaf as its own `make -o <prereq> ...
-   <leaf>` with its own log, in parallel, holding a lock on each `build/<dir>`
-   the leaf writes so two leaves never share an image directory concurrently;
-3. parses each log into one record per simulator run: top, CACHE_EN,
-   MEM_LATENCY, return or trap, tag/value or trap code, cycles, and the GC
-   counter line when present.
+Suites (`expand`):
+
+- `hw`: every test outside the GC areas (what G0 records and G1 compares);
+- `img`: the image tests of `hw` (kinds run/trap/stdout/coderam), the ones a
+  collection can run in;
+- `gc`, `gc-long`: the two GC areas; `gc-all`: both;
+- any other area name, or a test name / glob.
 
 Used by `tools/gc_baseline.py` (G0) and `tools/gc_acceptance.py` (G1, G4,
-G7, G8, G12, G14).
+G5, G7, G11-G14).
 """
 
 from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import fnmatch
 import json
 import os
 import pathlib
@@ -35,12 +39,26 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "pycore" / "tools"))
+import hw_tests  # noqa: E402
+
+GC_AREAS = ("gc", "gc-long")
+IMAGE_KINDS = {"run", "trap", "stdout", "coderam"}
+
+PASS_RE = re.compile(
+    r"^PASS: (?P<prog>\S*) \S+ (?:tag=(?P<tag>\d+) value=0x(?P<value>[0-9a-fA-F]+)"
+    r"|trapped code=(?P<trap>\d+)) cycles=(?P<cycles>\d+)"
+)
+CACHE_RE = re.compile(r"^tb_container: CACHE_EN=(\d+)")
+GC_LINE_RE = re.compile(r"^GC collections=")
+SIM_RE = re.compile(r"build/(sim_img_twocore|sim_img)/Vtb_container")
+FAIL_MARKERS = ("[FAIL]", "%Error", "%Fatal", "*** [")
 
 
 def merge_plusargs(base: str, extra: str) -> str:
     """Append `extra`, with a later `+NAME=value` replacing an earlier one.
 
-    G7/G8 append `+HEAP_DYN_BYTES=` after a fixture's Makefile value. Verilator
+    G7/G8 add `+HEAP_DYN_BYTES=` on top of a gate's own plusargs. Verilator
     `$value$plusargs` keeps the first match, so a second copy was ignored and
     G7 tortured `img_gc_stracc_split` at 16 KB instead of 2.5× peak.
     """
@@ -57,108 +75,59 @@ def merge_plusargs(base: str, extra: str) -> str:
             toks.append(tok)
     return " ".join(toks)
 
-RULE_RE = re.compile(r"^([A-Za-z0-9_.%/-]+(?:[ \t]+[A-Za-z0-9_.%/-]+)*)[ \t]*:(?![=:])(.*)$")
-PASS_RE = re.compile(
-    r"^PASS: (?P<prog>\S*) \S+ (?:tag=(?P<tag>\d+) value=0x(?P<value>[0-9a-fA-F]+)"
-    r"|trapped code=(?P<trap>\d+)) cycles=(?P<cycles>\d+)"
-)
-CACHE_RE = re.compile(r"^tb_container: CACHE_EN=(\d+)")
-GC_LINE_RE = re.compile(r"^GC collections=")
-SIM_RE = re.compile(r"build/(sim_img_twocore|sim_img)/Vtb_container")
-MKDIR_RE = re.compile(r"mkdir -p (build/[^\s;]+)")
-FAIL_MARKERS = ("[FAIL]", "%Error", "%Fatal", "*** [")
+
+# --------------------------------------------------------------------------
+# Selection
+# --------------------------------------------------------------------------
+
+def manifest(text: str | None = None) -> dict[str, hw_tests.Test]:
+    """{name: Test} from the manifest (or from `text`, e.g. an older commit's)."""
+    if text is None:
+        tests = hw_tests.load_manifest()
+    else:
+        tmp = ROOT / "build" / "gc_suite" / "_manifest.toml"
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(text, encoding="utf-8")
+        tests = hw_tests.load_manifest(tmp)
+    return {t.name: t for t in tests}
 
 
-@dataclass
-class Rule:
-    prereqs: list[str] = field(default_factory=list)
-    has_recipe: bool = False
-
-
-def parse_makefile(path: Path) -> dict[str, Rule]:
-    """Return {target: Rule} for every explicit rule in `path`."""
-    rules: dict[str, Rule] = {}
-    lines = path.read_text(encoding="utf-8").splitlines()
-    i = 0
-    current: list[str] = []
-    in_define = False
-    while i < len(lines):
-        line = lines[i]
-        if line.startswith("define "):
-            in_define = True
-        if in_define:
-            if line.startswith("endef"):
-                in_define = False
-            i += 1
-            continue
-        if line.startswith("\t"):
-            for name in current:
-                rules[name].has_recipe = True
-            i += 1
-            continue
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            i += 1
-            continue
-        joined = line
-        while joined.endswith("\\") and i + 1 < len(lines):
-            i += 1
-            joined = joined[:-1] + " " + lines[i]
-        i += 1
-        m = RULE_RE.match(joined)
-        if not m or "=" in joined.split(":", 1)[0]:
-            current = []
-            continue
-        targets = m.group(1).split()
-        rest = m.group(2).split(";", 1)
-        prereqs = [p for p in rest[0].split() if p != "|"]
-        current = []
-        for name in targets:
-            if name.startswith("."):
-                continue
-            rule = rules.setdefault(name, Rule())
-            rule.prereqs.extend(prereqs)
-            if len(rest) > 1 and rest[1].strip():
-                rule.has_recipe = True
-            current.append(name)
-    return rules
-
-
-def expand(rules: dict[str, Rule], suites: list[str]) -> list[str]:
-    """Leaf targets (rules with a recipe) reachable from `suites`, in order."""
-    out: list[str] = []
-    seen: set[str] = set()
-
-    def visit(name: str) -> None:
-        if name in seen:
-            return
-        seen.add(name)
-        rule = rules.get(name)
-        if rule is None:
-            raise KeyError(f"no Makefile rule for {name}")
-        if rule.has_recipe:
-            out.append(name)
-            return
-        for p in rule.prereqs:
-            visit(p)
-
+def expand(suites: list[str], tests: dict[str, hw_tests.Test] | None = None) -> list[str]:
+    """Test names selected by `suites`, in manifest order, no duplicates."""
+    tests = tests if tests is not None else manifest()
+    areas = {t.area for t in tests.values()}
+    picked: set[str] = set()
     for s in suites:
-        visit(s)
-    return out
+        if s == "hw":
+            hit = {n for n, t in tests.items() if t.area not in GC_AREAS}
+        elif s == "img":
+            hit = {n for n, t in tests.items() if t.area not in GC_AREAS and t.kind in IMAGE_KINDS}
+        elif s == "gc-all":
+            hit = {n for n, t in tests.items() if t.area in GC_AREAS}
+        elif s in areas:
+            hit = {n for n, t in tests.items() if t.area == s}
+        else:
+            hit = {n for n in tests if fnmatch.fnmatch(n, s)}
+            if not hit:
+                raise KeyError(f"no hw_tests.toml test or area matches {s!r}")
+        picked |= hit
+    return [n for n in tests if n in picked]
 
 
-def leaf_prereqs(rules: dict[str, Rule], leaves: list[str]) -> list[str]:
-    out: list[str] = []
-    for leaf in leaves:
-        for p in rules[leaf].prereqs:
-            if p in rules and p not in out:
-                out.append(p)
-    return out
+def top_of(name: str, tests: dict[str, hw_tests.Test] | None = None) -> str:
+    """'single' or 'twocore' for a test name ('single' if unknown)."""
+    tests = tests if tests is not None else manifest()
+    t = tests.get(name)
+    return t.core if t else "single"
 
+
+# --------------------------------------------------------------------------
+# Results
+# --------------------------------------------------------------------------
 
 @dataclass
 class SimRun:
-    target: str
+    target: str          # the hw_tests.toml test name
     index: int
     top: str
     cache_en: int
@@ -187,10 +156,9 @@ def parse_gc_line(line: str) -> dict[str, int]:
 
 
 def parse_log(target: str, text: str, cache_en: int, mem_latency: int,
-              returncode: int, log: str) -> list[SimRun]:
-    """One SimRun per simulator invocation found in a leaf's make log."""
+              returncode: int, log: str, top: str = "") -> list[SimRun]:
+    """One SimRun per simulator invocation found in a run's log."""
     runs: list[SimRun] = []
-    top = ""
     cur_cache = cache_en
     fail_lines: list[str] = []
     pending_gc: dict[str, int] = {}
@@ -228,137 +196,126 @@ def parse_log(target: str, text: str, cache_en: int, mem_latency: int,
             runs.append(run)
     if returncode != 0 or fail_lines or not runs:
         detail = "; ".join(fail_lines[:4]) or (
-            f"make exited {returncode}" if returncode else "no PASS line")
-        if runs and returncode == 0 and not fail_lines:
-            pass
-        else:
-            runs.append(SimRun(
-                target=target, index=len(runs), top=top or "unknown",
-                cache_en=cur_cache, mem_latency=mem_latency, status="fail",
-                detail=detail[:600], log=log,
-            ))
+            f"exit {returncode}" if returncode else "no PASS line")
+        runs.append(SimRun(
+            target=target, index=len(runs), top=top or "unknown",
+            cache_en=cur_cache, mem_latency=mem_latency, status="fail",
+            detail=detail[:600], log=log,
+        ))
     return runs
 
 
-class DirLocks:
-    def __init__(self) -> None:
-        self._guard = threading.Lock()
-        self._locks: dict[str, threading.Lock] = {}
+# --------------------------------------------------------------------------
+# Running
+# --------------------------------------------------------------------------
 
-    def get(self, names: list[str]) -> list[threading.Lock]:
-        with self._guard:
-            return [self._locks.setdefault(n, threading.Lock()) for n in sorted(set(names))]
-
-
-def make_vars(cache_en: int, mem_latency: int, extra: dict[str, str] | None) -> list[str]:
-    out = [f"PYCORE_CACHE_EN={cache_en}", f"PYCORE_MEM_LATENCY={mem_latency}"]
-    for k, v in (extra or {}).items():
-        out.append(f"{k}={v}")
-    return out
+_prepared: set[str] = set()
+_built: dict[str, tuple[bool, str]] = {}
+_guard = threading.Lock()
 
 
-def dry_run_dirs(repo: Path, leaf: str, skip: list[str]) -> list[str]:
-    cmd = ["make", "-n"] + [a for p in skip for a in ("-o", p)] + [leaf]
-    res = subprocess.run(cmd, cwd=repo, capture_output=True, text=True)
-    return sorted(set(MKDIR_RE.findall(res.stdout)))
+def prepare(tests: list[hw_tests.Test]) -> None:
+    """Build the simulators, firmware and generated fixtures once per process."""
+    key = ",".join(sorted({t.core for t in tests} | {n for t in tests for n in t.needs}
+                          | ({"make"} if any(t.kind == "make" for t in tests) else set())))
+    if key in _prepared:
+        return
+    hw_tests.prepare(tests)
+    _prepared.add(key)
 
 
-def leaf_top(repo: Path, leaf: str) -> str:
-    """'twocore' or 'single', from the simulator the leaf's recipe invokes."""
-    res = subprocess.run(["make", "-n", leaf], cwd=repo, capture_output=True, text=True)
-    m = SIM_RE.findall(res.stdout)
-    return "twocore" if "sim_img_twocore" in m else "single"
+def build(runner: hw_tests.Runner, t: hw_tests.Test) -> tuple[bool, str]:
+    """Build `t`'s image once per process (the sources cannot change: the
+    acceptance run is invalid if HEAD moves)."""
+    with _guard:
+        if t.name in _built:
+            return _built[t.name]
+    res = runner.build(t)
+    with _guard:
+        _built[t.name] = res
+    return res
 
 
-def run_leaves(
-    repo: Path,
-    leaves: list[str],
+def run_tests(
+    names: list[str],
     cache_en: int,
     mem_latency: int,
     log_dir: Path,
     jobs: int,
-    extra_vars: dict[str, str] | None = None,
+    plusargs: str = "",
+    per_test: dict[str, str] | None = None,
     timeout: float = 6 * 3600,
     progress: bool = True,
-    rules: dict[str, Rule] | None = None,
-    per_leaf: dict[str, str] | None = None,
+    tests: dict[str, hw_tests.Test] | None = None,
 ) -> list[SimRun]:
-    """Run `leaves` in parallel. `per_leaf[leaf]` is appended to that leaf's
-    PYCORE_GC_PLUSARGS (per-fixture torture parameters)."""
-    rules = rules or parse_makefile(repo / "Makefile")
-    skip = leaf_prereqs(rules, leaves)
+    """Run each test once at (cache_en, mem_latency) with `plusargs` (and
+    `per_test[name]`, merged over them) ahead of the test's own. `{leaf}` in
+    the plusargs becomes the test name, so per-run artefacts never collide."""
+    tests = tests if tests is not None else manifest()
+    sel = [tests[n] for n in names]
     log_dir.mkdir(parents=True, exist_ok=True)
-    if skip:
-        pre = subprocess.run(["make"] + skip, cwd=repo, capture_output=True, text=True)
-        (log_dir / "_prereqs.log").write_text(pre.stdout + pre.stderr, encoding="utf-8")
-        if pre.returncode != 0:
-            return [SimRun(target=p, index=0, top="unknown", cache_en=cache_en,
-                           mem_latency=mem_latency, status="fail",
-                           detail="prerequisite failed", log=str(log_dir / "_prereqs.log"))
-                    for p in skip]
-    for kind in ("img", "twocore"):
-        subprocess.run([sys.executable, "tools/ensure_sim.py", kind], cwd=repo,
-                       capture_output=True, text=True)
-    locks = DirLocks()
-    dirs = {leaf: dry_run_dirs(repo, leaf, skip) for leaf in leaves}
-    mv = make_vars(cache_en, mem_latency, extra_vars)
+    if not sel:
+        return []
+    try:
+        prepare(sel)
+    except subprocess.CalledProcessError as exc:
+        return [SimRun(target=t.name, index=0, top=t.core, cache_en=cache_en,
+                       mem_latency=mem_latency, status="fail",
+                       detail=f"prepare failed: {exc}") for t in sel]
+    fw_hex = Path(os.environ.get("EXCORE_FW_HEX", str(hw_tests.DEFAULT_FW_HEX))).resolve()
+    cfg = hw_tests.Config(f"cache={cache_en} lat={mem_latency}", cache_en, mem_latency)
     results: list[SimRun] = []
+    lock = threading.Lock()
     done = 0
     t0 = time.time()
-    lock_out = threading.Lock()
 
-    def one(leaf: str) -> list[SimRun]:
-        held = locks.get(dirs[leaf])
-        for lk in held:
-            lk.acquire()
+    def one(t: hw_tests.Test) -> list[SimRun]:
+        plus = merge_plusargs(plusargs, (per_test or {}).get(t.name, "")).replace("{leaf}", t.name)
+        for tok in plus.split():
+            if tok.startswith("+GC_DUMP_EACH="):
+                (ROOT / tok.split("=", 1)[1]).mkdir(parents=True, exist_ok=True)
+        runner = hw_tests.Runner(fw_hex, sys.executable, plus)
+        log = log_dir / f"{t.name}.log"
+        ok, detail = build(runner, t)
+        if not ok:
+            log.write_text(detail + "\n", encoding="utf-8")
+            return [SimRun(target=t.name, index=0, top=t.core, cache_en=cache_en,
+                           mem_latency=mem_latency, status="fail", detail=detail, log=str(log))]
         try:
-            log = log_dir / f"{leaf}.log"
-            # "{leaf}" in a make-variable value becomes the leaf's name, so
-            # per-run artefacts (GC dumps) never collide.
-            leaf_mv = [a.replace("{leaf}", leaf) for a in mv]
-            if per_leaf and per_leaf.get(leaf):
-                key = "PYCORE_GC_PLUSARGS="
-                if not any(a.startswith(key) for a in leaf_mv):
-                    leaf_mv.append(key)
-                leaf_mv = [
-                    (a.split("=", 1)[0] + "=" + merge_plusargs(a.split("=", 1)[1], per_leaf[leaf])
-                     if a.startswith(key) else a)
-                    for a in leaf_mv
-                ]
-            for a in leaf_mv:
-                for tok in a.split():
-                    if tok.startswith("+GC_DUMP_EACH="):
-                        pathlib.Path(repo / tok.split("=", 1)[1]).mkdir(parents=True, exist_ok=True)
-            cmd = ["make"] + [a for p in skip for a in ("-o", p)] + [leaf] + leaf_mv
-            try:
-                res = subprocess.run(cmd, cwd=repo, capture_output=True, text=True,
-                                     timeout=timeout)
-                text = res.stdout + res.stderr
-                rc = res.returncode
-            except subprocess.TimeoutExpired as exc:
-                text = (exc.stdout or b"").decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-                text += f"\n[FAIL] runner timeout after {timeout}s\n"
-                rc = 124
-            log.write_text(" ".join(cmd) + "\n" + text, encoding="utf-8")
-            return parse_log(leaf, text, cache_en, mem_latency, rc, str(log))
-        finally:
-            for lk in held:
-                lk.release()
+            cmd = runner.command(t, cfg)
+        except (OSError, RuntimeError) as exc:
+            log.write_text(f"{exc}\n", encoding="utf-8")
+            return [SimRun(target=t.name, index=0, top=t.core, cache_en=cache_en,
+                           mem_latency=mem_latency, status="fail", detail=str(exc), log=str(log))]
+        try:
+            res = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+            text, rc = res.stdout + res.stderr, res.returncode
+        except subprocess.TimeoutExpired as exc:
+            text = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+            text += f"\n[FAIL] runner timeout after {timeout}s\n"
+            rc = 124
+        log.write_text(" ".join(cmd) + "\n" + text, encoding="utf-8")
+        runs = parse_log(t.name, text, cache_en, mem_latency, rc, str(log), top=t.core)
+        # hw_tests' own verdict too (stdout fixtures compare their output).
+        passed, why, _ = runner.verdict(t, cfg, rc, text)
+        if not passed and all(r.status == "pass" for r in runs):
+            runs.append(SimRun(target=t.name, index=len(runs), top=t.core, cache_en=cache_en,
+                               mem_latency=mem_latency, status="fail", detail=why, log=str(log)))
+        return runs
 
+    # Longest first, as hw_tests does, so the long fixtures do not start last.
+    order = sorted(sel, key=lambda t: -(t.cycles or 0))
     with cf.ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
-        futs = {ex.submit(one, leaf): leaf for leaf in leaves}
-        for fut in cf.as_completed(futs):
-            runs = fut.result()
-            with lock_out:
+        for runs in ex.map(one, order):
+            with lock:
                 results.extend(runs)
                 done += 1
-                if progress and (done % 25 == 0 or done == len(leaves)):
+                if progress and (done % 25 == 0 or done == len(sel)):
                     bad = sum(1 for r in results if r.status != "pass")
-                    print(f"[gc_suite] CE={cache_en} LAT={mem_latency} "
-                          f"{done}/{len(leaves)} leaves, {bad} failing, "
-                          f"{time.time() - t0:.0f}s", flush=True)
-    order = {leaf: i for i, leaf in enumerate(leaves)}
-    results.sort(key=lambda r: (order.get(r.target, 1 << 30), r.index))
+                    print(f"[gc_suite] CE={cache_en} LAT={mem_latency} {done}/{len(sel)} tests, "
+                          f"{bad} failing, {time.time() - t0:.0f}s", flush=True)
+    pos = {n: i for i, n in enumerate(names)}
+    results.sort(key=lambda r: (pos.get(r.target, 1 << 30), r.index))
     return results
 
 
@@ -368,25 +325,21 @@ def results_to_json(results: list[SimRun]) -> list[dict]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("suites", nargs="+", help="suite or leaf targets")
-    ap.add_argument("--repo", default=str(ROOT))
+    ap.add_argument("suites", nargs="+", help="suites, areas or test names/globs")
     ap.add_argument("--cache-en", type=int, default=1)
     ap.add_argument("--mem-latency", type=int, default=4)
     ap.add_argument("--jobs", type=int, default=int(os.environ.get("TEST_JOBS", os.cpu_count() or 2)))
     ap.add_argument("--log-dir", default="build/gc_suite/logs")
     ap.add_argument("--out", default="")
-    ap.add_argument("--var", action="append", default=[], help="extra make VAR=value")
-    ap.add_argument("--list", action="store_true", help="print leaves and exit")
+    ap.add_argument("--plusargs", default="", help="simulator plusargs ahead of each test's own")
+    ap.add_argument("--list", action="store_true", help="print the selected tests and exit")
     args = ap.parse_args()
-    repo = Path(args.repo).resolve()
-    rules = parse_makefile(repo / "Makefile")
-    leaves = expand(rules, args.suites)
+    names = expand(args.suites)
     if args.list:
-        print("\n".join(leaves))
+        print("\n".join(names))
         return 0
-    extra = dict(v.split("=", 1) for v in args.var)
-    results = run_leaves(repo, leaves, args.cache_en, args.mem_latency,
-                         Path(args.log_dir).resolve(), args.jobs, extra, rules=rules)
+    results = run_tests(names, args.cache_en, args.mem_latency, Path(args.log_dir).resolve(),
+                        args.jobs, args.plusargs)
     if args.out:
         Path(args.out).write_text(json.dumps(results_to_json(results), indent=1), encoding="utf-8")
     bad = [r for r in results if r.status != "pass"]

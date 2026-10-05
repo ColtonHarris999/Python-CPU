@@ -57,8 +57,24 @@ def run(cmd: list[str], cwd: pathlib.Path = ROOT, timeout: float | None = None) 
         return 124, out + f"\n[timeout after {timeout}s]\n"
 
 
-def rules() -> dict[str, gc_suite.Rule]:
-    return gc_suite.parse_makefile(ROOT / "Makefile")
+_TESTS: dict = {}
+
+
+def tests() -> dict:
+    """{name: hw_tests.Test} from pycore/programs/hw_tests.toml, read once."""
+    if not _TESTS:
+        _TESTS.update(gc_suite.manifest())
+    return _TESTS
+
+
+def names(suites: list[str]) -> list[str]:
+    return gc_suite.expand(suites, tests())
+
+
+def gc_set(ctx: "Context") -> list[str]:
+    """The GC fixtures a gate runs: the per-PR [gc] area in MODE=quick, both
+    GC areas ([gc] and [gc-long]) in MODE=full."""
+    return ["gc-all"] if ctx.full else ["gc"]
 
 
 # --------------------------------------------------------------------------
@@ -119,13 +135,10 @@ def compare_to_baseline(results: list[gc_suite.SimRun], configs: set[tuple[str, 
     return diffs
 
 
-def run_config(ctx: Context, name: str, suites: list[str], ce: int, lat: int,
-               extra: dict[str, str] | None = None,
-               only: set[str] | None = None) -> list[gc_suite.SimRun]:
-    r = rules()
-    leaves = [x for x in gc_suite.expand(r, suites) if only is None or x in only]
-    return gc_suite.run_leaves(ROOT, leaves, ce, lat, ctx.out / "runs" / name, ctx.jobs,
-                               extra_vars=extra, rules=r, progress=True)
+def run_config(ctx: Context, name: str, sel: list[str], ce: int, lat: int,
+               plusargs: str = "") -> list[gc_suite.SimRun]:
+    return gc_suite.run_tests(sel, ce, lat, ctx.out / "runs" / name, ctx.jobs,
+                              plusargs=plusargs, tests=tests())
 
 
 # --------------------------------------------------------------------------
@@ -146,22 +159,16 @@ def gate_G0(ctx: Context) -> Result:
     m = re.search(r"at ([0-9a-f]{40})", first)
     if not m:
         return Result("fail", "baseline TSV header does not name its commit")
-    rc, mk = run(["git", "show", f"{m.group(1)}:Makefile"])
+    rc, toml = run(["git", "show", f"{m.group(1)}:pycore/programs/hw_tests.toml"])
     if rc != 0:
-        return Result("fail", f"cannot read the Makefile at baseline commit {m.group(1)[:10]}")
-    base_mk = ctx.out / "G0_baseline_Makefile"
-    base_mk.write_text(mk, encoding="utf-8")
-    r = gc_suite.parse_makefile(base_mk)
-    need = []
-    for name, suites, ce, lat in gc_baseline.ALL_TESTS_CONFIGS:
-        for leaf in gc_suite.expand(r, suites):
-            need.append((leaf, str(ce), str(lat)))
+        return Result("fail", f"cannot read hw_tests.toml at baseline commit {m.group(1)[:10]}")
+    need = gc_baseline.required_pairs(gc_suite.manifest(toml))
     have = {(row["target"], row["cache_en"], row["mem_latency"]) for row in rows}
     missing = [n for n in need if n not in have]
     fails = [row for row in rows if row["kind"] == "fail"]
     aux = BASELINE_AUX.read_text(encoding="utf-8").splitlines()[1:]
     aux_fail = [a for a in aux if not a.endswith("\tpass")]
-    lines.append(f"{len(rows)} baseline rows; {len(need)} (leaf, config) pairs required")
+    lines.append(f"{len(rows)} baseline rows; {len(need)} (test, config) pairs required")
     lines += [f"missing: {m}" for m in missing[:50]]
     lines += [f"pre-existing failure: {f['target']} {f['cache_en']}/{f['mem_latency']}" for f in fails]
     lines += [f"aux step failed at G0: {a}" for a in aux_fail]
@@ -169,11 +176,11 @@ def gate_G0(ctx: Context) -> Result:
     ledger = (ROOT / "planning" / "gc_progress.md").read_text(encoding="utf-8")
     unlisted = [f["target"] for f in fails if f["target"] not in ledger]
     if missing:
-        return Result("fail", f"baseline misses {len(missing)} leaf/config pairs "
+        return Result("fail", f"baseline misses {len(missing)} test/config pairs "
                       "(new fixtures need the G0 procedure: see ledger)", lines)
     if unlisted:
         return Result("fail", f"{len(unlisted)} pre-existing failures not listed in the ledger", lines)
-    return Result("pass", f"{len(rows)} rows cover all {len(need)} leaf/config pairs; "
+    return Result("pass", f"{len(rows)} rows cover all {len(need)} test/config pairs; "
                   f"{len(fails)} pre-existing failures", lines)
 
 
@@ -181,22 +188,23 @@ def gate_G0(ctx: Context) -> Result:
 # G1 GC_EN=0 transparency
 # --------------------------------------------------------------------------
 
-GC_OFF = {"PYCORE_GC_PLUSARGS": "+GC_EN=0"}
+GC_OFF = "+GC_EN=0"
 
 
 def gate_G1(ctx: Context) -> Result:
     lines = []
     diffs: list[str] = []
     configs = gc_baseline.ALL_TESTS_CONFIGS if ctx.full else gc_baseline.ALL_TESTS_CONFIGS[:1]
-    for name, suites, ce, lat in configs:
+    base_rows = load_baseline()
+    for name, suites, ce, lat, scope in configs:
         if not ctx.full:
-            suites = ["pycore-img"]
-        targets = ({row["target"] for row in load_baseline()}
-                   & set(gc_suite.expand(rules(), suites)))
-        off = dict(GC_OFF)
-        if ctx.mutant:
-            off["PYCORE_GC_PLUSARGS"] += f" +GC_MUTANT={ctx.mutant}"
-        res = run_config(ctx, f"G1_{name}", suites, ce, lat, off, only=targets)
+            suites = ["img"]
+        targets = ({row["target"] for row in base_rows
+                    if (row["cache_en"], row["mem_latency"]) == (str(ce), str(lat))}
+                   & set(gc_baseline.config_tests(suites, scope, tests())))
+        off = GC_OFF + (f" +GC_MUTANT={ctx.mutant}" if ctx.mutant else "")
+        sel = [n for n in names(suites) if n in targets]
+        res = run_config(ctx, f"G1_{name}", sel, ce, lat, off)
         d = compare_to_baseline(res, {(str(ce), str(lat))}, targets=targets)
         lines.append(f"{name}: {len(res)} runs, {len(d)} differences")
         diffs += [f"{name}: {x}" for x in d]
@@ -266,14 +274,8 @@ def gate_G3(ctx: Context) -> Result:
 TWO_CORE_RECLAIMS = True
 GC_ON = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40"
 GC_ON_VERIFY = GC_ON + " +GC_VERIFY_ONLY=1"
-_TOPS: dict[str, str] = {}
-
-
 def tops(leaves: list[str]) -> dict[str, str]:
-    for leaf in leaves:
-        if leaf not in _TOPS:
-            _TOPS[leaf] = gc_suite.leaf_top(ROOT, leaf)
-    return {leaf: _TOPS[leaf] for leaf in leaves}
+    return {leaf: gc_suite.top_of(leaf, tests()) for leaf in leaves}
 
 
 def gc_plusargs_for(top: str) -> str:
@@ -307,8 +309,7 @@ def gc_runs(ctx: Context, name: str, suites: list[str], ce: int, lat: int, extra
     it), optionally dumping every collection under dumps/<name>/<leaf>."""
     dump_root = ctx.out / "dumps" / name
     subprocess.run(["rm", "-rf", str(dump_root)])
-    r = rules()
-    leaves = [x for x in gc_suite.expand(r, suites) if only is None or x in only]
+    leaves = [x for x in names(suites) if only is None or x in only]
     by_top = tops(leaves)
     results: list[gc_suite.SimRun] = []
     groups: dict[str, list[str]] = defaultdict(list)
@@ -319,24 +320,23 @@ def gc_runs(ctx: Context, name: str, suites: list[str], ce: int, lat: int, extra
         plus = f"{gc_plusargs_for(top)} {mut} {extra_plus}"
         if dump:
             plus += f" +GC_DUMP_EACH={dump_root.relative_to(ROOT)}/{{leaf}}"
-        results += gc_suite.run_leaves(ROOT, sel, ce, lat, ctx.out / "runs" / name, ctx.jobs,
-                                       extra_vars={"PYCORE_GC_PLUSARGS": " ".join(plus.split())},
-                                       rules=r, progress=True, per_leaf=per_leaf)
+        results += gc_suite.run_tests(sel, ce, lat, ctx.out / "runs" / name, ctx.jobs,
+                                      plusargs=" ".join(plus.split()), per_test=per_leaf,
+                                      tests=tests())
     return results, dump_root
 
 
 def gate_G4(ctx: Context) -> Result:
     lines: list[str] = []
     problems: list[str] = []
-    r = rules()
-    gc_all = gc_suite.expand(r, ["pycore-img-gc-all"]) if "pycore-img-gc-all" in r else []
-    if not gc_all:
-        problems.append("pycore-img-gc-all does not exist")
+    gc_suites = gc_set(ctx)
+    if not names(gc_suites):
+        problems.append(f"no tests in {gc_suites}")
     existing = {row["target"] for row in load_baseline()}
-    sets = [("gcall", ["pycore-img-gc-all"], "", None)] if gc_all else []
+    sets = [("gcall", gc_suites, "", None)] if names(gc_suites) else []
     configs = [(1, 4)] if not ctx.full else [(1, 4), (0, 4)]
     if ctx.full:
-        sets.append(("exit", ["pycore-img", "pycore-img-two-core"], "+GC_AT_EXIT=1", existing))
+        sets.append(("exit", ["img"], "+GC_AT_EXIT=1", existing))
     total_dumps = 0
     for set_name, suites, extra, only in sets:
         for ce, lat in configs:
@@ -382,7 +382,7 @@ def gate_G4(ctx: Context) -> Result:
     if problems:
         return Result("fail", f"{len(problems)} problems over {total_dumps} dumps", lines)
     if not ctx.full:
-        return Result("pass", f"quick: {total_dumps} dumps exact on pycore-img-gc-all", lines)
+        return Result("pass", f"quick: {total_dumps} dumps exact on the [gc] area", lines)
     return Result("pass", f"{total_dumps} dumps exact vs gc_model (free set, roots, counters, run list)",
                   lines)
 
@@ -403,16 +403,26 @@ def gc_logs(ctx: Context) -> list[pathlib.Path]:
 def gate_G5(ctx: Context) -> Result:
     lines = []
     problems = []
-    cases = [("pycore-img-gc-verify-containers", "")] if not ctx.mutant else []
+    cases = [("gc-verify-containers", ["gc-verify-containers"], "")] if not ctx.mutant else []
     if ctx.full:
-        cases.append(("pycore-img-containers-two-core", "+GC_AT_EXIT=1"))
-    for target, extra in cases:
+        two = [n for n in names(["containers"])
+               if tests()[n].core == "twocore" and tests()[n].kind in gc_suite.IMAGE_KINDS]
+        cases.append(("containers-two-core", two, "+GC_AT_EXIT=1"))
+    for label, sel, extra in cases:
         plus = f"+GC_EN=1 +GC_VERIFY_ONLY=1 +GC_SHADOW_SELFTEST=1 +MAX_CYCLES_SCALE=40 {extra}".strip()
-        rc, out = run(["make", target, f"PYCORE_GC_PLUSARGS={plus}"], timeout=3600)
-        fired = "[GC-SHADOW] use-after-free: master=selftest" in out
-        lines.append(f"self-test on {target}: {'fired' if fired else 'DID NOT FIRE'} (rc={rc})")
-        if not fired or rc == 0:
-            problems.append(f"shadow self-test did not fire on {target}")
+        # The self-test faults on purpose, so these logs stay out of runs/
+        # (G5/G6 scan runs/ for real violations).
+        res = gc_suite.run_tests(sel, 1, 4, ctx.out / "G5_selftest" / label, ctx.jobs,
+                                 plusargs=plus, tests=tests(), progress=False)
+        quiet = [x.target for x in res
+                 if "[GC-SHADOW] use-after-free: master=selftest"
+                 not in pathlib.Path(x.log).read_text(encoding="utf-8", errors="replace")]
+        passed = [x.target for x in res if x.status == "pass"]
+        lines.append(f"self-test on {label}: {len(sel) - len(set(quiet))}/{len(sel)} fired, "
+                     f"{len(passed)} passed anyway")
+        if not sel or quiet or passed:
+            problems.append(f"shadow self-test did not fire on {label}: "
+                            f"{sorted(set(quiet) | set(passed))[:10]}")
     logs = gc_logs(ctx)
     hits = [p for p in logs if "[GC-SHADOW] use-after-free" in p.read_text(encoding="utf-8", errors="replace")]
     lines.append(f"{len(logs)} GC gate logs scanned, {len(hits)} with a shadow violation")
@@ -517,11 +527,10 @@ def scan_gc_problems(results: list[gc_suite.SimRun]) -> list[str]:
 def gate_G7(ctx: Context) -> Result:
     lines: list[str] = []
     problems: list[str] = []
-    r = rules()
-    suites = ["pycore-img", "pycore-img-two-core"] if ctx.full else ["pycore-img-gc-all"]
-    leaves = gc_suite.expand(r, suites)
+    suites = ["img"] + gc_set(ctx) if ctx.full else gc_set(ctx)
+    leaves = names(suites)
     by_top = tops(leaves)
-    gc_all = set(gc_suite.expand(r, ["pycore-img-gc-all"]))
+    gc_all = set(names(["gc-all"]))
     run_set = [x for x in leaves if by_top[x] == "single" or TWO_CORE_RECLAIMS]
     pending = sorted(set(leaves) - set(run_set))
     base_targets = {row["target"] for row in load_baseline()}
@@ -550,30 +559,30 @@ def gate_G7(ctx: Context) -> Result:
     # the 40 KB fragmented heap with 67200 B (first +HEAP_DYN_BYTES wins);
     # the 800-element list then fit and the program returned 0.
     recipe_heap = {
-        "pycore-img-gc-fragmented-alloc",
-        "pycore-img-gc-fragmented-alloc-two-core",
+        "gc-fragmented-alloc",
+        "gc-fragmented-alloc-two-core",
         # Fills each grant to a `_bi_heap_free()` margin so the next growth
         # answers NEED_HEAP (G9 two-core rows 14/15/17); a 2.5x-peak heap
         # moves the margin those rows depend on.
-        "pycore-img-gc-grant-churn-two-core",
+        "gc-grant-churn-two-core",
         # Same margin fill before each _bi_code_new (G9 row 31).
-        "pycore-img-gc-code-new-churn",
-        "pycore-img-gc-code-new-churn-two-core",
+        "gc-code-new-churn",
+        "gc-code-new-churn-two-core",
         # +GC_AUTO=0: the skip-then-MemoryError sequence needs its own heap.
-        "pycore-img-gc-release-zero-after-oom",
-        "pycore-img-gc-release-zero-after-oom-two-core",
+        "gc-release-zero-after-oom",
+        "gc-release-zero-after-oom-two-core",
     }
     bump_cursor = {
-        "pycore-img-heap-mark-release",
-        "pycore-img-heap-release-stale-trap",
+        "heap-mark-release",
+        "heap-release-stale-trap",
         # Fill-until-OOM then drop: AT_BOUNDARY first-fit leaves a 64 B hole
         # while the junk chain is still live, so the last tuple traps 7
         # (G7_b pycore-img-gc-root-closure at b639619, largest=64).
-        "pycore-img-gc-root-closure",
-        "pycore-img-gc-mutant-8",
-        "pycore-img-gc-mutant-27",
-        "pycore-img-gc-mutant-34",
-        "pycore-img-gc-mutant-36",
+        "gc-root-closure",
+        "gc-mutant-8",
+        "gc-mutant-27",
+        "gc-mutant-34",
+        "gc-mutant-36",
     }
 
     mode_b_logs: dict[str, str] = {}
@@ -701,7 +710,7 @@ def site_texts(ctx: Context) -> dict[str, list[str]]:
                 continue
             for p in d.glob("*.log"):
                 text = p.read_text(encoding="utf-8", errors="replace")
-                res = gc_suite.parse_log(p.stem, text, 1, 4, 0, str(p))
+                res = gc_suite.parse_log(p.stem, text, 1, 4, 0, str(p), top=tops([p.stem])[p.stem])
                 if res and all(x.status == "pass" for x in res):
                     out[tops([p.stem])[p.stem]].append(text)
     g8 = ctx.out / "G8"
@@ -753,14 +762,13 @@ def gate_G9(ctx: Context) -> Result:
 # G11 steady state
 # --------------------------------------------------------------------------
 
-STEADY = ["pycore-img-gc-steady-list", "pycore-img-gc-steady-dict", "pycore-img-gc-steady-set",
-          "pycore-img-gc-steady-str", "pycore-img-gc-steady-exc", "pycore-img-gc-steady-closure",
-          "pycore-img-gc-steady-compile"]
+STEADY = ["gc-steady-list", "gc-steady-dict", "gc-steady-set", "gc-steady-str",
+          "gc-steady-exc", "gc-steady-closure", "gc-steady-compile"]
 COMPILE_LOOP = [
-    "pycore-img-gc-compile-loop",
-    "pycore-img-gc-compile-loop-two-core",
-    "pycore-img-gc-compile-syntaxerror",
-    "pycore-img-gc-compile-syntaxerror-two-core",
+    "gc-compile-loop",
+    "gc-compile-loop-two-core",
+    "gc-compile-syntaxerror",
+    "gc-compile-syntaxerror-two-core",
 ]
 GC_LOG_RE = re.compile(r"^\[GC-LOG\] n=(\d+) .*?reason=\s*(\S+) live=(\d+) free=(\d+)", re.M)
 
@@ -768,12 +776,11 @@ GC_LOG_RE = re.compile(r"^\[GC-LOG\] n=(\d+) .*?reason=\s*(\S+) live=(\d+) free=
 def gate_G11(ctx: Context) -> Result:
     lines: list[str] = []
     problems: list[str] = []
-    r = rules()
     wanted = list(STEADY) + list(COMPILE_LOOP)
-    targets = [t for t in wanted if t in r]
-    problems += [f"missing fixture {t}" for t in wanted if t not in r]
+    targets = [t for t in wanted if t in tests()]
+    problems += [f"missing fixture {t}" for t in wanted if t not in tests()]
     if not targets:
-        return Result("fail", "no steady-state fixtures in the Makefile", lines)
+        return Result("fail", "no steady-state fixtures in hw_tests.toml", lines)
     res, _ = gc_runs(ctx, "G11", targets, 1, 4, "+GC_LOG=1", dump=False)
     for x in res:
         text = pathlib.Path(x.log).read_text(encoding="utf-8", errors="replace")
@@ -846,14 +853,13 @@ def gate_G12(ctx: Context) -> Result:
     problems: list[str] = []
     if not ctx.full:
         return Result("fail", "G12 runs only in MODE=full", lines)
-    r = rules()
-    gc_all = [x for x in gc_suite.expand(r, ["pycore-img-gc-all"])
+    gc_all = [x for x in names(["gc-all"])
               if tops([x])[x] == "single" or TWO_CORE_RECLAIMS]
     if not gc_all:
-        return Result("fail", "pycore-img-gc-all is empty", lines)
+        return Result("fail", "the GC areas are empty", lines)
     for ce, lat in G12_CONFIGS:
         name = f"G12_gcall_ce{ce}_lat{lat}"
-        res, dump_root = gc_runs(ctx, name, ["pycore-img-gc-all"], ce, lat, "", only=set(gc_all))
+        res, dump_root = gc_runs(ctx, name, ["gc-all"], ce, lat, "", only=set(gc_all))
         bad = [x for x in res if x.status != "pass"]
         n, probs = check_dumps(ctx, dump_root)
         gcp = scan_gc_problems(res)
@@ -864,11 +870,11 @@ def gate_G12(ctx: Context) -> Result:
     # Whole-suite cache and latency gates with the collector enabled. Two-core
     # stays verify-only until the grant protocol (Phase 3).
     plus = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_AT_EXIT=1 +MAX_CYCLES_SCALE=40"
+    hw = [sys.executable, str(ROOT / "pycore" / "tools" / "hw_tests.py"), "--jobs", str(ctx.jobs),
+          "--exclude-area", "gc-long", "--plusargs", plus]
     for label, args in (
-        ("transparency", ["make", "pycore-cache-transparency", f"TEST_JOBS={ctx.jobs}",
-                          f"PYCORE_GC_PLUSARGS={plus}"]),
-        ("latency", ["make", "pycore-mem-latency-sweep", f"TEST_JOBS={ctx.jobs}",
-                     f"PYCORE_GC_PLUSARGS={plus}"]),
+        ("default", hw + ["--area", "all", "--config", "1,4"]),
+        ("caching", hw + ["--caching"]),
     ):
         rc, out = run(args, timeout=6 * 3600)
         (ctx.out / f"G12_{label}.log").write_text(out, encoding="utf-8")
@@ -882,7 +888,7 @@ def gate_G12(ctx: Context) -> Result:
                       "single-core G4/G5 at every (CACHE_EN, MEM_LATENCY) and "
                       "cache/latency sweeps with GC_EN=1 pass; two-core waits for Phase 3",
                       lines)
-    return Result("pass", "G4/G5 on pycore-img-gc-all at every config; cache/latency sweeps green",
+    return Result("pass", "G4/G5 on the GC areas at every config; hw tests and caching gate green",
                   lines)
 
 
@@ -898,10 +904,10 @@ GC_LINE_RE = re.compile(
     re.M,
 )
 BENCH = {
-    "full": "pycore-img-gc-bench-full",
-    "churn": "pycore-img-gc-bench-churn",
-    "deep": "pycore-img-gc-bench-deep",
-    "wide": "pycore-img-gc-bench-wide",
+    "full": "gc-bench-full",
+    "churn": "gc-bench-churn",
+    "deep": "gc-bench-deep",
+    "wide": "gc-bench-wide",
 }
 
 
@@ -921,8 +927,7 @@ def parse_gc_line(text: str) -> dict[str, int] | None:
 def gate_G13(ctx: Context) -> Result:
     lines: list[str] = []
     problems: list[str] = []
-    r = rules()
-    missing = [t for t in BENCH.values() if t not in r]
+    missing = [t for t in BENCH.values() if t not in tests()]
     if missing:
         return Result("fail", f"missing bench targets: {missing}", lines)
     res, _ = gc_runs(ctx, "G13_bench", list(BENCH.values()), 1, 4, "+GC_LOG=1", dump=False)
@@ -944,8 +949,7 @@ def gate_G13(ctx: Context) -> Result:
     # collects must match G0 cycle-for-cycle; one that does collect may add
     # only the pause (plus 0.5%).
     existing = {row["target"] for row in load_baseline()}
-    p1p2, _ = gc_runs(ctx, "G13_p1p2", ["pycore-img"], 1, 4, "",
-                      only=existing - set(gc_suite.expand(r, ["pycore-img-gc-all"])))
+    p1p2, _ = gc_runs(ctx, "G13_p1p2", ["img"], 1, 4, "", only=existing)
     p1 = p2 = 0
     rel_zero: list[str] = []
     for x in p1p2:
@@ -1000,7 +1004,7 @@ def gate_G13(ctx: Context) -> Result:
             if mut > int(g0 * 1.005 + 0.5):
                 problems.append(f"P2 {x.target}: mutator {mut} > G0 {g0} + 0.5%")
     if rel_zero:
-        rz, _ = gc_runs(ctx, "G13_p1_nozero", ["pycore-img"], 1, 4, "+GC_MUTANT=46",
+        rz, _ = gc_runs(ctx, "G13_p1_nozero", ["img"], 1, 4, "+GC_MUTANT=46",
                         only=set(rel_zero), dump=False)
         for x in rz:
             if x.status != "pass":
@@ -1055,8 +1059,8 @@ def gate_G13(ctx: Context) -> Result:
             problems.append("P6b: bench_churn printed no cycle count")
     else:
         problems.append("P6b: bench_churn did not produce counters")
-    compile_t = "pycore-img-gc-compile-loop"
-    if compile_t in r:
+    compile_t = "gc-compile-loop"
+    if compile_t in tests():
         cres, _ = gc_runs(ctx, "G13_p6a", [compile_t], 1, 4, "+GC_LOG=1", dump=False)
         if cres and cres[0].status == "pass":
             text = pathlib.Path(cres[0].log).read_text(errors="replace")
@@ -1072,7 +1076,7 @@ def gate_G13(ctx: Context) -> Result:
         else:
             problems.append(f"P6a {cres[0].detail if cres else 'not run'}")
     else:
-        problems.append("P6a: img_gc_compile_loop target is missing")
+        problems.append("P6a: gc-compile-loop is not in hw_tests.toml")
     # P8: run-list pops per allocation over the G8 corpus, when present.
     g8 = ctx.out / "G8"
     if g8.is_dir():
@@ -1130,11 +1134,10 @@ def gate_G14(ctx: Context) -> Result:
     # Scanning the -j all-tests log attributed other jobs' recipe echoes
     # and generator messages to whichever simulator was open (09-28 run:
     # 93,301 "unexpected" lines, all make/python/mkdir echoes).
-    r = rules()
-    name, suites, ce, lat = gc_baseline.ALL_TESTS_CONFIGS[0]
-    leaves = gc_suite.expand(r, suites)
-    dres = gc_suite.run_leaves(ROOT, leaves, ce, lat, ctx.out / "runs" / "G14_default", ctx.jobs,
-                               rules=r, progress=True)
+    name, suites, ce, lat, scope = gc_baseline.ALL_TESTS_CONFIGS[0]
+    leaves = gc_baseline.config_tests(suites, scope, tests())
+    dres = gc_suite.run_tests(leaves, ce, lat, ctx.out / "runs" / "G14_default", ctx.jobs,
+                              tests=tests())
     unknown = []
     for x in dres:
         if x.status != "pass":
@@ -1142,7 +1145,7 @@ def gate_G14(ctx: Context) -> Result:
             continue
         text = pathlib.Path(x.log).read_text(encoding="utf-8", errors="replace")
         unknown += [f"{x.target}: {u}" for u in unknown_output_lines(text)]
-    lines.append(f"default-config leaves: {len(dres)}")
+    lines.append(f"default-config runs: {len(dres)}")
     lines += [f"unexpected output: {u}" for u in unknown[:40]]
     if rc != 0 or new or unknown:
         return Result("fail", f"all-tests rc={rc}, {len(new)} new warnings, "
@@ -1260,17 +1263,20 @@ def gate_G16(ctx: Context) -> Result:
     grad = preadme.split("Graduated", 1)[-1] if "Graduated" in preadme else ""
     if "gc_plan" not in grad:
         problems.append("planning/README.md does not list gc_plan.md under Graduated")
-    r = rules()
-    all_tests = r.get("all-tests")
     mk = (ROOT / "Makefile").read_text(encoding="utf-8")
-    at_block = mk.split("\nall-tests:", 1)[-1].split("\n\n", 1)[0]
+    if not re.search(r"^all-tests:", mk, flags=re.M):
+        problems.append("Makefile has no all-tests target")
+    at_block = mk.split("\ntest-all:", 1)[-1].split("\n\n", 1)[0]
     if "pycore-gc" not in at_block:
-        problems.append("all-tests does not run the GC targets")
+        problems.append("test-all does not run the GC engine testbench (pycore-gc)")
+    if "gc" not in {t.area for t in tests().values()}:
+        problems.append("hw_tests.toml has no [gc] area")
     wf = ROOT / ".github" / "workflows" / "all-tests.yml"
-    if not wf.is_file() or "pycore-gc" not in wf.read_text(encoding="utf-8"):
-        problems.append("CI workflow does not run GC gates")
+    matrix = re.search(r"area:\s*\[([^\]]*)\]", wf.read_text(encoding="utf-8")) if wf.is_file() else None
+    if not matrix or "gc" not in [a.strip() for a in matrix.group(1).split(",")]:
+        problems.append("CI workflow's hardware matrix does not run the gc area")
     lines += problems
-    if problems or all_tests is None:
+    if problems:
         return Result("fail", f"{len(problems)} doc/CI problems", lines)
-    return Result("pass", "gc.md complete; companion docs, README, planning index, Makefile, CI updated",
+    return Result("pass", "gc.md complete; companion docs, README, planning index, test-all, CI updated",
                   lines)

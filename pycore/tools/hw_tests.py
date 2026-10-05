@@ -297,9 +297,9 @@ class Runner:
             ] + self.global_plusargs + extra + mem
         raise RuntimeError(f"no plusargs for kind {t.kind}")
 
-    def simulate(self, t: Test, cfg: Config) -> tuple[bool, str, int | None]:
-        d = BUILD / t.name
-        log = d / f"sim-{cfg.slug}.log"
+    def command(self, t: Test, cfg: Config) -> list[str]:
+        """The command for one run of `t` under `cfg` (RuntimeError/OSError
+        when the image metadata is missing)."""
         if t.kind == "make":
             # prepare() already ran every generator in `needs`. Mark them
             # up to date: a recipe that regenerated pycore/programs/*.hex
@@ -318,12 +318,21 @@ class Runner:
                     f"PYCORE_MEM_PLUSARGS=+CACHE_EN={cfg.cache_en} +MEM_LATENCY={cfg.latency} "
                     + " ".join(self.global_plusargs)
                 )
-        else:
-            try:
-                cmd = [str(SIM[t.core])] + self.plusargs(t, cfg)
-            except (OSError, RuntimeError) as exc:
-                return False, str(exc), None
+            return cmd
+        return [str(SIM[t.core])] + self.plusargs(t, cfg)
+
+    def simulate(self, t: Test, cfg: Config) -> tuple[bool, str, int | None]:
+        log = BUILD / t.name / f"sim-{cfg.slug}.log"
+        try:
+            cmd = self.command(t, cfg)
+        except (OSError, RuntimeError) as exc:
+            return False, str(exc), None
         rc, out = _run(cmd, log)
+        return self.verdict(t, cfg, rc, out)
+
+    def verdict(self, t: Test, cfg: Config, rc: int, out: str) -> tuple[bool, str, int | None]:
+        """(passed, detail, cycles) for one run's exit code and output."""
+        d = BUILD / t.name
         cycles = None
         m = re.search(r"cycles=(\d+)", out)
         if m:
