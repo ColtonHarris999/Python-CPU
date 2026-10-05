@@ -27,6 +27,15 @@
 // Bitmap: BM_WORDS (heap limit / 2 KB) x 128-bit on-chip words; bit g <=> granule g = addr >> 4.
 // Mark stack: MSTACK_ONCHIP-entry ring; the oldest SPILL_BATCH entries spill
 // to PYCORE_GC_MARK_STACK when it is full and refill when it is empty.
+// Wide ranges: one pop scans at most SCAN_CHUNK slots of a tuple, list
+// buffer, set table, or dict order buffer / table. The rest of the range is
+// pushed first as a continuation entry (K_TUPLE for 32 B slots, K_DICTT for
+// 64 B dict slots), so a wide container holds at most SCAN_CHUNK + 1 entries.
+// Stack full: a child that does not fit is left unmarked and the range being
+// scanned (t_re_r) is written once to the rescan list at PYCORE_GC_RESCAN.
+// When the stack drains, recorded ranges are pushed back and scanned again;
+// marked children are skipped, so each rescan makes progress. The collection
+// is abandoned (overflow_r) only when the rescan list itself is full.
 // Free runs: the first 1024 listed runs stay on-chip (G13 P4); overflow
 // headers { FREE_MAGIC, size, next, base } live in PYCORE_GC_RUN_TABLE
 // after that window; once the table is full they go in place, in the run's
@@ -34,7 +43,9 @@
 module pycore_gc #(
     parameter int MSTACK_ONCHIP = 256,
     parameter int SPILL_BATCH   = 32,
-    parameter logic [31:0] STACK_ENTRIES = PYCORE_GC_MARK_STACK_ENTRIES
+    parameter logic [31:0] STACK_ENTRIES = PYCORE_GC_MARK_STACK_ENTRIES,
+    parameter logic [31:0] RESCAN_ENTRIES = PYCORE_GC_RESCAN_ENTRIES,
+    parameter logic [31:0] SCAN_CHUNK = PYCORE_GC_SCAN_CHUNK
 ) (
     input  logic         clk_i,
     input  logic         rst_n_i,
@@ -75,6 +86,9 @@ module pycore_gc #(
     output logic         clean_done_o,
     input  logic [31:0]  stack_limit_i,
     input  logic [7:0]   onchip_limit_i,
+    // Rescan-list entries (0: RESCAN_ENTRIES); tests shrink it to reach the
+    // abort path.
+    input  logic [31:0]  rescan_limit_i,
     input  logic [7:0]   mutant_i,
     // Register / RF root stream.
     input  logic         root_valid_i,
@@ -127,6 +141,7 @@ module pycore_gc #(
     output logic [31:0]  stash_cyc_o,
     output logic [31:0]  objects_o,
     output logic [31:0]  roots_o,
+    output logic [31:0]  rescans_o,         // ranges written to the rescan list
     // One past the highest heap byte the sweep wrote (headers, poison).
     output logic [31:0]  dirty_hi_o,
     // Debug: one pulse per free run emitted by the sweep (shadow checker).
@@ -156,6 +171,7 @@ module pycore_gc #(
     localparam logic [2:0] K_SET   = 3'd4;
     localparam logic [2:0] K_OBJ   = 3'd5;
     localparam logic [2:0] K_STR   = 3'd6;
+    localparam logic [2:0] K_DICTT = 3'd7;   // continuation: dict table slots
 
     // Latched configuration.
     logic [31:0] dyn_base_r, heap_limit_r, spill_sp_r, exc_sp_r, frame_depth_r;
@@ -165,7 +181,7 @@ module pycore_gc #(
     logic [31:0] mark_hi_w_r;
     logic        extra_roots_r;
     logic        stash_en_r, poison_en_r;
-    logic [31:0] stack_limit_r;
+    logic [31:0] stack_limit_r, rescan_limit_r;
     logic [8:0]  onchip_limit_r;
     logic [7:0]  mut_r;
     logic        bitmap_clean_r;
@@ -192,6 +208,11 @@ module pycore_gc #(
 
     function automatic logic [31:0] pad16(input logic [31:0] n);
         pad16 = (n + 32'd15) & ~32'd15;
+    endfunction
+
+    // Slots of a range the current pop scans.
+    function automatic logic [31:0] chunk(input logic [31:0] n);
+        chunk = (n > SCAN_CHUNK) ? SCAN_CHUNK : n;
     endfunction
 
     // OBJECT extent by ob_kind; 0 = unknown kind.
@@ -272,6 +293,16 @@ module pycore_gc #(
     logic [31:0]  mem_cnt_r;
     logic [31:0]  stack_total, stack_hw_r;
     assign stack_total = {{(31-OC_AW){1'b0}}, cnt_r} + mem_cnt_r;
+    // Full: the ring is full and so is the memory part (a push would fail).
+    // Room: no item in flight (queue 4, pending 3, marker 1) can fail.
+    logic         stk_full, stk_room8;
+    assign stk_full  = (cnt_r >= (OC_AW+1)'(onchip_limit_r)) && (mem_cnt_r >= stack_limit_r);
+    assign stk_room8 = (stack_total + 32'd8 <= 32'(onchip_limit_r) + stack_limit_r);
+    // Rescan list (memory, LIFO). m_have_ent_r: an entry has been popped, so
+    // every later overflowing child belongs to the tracer's range t_re_r.
+    // m_resc_done_r: that range is already recorded.
+    logic [31:0]  resc_cnt_r, rescans_r;
+    logic         m_have_ent_r, m_resc_done_r;
 
     // Tracer <-> marker pop handshake.
     logic         pop_req;      // tracer in T_POP
@@ -311,6 +342,7 @@ module pycore_gc #(
     assign stash_cyc_o      = stash_cyc_r;
     assign objects_o        = objects_r;
     assign roots_o          = roots_r;
+    assign rescans_o        = rescans_r;
 
     // =====================================================================
     // Tracer
@@ -332,6 +364,7 @@ module pycore_gc #(
     logic [31:0] t_cont_ptr_r, t_cont_left_r;
     logic [3:0]  t_range_r;        // memory-root range index
     logic [66:0] t_ent_r;          // popped entry
+    logic [66:0] t_re_r;           // range to record if a child overflows
     logic [31:0] t_a_r, t_b_r;     // header fields latched across reads
 
     wire [2:0]  t_kind  = t_ent_r[66:64];
@@ -343,6 +376,11 @@ module pycore_gc #(
     function automatic logic [QW-1:0] qraw(input logic [31:0] a, input logic [31:0] len);
         qraw = {1'b0, 1'b1, 4'd0, 32'd0, len, 32'd0, a};
     endfunction
+    // Continuation: push {k, n, a} unmarked (raw item with tag 1).
+    function automatic logic [QW-1:0] qcont(input logic [2:0] k, input logic [31:0] n,
+                                            input logic [31:0] a);
+        qcont = {1'b0, 1'b1, 4'd1, 61'd0, k, n, a};
+    endfunction
 
     // Drain one pending item per cycle into the queue when there is room and
     // the root stream is not using the queue input.
@@ -353,12 +391,13 @@ module pycore_gc #(
     // =====================================================================
     // Marker
     // =====================================================================
-    typedef enum logic [4:0] {
+    typedef enum logic [5:0] {
         M_IDLE, M_CLEAR,
         M_CLEAN_HDR, M_CLEAN_HDR_W, M_CLEAN_BUSY_W, M_CLEAN_ADDR_W,
         M_CLEAN_VAL_W, M_CLEAN_TAG_W,
         M_PRE, M_PRE_W, M_STASH_V, M_STASH_VW, M_STASH_T, M_STASH_TW, M_DEC,
         M_TEST, M_SET, M_PUSH, M_SPILL, M_SPILL_W, M_REFILL, M_REFILL_W,
+        M_RESC_WR, M_RESC_WR_W, M_RESC_RD, M_RESC_RD_W,
         M_SW_KEEP, M_SW_PRE, M_SW_SCAN, M_SW_LAST, M_SW_WR, M_SW_WR_W, M_FIN, M_FIN_W,
         M_DONE
     } mstate_e;
@@ -386,6 +425,7 @@ module pycore_gc #(
     logic [3:0]   d_tag;
     logic [127:0] d_val;
     logic         d_raw;
+    logic         d_cont;    // continuation entry {kind, size, addr} = d_val[66:0]
     logic [1:0]   d_act;     // 0 none, 1 raw set, 2 test+set (leaf), 3 test+set+push
     logic [31:0]  d_addr, d_len;
     logic [2:0]   d_kind;
@@ -398,6 +438,7 @@ module pycore_gc #(
         d_tag = m_ent_r[131:128];
         d_val = m_ent_r[127:0];
         d_raw = m_ent_r[132];
+        d_cont = d_raw && (d_tag == 4'd1);
         d_act = 2'd0;
         d_addr = 32'd0;
         d_len = 32'd0;
@@ -409,7 +450,9 @@ module pycore_gc #(
         mk = d_val[127:124];
         ik = d_val[119:116];
         ia = d_val[31:0];
-        if (d_raw) begin
+        if (d_cont) begin
+            // Handled in M_DEC: no decode, no mark.
+        end else if (d_raw) begin
             d_addr = d_val[31:0];
             d_len  = d_val[95:64];
             d_act  = (d_len != 32'd0) ? 2'd1 : 2'd0;
@@ -644,6 +687,9 @@ module pycore_gc #(
             extra_roots_r <= 1'b0;
             frame_depth_r <= '0; stash_en_r <= 1'b0; poison_en_r <= 1'b0;
             stack_limit_r <= STACK_ENTRIES; onchip_limit_r <= 9'(MSTACK_ONCHIP);
+            rescan_limit_r <= RESCAN_ENTRIES;
+            resc_cnt_r <= '0; rescans_r <= '0; m_have_ent_r <= 1'b0; m_resc_done_r <= 1'b0;
+            t_re_r <= '0;
             mut_r <= '0; bitmap_clean_r <= 1'b0; shadow_ok_r <= 1'b0; bg_clr_r <= '0;
             clean_busy_addr_r <= '0; clean_done_r <= 1'b0;
             out_r <= 1'b0; out_owner_r <= 1'b0;
@@ -743,6 +789,10 @@ module pycore_gc #(
                                  ? STACK_ENTRIES : stack_limit_i;
                 onchip_limit_r <= ((onchip_limit_i == 8'd0) || (9'(onchip_limit_i) > 9'(MSTACK_ONCHIP)))
                                   ? 9'(MSTACK_ONCHIP) : 9'(onchip_limit_i);
+                rescan_limit_r <= (rescan_limit_i == 32'd0 || rescan_limit_i > RESCAN_ENTRIES)
+                                  ? RESCAN_ENTRIES : rescan_limit_i;
+                resc_cnt_r <= '0; rescans_r <= '0;
+                m_have_ent_r <= 1'b0; m_resc_done_r <= 1'b0;
                 mut_r         <= mutant_i;
                 free_bytes_r <= '0; largest_base_r <= '0; largest_size_r <= '0;
                 run_head_r <= '0; runs_r <= '0; overflow_r <= 1'b0; fault_r <= 1'b0;
@@ -841,10 +891,24 @@ module pycore_gc #(
                 T_SCAN: begin
                     if (t_left_r == 32'd0) begin
                         if (t_cont_r) begin
-                            t_cont_r <= 1'b0;
-                            t_mode_r <= SM_DICTT;
-                            t_ptr_r  <= t_cont_ptr_r;
-                            t_left_r <= t_cont_left_r;
+                            // Dict table after the order buffer: a new range.
+                            // Switch once no order-buffer child can still
+                            // overflow against it (or all have drained); a
+                            // continuation push needs the pending buffer empty.
+                            if (((m_st_r == M_IDLE) && (q_cnt_r == 3'd0) && (tp_cnt_r == 2'd0)) ||
+                                (!m_resc_done_r && stk_room8 && (t_cont_left_r <= SCAN_CHUNK))) begin
+                                t_cont_r <= 1'b0;
+                                t_mode_r <= SM_DICTT;
+                                t_ptr_r  <= t_cont_ptr_r;
+                                t_left_r <= chunk(t_cont_left_r);
+                                t_re_r   <= {K_DICTT, chunk(t_cont_left_r), t_cont_ptr_r};
+                                m_resc_done_r <= 1'b0;
+                                if (t_cont_left_r > SCAN_CHUNK) begin
+                                    p1 = 1'b1;
+                                    i1 = qcont(K_DICTT, t_cont_left_r - SCAN_CHUNK,
+                                               t_cont_ptr_r + (SCAN_CHUNK << 6));
+                                end
+                            end
                         end else if (phase_r == P_ROOTS_MEM) begin
                             t_st_r <= T_MEMROOT;
                         end else begin
@@ -1024,10 +1088,19 @@ module pycore_gc #(
 `endif
                         t_mode_r  <= SM_PLAIN;
                         t_cont_r  <= 1'b0;
+                        t_re_r    <= pop_ent_r;
                         unique case (pop_ent_r[66:64])
                             K_TUPLE: begin
+                                // The pending buffer is empty at a pop, so the
+                                // continuation and a line ack's two items fit.
                                 t_ptr_r  <= pop_ent_r[31:0];
-                                t_left_r <= pop_ent_r[63:32];
+                                t_left_r <= chunk(pop_ent_r[63:32]);
+                                t_re_r   <= {K_TUPLE, chunk(pop_ent_r[63:32]), pop_ent_r[31:0]};
+                                if (pop_ent_r[63:32] > SCAN_CHUNK) begin
+                                    p1 = 1'b1;
+                                    i1 = qcont(K_TUPLE, pop_ent_r[63:32] - SCAN_CHUNK,
+                                               pop_ent_r[31:0] + (SCAN_CHUNK << 5));
+                                end
                                 if (cache_en_i && (pop_ent_r[5:0] == 6'd0) &&
                                     (pop_ent_r[63:32] >= 32'd2) && (tp_cnt_r < 2'd2)) begin
                                     t_want_r <= 1'b1;
@@ -1057,6 +1130,18 @@ module pycore_gc #(
                                 end else begin
                                     t_st_r   <= T_SCAN;
                                 end
+                            end
+                            K_DICTT: begin
+                                t_mode_r <= SM_DICTT;
+                                t_ptr_r  <= pop_ent_r[31:0];
+                                t_left_r <= chunk(pop_ent_r[63:32]);
+                                t_re_r   <= {K_DICTT, chunk(pop_ent_r[63:32]), pop_ent_r[31:0]};
+                                if (pop_ent_r[63:32] > SCAN_CHUNK) begin
+                                    p1 = 1'b1;
+                                    i1 = qcont(K_DICTT, pop_ent_r[63:32] - SCAN_CHUNK,
+                                               pop_ent_r[31:0] + (SCAN_CHUNK << 6));
+                                end
+                                t_st_r   <= T_SCAN;
                             end
                             default: begin
                                 // LIST / DICT / SET / OBJ / STR: header first.
@@ -1149,13 +1234,21 @@ module pycore_gc #(
                     if (t_ack) begin
                         unique case (t_kind)
                             K_LIST: begin
+                                logic [31:0] nl;
+                                nl = ((mut_r == 8'd13) && (t_b_r != 32'd0)) ? (t_b_r - 32'd1) : t_b_r;
                                 if ((t_a_r != 32'd0) && (rdata_i[31:0] != 32'd0)) begin
                                     p1 = 1'b1;
                                     i1 = qraw(rdata_i[31:0],
                                                        (mut_r == 8'd14) ? (t_b_r << 5) : (t_a_r << 5));
                                 end
+                                if (nl > SCAN_CHUNK) begin
+                                    p2 = 1'b1;
+                                    i2 = qcont(K_TUPLE, nl - SCAN_CHUNK,
+                                               rdata_i[31:0] + (SCAN_CHUNK << 5));
+                                end
                                 t_ptr_r  <= rdata_i[31:0];
-                                t_left_r <= ((mut_r == 8'd13) && (t_b_r != 32'd0)) ? (t_b_r - 32'd1) : t_b_r;
+                                t_left_r <= chunk(nl);
+                                t_re_r   <= {K_TUPLE, chunk(nl), rdata_i[31:0]};
                                 t_st_r   <= T_SCAN;
                             end
                             K_SET: begin
@@ -1164,8 +1257,14 @@ module pycore_gc #(
                                         p1 = 1'b1;
                                         i1 = qraw(rdata_i[31:0], t_a_r << 5);
                                     end
+                                    if (t_a_r > SCAN_CHUNK) begin
+                                        p2 = 1'b1;
+                                        i2 = qcont(K_TUPLE, t_a_r - SCAN_CHUNK,
+                                                   rdata_i[31:0] + (SCAN_CHUNK << 5));
+                                    end
                                     t_ptr_r  <= rdata_i[31:0];
-                                    t_left_r <= t_a_r;
+                                    t_left_r <= chunk(t_a_r);
+                                    t_re_r   <= {K_TUPLE, chunk(t_a_r), rdata_i[31:0]};
                                 end else begin
                                     t_left_r <= 32'd0;
                                 end
@@ -1195,8 +1294,14 @@ module pycore_gc #(
                             t_cont_ptr_r  <= rdata_i[31:0];
                             t_cont_left_r <= t_a_r;
                         end
+                        if ((rdata_i[95:64] != 32'd0) && (t_b_r > SCAN_CHUNK)) begin
+                            p3 = 1'b1;
+                            i3 = qcont(K_TUPLE, t_b_r - SCAN_CHUNK,
+                                       rdata_i[95:64] + (SCAN_CHUNK << 5));
+                        end
                         t_ptr_r  <= rdata_i[95:64];
-                        t_left_r <= (rdata_i[95:64] != 32'd0) ? t_b_r : 32'd0;
+                        t_left_r <= (rdata_i[95:64] != 32'd0) ? chunk(t_b_r) : 32'd0;
+                        t_re_r   <= {K_TUPLE, chunk(t_b_r), rdata_i[95:64]};
                         t_st_r   <= T_SCAN;
                     end
                 end
@@ -1305,9 +1410,16 @@ module pycore_gc #(
                                 i1 = qraw(item, (mut_r == 8'd14)
                                           ? (w0[31:0] << 5) : (w0[95:64] << 5));
                             end
+                            if (leftn > SCAN_CHUNK) begin
+                                p2 = 1'b1;
+                                i2 = qcont(K_TUPLE, leftn - SCAN_CHUNK, item + (SCAN_CHUNK << 5));
+                            end
                             t_ptr_r  <= item;
-                            t_left_r <= leftn;
-                            if (cache_en_i && (item[5:0] == 6'd0) &&
+                            t_left_r <= chunk(leftn);
+                            t_re_r   <= {K_TUPLE, chunk(leftn), item};
+                            // With a continuation queued, T_SCAN issues the
+                            // line read once the pending buffer has room.
+                            if (cache_en_i && (item[5:0] == 6'd0) && (leftn <= SCAN_CHUNK) &&
                                 (leftn >= 32'd2) && (tp_cnt_r < 2'd2)) begin
                                 t_want_r <= 1'b1;
                                 t_line_r <= 1'b0;
@@ -1323,8 +1435,14 @@ module pycore_gc #(
                                     p1 = 1'b1;
                                     i1 = qraw(item, w0[95:64] << 5);
                                 end
+                                if (w0[95:64] > SCAN_CHUNK) begin
+                                    p2 = 1'b1;
+                                    i2 = qcont(K_TUPLE, w0[95:64] - SCAN_CHUNK,
+                                               item + (SCAN_CHUNK << 5));
+                                end
                                 t_ptr_r  <= item;
-                                t_left_r <= w0[95:64];
+                                t_left_r <= chunk(w0[95:64]);
+                                t_re_r   <= {K_TUPLE, chunk(w0[95:64]), item};
                             end else begin
                                 t_left_r <= 32'd0;
                             end
@@ -1351,9 +1469,14 @@ module pycore_gc #(
                             pop_ent_r  <= ring[OC_AW'(bot_r + OC_AW'(cnt_r) - OC_AW'(1))];
                             cnt_r      <= cnt_r - 1'b1;
                             pop_give_r <= 1'b1;
+                            // Nothing is in flight: the next scan starts clean.
+                            m_have_ent_r  <= 1'b1;
+                            m_resc_done_r <= 1'b0;
                         end else if (mem_cnt_r != 32'd0) begin
                             m_batch_r <= 6'd0;
                             m_st_r    <= M_REFILL;
+                        end else if (resc_cnt_r != 32'd0) begin
+                            m_st_r    <= M_RESC_RD;
                         end else begin
                             mark_done_r <= 1'b1;
                             phase_r     <= P_SWEEP;
@@ -1610,10 +1733,26 @@ module pycore_gc #(
                     m_g_end_r <= d_ge;
                     m_push_r  <= (d_act == 2'd3);
                     m_pent_r  <= {d_kind, d_size, d_addr};
-                    if (d_act == 2'd0) begin
+                    if (d_cont) begin
+                        // Rest of a wide range: push as is, or record it.
+                        m_pent_r <= d_val[66:0];
+                        m_st_r   <= stk_full ? M_RESC_WR : M_PUSH;
+                    end else if (d_act == 2'd0) begin
                         m_st_r <= M_IDLE;
                     end else if ((d_act != 2'd1) && d_marked) begin
                         m_st_r <= M_IDLE;
+                    end else if ((d_act == 2'd3) && stk_full && m_have_ent_r) begin
+                        // No room: leave the child unmarked and rescan the
+                        // tracer's range later (once per range). Root items
+                        // have no range; they are marked and recorded
+                        // themselves (M_SPILL).
+                        if (!m_resc_done_r) begin
+                            m_resc_done_r <= 1'b1;
+                            m_pent_r      <= t_re_r;
+                            m_st_r        <= M_RESC_WR;
+                        end else begin
+                            m_st_r <= M_IDLE;
+                        end
                     end else begin
                         bm_q[d_ww[BM_AW-1:0]] <= d_bword | d_mask;
                         if (d_we > mark_hi_w_r) mark_hi_w_r <= d_we;
@@ -1671,9 +1810,10 @@ module pycore_gc #(
                         ((onchip_limit_r < 9'd4) && (m_batch_r != 6'd0))) begin
                         m_st_r <= M_PUSH;
                     end else if (mem_cnt_r >= stack_limit_r) begin
-                        overflow_r <= 1'b1;
-                        m_st_r     <= M_DONE;
-                        phase_r    <= P_FINISH;
+                        // Memory part full. After a partial batch the ring
+                        // has room; otherwise the stack is full (a root
+                        // item: already marked, so record the entry itself).
+                        m_st_r <= (m_batch_r != 6'd0) ? M_PUSH : M_RESC_WR;
                     end else begin
                         m_want_r  <= 1'b1;
                         m_we_r    <= 1'b1;
@@ -1718,6 +1858,46 @@ module pycore_gc #(
                             cnt_r <= cnt_r + 1'b1;
                         end
                         m_st_r <= M_REFILL;
+                    end
+                end
+
+                // Record m_pent_r in the rescan list; give up when it is full.
+                M_RESC_WR: begin
+                    if (resc_cnt_r >= rescan_limit_r) begin
+                        overflow_r <= 1'b1;
+                        m_st_r     <= M_DONE;
+                        phase_r    <= P_FINISH;
+                    end else begin
+                        m_want_r  <= 1'b1;
+                        m_we_r    <= 1'b1;
+                        m_addr_r  <= PYCORE_GC_RESCAN + (resc_cnt_r << 4);
+                        m_wdata_r <= {m_pent_r[66:64], 29'd0, 32'd0,
+                                      m_pent_r[63:32], m_pent_r[31:0]};
+                        m_st_r    <= M_RESC_WR_W;
+                    end
+                end
+                M_RESC_WR_W: begin
+                    if (m_ack) begin
+                        spill_xacts_r <= spill_xacts_r + 32'd1;
+                        resc_cnt_r    <= resc_cnt_r + 32'd1;
+                        rescans_r     <= rescans_r + 32'd1;
+                        m_st_r        <= M_IDLE;
+                    end
+                end
+                // Stack empty: move the newest recorded range back onto it.
+                M_RESC_RD: begin
+                    m_want_r <= 1'b1;
+                    m_we_r   <= 1'b0;
+                    m_addr_r <= PYCORE_GC_RESCAN + ((resc_cnt_r - 32'd1) << 4);
+                    m_st_r   <= M_RESC_RD_W;
+                end
+                M_RESC_RD_W: begin
+                    if (m_ack) begin
+                        spill_xacts_r <= spill_xacts_r + 32'd1;
+                        resc_cnt_r    <= resc_cnt_r - 32'd1;
+                        ring[bot_r]   <= {rdata_i[127:125], rdata_i[63:32], rdata_i[31:0]};
+                        cnt_r         <= cnt_r + 1'b1;
+                        m_st_r        <= M_IDLE;
                     end
                 end
 
@@ -2084,7 +2264,7 @@ module pycore_gc #(
                   (addr_o < dyn_base_r)) &&
                 !((phase_r == P_SWEEP) && (addr_o >= dyn_base_r) && (addr_o < heap_limit_r)))
                 $fatal(1, "[GC-INV] engine write outside metadata / freed runs: addr=%h", addr_o);
-            if (done_r && (cnt_r != '0 || mem_cnt_r != 32'd0) && !overflow_r)
+            if (done_r && (cnt_r != '0 || mem_cnt_r != 32'd0 || resc_cnt_r != 32'd0) && !overflow_r)
                 $fatal(1, "[GC-INV] mark stack not empty at end of collection");
             if (q_push && (q_cnt_r == 3'd4) && !q_pop)
                 $fatal(1, "[GC-INV] engine queue overflow");

@@ -1696,6 +1696,7 @@ module pycore_core #(
     logic [31:0] gc_every_n_runs_sim;
     logic [31:0] gc_boundary_every_sim;
     logic [31:0] gc_stack_limit_sim;
+    logic [31:0] gc_rescan_limit_sim;
     logic [7:0]  gc_onchip_sim;
     logic [7:0]  gc_mutant_sim;
     initial begin
@@ -1710,6 +1711,7 @@ module pycore_core #(
         gc_every_n_runs_sim = 32'd0;
         gc_boundary_every_sim = 32'd0;
         gc_stack_limit_sim = 32'd0;
+        gc_rescan_limit_sim = 32'd0;
         gc_onchip_sim = 8'd0;
         gc_mutant_sim = 8'd0;
         if ($value$plusargs("GC_EN=%d", v)) gc_en_sim = (v != 0);
@@ -1722,6 +1724,7 @@ module pycore_core #(
         if ($value$plusargs("GC_EVERY_N_RUNS=%d", v)) gc_every_n_runs_sim = v;
         if ($value$plusargs("GC_AT_BOUNDARY_EVERY=%d", v)) gc_boundary_every_sim = v;
         if ($value$plusargs("GC_STACK_LIMIT=%d", v)) gc_stack_limit_sim = v;
+        if ($value$plusargs("GC_RESCAN_LIMIT=%d", v)) gc_rescan_limit_sim = v;
         if ($value$plusargs("GC_ONCHIP=%d", v)) gc_onchip_sim = 8'(v);
         if ($value$plusargs("GC_MUTANT=%d", v)) gc_mutant_sim = 8'(v);
         // +HEAP_DYN_BYTES=n: heap limit = HEAP_INIT_PTR + n (G7 shrinks each
@@ -1761,6 +1764,7 @@ module pycore_core #(
     logic         gc_stack_overflow, gc_eng_fault;
     logic [31:0]  gc_mark_cyc, gc_sweep_cyc, gc_port_busy_mark, gc_mark_xacts;
     logic [31:0]  gc_spill_xacts, gc_stack_hw, gc_stash_cyc, gc_objects, gc_roots_n;
+    logic [31:0]  gc_rescans;
     logic         gc_free_range_valid;
     logic [31:0]  gc_free_range_base, gc_free_range_len;
     logic [31:0]  gc_dirty_hi;
@@ -1793,6 +1797,7 @@ module pycore_core #(
         .clean_done_o(gc_clean_done),
         .stack_limit_i(gc_stack_limit_sim),
         .onchip_limit_i(gc_onchip_sim),
+        .rescan_limit_i(gc_rescan_limit_sim),
         .mutant_i(gc_mutant_sim),
         .root_valid_i(gc_root_valid),
         .root_entry_i(gc_root_entry),
@@ -1835,6 +1840,7 @@ module pycore_core #(
         .stash_cyc_o(gc_stash_cyc),
         .objects_o(gc_objects),
         .roots_o(gc_roots_n),
+        .rescans_o(gc_rescans),
         .dirty_hi_o(gc_dirty_hi),
         .free_range_valid_o(gc_free_range_valid),
         .free_range_base_o(gc_free_range_base),

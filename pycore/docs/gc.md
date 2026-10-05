@@ -37,16 +37,18 @@ Handbook*, 2nd ed.
 
 - **Decision.** A 256-entry on-chip LIFO of compressed entries
   (`{kind[2:0], size[31:0], addr[31:0]}`, 67 bits). When a push finds it
-  full, the engine spills the oldest 32 entries to the 512 KB region at
-  `PYCORE_GC_MARK_STACK` (one 16 B slot each); when a pop finds it empty and
-  the memory part is non-empty, it refills 32. The memory part is sized for
-  the provable bound (§4.3 of the plan): at most 30,686 pending entries.
+  full, the engine spills the oldest 32 entries to the 192 KB region at
+  `PYCORE_GC_MARK_STACK` (12,288 entries, one 16 B slot each); when a pop
+  finds it empty and the memory part is non-empty, it refills 32. The plan's
+  provable bound (§4.3, at most 30,686 pending entries on the 1 MB map) does
+  not hold on the 16 MB map, and no fixed size can hold every graph, so the
+  stack is bounded instead by the two rules in "Bounded marking" below.
 - **Why.** Maas (§V-C, §VI-B) keeps a 1,024-entry mark queue on chip and
   spills only when it is full: spilling was about 2 % of memory requests.
   Our draft (§4.5) made every push and pop a dmem transaction, which roughly
   doubles mark traffic. Depth-first marking of typical PyCore heaps stays
-  shallow: a linked chain keeps one or two pending entries; only very wide
-  objects (a 16k-element list) overflow. The stack is LIFO, so spilling the
+  shallow: a linked chain keeps one or two pending entries, and a wide
+  container at most 129 (chunked scans). The stack is LIFO, so spilling the
   oldest entries is legal (marking is order-independent).
 - **Expected effect.** Removes ~2 transactions per pushed object on normal
   heaps. Area: 256 × 67 bits = 17,152 bits.
@@ -58,6 +60,47 @@ Handbook*, 2nd ed.
 - **Confirmed by.** G13 P7 (spill traffic ≤ 5 % of mark transactions on
   `bench_full` and `bench_deep`); G3 runs with the on-chip part shrunk to two
   entries so the spill and refill path is exercised on every seed.
+
+#### Bounded marking: chunked scans and the rescan list
+
+A stack sized for the largest graph does not exist, so marking never needs
+more than the stack holds:
+
+- **Chunked scans.** One pop scans at most `PYCORE_GC_SCAN_CHUNK` (128)
+  slots of a range: a tuple, a list buffer, a set table, a dict order
+  buffer or a dict table. Before scanning, the tracer pushes the rest of the
+  range, unmarked, as a continuation entry (`K_TUPLE` for 32 B slots, the
+  continuation-only `K_DICTT` for 64 B dict slots). Children are pushed on
+  top of it and popped first, so a wide container holds at most 129
+  entries, and every popped entry scans one range. A dict's order buffer
+  and table are two ranges of one pop; the tracer starts the table once no
+  order-buffer child can still overflow (fewer than 8 items in flight, or
+  all drained).
+- **Rescan list.** Only depth can still fill the stack (a 100,000-node
+  chain of `(payload, next)` leaves one payload per level). A child that
+  does not fit is not marked; the range being scanned (`t_re_r`: the chunk,
+  or the whole object for an OBJECT or CODE entry) is written once to the
+  rescan list at `PYCORE_GC_RESCAN` (4,096 entries, the top 64 KB of the
+  mark-stack region), and later children of that range are dropped. A
+  continuation that does not fit is recorded itself. When the stack and
+  its memory part are empty, the marker moves the newest recorded range
+  back onto the stack. Already-marked children are skipped, and the stack
+  is empty when a recorded range is rescanned, so each rescan marks at
+  least one new child and marking terminates with the same set an
+  unbounded stack marks. A root that does not fit (no range to rescan) is
+  marked and recorded itself.
+- **Abandoning.** Only a full rescan list abandons the collection
+  (`overflow`, `MemoryError`; see "Architecture and interfaces").
+  That takes more than 4,096 partly scanned ranges pending at once: a graph
+  deeper than the 12,544-entry stack in which most nodes popped while it is
+  full have several unmarked pushable children. Wide and deep graphs
+  (`img_gc_wide_live_list`, `img_gc_deep_live_chain`) need one or two.
+
+The oracle (`gc_model.trace`) applies the same rules with the engine's
+limits, which every dump records (`stack_limit`, `onchip`, `rescan_limit`),
+so `objects`, `stack_hw`, `rescans` and an abandoned collection must agree.
+G3 runs every eighth seed with a five-entry stack, and its directed cases
+check a wide list and a deep chain with tiny stacks and the abandon path.
 
 ### 2. Bitmap-slot cache (Maas mark-bit cache) — adopted
 
@@ -221,12 +264,14 @@ States, after the ordinary fetch/execute path:
    leaves the free run queued and does not zero it; the bytes are zeroed when
    a later allocation hands them out.
 
-A collection the engine abandons (mark-stack overflow, a dmem fault) raises
+A collection the engine abandons (rescan list full, a dmem fault) raises
 `MemoryError` and leaves marks in the bitmap, so the next collection clears
 the whole bitmap first (`M_CLEAR`, one cycle per word). Without that clear a
 stale mark made the marker skip a live object that was pushed but never
 scanned, and the sweep freed its children (`img_gc_mark_overflow_recover`,
-caught by the shadow-heap checker).
+caught by the shadow-heap checker). The fixture now reaches the abandon
+path with a 64-entry stack and a 64-entry rescan list (`+GC_ONCHIP`,
+`+GC_STACK_LIMIT`, `+GC_RESCAN_LIMIT`).
 
 `GC_EN=0` never takes these states. A `NEED_HEAP` result from excore becomes
 `MEM_FAULT`, which is what the pre-GC out-of-memory goldens expect.
@@ -371,6 +416,7 @@ Child slots are those in the plan's §4.1 table, as implemented in
 | RANGE | mode 1 is a 3-element tuple; mode 0 is inline | the tuple |
 | ITER | the underlying list, tuple, string, dict, set, or object | per iterator kind; an empty short string has no heap object |
 
+Ranges longer than 128 slots are scanned in chunks ("Bounded marking").
 Non-pointers (int, float, bool, short string, control) are not followed.
 A wrong extent under-marks and the next reuse corrupts a live object; G4
 compares the free set with the oracle, and G5's shadow heap checks every
@@ -407,12 +453,11 @@ mark bitmap 480 × 128 = 61,440 bits; run table 1,024 × 64 = 65,536 bits;
 mark stack 256 × 67 = 17,152 bits; static prune-map copy 256 × 128 =
 32,768 bits; total 176,896 bits (21.6 KB). The bitmap is sized from
 `PYCORE_HEAP_LIMIT`: on the 16 MB map it is 7,680 × 128 bits (120 KB),
-and the memory mark stack holds 16,384 entries. The mark stack overflows
-on a live list of more than 16,640 pushable elements, about 1 MB of a 15 MB
-heap, and the collection then raises `MemoryError` (`img_gc_wide_live_list`,
-in `[gc-long]`, fails until this is fixed). Both need re-sizing, and the
-stack an overflow fallback, before the collector is on by default
-(`planning/master_plan.md`, known bugs). Above the plan's
+and the memory mark stack holds 12,288 entries beside a 4,096-entry rescan
+list. A wide live list no longer overflows the stack (chunked scans:
+`img_gc_wide_live_list`, 18,000 tuples, stack high-water 130), and a
+100,000-node chain marks with seven rescans (`img_gc_deep_live_chain`,
+high-water 12,544). Above the plan's
 16 KB guideline: the run table is what brought the `bench_full` sweep from
 7,784 to 2,172 cycles (P4), and the prune-map copy and the deeper stack
 are what bring `bench_churn` under 25% (P6b): per collection they removed
@@ -516,14 +561,16 @@ pause ~= port-busy cycles / f_mem + engine-only cycles / f_gc.
 
 | Tier | Command | What | When |
 | --- | --- | --- | --- |
-| PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (61 programs, each under ~1M cycles) | every PR (CI `gc` area job) |
+| PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (62 programs) | every PR (CI `gc` area job) |
 | Long | `make test-gc-long` | the `[gc-long]` area: steady-state plateaus, allocation-site churn, benches, compile loops | nightly / on demand |
 | Compiler | `make test-compiler-gc` | the compile suite with the collector on and a 512 KB heap: 3-7 collections per program, several inside `compile()`; output must match CPython | nightly / on demand |
 | Fuzz | `make pycore-gc-fuzz SEEDS=0..49 TOP=single` | random programs checked against CPython and the oracle | nightly / on demand |
 | Acceptance | `make pycore-gc-acceptance MODE=full` | gates G0-G16 | before a collector design change |
 
 A new PR-tier program must stay under 2M cycles at the default config;
-anything longer goes in `[gc-long]`.
+anything longer goes in `[gc-long]`. The exception is `gc-wide-live-list`
+(6.7M cycles, almost all of it building a list wider than the mark stack),
+kept per PR because it guards the bounded-marking rules.
 
 The on-device compiler is the largest Python program the hart runs, so the
 compile suite doubles as a collector test. `--plusargs` passes simulator

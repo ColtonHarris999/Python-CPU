@@ -28,6 +28,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from encoding import (  # noqa: E402
     EXC_STACK_BASE,
     FRAME_STACK_BASE,
+    GC_SCAN_CHUNK,
     HEAP_BASE,
     HEAP_LIMIT,
     MUT_DICT,
@@ -49,7 +50,7 @@ from encoding import (  # noqa: E402
     make_none,
     mut_addr,
 )
-from heap_image import HeapImageBuilder, dict_min_slots  # noqa: E402
+from heap_image import HeapImageBuilder, dict_min_slots, static_dict_slots  # noqa: E402
 import gc_static  # noqa: E402
 
 TAG_ITER = 5
@@ -137,6 +138,7 @@ class Heap:
 class Gen:
     def __init__(self, seed: int, size: int = 60) -> None:
         self.r = random.Random(seed)
+        self.seed = seed
         self.b = HeapImageBuilder()
         self.nodes: list[Node] = []
         self.size = size
@@ -213,8 +215,8 @@ class Gen:
         allocs = [(h[1] & 0xFFFFFFFF, n * 32)] if n else []
         return self.add(Node("TUPLE", h, allocs, self.kids(els), row="TUPLE"))
 
-    def list_(self) -> Node:
-        n = self.r.randrange(0, 5)
+    def list_(self, n: int | None = None) -> Node:
+        n = self.r.randrange(0, 5) if n is None else n
         cap = n + self.r.randrange(0, 3)
         els = [self.pick() for _ in range(n)]
         h = self.b.alloc_list_with_capacity([v for v, _ in els], cap)
@@ -251,7 +253,8 @@ class Gen:
                 seen_keys.add(k[0])
                 keys.append(k)
         vals = [self.pick() for _ in range(n)]
-        slots = dict_min_slots(n) if self.r.random() < 0.7 else max(4, dict_min_slots(n) * 2)
+        least = dict_min_slots(n) if n < 128 else static_dict_slots(n)
+        slots = least if self.r.random() < 0.7 else max(4, least * 2)
         h = self.b.alloc_dict([(k[0], v[0]) for k, v in zip(keys, vals)], slot_count=slots)
         obj = mut_addr(h[1])
         ptrs = self.b.words[obj + 32]
@@ -282,8 +285,8 @@ class Gen:
         kids += [vals[i][1] for i in live if vals[i][1] is not None]
         return self.add(Node("DICT", h, allocs, kids, row="DICT"))
 
-    def set_(self) -> Node:
-        n = self.r.randrange(0, 5)
+    def set_(self, n: int | None = None) -> Node:
+        n = self.r.randrange(0, 5) if n is None else n
         els: list[tuple[tuple[int, int], Node | None]] = []
         seen: set[tuple[int, int]] = set()
         while len(els) < n:
@@ -291,7 +294,8 @@ class Gen:
             if k[0] not in seen:
                 seen.add(k[0])
                 els.append(k)
-        h = self.b.alloc_set([e[0] for e in els])
+        h = self.b.alloc_set([e[0] for e in els],
+                             slot_count=static_dict_slots(n) if n >= 64 else None)
         obj = mut_addr(h[1])
         slots = (self.b.words[obj] >> 64) & 0xFFFFFFFF
         table = self.b.words[obj + 16] & 0xFFFFFFFF
@@ -401,6 +405,11 @@ class Gen:
         h = (TAG_ITER, self.iter_val(3, 0, 3, addr, aux=1))
         return self.add(Node("STRSPILL", h, [(addr, 16)], row="ITER"))
 
+    def wide(self) -> Node:
+        """A tuple, list, dict or set wider than one GC scan chunk."""
+        n = GC_SCAN_CHUNK + self.r.randrange(1, 2 * GC_SCAN_CHUNK)
+        return self.r.choice([self.tuple_, self.list_, self.dict_, self.set_])(n)
+
     # ---- graph ----
     def build(self) -> list[Node]:
         makers = [self.long_str, self.tuple_, self.list_, self.dict_, self.set_, self.type_,
@@ -416,6 +425,10 @@ class Gen:
                 self.code()
         for mk in makers:            # every row at least once
             mk()
+        # Chunked scans and their continuations (own RNG: the other seeds'
+        # heaps stay as they were).
+        if random.Random(self.seed ^ 0x51DE).random() < 0.3:
+            self.wide()
         while len(self.nodes) < self.size:
             self.r.choice(makers)()
         # Back edges (cycles): patch mutable slots to reference later nodes.

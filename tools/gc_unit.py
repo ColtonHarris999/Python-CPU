@@ -6,9 +6,12 @@ build/tb_gc/Vtb_gc collects it twice back to back (the second collection must
 start from a clean bitmap) at every (CACHE_EN, MEM_LATENCY) in {0,1}x{1,4,30};
 gc_model.check_dump compares the run list, live/free/largest counters, and the
 mark-stack high-water mark. Every fourth seed runs with the on-chip mark stack
-shrunk to two entries (spill/refill on every push), every third with poison.
-Directed cases: the overflow guard fires with a 16-entry memory stack, and
-engine mutants selected with --mutant are killed.
+shrunk to two entries (spill/refill on every push), half of those also with
+a 3-entry memory stack (children that do not fit go through the rescan list),
+every third with poison. Directed cases: wide and deep graphs mark exactly
+with tiny stacks (chunked scans, rescans), the collection is abandoned only
+when the rescan list is full, and engine mutants selected with --mutant are
+killed.
 """
 
 from __future__ import annotations
@@ -45,8 +48,11 @@ def prepare(seed: int) -> dict[str, str]:
 def one(seed: int, ce: int, lat: int, mutant: int, info: dict[str, str]) -> tuple[str, list[str], dict]:
     d = OUT / f"s{seed}"
     onchip = 2 if seed % 4 == 0 else 0
+    stack = 3 if seed % 8 == 4 else 0
     poison = 1 if seed % 3 == 0 else 0
     extra = f"+CACHE_EN={ce} +MEM_LATENCY={lat} +RUNS=2 +POISON={poison} +MUTANT={mutant}"
+    if stack:
+        extra += f" +STACK_LIMIT={stack}"
     # Every other seed keeps its unallocated tail as the current run and
     # asks for the next-fit start there (core keep-run / rover paths).
     if seed % 2 == 1 and info.get("keep"):
@@ -55,8 +61,9 @@ def one(seed: int, ce: int, lat: int, mutant: int, info: dict[str, str]) -> tupl
         extra += f" +ONCHIP={onchip}"
     prefix = d / f"ce{ce}_lat{lat}_m{mutant}"
     rc, out = run_tb(info["plusargs"], prefix, extra)
-    label = f"seed={seed} ce={ce} lat={lat}" + (f" onchip={onchip}" if onchip else "")
-    stats = {"spill": 0, "hw": 0}
+    label = (f"seed={seed} ce={ce} lat={lat}" + (f" onchip={onchip}" if onchip else "")
+             + (f" stack={stack}" if stack else ""))
+    stats = {"spill": 0, "hw": 0, "rescans": 0}
     if rc != 0 or "TB_GC PASS" not in out:
         return label, [f"tb_gc failed rc={rc}: {out.strip().splitlines()[-1:]}"], stats
     problems = []
@@ -65,30 +72,73 @@ def one(seed: int, ce: int, lat: int, mutant: int, info: dict[str, str]) -> tupl
         problems += [f"run{run}: {p}" for p in gc_model.check_dump(dump, compare_hw=True)]
         stats["spill"] = max(stats["spill"], dump.meta.get("spill_xacts", 0))
         stats["hw"] = max(stats["hw"], dump.meta.get("stack_hw", 0))
+        stats["rescans"] = max(stats["rescans"], dump.meta.get("rescans", 0))
     return label, problems, stats
 
 
-def overflow_case() -> list[str]:
-    """A 400-wide list (wider than the 256-entry on-chip stack plus a
-    16-entry memory stack) must trip the guard."""
+def directed(name: str, heap: gc_heapgen.Heap,
+             cases: list[tuple[str, int, bool]]) -> list[str]:
+    """Collect `heap` once per (plusargs, want_overflow, want_rescans) case;
+    every run must match the oracle exactly (or overflow when it should)."""
+    d = OUT / name
+    info = heap.write(d, "heap")
+    problems = []
+    for i, (extra, want_ovf, want_resc) in enumerate(cases):
+        prefix = d / f"c{i}"
+        rc, out = run_tb(info["plusargs"], prefix, f"{extra} +RUNS={1 if want_ovf else 2}")
+        tag = f"{name} [{extra}]"
+        if rc != 0 or "TB_GC PASS" not in out:
+            problems.append(f"{tag}: tb_gc rc={rc}: {out.strip().splitlines()[-1:]}")
+            continue
+        for run in range(1 if want_ovf else 2):
+            dump = gc_model.load_dump(pathlib.Path(f"{prefix}.{run}.gcdump"))
+            m = dump.meta
+            if m.get("overflow", 0) != int(want_ovf):
+                problems.append(f"{tag}: overflow={m.get('overflow')} want {int(want_ovf)}")
+            if not want_ovf and bool(m.get("rescans", 0)) != want_resc:
+                problems.append(f"{tag}: rescans={m.get('rescans')} want {'>0' if want_resc else 0}")
+            problems += [f"{tag} run{run}: {p}" for p in gc_model.check_dump(dump, compare_hw=True)]
+    return problems
+
+
+def wide_heap() -> gc_heapgen.Heap:
+    """One 400-wide list of 1-tuples (four scan chunks)."""
     g = gc_heapgen.Gen(seed=7, size=0)
     kids = [g.tuple_(1) for _ in range(400)]
     h_list = g.b.alloc_list([k.handle for k in kids])
-    heap = gc_heapgen.Heap(g.b, g.nodes, [h_list], kids, 0x440, min(HEAP_LIMIT, g.b.ptr + 64),
+    return gc_heapgen.Heap(g.b, g.nodes, [h_list], kids, 0x440, min(HEAP_LIMIT, g.b.ptr + 64),
                            RF_SPILL_BASE, EXC_STACK_BASE, 0, set())
-    d = OUT / "overflow"
-    info = heap.write(d, "heap")
-    problems = []
-    for limit, want in ((16, 1), (4096, 0)):
-        prefix = d / f"lim{limit}"
-        rc, out = run_tb(info["plusargs"], prefix, f"+STACK_LIMIT={limit} +RUNS=1")
-        if rc != 0:
-            problems.append(f"overflow case limit={limit}: tb_gc rc={rc}")
-            continue
-        dump = gc_model.load_dump(pathlib.Path(f"{prefix}.0.gcdump"))
-        if dump.meta.get("overflow", 0) != want:
-            problems.append(f"overflow case limit={limit}: overflow={dump.meta.get('overflow')} want {want}")
-        problems += [f"overflow limit={limit}: {p}" for p in gc_model.check_dump(dump, compare_hw=(want == 0))]
+
+
+def deep_heap(n: int = 300) -> gc_heapgen.Heap:
+    """A chain of n nodes (payload_list, next): depth-first marking leaves one
+    payload per level on the stack."""
+    g = gc_heapgen.Gen(seed=8, size=0)
+    nxt = (TAG_INT, int_value(0))
+    nodes = []
+    for i in range(n):
+        payload = g.b.alloc_list([(TAG_INT, int_value(i))])
+        nxt = g.b.alloc_tuple([payload, nxt])
+        nodes.append(nxt)
+    return gc_heapgen.Heap(g.b, g.nodes, [nxt], [], 0x440, min(HEAP_LIMIT, g.b.ptr + 64),
+                           RF_SPILL_BASE, EXC_STACK_BASE, 0, set())
+
+
+def overflow_case() -> list[str]:
+    """Wide and deep graphs need no more than a few stack entries: a full
+    stack sends ranges to the rescan list, and only a full rescan list
+    abandons the collection."""
+    tiny = "+ONCHIP=2 +STACK_LIMIT=4"
+    problems = directed("wide", wide_heap(), [
+        ("+STACK_LIMIT=16", False, False),          # chunks: 129 entries fit
+        (tiny, False, True),
+        (f"{tiny} +RESCAN_LIMIT=1", True, False),
+    ])
+    problems += directed("deep", deep_heap(), [
+        ("+STACK_LIMIT=4096", False, False),
+        # One recorded node at a time: the stack drains before the next.
+        ("+ONCHIP=2 +STACK_LIMIT=1 +RESCAN_LIMIT=1", False, True),
+    ])
     return problems
 
 
@@ -109,6 +159,7 @@ def main() -> int:
     bad = 0
     max_spill = 0
     max_hw = 0
+    max_resc = 0
     infos = {s: prepare(s) for s in range(args.first, args.first + args.seeds)}
     with cf.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
         futs = [ex.submit(one, s, ce, lat, args.mutant, infos[s]) for s, ce, lat in tasks]
@@ -116,6 +167,7 @@ def main() -> int:
             label, problems, stats = f.result()
             max_spill = max(max_spill, stats["spill"])
             max_hw = max(max_hw, stats["hw"])
+            max_resc = max(max_resc, stats["rescans"])
             if problems:
                 bad += 1
                 if bad <= 20:
@@ -133,7 +185,7 @@ def main() -> int:
     spill_ok = max_spill > 0
     print(f"G3 seeds={args.seeds} configs={len(configs)} runs={len(tasks)} failing={bad} "
           f"overflow_guard={'ok' if not ov else 'FAIL'} spill_refill={'ok' if spill_ok else 'NOT EXERCISED'} "
-          f"max_stack_hw={max_hw}")
+          f"max_stack_hw={max_hw} max_rescans={max_resc}")
     return 0 if (bad == 0 and not ov and spill_ok) else 1
 
 
