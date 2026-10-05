@@ -558,6 +558,7 @@ def _exec_config(args: argparse.Namespace):
         build_dir=args.build_dir,
         progress=not args.no_progress,
         json_path=getattr(args, "json", None),
+        plusargs=tuple(args.plusargs.split()),
     )
 
 
@@ -613,6 +614,12 @@ def _add_exec_options(p: argparse.ArgumentParser, *, run_mode: bool = False) -> 
     p.add_argument(
         "--no-progress", action="store_true",
         help="Do not draw the live cycle counter",
+    )
+    p.add_argument(
+        "--plusargs", default=os.environ.get("PYCORE_PLUSARGS", ""),
+        help=("Extra simulator plusargs, space separated, ahead of the defaults "
+              "(e.g. '+GC_EN=1 +HEAP_DYN_BYTES=1048576'). With +GC_EN=1 the "
+              "report adds live bytes after each phase"),
     )
 
 

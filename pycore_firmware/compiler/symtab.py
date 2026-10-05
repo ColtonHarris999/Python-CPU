@@ -310,9 +310,10 @@ def _pyc_symtab(root):
     global sc_n, sc_kind, sc_parent, sc_node, sc_nlocals, sc_argcount
     global sc_varnames, opnd, opnd_n, ops, stmts, stmt_n
     global sc_kwonly, sc_flags, sc_defaults, sc_kwdefaults
-    cap = nd_n
-    if cap < 8:
-        cap = 8
+    # Scope tables start small and grow per scope (_pyc_sy_new_scope and the
+    # sc_free loop below). Sizing them to nd_n kept 16 node-count arrays live
+    # through codegen for a handful of scopes (the compile() peak, gc.md).
+    cap = 8
     sc_kind = [0] * cap
     sc_parent = [0] * cap
     sc_node = [0] * cap
@@ -383,10 +384,6 @@ def _pyc_symtab(root):
                 _pyc_sy_work_push(nid, 2)
                 continue
             sid = _pyc_sy_new_scope(1, cur, nid)
-            gdecl[sid] = [0] * 8
-            gdecl_n[sid] = 0
-            uses[sid] = [0] * 8
-            uses_n[sid] = 0
             capf = len(sc_free)
             while capf < sid + 1:
                 extra = capf
@@ -394,9 +391,17 @@ def _pyc_symtab(root):
                     extra = 8
                 sc_free = sc_free + ([0] * extra)
                 sc_free_n = sc_free_n + ([0] * extra)
+                gdecl = gdecl + ([0] * extra)
+                gdecl_n = gdecl_n + ([0] * extra)
+                uses = uses + ([0] * extra)
+                uses_n = uses_n + ([0] * extra)
                 capf = len(sc_free)
             sc_free[sid] = [0] * 8
             sc_free_n[sid] = 0
+            gdecl[sid] = [0] * 8
+            gdecl_n[sid] = 0
+            uses[sid] = [0] * 8
+            uses_n[sid] = 0
             sc_argcount[sid] = 1
             names, n = _pyc_sy_names_add(sc_varnames[sid], sc_nlocals[sid], ".0")
             sc_varnames[sid] = names
@@ -441,10 +446,6 @@ def _pyc_symtab(root):
                     _pyc_sy_work_push(kids[ks + j], 0)
                 continue
             sid = _pyc_sy_new_scope(1, cur, nid)
-            gdecl[sid] = [0] * 8
-            gdecl_n[sid] = 0
-            uses[sid] = [0] * 8
-            uses_n[sid] = 0
             capf = len(sc_free)
             while capf < sid + 1:
                 extra = capf
@@ -452,9 +453,17 @@ def _pyc_symtab(root):
                     extra = 8
                 sc_free = sc_free + ([0] * extra)
                 sc_free_n = sc_free_n + ([0] * extra)
+                gdecl = gdecl + ([0] * extra)
+                gdecl_n = gdecl_n + ([0] * extra)
+                uses = uses + ([0] * extra)
+                uses_n = uses_n + ([0] * extra)
                 capf = len(sc_free)
             sc_free[sid] = [0] * 8
             sc_free_n[sid] = 0
+            gdecl[sid] = [0] * 8
+            gdecl_n[sid] = 0
+            uses[sid] = [0] * 8
+            uses_n[sid] = 0
             # co_argcount is the positional count; nargs is nlocalsplus
             # for the parameters (positional + kw-only + *args + **kwargs).
             sc_argcount[sid] = params & 65535
