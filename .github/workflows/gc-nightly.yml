@@ -4,17 +4,13 @@ name: GC nightly
 # [gc-long] area of pycore/programs/hw_tests.toml (steady-state plateaus,
 # allocation-site churn, benches, compile loops) and 50 fuzz seeds on each
 # top. Too slow for the per-PR matrix in all-tests.yml, which runs [gc].
-# Same docker targets as all-tests.yml.
+# Same docker targets as all-tests.yml. On 4-core runners: gc-long ~17 min,
+# fuzz ~80 min single-core and ~3 h two-core (run 37286990167).
 
 on:
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
-  # TEMPORARY: workflow_dispatch needs the file on the default branch, so
-  # this runs the workflow once on its own branch before merge. Remove it.
-  push:
-    branches: [claude/ecstatic-ritchie-fwk33q]
-    paths: [.github/workflows/gc-nightly.yml]
 
 permissions:
   contents: read
