@@ -119,8 +119,9 @@ def gate_runs(ctx: Context, gate: str, name: str | None = None, *,
         elif done[0] % 50 == 0 or done[0] == total:
             print(f"[{label}] {done[0]}/{total} runs", flush=True)
 
+    # Under G10 one failure kills the mutant: stop there.
     return hw_tests.run_tests(tests, configs, jobs=ctx.jobs, plusargs=plus, extra=extra,
-                              out=out, echo=echo)
+                              out=out, echo=echo, stop_on_failure=bool(ctx.mutant))
 
 
 def run_logs(ctx: Context, prefix: str, exclude: tuple[str, ...] = ()) -> dict[str, list[pathlib.Path]]:

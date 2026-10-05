@@ -365,17 +365,51 @@ def _read_meta(path: pathlib.Path) -> dict[str, str]:
     return meta
 
 
-def _run(cmd: list[str], log: pathlib.Path, timeout: int = 7200) -> tuple[int, str]:
+def _run(cmd: list[str], log: pathlib.Path, timeout: int = 7200,
+         live: "Live | None" = None) -> tuple[int, str]:
+    proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if live is not None:
+        live.add(proc)
     try:
-        proc = subprocess.run(
-            cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout
-        )
-        rc, out = proc.returncode, proc.stdout + proc.stderr
-    except subprocess.TimeoutExpired as exc:
-        out = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-        rc, out = 124, out + f"\n[FAIL] runner timeout after {timeout} s\n"
+        out, err = proc.communicate(timeout=timeout)
+        rc, out = proc.returncode, out + err
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, err = proc.communicate()
+        rc, out = 124, out + err + f"\n[FAIL] runner timeout after {timeout} s\n"
+    finally:
+        if live is not None:
+            live.discard(proc)
+    if live is not None and live.stopped:
+        out += "\n[FAIL] stopped: an earlier run failed (stop_on_failure)\n"
+        rc = rc or 1
     log.write_text(" ".join(cmd) + "\n\n" + out, encoding="utf-8")
     return rc, out
+
+
+class Live:
+    """Running simulator processes, so a fail-fast run can kill them."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._procs: set[subprocess.Popen] = set()
+        self.stopped = False
+
+    def add(self, proc: subprocess.Popen) -> None:
+        with self._lock:
+            self._procs.add(proc)
+            if self.stopped:
+                proc.kill()
+
+    def discard(self, proc: subprocess.Popen) -> None:
+        with self._lock:
+            self._procs.discard(proc)
+
+    def stop(self) -> None:
+        with self._lock:
+            self.stopped = True
+            for proc in self._procs:
+                proc.kill()
 
 
 class Runner:
@@ -398,6 +432,7 @@ class Runner:
         self.extra = extra or {}
         self.python = python
         self.out = out or BUILD
+        self.live = Live()
         self._built: dict[str, tuple[bool, str]] = {}
         self._build_lock = threading.Lock()
         self._name_locks: dict[str, threading.Lock] = {}
@@ -555,7 +590,7 @@ class Runner:
                 return res
         if "{out}" in " ".join(self.global_plusargs + self.extra.get(t.name, "").split()):
             res.out = self.run_dir(t, cfg)
-        rc, out = _run(cmd, log)
+        rc, out = _run(cmd, log, live=self.live)
         res.sims = parse_sims(out)
         res.gc = parse_gc_line(out)
         if rc != 0 or "[FAIL]" in out or not res.sims:
@@ -613,9 +648,14 @@ def run_tests(
     fw_hex: pathlib.Path = DEFAULT_FW_HEX,
     do_prepare: bool = True,
     echo: Callable[[str], None] | None = print,
+    stop_on_failure: bool = False,
 ) -> list[Result]:
     """Run every test under its configs (configs_for) and return the
-    results, longest test first. ``echo`` gets one line per run."""
+    results, longest test first. ``echo`` gets one line per run.
+
+    ``stop_on_failure`` ends the run at the first unexpected result: runs
+    not yet started are skipped and running simulators are killed (G10: one
+    failure kills a mutant, and a mutant can make every run hang)."""
     if do_prepare and tests:
         prepare(tests)
     runner = Runner(fw_hex.resolve(), sys.executable, plusargs, out=out, extra=extra)
@@ -623,11 +663,19 @@ def run_tests(
     results: list[Result] = []
 
     def work(t: Test) -> None:
+        if runner.live.stopped:
+            return
         ok, detail = runner.build(t)
         for cfg in configs_for(t, configs):
+            if runner.live.stopped:
+                return
             r = runner.simulate(t, cfg) if ok else Result(t, cfg, False, detail)
             with lock:
+                if stop_on_failure and runner.live.stopped:
+                    return
                 results.append(r)
+                if stop_on_failure and not r.ok:
+                    runner.live.stop()
                 if echo:
                     c = f"cycles={r.cycles}" if r.cycles is not None else ""
                     why = r.detail if not r.passed else ""
