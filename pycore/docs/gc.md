@@ -643,14 +643,15 @@ current G0 is at `78860e7`.
 
 The on-device compiler is the largest Python program the hart runs, so the
 compile suite doubles as a collector test. `--plusargs` passes simulator
-plusargs through `pycore_cli.py run` and `compile_suite.py`; with `+GC_EN=1`
-the exec harness also calls `_bi_gc_collect()` before compile, after compile
-and after the run, and the report gives exact live bytes (what `compile()`
+plusargs through `pycore_cli.py run` and `compile_suite.py`; with the
+collector on (the default; `--plusargs +GC_EN=0` turns it off) the exec
+harness also calls `_bi_gc_collect()` before compile, after compile and after
+the run, and the report gives exact live bytes (what `compile()`
 kept), the number of collections and the longest pause:
 
 ```bash
-python3.14 pycore/tools/compile_suite.py --jobs 4 --plusargs "+GC_EN=1 +HEAP_DYN_BYTES=524288"
-python3.14 pycore/tools/pycore_cli.py run FILE.py --plusargs "+GC_EN=1 +GC_PHASE_PROF=1"
+python3.14 pycore/tools/compile_suite.py --jobs 4 --plusargs "+HEAP_DYN_BYTES=524288"
+python3.14 pycore/tools/pycore_cli.py run FILE.py --plusargs "+GC_PHASE_PROF=1"
 ```
 
 A small `+HEAP_DYN_BYTES` makes the collector run inside every compile.
@@ -666,7 +667,7 @@ Plusargs the gates use (give any of them to a test with
 
 | Plusarg | Effect |
 | --- | --- |
-| `+GC_EN=1` | collector on (the RTL default is off). The `gc` and `gc-long` entries in `hw_tests.toml` set it; `make test-hw HW_PLUSARGS=+GC_EN=1` runs every hardware test with it. `+GC_EN=0` is cycle-identical to the pre-GC machine (G1) |
+| `+GC_EN=1` | collector on (the RTL default is off). `hw_tests.py` adds it to every image test after the test's own plusargs, and `pycore_cli.py run` / `exec` (`make run-file`, `make exec-file`, the compile suite) add it after `--plusargs`. `+GC_EN=0` ahead of it (a test's plusargs, `--plusargs`, `HW_PLUSARGS=+GC_EN=0`) turns the collector off and is cycle-identical to the pre-GC machine (G1) |
 | `+GC_LOG=1` | one `[GC-LOG]` line per collection (live, free, pause, reason) |
 | `+GC_SITE_STATS=1` | one `[GC-SITE]` line per allocation site at exit (G9) |
 | `+GC_DUMP_EACH=<dir>` | coherent dump after each collection, checked by `gc_model.py` |

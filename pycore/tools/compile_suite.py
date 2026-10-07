@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cache-en", type=int, choices=(0, 1), default=None)
     ap.add_argument("--mem-latency", type=int, default=None)
     ap.add_argument("--plusargs", default="",
-                    help="extra simulator plusargs, e.g. '+GC_EN=1' (collector on)")
+                    help="extra simulator plusargs, e.g. '+GC_EN=0' (the collector is on by default)")
     ap.add_argument("--list", action="store_true", help="list programs and exit")
     args = ap.parse_args(argv)
 

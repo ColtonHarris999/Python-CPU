@@ -271,6 +271,15 @@ class ExecPipelineTest(unittest.TestCase):
             self.assertEqual(report["host"]["stdout"], "hi 3\n")
 
 
+class GcDefaultTest(unittest.TestCase):
+    def test_collector_is_on_unless_the_caller_turns_it_off(self) -> None:
+        self.assertTrue(pycore_exec.gc_enabled(()))
+        self.assertTrue(pycore_exec.gc_enabled(("+HEAP_DYN_BYTES=4096",)))
+        self.assertFalse(pycore_exec.gc_enabled(("+GC_EN=0",)))
+        # Verilog takes the first match.
+        self.assertFalse(pycore_exec.gc_enabled(("+GC_EN=0", "+GC_EN=1")))
+
+
 class CliTest(unittest.TestCase):
     def test_help_lists_exec_and_shell(self) -> None:
         buf = io.StringIO()
