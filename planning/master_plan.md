@@ -70,6 +70,20 @@ entry return. The live list of compiler bugs and ceilings is
 [`pycore/docs/compile_limitations.md`](../pycore/docs/compile_limitations.md)
 §3; add new finds there with a failing `img_compile_*` fixture.
 
+Bugs found while writing the accelerator plan are listed with repros in
+[`accelerator_split_plan.md`](accelerator_split_plan.md) Appendix A. Those
+reproduced on the simulators are:
+- excore `SET_UPDATE` hangs or drops elements on duplicates;
+- excore `LONG_STR` hashing and equality differ from pycore's;
+- a stale GIC after `ns['x'] = …` on the active globals dict;
+- `in` over more than 256 elements hangs;
+- name indexes ≥ 128 are truncated;
+- `set()` drops `None`;
+- bulk dict updates follow hash-slot order instead of insertion order;
+- `1.0 in [1]` is False;
+- held dmem requests execute twice at L1D (results unchanged, hit
+  counters inflated about 2×).
+
 Open hazards from the garbage-collection work (`pycore/docs/gc.md`):
 
 | Bug | Symptom | Where to start |
@@ -191,7 +205,7 @@ Inventory: `pycore_firmware/builtins/builtins.md`.
 | `getattr(obj, name)` with no default | returns `None` | raise `AttributeError` (firmware F2) |
 | `min` / `max` of an empty iterable | returns `None` | raise `ValueError` (F2) |
 | 27 not-implemented stubs (`open.py`, `super.py`, `hash.py`, …) | `return 1 % 0` bodies, **not seeded** into ROM, so a call is a missing-name `MEM_FAULT` | When one is seeded, it should `raise TypeError` (F3). See cleanup item F1 |
-| `print` phase 2 | one INT / BOOL / None / SHORT_STR per `_bi_print` | LONG_STR on the sink, container `__str__`, `file=` |
+| `print` phase 2 | one INT / BOOL / None / SHORT_STR per `_bi_print`, through an excore trap | a pycore memory write to a console channel, with STRACC formatting every type: [`accelerator_split_plan.md`](accelerator_split_plan.md) §7–8, phases P1, P2 and P6 |
 | `property` / `classmethod` / `staticmethod` | blocked | needs a descriptor protocol |
 
 `hasattr` must stay non-raising. Leave blocked: async (`aiter` / `anext`),
@@ -202,6 +216,24 @@ files, `breakpoint`, `hash` as a Python builtin, `memoryview`,
 and 128 B per `OBK_TYPE` share the bump heap under `PYCORE_HEAP_LIMIT`. New
 ROM bodies must pass `validate_code_tree` and, if they will be compiled on
 device, the compiler subset gate (`test_compiler_subset.py`).
+
+### 5. Accelerators and the excore split
+
+Design and phases: [`accelerator_split_plan.md`](accelerator_split_plan.md).
+The plan delivers:
+- a container accelerator with separate data-ready and container-ready
+  events;
+- print as a pycore console write;
+- `bytes`, `bytearray`, `int.from_bytes` and `int.to_bytes`;
+- startup `ACCEL_CFG` registers with excore fallbacks;
+- `excore_min` / `excore_full` and `rom_accel` / `rom_soft` builds;
+- the excore as an emulator of unimplemented Python.
+
+| Item | Today | Next step |
+| --- | --- | --- |
+| P0 groundwork | 27 compile-time `EXCORE_EN` routing sites; duplicate L1D requests; no runtime config | Regression tests for the plan's Appendix A, the memory fixes of §11, `ACCEL_CFG` + MCFG page + `pycore_route`, the key-spec package |
+| P1 console | `print` traps to the excore per piece; single-core has no output | IO window and console channels, `CONSOLE_BASE`, `_bi_write` |
+| P3 container accelerator | container work split between `S_CONTAINER` and excore traps 9–14 / 19–20 | CA stage A0, with the legacy path behind `ACCEL_CFG.CA = 0` |
 
 ## Memory-map locks
 
