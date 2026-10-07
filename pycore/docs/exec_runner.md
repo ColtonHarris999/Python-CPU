@@ -137,3 +137,28 @@ about a minute before its first output.
 | `TRAP MEM_FAULT` during compile | The compiler ran out of heap. It keeps its whole working set, roughly 10–16 KB per source line, and about 15 MB is free at boot (16 MB data window), so the limit is around a thousand lines. Simulation time runs out long before that. |
 | `UNSUPPORTED` | `class`, `import`, `with`, annotations, generator expressions, slice steps, and the other `compiler.md` exclusions. |
 | `TRAP DIV_ZERO`, `MEM_FAULT` during run | Division by zero, a missing dict key, a bad or negative index, or an unbound name. These are hardware traps, not catchable exceptions yet. |
+
+## CPython cycle baseline
+
+The `~` cycle column above is wall time times the host's nominal clock. VMs and
+containers usually have no PMU, so it is not a baseline. The simulated baseline
+is `pycore/tools/cpython_baseline/`:
+
+```bash
+make cpython-baseline                         # suite, PyCore-sized caches
+make cpython-baseline CPYTHON_BASELINE_MACHINE=skylake
+python3.14 -m cpython_baseline.baseline prog.py --machine pycore --llc-bytes 262144
+```
+
+`PYTHONPATH=pycore/tools` is required for the `-m` form. Callgrind simulates
+L1I, L1D, and a last-level cache; a simple-core model turns the counts into
+cycles. Presets are `pycore` (this hart's sizes and latencies), `gem5_classic`,
+`skylake`, and `romer`. Flags override a preset without editing it.
+
+The report splits each program into **compile** (source to bytecode),
+**interpret** (the dispatch edge inside `_PyEval_EvalFrameDefault`: fetch,
+decode, indirect jump), and **run** (inline opcode bodies plus the C helpers
+they call). Cache hit rates and MPKI are per phase. Compare PyCore with the
+cold compile and the cold exec. The warm pair is the steady state after the
+specializing interpreter has rewritten the code object. Methodology and the
+JSON schema: `pycore/tools/cpython_baseline/README.md`.

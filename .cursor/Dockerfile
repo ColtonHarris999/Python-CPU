@@ -8,6 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 #     older 5.020 in Ubuntu's repos).
 #   - build-essential / make: C++ toolchain Verilator emits and drives.
 #   - git / curl / ca-certificates: repository and network basics.
+#   - valgrind: Callgrind cache and branch simulation for the CPython baseline.
 # The python:3.14-slim base provides both `python3.14` (image-boot tooling) and
 # `python3` (excore RV32 assembler tooling).
 RUN apt-get update \
@@ -18,4 +19,5 @@ RUN apt-get update \
         git \
         curl \
         ca-certificates \
+        valgrind \
  && rm -rf /var/lib/apt/lists/*
