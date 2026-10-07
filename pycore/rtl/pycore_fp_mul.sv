@@ -2,8 +2,10 @@
 
 // IEEE 754 binary64 multiply, round-to-nearest-even, full subnormal
 // support.  The 53 x 53 significand product comes from an iterative
-// pycore_umul_seq (STEP multiplier bits per clock), so the per-cycle
-// datapath is one 53 x STEP multiply-accumulate:
+// pycore_umul_seq (STEP multiplier bits per clock) that the parent owns
+// and shares with pycore_fp_pow (mul_*_o / mul_*_i below; the two never
+// run at the same time), so the per-cycle datapath is one 53 x STEP
+// multiply-accumulate:
 //
 //   C0            unpack, normalize subnormal significands  -> stage 1 regs
 //   C1 .. C(N)    N = ceil(53/STEP) product steps (4 at STEP = 14)
@@ -14,17 +16,23 @@
 // the first, at the default STEP.
 // Handshake as in pycore_umul_seq.sv (level start_i, one-cycle done_o,
 // withdrawing start_i aborts).
-module pycore_fp_mul #(
-    parameter int STEP = 14
-) (
-    input  logic        clk_i,
-    input  logic        rst_n_i,
-    input  logic        start_i,
-    input  logic [63:0] op_a_i,
-    input  logic [63:0] op_b_i,
-    output logic [63:0] result_o,
-    output logic        done_o,
-    output logic        busy_o
+module pycore_fp_mul (
+    input  logic         clk_i,
+    input  logic         rst_n_i,
+    input  logic         start_i,
+    input  logic [63:0]  op_a_i,
+    input  logic [63:0]  op_b_i,
+    output logic [63:0]  result_o,
+    output logic         done_o,
+    output logic         busy_o,
+    // Shared significand multiplier (pycore_umul_seq, BW = 53): request,
+    // operands, and its product / handshake back.
+    output logic         mul_start_o,
+    output logic [52:0]  mul_a_o,
+    output logic [52:0]  mul_b_o,
+    input  logic [105:0] mul_product_i,
+    input  logic         mul_done_i,
+    input  logic         mul_busy_i
 );
 
     // ---------------- C0: unpack / normalize ----------------
@@ -74,24 +82,17 @@ module pycore_fp_mul #(
     end
 
     // ---------------- C1..: significand product ----------------
-    logic         mul_start;
     logic [105:0] product;
     logic         mul_done;
     logic         mul_busy;
 
     // Keep start high while the core runs; a flush drops it too.
-    assign mul_start = start_i && (s1_valid_r || mul_busy);
-
-    pycore_umul_seq #(.AW(53), .BW(53), .STEP(STEP)) u_mul (
-        .clk_i    (clk_i),
-        .rst_n_i  (rst_n_i),
-        .start_i  (mul_start),
-        .op_a_i   (s1_sig_a_r),
-        .op_b_i   (s1_sig_b_r),
-        .product_o(product),
-        .done_o   (mul_done),
-        .busy_o   (mul_busy)
-    );
+    assign mul_start_o = start_i && (s1_valid_r || mul_busy);
+    assign mul_a_o     = s1_sig_a_r;
+    assign mul_b_o     = s1_sig_b_r;
+    assign product     = mul_product_i;
+    assign mul_done    = mul_done_i;
+    assign mul_busy    = mul_busy_i;
 
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin

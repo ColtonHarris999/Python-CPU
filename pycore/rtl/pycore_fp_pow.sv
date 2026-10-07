@@ -19,7 +19,8 @@
 //         needs when y is huge.  NLOG digits leave a relative error
 //         below 2^-(NLOG-2).
 //   mul   L = E + log2 m' is normalised to LMW bits and multiplied by the
-//         53-bit significand of y (pycore_umul_seq).  The product is
+//         53-bit significand of y on the parent's pycore_umul_seq (shared
+//         with pycore_fp_mul through mul_*_o / mul_*_i).  The product is
 //         aligned to FP fraction bits: |P| >= 2^11 is an overflow or an
 //         underflow to zero, otherwise P = I + F with F in [0, 1).
 //   exp2  Restoring recurrence on F with the constants log2(1 + 2^-k):
@@ -38,22 +39,27 @@
 // Handshake as pycore_umul_seq: level start_i, accepted when idle, one
 // cycle done_o with result_o valid; withdrawing start_i aborts.
 module pycore_fp_pow #(
-    parameter int MUL_STEP = 14
+    parameter int LMW = 75                // bits of the normalised log2 x
 ) (
-    input  logic        clk_i,
-    input  logic        rst_n_i,
-    input  logic        start_i,
-    input  logic [63:0] op_x_i,
-    input  logic [63:0] op_y_i,
-    output logic [63:0] result_o,
-    output logic        done_o,
-    output logic        busy_o
+    input  logic            clk_i,
+    input  logic            rst_n_i,
+    input  logic            start_i,
+    input  logic [63:0]     op_x_i,
+    input  logic [63:0]     op_y_i,
+    output logic [63:0]     result_o,
+    output logic            done_o,
+    output logic            busy_o,
+    // Shared multiplier (pycore_umul_seq AW = LMW, BW = 53) owned by the parent.
+    output logic            mul_start_o,
+    output logic [LMW-1:0]  mul_a_o,
+    output logic [52:0]     mul_b_o,
+    input  logic [LMW+52:0] mul_product_i,
+    input  logic            mul_done_i
 );
 
     localparam int FW   = PY_POW_ROM_FW;  // fraction bits of the datapath (88)
     localparam int NLOG = 80;             // log2 digits
     localparam int NEXP = 72;             // exp2 digits
-    localparam int LMW  = 75;             // bits of the normalised log2 x
     localparam int FP   = 80;             // fraction bits of y * log2 x
     localparam int WW   = FW + 2;         // residual w: sign, 1 integer, FW fraction
     localparam int AW   = FW + 3;         // accumulator: sign, 2 integer, FW fraction
@@ -102,7 +108,7 @@ module pycore_fp_pow #(
 
     // ---- P = y * L ----
     logic [QW-1:0]      q_prod;
-    logic               mul_done, mul_start;
+    logic               mul_done;
     logic [PW-1:0]      pfix_r;
     logic               huge_r;
     logic               psign_r;
@@ -231,13 +237,11 @@ module pycore_fp_pow #(
     // ------------------------------------------------------------------
     // P = y * L
     // ------------------------------------------------------------------
-    pycore_umul_seq #(.AW(LMW), .BW(53), .STEP(MUL_STEP)) u_mul (
-        .clk_i(clk_i), .rst_n_i(rst_n_i),
-        .start_i(mul_start),
-        .op_a_i(lm_r), .op_b_i(my_r),
-        .product_o(q_prod), .done_o(mul_done), .busy_o()
-    );
-    assign mul_start = (state_r == S_MUL);
+    assign mul_start_o = (state_r == S_MUL);
+    assign mul_a_o     = lm_r;
+    assign mul_b_o     = my_r;
+    assign q_prod      = mul_product_i;
+    assign mul_done    = mul_done_i;
 
     // P = Q * 2^(ey - 52 + eL);  Pfix = P * 2^FP = Q >> t,  t = -(ey - 52 + eL + FP)
     logic signed [13:0] p_sh;

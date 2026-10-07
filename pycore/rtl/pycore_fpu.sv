@@ -72,11 +72,34 @@ module pycore_fpu #(
         .result_o(add_res), .done_o(add_done), .busy_o(add_busy)
     );
 
-    pycore_fp_mul #(.STEP(MUL_STEP)) u_mul (
+    // One significand multiplier (POW_LMW x 53, the wider of the two users)
+    // serves both pycore_fp_mul and pycore_fp_pow; the sequencer never has
+    // both in flight, so the power unit simply takes the bus while it runs.
+    localparam int POW_LMW = 75;
+    logic                 sm_start, fm_mul_start, pw_mul_start, sm_done, sm_busy;
+    logic [POW_LMW-1:0]   sm_a, pw_mul_a;
+    logic [52:0]          sm_b, fm_mul_a, fm_mul_b, pw_mul_b;
+    logic [POW_LMW+52:0]  sm_product;
+
+    assign sm_start = u_pow_start ? pw_mul_start : fm_mul_start;
+    assign sm_a     = u_pow_start ? pw_mul_a : {{(POW_LMW-53){1'b0}}, fm_mul_a};
+    assign sm_b     = u_pow_start ? pw_mul_b : fm_mul_b;
+
+    pycore_umul_seq #(.AW(POW_LMW), .BW(53), .STEP(MUL_STEP)) u_sig_mul (
+        .clk_i(clk_i), .rst_n_i(rst_n_i),
+        .start_i(sm_start),
+        .op_a_i(sm_a), .op_b_i(sm_b),
+        .product_o(sm_product), .done_o(sm_done), .busy_o(sm_busy)
+    );
+
+    pycore_fp_mul u_mul (
         .clk_i(clk_i), .rst_n_i(rst_n_i),
         .start_i(u_mul_start),
         .op_a_i(u_a), .op_b_i(u_b),
-        .result_o(mul_res), .done_o(mul_done), .busy_o(mul_busy)
+        .result_o(mul_res), .done_o(mul_done), .busy_o(mul_busy),
+        .mul_start_o(fm_mul_start), .mul_a_o(fm_mul_a), .mul_b_o(fm_mul_b),
+        .mul_product_i(sm_product[105:0]), .mul_done_i(sm_done && !u_pow_start),
+        .mul_busy_i(sm_busy && !u_pow_start)
     );
 
     pycore_fp_divrem #(.RL(DIV_RL)) u_div (
@@ -86,11 +109,13 @@ module pycore_fpu #(
         .result_o(div_res), .done_o(div_done), .busy_o(div_busy)
     );
 
-    pycore_fp_pow #(.MUL_STEP(MUL_STEP)) u_pow (
+    pycore_fp_pow #(.LMW(POW_LMW)) u_pow (
         .clk_i(clk_i), .rst_n_i(rst_n_i),
         .start_i(u_pow_start),
         .op_x_i(u_a), .op_y_i(u_b),
-        .result_o(pow_res), .done_o(pow_done), .busy_o(pow_busy)
+        .result_o(pow_res), .done_o(pow_done), .busy_o(pow_busy),
+        .mul_start_o(pw_mul_start), .mul_a_o(pw_mul_a), .mul_b_o(pw_mul_b),
+        .mul_product_i(sm_product), .mul_done_i(sm_done && u_pow_start)
     );
 
     assign u_done = add_done | mul_done | div_done | pow_done;
