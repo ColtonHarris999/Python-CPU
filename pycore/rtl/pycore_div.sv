@@ -91,6 +91,7 @@ module pycore_div #(
         .clk_i      (clk_i),
         .rst_n_i    (rst_n_i),
         .start_i    (core_start),
+        .sqrt_i     (1'b0),
         .rem_init_i (rem_init),
         .bits_i     (bits),
         .divisor_i  (b_mag_r),

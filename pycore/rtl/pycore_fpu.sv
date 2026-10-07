@@ -57,7 +57,7 @@ module pycore_fpu #(
     // ---------------------------------------------------------------------
     // Primitive pipelines and the shared issue bus
     // ---------------------------------------------------------------------
-    logic        u_add_start, u_sub, u_mul_start, u_div_start, u_fmod, u_pow_start;
+    logic        u_add_start, u_sub, u_mul_start, u_div_start, u_fmod, u_sqrt, u_pow_start;
     logic [63:0] u_a, u_b;
     logic [63:0] add_res, mul_res, div_res, pow_res;
     logic        add_done, mul_done, div_done, pow_done;
@@ -104,7 +104,7 @@ module pycore_fpu #(
 
     pycore_fp_divrem #(.RL(DIV_RL)) u_div (
         .clk_i(clk_i), .rst_n_i(rst_n_i),
-        .start_i(u_div_start), .fmod_i(u_fmod),
+        .start_i(u_div_start), .fmod_i(u_fmod), .sqrt_i(u_sqrt),
         .op_a_i(u_a), .op_b_i(u_b),
         .result_o(div_res), .done_o(div_done), .busy_o(div_busy)
     );
@@ -131,7 +131,7 @@ module pycore_fpu #(
         S_FD_FMOD, S_FD_SUB, S_FD_DIV, S_FD_FIX, S_FD_SUB1,
         S_FD_FLOOR, S_FD_DIFF, S_FD_HALF, S_FD_ADD1,
         S_POW_NORM, S_POW_STEP, S_POW_SQR, S_POW_MUL, S_POW_FIN, S_POW_RECIP, S_POW_INV,
-        S_POW_END, S_POW_UNIT,
+        S_POW_END, S_POW_UNIT, S_POW_SQRT,
         S_CADD_R, S_CADD_I,
         S_CMUL_1, S_CMUL_2, S_CMUL_3, S_CMUL_4, S_CMUL_5, S_CMUL_6,
         S_CDIV_1, S_CDIV_2, S_CDIV_3, S_CDIV_4, S_CDIV_5,
@@ -299,6 +299,10 @@ module pycore_fpu #(
                         dec_kind = K_EXC;   // complex result in Python: not in hardware
                     end else if (a_abs_one) begin
                         dec_result = {64'd0, (ar[63] && b_odd) ? PY_F64_NONE : PY_F64_ONE};
+                    end else if (br == PY_F64_HALF) begin
+                        // x ** 0.5: correctly rounded square root on the divider
+                        dec_kind = K_SEQ;
+                        dec_next = S_POW_SQRT;
                     end else if (b_int && b_trunc_ok && pow_n_small) begin
                         // x ** n, |n| <= POW_CHAIN_MAX: square-and-multiply
                         dec_kind      = K_SEQ;
@@ -399,6 +403,7 @@ module pycore_fpu #(
         u_mul_start = 1'b0;
         u_div_start = 1'b0;
         u_fmod      = 1'b0;
+        u_sqrt      = 1'b0;
         u_pow_start = 1'b0;
         u_a         = ar;
         u_b         = br;
@@ -438,6 +443,7 @@ module pycore_fpu #(
             S_POW_RECIP: begin u_div_start = 1'b1; u_a = PY_F64_ONE; u_b = t0_r; end
             S_POW_INV:   begin u_div_start = 1'b1; u_a = PY_F64_ONE; u_b = t1_r; end
             S_POW_UNIT:  begin u_pow_start = 1'b1; u_a = a_abs; u_b = br; end
+            S_POW_SQRT:  begin u_div_start = 1'b1; u_sqrt = 1'b1; u_a = a_abs; end
 
             // ---- complex + / - ----
             S_CADD_R: begin u_add_start = 1'b1; u_sub = (op_i == PY_ALU_SUB); u_a = ar; u_b = br; end
@@ -631,6 +637,8 @@ module pycore_fpu #(
                 end
                 // ---- float ** : |x| ** y on the log / exp unit ----
                 S_POW_UNIT: if (u_done) begin t0_r <= u_res; state_r <= S_POW_END; end
+                // ---- float ** 0.5 : sqrt on the divider ----
+                S_POW_SQRT: if (u_done) begin t0_r <= u_res; state_r <= S_POW_END; end
 
                 // ---- complex + - ----
                 S_CADD_R: if (u_done) begin t0_r <= u_res; state_r <= S_CADD_I; end
