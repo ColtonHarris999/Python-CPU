@@ -162,3 +162,9 @@ they call). Cache hit rates and MPKI are per phase. Compare PyCore with the
 cold compile and the cold exec. The warm pair is the steady state after the
 specializing interpreter has rewritten the code object. Methodology and the
 JSON schema: `pycore/tools/cpython_baseline/README.md`.
+
+`make cpython-baseline` is the short microbenchmark smoke test.
+`make cpython-baseline-research` is the pyperformance / Benchmarks Game /
+SciMark set, and the measured table lives in
+[`cpython_benchmarks.md`](cpython_benchmarks.md). Those are the programs to
+run on PyCore as well.
