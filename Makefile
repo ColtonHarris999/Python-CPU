@@ -49,6 +49,7 @@ PYCORE_ARITH_SRCS := \
 	pycore/rtl/pycore_fp_add.sv \
 	pycore/rtl/pycore_fp_mul.sv \
 	pycore/rtl/pycore_fp_divrem.sv \
+	pycore/rtl/pycore_fp_pow.sv \
 	pycore/rtl/pycore_fpu.sv
 
 PYCORE_RTL_SRCS := \

@@ -12,9 +12,10 @@
 //   ADD SUB MUL TRUE_DIV   one pipeline pass (pass-through, no extra cycle)
 //   MOD                    fmod, then the sign fix-up add        (float_rem)
 //   FLOOR_DIV              fmod, sub, div, fix-ups, floor        (float_divmod)
-//   POWER                  CPython's special cases, then square-and-multiply
-//                          on an integer-valued exponent (see docs/alu.md
-//                          for the deviations from libm pow())
+//   POWER                  CPython's special cases; x ** +-1, +-2 by
+//                          multiply / divide, everything else on the
+//                          pycore_fp_pow unit (2 ** (y log2 x), see
+//                          docs/alu.md for the accuracy versus libm pow())
 //   NEG POS NOT EQ..GE     combinational, 1 cycle
 //   complex ADD SUB MUL    per-component sequences (_Py_c_sum/_diff/_prod)
 //   complex TRUE_DIV       Smith's algorithm as in _Py_c_quot
@@ -23,10 +24,9 @@
 // exception_o replaces done_o when the operation ends in a Python
 // exception: ZeroDivisionError (x / 0.0, x // 0.0, x % 0.0, 0.0 ** -y,
 // z / 0j), OverflowError (finite ** finite overflowing to inf), and the
-// two power cases the hardware does not implement (fractional exponent,
-// negative base with a fractional exponent, which is a complex result in
-// Python).  Division by zero is reported in the accept cycle, before any
-// pipeline starts.
+// one power case the hardware does not implement: a negative base with
+// a fractional exponent, which is a complex result in Python.  Division
+// by zero is reported in the accept cycle, before any pipeline starts.
 //
 // Operands are binary64 bit patterns already promoted by pycore_promote;
 // complex operands carry the imaginary part in [127:64].  Handshake:
@@ -34,7 +34,11 @@
 // neither; withdrawing start_i aborts (see pycore_umul_seq.sv).
 module pycore_fpu #(
     parameter int MUL_STEP = 14,
-    parameter int DIV_RL   = 2
+    parameter int DIV_RL   = 2,
+    // Integer exponents with |n| <= POW_CHAIN_MAX use square-and-multiply
+    // (n = +-1, +-2: a single multiply / divide, exact to the last rounding);
+    // larger ones go through pycore_fp_pow like fractional exponents.
+    parameter int POW_CHAIN_MAX = 2
 ) (
     input  logic         clk_i,
     input  logic         rst_n_i,
@@ -53,11 +57,11 @@ module pycore_fpu #(
     // ---------------------------------------------------------------------
     // Primitive pipelines and the shared issue bus
     // ---------------------------------------------------------------------
-    logic        u_add_start, u_sub, u_mul_start, u_div_start, u_fmod;
+    logic        u_add_start, u_sub, u_mul_start, u_div_start, u_fmod, u_pow_start;
     logic [63:0] u_a, u_b;
-    logic [63:0] add_res, mul_res, div_res;
-    logic        add_done, mul_done, div_done;
-    logic        add_busy, mul_busy, div_busy;
+    logic [63:0] add_res, mul_res, div_res, pow_res;
+    logic        add_done, mul_done, div_done, pow_done;
+    logic        add_busy, mul_busy, div_busy, pow_busy;
     logic        u_done;
     logic [63:0] u_res;
 
@@ -82,8 +86,15 @@ module pycore_fpu #(
         .result_o(div_res), .done_o(div_done), .busy_o(div_busy)
     );
 
-    assign u_done = add_done | mul_done | div_done;
-    assign u_res  = add_done ? add_res : (mul_done ? mul_res : div_res);
+    pycore_fp_pow #(.MUL_STEP(MUL_STEP)) u_pow (
+        .clk_i(clk_i), .rst_n_i(rst_n_i),
+        .start_i(u_pow_start),
+        .op_x_i(u_a), .op_y_i(u_b),
+        .result_o(pow_res), .done_o(pow_done), .busy_o(pow_busy)
+    );
+
+    assign u_done = add_done | mul_done | div_done | pow_done;
+    assign u_res  = add_done ? add_res : (mul_done ? mul_res : (div_done ? div_res : pow_res));
 
     // ---------------------------------------------------------------------
     // Sequencer state
@@ -95,7 +106,7 @@ module pycore_fpu #(
         S_FD_FMOD, S_FD_SUB, S_FD_DIV, S_FD_FIX, S_FD_SUB1,
         S_FD_FLOOR, S_FD_DIFF, S_FD_HALF, S_FD_ADD1,
         S_POW_NORM, S_POW_STEP, S_POW_SQR, S_POW_MUL, S_POW_FIN, S_POW_RECIP, S_POW_INV,
-        S_POW_END,
+        S_POW_END, S_POW_UNIT,
         S_CADD_R, S_CADD_I,
         S_CMUL_1, S_CMUL_2, S_CMUL_3, S_CMUL_4, S_CMUL_5, S_CMUL_6,
         S_CDIV_1, S_CDIV_2, S_CDIV_3, S_CDIV_4, S_CDIV_5,
@@ -203,9 +214,13 @@ module pycore_fpu #(
         else         crec_scale = pycore_f64_is_zero(s) ? PY_F64_QNAN : {s[63], PY_F64_PINF[62:0]};
     endfunction
 
+    logic [63:0] b_trunc_abs;
+    logic        pow_n_small;
     always_comb begin
         b_trunc_ok = pycore_float_trunc_int64({64'd0, br}, b_trunc_int);
     end
+    assign b_trunc_abs = b_trunc_int[63] ? (~b_trunc_int + 64'd1) : b_trunc_int;
+    assign pow_n_small = (b_trunc_abs <= 64'(POW_CHAIN_MAX));
 
     always_comb begin
         dec_kind      = K_EXC;
@@ -255,16 +270,22 @@ module pycore_fpu #(
                     end else if (a_zero) begin
                         if (b_lt0) dec_kind = K_EXC;                 // ZeroDivisionError
                         else       dec_result = {64'd0, b_odd ? ar : PY_F64_PZERO};
-                    end else if (!b_int || !b_trunc_ok) begin
-                        dec_kind = K_EXC;   // fractional / huge exponent: not in hardware
+                    end else if (!b_int && ar[63]) begin
+                        dec_kind = K_EXC;   // complex result in Python: not in hardware
                     end else if (a_abs_one) begin
                         dec_result = {64'd0, (ar[63] && b_odd) ? PY_F64_NONE : PY_F64_ONE};
-                    end else begin
+                    end else if (b_int && b_trunc_ok && pow_n_small) begin
+                        // x ** n, |n| <= POW_CHAIN_MAX: square-and-multiply
                         dec_kind      = K_SEQ;
                         dec_next      = S_POW_NORM;
                         dec_pow_neg   = ar[63] && b_odd;
                         dec_pow_recip = b_lt0;
-                        dec_pow_n     = b_trunc_int[63] ? (~b_trunc_int + 64'd1) : b_trunc_int;
+                        dec_pow_n     = b_trunc_abs;
+                    end else begin
+                        // fractional, large or non-int64 exponent: 2 ** (y log2 |x|)
+                        dec_kind      = K_SEQ;
+                        dec_next      = S_POW_UNIT;
+                        dec_pow_neg   = ar[63] && b_odd;
                     end
                 end
                 PY_ALU_NEG: begin
@@ -353,6 +374,7 @@ module pycore_fpu #(
         u_mul_start = 1'b0;
         u_div_start = 1'b0;
         u_fmod      = 1'b0;
+        u_pow_start = 1'b0;
         u_a         = ar;
         u_b         = br;
 
@@ -390,6 +412,7 @@ module pycore_fpu #(
             S_POW_MUL:   begin u_mul_start = 1'b1; u_a = t0_r; u_b = t1_r; end
             S_POW_RECIP: begin u_div_start = 1'b1; u_a = PY_F64_ONE; u_b = t0_r; end
             S_POW_INV:   begin u_div_start = 1'b1; u_a = PY_F64_ONE; u_b = t1_r; end
+            S_POW_UNIT:  begin u_pow_start = 1'b1; u_a = a_abs; u_b = br; end
 
             // ---- complex + / - ----
             S_CADD_R: begin u_add_start = 1'b1; u_sub = (op_i == PY_ALU_SUB); u_a = ar; u_b = br; end
@@ -581,6 +604,8 @@ module pycore_fpu #(
                         state_r <= S_DONE;
                     end
                 end
+                // ---- float ** : |x| ** y on the log / exp unit ----
+                S_POW_UNIT: if (u_done) begin t0_r <= u_res; state_r <= S_POW_END; end
 
                 // ---- complex + - ----
                 S_CADD_R: if (u_done) begin t0_r <= u_res; state_r <= S_CADD_I; end
