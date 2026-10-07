@@ -446,6 +446,7 @@ def transcode_code_units(co: types.CodeType, code: bytes | None = None) -> list[
 
 _REL_JUMP_OPS = frozenset(_opcode_module.opname[op] for op in _opcode_module.hasjrel)
 _BACKWARD_JUMP_OPS = frozenset({"JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT"})
+_CALL_OPS = frozenset({"CALL", "CALL_KW"})
 
 
 def _exc_table_varint(value: int, first: bool) -> bytes:
@@ -518,12 +519,27 @@ def strip_inline_caches(co: types.CodeType) -> tuple[bytes, bytes]:
     if not any(r[4] for r in records):
         return code, co.co_exceptiontable
 
+    # An exception unwinding out of a callee is matched against the caller's
+    # table at the CALL-site successor (pc(CALL) + 1, pycore_call_fsm.svh
+    # S_RETURN). With caches that unit is a CACHE inside the protected
+    # range; without them it is the next instruction, outside the range
+    # when the CALL is the last protected instruction (`try: return f()`).
+    # Keep one NOP after such a CALL so the range still covers the
+    # successor (limitations.md L-RT-5).
+    exc_entries = dis._parse_exception_table(co)
+    range_ends = {entry.end // 2 for entry in exc_entries}
+    pad_after = {
+        start
+        for start, _n_ext, op, _arg, _n_cache, old_end in records
+        if _opcode_module.opname[op] in _CALL_OPS and old_end in range_ends
+    }
+
     # old unit index of an instruction start (or the code end) -> new index
     new_index: dict[int, int] = {}
     new_unit = 0
     for start, n_ext, _op, _arg, _n_cache, old_end in records:
         new_index[start] = new_unit
-        new_unit += n_ext + 1
+        new_unit += n_ext + 1 + (1 if start in pad_after else 0)
     new_index[n_units] = new_unit
 
     def remap(old: int) -> int:
@@ -561,9 +577,11 @@ def strip_inline_caches(co: types.CodeType) -> tuple[bytes, bytes]:
         for i in range(n_ext, 0, -1):
             out += bytes((OP_EXTENDED_ARG, (arg >> (8 * i)) & 0xFF))
         out += bytes((op, arg & 0xFF))
+        if start in pad_after:
+            out += bytes((_OP_NOP, 0))
 
     table = bytearray()
-    for entry in dis._parse_exception_table(co):
+    for entry in exc_entries:
         start_u = remap(entry.start // 2)
         end_u = remap(entry.end // 2)
         target_u = remap(entry.target // 2)

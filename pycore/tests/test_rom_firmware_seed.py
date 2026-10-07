@@ -324,6 +324,7 @@ class RomFirmwareSeedTest(unittest.TestCase):
         ]
         total_old = total_new = 0
         exc_tables_seen = 0
+        pads = 0
         for _key, stem, func_name in entries:
             path = image_from_source.FIRMWARE_BUILTINS_DIR / f"{stem}.py"
             ns: dict[str, object] = {}
@@ -338,6 +339,20 @@ class RomFirmwareSeedTest(unittest.TestCase):
             old = [i for i in dis.get_instructions(co) if i.opname != "EXTENDED_ARG"]
             ordinal = {i.start_offset // 2: n for n, i in enumerate(old)}
             new = decode(code)
+            # A NOP kept after a CALL that ends a protected range is padding
+            # (strip_inline_caches), not an instruction of the source body.
+            kept = []
+            for n, ins in enumerate(new):
+                if (
+                    ins[2] == "NOP"
+                    and n > 0
+                    and new[n - 1][2] in image_from_source._CALL_OPS
+                    and old[len(kept)].opname != "NOP"
+                ):
+                    pads += 1
+                    continue
+                kept.append(ins)
+            new = kept
             new_ordinal = {start: n for n, (start, _pc, _name, _arg) in enumerate(new)}
             with self.subTest(body=func_name):
                 self.assertEqual(len(new), len(old))
@@ -366,6 +381,7 @@ class RomFirmwareSeedTest(unittest.TestCase):
                     else:
                         self.assertEqual(new_ordinal[b[1]], ordinal[a.end // 2])
         self.assertGreater(exc_tables_seen, 0, "no ROM body with a try block")
+        self.assertGreater(pads, 0, "compile's `try: return f()` needs a pad NOP")
         self.assertLess(total_new, total_old * 0.7, (total_new, total_old))
 
     def test_wave3_image_programs_build(self) -> None:
