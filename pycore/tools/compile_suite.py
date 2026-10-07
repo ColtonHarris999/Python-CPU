@@ -102,6 +102,10 @@ def run_one(
         result["compile_cycles"] = (phases.get("compile") or {}).get("cycle")
         result["run_cycles"] = (phases.get("run") or {}).get("cycle")
         result["compile_heap"] = dev.get("heap_compile")
+        if dev.get("gc_live_boot") is not None:
+            result["gc_kept_by_compile"] = dev["gc_live_compiled"] - dev["gc_live_boot"]
+            result["gc_collections"] = dev.get("gc_collections")
+            result["gc_max_pause"] = dev.get("gc_max_pause")
     else:
         tail = (proc.stdout + proc.stderr).strip().splitlines()[-3:]
         result["detail"] = " | ".join(tail)
@@ -120,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-cycles", type=int, default=DEFAULT_MAX_CYCLES)
     ap.add_argument("--cache-en", type=int, choices=(0, 1), default=None)
     ap.add_argument("--mem-latency", type=int, default=None)
+    ap.add_argument("--plusargs", default="",
+                    help="extra simulator plusargs, e.g. '+GC_EN=1' (collector on)")
     ap.add_argument("--list", action="store_true", help="list programs and exit")
     args = ap.parse_args(argv)
 
@@ -140,6 +146,8 @@ def main(argv: list[str] | None = None) -> int:
         extra += ["--cache-en", str(args.cache_en)]
     if args.mem_latency is not None:
         extra += ["--mem-latency", str(args.mem_latency)]
+    if args.plusargs:
+        extra += ["--plusargs", args.plusargs]
     build = pathlib.Path(args.build_dir)
     if not build.is_absolute():
         build = REPO_ROOT / build
@@ -167,12 +175,24 @@ def main(argv: list[str] | None = None) -> int:
     results.sort(key=lambda r: r["name"])
     failed = [r for r in results if r["verdict"] != "PASS"]
     print()
-    print(f"{'program':<22} {'verdict':<11} {'compile cycles':>15} {'run cycles':>12} {'compile heap':>13}")
+    # With the collector on, "kept" is the live bytes compile() left behind
+    # (the code object and its constants), measured by _bi_gc_collect().
+    gc_cols = any("gc_kept_by_compile" in r for r in results)
+    head = f"{'program':<22} {'verdict':<11} {'compile cycles':>15} {'run cycles':>12} {'compile heap':>13}"
+    if gc_cols:
+        head += f" {'kept':>9} {'GCs':>5} {'max pause':>10}"
+    print(head)
     for r in results:
-        print(
+        line = (
             f"{r['name']:<22} {r['verdict']:<11} {_fmt(r['compile_cycles']):>15} "
             f"{_fmt(r['run_cycles']):>12} {_fmt(r['compile_heap']):>13}"
         )
+        if gc_cols:
+            line += (f" {_fmt(r.get('gc_kept_by_compile')):>9} {_fmt(r.get('gc_collections')):>5}"
+                     f" {_fmt(r.get('gc_max_pause')):>10}")
+        print(line)
+    summary = build / "results.json"
+    summary.write_text(json.dumps(results, indent=1) + "\n", encoding="utf-8")
     print()
     if failed:
         for r in failed:

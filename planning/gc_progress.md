@@ -2,6 +2,65 @@
 
 Status: IN PROGRESS            <!-- IN PROGRESS | DONE | BLOCKED -->
 
+## Active handoff — 2026-10-05 (GC branches merged)
+
+- One branch, `claude/gc-review-merge-7vj3d0`, holds the four GC follow-ups:
+  `gc/collector` after #139 (sweep skip, idle bitmap clear, compile suite
+  with the collector, timing record), `claude/pensive-brown-y1nikp`
+  (bounded marking: 128-slot chunked scans plus a rescan list),
+  `claude/ecstatic-ritchie-fwk33q` (gates on `hw_tests.toml`, G0 on the
+  16 MB map, nightly, G10 49/49). #141 (64-slot chunks, wide lists only) is
+  superseded by the bounded-marking branch, and #140 (the `gc_suite.py` port)
+  by the gate port.
+- `gc-wide-live-list` passes (6.7M cycles) and is in `[gc]` with no xfail
+  marker; `gc-deep-live-chain` is in `[gc-long]`. `[gc]` holds 64 programs.
+- G0 re-captured at `78860e7`. The compile-peak change there moves the boot
+  ROM, which put 36 of 372 G1 runs off the `cf929f8` baseline by a few
+  cycles (identical results; 0 differences with that change reverted).
+  `tools/gc_baseline.py` now skips the `gc` / `gc-long` areas, so a baseline
+  can be taken on a commit that has the collector.
+- `MODE=quick` on the merged tree: G0-G8 pass (G3 1200/1200, G4 300 dumps,
+  G8 50 seeds, coverage complete). Host tests 578 OK.
+- G13: P5 549,289 and P6b 25.8% missed; with `PYCORE_L2_HIT_CYCLES = 1`
+  they were 343,209 and 24.0%, so the cause was the 8-cycle L2 hit.
+- Fixed by overlapping the misses: L1D gained a non-blocking line-read
+  port (4 fills in flight, tagged answers, prefetches), L2 a pipelined port,
+  the xbar a pipe mode (memory_hierarchy.md, "Several loads in flight";
+  `make pycore-mem-nb`). The marker prefetches pushed children and the next
+  lines of a scan (gc.md, Performance). P5 324,398, P6b 22.5%. Ordinary
+  requests keep their timing (G1).
+- Next: `MODE=full`.
+
+## Active handoff — 2026-10-05 (gates on hw_tests.toml, 16 MB map)
+
+- The gates no longer drive per-fixture make targets: each hardware gate is
+  a `[gate.*]` table in `pycore/programs/hw_tests.toml` run through
+  `hw_tests.run_tests()` (`tools/gc_gates.py`; `tools/gc_suite.py` removed).
+  Quick sets: `[gc]` plus every `gc-mutant-*`; full adds `[gc-long]` and the
+  existing tests.
+- G0 regenerated from `main` at `cf929f8` (16 MB map) with
+  `tools/gc_baseline.py`: 2218 runs (test-hw and test-caching configs), none
+  failing. G1 at the default config: 372 single-core tests identical with
+  `GC_EN=0`; `img_compile_repeat` is not compared (its source changed on this
+  branch).
+- `[gc-long]` on the 16 MB map: `gc-root-closure` and `gc-mutant-8/27/34`
+  filled a 15 MB heap and hit their 40M-cycle caps; they now set
+  `+HEAP_DYN_BYTES` (256 KB / 64 KB) and 27/34 moved to `[gc]` (0.3M cycles).
+  Each still kills its mutant. `gc-wide-live-list` is `xfail` (mark-stack
+  overflow, master_plan known bugs).
+- G10: `make pycore-gc-mutants` 49/49 killed after a passing no-mutant run
+  (G3 22, G4 25, G7 2: mutants 35 and 39). Mutant 33 is now killed by G4.
+  A mutant's gate stops at its first failure (mutant 26 made programs hang
+  for over an hour per gate before).
+- G13 re-measured (gc.md, Performance): P5 560,333 > 400,000 and P6b 25.9% >
+  25% miss on the 16 MB map; P1, P3, P4, P6a, P7, P8 met.
+- Nightly `.github/workflows/gc-nightly.yml` (test-gc-long, 50 fuzz seeds per
+  top) ran green on the branch (run 37286990167).
+- `make pycore-gc-acceptance MODE=quick TEST_JOBS=4` at `4eaa0b2` (clean
+  tree): G0-G8 pass, 45 min (G8 41 min of it).
+- Next: `MODE=full` on the 16 MB map (G13 will fail on P5/P6b until they are
+  addressed).
+
 ## Active handoff — 2026-10-04 (G9 row 29)
 
 - `MODE=full` at `7273663` (8 jobs, poison line writes): G0-G8 and
@@ -314,7 +373,7 @@ full-run record. Rerun G8 from the promoted Phase 4/5 checkpoint.
 | 30 | epoch not incremented | G4 | — |
 | 31 | re-dispatch at next instruction | G4 | — |
 | 32 | STRACC NEED_HEAP as success | G4 | — |
-| 33 | excore MB_HEAP_LIMIT stuck | pending Phase 3 | — |
+| 33 | excore MB_HEAP_LIMIT stuck | G4 (16 MB map, 2026-10-05) | — |
 | 34 | CALL **kwargs budget one short | G4 | `img_gc_mutant_34` |
 | 35 | UNPACK_EX capacity after tos | G8 | — |
 | 36 | OOM loop guard + empty-list MEM_FAULT disabled | G4 | `img_gc_mutant_36` |

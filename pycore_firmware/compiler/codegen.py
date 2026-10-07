@@ -2305,6 +2305,17 @@ def _pyc_codegen_main():
     global _hole_n, _hole_lo, _hole_hi, _hole_fin, _stk_base
     _pyc_lex(_in_src)
     root = _pyc_parse(_in_mode)
+    # The tokens and the parser's operand/operator stacks are dead once the
+    # tree is built: drop them before symtab instead of after folding, so a
+    # collection during symtab does not keep them (the compile() peak).
+    # symtab grows opnd/ops again as its own work stack.
+    tk_n = 0
+    tk_s = [0] * 8
+    tk_a = [0] * 8
+    tk_b = [0] * 8
+    opnd = [0] * 8
+    ops = [0] * 8
+    ops_obj = [0] * 8
     _pyc_symtab(root)
     # §11.3 constant folding: bottom-up rewrite of Constant BinOp / UnaryOp.
     # Int + - * & | ^ and unary - ~ ; str Add. Skip / // % ** << >> (div0,

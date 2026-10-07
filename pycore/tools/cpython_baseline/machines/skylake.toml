@@ -1,0 +1,32 @@
+# Ismail and Suh (IISWC 2018) Skylake-like levels, folded onto Callgrind's
+# two-level model by making the L2 the last-level cache. L3 is not simulated;
+# memory latency is their ~173-cycle DRAM figure, so an L2 miss pays the
+# L1-miss penalty plus (173 - 12). L1 is 64KB 8-way, 4-cycle hit; L2 is
+# 256KB 4-way, 12-cycle hit. Branch penalty 16 is RegCPython's x86 pipeline
+# length, not Ismail's in-order core (use --branch-penalty 5 for that).
+name = "skylake"
+description = "Skylake-like L1 64KB and L2 256KB; DRAM stands in for L3"
+model = "simple-core"
+frequency_mhz = 3400
+branch_penalty = 16
+
+[l1i]
+size_bytes = 65536
+associativity = 8
+line_bytes = 64
+hit_latency = 4
+
+[l1d]
+size_bytes = 65536
+associativity = 8
+line_bytes = 64
+hit_latency = 4
+
+[llc]
+size_bytes = 262144
+associativity = 4
+line_bytes = 64
+hit_latency = 12
+
+[memory]
+latency = 173

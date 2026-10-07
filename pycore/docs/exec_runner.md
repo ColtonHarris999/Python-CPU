@@ -61,8 +61,7 @@ the next, and the `boot` line in the report is the reset-to-harness cost.
 ## Report
 
 ```text
-==== PyCore report: pycore/programs/demo_exec.py =============================
-  Result   PASS -- output matches CPython
+==== PyCore report: pycore/programs/demo_exec.py ======================  Result   PASS -- output matches CPython
   ...
                PyCore cycles    @100 MHz    CPython cycles  CPython time  PyCore/CPython
   compile         12,678,780   126.79 ms          ~754,448      359.3 us           16.8x
@@ -138,3 +137,28 @@ about a minute before its first output.
 | `UNSUPPORTED` | `class`, `import`, `with`, annotations, generator expressions, slice steps, and the other `compiler.md` exclusions. |
 | `TRAP DIV_ZERO`, `MEM_FAULT` during run | Division by zero, a missing dict key, a bad or negative index, or an unbound name. These are hardware traps, not catchable exceptions yet. |
 | `TRAP OVERFLOW`, `VALUE` during run | An `int` result left the signed 64-bit range (CPython would have made a big int), or a negative shift count. The hart has no big-int fallback yet. |
+
+## CPython cycle baseline
+
+The `~` cycle column above is wall time times the host's nominal clock. VMs and
+containers usually have no PMU, so it is not a baseline. The simulated baseline
+is `pycore/tools/cpython_baseline/`:
+
+```bash
+make cpython-baseline                         # suite, PyCore-sized caches
+make cpython-baseline CPYTHON_BASELINE_MACHINE=skylake
+python3.14 -m cpython_baseline.baseline prog.py --machine pycore --llc-bytes 262144
+```
+
+`PYTHONPATH=pycore/tools` is required for the `-m` form. Callgrind simulates
+L1I, L1D, and a last-level cache; a simple-core model turns the counts into
+cycles. Presets are `pycore` (this hart's sizes and latencies), `gem5_classic`,
+`skylake`, and `romer`. Flags override a preset without editing it.
+
+The report splits each program into **compile** (source to bytecode),
+**interpret** (the dispatch edge inside `_PyEval_EvalFrameDefault`: fetch,
+decode, indirect jump), and **run** (inline opcode bodies plus the C helpers
+they call). Cache hit rates and MPKI are per phase. Compare PyCore with the
+cold compile and the cold exec. The warm pair is the steady state after the
+specializing interpreter has rewritten the code object. Methodology and the
+JSON schema: `pycore/tools/cpython_baseline/README.md`.

@@ -76,7 +76,11 @@ fib(30): 832040
 ```
 
 The **PyCore/CPython** column is a cycle ratio, not wall-clock time: it
-divides PyCore's cycles by the host CPU's cycles for the same phase.
+divides PyCore's cycles by the host CPU's cycles for the same phase. The
+host figure is a hardware counter when the kernel exposes one, and otherwise
+a wall-time estimate (the `~` in the sample). The simulated baseline — adjustable
+caches, and separate compile / dispatch / execution cycles — is
+`make cpython-baseline`. See `pycore/docs/exec_runner.md`.
 
 Programs are plain scripts (no `managed_entry` needed). The on-device
 compiler takes the T1–T6 grammar in `pycore/docs/compiler.md`, including

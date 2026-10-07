@@ -591,10 +591,16 @@ def main() -> int:
     with cf.ProcessPoolExecutor(max_workers=max(1, args.jobs)) as ex:
         futs = {ex.submit(one_seed, s, args.top, str(out), args.mutant): s for s in seeds}
         for n, fut in enumerate(cf.as_completed(futs), 1):
+            if fut.cancelled():
+                continue
             rec = fut.result()
             recs.append(rec)
             if rec["problems"]:
                 print(f"[gc_fuzz] FAIL seed {rec['seed']} ({args.top}): {rec['problems'][:3]}", flush=True)
+                if args.mutant:
+                    # G10: one failing seed kills the mutant; skip the rest.
+                    for f in futs:
+                        f.cancel()
             if n % 25 == 0 or n == len(seeds):
                 bad = sum(1 for x in recs if x["problems"])
                 print(f"[gc_fuzz] {args.top} {n}/{len(seeds)} seeds, {bad} failing, "
@@ -633,7 +639,7 @@ def main() -> int:
               f"min_allocs={need_n}")
     for ln in gc_sites.table(rows, wanted):
         print(f"G8 site {ln}")
-    return 1 if failing else 0
+    return 1 if failing or miss_kinds or miss_rows else 0
 
 
 if __name__ == "__main__":

@@ -70,13 +70,27 @@ entry return. The live list of compiler bugs and ceilings is
 [`pycore/docs/compile_limitations.md`](../pycore/docs/compile_limitations.md)
 §3; add new finds there with a failing `img_compile_*` fixture.
 
+Bugs found while writing the accelerator plan are listed with repros in
+[`accelerator_split_plan.md`](accelerator_split_plan.md) Appendix A. Those
+reproduced on the simulators are:
+- excore `SET_UPDATE` hangs or drops elements on duplicates;
+- excore `LONG_STR` hashing and equality differ from pycore's;
+- a stale GIC after `ns['x'] = …` on the active globals dict;
+- `in` over more than 256 elements hangs;
+- name indexes ≥ 128 are truncated;
+- `set()` drops `None`;
+- bulk dict updates follow hash-slot order instead of insertion order;
+- `1.0 in [1]` is False;
+- held dmem requests execute twice at L1D (results unchanged, hit
+  counters inflated about 2×).
+
 Open hazards from the garbage-collection work (`pycore/docs/gc.md`):
 
 | Bug | Symptom | Where to start |
 | --- | --- | --- |
 | `_bi_heap_release` with `GC_EN=0` hands back unzeroed bytes | A dict or set built after a release can see the released table's keys (`img_gc_release_zero` returns 4 with `+GC_EN=0`) | With GC on the release zeroes `[mark, old ptr)` at the next boundary (gc.md invariant 6). Doing the same with GC off changes cycle counts, so it waits for a baseline refresh |
 | Run-time source that spells `_PYC_G` or `__dict__` without the program naming it | The image builder decides the compiler-cleanup descriptor and immutable type dicts from the names and string constants it can see (gc.md). `exec("_PY" + "C_G['k'] = [1]")` stores a heap value the collector does not trace and frees it | Either treat any run-time source with a non-constant argument as reaching every name (costs the compile-loop cleanup), or check at collection time that `_PYC_G` and the type dicts hold no dynamic pointers outside the scratch slots |
-| GC sizing on the 16 MB map | The mark stack (16,384 + 256 entries) was sized for a ~1 MB heap: one live list of more than 16,640 tuples (about 1 MB) makes every collection raise `MemoryError` with most of the heap free (`img_gc_wide_live_list` returns 2; `[gc-long]`). Any fixed size can be exceeded by a deep or wide graph. The run table no longer limits (in-place headers past 14,272 runs). The on-chip mark bitmap is 120 KB | Before turning the collector on by default: scan wide containers in chunks (push a continuation entry instead of every element), and on overflow leave the child unmarked and record its parent for a rescan once the stack drains (the rescan skips children already marked), so the collection completes instead of raising `MemoryError` |
+| GC mark stack on pathological graphs | Wide and deep live graphs mark with a bounded stack: one pop scans at most 128 slots and pushes the rest as a continuation, and a child that does not fit sends the range being scanned to a rescan list (`img_gc_wide_live_list`, `img_gc_deep_live_chain`, gc.md). The collection still raises `MemoryError` if more than 4,096 partly scanned ranges are pending at once: that takes a graph deeper than the 12,544-entry stack in which most nodes popped while it is full have several unmarked pushable children. The on-chip mark bitmap is 120 KB | A larger rescan list, or a rescan that walks the heap (needs object boundaries, which the extent bitmap does not record) |
 
 ## Open pull requests (parked)
 
@@ -191,7 +205,7 @@ Inventory: `pycore_firmware/builtins/builtins.md`.
 | `getattr(obj, name)` with no default | returns `None` | raise `AttributeError` (firmware F2) |
 | `min` / `max` of an empty iterable | returns `None` | raise `ValueError` (F2) |
 | 27 not-implemented stubs (`open.py`, `super.py`, `hash.py`, …) | `return 1 % 0` bodies, **not seeded** into ROM, so a call is a missing-name `MEM_FAULT` | When one is seeded, it should `raise TypeError` (F3). See cleanup item F1 |
-| `print` phase 2 | one INT / BOOL / None / SHORT_STR per `_bi_print` | LONG_STR on the sink, container `__str__`, `file=` |
+| `print` phase 2 | one INT / BOOL / None / SHORT_STR per `_bi_print`, through an excore trap | a pycore memory write to a console channel, with STRACC formatting every type: [`accelerator_split_plan.md`](accelerator_split_plan.md) §7–8, phases P1, P2 and P6 |
 | `property` / `classmethod` / `staticmethod` | blocked | needs a descriptor protocol |
 
 `hasattr` must stay non-raising. Leave blocked: async (`aiter` / `anext`),
@@ -202,6 +216,24 @@ files, `breakpoint`, `hash` as a Python builtin, `memoryview`,
 and 128 B per `OBK_TYPE` share the bump heap under `PYCORE_HEAP_LIMIT`. New
 ROM bodies must pass `validate_code_tree` and, if they will be compiled on
 device, the compiler subset gate (`test_compiler_subset.py`).
+
+### 5. Accelerators and the excore split
+
+Design and phases: [`accelerator_split_plan.md`](accelerator_split_plan.md).
+The plan delivers:
+- a container accelerator with separate data-ready and container-ready
+  events;
+- print as a pycore console write;
+- `bytes`, `bytearray`, `int.from_bytes` and `int.to_bytes`;
+- startup `ACCEL_CFG` registers with excore fallbacks;
+- `excore_min` / `excore_full` and `rom_accel` / `rom_soft` builds;
+- the excore as an emulator of unimplemented Python.
+
+| Item | Today | Next step |
+| --- | --- | --- |
+| P0 groundwork | 27 compile-time `EXCORE_EN` routing sites; duplicate L1D requests; no runtime config | Regression tests for the plan's Appendix A, the memory fixes of §11, `ACCEL_CFG` + MCFG page + `pycore_route`, the key-spec package |
+| P1 console | `print` traps to the excore per piece; single-core has no output | IO window and console channels, `CONSOLE_BASE`, `_bi_write` |
+| P3 container accelerator | container work split between `S_CONTAINER` and excore traps 9–14 / 19–20 | CA stage A0, with the legacy path behind `ACCEL_CFG.CA = 0` |
 
 ## Memory-map locks
 

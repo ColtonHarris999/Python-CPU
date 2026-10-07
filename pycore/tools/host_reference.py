@@ -11,7 +11,9 @@ For both phases -- ``compile(source, filename, "exec")`` and ``exec(code)``
 cycles and retired machine instructions through ``perf_event_open``. When
 hardware counters are not available (macOS, most VMs and containers) the
 cycle figure is estimated from wall time and the nominal clock, and the
-report says so.
+report says so. That estimate is not the benchmark baseline. Cycle counts
+on an adjustable simulated machine, including the dispatch edge and cache
+hits, come from ``cpython_baseline`` (see ``pycore/docs/exec_runner.md``).
 
 It also counts CPython bytecode instructions executed by the program with
 ``sys.monitoring`` (a second, separate run, so the tracing overhead never

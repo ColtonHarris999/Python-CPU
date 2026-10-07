@@ -5,7 +5,15 @@ Given a dmem image (a `$readmemh` hex or a collector dump) and a root set,
 `trace()` computes the live extents with the traversal rules of §4.1 and the
 engine's deterministic order (every root, then every memory-root range, then
 depth-first: pop the newest entry, discover its children in slot order). The
-order matters only for the mark-stack high-water mark, which G3 compares.
+order matters for the mark-stack high-water mark, which G3 compares, and,
+with a bounded stack, for which ranges go to the rescan list.
+
+Like the engine, one pop scans at most GC_SCAN_CHUNK slots of a range and
+pushes the rest first as a continuation entry. With `stack_limit` set, a
+child that does not fit is left unmarked and the range being scanned is
+recorded (once) in the rescan list, which is moved back onto the stack when
+the stack drains; a root that does not fit is marked and recorded itself.
+Marking is abandoned (`overflow`) only when the rescan list is full.
 
 `check_dump()` verifies one collector dump (G3 unit runs and G4 system runs):
 the free-run list against the complement of the reachable granules, the
@@ -38,9 +46,12 @@ from encoding import (  # noqa: E402
     GC_EXTRA_ROOTS_COUNT,
     GC_COMPILER_CLEANUP_MAGIC,
     GC_FREE_MAGIC,
+    GC_MARK_STACK_ENTRIES,
+    GC_RESCAN_ENTRIES,
     GC_ROOT_STASH,
     GC_RUN_TABLE,
     GC_RUN_TABLE_BYTES,
+    GC_SCAN_CHUNK,
     GC_STATIC_MAP,
     GC_STATIC_MAP_BYTES,
     HEAP_BASE,
@@ -65,8 +76,9 @@ OBK_EXTENT = {1: 64, 2: 128, 3: 96, 4: 96, 5: 128, 6: 96, 7: 64, 8: 96}
 OBK_BYTEARRAY = 5
 CTL_UNINIT = 0
 
-K_TUPLE, K_CODE, K_LIST, K_DICT, K_SET, K_OBJ, K_STR = range(7)
-KIND_NAMES = ["TUPLE", "CODE", "LIST", "DICT", "SET", "OBJ", "STR"]
+# K_DICTT is only ever a continuation: dict table slots (64 B each).
+K_TUPLE, K_CODE, K_LIST, K_DICT, K_SET, K_OBJ, K_STR, K_DICTT = range(8)
+KIND_NAMES = ["TUPLE", "CODE", "LIST", "DICT", "SET", "OBJ", "STR", "DICTT"]
 M64 = (1 << 64) - 1
 M32 = (1 << 32) - 1
 
@@ -110,6 +122,7 @@ class TraceResult:
     objects: int = 0
     roots: int = 0
     stack_hw: int = 0
+    rescans: int = 0
     overflow: bool = False
     bad_kind: int = 0
     reserved: int = 0
@@ -118,6 +131,10 @@ class TraceResult:
 
     def live_granules(self, lo: int, hi: int) -> set[int]:
         return {g for g in range(lo >> 4, hi >> 4) if self.marked[g]}
+
+
+class _Overflow(Exception):
+    """The rescan list is full: the engine abandons the collection."""
 
 
 def trace(
@@ -129,6 +146,7 @@ def trace(
     frame_depth: int = 0,
     stack_limit: int | None = None,
     onchip: int = 256,
+    rescan_limit: int | None = None,
     mutant: int = 0,
     pruned: set[int] | None = None,
     extra_roots: bool = True,
@@ -136,12 +154,20 @@ def trace(
     """Mark everything reachable from the register roots and memory roots.
 
     `pruned` granules start marked, as the engine's static-map preload does.
+    `stack_limit` (memory entries, beside `onchip`) bounds the mark stack;
+    None is unbounded. `rescan_limit` bounds the rescan list.
     """
     res = TraceResult(marked=bytearray(HEAP_LIMIT >> 4))
     marked = res.marked
     for g in pruned or ():
         marked[g] = 1
-    stack: list[tuple[int, int, int]] = []
+    stack: list[tuple[int, int, int]] = []     # (kind, addr, size)
+    rescan: list[tuple[int, int, int]] = []
+    stack_cap = None if stack_limit is None else onchip + stack_limit
+    # The range being scanned (None while tracing roots), and whether a child
+    # of it has already been recorded.
+    cur: tuple[int, int, int] | None = None
+    recorded = False
 
     def valid(addr: int, length: int) -> bool:
         ok = (addr & 15) == 0 and HEAP_BASE <= addr < HEAP_LIMIT and length <= HEAP_LIMIT - addr
@@ -166,12 +192,53 @@ def trace(
         mark_range(addr, length, what)
         return True
 
+    def room() -> bool:
+        return stack_cap is None or len(stack) < stack_cap
+
+    def record(ent: tuple[int, int, int]) -> None:
+        if rescan_limit is not None and len(rescan) >= rescan_limit:
+            res.overflow = True
+            raise _Overflow
+        rescan.append(ent)
+        res.rescans += 1
+
+    def stack_push(ent: tuple[int, int, int]) -> None:
+        stack.append(ent)
+        res.stack_hw = max(res.stack_hw, len(stack))
+
     def push(kind: int, addr: int, size: int, length: int, what: str) -> None:
-        if test_set(addr, length, what):
-            stack.append((kind, addr, size))
-            res.stack_hw = max(res.stack_hw, len(stack))
-            if stack_limit is not None and len(stack) > onchip + stack_limit:
-                res.overflow = True
+        nonlocal recorded
+        if not valid(addr, length) or marked[addr >> 4]:
+            return
+        if room():
+            mark_range(addr, length, what)
+            stack_push((kind, addr, size))
+        elif cur is not None:
+            # Leave the child unmarked; the whole range is scanned again.
+            if not recorded:
+                recorded = True
+                record(cur)
+        else:
+            mark_range(addr, length, what)
+            record((kind, addr, size))
+
+    def scan_range(kind: int, base: int, count: int) -> None:
+        """Scan one chunk of a 32 B (K_TUPLE) or dict-table (K_DICTT) range;
+        the rest is pushed first, unmarked, as a continuation."""
+        nonlocal cur, recorded
+        stride = 64 if kind == K_DICTT else 32
+        if count > GC_SCAN_CHUNK:
+            rest = (kind, base + stride * GC_SCAN_CHUNK, count - GC_SCAN_CHUNK)
+            if room():
+                stack_push(rest)
+            else:
+                record(rest)
+            count = GC_SCAN_CHUNK
+        cur, recorded = (kind, base, count), False
+        if kind == K_DICTT:
+            scan_dict_table(base, count)
+        else:
+            scan_plain(base, count)
 
     def discover(tag: int, val: int) -> None:
         a32 = val & M32
@@ -286,107 +353,115 @@ def trace(
             if vtag in PTR_TAGS:
                 discover(vtag, mem.rd(s + 32))
 
-    # ---- roots ----
-    for tag, val in reg_roots:
-        res.roots += 1
-        discover(tag, val)
-    if mutant != 9:
-        scan_plain(BOOT_RECORD_ADDR, 3)
-    if mutant != 10:
-        scan_plain(NATIVE_METHOD_TABLE_ADDR, NATIVE_METHOD_COUNT)
-    scan_plain(ITER_EXHAUST_TYPE_ADDR, 1)
-    scan_plain(MEMORY_ERROR_INSTANCE_ADDR, 1)
-    if extra_roots:
-        scan_plain(GC_EXTRA_ROOTS, GC_EXTRA_ROOTS_COUNT)
-    if mutant != 2:
-        scan_plain(RF_SPILL_BASE, (spill_sp - RF_SPILL_BASE) >> 5)
-    if mutant != 5:
-        for node in range(EXC_STACK_BASE, exc_sp, 32):
-            w = mem.rd(node + 16)
-            if (w >> 127) & 1:
-                t = (w >> 120) & 0xF
-                if t in (TAG_OBJECT, TAG_CODE):
-                    discover(t, w & M64)
-                elif t != TAG_CONTROL:
-                    res.bad_kind += 1
-    if mutant != 3:
-        for k in range(frame_depth):
-            w = mem.rd(FRAME_STACK_BASE + 32 * k + 16)
-            if w & M32:
-                discover(TAG_CODE, w & M32)
-            inst = (w >> 33) & M64
-            if inst:
-                discover(TAG_OBJECT, inst)
-            glob = (w >> 97) & ((1 << 31) - 1)
-            if glob and mutant != 4:
-                discover(TAG_MUT, (MUT_DICT << 124) | glob)
+    try:
+        # ---- roots ----
+        for tag, val in reg_roots:
+            res.roots += 1
+            discover(tag, val)
+        if mutant != 9:
+            scan_plain(BOOT_RECORD_ADDR, 3)
+        if mutant != 10:
+            scan_plain(NATIVE_METHOD_TABLE_ADDR, NATIVE_METHOD_COUNT)
+        scan_plain(ITER_EXHAUST_TYPE_ADDR, 1)
+        scan_plain(MEMORY_ERROR_INSTANCE_ADDR, 1)
+        if extra_roots:
+            scan_plain(GC_EXTRA_ROOTS, GC_EXTRA_ROOTS_COUNT)
+        if mutant != 2:
+            scan_plain(RF_SPILL_BASE, (spill_sp - RF_SPILL_BASE) >> 5)
+        if mutant != 5:
+            for node in range(EXC_STACK_BASE, exc_sp, 32):
+                w = mem.rd(node + 16)
+                if (w >> 127) & 1:
+                    t = (w >> 120) & 0xF
+                    if t in (TAG_OBJECT, TAG_CODE):
+                        discover(t, w & M64)
+                    elif t != TAG_CONTROL:
+                        res.bad_kind += 1
+        if mutant != 3:
+            for k in range(frame_depth):
+                w = mem.rd(FRAME_STACK_BASE + 32 * k + 16)
+                if w & M32:
+                    discover(TAG_CODE, w & M32)
+                inst = (w >> 33) & M64
+                if inst:
+                    discover(TAG_OBJECT, inst)
+                glob = (w >> 97) & ((1 << 31) - 1)
+                if glob and mutant != 4:
+                    discover(TAG_MUT, (MUT_DICT << 124) | glob)
 
-    # ---- depth-first marking ----
-    while stack:
-        kind, addr, size = stack.pop()
-        res.objects += 1
-        res.kinds_seen.add(KIND_NAMES[kind])
-        if kind == K_TUPLE:
-            scan_plain(addr, size)
-        elif kind == K_CODE:
-            if mutant == 20:
-                scan_plain(addr + 64, 6)
-            else:
-                scan_plain(addr, 8)
-        elif kind == K_LIST:
-            hdr = mem.rd(addr)
-            cap, length = (hdr >> 64) & M32, hdr & M32
-            if (hdr & M64) > (hdr >> 64):
-                res.bad_kind += 1
-            buf = mem.rd(addr + 16) & M32
-            if cap and buf:
-                raw(buf, (length if mutant == 14 else cap) * 32, "LIST_BUF")
-            n = length - 1 if (mutant == 13 and length) else length
-            if in_heap(buf, n * 32):
-                scan_plain(buf, n)
-        elif kind == K_SET:
-            slots = (mem.rd(addr) >> 64) & M32
-            table = mem.rd(addr + 16) & M32
-            if slots and table:
-                if mutant != 18:
-                    raw(table, slots * 32, "SET_TABLE")
-                if in_heap(table, slots * 32):
-                    scan_plain(table, slots)
-        elif kind == K_DICT:
-            slots = (mem.rd(addr) >> 64) & M32
-            order_len = mem.rd(addr + 16) & M32
-            ptrs = mem.rd(addr + 32)
-            order, table = (ptrs >> 64) & M32, ptrs & M32
-            if slots and order and mutant != 15:
-                raw(order, slots * 32, "DICT_ORDER")
-            if slots and table:
-                raw(table, slots * 64, "DICT_TABLE")
-            if order and in_heap(order, order_len * 32):
-                scan_plain(order, order_len)
-            if slots and table and in_heap(table, slots * 64):
-                scan_dict_table(table, slots)
-        elif kind == K_OBJ:
-            head = mem.rd(addr)
-            ob_kind = head >> 96
-            ext = OBK_EXTENT.get(ob_kind, 0)
-            if not ext:
-                res.bad_kind += 1
-                continue
-            raw(addr, ext, f"OBK{ob_kind}")
-            res.kinds_seen.add(f"OBK{ob_kind}")
-            ob_type = head & M64
-            if ob_type and mutant != 19:
-                discover(TAG_OBJECT, ob_type)
-            if ob_kind == OBK_BYTEARRAY:
-                buf = mem.rd(addr + 64) & M32
-                cap = mem.rd(addr + 96) & M32
-                if buf and cap and mutant != 23:
-                    raw(buf, pad16(cap), "BYTEARRAY_BUF")
-            else:
-                scan_plain(addr + 32, (ext - 32) // 32)
-        elif kind == K_STR:
-            n = (mem.rd(addr) >> 96) & 0xFFFFFF
-            raw(addr, 16 + pad16(n), "LONG_STR")
+        # ---- depth-first marking ----
+        while stack or rescan:
+            if not stack:
+                stack_push(rescan.pop())
+            kind, addr, size = stack.pop()
+            res.objects += 1
+            res.kinds_seen.add(KIND_NAMES[kind])
+            cur, recorded = (kind, addr, size), False
+            if kind == K_TUPLE:
+                scan_range(K_TUPLE, addr, size)
+            elif kind == K_DICTT:
+                scan_range(K_DICTT, addr, size)
+            elif kind == K_CODE:
+                if mutant == 20:
+                    scan_plain(addr + 64, 6)
+                else:
+                    scan_plain(addr, 8)
+            elif kind == K_LIST:
+                hdr = mem.rd(addr)
+                cap, length = (hdr >> 64) & M32, hdr & M32
+                if (hdr & M64) > (hdr >> 64):
+                    res.bad_kind += 1
+                buf = mem.rd(addr + 16) & M32
+                if cap and buf:
+                    raw(buf, (length if mutant == 14 else cap) * 32, "LIST_BUF")
+                n = length - 1 if (mutant == 13 and length) else length
+                if in_heap(buf, n * 32):
+                    scan_range(K_TUPLE, buf, n)
+            elif kind == K_SET:
+                slots = (mem.rd(addr) >> 64) & M32
+                table = mem.rd(addr + 16) & M32
+                if slots and table:
+                    if mutant != 18:
+                        raw(table, slots * 32, "SET_TABLE")
+                    if in_heap(table, slots * 32):
+                        scan_range(K_TUPLE, table, slots)
+            elif kind == K_DICT:
+                slots = (mem.rd(addr) >> 64) & M32
+                order_len = mem.rd(addr + 16) & M32
+                ptrs = mem.rd(addr + 32)
+                order, table = (ptrs >> 64) & M32, ptrs & M32
+                if slots and order and mutant != 15:
+                    raw(order, slots * 32, "DICT_ORDER")
+                if slots and table:
+                    raw(table, slots * 64, "DICT_TABLE")
+                if order and in_heap(order, order_len * 32):
+                    scan_range(K_TUPLE, order, order_len)
+                if slots and table and in_heap(table, slots * 64):
+                    scan_range(K_DICTT, table, slots)
+            elif kind == K_OBJ:
+                head = mem.rd(addr)
+                ob_kind = head >> 96
+                ext = OBK_EXTENT.get(ob_kind, 0)
+                if not ext:
+                    res.bad_kind += 1
+                    continue
+                raw(addr, ext, f"OBK{ob_kind}")
+                res.kinds_seen.add(f"OBK{ob_kind}")
+                ob_type = head & M64
+                if ob_type and mutant != 19:
+                    discover(TAG_OBJECT, ob_type)
+                if ob_kind == OBK_BYTEARRAY:
+                    buf = mem.rd(addr + 64) & M32
+                    cap = mem.rd(addr + 96) & M32
+                    if buf and cap and mutant != 23:
+                        raw(buf, pad16(cap), "BYTEARRAY_BUF")
+                else:
+                    scan_plain(addr + 32, (ext - 32) // 32)
+            elif kind == K_STR:
+                n = (mem.rd(addr) >> 96) & 0xFFFFFF
+                raw(addr, 16 + pad16(n), "LONG_STR")
+    except _Overflow:
+        pass
     return res
 
 
@@ -533,21 +608,29 @@ def check_dump(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> list
             problems.append(
                 f"root stash ({len(stash)} roots) differs from testbench roots "
                 f"({len(dump.roots)}) at index {first}")
-    # The RTL traces with the static prune map preloaded; its counters and
-    # overflow follow that trace. The free set is always judged against the
-    # unpruned trace, so an unsound map is a SAFETY failure here.
+    # The RTL traces with the static prune map preloaded and its own stack and
+    # rescan-list limits; its counters and overflow follow that trace. The
+    # free set is always judged against the unpruned, unbounded trace, so an
+    # unsound map is a SAFETY failure here. Dumps without the limits predate
+    # them and ran with the defaults.
     kw = dict(spill_sp=m.get("spill_sp", RF_SPILL_BASE),
               exc_sp=m.get("exc_sp", EXC_STACK_BASE), frame_depth=m.get("frame_depth", 0),
-              stack_limit=m.get("stack_limit"), onchip=m.get("onchip", 256), mutant=mutant,
-              extra_roots=bool(m.get("extra_roots", 1)))
+              mutant=mutant, extra_roots=bool(m.get("extra_roots", 1)))
+    limits = dict(stack_limit=m.get("stack_limit", GC_MARK_STACK_ENTRIES),
+                  onchip=m.get("onchip", 256),
+                  rescan_limit=m.get("rescan_limit", GC_RESCAN_ENTRIES))
     pruned = {g for g in pruned_granules(dump.mem.words) if g < dyn_base >> 4}
     pruned |= compiler_idle_premark(dump.mem, dyn_base)
-    res = trace(dump.mem, dump.roots, **kw)
-    res_p = trace(dump.mem, dump.roots, pruned=pruned, **kw) if pruned else res
-    if m.get("overflow", 0):
-        if not res_p.overflow and m.get("stack_limit") is not None:
-            problems.append("RTL reported mark-stack overflow but the oracle's stack fits")
+    res_p = trace(dump.mem, dump.roots, pruned=pruned, **kw, **limits)
+    if m.get("overflow", 0) or res_p.overflow:
+        if not res_p.overflow:
+            problems.append("RTL abandoned marking (rescan list full) but the oracle's fits")
+        elif not m.get("overflow", 0):
+            problems.append("oracle's rescan list overflows but the RTL finished marking")
         return problems
+    # Bounded marking that rescanned reaches the same set; reuse it only when
+    # it is the same trace.
+    res = res_p if not pruned and not res_p.rescans else trace(dump.mem, dump.roots, **kw)
     for k in ("bad_kind", "reserved", "wild"):
         if getattr(res, k):
             problems.append(f"oracle saw {k}={getattr(res, k)} (heap or roots malformed)")
@@ -613,6 +696,7 @@ def check_dump(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> list
         "runs": len(want),
         "roots": res_p.roots,
         "objects": res_p.objects,
+        "rescans": res_p.rescans,
     }
     if compare_hw:
         checks["stack_hw"] = res_p.stack_hw

@@ -1,0 +1,4 @@
+step	status
+test-host	pass
+test-rtl-modules	pass
+excore-cpu-test	pass

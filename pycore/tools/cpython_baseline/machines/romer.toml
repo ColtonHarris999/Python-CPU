@@ -1,0 +1,31 @@
+# Romer et al. (ASPLOS 1996) swept interpreter caches around an 8KB
+# direct-mapped L1 and a 512KB direct-mapped L2. An L1 miss that hits L2
+# costs 6 cycles; an L2 miss costs 30, so the extra last-level penalty is
+# 24. The branch penalty is their pipeline's 4 cycles. Line size is 32B,
+# the era's typical line, and direct-mapped is associativity 1.
+name = "romer"
+description = "Romer ASPLOS 1996 baseline: 8KB direct L1, 512KB direct L2"
+model = "simple-core"
+frequency_mhz = 100
+branch_penalty = 4
+
+[l1i]
+size_bytes = 8192
+associativity = 1
+line_bytes = 32
+hit_latency = 1
+
+[l1d]
+size_bytes = 8192
+associativity = 1
+line_bytes = 32
+hit_latency = 1
+
+[llc]
+size_bytes = 524288
+associativity = 1
+line_bytes = 32
+hit_latency = 7
+
+[memory]
+latency = 31

@@ -3736,7 +3736,8 @@ localparam logic [31:0] PYCORE_BOOT_RECORD_BYTES = 32'd96;
 //   0xF86000 – 0xF863FF  stats (+ compiler cleanup descriptor)
 //   0xF86400 – 0xF883FF  static prune map (one bit per static granule)
 //   0xF88400 – 0xFBFFFF  free-run overflow table
-//   0xFC0000 – 0xFFFFFF  mark-stack spill area (16,384 x 16 B entries)
+//   0xFC0000 – 0xFEFFFF  mark-stack spill area (12,288 x 16 B entries)
+//   0xFF0000 – 0xFFFFFF  rescan list (4,096 x 16 B entries)
 // Bitmap bit g covers heap granule g = addr >> 4 (16 B); word = addr >> 11.
 // Free runs carry a 16 B header in their first granule:
 //   { FREE_MAGIC[127:96], size_bytes[95:64], next_run[63:32], 32'd0 }.
@@ -3773,8 +3774,17 @@ localparam logic [31:0] PYCORE_GC_STATIC_MAP_BYTES = 32'h0000_2000;
 localparam logic [31:0] PYCORE_GC_RUN_TABLE        = 32'h00F8_8400;
 localparam logic [31:0] PYCORE_GC_RUN_TABLE_BYTES  = 32'h0003_7C00;
 localparam logic [31:0] PYCORE_GC_MARK_STACK       = 32'h00FC_0000;
-localparam logic [31:0] PYCORE_GC_MARK_STACK_BYTES = 32'h0004_0000;
-localparam logic [31:0] PYCORE_GC_MARK_STACK_ENTRIES = 32'd16384;
+localparam logic [31:0] PYCORE_GC_MARK_STACK_BYTES = 32'h0003_0000;
+localparam logic [31:0] PYCORE_GC_MARK_STACK_ENTRIES = 32'd12288;
+// Rescan list: scan ranges whose children did not all fit on the mark stack
+// (one 16 B entry each, same format as a spilled stack entry). The marker
+// re-pushes them when the stack drains; it gives up only when this is full.
+localparam logic [31:0] PYCORE_GC_RESCAN           = 32'h00FF_0000;
+localparam logic [31:0] PYCORE_GC_RESCAN_BYTES     = 32'h0001_0000;
+localparam logic [31:0] PYCORE_GC_RESCAN_ENTRIES   = 32'd4096;
+// Slots one mark-stack pop scans; the rest of the range is pushed first as a
+// continuation entry, so a wide container holds at most this many entries.
+localparam logic [31:0] PYCORE_GC_SCAN_CHUNK       = 32'd128;
 localparam logic [31:0] PYCORE_GC_GRANULE_BYTES    = 32'd16;
 /* verilator lint_on UNUSEDPARAM */
 localparam logic [31:0] PYCORE_GC_BITMAP_WORDS     = PYCORE_HEAP_LIMIT >> 11;

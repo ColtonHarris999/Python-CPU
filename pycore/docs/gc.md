@@ -5,11 +5,10 @@ gates G0-G16 passed on the 1 MB memory map, except G9 (fixed afterwards,
 `img_gc_call_varargs`); the record is
 [`planning/gc_plan.md`](../../planning/gc_plan.md) and
 [`planning/gc_progress.md`](../../planning/gc_progress.md). On `main`'s
-16 MB map it passes the unit gate (G3) and the `gc` test area, and with it
-off every existing test is cycle-identical to `main`. It becomes the default
-after one full acceptance run on the 16 MB map; the acceptance runner
-(`tools/gc_acceptance.py`) still drives the old per-fixture make targets
-and is being ported to `hw_tests.toml`.
+16 MB map the gates run from `hw_tests.toml` (Testing, below): `MODE=quick`
+(G0-G8) and G10 (every mutant killed) pass, and with the collector off every
+existing test is cycle-identical to `main` (G1). It becomes the default
+after one `MODE=full` run on the 16 MB map.
 
 PyCore has a precise, stop-the-world, non-moving mark-and-sweep collector.
 The engine (`pycore/rtl/pycore_gc.sv`) is a core-side dmem master beside
@@ -37,16 +36,18 @@ Handbook*, 2nd ed.
 
 - **Decision.** A 256-entry on-chip LIFO of compressed entries
   (`{kind[2:0], size[31:0], addr[31:0]}`, 67 bits). When a push finds it
-  full, the engine spills the oldest 32 entries to the 512 KB region at
-  `PYCORE_GC_MARK_STACK` (one 16 B slot each); when a pop finds it empty and
-  the memory part is non-empty, it refills 32. The memory part is sized for
-  the provable bound (§4.3 of the plan): at most 30,686 pending entries.
+  full, the engine spills the oldest 32 entries to the 192 KB region at
+  `PYCORE_GC_MARK_STACK` (12,288 entries, one 16 B slot each); when a pop
+  finds it empty and the memory part is non-empty, it refills 32. The plan's
+  provable bound (§4.3, at most 30,686 pending entries on the 1 MB map) does
+  not hold on the 16 MB map, and no fixed size can hold every graph, so the
+  stack is bounded instead by the two rules in "Bounded marking" below.
 - **Why.** Maas (§V-C, §VI-B) keeps a 1,024-entry mark queue on chip and
   spills only when it is full: spilling was about 2 % of memory requests.
   Our draft (§4.5) made every push and pop a dmem transaction, which roughly
   doubles mark traffic. Depth-first marking of typical PyCore heaps stays
-  shallow: a linked chain keeps one or two pending entries; only very wide
-  objects (a 16k-element list) overflow. The stack is LIFO, so spilling the
+  shallow: a linked chain keeps one or two pending entries, and a wide
+  container at most 129 (chunked scans). The stack is LIFO, so spilling the
   oldest entries is legal (marking is order-independent).
 - **Expected effect.** Removes ~2 transactions per pushed object on normal
   heaps. Area: 256 × 67 bits = 17,152 bits.
@@ -58,6 +59,47 @@ Handbook*, 2nd ed.
 - **Confirmed by.** G13 P7 (spill traffic ≤ 5 % of mark transactions on
   `bench_full` and `bench_deep`); G3 runs with the on-chip part shrunk to two
   entries so the spill and refill path is exercised on every seed.
+
+#### Bounded marking: chunked scans and the rescan list
+
+A stack sized for the largest graph does not exist, so marking never needs
+more than the stack holds:
+
+- **Chunked scans.** One pop scans at most `PYCORE_GC_SCAN_CHUNK` (128)
+  slots of a range: a tuple, a list buffer, a set table, a dict order
+  buffer or a dict table. Before scanning, the tracer pushes the rest of the
+  range, unmarked, as a continuation entry (`K_TUPLE` for 32 B slots, the
+  continuation-only `K_DICTT` for 64 B dict slots). Children are pushed on
+  top of it and popped first, so a wide container holds at most 129
+  entries, and every popped entry scans one range. A dict's order buffer
+  and table are two ranges of one pop; the tracer starts the table once no
+  order-buffer child can still overflow (fewer than 8 items in flight, or
+  all drained).
+- **Rescan list.** Only depth can still fill the stack (a 100,000-node
+  chain of `(payload, next)` leaves one payload per level). A child that
+  does not fit is not marked; the range being scanned (`t_re_r`: the chunk,
+  or the whole object for an OBJECT or CODE entry) is written once to the
+  rescan list at `PYCORE_GC_RESCAN` (4,096 entries, the top 64 KB of the
+  mark-stack region), and later children of that range are dropped. A
+  continuation that does not fit is recorded itself. When the stack and
+  its memory part are empty, the marker moves the newest recorded range
+  back onto the stack. Already-marked children are skipped, and the stack
+  is empty when a recorded range is rescanned, so each rescan marks at
+  least one new child and marking terminates with the same set an
+  unbounded stack marks. A root that does not fit (no range to rescan) is
+  marked and recorded itself.
+- **Abandoning.** Only a full rescan list abandons the collection
+  (`overflow`, `MemoryError`; see "Architecture and interfaces").
+  That takes more than 4,096 partly scanned ranges pending at once: a graph
+  deeper than the 12,544-entry stack in which most nodes popped while it is
+  full have several unmarked pushable children. Wide and deep graphs
+  (`img_gc_wide_live_list`, `img_gc_deep_live_chain`) need one or two.
+
+The oracle (`gc_model.trace`) applies the same rules with the engine's
+limits, which every dump records (`stack_limit`, `onchip`, `rescan_limit`),
+so `objects`, `stack_hw`, `rescans` and an abandoned collection must agree.
+G3 runs every eighth seed with a five-entry stack, and its directed cases
+check a wide list and a deep chain with tiny stacks and the abandon path.
 
 ### 2. Bitmap-slot cache (Maas mark-bit cache) — adopted
 
@@ -77,9 +119,17 @@ Handbook*, 2nd ed.
 
 - **Decision.** The sweep reads every bitmap word it covers and writes zero
   back to each non-zero word, including the pinned static range below
-  `heap_dyn_base`. There is no separate `CLEAR` phase except on the first
-  collection after reset (RAM contents are not guaranteed), tracked by a
-  `bitmap_clean_r` flag.
+  `heap_dyn_base`. Words above the highest word this collection marked
+  (`mark_hi_w_r`) are already zero, so the sweep lists everything above it
+  as one run without reading it, and it jumps over a kept run
+  (`[keep_lo, keep_hi)`) instead of painting it into the bitmap. On the
+  16 MB map a collection with little live data swept 7,680 bitmap words
+  (15,000+ cycles with a kept run); it now sweeps 200-600 cycles
+  (`cs_control` boundary collections: 15,125 -> 419). There is no separate
+  `CLEAR` phase in the pause: after reset (RAM contents are not guaranteed)
+  and after an aborted collection the idle engine clears the bitmap in the
+  background, one word per cycle (`bg_clr_r`); a collection that starts
+  first finishes the clear. `bitmap_clean_r` tracks it.
 - **Why.** Clearing marks during the sweep lets the next collection start
   from a clean map for free. The plan attributes this to Bacon, but Bacon's
   sweep zeroes object data and never states that it clears the Mark Map;
@@ -213,12 +263,14 @@ States, after the ordinary fetch/execute path:
    leaves the free run queued and does not zero it; the bytes are zeroed when
    a later allocation hands them out.
 
-A collection the engine abandons (mark-stack overflow, a dmem fault) raises
+A collection the engine abandons (rescan list full, a dmem fault) raises
 `MemoryError` and leaves marks in the bitmap, so the next collection clears
 the whole bitmap first (`M_CLEAR`, one cycle per word). Without that clear a
 stale mark made the marker skip a live object that was pushed but never
 scanned, and the sweep freed its children (`img_gc_mark_overflow_recover`,
-caught by the shadow-heap checker).
+caught by the shadow-heap checker). The fixture now reaches the abandon
+path with a 64-entry stack and a 64-entry rescan list (`+GC_ONCHIP`,
+`+GC_STACK_LIMIT`, `+GC_RESCAN_LIMIT`).
 
 `GC_EN=0` never takes these states. A `NEED_HEAP` result from excore becomes
 `MEM_FAULT`, which is what the pre-GC out-of-memory goldens expect.
@@ -363,6 +415,7 @@ Child slots are those in the plan's §4.1 table, as implemented in
 | RANGE | mode 1 is a 3-element tuple; mode 0 is inline | the tuple |
 | ITER | the underlying list, tuple, string, dict, set, or object | per iterator kind; an empty short string has no heap object |
 
+Ranges longer than 128 slots are scanned in chunks ("Bounded marking").
 Non-pointers (int, float, bool, short string, control) are not followed.
 A wrong extent under-marks and the next reuse corrupts a live object; G4
 compares the free set with the oracle, and G5's shadow heap checks every
@@ -394,17 +447,16 @@ mutator access.
 
 ## Performance
 
-On-chip storage (1 MB map, where the G13 numbers below were measured):
+On-chip storage on the 1 MB map:
 mark bitmap 480 × 128 = 61,440 bits; run table 1,024 × 64 = 65,536 bits;
 mark stack 256 × 67 = 17,152 bits; static prune-map copy 256 × 128 =
 32,768 bits; total 176,896 bits (21.6 KB). The bitmap is sized from
 `PYCORE_HEAP_LIMIT`: on the 16 MB map it is 7,680 × 128 bits (120 KB),
-and the memory mark stack holds 16,384 entries. The mark stack overflows
-on a live list of more than 16,640 pushable elements, about 1 MB of a 15 MB
-heap, and the collection then raises `MemoryError` (`img_gc_wide_live_list`,
-in `[gc-long]`, fails until this is fixed). Both need re-sizing, and the
-stack an overflow fallback, before the collector is on by default
-(`planning/master_plan.md`, known bugs). Above the plan's
+and the memory mark stack holds 12,288 entries beside a 4,096-entry rescan
+list. A wide live list no longer overflows the stack (chunked scans:
+`img_gc_wide_live_list`, 18,000 tuples, stack high-water 130), and a
+100,000-node chain marks with seven rescans (`img_gc_deep_live_chain`,
+high-water 12,544). Above the plan's
 16 KB guideline: the run table is what brought the `bench_full` sweep from
 7,784 to 2,172 cycles (P4), and the prune-map copy and the deeper stack
 are what bring `bench_churn` under 25% (P6b): per collection they removed
@@ -428,36 +480,189 @@ has written `_PYC_G["_busy"]` since the last loop; the image omits the
 cleanup descriptor for programs that name `_PYC_G`, so only `compile()`
 writes those slots.
 
-G13 targets, from measurements already recorded in this file and in
-`planning/gc_progress.md`. A blank cell has not been re-measured on the
-current commit.
+G13 targets, re-measured on the 16 MB map at CACHE_EN=1 MEM_LATENCY=4
+(`make pycore-gc-bench`; P1/P2 from G13's run of every existing single-core
+image test with `+GC_EN=1`; P8 over 50 single-core `pycore-gc-fuzz` seeds).
+The 1 MB-map value, where it differs, is in brackets. P3-P7 are measured
+with mark prefetch (below) on the merged sweep fix and bounded marking;
+P1, P2 and P8 are from the earlier full measurement.
 
-| ID | Target | Measured |
+**Mark prefetch.** Marking is memory-bound: the tracer's reads wait on L1D
+misses, and with the 8-cycle L2 hit (`PYCORE_L2_HIT_CYCLES`, #137) one
+blocking miss at a time put `bench_full` at 549,289 cycles and `bench_churn`
+at 25.8% (P5 and P6b missed; with a 1-cycle L2 hit they were 343,209 and
+24.0%). While marking (`P_ROOTS_MEM`, `P_MARK`, `CACHE_EN=1`) the engine now
+prefetches lines into L1D through its non-blocking port
+([`memory_hierarchy.md`](memory_hierarchy.md), "Several loads in flight"),
+so up to four fills overlap each other and the tracer's work:
+
+- the line of every child the marker pushes on the stack (it is popped and
+  read soon after: newest first, as the stack pops);
+- the next two lines of the range the tracer is scanning, when it reaches
+  the first element of a line (plain arrays and dict tables).
+
+Candidates go on an 8-entry LIFO that drops its oldest entry when full;
+addresses outside `[0x40, heap_limit)` are skipped. Prefetches change no
+result and no counter except cycles: dumps, roots and run lists are the same
+with `+GC_PREFETCH=0` (G3 runs every seed with prefetch on; the core and
+`tb_gc` take `+GC_PREFETCH=0` to compare). `mark_xacts` and the port-busy
+count still count only the tracer's and marker's own requests.
+
+| ID | Target | Measured (16 MB map) | |
+| --- | --- | --- | --- |
+| P1 | no-collect tests match G0 cycles | 359 of 359 existing image tests run without a collection; 357 cycle-identical to `main`, the two release-zeroing tests within the revised bound (`heap-mark-release` 5610 vs G0 5468, zeroing 30 cycles over 2 lines; `compile-release-realloc` 781,887 vs 779,159, zeroing 5,056 over 361 lines) and identical with mutant 46. G1: all 372 single-core tests identical with `GC_EN=0` | met |
+| P2 | a collecting existing test adds only its pause (+0.5%) | no existing test collects at the default heap | — |
+| P3 | mark port utilisation ≥ 0.80 on `bench_full` | 0.949 | met |
+| P4 | sweep ≤ 4 cycles/bitmap word + 6/run | 2,211 cycles on `bench_full` (cap 4 × 7,680 + 6 × 562 = 34,092; 9,430 before the sweep fix) [2,172, cap 5,292] | met |
+| P5 | max pause ≤ 400,000 cycles on `bench_full` | 324,398 (549,289 without prefetch) [399,009] | met |
+| P6a | GC share ≤ 2% on `img_gc_compile_loop` | 1,001,778 / 83,791,081 = 1.20% [1.92%] | met |
+| P6b | GC share ≤ 25% on `bench_churn` | 1,436,979 / 6,397,124 = 22.5% (25.8% without prefetch) [24.2%] | met |
+| P7 | mark-stack spills ≤ 5% of mark transactions | `bench_full` 0 / 28,919; `bench_deep` 0 / 40,331 (chunked scans) | met |
+| P8 | ≤ 0.05 run-list pops per allocation over the G8 corpus | 1,493 / 102,431 = 0.0146 | met |
+
+Other counters (`bench_*`, two collections each unless noted; without
+prefetch in parentheses): `bench_full` mark 603,098 cycles (1,051,606);
+`bench_deep` max pause 223,591 (411,527); `bench_wide` max pause 396,086
+(568,952; 968,978 before chunked scans), 0 spills / 47,967 mark
+transactions; `bench_churn` 47 collections, max pause 38,443 (44,142).
+
+## Clock and timing
+
+`tools/gc_timing.sh` estimates the engine's logic depth: sv2v, the mark
+bitmap and mark-stack ring shrunk to 16 entries (the run table, 1,024
+entries, and the prune-map copy, 256, stay full size), Yosys + ABC mapped to
+the SkyWater sky130 hd library (typical corner, no wire load). One sky130
+FO4 is 80.5 ps.
+
+| Path | Delay | FO4 |
 | --- | --- | --- |
-| P1 | no-collect fixtures match G0 cycles | G1 full pass at `c09384c` (cycle-identical with the collector off) |
-| P3 | mark port utilisation ≥ 0.80 on `bench_full` | line consume of PLAIN pairs, dict slots, and list/set headers |
-| P4 | sweep ≤ 4 cycles/bitmap slot + 6/run | 2172 cycles on `bench_full` (cap 5292) |
-| P5 | max pause ≤ 400000 cycles on `bench_full` | 399009 |
-| P6a | GC share ≤ 2% on `img_gc_compile_loop` | 910656 / 47506100 = 1.92% (was 1.963% before the cleanup skip and prune-map copy) |
-| P6b | GC share ≤ 25% on `bench_churn` | 1080241 / 4464246 = 0.242 (was 0.283: 256-entry stack, on-chip prune-map copy, cleanup skip) |
-| P7 | mark-stack spills ≤ 5% of mark transactions | `bench_full` 256 spills / 30,164 transactions with 256 entries (1,024 with 64); 0 on `bench_churn` |
-| P8 | ≤ 0.05 run-list pops per allocation over the G8 corpus | 1.43 / 1.17 (measure / shrunk) at 10b2ba8; 0.011 on single-core seeds 0-9 with keep-run and next-fit |
+| Worst register-to-register logic path, before the sweep-step fix | 9.02 ns | 112 |
+| Same, now (sweep: `sw_g_r` compares and adds into the run-emit write enables) | 7.23 ns | 90 |
+| Read mux of a 256 / 1,024 / 7,680-word flop array | 1.03 / 1.26 / 1.88 ns | 13 / 16 / 23 |
+
+Adding ~0.4 ns of flop overhead and ~25% for wires puts the engine at about
+9.5 ns, **roughly 100 MHz in sky130 at the typical corner** (less at the slow
+corner), for the logic alone.
+
+On an FPGA the deep single-cycle paths cost far more. With every array at 16
+entries (bitmap, ring, run table and prune-map copy), `synth_ecp5` needs
+55,272 LUT4 and 10,186 flops, 71% of the logic of the largest ECP5 (LFE5U-85),
+and nextpnr's post-placement estimate is **11.3 MHz** (worst slack about
+-68 ns at a 50 MHz target; routing did not converge in an hour and was
+stopped). An FPGA prototype of the collector needs the sweep and marker
+paths pipelined before it is worth benchmarking at a useful clock.
+
+The arrays are the real limit:
+
+- The mark bitmap is 7,680 x 128 bits on the 16 MB map and is read
+  combinationally in up to four places in one cycle (marker test, marker
+  set, sweep scan, kept-run update before this revision). Built from flops
+  it would be about 20 mm2 of sky130. As SRAM it needs a registered read
+  port, so the marker's test-and-set becomes read-then-write (one extra cycle
+  per marked object, about 1% of a mark-bound pause) and the sweep reads the
+  next word a cycle ahead. The run table (1,024 x 64 bits, read
+  combinationally by the core's allocator through `run_peek`), the prune-map
+  copy and the mark-stack ring have the same property.
+
+### A separate clock
+
+Marking is memory-bound: the dmem port is busy 84-97% of the mark phase
+(blocking L1D/L2, one outstanding request; measured before mark prefetch,
+which overlaps those misses). The part of a pause that the engine's own
+clock speeds up is small:
+
+| Benchmark | Live | Mark cycles | Port busy | Engine-only (mark + sweep) |
+| --- | --- | --- | --- | --- |
+| `bench_full` | 502 KB | 511,616 | 496,108 | 17,661 (3.4%) |
+| `bench_deep` | 320 KB | 381,349 | 321,108 | 60,596 (15.9%) |
+| `bench_wide` | 512 KB | 912,995 | 867,366 | 46,081 (5.0%) |
+| `bench_churn` | 30 KB | 23,645 | 22,356 | 1,934 (8.0%) |
+
+So the engine belongs on the memory hierarchy's clock, or a synchronous
+integer ratio of it. A faster asynchronous GC clock would save at most the
+engine-only share and pay a synchronizer on every dmem transaction (two or
+three cycles on ~20-60-cycle transactions). Its interfaces to the core are
+the dmem port, the root stream, the start/done handshake and `run_peek` (the
+core reads the on-chip run table combinationally in `S_GC_ALLOC`); a clock
+crossing would need the last moved to the core side or behind a handshake.
+For benchmarking at a clock `f` with memory latency in core cycles:
+pause ~= port-busy cycles / f_mem + engine-only cycles / f_gc.
 
 ## Testing
 
 | Tier | Command | What | When |
 | --- | --- | --- | --- |
-| PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (61 programs, each under ~1M cycles) | every PR (CI `gc` area job) |
-| Long | `make test-gc-long` | the `[gc-long]` area: steady-state plateaus, allocation-site churn, benches, compile loops | nightly / on demand |
-| Fuzz | `make pycore-gc-fuzz SEEDS=0..49 TOP=single` | random programs checked against CPython and the oracle | nightly / on demand |
-| Acceptance | `make pycore-gc-acceptance MODE=full` | gates G0-G16 | before a collector design change |
+| PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (64 programs) | every PR (CI `gc` area job) |
+| Long | `make test-gc-long` | the `[gc-long]` area: steady-state plateaus, allocation-site churn, benches, compile loops | nightly (`.github/workflows/gc-nightly.yml`) / on demand |
+| Compiler | `make test-compiler-gc` | the compile suite with the collector on and a 512 KB heap: 3-7 collections per program, several inside `compile()`; output must match CPython | nightly / on demand |
+| Fuzz | `make pycore-gc-fuzz SEEDS=0..49 TOP=single` | random programs checked against CPython and the oracle | nightly, both tops / on demand |
+| Acceptance | `make pycore-gc-acceptance MODE=quick` | gates G0-G8 | before merging a collector change |
+| Acceptance | `make pycore-gc-acceptance MODE=full` | gates G0-G16 | before a collector design change or turning it on by default |
+| Mutants | `make pycore-gc-mutants [MUTANTS=1,5]` | the quick gates against each of the 49 mutants (G10) | after a change to the gates or the RTL they cover |
 
 A new PR-tier program must stay under 2M cycles at the default config;
-anything longer goes in `[gc-long]`.
+anything longer goes in `[gc-long]`. The exception is `gc-wide-live-list`
+(6.7M cycles, almost all of it building a list wider than the mark stack),
+kept per PR because it guards the bounded-marking rules. A known bug is
+marked `xfail = "<why>"` in `hw_tests.toml`: the run must fail, and the
+suite fails if it passes, so the marker comes off with the fix.
+
+The steady-state programs (`img_gc_steady_*`) check themselves, like
+`img_gc_leak_check`: live bytes from `_bi_gc_collect()` after a warm-up and
+again at the end; any growth returns minus the growth instead of the
+checksum.
+
+### Gates
+
+`tools/gc_acceptance.py` runs the gates in order and writes
+`build/gc_acceptance/status.json` and `report.md`; `tools/gc_gates.py` holds
+them. A gate that runs hardware tests takes its test set and plusargs from a
+`[gate.*]` table at the end of `pycore/programs/hw_tests.toml` and runs it
+through `hw_tests.py`, one log per run under
+`build/gc_acceptance/runs/<gate>/<test>/` (dumps beside it).
+`python3.14 pycore/tools/hw_tests.py --gate G4 [--mode full]` runs one set by
+hand, without the checks.
+
+| Gate | Runs | Passes when |
+| --- | --- | --- |
+| G0 | — | `pycore/tests/data/gc_baseline_cycles.tsv` covers every test and config `main` ran at its commit |
+| G1 | baseline tests, `+GC_EN=0` (quick: single-core, default config; full: every test-hw and test-caching config) | every result and cycle count equals G0 |
+| G2 | `pycore/tests/test_gc_model.py` | the oracle agrees with Python reachability |
+| G3 | `make pycore-gc` | 200 seeds × 6 configs exact |
+| G4 | `[gc]` + `gc-mutant-*` (full: + `[gc-long]`, CACHE_EN 0 and 1, and every existing image test with `+GC_AT_EXIT=1`), `+GC_DUMP_EACH` | every dump equals `gc_model.py` |
+| G5, G6 | the shadow self-test; every GC log so far | the self-test fires; no `[GC-SHADOW]` or `[GC-INV]` |
+| G7 | as G4, `+GC_EVERY_N_RUNS=1` in a 2.5×-peak heap (full: also `+GC_AT_BOUNDARY_EVERY=K` and poison) | goldens hold, dumps exact |
+| G8 | `gc_fuzz.py`, 50 seeds single-core (full: 1000 per top) | no failure; every kind and site covered |
+| G9-G16 | full only: site coverage, mutants, steady state, every memory config, P1-P8, `test-all` and warnings, review, docs/CI | see `planning/gc_plan.md` §10.2 |
+
+`make pycore-gc-baseline [BASELINE_REF=<commit>]` regenerates G0 from a
+worktree of that commit (`tools/gc_baseline.py`: its own `hw_tests.py` under
+the test-hw and test-caching configs, outside the `gc` and `gc-long` areas,
+with the collector off, plus its Verilator warnings and host steps). The
+current G0 is at `78860e7`.
+
+The on-device compiler is the largest Python program the hart runs, so the
+compile suite doubles as a collector test. `--plusargs` passes simulator
+plusargs through `pycore_cli.py run` and `compile_suite.py`; with `+GC_EN=1`
+the exec harness also calls `_bi_gc_collect()` before compile, after compile
+and after the run, and the report gives exact live bytes (what `compile()`
+kept), the number of collections and the longest pause:
+
+```bash
+python3.14 pycore/tools/compile_suite.py --jobs 4 --plusargs "+GC_EN=1 +HEAP_DYN_BYTES=524288"
+python3.14 pycore/tools/pycore_cli.py run FILE.py --plusargs "+GC_EN=1 +GC_PHASE_PROF=1"
+```
+
+A small `+HEAP_DYN_BYTES` makes the collector run inside every compile.
+`compile()` keeps only its code object (2-10 KB per suite program); its
+working set is reclaimed. The peak live set during a compile (tokens plus
+AST at the end of parsing, about 190 KB for the 65-line `cs_control`) is the
+smallest heap a file compiles in.
 
 ## Debugging
 
-Plusargs the gates use:
+Plusargs the gates use (give any of them to a test with
+`hw_tests.py --plusargs`, e.g. `--plusargs "+GC_LOG=1"`):
 
 | Plusarg | Effect |
 | --- | --- |
@@ -466,12 +671,13 @@ Plusargs the gates use:
 | `+GC_SITE_STATS=1` | one `[GC-SITE]` line per allocation site at exit (G9) |
 | `+GC_DUMP_EACH=<dir>` | coherent dump after each collection, checked by `gc_model.py` |
 | `+GC_ROOT_STASH=1` | write the streamed roots for the oracle |
+| `+GC_PHASE_PROF=1` | one `[GC-PHASE]` line per collection: cycles in each engine phase (clear, cleanup, preload, roots, mark, sweep), objects, mark transactions |
 | `+GC_POISON=1` | poison reclaimed granules so a use-after-free faults (the sweep writes whole aligned 64 B lines in one line write when `CACHE_EN=1`, 16 B words otherwise) |
 | `+GC_AT_EXIT=1` | collect once at halt |
 | `+GC_EVERY_N_RUNS=1` | collect when a run cannot satisfy the allocation (G7 mode a) |
 | `+GC_AT_BOUNDARY_EVERY=K` | collect every K instructions (G7 mode b, G8 measure) |
 | `+HEAP_DYN_BYTES=N` | shrink the dynamic heap |
-| `+GC_MUTANT=n` | enable mutant n (`tools/gc_mutants.py`); 0 is inert |
+| `+GC_MUTANT=n` | enable mutant n (`make pycore-gc-mutants`); 0 is inert |
 | `+MAX_CYCLES_SCALE=k` | raise the cycle cap for a run that collects |
 
 `[GC-SHADOW]` is the shadow-heap checker (G5). `[GC-INV]` is an in-RTL

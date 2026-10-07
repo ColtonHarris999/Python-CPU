@@ -1,0 +1,33 @@
+# Learning-gem5 classic caches, the geometry interpreter papers copy when
+# they name a "gem5 TimingSimple" hierarchy: 16KB 2-way L1I, 64KB 2-way L1D,
+# 256KB 8-way L2, 64B lines. Hit latencies follow parallel tag/data lookup
+# plus response: L1 max(2, 2) + 2 = 4, L2 tag/data/response 20.
+# SimpleMemory here is 200 cycles. The branch penalty stays 16; gem5's
+# TimingSimpleCPU itself has no predictor, so do not add this penalty again
+# on top of a TimingSimpleCPU run.
+name = "gem5_classic"
+description = "gem5 classic L1I 16KB / L1D 64KB / L2 256KB"
+model = "simple-core"
+frequency_mhz = 1000
+branch_penalty = 16
+
+[l1i]
+size_bytes = 16384
+associativity = 2
+line_bytes = 64
+hit_latency = 4
+
+[l1d]
+size_bytes = 65536
+associativity = 2
+line_bytes = 64
+hit_latency = 4
+
+[llc]
+size_bytes = 262144
+associativity = 8
+line_bytes = 64
+hit_latency = 20
+
+[memory]
+latency = 200
