@@ -17,6 +17,15 @@ two-core builds, with a mailbox trace hook. The results are in §2 and
 Appendix B. Bugs found along the way are listed in Appendix A. Every
 entry there says whether it was reproduced or found by reading code.
 
+A second research round covered the units the first round only read:
+- cycle profiles of the on-device compiler and small programs (§2.4);
+- a 240-probe semantics sweep of containers, calls, protocols and
+  exceptions (Appendix E);
+- STRACC string producers (§8.0);
+- the GC and allocator under excore growth (§6.5).
+
+It added A26–A42 to Appendix A and changed §6, §8, §10–§12 and §14–§16.
+
 Opcode, type and builtin support stays in
 [`pycore/docs/bytecode_support.md`](../pycore/docs/bytecode_support.md),
 [`pycore/docs/exception_support.md`](../pycore/docs/exception_support.md),
@@ -93,7 +102,7 @@ with 128 dirty lines.
 
 ### 2.3 Bugs this plan must fix or route around
 
-Appendix A lists 25 items with their evidence. The ones that shape the
+Appendix A lists 42 items with their evidence. The ones that shape the
 design are:
 
 - **Excore firmware correctness.** `SET_UPDATE` corrupts its loop bound on
@@ -108,8 +117,94 @@ design are:
 - **Container FSM.** `in` hangs over more than 256 elements (A8). Name
   indexes ≥ 128 are truncated (A9). `set(iterable)` mishandles `None`
   (A10). Bulk dict ops walk hash-slot order instead of insertion order
-  (A11). `1.0 in [1]` is False (A12). The 4th instance attribute needs an
-  excore grow (A14).
+  (A11). `1.0 in [1]`, `(1, 2) in [(1, 2)]` and `[1] in [[1]]` are False
+  (A12). The 4th instance attribute needs an excore grow (A14).
+  `a.extend(a)` never terminates (A30).
+- **STRACC.** Every string longer than 16 payload bytes that the copy
+  path produces carries a wrong hash. It never equals, and never finds in
+  a dict or set, the same text built any other way. The affected
+  producers are concat, repeat, slice, join, pad, zfill, strip, affix,
+  split and partition (A26, §8.0). Three inputs hang the unit (A27).
+  Slices and strips do not narrow the kind, so `"aé€"[:2] != "aé"`
+  (A28).
+- **Containers are memory-hungry.** A dict slot costs 96 B (a 32 B order
+  entry plus a 64 B table slot), and the excore grows to the next power of
+  two at or above 4 × used. A 200-key dict holds a 96 KB table, about 10×
+  CPython's footprint and 12× the 8 KB L1D (A31, §6.5).
+- **Missing semantics give wrong answers, not traps.** Besides A12,
+  integer arithmetic wraps silently at 64 bits: `2**62 + 2**62 > 2**62`
+  is False (A32).
+
+### 2.4 Where cycles go on real programs
+
+Measured with a profiling build of the two-core top, `MEM_LATENCY=4`,
+cache on. It counts cycles per core state, per opcode, per container op
+and per cache-FSM state. The largest real workload is the on-device
+compiler compiling `compile_suite/cs_program.py` (1.06 M bytecodes):
+
+| Core state | Cycles | Share |
+| --- | ---: | ---: |
+| `S_CONTAINER` | 16.96 M | 41.2% |
+| `FETCH` (waiting on L1I) | 16.48 M | 40.0% |
+| `DECODE` / `EXEC` / `MEM` / `WB` | 3.58 M | 8.7% |
+| `CALL` + `RF_SPILL` | 2.49 M | 6.1% |
+| `RETURN` + `RF_FILL` | 1.55 M | 3.8% |
+| `STRACC` | 0.08 M | 0.2% |
+| excore (`TRAP_*`) | 1,656 | 0.004% |
+| **Total** | **41.15 M** | |
+
+| Container op | Count | Cycles each | Share of total |
+| --- | ---: | ---: | ---: |
+| `LOAD_GLOBAL` | 152,427 | 45.6 | 16.9% |
+| `SUBSCR_DICT` | 31,228 | 80.4 | 6.1% |
+| `SUBSCR_LIST` | 30,969 | 53.7 | 4.0% |
+| `LOAD_CONST` | 52,170 | 28.3 | 3.6% |
+| `SEQ_REPEAT` | 602 | 2,222 | 3.3% |
+| `SEQ_CONCAT` | 238 | 4,060 | 2.3% |
+| `STORE_LIST` | 15,001 | 59.0 | 2.2% |
+| `STORE_NAME` / `STORE_GLOBAL` | 8,339 | 64.1 | 1.3% |
+| `CONTAINS_DICT` | 971 | 344 | 0.8% |
+
+Most container cycles are memory waits: 12.9 M of the 17.0 M had a dmem
+request outstanding.
+- **L1I.** 117 k misses against 300 k hits, a 28% miss rate. Each miss
+  spends 97 cycles in `FILL_WAIT`.
+- **L1D.** 217 k misses, 49 cycles of `FILL_WAIT` each.
+- **GIC.** It hits only 55% of the time (84 k hits, 68 k misses), because
+  each of the 12.3 k `STORE_GLOBAL` / `STORE_NAME` executions flushes the
+  whole cache.
+
+`cs_containers` gives the same split within 0.5 points.
+
+Small programs and their run phases look different:
+
+| Program | Total cycles | Excore share | Where |
+| --- | ---: | ---: | --- |
+| `cs_program`, run phase | 392 k | 40% | 52 `print` pieces (1.3 k each), 2 module-namespace `DICT_GROW` (24.7 k each), 15 `LIST_EXTEND`, 4 `LIST_GROW` |
+| `cs_containers`, run phase | 382 k | 58% | 94 `print` pieces, 37 `LIST_EXTEND`, 2 `DICT_GROW` |
+| `allocator_list` | 3.68 M | 92% | 256 `LIST_EXTEND`, 13.1 k each: the firmware copies the whole list on every `+=` |
+
+What this changes:
+1. **Amdahl.** On the largest program, an infinitely fast CA removes at
+   most 41% of cycles, and fetch costs as much again. The speedup report
+   (§12) states the fetch share next to every number. L1I work (§11) is a
+   peer of the CA for macro benchmarks, not an afterthought.
+2. **`LOAD_GLOBAL` is the single most expensive op.** The fix is GIC
+   policy, not a faster probe: targeted invalidation instead of a full
+   flush (§6.11, D15). Flushing the whole GIC on every CA namespace write
+   would make this worse.
+3. **`SEQ_REPEAT` and `SEQ_CONCAT` cost 2–4 k cycles each**, because they
+   copy element by element. The CA copy engine's line-granular path is
+   worth more on this workload than any probe optimization.
+4. **The compiler hides the missing growth hardware.** It pre-seeds
+   `_PYC_G` (`PACKAGE_RUNTIME_SEEDS`) so it never takes a `DICT_GROW`.
+   Programs that do not do this pay 12–25 k cycles per grow.
+5. **CALL plus RETURN cost about 10%**, mostly RF spill and fill (about 49
+   and 83 cycles per call). That is outside this plan; it belongs to the
+   pipeline track.
+6. **None of these workloads hits A1 or A2.** The compile phase takes no
+   container traps, and the run phases' namespace grows stay below 64
+   slots with no set updates.
 
 ---
 
@@ -347,6 +442,9 @@ of the CALL FSM, and excore traps 9–14 and 19–20.
 | Namespaces | `NS_LOAD(globals, builtins, name)`, `NS_STORE(dict, name, value)` | dict probes of `LOAD_GLOBAL` / `LOAD_NAME`, `STORE_NAME` / `STORE_GLOBAL` |
 | Attributes | `A_LOAD(obj, name)` walks the instance dict, then up to 8 `tp_dict`s, and returns the value plus where it was found; `A_STORE`, `A_DEL` | dict probes of `LOAD_ATTR` / `STORE_ATTR` / `DELETE_ATTR` |
 | Call support | `KW_LOOKUP` (binder kwargs and kwdefaults probes), `LEN` / `TRUTH` | binder probes, `BI_LEN`, the container half of `TO_BOOL` |
+| Comparison (v1.1) | `SEQ_CMP(op)` for list/tuple `==` `!=` `<` `<=` `>` `>=` (element-wise, rich equality, first difference decides); `D_EQ`; `S_CMP(op)` for `==` and the subset relations | new: every container comparison is a `TYPE` trap today (Appendix E) |
+| Set algebra (v1.1) | `S_UNION`, `S_INTER`, `S_DIFF`, `S_XOR` (operators and methods, iterable right operand for methods), `S_DISJOINT`, `S_REMOVE`, `S_DISCARD`, `S_POP`, `S_CLEAR`, `S_COPY` | new: `TYPE` / `ATTR_ERROR` traps today. Reuses the bulk engine's probe/insert sub-FSM |
+| Methods (v1.1) | `L_REMOVE`, `L_INDEX`, `L_COUNT`, `L_REVERSE`, `L_COPY`; `D_POPITEM`, `D_SETDEFAULT`, `D_COPY`, `D_CLEAR`; `T_INDEX` / `T_COUNT` share the list scanners | new: `ATTR_ERROR` (15) or `TYPE` traps today. `list.sort` stays a ROM merge sort over `L_GET` / `L_SET` until a sort engine is justified |
 
 The remaining `S_CONTAINER` arms go to three places:
 
@@ -449,6 +547,53 @@ of the same command, not a second encoding.
 - Every CA allocation path gets a key in `tools/gc_sites.py` and is
   covered by the G-gates. `gc_model.py` learns the new object kinds (§9).
 
+What the GC research round measured (two-core, `+GC_EN=1`):
+- **The abort / collect / re-dispatch contract holds for excore growth.**
+  - 15 growth-heavy probes pass with a collection every 5 instruction
+    boundaries (`+GC_AT_BOUNDARY_EVERY=5`). That covers dict, set and
+    list grows, bulk updates, `zip` / `map` / `reversed` / `range` ROM
+    loops and LONG_STR-keyed grows.
+  - A loop that rebuilds a 100-element set six times passes in 24–64 KB
+    heaps. Each run takes 1–3 `NEED_HEAP` results, and each one collects
+    and lets the excore's retry adopt the new run.
+  - The CA inherits this contract unchanged.
+- **Out-of-memory points come from the dict layout, not the GC.** With a
+  96 KB dynamic heap, a 200-key int dict fails. The collection leaves
+  24.6 KB live and a 65.6 KB free run, but the excore asks for 98,304
+  bytes: a 1,024-slot table at 96 B per slot. With 128 KB it passes. The
+  table costs:
+  - 64 B per slot plus a 32 B order entry per slot (`heap_image.py`
+    `alloc_dict`, excore `dgr_alloc`);
+  - a grow target of the next power of two ≥ 4 × used (2 × used above
+    50,000), with the order buffer sized to the slot count rather than
+    the usable count.
+
+  So a dict spends 144–768 B per live key, 4.5–24× the 32 B of key and
+  value. The 200-key dict spends about 490 B per key. CPython's compact dict
+  spends about 46 B per key for the same 200 keys: a 1 KB index plus
+  341 × 24 B entries, about 9 KB.
+- Decision D14 (§15) picks the CA's dict layout and growth policy. The
+  default keeps today's layout for stage A0, so the CA, `excore_full`,
+  `heap_image.py` and `gc_model.py` stay byte-identical. It also adopts
+  CPython's growth (`used × 3`) and sizes the order buffer to ⅔ of the
+  slots at once, because both are policy, not layout. A compact
+  index + dense-entry layout is a v2 item with its own GC-kind change.
+  Footprint is part of the CA's measured gain: a 96 KB table is 12× L1D.
+- **Large power-of-two tables fragment the non-moving heap, and the run
+  fit rule adds a false OOM (A42).**
+  - A loop that rebuilds a 60-key dict six times fails in a 48 KB heap
+    with 6.2 KB live. Each rebuild needs one 24,576 B block (256 slots).
+    After collection, 42,960 B are free in 3 runs, and the largest is
+    exactly 24,576 B.
+  - `S_GC_ALLOC` accepts a run only if it holds `need + 64` B. The excore
+    does not align its grow buffers, so the request would have fit.
+  - The OOM guard counts the next loop iteration's allocation at the same
+    pc as a retry of the failed one.
+  - The CA's `alloc` channel already carries `line_align`. `S_GC_ALLOC`
+    adds the 64 B of slack only when that bit is set, and the retry guard
+    keys on the dynamic instance (a per-dispatch counter), not on the pc.
+    D14's smaller tables shrink the blocks themselves.
+
 ### 6.6 Where data ready falls
 
 | Class | Commands | DR at | Work after DR |
@@ -459,10 +604,28 @@ of the same command, not a second encoding.
 | E3: the result is the work | `L_GET`, `T_GET`, `D_GET`, `*_CONTAINS`, `NS_LOAD`, `A_LOAD`, `IT_NEXT`, `UNPACK`, `LEN`, `TRUTH` | when the value is known | none (CR = DR) |
 | E4: the decision needs the whole walk | `S_UPDATE` / `D_UPDATE` (an unhashable element raises mid-way; CPython also leaves a partial update), `D_MERGE` (a duplicate key raises `TypeError`) | after the walk | none |
 
+The v1.1 commands fall into the same classes:
+- E3: `SEQ_CMP`, `D_EQ`, `S_CMP`, `L_INDEX`, `L_COUNT`, `T_INDEX`,
+  `T_COUNT`, `S_DISJOINT`.
+- E1: `L_REMOVE`, `D_POPITEM`, `S_REMOVE`, `S_POP`.
+- E2: `S_UNION`, `S_INTER`, `S_DIFF`, `S_XOR`, `L_COPY`, `D_COPY`,
+  `S_COPY`.
+- E0: `L_REVERSE`, `D_CLEAR`, `S_CLEAR`, `S_DISCARD`.
+- `D_SETDEFAULT` is E3 when the key is present. Otherwise it is E0, and
+  the result is the default.
+
 E0 with a grow: whether a new key needs a grow depends on whether the key
 is new. When the header says the next *new* key would cross the
 threshold, DR waits for the probe. Otherwise DR does not wait. Lists know
 from the header alone (`len == cap`).
+
+Self-referencing operands: when a command's source and destination are
+the same container (`a.extend(a)`, `a += a`, `d.update(d)`, `s |= s`),
+the CA snapshots the source length at issue and copies that many
+elements. CPython does the same. Today's ROM `list.extend` iterates the
+live list and never terminates (A30). In Stage B the BCT holds one write
+entry that covers both roles, not a read lock and a write lock that would
+block each other.
 
 ### 6.7 Hazards, in stages
 
@@ -535,6 +698,16 @@ no flushes and no range-invalidate operations.
   - OBJECT keys keep identity semantics. A class that defines `__eq__`
     or `__hash__` gets a type flag at image build. Its instances as keys
     go to `EMULATE` until a protocol path exists.
+  - Container equality and ordering (`SEQ_CMP`, `D_EQ`, `S_CMP`) use the
+    same element equality. A nested container element pushes a frame on
+    a small compare stack (8 levels). Deeper nesting, or an element whose
+    type has the `__eq__` / `__lt__` flag, returns `FALLBACK` and goes
+    to the ROM or `EMULATE` path, which can make protocol calls. Ordering
+    of unlike types raises `TypeError`, as in CPython.
+  - The string fast reject (tier 2: hash, lengths, kind) is only correct
+    if every producer emits the canonical handle, with the right hash
+    (A26) and the narrowest kind (A28). Today neither holds. §8.0 fixes
+    both before the CA relies on tier 2.
 - **LONG_STR compare lane.** The CA has its own payload comparator. It
   streams both payloads, 16 B per cycle, over its own port; tier 2 has
   already proven the kind and length equal. It does not borrow STRACC, so
@@ -564,7 +737,7 @@ It is flushed:
 | `trap_req` (any excore trap) | drain before the handoff; flush the descriptor cache on `trap_res` |
 | `_bi_heap_release`, `_bi_code_new` / `blit` / `patch` / `release` | drain; flush the descriptor cache on release |
 | STRACC command with a container operand (join, repr walk) | A1: drain. B: BCT check |
-| CA write to a dict at `globals_base_r` or `builtins_base_r` | pulse `gic_flush` **at DR**, not at CR, because a `LOAD_GLOBAL` that hits the GIC does not wait for the CA (Appendix D). This also fixes the existing GIC bug (A7) for every dict-writing path |
+| CA write or delete on a dict at `globals_base_r` or `builtins_base_r` | pulse `gic_inv(name_hash)` **at DR**, not at CR, because a `LOAD_GLOBAL` that hits the GIC does not wait for the CA (Appendix D). This also fixes the existing GIC bug (A7) for every dict-writing path. Not a full flush: see the GIC policy below |
 | CA never writes code objects or `co_consts` | CODC unaffected |
 | halt or program end | drain, so results and memory dumps are final |
 
@@ -572,6 +745,26 @@ The `_PYC_G` cleanup descriptor stores absolute table-slot addresses
 (`image_from_source.py`). The CA must not relocate that table except on an
 insert-driven grow. Better: make the descriptor base-relative as part of
 this work, which removes the constraint.
+
+**GIC policy (D15).** Today every `STORE_NAME` / `STORE_GLOBAL` flushes
+all 16 entries. On the compiler workload that is 12.3 k flushes, and the
+hit rate is 55% (§2.4).
+- Each entry gains a 16-bit tag: the low bits of the name's key-spec
+  hash.
+- Namespace writes invalidate only the entries whose tag matches. The CA
+  computes that hash for its probe anyway. A false match costs one miss.
+- A write to the globals dict also invalidates entries that resolved in
+  builtins, because a new global shadows a builtin. The tag match covers
+  that case.
+- Writes to any other dict leave the GIC alone. The GIC is flushed on
+  every globals switch, so its entries only ever describe the current
+  globals and builtins.
+- Full flushes remain for a globals switch, GC, and an excore result that
+  reports a namespace write (§11).
+
+Gate: the GIC hit rate on the compile suite is reported before and after.
+The entry count grows from 16 to 64 only if targeted invalidation alone
+leaves the hit rate under 90%.
 
 ### 6.12 Inside the CA
 
@@ -602,7 +795,9 @@ The rewrite fixes these (Appendix A):
 - Full-width name indexes in pycore's name reads (A9).
 - `None` in `set()` (A10).
 - Insertion-order walks for bulk sources (A11).
-- Rich equality for `in` (A12).
+- Rich equality for `in` (A12), including container elements:
+  `(1, 2) in [(1, 2)]` and `[1] in [[1]]` are True.
+- Self-source extend and update terminate (A30, §6.6).
 - No reliance on the contamination bit, which is retired (A22).
 - Counts beyond 127 for `BUILD_*`, `UNPACK*`, `LIST_TO_TUPLE` and `set()`
   (A23).
@@ -750,6 +945,67 @@ reworded to match.
 
 ## 8. STRACC: conversions, `str()`, `repr()`, f-strings
 
+### 8.0 Fix first: every producer emits the canonical string
+
+The CA's dict and set probes trust the string handle: `(hash, nbytes,
+nchars, kind)` must be equal before any payload compare (§6.9). Today
+STRACC breaks that in three ways.
+
+- **A26: double-hashed unit at a destination word boundary.**
+  - **Cause.** `consume_unit` (`pycore_str_accel.sv`) steps `hash_r` and
+    `flags_r` on every call. When the unit belongs to a new 16 B
+    destination word and the previous word is still dirty, it issues
+    that write and returns without consuming the unit. The copy loop
+    (`step_copy`) then calls it again with the same unit, so the unit is
+    hashed twice.
+  - **Which producers.** Producers that check `dest_can_take()` first
+    are correct: map (`lower` / `upper` / …), replace and expandtabs.
+    Concat, repeat, slice, join, pad, zfill, strip, affix, split and
+    partition are wrong.
+  - **Boundary.** The first unit past 16 payload bytes: 17 chars at kind
+    1, 9 at kind 2, 5 at kind 4.
+  - **Effect.** Such a string never `==` an image constant with the same
+    text, and never finds it as a dict or set key. Runtime-vs-runtime
+    compares pass because both sides carry the same wrong hash. Ordering
+    compares are content-based and pass.
+  - **Why tests missed it.** `img_str_eq_runtime_long` uses 10 chars, and
+    `img_str_dict_key_runtime` uses exactly 16.
+  - **Fix.** Step the hash and flags only on the branch that accepts the
+    unit, or gate every caller with `dest_can_take()` as the replace path
+    does.
+- **A27: three inputs hang the unit.** They are `"banana".rfind("x")`,
+  `"€ab€".strip("€")` and a 17-character `lstrip` set on a 26-character
+  string. Each loop gets a bound check, and `tb_str_accel` gets a
+  no-progress watchdog.
+- **A28: no kind narrowing.**
+  - **Symptom.** Slice, strip, split, partition, replace and join keep
+    the source kind, so `"aé€"[:2]` stays kind 2. It is then unequal to
+    `"aé"`, and `{t, "aé"}` has two members.
+  - **Invariant.** The canonical invariant gains CPython's rule: the kind
+    is the narrowest that holds every code point.
+  - **Mechanism.** Producers track the maximum code point while copying.
+    When the result could be narrower, a compaction pass rewrites it in
+    place and computes the hash over the narrowed units, because the
+    hash covers the stored bytes.
+- **A29: wrong results.**
+  - Odd-margin `center` puts the extra pad on the wrong side.
+  - Kind-2/4 fill characters are written wrong.
+  - `center(5, "xy")` does not raise `TypeError`.
+  - `find` / `count` / `rfind` with an empty needle and `start > len`
+    return the wrong values.
+  - `upper()` of `µ` (U+00B5 → U+039C, a kind-widening map) on a LONG
+    receiver returns the input. The `ALL_UPPER` / `ALL_LOWER` flags treat
+    `µ` as caseless, both in `encoding.stracc_case_flags` and in the RTL.
+
+A26 and A27 are P0: they break the dict semantics the CA depends on. A28
+and A29 land in P2. The gate is a STRACC differential fuzzer against
+CPython that covers:
+- every producer;
+- kinds 1, 2 and 4;
+- lengths 0–40, crossing each 16 B boundary;
+- for each result, `==`, `hash`-path dict lookup and set membership
+  against an image constant.
+
 ### 8.1 New commands
 
 STRACC uses 20 of 64 opcodes (`PY_SA_*`). Added:
@@ -812,7 +1068,23 @@ through the CA walk service) is a later optimisation.
 `str(obj)` resolves `__str__` through `A_LOAD` on the type's MRO and makes
 a protocol call, using the same machinery as `__len__`, `__iter__` and
 `__next__` today. If `__str__` is absent it uses `__repr__`. If that is
-absent too, it uses CPython's default text:
+absent too, it uses CPython's default text.
+
+Measured today:
+- User-defined `__len__`, `__iter__` and `__next__` work; the protocol
+  call is real.
+- `str(obj)` with `__str__` traps `TYPE`.
+- `repr(obj)` with `__repr__` and `repr(['a', None, True])` fault with
+  `MEM_FAULT` (7). That fault is a misclassification the §10 audit must
+  fix.
+- `__getitem__`, `__contains__`, `__eq__`, `__add__` and `__bool__`
+  trap `TYPE`; `__call__` traps `CALL_FILTER`.
+
+STRACC cannot make calls. pycore makes the protocol call and hands the
+resulting string to STRACC. The ROM container walker reaches object
+elements through `repr()`, so it needs no special case.
+
+The default texts:
 
 | Object | Default text |
 | --- | --- |
@@ -951,6 +1223,16 @@ New:
 2. **Audit every `TYPE` and `CALL_FILTER` site.** A real Python error
    raises on pycore: a fatal code now, a Python exception after T6. A
    missing feature routes to `EMULATE`. The two never share a code again.
+   - The sweep found `MEM_FAULT` (7) used the same way: `repr` of a list
+     or an object, a negative index, `frozenset()`, and `next()` on an
+     exhausted iterator, with or without a default.
+   - `ATTR_ERROR` (15) is used for every missing method.
+   - So the audit covers codes 1, 6, 7 and 15.
+   - The sweep also found that `TypeError`, `ValueError`,
+     `AttributeError`, `ZeroDivisionError` (code 3), `KeyError`,
+     `IndexError` and `StopIteration` from `next()` are all uncatchable
+     today. A `try` around them never runs its handler, while `raise` of
+     the same classes is caught correctly.
 3. **Context page** at `0x00F0_A000` (4 KB). pycore writes it before
    `trap_req`, and the handoff makes it visible:
    - stack and frame state: `tos`, `rf_wm`, `cur_locals_base`,
@@ -992,9 +1274,47 @@ New:
 
    Each handler is deleted from `excore_min` once the feature is built in
    hardware.
-8. **Out of scope** for the excore: generators and `async`, which need
-   suspended frames on pycore, and anything that would run concurrently
-   with pycore.
+
+   The semantics sweep (Appendix E) adds these runtime gaps. Each is
+   listed with its eventual hardware owner, and each emulates until that
+   owner lands:
+   - container `==` / `<` and set operators → CA v1.1 (§6.1);
+   - the missing list, dict, set and tuple methods → CA v1.1;
+   - `range` indexing and `in` → pycore `RANGE` arm;
+   - `next(it, default)` → ROM;
+   - `int.bit_length` and other `int` methods → ROM over `LOAD_ATTR` on
+     primitives (§9.3);
+   - `bool` operands to shifts and bitwise ops → ALU.
+
+   Order the work by what the compile suite and `pycore/programs` use;
+   §12.2's macro benchmarks record which handlers fire.
+8. **Build-time rejections become runtime emulation.** G1 requires that
+   unimplemented Python reaches the excore. Today much of it never gets
+   that far, because `image_from_source.py` rejects the program:
+   - `frozenset` constants, which means every `x in {1, 2, 3}`, because
+     CPython folds the set display into a `frozenset` constant;
+   - classes with bases, so `class B(A)` and `class E(Exception)` fail;
+   - closures (`SET_FUNCTION_ATTRIBUTE` flag 8) and `nonlocal`;
+   - slices with a step, and `BUILD_SLICE`;
+   - `dict(a=1)`, `sorted(key=…)` and `zip` with 3+ iterables: ROM
+     signatures, not hardware;
+   - `@property`, `with`, `assert`, generators.
+
+   The builder should emit these and let the runtime route them. Constant
+   sets become `SET` objects with a frozen flag, served by the CA. The
+   others become `EMULATE` sites. Generators, `with` and `assert` stay
+   with their own tracks in `exception_support.md` and the master plan.
+9. **Integer overflow traps.** `int` is 64-bit (a non-goal of this plan
+   is arbitrary precision), but today overflow wraps silently and gives
+   wrong answers (A32). The ALU flags signed overflow on add, sub, mul,
+   shift-left and negate, and raises `EMULATE` with class `TYPE_COMBO`.
+   The excore then does the operation in software, as a 64-bit result or
+   `OverflowError`; a bignum representation would come later. This costs
+   one comparator per op and turns a silent corruption into a measured
+   event.
+10. **Out of scope** for the excore: generators and `async`, which need
+    suspended frames on pycore, and anything that would run concurrently
+    with pycore.
 
 ---
 
@@ -1015,6 +1335,8 @@ any second concurrent data master or memory-mapped IO.
 | — | **Every excore trap flushes CODC and GIC**, even for pure container work | Flush CODC only when the excore wrote code; flush GIC only when it wrote a namespace dict (reported in the result) | P7 |
 | — | **The excore attaches at L2**, so every trap pays a full L1D write-back and invalidate plus a cold refill (§2.2) | Decision D3: mux the excore slot port into the L1D arbiter while pycore is frozen. That removes the flush, the invalidate and the refill, and keeps the excore's view coherent by construction. Keep the L2 attach selectable so both baselines can be measured | P7 |
 | — | **The ordinary L1D miss path is word-serial** (4 × L2 requests per line, 53 cycles on an L2 hit vs 15 on the NB path) | Whole-line pipelined fills and write-backs for ordinary misses. This lowers every master's cost and makes baselines fair | P0 (perf; optional) |
+| — | **L1I fills are word-serial at 8 B** (`DATA_WIDTH = 64`, `DOWN_LINE = 0`): 8 L2 requests per 64 B line. On the compiler workload, fetch is 40% of all cycles, the L1I miss rate is 28% (8 KB, 4-way), and each miss spends 97 cycles in `FILL_WAIT` (§2.4) | Line fills for L1I first (`DOWN_LINE = 1`, one L2 line request). Then measure a next-line prefetch and a 16 KB L1I. Report fetch share in every speedup table (§12.3) | P0 (perf; strongly recommended before any accelerator speedup is reported) |
+| — | **GIC full flush on every namespace store** (55% hit rate on the compiler, 12.3 k flushes) | Tagged targeted invalidation (§6.11, D15) | P3 (P0 for the A7 part) |
 | — | **Zero-line writes bypass L2 to DRAM** (`ZERO_LINE_BYPASS` at both levels), so GC allocation zeroing makes the first touch a DRAM round trip | Set L2 `ZERO_LINE_BYPASS = 0`. The CA writes content lines and never zero lines | P3 |
 | — | **STRACC never writes full lines**, so fresh destination lines pay a write-allocate fill | Full-line destination writes in STRACC | P2 |
 | — | **The CI latency model inverts the hierarchy**: DRAM first beat is 4 cycles, an L2 hit 8. `T_BEAT` and `L2_HIT` are compile-time | Measurements run at `+MEM_LATENCY=30` and `100` too; expose `L2_HIT` and `T_BEAT` as plusargs | P0 |
@@ -1074,6 +1396,11 @@ These are crossed with `rom_accel` / `rom_soft`, `+MEM_LATENCY` ∈ {4, 30,
   nightly workflow (`accel-nightly.yml`, like `gc-nightly.yml`) refreshes
   the report.
 - **Fairness**:
+  - Every row reports the fetch-stall share and the L1I miss rate next
+    to the speedup. On the compiler, fetch is 40% of cycles (§2.4), so a
+    container speedup alone cannot exceed about 1.7× there.
+  - Report memory footprint (peak heap, bytes per container element) per
+    profile, because the CA's layout policy (D14) is part of its gain.
   - Remove the artificial 4-cycle delays in the mailbox (`MB_HEAP_LIMIT`
     read, `NEED_HEAP`), or report them.
   - Report "end-to-end" and "compute-only" (handoff excluded) excore
@@ -1102,6 +1429,9 @@ against `GC = 0`: bump allocation, no collection.
 | Console and formatting | stdout tests on both tops; new stdout tests for every type, 64-bit ints, floats, kind-2/4 text (UTF-8), containers and objects. A formatting corpus diffed against CPython 3.14 (ints of every radix including INT_MIN, random and edge-case doubles, quotes and escapes, nested and self-referential containers) |
 | Bytes | a `bytes` area in `hw_tests.toml`, diffed against CPython, including `OverflowError` / `ValueError` cases |
 | Bugs | Appendix A items become regression tests first, with `xfail` markers until fixed |
+| Strings | the §8.0 STRACC differential fuzzer: every producer × kinds 1/2/4 × lengths 0–40, each result checked for `==`, dict lookup and set membership against an image constant; a no-progress watchdog in `tb_str_accel` |
+| Semantics sweep | Appendix E's probes join `hw_tests.toml` as one-feature tests with the expected CPython value. Each starts as `xfail` with its current trap code, so a fix shows up as an unexpected pass and a regression (for example a trap becoming a wrong answer) fails. Run on both tops |
+| GC with growth | the 15 growth probes of §6.5 under `+GC_AT_BOUNDARY_EVERY=5`, and the set and dict churn loops under heaps sized to force `NEED_HEAP` (24–64 KB), for every profile |
 
 Tests that change meaning:
 - `dict-grow-fatal` and `set-grow-fatal` (expect 11/13 on single-core)
@@ -1122,21 +1452,22 @@ unchanged, and the phase's gate below met.
 
 | Phase | Delivers | Gate |
 | --- | --- | --- |
-| **P0** Groundwork | Regression tests for Appendix A (`xfail`); the §11 P0 rows (duplicate requests, response routing, flush sequencer, slot port, GIC flush, heap-write bus, address guards, docs); `ACCEL_CFG` + MCFG page + `+ACCEL_CFG` + `FW_CAPS` + trap 23 + `pycore_route` at all 27 sites + `EXCORE_PRESENT`; key-spec package and vectors; excore hart and assembler fixes; toolchain decision D2; firmware tree split into `min` / `full` scaffolds; fixes for excore A1–A3, A15, A16, A19b, A21; PERF counters, `accel_bench.py` skeleton and today's baseline captured | Cycles identical except where a fix changes them (documented); L1D counters de-duplicated; default profile behaves exactly as `main` |
+| **P0** Groundwork | Regression tests for Appendix A (`xfail`) and the Appendix E sweep; STRACC A26 (hash) and A27 (hangs) fixed; L1I line fills (§11); the §11 P0 rows (duplicate requests, response routing, flush sequencer, slot port, GIC flush, heap-write bus, address guards, docs); `ACCEL_CFG` + MCFG page + `+ACCEL_CFG` + `FW_CAPS` + trap 23 + `pycore_route` at all 27 sites + `EXCORE_PRESENT`; key-spec package and vectors; excore hart and assembler fixes; toolchain decision D2; firmware tree split into `min` / `full` scaffolds; fixes for excore A1–A3, A15, A16, A19b, A21; the allocator fit rule and retry guard (A42); PERF counters, `accel_bench.py` skeleton and today's baseline captured | Cycles identical except where a fix changes them (documented); L1D counters de-duplicated; default profile behaves exactly as `main` |
 | **P1** Console | IO window, `pycore_console.sv`, `CONSOLE_BASE`, `BI_WRITE` (`SHORT_STR` store and the kind-1 / bytes copy loop), `SA_EMIT` for kind-2/4 UTF-8, testbench capture on both tops, ROM `print`, `BI_PRINT` removed from excore | stdout tests pass on **both** tops with zero excore traps; `pycore_exec.py` and PHASE_MARK unchanged for users |
-| **P2** Formatting I | `SA_FMT_INT` with sink mode; `str` / `repr` for int, bool, None and str (kind-1 repr); `SA_BUILD_STRING`; `FORMAT_SIMPLE` / `CONVERT_VALUE` via STRACC; `hex` / `oct` / `bin` natives; `repr` seeded; STRACC full-line writes | formatting corpus matches CPython; A4 fixed |
-| **P3** CA, stage A0 | The CA: interface, arbiter port and NB wiring, compare lane, alloc channel, drain points, `gic_flush`, descriptor cache; every §6.1 command; §6.13 fixes; ROM `list.append` / `list.extend` / `list()` / `tuple()` on native commands; legacy path behind `CA = 0` | zero container excore traps under `all-on`; G-gates, `test-caching` and compile suite pass; CA area/Fmax recorded; cycles report vs P0 baseline |
+| **P2** Formatting I | STRACC A28 (kind narrowing) and A29; `SA_FMT_INT` with sink mode; `str` / `repr` for int, bool, None and str (kind-1 repr); `SA_BUILD_STRING`; `FORMAT_SIMPLE` / `CONVERT_VALUE` via STRACC; `hex` / `oct` / `bin` natives; `repr` seeded; STRACC full-line writes | formatting corpus matches CPython; A4 fixed |
+| **P3** CA, stage A0 | The CA: interface, arbiter port and NB wiring, compare lane, alloc channel, drain points, tagged GIC invalidation (D15), descriptor cache; every §6.1 v1 command; §6.13 fixes; D14 growth policy; ROM `list.append` / `list.extend` / `list()` / `tuple()` on native commands; legacy path behind `CA = 0` | zero container excore traps under `all-on`; G-gates, `test-caching` and compile suite pass; CA area/Fmax recorded; cycles report vs P0 baseline; GIC hit rate on the compile suite reported |
+| **P3b** CA v1.1 | §6.1 comparison, set-algebra and method commands; ROM `list.sort` merge sort; `frozenset` constants as frozen `SET` objects | the Appendix E container rows pass on both tops under `all-on` |
 | **P4** CA, stage A1 | early retire at DR; the Appendix D container-touch stall; overlap counters | identical results; hazard tests; overlap measured |
 | **P5** Bytes | §9: representation, GC kinds, image and linter, CA `BA_*`, STRACC bytes commands, `LOAD_ATTR` on primitives, ROM wrappers, `OverflowError` | bytes area matches CPython |
 | **P6** Formatting II | `SA_FMT_FLOAT`, `SA_REPR_BYTES`, container and object `str` / `repr` (§8.4–8.5), print of every type | corpus matches CPython (addresses normalized) |
-| **P7** Excore emulator | traps 21/22 and `MB_REASON`, context page, RF window, `JUMP` / `RAISE` (`UPCALL` optional), result hygiene, the `TYPE` / `CALL_FILTER` audit, first `EMULATE` handlers in `excore_min`; D3 (excore at L1D) and the selective CODC/GIC flush | listed features run through `EMULATE`; no regressions |
+| **P7** Excore emulator | traps 21/22 and `MB_REASON`, context page, RF window, `JUMP` / `RAISE` (`UPCALL` optional), result hygiene, the `TYPE` / `CALL_FILTER` / `MEM_FAULT` / `ATTR_ERROR` audit, first `EMULATE` handlers in `excore_min`, ALU overflow → `EMULATE` (§10.1 item 9), image builder emits instead of rejecting (§10.1 item 8); D3 (excore at L1D) and the selective CODC/GIC flush | listed features run through `EMULATE`; no regressions |
 | **P8** Fallbacks and measurement | `excore_full` implements every CA and STRACC command; the legacy container arms are deleted from pycore (`S_CONTAINER` becomes the micro-sequencer); `rom_soft`; the profile matrix in CI and nightly; the speedup report; optionally `GC = 2` | every profile gives identical results on the whole suite; report published |
 | **P9** CA, stage B | the 4-deep command queue, the address-precise BCT, a lookup engine running beside the background engine; a design note for stage C (pipelined pycore) | identical results; measured gain over A1 |
 
-Dependencies: P0 comes before everything. P1 needs P0's duplicate-request
-fix and MCFG. P2 needs P1 for sink mode. P3 needs P0. P4 and P5 need P3,
-and P5 also needs P2. P6 needs P2 and P3. P7 needs P0. P8 needs P3–P7.
-P9 needs P4.
+Dependencies: P0 comes before everything. P1 needs P0's
+duplicate-request fix and MCFG. P2 needs P1 for sink mode. P3 needs P0.
+P3b needs P3. P4 and P5 need P3, and P5 also needs P2. P6 needs P2 and
+P3. P7 needs P0. P8 needs P3–P7. P9 needs P4.
 
 ---
 
@@ -1157,6 +1488,9 @@ P9 needs P4.
 | D11 | `repr` above U+00FF | `EMULATE` first; Unicode printable table in STRACC later |
 | D12 | Set display order | PyCore probe order; documented divergence for colliding hashes |
 | D13 | L1D port for the CA | arbitrated single port; true dual port only if measurements demand it |
+| D14 | Dict layout and growth policy | today's layout (64 B slot + 32 B order entry) for A0, so every implementation stays byte-identical; CPython growth (`used × 3`) and an order buffer of ⅔ × slots from P3; a compact index + dense-entry layout is v2 (§6.5) |
+| D15 | GIC invalidation | 16-bit name-hash tags with targeted invalidation on namespace writes; 64 entries only if the hit rate stays under 90% (§6.11) |
+| D16 | `int` overflow | ALU detects signed overflow and raises `EMULATE`; no silent wrap (§10.1 item 9) |
 
 ---
 
@@ -1170,6 +1504,8 @@ P9 needs P4.
 | Early retire exposes ordering bugs | A0 → A1 → B in separate phases; directed hazard tests; the shadow-memory checker |
 | Firmware size and toolchain churn | D2 decided in P0; 64 KB IMEM; generated headers |
 | CI time grows with the profile matrix | PR CI runs `all-on` plus `all-off` on four areas; the full matrix is nightly |
+| The CA's measured speedup on real programs is small because fetch dominates (40% of the compiler's cycles) | L1I line fills in P0; fetch share reported with every speedup (§12.3) |
+| A string producer outside STRACC (CA, excore fallback, ROM) creates a non-canonical handle (wrong hash or kind) and dict lookups silently miss | one key spec (R6); the §8.0 fuzzer extended to every producer under every profile |
 | Cycle-baseline churn breaks GC gate G1 | Re-capture G0 in the PR that changes cycles; every phase PR says whether it does |
 
 ---
@@ -1215,8 +1551,8 @@ When this plan lands, move it to `planning/old/` with an "Archived" note
 | A9 | Name index ≥ 128 truncated: name *N* takes the tag of name *N & 127* | `container_idx_r <= namei[6:0]` in `pycore_cont_object.svh` | Reproduced: a LONG_STR-named global at index 128 → `MEM_FAULT`; index 127 passes |
 | A10 | `set(iterable)` treats `None` as an empty slot | `BI_SET` in `pycore_call_fsm.svh` | Reproduced: `None in set((None, 5))` is False; `len(set((None, None, 7)))` is 3 |
 | A11 | Bulk dict update and merge walk hash-slot order, not insertion order | `pycore_cont_bulk.svh`, `do_dict_update` / `do_dict_merge` | Reproduced: `a = {3: …, 1: …}; {**a}` iterates 1 first (CPython 3) |
-| A12 | `in` on list and tuple lacks int/float cross-equality and tuple value equality | `pycore_elem_eq` | Reproduced: `1.0 in [1, 2]` and `(a, 2) in [(a, 2)]` (distinct tuples) are both False |
-| A13 | `KeyError`, `IndexError` and `NameError` are fatal `MEM_FAULT`s, not exceptions | container arms | Reproduced; known limitation (T6) |
+| A12 | `in` on list and tuple lacks int/float cross-equality and container value equality | `pycore_elem_eq` | Reproduced: `1.0 in [1, 2]`, `(a, 2) in [(a, 2)]` (distinct tuples), `(1, 2) in [(1, 2)]` and `[1] in [[1]]` are all False on both tops: wrong answers, not traps |
+| A13 | `KeyError`, `IndexError` and `NameError` are fatal `MEM_FAULT`s, not exceptions | container arms | Reproduced; known limitation (T6). See A35 for the other classes |
 | A14 | Instance dicts start at 4 slots, so the 4th attribute needs an excore grow on every instance | `CALL_EMPTY_DICT_SLOTS` | Reproduced: 3 attributes pass on single-core, 4 halt with 11 |
 | A15 | Excore `SET_UPDATE` keeps the loop index in `SCR_FTI0/1`, which `float_to_int` overwrites | `su_insert` vs `float_to_int` | Code reading |
 | A16 | Excore `LIST_GROW` writes the appended element's tag slot with nonzero upper bits | `do_list_grow` append | Code reading |
@@ -1230,6 +1566,23 @@ When this plan lands, move it to `planning/old/` with an "Archived" note
 | A23 | `BUILD_*` / `UNPACK_SEQUENCE` take `oparg[6:0]`; `LIST_TO_TUPLE`, `UNPACK_EX` and `set()` `TYPE`-trap at 128+ elements | `pycore_core.sv`, `pycore_cont_list.svh` | Code reading |
 | A24 | Not synthesizable or poor timing: `real` in `BI_MAX`; combinational 64-bit divide loop in `pycore_int_to_short_str` | `pycore_call_fsm.svh`, `pycore_defs.svh` | Code reading |
 | A25 | Stale docs: L2 "inclusive"; STRACC master states; data map without the GC region; `adding_a_trap_handler.md` free codes; `rv32i_subset.md` M extension | `pycore/docs`, `excore/docs` | Code reading |
+| A26 | STRACC hashes the first unit of each new 16 B destination word twice, so copy-path strings longer than 16 payload bytes carry a wrong hash: never `==` an equal image constant, never found as a dict or set key | `pycore_str_accel.sv` `consume_unit` steps `hash_r` / `flags_r` before the `dest_can_take` decision; `step_copy` re-calls it after the write | Reproduced on both tops: `p = "abcdefgh"; p + "ijklmnopq" == "abcdefghijklmnopq"` is False; 16 bytes pass. Boundary at 9 chars for kind 2 and 5 for kind 4. Of 16 producers, map, replace and expandtabs (which gate on `dest_can_take`) pass; concat, repeat, slice, join, pad, zfill, strip, affix, split, partition and the dict/set probes fail |
+| A27 | STRACC hangs | search and trim loops | Reproduced on both tops: `"banana".rfind("x")`; `"€ab€".strip("€")`; `"abcdefghijklmnopqrstuvwxyz".lstrip("abcdefghijklmnopq")` |
+| A28 | No kind narrowing: a slice or strip of a wide string keeps the wide kind | STRACC producers | Reproduced: `"aé€"[:2] == "aé"` is False; `len({t, "aé"})` is 2 |
+| A29 | STRACC wrong results | `SA_PAD`, `SA_SEARCH`, `SA_MAP`, `encoding.stracc_case_flags` | Reproduced: `"ab".center(5)` and `center(7)` pad the wrong side; `center(5, "*")` wrong; `center(5, "xy")` returns instead of raising `TypeError`; `"abc".find("", 5)`, `count("", 5)`, `rfind("", 5)` wrong; `("µ" * 16).upper()` and a constant LONG `µ` string return unchanged |
+| A30 | `a.extend(a)` never terminates | ROM `list_extend` iterates the live list | Reproduced on two-core: 1,023 `LIST_EXTEND` traps before the cycle limit |
+| A31 | Dict footprint: 96 B per slot and growth to pow2 ≥ 4 × used; a 200-key dict needs a 96 KB table | `heap_image.alloc_dict`, excore `dgr_alloc` | Reproduced: 96 KB heap with `+GC_EN=1` fails with `MemoryError` after a collection leaves a 65.6 KB run (the excore asks for 98,304 B); 128 KB passes |
+| A32 | `int` overflow wraps silently | ALU | Reproduced on both tops: `x = 2**62; x + x > x` is False; `(1 << 62) * 4 > 0` is False |
+| A33 | Container comparison and set operators trap `TYPE` | `S_EXEC` compare, `BINARY_OP` | Reproduced: `==`, `!=` and `<` on list, tuple, dict and set; `\|`, `&`, `-`, `^` on sets; `d \| e`, `d \|= e` |
+| A34 | Most container methods are missing (`ATTR_ERROR`, 15) | native-method table has 12 container entries | Reproduced: `list.insert/remove/index/count/reverse/sort/copy`, `dict.popitem/setdefault/copy/clear`, `set.remove/discard/pop/union/isdisjoint`; `tuple.count/index` trap `TYPE` |
+| A35 | `TypeError`, `ValueError`, `AttributeError`, `ZeroDivisionError` and `StopIteration` raised by operations cannot be caught; only `raise` statements produce catchable exceptions | the trap codes 1, 3 and 7 are fatal | Reproduced: `try: 1 // 0 except ZeroDivisionError` halts with 3; `1 + 'a'`, `(1).foo` and `int('zz')` halt with 1; `next()` on an exhausted iterator halts with 7 |
+| A36 | `MEM_FAULT` (7) reports missing features | various | Reproduced: `repr(['a', None, True])`, `repr(obj)` with `__repr__`, `frozenset([1, 2])`, `next(iter([]), 7)`, `a[-1]`, `t[-2]` |
+| A37 | Dunder protocols beyond `__len__` / `__iter__` / `__next__` are not dispatched | `S_EXEC`, CALL FSM | Reproduced: `__getitem__`, `__contains__`, `__eq__`, `__str__`, `__add__`, `__bool__` trap `TYPE`; `__call__` traps `CALL_FILTER` |
+| A38 | The image builder rejects common Python, so it never reaches the excore | `image_from_source.py` | Reproduced: `x in {1, 2, 3}` (folded `frozenset` constant), `class B(A)`, closures (`SET_FUNCTION_ATTRIBUTE` 8), `a[::2]` and `a[::-1]`, `dict(a=1)`, `sorted(key=…)`, `zip(a, b, c)`, `@property`, `with`, `assert`, generators |
+| A39 | A `bool` left operand of `<<` traps `TYPE` | ALU type check | Reproduced: `r \|= (a == b) << 2` |
+| A40 | L1I fills are word-serial at 8 B | `pycore_mem_hier.sv` L1I `DOWN_LINE = 0`, `DATA_WIDTH = 64` | Measured: 97 cycles of `FILL_WAIT` per L1I miss on the compiler workload vs 49 for L1D; fetch is 40% of cycles |
+| A41 | The GIC is flushed whole by every namespace store | `gic_flush` in `pycore_core.sv` | Measured: 55% hit rate and 12.3 k flushes on the compiler workload |
+| A42 | False out-of-memory: a free run must hold `need + 64` B even for unaligned excore requests, and the OOM retry guard keys on the pc, so the next loop iteration's allocation counts as a retry | `S_GC_ALLOC` run fit and `gc_retry_*` in `pycore_core.sv` | Reproduced with `+GC_EN=1 +HEAP_DYN_BYTES=49152`: rebuilding a 60-key dict six times raises `MemoryError` with 42,960 B free and a 24,576 B run for a 24,576 B request; 64 KB passes |
 
 ---
 
@@ -1297,3 +1650,49 @@ Everything else proceeds while the CA finishes container-ready work:
 ALU and compare ops, `LOAD_FAST` / `STORE_FAST`, branches, `LOAD_CONST`
 and `RETURN`. Stage B replaces this list with an address check against
 the BCT.
+
+---
+
+## Appendix E. Semantics sweep: what runs, what traps, what is wrong
+
+About 240 probes, most of them testing one feature, ran on the
+single-core (`EXCORE_EN=0`) and two-core builds of `5335a22`. Each
+returns an int that CPython 3.14 computes on the host. "Excore" means
+the probe passes on two-core only because of excore growth traps. Codes:
+1 `TYPE`, 3 `DIV_ZERO`, 6 `CALL_FILTER`, 7 `MEM_FAULT`, 15 `ATTR_ERROR`.
+
+### E.1 Containers
+
+| Area | Works | Excore | Traps (code) | Wrong or hangs | Owner |
+| --- | --- | --- | --- | --- | --- |
+| dict | `get` with default, `pop`, `in`, `dict(pairs)`, 1 / 1.0 / True key merging, `-1` and `-2` as distinct keys, `False` and `0.0` lookups | `keys()` / `values()` / `items()` lists, dict comprehensions, `dict(zip())`, 200-key build and delete, 6 instance attributes | `==` / `!=` (1); `\|` / `\|=` (1); tuple keys (1); `popitem`, `setdefault`, `copy`, `clear` (15); `update(x=1)` (6); missing key or `del` of one (7); mutation during iteration (1, should be catchable `RuntimeError`) | — | CA v1 / v1.1; T6 for the exceptions |
+| list | `pop()`, `[0] * 0`, `[1] * -1`, `a *= 2`, `True in [1]`, `None in [None]`, `len`, truth | literals of 3+ items, `pop(0)`, `clear`, `[[]] * 3` aliasing, `a += a`, `list * 2`, comprehensions, `reversed`, `sorted(strs)`, `sorted(reverse=True)`, `min(list)` | `==` / `<` (1); `a[:]` (1); `insert`, `remove`, `index`, `count`, `reverse`, `sort`, `copy` (15); negative index (7); `[1][4]` in `try` (7) | `1.0 in [1]`, `(1, 2) in [(1, 2)]`, `[1] in [[1]]` False (A12); `a.extend(a)` hangs (A30) | CA v1 / v1.1; ROM sort |
+| tuple | concat, repeat, nested unpack | — | `<` (1); `count`, `index` (1); negative index (7) | — | CA v1.1 |
+| set | `add` with mixed numerics, set comprehensions, string members | 300-element `add` | `\|`, `&`, `-`, `^`, `==` (1); tuple members (1); `remove`, `discard`, `pop`, `union`, `isdisjoint` (15); `frozenset()` (7) | — | CA v1.1 |
+| range | `len` | `list(range(10, 0, -3))` | `r[3]`, `5 in r` (1) | — | pycore `RANGE` arm |
+| unpack | `a, b = b, a`, `p, (q, s) = …` | — | `a, *b, c = range(6)` (1); unpacking a dict or a str (1) | — | CA `UNPACK` / `UNPACK_EX` |
+| builtins | `any`, `all`, `min(dict)`, `divmod`, `pow(a, b, m)`, `abs`, `int(str)`, `hex`, `bin` | `zip` (2 iterables), `enumerate(start)`, `map` | `max(tuple)`, `max(key=)` (6); `next(it, default)` (7); exhausted `next()` (7) | — | ROM |
+
+### E.2 Calls, objects, exceptions, numbers
+
+| Area | Works | Traps (code) | Wrong |
+| --- | --- | --- | --- |
+| calls | positional, defaults, keywords, `*args`, `**kwargs`, `f(*t)`, `lambda`, recursion to depth 900 | — | — |
+| classes | `__init__`, methods, class attributes, `@staticmethod`, many attributes (excore grow), instance in a list, `__hash__` class as a key (identity) | `__getitem__`, `__contains__`, `__eq__`, `__str__`, `__add__`, `__bool__` (1); `__repr__` (7); `__call__` (6) | — |
+| protocols | `__len__`, `__iter__` / `__next__` | — | — |
+| exceptions | `raise` / `except` of built-in classes, base-class matching (`KeyError` as `LookupError`), `finally`, unwinding through calls, bare `raise`, `except … as e` with `e.args` | exceptions raised by operations: `TypeError`, `ValueError`, `AttributeError` (1), `ZeroDivisionError` (3), `StopIteration` from `next()` (7) | — |
+| numbers | `divmod`, float multiply, `pow` with modulus, `True << 1` folded by CPython | `bool` operand of `<<` (1); `int.bit_length` (1) | 64-bit overflow wraps (A32) |
+
+### E.3 Rejected by the image builder (never reaches the hart)
+
+`x in {1, 2, 3}` (a `frozenset` constant), classes with bases
+(`class B(A)`, `class E(Exception)`), closures and `nonlocal`, step
+slices and `BUILD_SLICE`, `dict(a=1)`, `sorted(key=…)`, `zip` of three
+iterables, `@property`, `with`, `assert`, generators and generator
+expressions. §10.1 item 8 says which become runtime `EMULATE` sites.
+
+### E.4 Strings
+
+Covered by §8.0 and A26–A29. Of 16 STRACC producers, map, replace and
+expandtabs give canonical handles past 16 payload bytes; the copy-path
+producers do not.

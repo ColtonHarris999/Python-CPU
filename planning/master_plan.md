@@ -82,7 +82,20 @@ reproduced on the simulators are:
 - bulk dict updates follow hash-slot order instead of insertion order;
 - `1.0 in [1]` is False;
 - held dmem requests execute twice at L1D (results unchanged, hit
-  counters inflated about 2×).
+  counters inflated about 2×);
+- STRACC strings longer than 16 payload bytes built by concat, slice,
+  join, strip, split and other copy-path producers carry a wrong hash, so
+  they never equal or find an equal image constant (A26);
+- three STRACC inputs hang (`"banana".rfind("x")` and two strips), and
+  slices of wide strings keep the wide kind (A27, A28);
+- `a.extend(a)` never terminates (A30);
+- `int` overflow wraps silently at 64 bits (A32);
+- `(1, 2) in [(1, 2)]` and `[1] in [[1]]` are False (A12).
+
+Its Appendix E lists what the hart runs, traps on, or rejects at image
+build across containers, calls, protocols and exceptions. §2.4 there
+profiles the on-device compiler: 41% container ops, 40% instruction
+fetch, `LOAD_GLOBAL` alone 17%.
 
 Open hazards from the garbage-collection work (`pycore/docs/gc.md`):
 
@@ -231,7 +244,7 @@ The plan delivers:
 
 | Item | Today | Next step |
 | --- | --- | --- |
-| P0 groundwork | 27 compile-time `EXCORE_EN` routing sites; duplicate L1D requests; no runtime config | Regression tests for the plan's Appendix A, the memory fixes of §11, `ACCEL_CFG` + MCFG page + `pycore_route`, the key-spec package |
+| P0 groundwork | 27 compile-time `EXCORE_EN` routing sites; duplicate L1D requests; no runtime config; STRACC hash and hang bugs; word-serial L1I fills | Regression tests for the plan's Appendices A and E, the STRACC fixes of §8.0, L1I line fills, the memory fixes of §11, `ACCEL_CFG` + MCFG page + `pycore_route`, the key-spec package |
 | P1 console | `print` traps to the excore per piece; single-core has no output | IO window and console channels, `CONSOLE_BASE`, `_bi_write` |
 | P3 container accelerator | container work split between `S_CONTAINER` and excore traps 9–14 / 19–20 | CA stage A0, with the legacy path behind `ACCEL_CFG.CA = 0` |
 
