@@ -201,6 +201,7 @@ call (16), dict update (19), and dict merge (20). See
 | Doc | Path |
 | --- | --- |
 | Two-core architecture | `pycore/docs/architecture.md` |
+| Arithmetic units: latencies, semantics, synthesis | `pycore/docs/alu.md` |
 | Tag map | `pycore/docs/tags.md` |
 | Bytecode support matrix | `pycore/docs/bytecode_support.md` |
 | Exception types | `pycore/docs/exception_support.md` |

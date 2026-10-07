@@ -61,7 +61,7 @@ module tb_alu_units;
     bit back_to_back;
 
     // ---- latency bookkeeping ------------------------------------------
-    localparam int NCLASS = 64;
+    localparam int NCLASS = 96;
     string  cls_name [NCLASS];
     int     cls_min  [NCLASS];
     int     cls_max  [NCLASS];
@@ -497,6 +497,58 @@ module tb_alu_units;
                  PY_TAG_COMPLEX, {64'h4010_0000_0000_0000, 64'h4008_0000_0000_0000}, "");
     endtask
 
+    // Canonical operand pairs whose latencies are quoted in alu.md.
+    task automatic latency_probes();
+        run_case(PY_ALU_MUL, PY_TAG_INT, 128'd12345, PY_TAG_INT, 128'(-678), "probe INT MUL");
+        run_case(PY_ALU_FLOOR_DIV, PY_TAG_INT, 128'd3, PY_TAG_INT, 128'd7, "probe INT // |a|<|b|");
+        run_case(PY_ALU_FLOOR_DIV, PY_TAG_INT, 128'(-7), PY_TAG_INT, 128'd2, "probe INT // 3-bit/2-bit");
+        run_case(PY_ALU_FLOOR_DIV, PY_TAG_INT, {64'd0, 64'h7FFF_FFFF_FFFF_FFFF}, PY_TAG_INT,
+                 128'd3, "probe INT // 63-bit/2-bit");
+        run_case(PY_ALU_MOD, PY_TAG_INT, {64'd0, 64'h8000_0000_0000_0000}, PY_TAG_INT,
+                 128'd1, "probe INT % 64-bit/1-bit");
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd7, PY_TAG_INT, 128'd1, "probe INT 7**1");
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd2, PY_TAG_INT, 128'd62, "probe INT 2**62");
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd3, PY_TAG_INT, 128'd39, "probe INT 3**39");
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'(-1), PY_TAG_INT, 128'd1001, "probe INT (-1)**1001");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_INT, 128'd1, PY_TAG_INT, 128'd3, "probe INT 1/3");
+        run_case(PY_ALU_ADD, PY_TAG_FLOAT, {64'd0, 64'h3FF0_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000}, "probe FLOAT 1.0+3.0");
+        run_case(PY_ALU_MUL, PY_TAG_FLOAT, {64'd0, 64'h3FF0_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000}, "probe FLOAT 1.0*3.0");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_FLOAT, {64'd0, 64'h3FF0_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000}, "probe FLOAT 1.0/3.0");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_FLOAT, {64'd0, 64'h3FF0_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h7FF0_0000_0000_0000}, "probe FLOAT 1.0/inf");
+        run_case(PY_ALU_MOD, PY_TAG_FLOAT, {64'd0, 64'h401E_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'hC008_0000_0000_0000}, "probe FLOAT 7.5%-3.0");
+        run_case(PY_ALU_MOD, PY_TAG_FLOAT, {64'd0, 64'h4018_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000}, "probe FLOAT 6.0%3.0");
+        run_case(PY_ALU_MOD, PY_TAG_FLOAT, {64'd0, 64'h3FF0_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000}, "probe FLOAT 1.0%3.0");
+        run_case(PY_ALU_MOD, PY_TAG_FLOAT, {64'd0, 64'h4330_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000}, "probe FLOAT 2**52%3.0");
+        run_case(PY_ALU_MOD, PY_TAG_FLOAT, {64'd0, 64'h7FEF_FFFF_FFFF_FFFF},
+                 PY_TAG_FLOAT, {64'd0, 64'h0000_0000_0000_0001}, "probe FLOAT DBL_MAX%min");
+        run_case(PY_ALU_FLOOR_DIV, PY_TAG_FLOAT, {64'd0, 64'h401E_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'hC008_0000_0000_0000}, "probe FLOAT 7.5//-3.0");
+        run_case(PY_ALU_FLOOR_DIV, PY_TAG_FLOAT, {64'd0, 64'h4018_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000}, "probe FLOAT 6.0//3.0");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000}, "probe FLOAT 2.0**2");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4059_0000_0000_0000}, "probe FLOAT 2.0**100");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'hC059_0000_0000_0000}, "probe FLOAT 2.0**-100");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'hC090_C000_0000_0000}, "probe FLOAT 2.0**-1072");
+        run_case(PY_ALU_ADD, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h3FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h4010_0000_0000_0000, 64'h4008_0000_0000_0000}, "probe COMPLEX +");
+        run_case(PY_ALU_MUL, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h3FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h4010_0000_0000_0000, 64'h4008_0000_0000_0000}, "probe COMPLEX *");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h3FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h4010_0000_0000_0000, 64'h4008_0000_0000_0000}, "probe COMPLEX /");
+    endtask
+
     initial begin
         clk = 1'b0;
         rst_n = 1'b0;
@@ -516,6 +568,7 @@ module tb_alu_units;
         @(posedge clk);
         #1;
 
+        latency_probes();
         directed();
         int_pairs(iters);
         float_pairs(iters);

@@ -269,8 +269,8 @@ rather than widening every leave:
   result into `value[127:64]`. Overflow wraps at 64 bits (not CPython
   arbitrary precision).
 - `FLOAT` stores the IEEE 754 double in `value[63:0]` with `value[127:64] = 0`.
-- `COMPLEX` stores two binary64 values (real/imag); `pycore_complex_alu`
-  handles ADD/SUB/MUL/TRUE_DIV/NEG/POS/EQ/NE/NOT.
+- `COMPLEX` stores two binary64 values (real/imag); `pycore_fpu` sequences
+  ADD/SUB/MUL/TRUE_DIV/NEG/POS/EQ/NE/NOT on its scalar datapaths.
 - `BOOL` keeps the truth value in `value[0]` with all other bits zero.
 - `MUT_COLLEC` / `OBJECT` / `ITER` / `CODE_OBJECT` addresses use the low
   64 bits; the data bus is 32-bit (`ADDR_WIDTH = 32`).
@@ -316,11 +316,20 @@ The execute stage is a tag-routed fabric:
 2. `pycore_promote.sv` converts `BOOL -> INT`, `BOOL -> FLOAT`, or
    `INT -> FLOAT` when selected by tag decode.
 3. Operation-specific modules run independently:
-   - `pycore_int_alu.sv`
-   - `pycore_mul.sv`
-   - `pycore_div.sv`
-   - `pycore_fpu.sv`
-4. `pycore_exec.sv` muxes the selected result back into `{tag, value}` form.
+   - `pycore_int_alu.sv` -- single-cycle `+ - << >> & | ^ ~`, compares
+   - `pycore_mul.sv` -- 5-cycle signed 64 x 64 multiplier
+   - `pycore_div.sv` -- 5..37-cycle floor divider (`//`, `%`)
+   - `pycore_ipow.sv` -- `INT ** INT` on the shared multiplier
+   - `pycore_fpu.sv` -- binary64 add (4), multiply (6), divide (32), exact
+     `fmod`, plus the CPython sequences for `%`, `//`, `**` and COMPLEX
+     arithmetic, built on `pycore_fp_add.sv`, `pycore_fp_mul.sv`,
+     `pycore_fp_divrem.sv`
+4. `pycore_exec.sv` muxes the selected result back into `{tag, value}` form
+   and raises `stall_o` while a multi-cycle unit is running.
+
+Every multi-cycle unit uses the same `start / done / stall / busy` handshake;
+`S_EXEC` is held while `stall_o` is high. Latencies, semantics and
+verification are in `pycore/docs/alu.md`.
 
 `NB_TRUE_DIVIDE` always produces `FLOAT`, including `INT / INT`. The operands
 are converted to IEEE 754 double before entering the FPU, matching Python's `/`

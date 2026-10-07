@@ -47,7 +47,9 @@ the object's heap layout or `addr`, and helpers that just need the address
 
 ## COMPLEX ALU
 
-`pycore_complex_alu` supports ADD/SUB/MUL/TRUE_DIV/NEG/POS/EQ/NE/NOT.
+`pycore_fpu` supports ADD/SUB/MUL/TRUE_DIV/NEG/POS/EQ/NE/NOT on COMPLEX by
+sequencing its scalar binary64 datapaths (`_Py_c_prod` / Smith `_Py_c_quot`;
+cycle counts in `alu.md`).
 Mixed INT/FLOAT/BOOL + COMPLEX operands normalize to complex in `pycore_exec`.
 FLOOR_DIV / MOD / POWER / ordering compares on COMPLEX type-trap.
 
