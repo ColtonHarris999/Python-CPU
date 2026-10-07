@@ -30,7 +30,8 @@ enum {
 enum { TAG_INT = 1, TAG_FLOAT = 2, TAG_COMPLEX = 3, TAG_BOOL = 4, TAG_OBJECT = 10 };
 
 // PY_TRAP_* (pycore_defs.svh)
-enum { TRAP_NONE = 0, TRAP_TYPE = 1, TRAP_DIV_ZERO = 3, TRAP_FPU = 4 };
+enum { TRAP_NONE = 0, TRAP_TYPE = 1, TRAP_DIV_ZERO = 3, TRAP_FPU = 4,
+       TRAP_OVERFLOW = 21, TRAP_VALUE = 22 };
 
 static double bits_to_d(long long b) { double d; memcpy(&d, &b, 8); return d; }
 static long long d_to_bits(double d) { long long b; memcpy(&b, &d, 8); return b; }
@@ -208,8 +209,9 @@ static uint64_t hw_pow_unit(double x, double y)
 
 // ---- float ** float as the hardware computes it ---------------------------
 // CPython float_pow() special cases; then |a| ** +-1, +-2 by
-// square-and-multiply (reciprocal for negative exponents) and every other
-// exponent on the log / exp unit; sign restored for odd integer exponents.
+// square-and-multiply (reciprocal for negative exponents), 0.5 as a
+// correctly rounded square root, and every other exponent on the log /
+// exp unit; sign restored for odd integer exponents.
 // Returns 0 on success, TRAP_FPU for a Python OverflowError /
 // ZeroDivisionError, or a negative base with a fractional exponent (a
 // complex result in Python, not implemented).
@@ -253,7 +255,9 @@ static int hw_float_pow(double a, double b, double *out)
     if (abs_a == 1.0) { *out = (a < 0.0 && b_odd) ? -1.0 : 1.0; return 0; }
 
     double acc;
-    if (b_is_int && fabs(b) <= (double)POW_CHAIN_MAX) {
+    if (b == 0.5) {
+        acc = sqrt(abs_a);                      // correctly rounded on the divider
+    } else if (b_is_int && fabs(b) <= (double)POW_CHAIN_MAX) {
         uint64_t n = (uint64_t)fabs(b);
         acc = sqm_chain(abs_a, n);
         if (b < 0.0) {
@@ -418,15 +422,14 @@ static int complex_op(int op, double ar, double ai, double br, double bi,
     return TRAP_TYPE;
 }
 
-// ---- integer op (64-bit wrapping fast path) ---------------------------------
+// ---- integer op (signed 64-bit; leaving the range traps OVERFLOW) ----------
 static int int_op(int op, int64_t a, int64_t b, int bool_bool, int *res_tag, int64_t *r)
 {
     *res_tag = TAG_INT;
-    uint64_t ua = (uint64_t)a, ub = (uint64_t)b;
     switch (op) {
-    case OP_ADD: *r = (int64_t)(ua + ub); return 0;
-    case OP_SUB: *r = (int64_t)(ua - ub); return 0;
-    case OP_MUL: *r = (int64_t)(ua * ub); return 0;
+    case OP_ADD: return __builtin_add_overflow(a, b, r) ? TRAP_OVERFLOW : 0;
+    case OP_SUB: return __builtin_sub_overflow(a, b, r) ? TRAP_OVERFLOW : 0;
+    case OP_MUL: return __builtin_mul_overflow(a, b, r) ? TRAP_OVERFLOW : 0;
     case OP_FLOOR_DIV:
     case OP_MOD: {
         if (b == 0) return TRAP_DIV_ZERO;
@@ -434,15 +437,17 @@ static int int_op(int op, int64_t a, int64_t b, int bool_bool, int *res_tag, int
         __int128 q = (__int128)a / b;
         __int128 m = (__int128)a - q * b;
         if (m != 0 && ((m < 0) != (b < 0))) { q -= 1; m += b; }
+        if (op == OP_FLOOR_DIV && q > INT64_MAX) return TRAP_OVERFLOW;   // INT64_MIN // -1
         *r = (op == OP_MOD) ? (int64_t)m : (int64_t)q;
         return 0;
     }
     case OP_POWER: {
+        // b < 0 is a float in Python and is handled by the caller.
         if (b < 0) return TRAP_TYPE;
         __int128 acc = 1;
         for (int64_t i = 0; i < b; i++) {
             acc = acc * a;
-            if (acc > INT64_MAX || acc < INT64_MIN) return TRAP_TYPE;
+            if (acc > INT64_MAX || acc < INT64_MIN) return TRAP_OVERFLOW;
             if (acc == 0 || acc == 1) break;        // stays put; also bounds the loop
             if (acc == -1 && a == -1) {
                 // (-1)**b: sign depends on parity of the remaining exponent
@@ -455,10 +460,14 @@ static int int_op(int op, int64_t a, int64_t b, int bool_bool, int *res_tag, int
         return 0;
     }
     case OP_LSHIFT:
-        if (b < 0 || b >= 64) *r = 0; else *r = (int64_t)(ua << b);
+        if (b < 0) return TRAP_VALUE;                               // ValueError
+        if (b >= 64) { if (a != 0) return TRAP_OVERFLOW; *r = 0; return 0; }
+        *r = (int64_t)((uint64_t)a << b);
+        if ((*r >> b) != a) return TRAP_OVERFLOW;                   // big int in Python
         return 0;
     case OP_RSHIFT:
-        if (b < 0) *r = 0; else if (b >= 64) *r = (a < 0) ? -1 : 0; else *r = a >> b;
+        if (b < 0) return TRAP_VALUE;
+        *r = (b >= 64) ? ((a < 0) ? -1 : 0) : (a >> b);
         return 0;
     case OP_AND:
         if (bool_bool) *res_tag = TAG_BOOL;
@@ -469,7 +478,9 @@ static int int_op(int op, int64_t a, int64_t b, int bool_bool, int *res_tag, int
     case OP_XOR:
         if (bool_bool) *res_tag = TAG_BOOL;
         *r = a ^ b; return 0;
-    case OP_NEG: *r = (int64_t)(0 - ua); return 0;
+    case OP_NEG:
+        if (a == INT64_MIN) return TRAP_OVERFLOW;
+        *r = -a; return 0;
     case OP_POS: case OP_PASS: *r = a; return 0;
     case OP_INVERT: *r = ~a; return 0;
     case OP_NOT: *res_tag = TAG_BOOL; *r = (a == 0); return 0;
@@ -550,8 +561,15 @@ int alu_ref(int op, int tag_a, long long a_lo, long long a_hi,
     int64_t a = (tag_a == TAG_BOOL) ? (a_lo & 1) : (int64_t)a_lo;
     int64_t b = binary ? ((tag_b == TAG_BOOL) ? (b_lo & 1) : (int64_t)b_lo) : 0;
     int bool_bool = (tag_a == TAG_BOOL) && (tb == TAG_BOOL);
-    if ((op == OP_LSHIFT || op == OP_RSHIFT) && (tag_a != TAG_INT || tag_b != TAG_INT))
-        return TRAP_TYPE;
+    if (op == OP_POWER && b < 0) {
+        // int ** negative int is a float: CPython converts both operands.
+        double rf;
+        int t = hw_float_pow((double)a, (double)b, &rf);
+        if (t) return t;
+        *res_tag = TAG_FLOAT;
+        *r_lo = d_to_bits(rf);
+        return 0;
+    }
     int64_t r;
     int t = int_op(op, a, b, bool_bool, res_tag, &r);
     if (t) return t;

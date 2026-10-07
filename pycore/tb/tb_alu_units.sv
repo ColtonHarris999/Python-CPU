@@ -61,6 +61,7 @@ module tb_alu_units;
     int errors;
     int checks;
     int pow_checked, pow_exact;   // float ** float results compared with libm
+    int trap_count [32];          // expected (and matched) traps per code
     bit back_to_back;
 
     // ---- latency bookkeeping ------------------------------------------
@@ -117,6 +118,17 @@ module tb_alu_units;
             PY_ALU_GT: return "GT";         PY_ALU_GE: return "GE";
             PY_ALU_PASS: return "PASS";
             default: return "?";
+        endcase
+    endfunction
+
+    function automatic string trap_name(input logic [4:0] code);
+        unique case (code)
+            PY_TRAP_TYPE:          return "TYPE";
+            PY_TRAP_DIV_ZERO:      return "DIV_ZERO";
+            PY_TRAP_FPU_EXCEPTION: return "FPU_EXCEPTION";
+            PY_TRAP_OVERFLOW:      return "OVERFLOW";
+            PY_TRAP_VALUE:         return "VALUE";
+            default:               return "?";
         endcase
     endfunction
 
@@ -210,6 +222,7 @@ module tb_alu_units;
 
         if (ref_trap != 0) begin
             ok = got_trap && (int'(got_code) == ref_trap);
+            if (ok) trap_count[ref_trap]++;
             if (!ok) begin
                 fail($sformatf("%s: expected trap %0d, got trap=%0d code=%0d res=%h",
                        lab, ref_trap, got_trap, got_code, res));
@@ -345,7 +358,8 @@ module tb_alu_units;
                      (ta == PY_TAG_INT && tb == PY_TAG_INT) ? {"INT ", op_name(op)} : "");
         end
         for (int i = 0; i < n / 4; i++) begin
-            logic [4:0] op = (i % 3 == 0) ? PY_ALU_NEG : ((i % 3 == 1) ? PY_ALU_POS : PY_ALU_INVERT);
+            logic [4:0] op = (i % 4 == 0) ? PY_ALU_NEG : ((i % 4 == 1) ? PY_ALU_POS :
+                             ((i % 4 == 2) ? PY_ALU_INVERT : PY_ALU_NOT));
             run_case(op, PY_TAG_INT, {64'd0, rand_int()}, PY_TAG_INT, 128'd0, {"INT ", op_name(op)});
         end
     endtask
@@ -438,9 +452,59 @@ module tb_alu_units;
         run_case(PY_ALU_POWER, PY_TAG_INT, 128'(-1), PY_TAG_INT, 128'd1001, "");
         run_case(PY_ALU_POWER, PY_TAG_INT, 128'd3, PY_TAG_INT, 128'd0, "");
         run_case(PY_ALU_POWER, PY_TAG_INT, 128'd0, PY_TAG_INT, 128'd0, "");
-        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd3, PY_TAG_INT, 128'(-1), "");              // trap
         run_case(PY_ALU_TRUE_DIV, PY_TAG_INT, 128'd1, PY_TAG_INT, 128'd3, "");
         run_case(PY_ALU_TRUE_DIV, PY_TAG_INT, 128'd1, PY_TAG_INT, 128'd0, "");
+
+        // INT overflow traps (CPython promotes to a big int) and ValueErrors
+        run_case(PY_ALU_ADD, PY_TAG_INT, {64'd0, 64'h7FFF_FFFF_FFFF_FFFF}, PY_TAG_INT, 128'd1, "");
+        run_case(PY_ALU_ADD, PY_TAG_INT, {64'd0, 64'h7FFF_FFFF_FFFF_FFFF}, PY_TAG_BOOL, 128'd1, "");
+        run_case(PY_ALU_ADD, PY_TAG_INT, {64'd0, 64'h7FFF_FFFF_FFFF_FFFE}, PY_TAG_INT, 128'd1, "");   // fits
+        run_case(PY_ALU_SUB, PY_TAG_INT, {64'd0, 64'h8000_0000_0000_0000}, PY_TAG_INT, 128'd1, "");
+        run_case(PY_ALU_SUB, PY_TAG_INT, 128'd0, PY_TAG_INT, {64'd0, 64'h8000_0000_0000_0000}, "");
+        run_case(PY_ALU_SUB, PY_TAG_INT, 128'(-1), PY_TAG_INT, {64'd0, 64'h7FFF_FFFF_FFFF_FFFF}, ""); // fits
+        run_case(PY_ALU_MUL, PY_TAG_INT, {64'd0, 64'h8000_0000_0000_0000}, PY_TAG_INT, 128'(-1), "");
+        run_case(PY_ALU_MUL, PY_TAG_INT, {64'd0, 64'h4000_0000_0000_0000}, PY_TAG_INT, 128'd2, "");  // 2^63
+        run_case(PY_ALU_MUL, PY_TAG_INT, {64'd0, 64'h4000_0000_0000_0000}, PY_TAG_INT, 128'(-2), ""); // INT64_MIN fits
+        run_case(PY_ALU_MUL, PY_TAG_INT, 128'(-3), PY_TAG_INT, {64'd0, 64'h2AAA_AAAA_AAAA_AAAB}, ""); // -2^63-1
+        run_case(PY_ALU_MUL, PY_TAG_INT, 128'(-1), PY_TAG_INT, 128'(-1), "");                         // 1
+        run_case(PY_ALU_NEG, PY_TAG_INT, {64'd0, 64'h8000_0000_0000_0000}, PY_TAG_INT, 128'd0, "");
+        run_case(PY_ALU_NEG, PY_TAG_INT, {64'd0, 64'h8000_0000_0000_0001}, PY_TAG_INT, 128'd0, "");   // fits
+        run_case(PY_ALU_INVERT, PY_TAG_INT, {64'd0, 64'h8000_0000_0000_0000}, PY_TAG_INT, 128'd0, ""); // INT64_MAX
+        run_case(PY_ALU_LSHIFT, PY_TAG_INT, 128'd1, PY_TAG_INT, 128'd62, "");                         // fits
+        run_case(PY_ALU_LSHIFT, PY_TAG_INT, 128'd1, PY_TAG_INT, 128'd63, "");                         // 2^63 overflow
+        run_case(PY_ALU_LSHIFT, PY_TAG_INT, 128'(-1), PY_TAG_INT, 128'd63, "");                       // INT64_MIN fits
+        run_case(PY_ALU_LSHIFT, PY_TAG_INT, 128'(-2), PY_TAG_INT, 128'd63, "");                       // overflow
+        run_case(PY_ALU_LSHIFT, PY_TAG_INT, 128'd3, PY_TAG_INT, 128'd62, "");                         // overflow
+        run_case(PY_ALU_LSHIFT, PY_TAG_INT, 128'd1, PY_TAG_INT, 128'd64, "");                         // overflow
+        run_case(PY_ALU_LSHIFT, PY_TAG_INT, 128'd0, PY_TAG_INT, 128'd1000, "");                       // 0
+        run_case(PY_ALU_LSHIFT, PY_TAG_INT, 128'd5, PY_TAG_INT, 128'(-1), "");                        // ValueError
+        run_case(PY_ALU_RSHIFT, PY_TAG_INT, 128'd5, PY_TAG_INT, 128'(-1), "");                        // ValueError
+        run_case(PY_ALU_RSHIFT, PY_TAG_INT, 128'(-5), PY_TAG_INT, 128'd1000, "");                     // -1
+        run_case(PY_ALU_RSHIFT, PY_TAG_INT, 128'd5, PY_TAG_INT, 128'd1000, "");                       // 0
+        run_case(PY_ALU_LSHIFT, PY_TAG_BOOL, 128'd1, PY_TAG_INT, 128'd2, "");                         // True << 2 = 4
+        run_case(PY_ALU_RSHIFT, PY_TAG_INT, 128'd8, PY_TAG_BOOL, 128'd1, "");                         // 8 >> True = 4
+        run_case(PY_ALU_LSHIFT, PY_TAG_BOOL, 128'd1, PY_TAG_BOOL, 128'd1, "");                        // 2
+        run_case(PY_ALU_FLOOR_DIV, PY_TAG_INT, {64'd0, 64'h8000_0000_0000_0000}, PY_TAG_INT, 128'd1, ""); // fits
+        run_case(PY_ALU_NOT, PY_TAG_INT, 128'd2, PY_TAG_INT, 128'd0, "");                             // False
+        run_case(PY_ALU_NOT, PY_TAG_INT, 128'd0, PY_TAG_INT, 128'd0, "");                             // True
+        run_case(PY_ALU_NOT, PY_TAG_INT, {64'd0, 64'h8000_0000_0000_0000}, PY_TAG_INT, 128'd0, "");  // False
+        run_case(PY_ALU_NOT, PY_TAG_BOOL, 128'd1, PY_TAG_INT, 128'd0, "");
+
+        // INT ** negative INT is a float
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd3, PY_TAG_INT, 128'(-1), "");              // 1/3
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd2, PY_TAG_INT, 128'(-1), "");              // 0.5
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd2, PY_TAG_INT, 128'(-2), "");              // 0.25
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'(-2), PY_TAG_INT, 128'(-3), "");            // -0.125
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd10, PY_TAG_INT, 128'(-1), "");             // 0.1
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd0, PY_TAG_INT, 128'(-1), "");              // ZeroDivision
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd1, PY_TAG_INT, 128'(-5), "");              // 1.0
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'(-1), PY_TAG_INT, 128'(-5), "");            // -1.0
+        run_case(PY_ALU_POWER, PY_TAG_BOOL, 128'd1, PY_TAG_INT, 128'(-7), "");             // 1.0
+        run_case(PY_ALU_POWER, PY_TAG_BOOL, 128'd0, PY_TAG_INT, 128'(-7), "");             // ZeroDivision
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd2, PY_TAG_INT, 128'(-1074), "");           // 5e-324
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd2, PY_TAG_INT, 128'(-1075), "");           // 0.0
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd3, PY_TAG_INT, 128'(-700), "");            // 0.0 (underflow)
+        run_case(PY_ALU_POWER, PY_TAG_INT, {64'd0, 64'h8000_0000_0000_0000}, PY_TAG_INT, 128'(-1), ""); // -2^-63
 
         // FLOAT: rounding / cancellation / subnormal corners
         run_case(PY_ALU_ADD, PY_TAG_FLOAT, {64'd0, 64'h3FF0_0000_0000_0000},
@@ -544,6 +608,33 @@ module tb_alu_units;
                  PY_TAG_FLOAT, {64'd0, 64'h43F0_0000_0000_0000}, "");   // 0.5 ** 2^64 = 0.0
         run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'hBFF8_0000_0000_0000},
                  PY_TAG_FLOAT, {64'd0, 64'h4034_0000_0000_0000}, "");   // (-1.5) ** 20
+        // x ** 0.5 on the square-root path: exact roots, odd / even exponents, subnormals
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4010_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // 4 ** 0.5 = 2
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4022_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // 9 ** 0.5 = 3
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4020_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // 8 ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h3FD0_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // 0.25 ** 0.5 = 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h3FF0_0000_0000_0001},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // (1 + 2^-52) ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h3FEF_FFFF_FFFF_FFFF},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // (1 - 2^-53) ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h0000_0000_0000_0002},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // 1e-323 ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h0008_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // DBL_MIN/2 ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h0010_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // DBL_MIN ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h7FE0_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // 2^1023 ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_INT, 128'd2,
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // int 2 ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h8000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // -0.0 ** 0.5 = 0.0
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'hC010_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // -4 ** 0.5 -> complex: trap
         run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'hBFF8_0000_0000_0000},
                  PY_TAG_FLOAT, {64'd0, 64'h4035_0000_0000_0000}, "");   // (-1.5) ** 21
         run_case(PY_ALU_LT, PY_TAG_FLOAT, {64'd0, 64'h8000_0000_0000_0000},
@@ -640,9 +731,11 @@ module tb_alu_units;
         run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000},
                  PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000}, "probe FLOAT 3.0**3 (unit)");
         run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000},
-                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "probe FLOAT 3.0**0.5");
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "probe FLOAT 3.0**0.5 (sqrt)");
         run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
-                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "probe FLOAT 2.0**0.5 (2^n base)");
+                 PY_TAG_FLOAT, {64'd0, 64'h3FD0_0000_0000_0000}, "probe FLOAT 2.0**0.25 (2^n base)");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FD0_0000_0000_0000}, "probe FLOAT 3.0**0.25 (unit)");
         run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000},
                  PY_TAG_FLOAT, {64'd0, 64'h43F0_0000_0000_0000}, "probe FLOAT 0.5**2^64 (underflow)");
         run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000},
@@ -671,6 +764,7 @@ module tb_alu_units;
         errors = 0;
         checks = 0;
         pow_checked = 0;
+        for (int i = 0; i < 32; i++) trap_count[i] = 0;
         pow_exact = 0;
         ncls = 0;
         back_to_back = 1'b0;
@@ -704,6 +798,11 @@ module tb_alu_units;
         for (int i = 0; i < ncls; i++) begin
             $display("%-20s %6d %6d %8.1f %6d", cls_name[i], cls_min[i], cls_max[i],
                      real'(cls_sum[i]) / real'(cls_n[i]), cls_n[i]);
+        end
+        $display("");
+        $display("Traps seen (expected by the reference and raised by the hardware)");
+        for (int i = 1; i < 32; i++) begin
+            if (trap_count[i] != 0) $display("  code %2d %-14s %6d", i, trap_name(5'(i)), trap_count[i]);
         end
         $display("");
         if (errors != 0) begin
