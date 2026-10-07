@@ -20,6 +20,8 @@ module tb_alu_units;
         output int res_tag, output longint r_lo, output longint r_hi);
     import "DPI-C" function real alu_ref_pow_ulps(
         input longint a_bits, input longint b_bits, input longint hw_bits);
+    import "DPI-C" function int alu_ref_pow_exact(
+        input longint a_bits, input longint b_bits, input longint hw_bits);
     import "DPI-C" function longint alu_ref_fmod(input longint a, input longint b);
     import "DPI-C" function longint alu_ref_floor(input longint a);
     import "DPI-C" function longint alu_ref_i64_to_f64(input longint a);
@@ -58,6 +60,7 @@ module tb_alu_units;
     int iters;
     int errors;
     int checks;
+    int pow_checked, pow_exact;   // float ** float results compared with libm
     bit back_to_back;
 
     // ---- latency bookkeeping ------------------------------------------
@@ -238,23 +241,24 @@ module tb_alu_units;
                    tag_name(4'(ref_tag)), r_hi, r_lo, cycles));
         end
 
-        // float ** float may differ from libm only by the accumulated
-        // rounding of the square-and-multiply chain; bound it for the
-        // modest exponents the random generator produces.
+        // float ** float: the reference model is bit-exact for the
+        // hardware algorithm; additionally bound the distance to libm
+        // pow() (1 ulp, 2 for x ** -2) and count exact agreement.
         if (op == PY_ALU_POWER && ref_tag == int'(PY_TAG_FLOAT) && value_ok) begin
-            longint bb;
+            longint aa, bb;
             real ulps;
+            aa = (tag_a == PY_TAG_FLOAT) ? longint'(va[63:0]) :
+                 ((tag_a == PY_TAG_BOOL) ? alu_ref_i64_to_f64(longint'(va[0])) :
+                                           alu_ref_i64_to_f64(longint'(va[63:0])));
             bb = (tag_b == PY_TAG_FLOAT) ? longint'(vb[63:0]) :
                  ((tag_b == PY_TAG_BOOL) ? alu_ref_i64_to_f64(longint'(vb[0])) :
                                            alu_ref_i64_to_f64(longint'(vb[63:0])));
-            ulps = alu_ref_pow_ulps(
-                (tag_a == PY_TAG_FLOAT) ? longint'(va[63:0]) :
-                ((tag_a == PY_TAG_BOOL) ? alu_ref_i64_to_f64(longint'(va[0])) :
-                                          alu_ref_i64_to_f64(longint'(va[63:0]))),
-                bb, longint'(rv[63:0]));
+            ulps = alu_ref_pow_ulps(aa, bb, longint'(rv[63:0]));
             if (ulps > 1.0) begin
                 fail($sformatf("%s: pow result %h is %f x tolerance from libm", lab, rv[63:0], ulps));
             end
+            pow_checked++;
+            if (alu_ref_pow_exact(aa, bb, longint'(rv[63:0]))) pow_exact++;
         end
 
         if (cls != "") record_latency(cls, cycles);
@@ -306,12 +310,20 @@ module tb_alu_units;
         endcase
     endfunction
 
-    // Exponents for float **: mostly small integers so libm agreement can
-    // be bounded, with a sprinkling of fractions / specials.
+    // Exponents for float **: small integers (both the square-and-multiply
+    // and the log / exp path), fractions of modest size, and specials.
     function automatic logic [63:0] rand_pow_exp();
-        int k = $urandom_range(0, 9);
-        if (k < 7) return alu_ref_i64_to_f64(longint'($urandom_range(0, 40)) - 20);
-        if (k == 7) return 64'h3FE0_0000_0000_0000;      // 0.5 -> hardware exception
+        int k = $urandom_range(0, 11);
+        logic [63:0] v;
+        if (k < 4) return alu_ref_i64_to_f64(longint'($urandom_range(0, 40)) - 20);
+        if (k == 4) return 64'h3FE0_0000_0000_0000;                                 // 0.5
+        if (k == 5) begin                                                           // n / 16
+            v = alu_ref_i64_to_f64(longint'($urandom_range(0, 1600)) - 800);
+            return (v == 64'd0) ? v : {v[63], v[62:52] - 11'd4, v[51:0]};
+        end
+        if (k == 6) return {1'($urandom_range(0, 1)), 11'd1023 + 11'($urandom_range(0, 10)) - 11'd6, rand64()[51:0]}; // |y| in [2^-6, 2^5)
+        if (k == 7) return {1'($urandom_range(0, 1)), 11'd1023 + 11'($urandom_range(0, 50)) - 11'd30, rand64()[51:0]}; // wide range
+        if (k == 8) return alu_ref_i64_to_f64(longint'($urandom_range(0, 3000)) - 1500);  // larger integer
         return rand_f64();
     endfunction
 
@@ -335,6 +347,24 @@ module tb_alu_units;
         for (int i = 0; i < n / 4; i++) begin
             logic [4:0] op = (i % 3 == 0) ? PY_ALU_NEG : ((i % 3 == 1) ? PY_ALU_POS : PY_ALU_INVERT);
             run_case(op, PY_TAG_INT, {64'd0, rand_int()}, PY_TAG_INT, 128'd0, {"INT ", op_name(op)});
+        end
+    endtask
+
+    // Dedicated float ** float stress: finite positive / negative bases
+    // of every magnitude against the exponent mix above.
+    task automatic pow_pairs(input int n);
+        for (int i = 0; i < n; i++) begin
+            logic [63:0] a = rand_f64();
+            logic [63:0] b = rand_pow_exp();
+            if ($urandom_range(0, 2) != 0) begin
+                // mostly finite non-zero bases around 1 or anywhere normal
+                int k = $urandom_range(0, 3);
+                a = (k == 0) ? {1'($urandom_range(0, 1)), 11'd1023, rand64()[51:0]} :
+                    (k == 1) ? {1'b0, 11'd1023 + 11'($urandom_range(0, 6)) - 11'd3, rand64()[51:0]} :
+                    (k == 2) ? {1'b0, 11'($urandom_range(1, 2045)), rand64()[51:0]} :
+                               {1'b0, 11'd1023, 44'd0, rand64()[7:0]};        // 1 + tiny
+            end
+            run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, a}, PY_TAG_FLOAT, {64'd0, b}, "FLOAT POWER");
         end
     endtask
 
@@ -479,8 +509,43 @@ module tb_alu_units;
                  PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000}, "");   // (-2) ** 3 = -8
         run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h0000_0000_0000_0000},
                  PY_TAG_FLOAT, {64'd0, 64'hBFF0_0000_0000_0000}, "");   // 0 ** -1 -> ZeroDivision
+        // float ** float on the log / exp unit
         run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
-                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // 2 ** 0.5 -> not supported
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // 2 ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4020_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FD5_5555_5555_5555}, "");   // 8 ** (1/3)
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4024_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4073_4800_0000_0000}, "");   // 10 ** 308.5 -> Overflow
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4024_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4073_4000_0000_0000}, "");   // 10 ** 308 (near DBL_MAX)
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'hC090_C800_0000_0000}, "");   // 2 ** -1074 (min subnormal)
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'hC090_CC00_0000_0000}, "");   // 2 ** -1075 -> 0.0
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // 0.5 ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'hC000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'hC008_0000_0000_0000}, "");   // (-2) ** -3 = -0.125
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'hC020_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FD5_5555_5555_5555}, "");   // (-8) ** (1/3) -> complex: trap
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h3FF0_0000_0000_0001},
+                 PY_TAG_FLOAT, {64'd0, 64'h430C_6BF5_2634_0000}, "");   // (1+2^-52) ** 1e15
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h3FEF_FFFF_FFFF_FFFF},
+                 PY_TAG_FLOAT, {64'd0, 64'hC3AB_C16D_674E_C800}, "");   // (1-2^-53) ** -1e18
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h7FEF_FFFF_FFFF_FFFF},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // DBL_MAX ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h0000_0000_0000_0001},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "");   // 5e-324 ** 0.5
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h0000_0000_0000_0001}, "");   // 2 ** 5e-324 = 1.0
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h43F0_0000_0000_0000}, "");   // 2 ** 2^64 -> Overflow
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h43F0_0000_0000_0000}, "");   // 0.5 ** 2^64 = 0.0
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'hBFF8_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4034_0000_0000_0000}, "");   // (-1.5) ** 20
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'hBFF8_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4035_0000_0000_0000}, "");   // (-1.5) ** 21
         run_case(PY_ALU_LT, PY_TAG_FLOAT, {64'd0, 64'h8000_0000_0000_0000},
                  PY_TAG_FLOAT, {64'd0, 64'h0000_0000_0000_0000}, "");   // -0 < +0 false
         run_case(PY_ALU_EQ, PY_TAG_FLOAT, {64'd0, 64'h8000_0000_0000_0000},
@@ -570,6 +635,20 @@ module tb_alu_units;
                  PY_TAG_FLOAT, {64'd0, 64'hC059_0000_0000_0000}, "probe FLOAT 2.0**-100");
         run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
                  PY_TAG_FLOAT, {64'd0, 64'hC090_C000_0000_0000}, "probe FLOAT 2.0**-1072");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'hBFF0_0000_0000_0000}, "probe FLOAT 3.0**-1");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000}, "probe FLOAT 3.0**3 (unit)");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "probe FLOAT 3.0**0.5");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4000_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000}, "probe FLOAT 2.0**0.5 (2^n base)");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h3FE0_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h43F0_0000_0000_0000}, "probe FLOAT 0.5**2^64 (underflow)");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'h3FF0_0000_0000_0000}, "probe FLOAT 3.0**1");
+        run_case(PY_ALU_POWER, PY_TAG_FLOAT, {64'd0, 64'h4008_0000_0000_0000},
+                 PY_TAG_FLOAT, {64'd0, 64'hC000_0000_0000_0000}, "probe FLOAT 3.0**-2");
         run_case(PY_ALU_ADD, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h3FF0_0000_0000_0000},
                  PY_TAG_COMPLEX, {64'h4010_0000_0000_0000, 64'h4008_0000_0000_0000}, "probe COMPLEX +");
         run_case(PY_ALU_MUL, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h3FF0_0000_0000_0000},
@@ -591,6 +670,8 @@ module tb_alu_units;
         rs2 = '0;
         errors = 0;
         checks = 0;
+        pow_checked = 0;
+        pow_exact = 0;
         ncls = 0;
         back_to_back = 1'b0;
         if (!$value$plusargs("seed=%d", seed)) seed = 1;
@@ -605,12 +686,14 @@ module tb_alu_units;
         directed();
         int_pairs(iters);
         float_pairs(iters);
+        pow_pairs(iters / 3);
         complex_pairs(iters / 2);
 
         back_to_back = 1'b1;
         directed();
         int_pairs(iters / 2);
         float_pairs(iters / 2);
+        pow_pairs(iters / 6);
         complex_pairs(iters / 4);
         valid = 1'b0;
         @(posedge clk);
@@ -624,9 +707,11 @@ module tb_alu_units;
         end
         $display("");
         if (errors != 0) begin
+            $display("float ** : %0d of %0d results identical to libm pow()", pow_exact, pow_checked);
             $display("FAIL: %0d of %0d ALU checks failed (seed %0d)", errors, checks, seed);
             $fatal(1);
         end
+        $display("float ** : %0d of %0d results identical to libm pow()", pow_exact, pow_checked);
         $display("PASS: %0d ALU unit checks against the CPython reference (seed %0d)", checks, seed);
         $finish;
     end

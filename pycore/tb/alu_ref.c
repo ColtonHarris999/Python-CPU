@@ -51,11 +51,168 @@ static int cmp_result(int op, int lt, int eq, int gt, int unordered)
     return 0;
 }
 
+// ---- pycore_fp_pow, bit for bit -------------------------------------------
+// |x| ** y = 2 ** (y log2 |x|) with the same fixed-point digit recurrences
+// as the RTL (see pycore_fp_pow.sv); the constants come from the generated
+// pow_rom.h shared with the RTL.  Returns the binary64 bit pattern, +inf on
+// overflow, +0 on underflow.
+#include "pow_rom.h"
+
+typedef unsigned __int128 u128;
+typedef __int128 i128;
+
+#define POW_FW   POW_ROM_FW         /* 88 fraction bits                     */
+#define POW_NLOG 80
+#define POW_NEXP 72
+#define POW_LMW  75
+#define POW_FP   80
+#define POW_LW   (POW_FW + 13)
+#define POW_CHAIN_MAX 2             /* pycore_fpu POW_CHAIN_MAX             */
+
+static u128 rom128(const unsigned long long e[2]) { return ((u128)e[0] << 64) | e[1]; }
+static u128 rom_pos(int k) { return (k >= 0 && k < POW_ROM_KMAX) ? rom128(pow_rom_pos[k]) : 0; }
+static u128 rom_neg(int k) { return (k >= 0 && k < POW_ROM_KMAX) ? rom128(pow_rom_neg[k]) : 0; }
+
+static int bitlen128(u128 v)
+{
+    int n = 0;
+    while (v) { v >>= 1; n++; }
+    return n;
+}
+
+// pycore_f64_pack_round: value = sig * 2^(exp_s - 1023 - 52), RNE.
+static uint64_t pack_round_rtl(int sign, int exp_s, uint64_t sig53, int g, int r, int s)
+{
+    u128 ext = ((u128)sig53 << 3) | (g << 2) | (r << 1) | s;
+    if (ext == 0) return (uint64_t)sign << 63;
+    u128 shifted;
+    int exp_eff;
+    if (exp_s <= 0) {
+        int sh = 1 - exp_s;
+        if (sh > 55) shifted = 1;
+        else {
+            u128 lost = ext & (((u128)1 << sh) - 1);
+            shifted = (ext >> sh) | (lost ? 1 : 0);
+        }
+        exp_eff = 1;
+    } else {
+        shifted = ext;
+        exp_eff = exp_s;
+    }
+    int inc = ((shifted >> 2) & 1) && (((shifted >> 1) & 1) | (shifted & 1) | ((shifted >> 3) & 1));
+    uint64_t sig_r = (uint64_t)(shifted >> 3) + (inc ? 1 : 0);
+    if (sig_r >> 53) { sig_r >>= 1; exp_eff++; }
+    if (exp_eff >= 2047) return ((uint64_t)sign << 63) | 0x7FF0000000000000ull;
+    uint64_t e_field = ((sig_r >> 52) & 1) ? (uint64_t)exp_eff : 0;
+    return ((uint64_t)sign << 63) | (e_field << 52) | (sig_r & ((1ull << 52) - 1));
+}
+
+static void unpack_norm(uint64_t bits, uint64_t *sig, int *exp)
+{
+    uint64_t e = (bits >> 52) & 0x7FF, f = bits & ((1ull << 52) - 1);
+    uint64_t s = e ? (f | (1ull << 52)) : f;
+    int ee = e ? (int)e : 1;
+    int lz = 0;
+    while (!((s >> 52) & 1)) { s <<= 1; lz++; }          // s != 0 here
+    *sig = s;
+    *exp = ee - lz - 1023;                                // value = sig * 2^(exp - 52)
+}
+
+static uint64_t hw_pow_unit(double x, double y)
+{
+    uint64_t mx, my;
+    int ex, ey;
+    unpack_norm(d_to_bits(x), &mx, &ex);
+    unpack_norm(d_to_bits(y), &my, &ey);
+    int ysign = (d_to_bits(y) >> 63) & 1;
+
+    // x = m' 2^E, m' in [2/3, 4/3); r = m' - 1 with POW_FW fraction bits
+    i128 r_fx;
+    int E;
+    if (mx > 0x15555555555555ull) {
+        r_fx = -((i128)((1ull << 53) - mx) << (POW_FW - 53));
+        E = ex + 1;
+    } else {
+        r_fx = (i128)(mx & ((1ull << 52) - 1)) << (POW_FW - 52);
+        E = ex;
+    }
+
+    // signed-digit log2(m') scaled by 2^j0
+    i128 acc = 0;
+    int j0 = 2;
+    u128 mag = r_fx < 0 ? (u128)(-r_fx) : (u128)r_fx;
+    if (mag) {
+        int s = POW_FW - bitlen128(mag);
+        j0 = s < 2 ? 2 : s;
+        i128 w = (-r_fx) << j0;
+        const i128 half = (i128)1 << (POW_FW - 1), one = (i128)1 << POW_FW;
+        for (int i = 0; i < POW_NLOG; i++) {
+            int j = j0 + i;
+            int d = (w >= half) ? 1 : ((w < -half) ? -1 : 0);
+            if (d) {
+                i128 wj = (j >= 127) ? (w < 0 ? -1 : 0) : (w >> j);
+                if (d == 1) { w = (w - one + wj) << 1; acc -= (i128)(rom_pos(j) >> i); }
+                else        { w = (w + one - wj) << 1; acc += (i128)(rom_neg(j) >> i); }
+            } else {
+                w <<= 1;
+            }
+        }
+    }
+
+    // L = E + acc 2^-j0 as sign / magnitude, normalised to POW_LMW bits
+    int lsign, lscale;
+    u128 lmag;
+    if (E == 0) {
+        lsign = acc < 0; lmag = acc < 0 ? (u128)(-acc) : (u128)acc; lscale = j0;
+    } else {
+        i128 V = ((i128)E << POW_FW) + (acc >> j0);
+        lsign = V < 0; lmag = V < 0 ? (u128)(-V) : (u128)V; lscale = 0;
+    }
+    u128 Lm = 0;
+    int eL = 0;
+    if (lmag) {
+        int lz = POW_LW - bitlen128(lmag);
+        Lm = (lmag << lz) >> (POW_LW - POW_LMW);
+        eL = (POW_LW - POW_LMW) - lz - POW_FW - lscale;
+    }
+
+    // P = y L = Q 2^(ey - 52 + eL), aligned to POW_FP fraction bits
+    u128 Q = (u128)my * Lm;
+    int sh = ey - 52 + eL + POW_FP;
+    u128 Pfix;
+    int huge;
+    if (sh >= 0) { Pfix = 0; huge = Q != 0; }
+    else {
+        int t = -sh;
+        Pfix = (t >= 128) ? 0 : (Q >> t);
+        huge = (Pfix >> (11 + POW_FP)) != 0;
+    }
+    int psign = ysign ^ lsign;
+    if (huge) return psign ? 0 : 0x7FF0000000000000ull;
+    i128 Ps = psign ? -(i128)Pfix : (i128)Pfix;
+    int I = (int)(Ps >> POW_FP);
+    u128 F = ((u128)Ps & (((u128)1 << POW_FP) - 1)) << (POW_FW - POW_FP);
+
+    // 2^F, restoring recurrence
+    u128 Z = (u128)1 << POW_FW;
+    for (int k = 1; k <= POW_NEXP; k++) {
+        u128 c = rom_pos(k) >> k;
+        if (F >= c) { F -= c; Z += Z >> k; }
+    }
+    uint64_t sig = (uint64_t)(Z >> (POW_FW - 52));
+    int g  = (int)((Z >> (POW_FW - 53)) & 1);
+    int rb = (int)((Z >> (POW_FW - 54)) & 1);
+    int st = (Z & (((u128)1 << (POW_FW - 54)) - 1)) != 0;
+    return pack_round_rtl(0, I + 1023, sig, g, rb, st);
+}
+
 // ---- float ** float as the hardware computes it ---------------------------
-// Square-and-multiply on |a| with the integer exponent |n| (MSB first),
-// reciprocal for negative exponents, sign restored for odd exponents.
+// CPython float_pow() special cases; then |a| ** +-1, +-2 by
+// square-and-multiply (reciprocal for negative exponents) and every other
+// exponent on the log / exp unit; sign restored for odd integer exponents.
 // Returns 0 on success, TRAP_FPU for a Python OverflowError /
-// ZeroDivisionError / unsupported (non-integer) exponent.
+// ZeroDivisionError, or a negative base with a fractional exponent (a
+// complex result in Python, not implemented).
 static double sqm_chain(double base, uint64_t n)
 {
     int msb = 63;
@@ -92,27 +249,32 @@ static int hw_float_pow(double a, double b, double *out)
         *out = b_odd ? a : 0.0;
         return 0;
     }
-    if (!b_is_int || fabs(b) >= 9223372036854775808.0) return TRAP_FPU;
+    if (!b_is_int && a < 0.0) return TRAP_FPU;  // complex result in Python
     if (abs_a == 1.0) { *out = (a < 0.0 && b_odd) ? -1.0 : 1.0; return 0; }
 
-    uint64_t n = (uint64_t)fabs(b);
-    double acc = sqm_chain(abs_a, n);
-    if (b < 0.0) {
-        // 1 / x**n, or (1/x)**n when x**n overflowed (result tiny/subnormal).
-        if (isinf(acc)) acc = sqm_chain(1.0 / abs_a, n);
-        else            acc = 1.0 / acc;
+    double acc;
+    if (b_is_int && fabs(b) <= (double)POW_CHAIN_MAX) {
+        uint64_t n = (uint64_t)fabs(b);
+        acc = sqm_chain(abs_a, n);
+        if (b < 0.0) {
+            // 1 / x**n, or (1/x)**n when x**n overflowed (result tiny/subnormal).
+            if (isinf(acc)) acc = sqm_chain(1.0 / abs_a, n);
+            else            acc = 1.0 / acc;
+        }
+    } else {
+        acc = bits_to_d((long long)hw_pow_unit(abs_a, b));
     }
     if (isinf(acc)) return TRAP_FPU;            // OverflowError
-    *out = (a < 0.0 && (n & 1)) ? -acc : acc;
+    *out = (a < 0.0 && b_odd) ? -acc : acc;
     return 0;
 }
 
-// Is the hardware allowed to differ from libm pow() here?  Only by the
-// accumulated rounding of the square-and-multiply chain. Returns the
+// Is the hardware allowed to differ from libm pow() here?  Returns the
 // distance in ulps divided by the tolerance for this operand pair, so the
-// testbench flags anything above 1.0. The tolerance is 64 ulps for the
-// direct chain and (2n + 8) for the (1/x)**n retry, whose initial rounding
-// error is amplified n times.
+// testbench flags anything above 1.0.  Both the log / exp unit and glibc's
+// pow are correctly rounded except within a tiny band around rounding
+// boundaries, so they can differ by at most 1 ulp; x ** -2 (1 / (x*x))
+// takes two roundings and is allowed 2.
 double alu_ref_pow_ulps(long long a_bits, long long b_bits, long long hw_bits)
 {
     double a = bits_to_d(a_bits), b = bits_to_d(b_bits), hw = bits_to_d(hw_bits);
@@ -124,11 +286,17 @@ double alu_ref_pow_ulps(long long a_bits, long long b_bits, long long hw_bits)
     frexp(lib, &e);
     double ulp = ldexp(1.0, e - 53);
     if (lib == 0.0 || ulp < 0x1p-1074) ulp = 0x1p-1074;   // subnormal spacing
-    double tol = 64.0;
-    if (b < 0.0 && floor(b) == b && fabs(b) < 9223372036854775808.0 &&
-        isinf(sqm_chain(fabs(a), (uint64_t)fabs(b))))
-        tol = 2.0 * fabs(b) + 8.0;
+    double tol = (b == -2.0) ? 2.0 : 1.0;
     return fabs(hw - lib) / ulp / tol;
+}
+
+// Exact agreement with libm pow() (for the statistics the testbench prints).
+int alu_ref_pow_exact(long long a_bits, long long b_bits, long long hw_bits)
+{
+    double a = bits_to_d(a_bits), b = bits_to_d(b_bits);
+    double lib = pow(a, b);
+    if (isnan(lib)) return isnan(bits_to_d(hw_bits));
+    return d_to_bits(lib) == hw_bits;
 }
 
 // ---- CPython float_rem / float_divmod -------------------------------------
