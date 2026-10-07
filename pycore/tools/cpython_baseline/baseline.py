@@ -15,6 +15,7 @@ size, hit latencies, memory latency, and the branch penalty are flags, so
 a sweep does not need a new file.
 
     python3.14 pycore/tools/cpython_baseline/baseline.py --suite --machine pycore
+    python3.14 pycore/tools/cpython_baseline/baseline.py --research --machine pycore
     python3.14 pycore/tools/cpython_baseline/baseline.py prog.py --machine skylake --llc-bytes 1048576
 """
 
@@ -35,6 +36,7 @@ from cpython_baseline.report import render_program, render_suite  # noqa: E402
 from cpython_baseline.runner import measure, python_identity  # noqa: E402
 
 _BENCH = Path(__file__).resolve().parent / "benchmarks"
+_RESEARCH = _BENCH / "research"
 
 
 def _overrides(args: argparse.Namespace) -> dict:
@@ -59,13 +61,20 @@ def _programs(args: argparse.Namespace) -> list[Path]:
     chosen = [Path(p) for p in args.program]
     if args.suite:
         chosen.extend(sorted(_BENCH.glob("*.py")))
+    if args.research:
+        chosen.extend(sorted(p for p in _RESEARCH.glob("*.py") if p.is_file()))
     return chosen
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("program", nargs="*", help="Python files to measure")
-    parser.add_argument("--suite", action="store_true", help="Also run the built-in benchmarks")
+    parser.add_argument("--suite", action="store_true", help="Also run the built-in microbenchmarks")
+    parser.add_argument(
+        "--research",
+        action="store_true",
+        help="Run the pyperformance / CLBG / SciMark research set",
+    )
     parser.add_argument("--machine", default="pycore", help="Preset name or path to a TOML spec")
     parser.add_argument("--list-machines", action="store_true")
     parser.add_argument("--json", help="Write the full record to this path")
@@ -95,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     machine = apply_overrides(load_machine(args.machine), _overrides(args))
     programs = _programs(args)
     if not programs:
-        parser.error("give a Python file, or --suite for the built-in benchmarks")
+        parser.error("give a Python file, or --suite / --research")
     records = []
     for program in programs:
         record = measure(program, machine, Path(args.work), cold_only=args.cold_only)

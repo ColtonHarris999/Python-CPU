@@ -127,7 +127,7 @@ EXCORE_RTL_SRCS := \
 	docker-all-tests test-host test-rtl-modules test-hw test-caching \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
 	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
-	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline
+	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -596,6 +596,12 @@ CPYTHON_BASELINE_MACHINE ?= pycore
 cpython-baseline:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m cpython_baseline.baseline \
 		--suite --machine $(CPYTHON_BASELINE_MACHINE)
+
+# Research benchmarks (pyperformance, the Benchmarks Game, SciMark).
+# Same machine flag as cpython-baseline. Much longer: Callgrind on fannkuch.
+cpython-baseline-research:
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m cpython_baseline.baseline \
+		--research --machine $(CPYTHON_BASELINE_MACHINE)
 
 pycore-compile-suite: test-compiler-vs-cpython
 
