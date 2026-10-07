@@ -73,6 +73,9 @@ DEFAULT_FW_HEX = ROOT / "build" / "excore_fw" / "list_grow.hex"
 KINDS = {"run", "trap", "stdout", "coderam", "container", "container_boot", "excore", "make"}
 # Kinds that boot a host-built image through managed_entry().
 IMAGE_KINDS = {"run", "trap", "stdout", "coderam"}
+# Plusargs every image test gets after its own: the collector is on unless
+# the test, --plusargs or a gate says +GC_EN=0 (Verilog takes the first match).
+IMAGE_DEFAULTS = ["+GC_EN=1"]
 # Top-level manifest tables that are not test areas.
 NOT_AREAS = {"gate"}
 
@@ -419,8 +422,8 @@ class Runner:
     default build/hw). ``plusargs`` are added to every run and ``extra``
     maps a test name to plusargs for that test only; both go ahead of the
     test's own so they win (Verilog $value$plusargs takes the first match):
-    +GC_EN=0 on a GC fixture that asks for +GC_EN=1 runs it with the
-    collector off. ``{out}`` in any of them becomes the run's own directory
+    +GC_EN=0 runs an image test with the collector off (it is on by
+    default: ``IMAGE_DEFAULTS`` go last). ``{out}`` in any of them becomes the run's own directory
     ``<out>/<test>/<config>/`` (created first), e.g. +GC_DUMP_EACH={out}.
     """
 
@@ -543,7 +546,7 @@ class Runner:
                     f"+EXPECTED_TAG={meta['EXPECTED_TAG']}",
                     f"+EXPECTED_VALUE={meta['EXPECTED_VALUE']}",
                 ]
-            return args + cycles + mem + added + extra
+            return args + cycles + mem + added + extra + IMAGE_DEFAULTS
         if t.kind == "container":
             return [f"+PROG_HEX={t.hex}", "+BOOT_EN=0"] + added + extra + mem
         if t.kind in ("container_boot", "excore"):

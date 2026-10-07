@@ -42,6 +42,9 @@ DEFAULT_MAX_CYCLES = 200_000_000
 DEFAULT_HEARTBEAT = 250_000
 DEFAULT_PYCORE_MHZ = 100.0
 DEFAULT_BUILD_DIR = "build/pycore_exec"
+# The collector is on for every run. The defaults go last, so a caller's
+# +GC_EN=0 (Verilog takes the first match) turns it off.
+DEFAULT_PLUSARGS: tuple[str, ...] = ("+GC_EN=1",)
 
 # Console bytes the harness writes as phase marks (tb PHASE_MARKS=1 swallows
 # 0x01..0x07) and the SO/SI pair that frames harness metadata in stdout.
@@ -510,6 +513,7 @@ def run_device(
         f"+STDOUT_PATH={stdout_path.resolve()}",
         "+PHASE_MARKS=1",
         f"+HEARTBEAT={heartbeat}",
+        *DEFAULT_PLUSARGS,
     ]
     res = DeviceResult(log_path=str(log_path))
     tail = _StdoutTail(stdout_path, console)
@@ -959,6 +963,14 @@ def render_report(
 # ---------------------------------------------------------------------------
 
 
+def gc_enabled(plusargs: tuple[str, ...] | list[str]) -> bool:
+    """Whether a run with ``plusargs`` ahead of the defaults collects."""
+    for a in [*plusargs, *DEFAULT_PLUSARGS]:
+        if a.startswith("+GC_EN="):
+            return a != "+GC_EN=0"
+    return False
+
+
 @dataclasses.dataclass
 class ExecConfig:
     max_cycles: int = DEFAULT_MAX_CYCLES
@@ -971,7 +983,7 @@ class ExecConfig:
     build_dir: str = DEFAULT_BUILD_DIR
     progress: bool = True
     json_path: str | None = None
-    # Extra simulator plusargs (e.g. "+GC_EN=1"), ahead of the defaults.
+    # Extra simulator plusargs (e.g. "+GC_EN=0"), ahead of the defaults.
     plusargs: tuple[str, ...] = ()
 
 
@@ -1005,7 +1017,7 @@ def exec_file(path: pathlib.Path, cfg: ExecConfig, *, out=sys.stdout) -> int:
         host = run_host(prepared_path, path.name, work, cfg.host_python)
 
     try:
-        gc_on = any(a.startswith("+GC_EN=") and a != "+GC_EN=0" for a in cfg.plusargs)
+        gc_on = gc_enabled(cfg.plusargs)
         meta = build_device_image(build_harness(prepared, path.name, gc_stats=gc_on), work)
     except (ValueError, RuntimeError) as exc:
         print(f"exec: could not build the boot image: {exc}", file=out)

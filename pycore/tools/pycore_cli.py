@@ -400,11 +400,16 @@ def _run_shared_sim(
     two_core: bool,
     stdout_path: pathlib.Path,
     code_ram_hex: pathlib.Path | None = None,
+    plusargs: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
+    from pycore_exec import DEFAULT_PLUSARGS  # noqa: PLC0415 - imports this module
+
     sim = _ensure_shared_sim(two_core)
     ram_hex = code_ram_hex or (pathlib.Path(program_hex).parent / "code_ram.hex")
+    # Extra plusargs go first and the defaults last: Verilog takes the first match.
     cmd = [
         str(sim),
+        *plusargs,
         f"+PROG_HEX={program_hex.resolve()}",
         f"+DMEM_HEX={dmem_hex.resolve()}",
         "+BOOT_EN=1",
@@ -423,6 +428,7 @@ def _run_shared_sim(
     if two_core:
         cmd.append(f"+FW_HEX={EXCORE_FW_HEX.resolve()}")
         cmd.append(f"+STDOUT_PATH={stdout_path.resolve()}")
+    cmd += DEFAULT_PLUSARGS
     print("Running PyCore simulation...")
     sys.stdout.flush()
     return subprocess.run(
@@ -520,6 +526,7 @@ def cmd_run_host_compile(args: argparse.Namespace) -> int:
             max_cycles=args.max_cycles,
             two_core=two_core,
             stdout_path=stdout_path,
+            plusargs=tuple(args.plusargs.split()),
         )
     except RuntimeError as exc:
         print(f"run FAIL: {exc}")
@@ -618,8 +625,9 @@ def _add_exec_options(p: argparse.ArgumentParser, *, run_mode: bool = False) -> 
     p.add_argument(
         "--plusargs", default=os.environ.get("PYCORE_PLUSARGS", ""),
         help=("Extra simulator plusargs, space separated, ahead of the defaults "
-              "(e.g. '+GC_EN=1 +HEAP_DYN_BYTES=1048576'). With +GC_EN=1 the "
-              "report adds live bytes after each phase"),
+              "(e.g. '+HEAP_DYN_BYTES=1048576'). The collector is on by default "
+              "and the report adds live bytes after each phase; '+GC_EN=0' "
+              "turns it off"),
     )
 
 

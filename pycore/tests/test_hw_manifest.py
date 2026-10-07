@@ -9,6 +9,7 @@ from __future__ import annotations
 import pathlib
 import re
 import unittest
+from unittest import mock
 
 import hw_tests
 
@@ -68,6 +69,18 @@ class HwManifestTest(unittest.TestCase):
         self.assertTrue(sample)
         for t in sample:
             self.assertIn(t.area, hw_tests.SAMPLED_AREAS, t.name)
+
+    def test_image_tests_collect_by_default(self) -> None:
+        meta = {"HEAP_INIT_PTR": "4096", "CODE_RAM_INIT_SLOT": "1",
+                "EXPECTED_TAG": "1", "EXPECTED_VALUE": "1"}
+        t = next(t for t in self.tests if t.kind == "run" and "GC_EN" not in t.plusargs)
+        cfg = hw_tests.Config("default", 1, 4)
+        with mock.patch.object(hw_tests, "_read_meta", return_value=meta):
+            args = hw_tests.Runner(pathlib.Path("fw.hex"), "python3").plusargs(t, cfg)
+            off = hw_tests.Runner(pathlib.Path("fw.hex"), "python3", "+GC_EN=0").plusargs(t, cfg)
+        first = lambda a: next(x for x in a if x.startswith("+GC_EN="))  # noqa: E731
+        self.assertEqual(first(args), "+GC_EN=1")
+        self.assertEqual(first(off), "+GC_EN=0")
 
 
 if __name__ == "__main__":

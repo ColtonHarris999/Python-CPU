@@ -17,8 +17,8 @@ PYCORE_CACHE_EN ?= 1
 PYCORE_MEM_LATENCY ?= 4
 PYCORE_MEM_PLUSARGS ?= +CACHE_EN=$(PYCORE_CACHE_EN) +MEM_LATENCY=$(PYCORE_MEM_LATENCY)
 # Extra simulator plusargs for every hardware test, placed before each
-# test's own so they win (Verilog takes the first match), e.g.
-# `make test-hw HW_PLUSARGS=+GC_EN=1` runs the suite with the collector on.
+# test's own so they win (Verilog takes the first match). Image tests run
+# with the collector on; `make test-hw HW_PLUSARGS=+GC_EN=0` turns it off.
 HW_PLUSARGS ?=
 # GC acceptance runner (planning/gc_plan.md §10.3): MODE=quick|full.
 MODE ?= quick

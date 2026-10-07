@@ -273,6 +273,28 @@ class SharedSimPlusargsTest(unittest.TestCase):
         self.assertIn("+EXPECTED_VALUE=15", blob)
         self.assertNotIn("-GPROG_HEX", blob)
         self.assertNotIn("verilator", blob.lower())
+        # The collector is on by default, after anything the caller passes.
+        self.assertEqual(cmd[-1], "+GC_EN=1")
+
+    def test_caller_plusargs_go_first(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="PASS:\n", stderr="")
+        with mock.patch.object(
+            pycore_cli, "_ensure_shared_sim", return_value=pathlib.Path("/tmp/fake")
+        ), mock.patch.object(
+            pycore_cli.subprocess, "run", return_value=completed
+        ) as run:
+            pycore_cli._run_shared_sim(
+                program_hex=pathlib.Path("/tmp/p.hex"),
+                dmem_hex=pathlib.Path("/tmp/d.hex"),
+                meta={"HEAP_INIT_PTR": "4096", "EXPECTED_TAG": "1", "EXPECTED_VALUE": "15"},
+                max_cycles=200000,
+                two_core=False,
+                stdout_path=pathlib.Path("/tmp/console.txt"),
+                plusargs=("+GC_EN=0",),
+            )
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[1], "+GC_EN=0")
+        self.assertEqual(cmd[-1], "+GC_EN=1")
 
 
 if __name__ == "__main__":
