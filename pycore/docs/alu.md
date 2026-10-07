@@ -102,8 +102,21 @@ CPython's exact operation sequences on them:
 | `**` (integer exponent `n`) | square-and-multiply, `k = bits(|n|) - 1`, `p = popcount(|n|) - 1`        | `6 + 7 k + 6 p`; `+ 32` for `n < 0`; `+ 35 + 7 k + 6 p` instead when `x**|n|` overflowed and `(1/x)**|n|` is recomputed |
 | COMPLEX `+ -`               | two adds                                                                 | 10                                             |
 | COMPLEX `*`                 | `_Py_c_prod`: four multiplies, two adds                                  | 34                                             |
-| COMPLEX `/`                 | `_Py_c_quot` (Smith): three divides, three multiplies, three adds        | 128                                            |
+| COMPLEX `/`                 | `_Py_c_quot` (Smith): three divides, three multiplies, three adds        | 128 with finite operands; `+ 1` to inspect the result when an operand holds an infinity, `+ 9` when the inf / zero recovery below runs |
 | COMPLEX compares, `not`, `-`| combinational                                                            | 1                                              |
+
+Complex division includes CPython 3.14's recovery of infinities and zeros
+(`_Py_c_quot`, after C11 Annex G.5.2): when Smith's algorithm produces
+`nan+nanj` and exactly one operand holds an infinity, the result is rebuilt
+from signs — `inf*(x*br + y*bi) + inf*(y*br - x*bi)j` for an infinite
+numerator, `0.0*(ar*x + ai*y) + 0.0*(ai*x - ar*y)j` for an infinite
+denominator, with `x`, `y` in `{+-1, +-0}`. The products are sign /
+magnitude selects, so the hardware spends only the two adds on it
+(`S_CREC_R`, `S_CREC_I`). The decision is taken from the *operands*
+(`crec_cand`), not the result, so divisions with all-finite operands go
+straight to `S_DONE` with unchanged timing and no added logic on that
+path; only a division with an infinite operand pays one cycle to look at
+the result, and nine when it is actually `nan+nanj`.
 
 ### Measured latencies
 
@@ -140,6 +153,8 @@ probe FLOAT 2.0**-1072      205      (overflow retry path)
 probe COMPLEX +              10
 probe COMPLEX *              34
 probe COMPLEX /             128
+probe COMPLEX inf/, no recovery   42   ((inf+0j)/(2+0j): divides on inf finish early)
+probe COMPLEX inf/, recovery      71   ((inf+0j)/(1+1j) = inf-infj)
 ```
 
 Random-operand ranges from the same run (3000 iterations per class):
@@ -163,7 +178,8 @@ PyCore has:
   bit for bit as well. Compares follow IEEE (NaN is unordered; `-0.0 ==
   0.0`).
 - `COMPLEX` `+ - * /` are `_Py_c_sum`, `_Py_c_diff`, `_Py_c_prod` and
-  the Smith-scaled `_Py_c_quot`, operation for operation.
+  the Smith-scaled `_Py_c_quot` including its 3.14 infinity / zero
+  recovery, operation for operation.
 - Division by zero (`INT // 0`, `INT % 0`, `x / 0.0`, `x % 0.0`,
   `x // 0.0`, `0.0 ** -n`, complex `/ 0j`) traps: `DIV_ZERO` for INT,
   `FPU_EXCEPTION` for FLOAT / COMPLEX.
@@ -183,16 +199,12 @@ Deviations (in addition to those in `bytecode_support.md`):
 3. **`int ** int`** traps `TYPE` for a negative exponent (CPython returns a
    float) and when the result leaves 64 bits (CPython promotes to a big
    int). `0 ** 0 == 1`.
-4. **Complex `/` has no NaN / infinity recovery.** CPython 3.14's
-   `_Py_c_quot` additionally repairs results that came out `nan+nanj`
-   when an operand was infinite; the hardware returns the plain Smith
-   result.
-5. **`INT / INT` and `INT op FLOAT` promote through binary64.** For
+4. **`INT / INT` and `INT op FLOAT` promote through binary64.** For
    `|int| > 2**53` the conversion rounds, so `(2**53 + 1) / 1` and
    `2**53 + 1 > 2.0**53` can differ from CPython, which compares and
    divides exactly. This is the existing promotion behaviour; the
    conversion itself (`pycore_i64_to_f64`) is correctly rounded.
-6. **NaN payloads.** The hardware produces the canonical quiet NaN
+5. **NaN payloads.** The hardware produces the canonical quiet NaN
    (`0x7FF8_0000_0000_0000`) and propagates operand NaNs by value; it does
    not reproduce the host libm's payload choices. CPython programs cannot
    observe this except through `struct`.
@@ -215,12 +227,13 @@ against libm `pow`. Each run issues, through `pycore_exec`:
   zeros, infinities, NaNs, subnormals, `DBL_MAX`, small integers,
   half-integers, mixed `INT` / `BOOL` promotion;
 - 1500 random COMPLEX pairs over `+ - * /`, `==`, `!=`, mixed
-  real-numeric operands;
+  real-numeric operands, with infinite / NaN components often enough to
+  reach the division recovery path;
 - the same again back to back (`valid_i` held, operands swapped in the
   cycle after each completion) to exercise re-arming.
 
 It also asserts that a trap is never raised while `stall_o` is high.
-Fifteen seeds (212k checks) pass. `make pycore-exec` and
+Twelve seeds (170k checks) pass on the final RTL. `make pycore-exec` and
 `make pycore-type-pairs` are the older smoke tests, now waiting on
 `stall_o`, and the hardware areas (`make test-hw`) exercise the units
 from real bytecode.
@@ -239,7 +252,7 @@ so a relative measure only):
 | `pycore_mul` (STEP = 16)       | 7.6 k  | 358   | 115                  |
 | `pycore_div` (RL = 2)          | 5.8 k  | 727   | 128 (`udiv_seq` step) |
 | `pycore_ipow` (without mul)    | 1.6 k  | 202   | 72                   |
-| `pycore_fpu` (all FP units)    | 32 k   | 2163  | 153 (`fp_divrem` final normalise), 102 (`fp_add`), 76 (`fp_mul`) |
+| `pycore_fpu` (all FP units)    | 34 k   | 2163  | 153 (`fp_divrem` final normalise), 122 (`fpu` sequencer), 102 (`fp_add`), 76 (`fp_mul`) |
 
 Each of these paths is one adder-class carry chain plus muxing; there are
 no chained adders in a cycle. Knobs if the clock target needs them:

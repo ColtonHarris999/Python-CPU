@@ -221,6 +221,21 @@ static int complex_op(int op, double ar, double ai, double br, double bi,
         } else {
             *rr = NAN; *ri = NAN;
         }
+        // CPython 3.14: recover infinities and zeros that computed as
+        // nan+nanj (C11 Annex G.5.2 _Cdivd).
+        if (isnan(*rr) && isnan(*ri)) {
+            if ((isinf(ar) || isinf(ai)) && isfinite(br) && isfinite(bi)) {
+                double x = copysign(isinf(ar) ? 1.0 : 0.0, ar);
+                double y = copysign(isinf(ai) ? 1.0 : 0.0, ai);
+                *rr = INFINITY * (x * br + y * bi);
+                *ri = INFINITY * (y * br - x * bi);
+            } else if ((isinf(abs_br) || isinf(abs_bi)) && isfinite(ar) && isfinite(ai)) {
+                double x = copysign(isinf(br) ? 1.0 : 0.0, br);
+                double y = copysign(isinf(bi) ? 1.0 : 0.0, bi);
+                *rr = 0.0 * (ar * x + ai * y);
+                *ri = 0.0 * (ai * x - ar * y);
+            }
+        }
         return 0;
     }
     case OP_NEG: *rr = -ar; *ri = -ai; return 0;

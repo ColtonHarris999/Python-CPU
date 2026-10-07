@@ -495,6 +495,35 @@ module tb_alu_units;
                  PY_TAG_COMPLEX, {64'd0, 64'd0}, "");                                   // ZeroDivision
         run_case(PY_ALU_MUL, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h3FF0_0000_0000_0000},
                  PY_TAG_COMPLEX, {64'h4010_0000_0000_0000, 64'h4008_0000_0000_0000}, "");
+        // Complex / with an infinite operand: CPython 3.14 recovery
+        // (inf+0j)/(1+1j) = inf-infj ; infj/(2+0j) = nan+infj (no recovery, one NaN)
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h0000_0000_0000_0000, 64'h7FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h3FF0_0000_0000_0000, 64'h3FF0_0000_0000_0000}, "");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h7FF0_0000_0000_0000, 64'h0000_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h0000_0000_0000_0000, 64'h4000_0000_0000_0000}, "");
+        // (1+2j)/(inf+0j) = 0j ; (1+2j)/(inf+infj) = 0j ; (-1-2j)/(inf+0j) = -0-0j
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h3FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h0000_0000_0000_0000, 64'h7FF0_0000_0000_0000}, "");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h3FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h7FF0_0000_0000_0000, 64'h7FF0_0000_0000_0000}, "");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'hC000_0000_0000_0000, 64'hBFF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h0000_0000_0000_0000, 64'h7FF0_0000_0000_0000}, "");
+        // (inf+infj)/(1-1j): inf*(1 + -1) -> inf*0 = nan real, inf*(1 - -1) = inf imag
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h7FF0_0000_0000_0000, 64'h7FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'hBFF0_0000_0000_0000, 64'h3FF0_0000_0000_0000}, "");
+        // both infinite / NaN operand: stays nan+nanj
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h0000_0000_0000_0000, 64'h7FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h0000_0000_0000_0000, 64'h7FF0_0000_0000_0000}, "");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h0000_0000_0000_0000, 64'h7FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h7FF8_0000_0000_0000, 64'h3FF0_0000_0000_0000}, "");
+        // (3+2j)/(-inf+nanj): the NaN component acts as +-0 -> -0-0j
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h4008_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h7FF8_0000_0000_0000, 64'hFFF0_0000_0000_0000}, "");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h4008_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'hFFF8_0000_0000_0000, 64'h7FF0_0000_0000_0000}, "");
+        // huge finite numerator over infinite denominator: sum overflows, 0*inf = nan
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h7FEF_FFFF_FFFF_FFFF, 64'h7FEF_FFFF_FFFF_FFFF},
+                 PY_TAG_COMPLEX, {64'h7FF0_0000_0000_0000, 64'h7FF0_0000_0000_0000}, "");
     endtask
 
     // Canonical operand pairs whose latencies are quoted in alu.md.
@@ -547,6 +576,10 @@ module tb_alu_units;
                  PY_TAG_COMPLEX, {64'h4010_0000_0000_0000, 64'h4008_0000_0000_0000}, "probe COMPLEX *");
         run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h4000_0000_0000_0000, 64'h3FF0_0000_0000_0000},
                  PY_TAG_COMPLEX, {64'h4010_0000_0000_0000, 64'h4008_0000_0000_0000}, "probe COMPLEX /");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h0000_0000_0000_0000, 64'h7FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h0000_0000_0000_0000, 64'h4000_0000_0000_0000}, "probe COMPLEX inf/, no recovery");
+        run_case(PY_ALU_TRUE_DIV, PY_TAG_COMPLEX, {64'h0000_0000_0000_0000, 64'h7FF0_0000_0000_0000},
+                 PY_TAG_COMPLEX, {64'h3FF0_0000_0000_0000, 64'h3FF0_0000_0000_0000}, "probe COMPLEX inf/, recovery");
     endtask
 
     initial begin

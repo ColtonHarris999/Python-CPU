@@ -100,6 +100,7 @@ module pycore_fpu #(
         S_CMUL_1, S_CMUL_2, S_CMUL_3, S_CMUL_4, S_CMUL_5, S_CMUL_6,
         S_CDIV_1, S_CDIV_2, S_CDIV_3, S_CDIV_4, S_CDIV_5,
         S_CDIV_6, S_CDIV_7, S_CDIV_8, S_CDIV_9,
+        S_CREC_CHK, S_CREC_R, S_CREC_I,     // complex / : inf / zero recovery
         S_DONE, S_EXC
     } state_e;
 
@@ -158,6 +159,49 @@ module pycore_fpu #(
     assign br_abs = {1'b0, br[62:0]};
     assign bi_abs = {1'b0, bi[62:0]};
     assign cmp_rb = pycore_f64_cmp(br_abs, bi_abs);
+
+    // ---- complex / : recovery of infinities and zeros (CPython 3.14) ----
+    // Smith's algorithm yields nan+nanj when exactly one operand holds an
+    // infinity; _Py_c_quot then rebuilds the result from signs alone:
+    //   a infinite, b finite:  x = copysign(isinf(ar) ? 1 : 0, ar), y likewise
+    //       from ai,  r = inf*(x*br + y*bi) + inf*(y*br - x*bi) j
+    //   b infinite, a finite:  x, y from br, bi,
+    //       r = 0.0*(ar*x + ai*y) + 0.0*(ai*x - ar*y) j
+    // x*v with x in {+-1, +-0} is +-v or +-0, so the products are sign /
+    // magnitude selects and only the two sums need the adder. The check is
+    // made from the operands, so finite-operand divisions never pay for it.
+    logic        a_has_inf, b_has_inf, a_fin, b_fin;
+    logic        crec_cand;               // one side infinite, the other finite
+    logic        crec_b;                  // the infinite side is b
+    logic [62:0] crec_r1m, crec_r2m, crec_i1m, crec_i2m;
+    logic [63:0] crec_r1, crec_r2, crec_i1, crec_i2;
+
+    assign a_has_inf = pycore_f64_is_inf(ar) || pycore_f64_is_inf(ai);
+    assign b_has_inf = pycore_f64_is_inf(br) || pycore_f64_is_inf(bi);
+    assign a_fin     = pycore_f64_is_finite(ar) && pycore_f64_is_finite(ai);
+    assign b_fin     = pycore_f64_is_finite(br) && pycore_f64_is_finite(bi);
+    assign crec_cand = (a_has_inf && b_fin) || (b_has_inf && a_fin);
+    assign crec_b    = b_has_inf && a_fin;
+
+    // magnitudes of the four products (x*br, y*bi, y*br, x*bi  /  ar*x, ai*y, ai*x, ar*y)
+    assign crec_r1m = crec_b ? (pycore_f64_is_inf(br) ? ar[62:0] : 63'd0)
+                             : (pycore_f64_is_inf(ar) ? br[62:0] : 63'd0);
+    assign crec_r2m = crec_b ? (pycore_f64_is_inf(bi) ? ai[62:0] : 63'd0)
+                             : (pycore_f64_is_inf(ai) ? bi[62:0] : 63'd0);
+    assign crec_i1m = crec_b ? (pycore_f64_is_inf(br) ? ai[62:0] : 63'd0)
+                             : (pycore_f64_is_inf(ai) ? br[62:0] : 63'd0);
+    assign crec_i2m = crec_b ? (pycore_f64_is_inf(bi) ? ar[62:0] : 63'd0)
+                             : (pycore_f64_is_inf(ar) ? bi[62:0] : 63'd0);
+    assign crec_r1 = {ar[63] ^ br[63], crec_r1m};
+    assign crec_r2 = {ai[63] ^ bi[63], crec_r2m};
+    assign crec_i1 = {ai[63] ^ br[63], crec_i1m};
+    assign crec_i2 = {ar[63] ^ bi[63], crec_i2m};
+
+    // inf * s  (a infinite)  or  0.0 * s  (b infinite), s finite or inf.
+    function automatic logic [63:0] crec_scale(input logic [63:0] s, input logic by_zero);
+        if (by_zero) crec_scale = pycore_f64_is_inf(s)  ? PY_F64_QNAN : {s[63], 63'd0};
+        else         crec_scale = pycore_f64_is_zero(s) ? PY_F64_QNAN : {s[63], PY_F64_PINF[62:0]};
+    endfunction
 
     always_comb begin
         b_trunc_ok = pycore_float_trunc_int64({64'd0, br}, b_trunc_int);
@@ -257,6 +301,12 @@ module pycore_fpu #(
                         dec_kind   = K_SEQ;
                         dec_next   = S_CDIV_1;
                         dec_cdiv_b = 1'b1;
+                    end else if (crec_cand) begin
+                        // b has a NaN component next to an infinity and a is
+                        // finite: Smith gives nan+nanj, the recovery still
+                        // applies (the NaN acts as +-0).
+                        dec_kind   = K_SEQ;
+                        dec_next   = S_CREC_R;
                     end else begin                              // a NaN component
                         dec_kind   = K_COMB;
                         dec_result = {PY_F64_QNAN, PY_F64_QNAN};
@@ -384,6 +434,8 @@ module pycore_fpu #(
                 u_a = cdiv_b_r ? t3_r : ai;  u_b = cdiv_b_r ? ar : t3_r;
             end
             S_CDIV_9: begin u_div_start = 1'b1; u_a = t3_r; u_b = t1_r; end   // ri
+            S_CREC_R: begin u_add_start = 1'b1; u_a = crec_r1; u_b = crec_r2; end
+            S_CREC_I: begin u_add_start = 1'b1; u_sub = 1'b1; u_a = crec_i1; u_b = crec_i2; end
 
             default: ;
         endcase
@@ -551,7 +603,29 @@ module pycore_fpu #(
                 S_CDIV_6: if (u_done) begin t2_r <= u_res; state_r <= S_CDIV_7; end
                 S_CDIV_7: if (u_done) begin t3_r <= u_res; state_r <= S_CDIV_8; end
                 S_CDIV_8: if (u_done) begin t3_r <= u_res; state_r <= S_CDIV_9; end
-                S_CDIV_9: if (u_done) begin res_r <= {u_res, t2_r}; state_r <= S_DONE; end
+                S_CDIV_9: if (u_done) begin
+                    if (crec_cand) begin
+                        // An operand is infinite: look at the result first.
+                        t3_r    <= u_res;
+                        state_r <= S_CREC_CHK;
+                    end else begin
+                        res_r   <= {u_res, t2_r};
+                        state_r <= S_DONE;
+                    end
+                end
+                S_CREC_CHK: begin
+                    if (pycore_f64_is_nan(t2_r) && pycore_f64_is_nan(t3_r)) begin
+                        state_r <= S_CREC_R;
+                    end else begin
+                        res_r   <= {t3_r, t2_r};
+                        state_r <= S_DONE;
+                    end
+                end
+                S_CREC_R: if (u_done) begin t2_r <= crec_scale(u_res, crec_b); state_r <= S_CREC_I; end
+                S_CREC_I: if (u_done) begin
+                    res_r   <= {crec_scale(u_res, crec_b), t2_r};
+                    state_r <= S_DONE;
+                end
 
                 S_DONE, S_EXC: state_r <= S_IDLE;
                 default:       state_r <= S_IDLE;
