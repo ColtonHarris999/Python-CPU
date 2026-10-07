@@ -428,15 +428,151 @@ def validate_code_tree(module_code: types.CodeType) -> None:
         validate_code_object(co)
 
 
-def transcode_code_units(co: types.CodeType) -> list[str]:
-    """Transcode raw co_code units one-for-one into imem slots."""
-    code = co.co_code
+def transcode_code_units(co: types.CodeType, code: bytes | None = None) -> list[str]:
+    """Transcode raw co_code units one-for-one into imem slots.
+
+    *code* overrides ``co.co_code`` (the cache-free ROM layout from
+    ``strip_inline_caches``).
+    """
+    if code is None:
+        code = co.co_code
     if len(code) % 2:
         raise ValueError(f"code object {co.co_name!r} has odd co_code length")
     slots: list[str] = []
     for offset in range(0, len(code), 2):
         slots.append(format_imem_slot(code[offset], code[offset + 1]))
     return slots
+
+
+_REL_JUMP_OPS = frozenset(_opcode_module.opname[op] for op in _opcode_module.hasjrel)
+_BACKWARD_JUMP_OPS = frozenset({"JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT"})
+
+
+def _exc_table_varint(value: int, first: bool) -> bytes:
+    """One CPython exception-table varint: 6-bit groups, MSB first, 0x40
+    continuation, 0x80 on the first byte of an entry."""
+    groups = []
+    while True:
+        groups.append(value & 0x3F)
+        value >>= 6
+        if value == 0:
+            break
+    groups.reverse()
+    out = bytearray()
+    for i, g in enumerate(groups):
+        b = g
+        if i + 1 < len(groups):
+            b |= 0x40
+        if i == 0 and first:
+            b |= 0x80
+        out.append(b)
+    return bytes(out)
+
+
+def strip_inline_caches(co: types.CodeType) -> tuple[bytes, bytes]:
+    """Return ``(co_code, co_exceptiontable)`` for *co* without its ``CACHE``
+    units, jump args and exception-table offsets remapped to the compact
+    layout.
+
+    Fetch skips ``CACHE`` units, and relative jumps land on
+    ``pc + 1 + n_cache(jump) + arg`` with ``n_cache`` taken from the jump
+    opcode itself (``pycore_defs.svh``), which is also how the on-device
+    compiler lays code out (``compiler.md`` D1). ROM bodies are stored in
+    that form so they take ~35 % fewer ROM slots. ``EXTENDED_ARG`` prefixes
+    are kept (offsets only shrink, so the old width always suffices).
+    Nested code objects are left alone: ROM bodies have none.
+
+    The result is raw bytes rather than a new code object because CPython's
+    ``co_code`` getter re-synthesises cache slots from the opcode table, so
+    a ``CodeType`` cannot carry a cache-free layout. ``_ImageSerializer``
+    takes it as a ``code_overrides`` entry keyed by ``id(co)``.
+    """
+    code = co.co_code
+    cache_entries = _opcode_module._inline_cache_entries
+    n_units = len(code) // 2
+    # One record per logical instruction: (old_start, n_ext, opcode, arg,
+    # n_cache, old_end). old_start is the first EXTENDED_ARG unit.
+    records: list[tuple[int, int, int, int, int, int]] = []
+    unit = 0
+    while unit < n_units:
+        start = unit
+        n_ext = 0
+        arg = 0
+        while code[2 * unit] == OP_EXTENDED_ARG:
+            arg = (arg | code[2 * unit + 1]) << 8
+            n_ext += 1
+            unit += 1
+        op = code[2 * unit]
+        arg |= code[2 * unit + 1]
+        unit += 1
+        opname = _opcode_module.opname[op]
+        n_cache = cache_entries.get(opname, 0)
+        for k in range(n_cache):
+            if unit + k >= n_units or code[2 * (unit + k)] != OP_CACHE:
+                raise ValueError(
+                    f"{co.co_name!r}: {opname} at unit {start} lacks its "
+                    f"{n_cache} CACHE units"
+                )
+        unit += n_cache
+        records.append((start, n_ext, op, arg, n_cache, unit))
+    if not any(r[4] for r in records):
+        return code, co.co_exceptiontable
+
+    # old unit index of an instruction start (or the code end) -> new index
+    new_index: dict[int, int] = {}
+    new_unit = 0
+    for start, n_ext, _op, _arg, _n_cache, old_end in records:
+        new_index[start] = new_unit
+        new_unit += n_ext + 1
+    new_index[n_units] = new_unit
+
+    def remap(old: int) -> int:
+        try:
+            return new_index[old]
+        except KeyError:
+            raise ValueError(
+                f"{co.co_name!r}: unit {old} is not an instruction start"
+            ) from None
+
+    out = bytearray()
+    for start, n_ext, op, arg, n_cache, old_end in records:
+        opname = _opcode_module.opname[op]
+        if opname in _REL_JUMP_OPS:
+            if opname in _BACKWARD_JUMP_OPS:
+                target = old_end - arg
+            else:
+                target = old_end + arg
+            new_pc = new_index[start] + n_ext  # the opcode unit itself
+            base = new_pc + 1 + n_cache
+            new_target = remap(target)
+            if opname in _BACKWARD_JUMP_OPS:
+                arg = base - new_target
+            else:
+                arg = new_target - base
+            if arg < 0:
+                raise ValueError(
+                    f"{co.co_name!r}: {opname} at unit {start} cannot encode "
+                    "its target without CACHE units"
+                )
+        if arg >= 1 << (8 * (n_ext + 1)):
+            raise ValueError(
+                f"{co.co_name!r}: arg {arg} of {opname} needs more EXTENDED_ARG"
+            )
+        for i in range(n_ext, 0, -1):
+            out += bytes((OP_EXTENDED_ARG, (arg >> (8 * i)) & 0xFF))
+        out += bytes((op, arg & 0xFF))
+
+    table = bytearray()
+    for entry in dis._parse_exception_table(co):
+        start_u = remap(entry.start // 2)
+        end_u = remap(entry.end // 2)
+        target_u = remap(entry.target // 2)
+        table += _exc_table_varint(start_u, True)
+        table += _exc_table_varint(end_u - start_u, False)
+        table += _exc_table_varint(target_u, False)
+        table += _exc_table_varint((entry.depth << 1) | int(entry.lasti), False)
+
+    return bytes(out), bytes(table)
 
 
 def count_global_store_names(module_code: types.CodeType) -> set[str]:
@@ -476,6 +612,9 @@ class _ImageSerializer:
         self._code_bank = "rom"
         self.code_handles: dict[int, Tagged] = {}
         self.entry_slots: dict[int, int] = {}
+        # id(code object) -> (co_code, co_exceptiontable) to serialize in
+        # place of the object's own (ROM bodies, see strip_inline_caches).
+        self.code_overrides: dict[int, tuple[bytes, bytes]] = {}
         self.defaults_map: dict[int, tuple] = defaults_map or {}
         self.kwdefaults_map: dict[int, dict] = kwdefaults_map or {}
         self.type_refs: dict[str, Tagged] = type_refs if type_refs is not None else {}
@@ -529,7 +668,12 @@ class _ImageSerializer:
             if isinstance(const, types.CodeType):
                 self.serialize_code(const)
 
-        entry_slot = self._append_code_units(transcode_code_units(folded))
+        override = self.code_overrides.get(co_id)
+        if override is not None:
+            code_bytes, exc_bytes = override
+        else:
+            code_bytes, exc_bytes = folded.co_code, co.co_exceptiontable
+        entry_slot = self._append_code_units(transcode_code_units(folded, code_bytes))
         self.entry_slots[co_id] = entry_slot
 
         co_consts = self.heap.alloc_tuple(
@@ -557,7 +701,7 @@ class _ImageSerializer:
             slot_count=dict_min_slots(max(len(kwdefaults_py), 1)),
         )
         co_exceptiontable = self.heap.alloc_tuple(
-            [(TAG_INT, int_value(byte)) for byte in co.co_exceptiontable]
+            [(TAG_INT, int_value(byte)) for byte in exc_bytes]
         )
         handle = self.heap.add_code_object(
             entry_slot,
@@ -2689,6 +2833,10 @@ def seed_firmware_function(
     if func_name == "set_add":
         co = _build_set_add_method_code(co)
     validate_code_tree(co)
+    # Slice folding pattern-matches BINARY_OP + CACHE, so fold first, then
+    # store the body in the compact cache-free layout.
+    co = fold_slice_constants_one(co)
+    serializer.code_overrides[id(co)] = strip_inline_caches(co)
     defaults = func.__defaults__
     if defaults:
         serializer.defaults_map[id(co)] = defaults

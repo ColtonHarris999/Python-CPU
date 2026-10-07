@@ -124,6 +124,16 @@ These limit every firmware builtin:
 | `to_bytes` | int.to_bytes-style conversion helper (pycore BI_TO_BYTES). | blocked | Excore path; needs BYTES allocation. |
 | `list_append` | list.append native method (index 0 in `ROM_NATIVE_METHODS`). | implemented | `lst += [value]` mirror; grow goes through the excore LIST_APPEND trap. |
 
+## ROM footprint
+
+ROM bodies are serialized without CPython's inline `CACHE` units
+(`image_from_source.strip_inline_caches`; jump args and exception tables are
+remapped to the hardware `pc + 1 + n_cache + arg` rule, the layout the
+on-device compiler emits). All ROM builtins and native methods together take
+~3.4k of the 8192 code-ROM slots (6.0k with caches); the largest bodies are
+`_float_from_str`, `_round_float` and `_scale`. The budget is tracked as
+`L-RT-4` in `pycore/docs/limitations.md`.
+
 ## Source layout
 
 ```text

@@ -43,7 +43,7 @@ JSON `plan_track` on an opcode names the exceptions-plan track that lifts it
 
 | Bytecode                                | Description                                                                                 | PyCore-specific note                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | --------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `CACHE`                                 | Inline cache entry used by CPython adaptive interpreter.                                    | Preserved in the image and skipped by fetch; slot order remains CPython-identical.                                                                                                                                                                                                                                                                                                                                                         |
+| `CACHE`                                 | Inline cache entry used by CPython adaptive interpreter.                                    | Preserved in user-program images and skipped by fetch; slot order remains CPython-identical. ROM bodies are stored without them (`strip_inline_caches`, jump args and exception tables remapped), the same layout the on-device compiler emits.                                                                                                                                                                                                                                                                                                                                                         |
 | `EXTENDED_ARG`                          | Extends argument width of the following opcode.                                             | Preserved in the image and folded by fetch; following opcode sees the full argument.                                                                                                                                                                                                                                                                                                                                                       |
 | `RESUME`                                | Marks function entry/resume points in CPython bytecode.                                     | Treated as a no-op control marker.                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `NOP`                                   | Explicit no-op left by dead-code elimination (e.g. `if False:`).                            | Decode empty case clone of `RESUME`/`NOT_TAKEN`; stack 0, no trap. Layer D: `img_nop`.                                                                                                                                                                                                                                                                                                                                                     |
@@ -149,7 +149,8 @@ In short, unsupported bytecodes do not have fallback emulation in hardware.
 ## Semantic deviations from CPython
 
 These are intentional or interim differences; they are not bugs to "fix" in
-this milestone:
+this milestone. `limitations.md` is the cross-area tracker that indexes this
+list and records what each item would cost to lift:
 
 1. **INT/BOOL/FLOAT cross-tag keys stay on pycore.** Rich equality
   (`True == 1`, `1.0 == 1`, …) runs on the probe path for dict and set.
@@ -192,7 +193,12 @@ this milestone:
   CPython's full locals→globals→builtins chain.
 9. **Image fidelity scope.** Images preserve the `compile()` object graph and
   bytecode-unit order, including `CACHE` and `EXTENDED_ARG`, but use PyCore's
-   tagged 128-bit-slot layout rather than CPython C structs. The on-device
+   tagged 128-bit-slot layout rather than CPython C structs. ROM builtin
+   bodies are the exception: `image_from_source.strip_inline_caches` stores
+   them without `CACHE` units (jump args and exception-table offsets
+   remapped to the hardware `pc + 1 + n_cache + arg` rule), which is the
+   layout the on-device compiler emits anyway and keeps the ROM at ~3.4k of
+   the 8192 slots. The on-device
    firmware compiler (step H) is the other direction: it **emits no `CACHE`**
    (D1). Constant folding (§11.3) covers int `+ - * & | ^` / unary `- ~` /
    str `+`; `/ // % ** << >>` stay unfolded (D2). Differentials compare results, never

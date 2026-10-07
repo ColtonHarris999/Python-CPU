@@ -276,6 +276,98 @@ class RomFirmwareSeedTest(unittest.TestCase):
                 break
         self.assertTrue(found, "OBK_TYPE with OB_FLAG_STR_TYPE missing from builtins heap")
 
+    def test_rom_bodies_are_cache_free_and_jumps_remap(self) -> None:
+        """strip_inline_caches keeps every instruction, arg and jump target."""
+        import dis
+        import opcode
+
+        def decode(code: bytes):
+            unit = 0
+            out = []
+            while unit < len(code) // 2:
+                start = unit
+                arg = 0
+                while code[2 * unit] == image_from_source.OP_EXTENDED_ARG:
+                    arg = (arg | code[2 * unit + 1]) << 8
+                    unit += 1
+                op = code[2 * unit]
+                arg |= code[2 * unit + 1]
+                out.append((start, unit, opcode.opname[op], arg))
+                unit += 1
+            return out
+
+        def parse_exc(table: bytes):
+            pos = 0
+
+            def varint():
+                nonlocal pos
+                b = table[pos]
+                pos += 1
+                v = b & 0x3F
+                while b & 0x40:
+                    b = table[pos]
+                    pos += 1
+                    v = (v << 6) | (b & 0x3F)
+                return v
+
+            out = []
+            while pos < len(table):
+                s = varint()
+                n = varint()
+                t = varint()
+                dl = varint()
+                out.append((s, s + n, t, dl >> 1, dl & 1))
+            return out
+
+        entries = list(image_from_source.ROM_FIRMWARE_BUILTINS) + [
+            (str(i), stem, fn) for i, stem, fn in image_from_source.ROM_NATIVE_METHODS
+        ]
+        total_old = total_new = 0
+        exc_tables_seen = 0
+        for _key, stem, func_name in entries:
+            path = image_from_source.FIRMWARE_BUILTINS_DIR / f"{stem}.py"
+            ns: dict[str, object] = {}
+            exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), ns)
+            co = ns[func_name].__code__
+            if func_name == "set_add":
+                co = image_from_source._build_set_add_method_code(co)
+            co = image_from_source.fold_slice_constants_one(co)
+            code, table = image_from_source.strip_inline_caches(co)
+            total_old += len(co.co_code) // 2
+            total_new += len(code) // 2
+            old = [i for i in dis.get_instructions(co) if i.opname != "EXTENDED_ARG"]
+            ordinal = {i.start_offset // 2: n for n, i in enumerate(old)}
+            new = decode(code)
+            new_ordinal = {start: n for n, (start, _pc, _name, _arg) in enumerate(new)}
+            with self.subTest(body=func_name):
+                self.assertEqual(len(new), len(old))
+                self.assertNotIn("CACHE", {name for _s, _p, name, _a in new})
+                for (start, pc, name, arg), ins in zip(new, old):
+                    self.assertEqual(name, ins.opname)
+                    if name in image_from_source._REL_JUMP_OPS:
+                        n_cache = opcode._inline_cache_entries.get(name, 0)
+                        if name in image_from_source._BACKWARD_JUMP_OPS:
+                            target = pc + 1 + n_cache - arg
+                        else:
+                            target = pc + 1 + n_cache + arg
+                        self.assertEqual(new_ordinal[target], ordinal[ins.argval // 2])
+                    elif ins.arg is not None:
+                        self.assertEqual(arg, ins.arg)
+                old_exc = dis._parse_exception_table(co)
+                new_exc = parse_exc(table)
+                self.assertEqual(len(new_exc), len(old_exc))
+                for a, b in zip(old_exc, new_exc):
+                    exc_tables_seen += 1
+                    self.assertEqual(new_ordinal[b[0]], ordinal[a.start // 2])
+                    self.assertEqual(new_ordinal[b[2]], ordinal[a.target // 2])
+                    self.assertEqual((b[3], bool(b[4])), (a.depth, a.lasti))
+                    if a.end // 2 == len(co.co_code) // 2:
+                        self.assertEqual(b[1], len(code) // 2)
+                    else:
+                        self.assertEqual(new_ordinal[b[1]], ordinal[a.end // 2])
+        self.assertGreater(exc_tables_seen, 0, "no ROM body with a try block")
+        self.assertLess(total_new, total_old * 0.7, (total_new, total_old))
+
     def test_wave3_image_programs_build(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1] / "programs"
         for name in (
