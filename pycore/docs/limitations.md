@@ -293,6 +293,42 @@ indexes those lists so there is one place to start:
   compiler package (no RTL change; costs the write-floor guarantee for
   those bodies).
 
+### L-RT-5 Exception unwind matches the caller's table at `CALL + 1`
+
+- **Status:** open (hart)
+- **CPython:** an exception leaving a callee is matched against the
+  caller's exception table at the offset of the `CALL` instruction.
+- **PyCore:** the unwind through `S_RETURN` reloads `cur_pc_r` from the
+  frame's saved return PC, `pc(CALL) + 1`, and walks the table there
+  (`pycore_call_fsm.svh`, `pycore_cont_raise.svh` `CP_LIST_WB`). In a
+  CPython-compiled image that unit is one of the CALL's `CACHE` units and
+  still inside the protected range, so nothing is visible. In cache-free
+  code (`compiler.md` D1, and ROM bodies after `strip_inline_caches`) it
+  is the next instruction, which is outside the range when the `CALL` is
+  the last protected instruction. Both compilers produce that shape for
+  `try: return f()` with a `finally:` (the inlined finally body is not
+  part of the protected range, so the `CALL` ends it). The finally
+  handler is then skipped and the exception propagates one frame too far.
+  Reproduced on the device compiler (`pycore_cli.py exec`):
+
+  ```python
+  def inner():
+      try:
+          return boom()        # raises ValueError
+      finally:
+          print("fin")         # PyCore: never printed
+  ```
+
+  `try: return f()` with only `except` clauses is fine (`RETURN_VALUE`
+  stays inside the range).
+- **Workaround:** the image tool keeps one `NOP` after such a `CALL` in
+  ROM bodies (`compile`'s `try: return _bi_exec_globals(...)` needs it).
+  In user code, bind the result first (`r = f()` then `return r`) when a
+  `finally` must run after a raising call.
+- **To lift:** walk the table at `call_entry_slot_r - 1` on the unwind
+  path (one subtractor on an existing register; the return path keeps
+  `+ 1`), then drop the pad from `strip_inline_caches`.
+
 ## Design debt (L-PPA)
 
 Items that are not CPython-visible but limit frequency or area.
