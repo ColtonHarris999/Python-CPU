@@ -161,16 +161,24 @@ function automatic logic [3:0] pycore_f64_cmp(input logic [63:0] a, input logic 
     end
 endfunction
 
+// (Indexing a function result directly is not portable to every
+// synthesis frontend, hence the temporaries.)
 function automatic logic pycore_f64_lt(input logic [63:0] a, input logic [63:0] b);
-    pycore_f64_lt = pycore_f64_cmp(a, b)[0];
+    logic [3:0] c;
+    c = pycore_f64_cmp(a, b);
+    pycore_f64_lt = c[0];
 endfunction
 
 function automatic logic pycore_f64_eq(input logic [63:0] a, input logic [63:0] b);
-    pycore_f64_eq = pycore_f64_cmp(a, b)[1];
+    logic [3:0] c;
+    c = pycore_f64_cmp(a, b);
+    pycore_f64_eq = c[1];
 endfunction
 
 function automatic logic pycore_f64_gt(input logic [63:0] a, input logic [63:0] b);
-    pycore_f64_gt = pycore_f64_cmp(a, b)[2];
+    logic [3:0] c;
+    c = pycore_f64_cmp(a, b);
+    pycore_f64_gt = c[2];
 endfunction
 
 // Evaluate one of the six Python comparison selectors.

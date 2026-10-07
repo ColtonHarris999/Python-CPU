@@ -104,20 +104,26 @@ module pycore_div #(
     // ---- fix-up: truncated -> floor (CPython semantics) ----
     //   q_t = sign-adjusted |a| / |b|, r_t has a's sign;
     //   if r_t != 0 and signs differ: q = q_t - 1, r = r_t + b.
-    logic        signs_differ;
-    logic [63:0] q_trunc, r_trunc;
+    // Written so that every case is one carry chain followed by a mux
+    // (no chained adders):  -(|q|) - 1 == ~|q|,  and  r_t + b is
+    // +-(|r| - |b|) when the signs differ.
+    logic        signs_differ, fix;
+    logic [63:0] q_neg, r_neg, r_minus_b, b_minus_r;
     logic [63:0] q_floor, r_floor;
 
     assign signs_differ = sa_r ^ sb_r;
-    assign q_trunc = signs_differ ? (~q_mag + 64'd1) : q_mag;
-    assign r_trunc = sa_r ? (~r_mag + 64'd1) : r_mag;
+    assign fix          = (r_mag != 64'd0) && signs_differ;
+    assign q_neg        = ~q_mag + 64'd1;
+    assign r_neg        = ~r_mag + 64'd1;
+    assign r_minus_b    = r_mag - b_mag_r;
+    assign b_minus_r    = b_mag_r - r_mag;
     always_comb begin
-        if ((r_mag != 64'd0) && signs_differ) begin
-            q_floor = q_trunc - 64'd1;
-            r_floor = r_trunc + (sb_r ? (~b_mag_r + 64'd1) : b_mag_r);
+        if (fix) begin
+            q_floor = ~q_mag;                          // -(|q|) - 1
+            r_floor = sa_r ? b_minus_r : r_minus_b;    // (-|r|) + |b|  /  |r| - |b|
         end else begin
-            q_floor = q_trunc;
-            r_floor = r_trunc;
+            q_floor = signs_differ ? q_neg : q_mag;
+            r_floor = sa_r ? r_neg : r_mag;
         end
     end
 
