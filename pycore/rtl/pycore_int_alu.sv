@@ -13,12 +13,16 @@ module pycore_int_alu (
     logic signed [63:0] b_s;
     logic signed [64:0] add_ext;
     logic signed [64:0] sub_ext;
+    logic signed [63:0] sra;
     logic cmp_result;
 
     assign a_s = op_a_i;
     assign b_s = op_b_i;
     assign add_ext = {a_s[63], a_s} + {b_s[63], b_s};
     assign sub_ext = {a_s[63], a_s} - {b_s[63], b_s};
+    // Arithmetic shift in its own signed assignment: inside the unsigned
+    // ternary below `>>>` would silently degrade to a logical shift.
+    assign sra = a_s >>> op_b_i[5:0];
 
     always_comb begin
         result_o = 64'b0;
@@ -51,7 +55,7 @@ module pycore_int_alu (
             PY_ALU_RSHIFT: begin
                 result_o = (b_s < 0) ? 64'b0 :
                          (op_b_i[63:6] != 58'b0 ? (a_s[63] ? 64'hffff_ffff_ffff_ffff : 64'b0) :
-                                                 (a_s >>> op_b_i[5:0]));
+                                                 sra);
             end
             PY_ALU_AND: begin
                 result_o = op_a_i & op_b_i;

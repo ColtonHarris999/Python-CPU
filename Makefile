@@ -358,6 +358,28 @@ pycore-type-pairs:
 		pycore/tb/tb_type_pairs.sv
 	./$(BUILD_DIR)/pycore_type_pairs/Vtb_type_pairs
 
+# Randomised check of every arithmetic unit against a CPython reference
+# model (DPI-C); also prints the per-operation latency table (alu.md).
+ALU_UNITS_SEED ?= 1
+ALU_UNITS_ITERS ?= 3000
+pycore-alu-units:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_alu_units \
+		--Mdir $(BUILD_DIR)/pycore_alu_units \
+		-Wall -Wno-fatal \
+		-CFLAGS "-ffp-contract=off" -LDFLAGS "-lm" \
+		pycore/rtl/pycore_tag_decode.sv \
+		pycore/rtl/pycore_promote.sv \
+		pycore/rtl/pycore_int_alu.sv \
+		$(PYCORE_ARITH_SRCS) \
+		pycore/rtl/pycore_exec.sv \
+		pycore/tb/tb_alu_units.sv \
+		pycore/tb/alu_ref.c
+	./$(BUILD_DIR)/pycore_alu_units/Vtb_alu_units \
+		+seed=$(ALU_UNITS_SEED) +iters=$(ALU_UNITS_ITERS)
+
 pycore-mem:
 	mkdir -p $(BUILD_DIR)
 	$(VERILATOR) -sv --binary --timing \
@@ -693,7 +715,7 @@ excore-cpu-test: excore-fw
 excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec \
-	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
+	pycore-type-pairs pycore-alu-units pycore-mem pycore-cache-lru pycore-cache pycore-ram \
 	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff \
 	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile
 

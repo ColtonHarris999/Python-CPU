@@ -892,28 +892,30 @@
                                         (cont_rf_rs1_tag == PY_TAG_FLOAT)
                                     ) begin
                                         begin
-                                            real ra, rb;
+                                            // Bit-level binary64 compare (no `real`):
+                                            // INT/BOOL operands are converted with
+                                            // the same RNE conversion the FPU uses.
+                                            logic [63:0] ra, rb;
                                             logic [3:0] tag_a;
                                             tag_a = pycore_get_tag(return_wb_data_r);
                                             if (tag_a == PY_TAG_FLOAT)
-                                                ra = $bitstoreal(
-                                                    pycore_get_val(return_wb_data_r)[63:0]);
+                                                ra = pycore_get_val(return_wb_data_r)[63:0];
                                             else if (tag_a == PY_TAG_BOOL)
                                                 ra = pycore_get_val(return_wb_data_r)[0]
-                                                    ? 1.0 : 0.0;
+                                                    ? PY_F64_ONE : PY_F64_PZERO;
                                             else
-                                                ra = $itor($signed(
-                                                    pycore_get_val(return_wb_data_r)[63:0]));
+                                                ra = pycore_i64_to_f64(
+                                                    pycore_get_val(return_wb_data_r)[63:0]);
                                             if (cont_rf_rs1_tag == PY_TAG_FLOAT)
-                                                rb = $bitstoreal(cont_rf_rs1_val[63:0]);
+                                                rb = cont_rf_rs1_val[63:0];
                                             else if (cont_rf_rs1_tag == PY_TAG_BOOL)
-                                                rb = cont_rf_rs1_val[0] ? 1.0 : 0.0;
+                                                rb = cont_rf_rs1_val[0] ? PY_F64_ONE : PY_F64_PZERO;
                                             else
-                                                rb = $itor($signed(cont_rf_rs1_val[63:0]));
+                                                rb = pycore_i64_to_f64(cont_rf_rs1_val[63:0]);
                                             container_wb_we_r   <= 1'b1;
                                             container_wb_addr_r <= RF_AW'(
                                                 {1'b0, tos_r} - 9'd4);
-                                            container_wb_data_r <= (rb > ra)
+                                            container_wb_data_r <= pycore_f64_gt(rb, ra)
                                                 ? pycore_make_entry(
                                                     cont_rf_rs1_tag,
                                                     cont_rf_rs1_val)

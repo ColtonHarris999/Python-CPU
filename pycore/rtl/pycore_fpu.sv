@@ -94,7 +94,8 @@ module pycore_fpu #(
         S_MOD_FMOD, S_MOD_FIX, S_MOD_ADD,
         S_FD_FMOD, S_FD_SUB, S_FD_DIV, S_FD_FIX, S_FD_SUB1,
         S_FD_FLOOR, S_FD_DIFF, S_FD_HALF, S_FD_ADD1,
-        S_POW_NORM, S_POW_STEP, S_POW_SQR, S_POW_MUL, S_POW_FIN, S_POW_RECIP, S_POW_END,
+        S_POW_NORM, S_POW_STEP, S_POW_SQR, S_POW_MUL, S_POW_FIN, S_POW_RECIP, S_POW_INV,
+        S_POW_END,
         S_CADD_R, S_CADD_I,
         S_CMUL_1, S_CMUL_2, S_CMUL_3, S_CMUL_4, S_CMUL_5, S_CMUL_6,
         S_CDIV_1, S_CDIV_2, S_CDIV_3, S_CDIV_4, S_CDIV_5,
@@ -105,6 +106,7 @@ module pycore_fpu #(
     state_e       state_r;
     logic [63:0]  t0_r, t1_r, t2_r, t3_r;
     logic [63:0]  pow_n_r;                // exponent bits below the MSB, MSB first
+    logic [63:0]  pow_n0_r;               // |exponent| as accepted (for the retry)
     logic [6:0]   pow_cnt_r;              // how many of them remain
     logic         pow_neg_r, pow_recip_r;
     logic         cdiv_b_r;               // Smith's algorithm, |bi| > |br| path
@@ -337,6 +339,7 @@ module pycore_fpu #(
             S_POW_SQR:   begin u_mul_start = 1'b1; u_a = t0_r; u_b = t0_r; end
             S_POW_MUL:   begin u_mul_start = 1'b1; u_a = t0_r; u_b = t1_r; end
             S_POW_RECIP: begin u_div_start = 1'b1; u_a = PY_F64_ONE; u_b = t0_r; end
+            S_POW_INV:   begin u_div_start = 1'b1; u_a = PY_F64_ONE; u_b = t1_r; end
 
             // ---- complex + / - ----
             S_CADD_R: begin u_add_start = 1'b1; u_sub = (op_i == PY_ALU_SUB); u_a = ar; u_b = br; end
@@ -409,6 +412,7 @@ module pycore_fpu #(
             state_r     <= S_IDLE;
             t0_r <= '0; t1_r <= '0; t2_r <= '0; t3_r <= '0;
             pow_n_r     <= '0;
+            pow_n0_r    <= '0;
             pow_cnt_r   <= '0;
             pow_neg_r   <= 1'b0;
             pow_recip_r <= 1'b0;
@@ -427,6 +431,7 @@ module pycore_fpu #(
                         pow_neg_r   <= dec_pow_neg;
                         pow_recip_r <= dec_pow_recip;
                         pow_n_r     <= dec_pow_n;
+                        pow_n0_r    <= dec_pow_n;
                         t0_r        <= PY_F64_ONE;        // pow accumulator
                         t1_r        <= a_abs;             // pow base
                     end
@@ -501,8 +506,21 @@ module pycore_fpu #(
                     pow_cnt_r <= pow_cnt_r - 7'd1;
                     state_r   <= S_POW_STEP;
                 end
-                S_POW_FIN: state_r <= pow_recip_r ? S_POW_RECIP : S_POW_END;
+                S_POW_FIN: begin
+                    // x ** -n: 1 / x**n, unless x**n overflowed -- then the
+                    // true result is tiny or subnormal and is recomputed as
+                    // (1/|x|) ** n, which cannot overflow (|x| > 1 here).
+                    if (!pow_recip_r)      state_r <= S_POW_END;
+                    else if (pow_overflow) state_r <= S_POW_INV;
+                    else                   state_r <= S_POW_RECIP;
+                end
                 S_POW_RECIP: if (u_done) begin t0_r <= u_res; state_r <= S_POW_END; end
+                S_POW_INV: if (u_done) begin
+                    t1_r        <= u_res;
+                    pow_n_r     <= pow_n0_r;
+                    pow_recip_r <= 1'b0;
+                    state_r     <= S_POW_NORM;
+                end
                 S_POW_END: begin
                     if (pow_overflow) begin
                         state_r <= S_EXC;                 // OverflowError

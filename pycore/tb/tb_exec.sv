@@ -50,6 +50,32 @@ module tb_exec;
         end
     endfunction
 
+    // Present the operation the way the core does: retire the previous one
+    // (valid_i low for a cycle while the core is in S_MEM), then hold
+    // valid_i until the fabric reports completion -- multi-cycle units
+    // stall, everything else finishes in the issue cycle. Outputs are
+    // sampled on the falling clock edge of the completion cycle.
+    task automatic settle();
+        int cycles;
+        begin
+            if (valid) begin
+                @(posedge clk);
+                #1;
+                valid = 1'b0;
+                @(posedge clk);
+                #1;
+            end
+            cycles = 0;
+            valid = 1'b1;
+            @(negedge clk);
+            while (stall && !trap) begin
+                cycles++;
+                check(cycles < 2000, "execute fabric did not finish");
+                @(negedge clk);
+            end
+        end
+    endtask
+
     initial begin
         clk = 1'b0;
         rst_n = 1'b0;
@@ -59,12 +85,13 @@ module tb_exec;
         rs2 = '0;
         #12;
         rst_n = 1'b1;
-        valid = 1'b1;
+        @(posedge clk);
+        settle();
 
         rs1 = entry(PY_TAG_INT, 64'd40);
         rs2 = entry(PY_TAG_INT, 64'd2);
         alu_op = PY_ALU_ADD;
-        #1;
+        settle();
         check(!trap, "INT add should not trap");
         check(pycore_get_tag(result) == PY_TAG_INT, "INT add should tag INT");
         check(result[63:0] == 64'd42, "INT add value mismatch");
@@ -73,7 +100,7 @@ module tb_exec;
         rs1 = entry(PY_TAG_BOOL, 64'd1);
         rs2 = entry(PY_TAG_BOOL, 64'd0);
         alu_op = PY_ALU_AND;
-        #1;
+        settle();
         check(!trap, "BOOL and should not trap");
         check(pycore_get_tag(result) == PY_TAG_BOOL, "BOOL and should tag BOOL");
         check(result[63:0] == 64'd0, "BOOL and value mismatch");
@@ -81,7 +108,7 @@ module tb_exec;
         rs1 = entry(PY_TAG_INT, 64'd3);
         rs2 = entry(PY_TAG_INT, 64'd2);
         alu_op = PY_ALU_TRUE_DIV;
-        #1;
+        settle();
         check(!trap, "INT true divide should not trap");
         check(pycore_get_tag(result) == PY_TAG_FLOAT, "INT true divide should tag FLOAT");
         check($bitstoreal(result[63:0]) == 1.5, "INT true divide value mismatch");
@@ -89,7 +116,7 @@ module tb_exec;
         rs1 = entry(PY_TAG_ITER, 64'h1000);
         rs2 = entry(PY_TAG_INT, 64'd1);
         alu_op = PY_ALU_ADD;
-        #1;
+        settle();
         check(trap && trap_code == PY_TRAP_TYPE, "ITER arithmetic should type trap");
 
         // COMPARE_OP's six selectors share this execute path.  Exercise each
@@ -97,29 +124,29 @@ module tb_exec;
         rs1 = entry(PY_TAG_INT, 64'd2);
         rs2 = entry(PY_TAG_INT, 64'd3);
         alu_op = PY_ALU_LT;
-        #1;
+        settle();
         check(!trap, "INT less-than should not trap");
         check(pycore_get_tag(result) == PY_TAG_BOOL, "less-than should tag BOOL");
         check(result[63:0] == 64'd1, "INT less-than value mismatch");
 
         alu_op = PY_ALU_LE;
-        #1;
+        settle();
         check(!trap && result[63:0] == 64'd1, "INT less-equal value mismatch");
 
         alu_op = PY_ALU_EQ;
-        #1;
+        settle();
         check(!trap && result[63:0] == 64'd0, "INT equality value mismatch");
 
         alu_op = PY_ALU_NE;
-        #1;
+        settle();
         check(!trap && result[63:0] == 64'd1, "INT inequality value mismatch");
 
         alu_op = PY_ALU_GT;
-        #1;
+        settle();
         check(!trap && result[63:0] == 64'd0, "INT greater-than value mismatch");
 
         alu_op = PY_ALU_GE;
-        #1;
+        settle();
         check(!trap && result[63:0] == 64'd0, "INT greater-equal value mismatch");
         check(result[PYCORE_VAL_MSB:64] == 64'b0,
               "comparison BOOL upper bits should be zero");
@@ -127,7 +154,7 @@ module tb_exec;
         rs1 = entry(PY_TAG_BOOL, 64'd1);
         rs2 = entry(PY_TAG_INT, 64'd0);
         alu_op = PY_ALU_GT;
-        #1;
+        settle();
         check(!trap && pycore_get_tag(result) == PY_TAG_BOOL,
               "BOOL/INT compare should produce BOOL");
         check(result[63:0] == 64'd1, "BOOL/INT comparison value mismatch");
@@ -135,7 +162,7 @@ module tb_exec;
         rs1 = entry(PY_TAG_INT, 64'd2);
         rs2 = entry(PY_TAG_FLOAT, $realtobits(2.5));
         alu_op = PY_ALU_LT;
-        #1;
+        settle();
         check(!trap && pycore_get_tag(result) == PY_TAG_BOOL,
               "INT/FLOAT compare should produce BOOL");
         check(result[63:0] == 64'd1, "INT/FLOAT comparison value mismatch");
@@ -144,13 +171,13 @@ module tb_exec;
         rs1 = entry(PY_TAG_SHORT_STR, 64'd0);
         rs2 = entry(PY_TAG_SHORT_STR, 64'd0);
         alu_op = PY_ALU_EQ;
-        #1;
+        settle();
         check(!trap, "same-tag SHORT_STR EQ should not trap");
         check(pycore_get_tag(result) == PY_TAG_BOOL, "string EQ should tag BOOL");
         check(result[63:0] == 64'd1, "equal SHORT_STR EQ should be true");
 
         alu_op = PY_ALU_NE;
-        #1;
+        settle();
         check(!trap && result[63:0] == 64'd0,
               "equal SHORT_STR NE should be false");
 
@@ -160,18 +187,18 @@ module tb_exec;
         rs2 = pycore_make_entry(PY_TAG_SHORT_STR,
                                 128'h16200000000000000000000000000000); // "b"
         alu_op = PY_ALU_LT;
-        #1;
+        settle();
         check(!trap, "SHORT_STR less-than should not trap");
         check(pycore_get_tag(result) == PY_TAG_BOOL, "SHORT_STR LT should tag BOOL");
         check(result[63:0] == 64'd1, "SHORT_STR less-than value mismatch");
 
         alu_op = PY_ALU_GT;
-        #1;
+        settle();
         check(!trap && result[63:0] == 64'd0,
               "SHORT_STR greater-than value mismatch");
 
         alu_op = PY_ALU_LE;
-        #1;
+        settle();
         check(!trap && result[63:0] == 64'd1,
               "SHORT_STR less-equal value mismatch");
 
@@ -179,7 +206,7 @@ module tb_exec;
         rs1 = entry(PY_TAG_LONG_STR, 64'd0);
         rs2 = entry(PY_TAG_LONG_STR, 64'd0);
         alu_op = PY_ALU_LT;
-        #1;
+        settle();
         check(trap && trap_code == PY_TRAP_TYPE,
               "LONG_STR ordering should type trap");
 
@@ -189,14 +216,14 @@ module tb_exec;
         rs2 = pycore_make_entry(PY_TAG_COMPLEX,
             pycore_complex_value($realtobits(3.0), $realtobits(4.0)));
         alu_op = PY_ALU_ADD;
-        #1;
+        settle();
         check(!trap, "COMPLEX add should not trap");
         check(pycore_get_tag(result) == PY_TAG_COMPLEX, "COMPLEX add should tag COMPLEX");
         check($bitstoreal(result[63:0]) == 4.0, "COMPLEX add real mismatch");
         check($bitstoreal(result[127:64]) == 6.0, "COMPLEX add imag mismatch");
 
         alu_op = PY_ALU_MUL;
-        #1;
+        settle();
         check(!trap, "COMPLEX mul should not trap");
         // (1+2j)*(3+4j) = -5+10j
         check($bitstoreal(result[63:0]) == -5.0, "COMPLEX mul real mismatch");
@@ -206,7 +233,7 @@ module tb_exec;
         rs2 = pycore_make_entry(PY_TAG_COMPLEX,
             pycore_complex_value($realtobits(1.0), $realtobits(1.0)));
         alu_op = PY_ALU_ADD;
-        #1;
+        settle();
         check(!trap, "INT + COMPLEX should not trap");
         check(pycore_get_tag(result) == PY_TAG_COMPLEX, "INT+COMPLEX should tag COMPLEX");
         check($bitstoreal(result[63:0]) == 3.0, "INT+COMPLEX real mismatch");
@@ -217,13 +244,13 @@ module tb_exec;
         rs2 = pycore_make_entry(PY_TAG_COMPLEX,
             pycore_complex_value($realtobits(1.0), $realtobits(2.0)));
         alu_op = PY_ALU_EQ;
-        #1;
+        settle();
         check(!trap && pycore_get_tag(result) == PY_TAG_BOOL,
               "COMPLEX EQ should produce BOOL");
         check(result[63:0] == 64'd1, "equal COMPLEX EQ should be true");
 
         alu_op = PY_ALU_LT;
-        #1;
+        settle();
         check(trap && trap_code == PY_TRAP_TYPE,
               "COMPLEX ordering should type trap");
 
@@ -231,7 +258,7 @@ module tb_exec;
             pycore_complex_value($realtobits(1.0), $realtobits(-2.0)));
         rs2 = entry(PY_TAG_INT, 64'd0);
         alu_op = PY_ALU_NEG;
-        #1;
+        settle();
         check(!trap, "COMPLEX NEG should not trap");
         check($bitstoreal(result[63:0]) == -1.0, "COMPLEX NEG real mismatch");
         check($bitstoreal(result[127:64]) == 2.0, "COMPLEX NEG imag mismatch");

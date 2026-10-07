@@ -201,12 +201,30 @@ module tb_type_pairs;
 
     task automatic run_pair(input logic [4:0] op, input logic [3:0] tag_a, input logic [3:0] tag_b);
         string label;
+        int cycles;
         begin
             label = $sformatf("%s %s x %s", op_name(op), tag_name(tag_a), tag_name(tag_b));
+            // Retire the previous operation (valid_i low for one cycle, as
+            // the core does in S_MEM), then hold this one until the fabric
+            // completes: FLOAT / COMPLEX arithmetic takes several cycles.
+            if (valid) begin
+                @(posedge clk);
+                #1;
+                valid = 1'b0;
+                @(posedge clk);
+                #1;
+            end
             alu_op = op;
             rs1 = entry_for_tag(tag_a);
             rs2 = entry_for_tag(tag_b);
-            #1;
+            valid = 1'b1;
+            @(negedge clk);
+            cycles = 0;
+            while (stall && !trap) begin
+                cycles++;
+                check(cycles < 2000, {label, " did not finish"});
+                @(negedge clk);
+            end
             tests_run++;
 
             if (expect_trap(tag_a, tag_b)) begin
@@ -231,7 +249,8 @@ module tb_type_pairs;
         tests_run = 0;
         #12;
         rst_n = 1'b1;
-        valid = 1'b1;
+        @(posedge clk);
+        #1;
 
         for (int op_idx = 0; op_idx < 2; op_idx++) begin
             for (int lhs_idx = 0; lhs_idx < 7; lhs_idx++) begin
