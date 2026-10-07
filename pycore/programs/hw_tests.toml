@@ -19,6 +19,11 @@
 #   plusargs  extra simulator plusargs
 #   needs     make targets that generate the fixture first
 #   legacy    the old make target name, when it is not pycore-img-<name>
+#   xfail     a known bug, in words: the run must fail (XFAIL); a pass fails
+#             the suite (XPASS) so the marker is removed with the fix
+#
+# The [gate.*] tables at the end are not areas: they are the GC acceptance
+# gates' test sets (make pycore-gc-acceptance).
 
 # Integer and float arithmetic, comparisons, bitwise and unary ops, truthiness.
 [alu]
@@ -613,9 +618,13 @@ gc-mutant-44 = { src = "gc_mutant_44", cycles = 40_000_000, plusargs = "+GC_EN=1
 gc-mutant-40 = { kind = "trap", src = "gc_mutant_40", trap = 7, cycles = 8_000_000, plusargs = "+GC_EN=1", caching = true }
 gc-mutant-28 = { src = "gc_mutant_28", cycles = 8_000_000, plusargs = "+GC_EN=1", caching = true }
 gc-mutant-36 = { kind = "trap", src = "gc_mutant_36", trap = 7, cycles = 2_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192", caching = true }
+# Fill-until-OOM fixtures: a small heap keeps the fill short on the 16 MB map.
+gc-mutant-27 = { kind = "trap", src = "gc_mutant_27", trap = 7, cycles = 4_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=65536" }
+gc-mutant-34 = { kind = "trap", src = "gc_mutant_34", trap = 7, cycles = 4_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=65536" }
 gc-excore-need-heap = { core = "twocore", file = "img_gc_excore_need_heap.py", cycles = 2_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192", caching = true }
 gc-growth-paths = { core = "twocore", file = "img_gc_growth_paths.py", cycles = 4_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192", caching = true }
 gc-excore-churn = { core = "twocore", file = "img_gc_excore_churn.py", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
+gc-wide-live-list = { src = "gc_wide_live_list", cycles = 10_000_000, plusargs = "+GC_EN=1" }
 
 # Long GC loops: steady-state plateaus, allocation-site churn, benches and
 # compile loops (millions of cycles each, up to ~150M uncached). Not in
@@ -635,11 +644,9 @@ gc-steady-closure-two-core = { core = "twocore", src = "gc_steady_closure", cycl
 gc-code-new-churn-two-core = { core = "twocore", src = "gc_code_new_churn", cycles = 100_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
 gc-grant-churn-two-core = { core = "twocore", src = "gc_grant_churn", cycles = 600_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=32768" }
 gc-exec-pyc-g = { src = "gc_exec_pyc_g", cycles = 40_000_000, plusargs = "+GC_EN=1" }
-gc-root-closure = { src = "gc_root_closure", cycles = 40_000_000, plusargs = "+GC_EN=1" }
+gc-root-closure = { src = "gc_root_closure", cycles = 40_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=262144" }
 gc-root-frames = { src = "gc_root_frames", cycles = 60_000_000, plusargs = "+GC_EN=1" }
-gc-mutant-8 = { src = "gc_mutant_8", cycles = 40_000_000, plusargs = "+GC_EN=1" }
-gc-mutant-27 = { kind = "trap", src = "gc_mutant_27", trap = 7, cycles = 40_000_000, plusargs = "+GC_EN=1" }
-gc-mutant-34 = { kind = "trap", src = "gc_mutant_34", trap = 7, cycles = 40_000_000, plusargs = "+GC_EN=1" }
+gc-mutant-8 = { src = "gc_mutant_8", cycles = 40_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=262144" }
 gc-steady-list = { src = "gc_steady_list", cycles = 20_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
 gc-steady-dict = { src = "gc_steady_dict", cycles = 20_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
 gc-steady-set = { src = "gc_steady_set", cycles = 20_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
@@ -654,13 +661,148 @@ gc-compile-syntaxerror-two-core = { core = "twocore", src = "gc_compile_syntaxer
 gc-bench-full = { src = "gc_bench_full", cycles = 40_000_000, plusargs = "+GC_EN=1" }
 gc-bench-deep = { src = "gc_bench_deep", cycles = 20_000_000, plusargs = "+GC_EN=1" }
 gc-bench-wide = { src = "gc_bench_wide", cycles = 40_000_000, plusargs = "+GC_EN=1" }
-# Known bug (planning/master_plan.md, GC sizing): fails, returns 2, until the
-# mark stack cannot overflow on a live list wider than 16,640 elements.
-gc-wide-live-list = { src = "gc_wide_live_list", cycles = 60_000_000, plusargs = "+GC_EN=1" }
+gc-deep-live-chain = { src = "gc_deep_live_chain", cycles = 200_000_000, plusargs = "+GC_EN=1" }
 gc-leak-check-full-heap-two-core = { core = "twocore", src = "gc_leak_check", cycles = 40_000_000, plusargs = "+GC_EN=1" }
 # Collector-resource and leak checks from review: 14M-45M cycles each, so
 # they stay out of the per-PR [gc] job and the caching gate.
-gc-mark-overflow-recover = { src = "gc_mark_overflow_recover", cycles = 24_000_000, plusargs = "+GC_EN=1" }
+gc-mark-overflow-recover = { src = "gc_mark_overflow_recover", cycles = 24_000_000, plusargs = "+GC_EN=1 +GC_ONCHIP=32 +GC_STACK_LIMIT=32 +GC_RESCAN_LIMIT=64" }
 gc-run-table-overflow = { src = "gc_run_table_overflow", cycles = 64_000_000, plusargs = "+GC_EN=1" }
 gc-leak-check-two-core = { core = "twocore", src = "gc_leak_check", cycles = 40_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=65536" }
 gc-bench-churn = { src = "gc_bench_churn", cycles = 40_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=81920" }
+
+# ---------------------------------------------------------------------------
+# GC acceptance gates (planning/gc_plan.md §10.2): the test set and plusargs
+# of each gate that runs hardware tests. tools/gc_gates.py runs them through
+# hw_tests.py and checks the results; `make pycore-gc-acceptance MODE=quick`
+# runs G0-G8, MODE=full G0-G16. Run one set by hand with
+#   python3.14 pycore/tools/hw_tests.py --gate G4 [--mode full] [names...]
+# (logs under build/gc_gates/<gate>/; the checks are not applied there).
+#
+# Fields (a gate's tests are the union of its `sets`, or the gate table
+# itself when it has none):
+#   areas, names  tests in these areas, plus tests matching these globs;
+#                 with neither, every test
+#   exclude       globs to drop
+#   core          single or twocore only
+#   images        only kinds that boot a host-built image (run, trap,
+#                 stdout, coderam)
+#   baseline      only tests with a row in the G0 baseline
+#                 (pycore/tests/data/gc_baseline_cycles.tsv)
+#   plusargs      added to every run, ahead of each test's own (so they
+#                 win); {out} is the run's own directory
+#   configs       "CACHE_EN,LAT" entries, or "caching" for test-caching's four
+#                 (default "1,4")
+#   full          fields that replace the above in MODE=full
+#   full_only     the gate runs only in MODE=full
+# Gate-specific fields are described where they appear.
+#
+# Quick mode uses the per-PR [gc] area plus every gc-mutant-* fixture (G10
+# runs the quick gates against each mutant, and those fixtures exist to kill
+# one). Full mode adds [gc-long] and the existing tests.
+# ---------------------------------------------------------------------------
+
+# G1: with the collector off, every result and cycle count equals G0.
+[gate.G1]
+baseline = true
+core = "single"
+plusargs = "+GC_EN=0"
+full = { core = "", configs = ["1,4", "caching"] }
+
+# G4: every collection's dump (heap, roots, counters, run list) equals the
+# gc_model.py oracle. `exit` adds a collection at halt to every existing
+# image test in MODE=full; those must each collect at least once.
+[gate.G4]
+sets = [{ areas = ["gc"], names = ["gc-mutant-*"] }]
+plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_DUMP_EACH={out}"
+full = { sets = [{ areas = ["gc", "gc-long"] }], configs = ["1,4", "0,4"] }
+
+[gate.G4-exit]
+full_only = true
+baseline = true
+images = true
+plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_AT_EXIT=1 +GC_DUMP_EACH={out}"
+configs = ["1,4", "0,4"]
+
+# G5: the shadow-heap checker's self-test must fire (and stop the run); then
+# every GC gate log of the run is scanned for a use-after-free.
+[gate.G5]
+names = ["gc-verify-containers"]
+plusargs = "+GC_EN=1 +GC_VERIFY_ONLY=1 +GC_SHADOW_SELFTEST=1 +MAX_CYCLES_SCALE=40 +GC_AT_EXIT=1"
+full = { names = ["gc-verify-containers", "containers-two-core"] }
+
+# G7: torture. Mode a collects whenever a run cannot satisfy an allocation
+# (+GC_EVERY_N_RUNS=1) in a heap of 2.5x the test's peak occupancy; mode b
+# collects every K instructions (+GC_AT_BOUNDARY_EVERY=K, K = a prime near
+# instructions/50); mode c is mode a with +GC_POISON=1. Goldens hold; dumps
+# match the oracle.
+#   recipe_heap  keep the test's own +HEAP_DYN_BYTES (it is the condition
+#                under test)
+#   bump_cursor  no extra collections: the result depends on the bump
+#                cursor or on a fill-until-OOM sequence
+[gate.G7]
+sets = [{ areas = ["gc"], names = ["gc-mutant-*"] }]
+plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_LOG=1 +GC_SITE_STATS=1 +GC_DUMP_EACH={out}"
+modes = ["a"]
+full = { sets = [{ areas = ["gc", "gc-long"] }, { baseline = true, images = true }], modes = ["b", "a", "c"] }
+recipe_heap = [
+    "gc-fragmented-alloc", "gc-fragmented-alloc-two-core",
+    # Fills each grant to a _bi_heap_free() margin so the next growth answers
+    # NEED_HEAP (G9 two-core rows 14/15/17).
+    "gc-grant-churn-two-core",
+    # The same margin fill before each _bi_code_new (G9 row 31).
+    "gc-code-new-churn", "gc-code-new-churn-two-core",
+    # +GC_AUTO=0: the skip-then-MemoryError sequence needs its own heap.
+    "gc-release-zero-after-oom", "gc-release-zero-after-oom-two-core",
+    # The overflow / recovery sequence is sized to the test's heap.
+    "gc-live-exceeds-heap", "gc-live-exceeds-heap-two-core",
+    "gc-memoryerror-*",
+]
+bump_cursor = [
+    "heap-mark-release", "heap-release-stale-trap",
+    # Fill-until-OOM, then drop: first-fit leaves a 64 B hole while the junk
+    # chain is still live, so the last tuple traps 7.
+    "gc-root-closure", "gc-mutant-8", "gc-mutant-27", "gc-mutant-34", "gc-mutant-36",
+]
+
+# G8: randomized differential fuzzing (pycore/tools/gc_fuzz.py).
+[gate.G8]
+seeds = 50
+tops = ["single"]
+full = { seeds = 1000, tops = ["single", "twocore"] }
+
+# G11: steady state. At least 10 collections; over the last half live bytes
+# stay within `limit` (`compile_limit` for compile loops) and free bytes do
+# not fall by more than 1 KB.
+[gate.G11]
+full_only = true
+names = ["gc-steady-*", "gc-compile-loop", "gc-compile-loop-two-core",
+         "gc-compile-syntaxerror", "gc-compile-syntaxerror-two-core"]
+plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_LOG=1"
+limit = 1024
+compile_limit = 16384
+
+# G12: G4 at every (CACHE_EN, MEM_LATENCY), then test-caching's configs with
+# the collector on and a collection at exit (`caching_plusargs`).
+[gate.G12]
+full_only = true
+areas = ["gc", "gc-long"]
+plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_DUMP_EACH={out}"
+configs = ["0,1", "0,4", "0,30", "1,1", "1,4", "1,30"]
+caching_plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_AT_EXIT=1 +MAX_CYCLES_SCALE=40"
+
+# G13: performance targets P3-P7 (pycore/docs/gc.md, Performance). P8 is
+# scored over the G8 corpus.
+[gate.G13]
+full_only = true
+names = ["gc-bench-full", "gc-bench-churn", "gc-bench-deep", "gc-bench-wide", "gc-compile-loop"]
+plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_LOG=1"
+
+# G13 P1/P2: existing single-core image tests with the collector on. One that
+# never collects matches G0 cycle for cycle; one that collects may add only
+# its pause (plus 0.5%).
+[gate.G13-p1]
+full_only = true
+baseline = true
+images = true
+core = "single"
+plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40"

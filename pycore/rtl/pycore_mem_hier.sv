@@ -57,6 +57,17 @@ module pycore_mem_hier #(
     output logic                    dmem_fault_o,
     output logic [PYCORE_LINE_BYTES*8-1:0] dmem_rdata_line_o,
 
+    // Non-blocking line reads into L1D (pycore_cache NB port).
+    input  logic                    dmem_nb_req_i,
+    input  logic                    dmem_nb_pf_i,
+    input  logic [ADDR_WIDTH-1:0]   dmem_nb_addr_i,
+    input  logic [3:0]              dmem_nb_id_i,
+    output logic                    dmem_nb_gnt_o,
+    output logic                    dmem_nb_ack_o,
+    output logic                    dmem_nb_fault_o,
+    output logic [3:0]              dmem_nb_id_o,
+    output logic [PYCORE_LINE_BYTES*8-1:0] dmem_nb_line_o,
+
     input  logic                    excore_req_i,
     input  logic                    excore_we_i,
     input  logic [DMEM_DATA_W/8-1:0] excore_wstrb_i,
@@ -89,6 +100,7 @@ module pycore_mem_hier #(
     logic [DMEM_DATA_W-1:0] l1d_down_wdata, l1d_down_rdata;
     logic                   l1d_down_line;
     logic [PYCORE_LINE_BYTES*8-1:0] l1d_down_wline;
+    logic                   l1d_down_pipe, l1d_down_gnt, l1d_down_last;
 
     logic                   l1i_down_req, l1i_down_we, l1i_down_ack, l1i_down_fault;
     logic [IMEM_DATA_W/8-1:0] l1i_down_wstrb;
@@ -105,6 +117,7 @@ module pycore_mem_hier #(
     logic [DMEM_DATA_W-1:0] l2_wdata, l2_rdata;
     logic                   l2_line;
     logic [PYCORE_LINE_BYTES*8-1:0] l2_wline;
+    logic                   l2_pipe, l2_gnt, l2_last;
 
     logic                   ram_req, ram_we, ram_line, ram_ack, ram_last, ram_fault;
     logic [DMEM_DATA_W/8-1:0] ram_wstrb;
@@ -157,7 +170,23 @@ module pycore_mem_hier #(
         .rdata_o(imem_rdata_o),
         .fault_o(imem_fault_o),
         .rdata_line_o(l1i_line),
+        /* verilator lint_off PINCONNECTEMPTY */
+        .pipe_i(1'b0),
+        .gnt_o(),
+        .last_o(),
+        .nb_req_i(1'b0),
+        .nb_pf_i(1'b0),
+        .nb_addr_i('0),
+        .nb_id_i('0),
+        .nb_gnt_o(),
+        .nb_ack_o(),
+        .nb_fault_o(),
+        .nb_id_o(),
+        .nb_line_o(),
         .down_req_o(l1i_down_req),
+        .down_pipe_o(),
+        .down_gnt_i(1'b0),
+        /* verilator lint_on PINCONNECTEMPTY */
         .down_we_o(l1i_down_we),
         .down_line_o(),
         .down_wstrb_o(l1i_down_wstrb),
@@ -194,7 +223,8 @@ module pycore_mem_hier #(
         .HIT_CYCLES(L1D_HIT_CYCLES),
         .DOWN_LINE(1'b0),
         .REGION_BASE(PYCORE_FRAME_STACK_BASE),
-        .REGION_LIMIT(PYCORE_FRAME_STACK_BASE + PYCORE_FRAME_STACK_BYTES)
+        .REGION_LIMIT(PYCORE_FRAME_STACK_BASE + PYCORE_FRAME_STACK_BYTES),
+        .NB(1'b1)
     ) l1d (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
@@ -210,7 +240,23 @@ module pycore_mem_hier #(
         .rdata_o(dmem_rdata_o),
         .fault_o(dmem_fault_o),
         .rdata_line_o(dmem_rdata_line_o),
+        .pipe_i(1'b0),
+        /* verilator lint_off PINCONNECTEMPTY */
+        .gnt_o(),
+        .last_o(),
+        /* verilator lint_on PINCONNECTEMPTY */
+        .nb_req_i(dmem_nb_req_i),
+        .nb_pf_i(dmem_nb_pf_i),
+        .nb_addr_i(dmem_nb_addr_i),
+        .nb_id_i(dmem_nb_id_i),
+        .nb_gnt_o(dmem_nb_gnt_o),
+        .nb_ack_o(dmem_nb_ack_o),
+        .nb_fault_o(dmem_nb_fault_o),
+        .nb_id_o(dmem_nb_id_o),
+        .nb_line_o(dmem_nb_line_o),
         .down_req_o(l1d_down_req),
+        .down_pipe_o(l1d_down_pipe),
+        .down_gnt_i(l1d_down_gnt),
         .down_we_o(l1d_down_we),
         .down_line_o(l1d_down_line),
         .down_wstrb_o(l1d_down_wstrb),
@@ -218,7 +264,7 @@ module pycore_mem_hier #(
         .down_wdata_o(l1d_down_wdata),
         .down_wline_o(l1d_down_wline),
         .down_ack_i(l1d_down_ack),
-        .down_last_i(1'b0),
+        .down_last_i(l1d_down_last),
         .down_rdata_i(l1d_down_rdata),
         .down_fault_i(l1d_down_fault),
         .inv_all_i(l1d_inv_all),
@@ -257,6 +303,9 @@ module pycore_mem_hier #(
         .dmem_wdata_i(l1d_down_wdata),
         .dmem_line_i(l1d_down_line),
         .dmem_wline_i(l1d_down_wline),
+        .dmem_pipe_i(l1d_down_pipe),
+        .dmem_gnt_o(l1d_down_gnt),
+        .dmem_last_o(l1d_down_last),
         .dmem_ack_o(l1d_down_ack),
         .dmem_rdata_o(l1d_down_rdata),
         .dmem_fault_o(l1d_down_fault),
@@ -275,6 +324,9 @@ module pycore_mem_hier #(
         .l2_wdata_o(l2_wdata),
         .l2_line_o(l2_line),
         .l2_wline_o(l2_wline),
+        .l2_pipe_o(l2_pipe),
+        .l2_gnt_i(l2_gnt),
+        .l2_last_i(l2_last),
         .l2_ack_i(l2_ack),
         .l2_rdata_i(l2_rdata),
         .l2_fault_i(l2_fault)
@@ -289,7 +341,8 @@ module pycore_mem_hier #(
         .READ_ONLY(1'b0),
         .WRITE_BACK(1'b1),
         .ZERO_LINE_BYPASS(1'b1),
-        .HIT_CYCLES(L2_HIT_CYCLES)
+        .HIT_CYCLES(L2_HIT_CYCLES),
+        .PIPE(1'b1)
     ) l2 (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
@@ -305,7 +358,23 @@ module pycore_mem_hier #(
         .rdata_o(l2_rdata),
         .fault_o(l2_fault),
         .rdata_line_o(),
+        .pipe_i(l2_pipe),
+        .gnt_o(l2_gnt),
+        .last_o(l2_last),
+        /* verilator lint_off PINCONNECTEMPTY */
+        .nb_req_i(1'b0),
+        .nb_pf_i(1'b0),
+        .nb_addr_i('0),
+        .nb_id_i('0),
+        .nb_gnt_o(),
+        .nb_ack_o(),
+        .nb_fault_o(),
+        .nb_id_o(),
+        .nb_line_o(),
         .down_req_o(ram_req),
+        .down_pipe_o(),
+        .down_gnt_i(1'b0),
+        /* verilator lint_on PINCONNECTEMPTY */
         .down_we_o(ram_we),
         .down_line_o(ram_line),
         .down_wstrb_o(ram_wstrb),

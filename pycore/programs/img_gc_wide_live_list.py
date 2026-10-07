@@ -1,9 +1,10 @@
 """GC: a wide live list must not make collection fail on a mostly empty heap.
 
 18,000 live 1-tuples in one list is about 1.2 MB of a 15 MB heap. Marking
-pushes every element of the list, so a mark stack sized for the old 1 MB
-map (16,640 entries) overflows and the collection raises MemoryError even
-though almost all of the heap is free.
+used to push every element of the list when it scanned it, so the mark
+stack (16,640 entries then) overflowed and the collection raised
+MemoryError even though almost all of the heap was free. The marker now
+scans a wide range in chunks and pushes the rest as one continuation entry.
 
 # pycore-expect: 1
 """

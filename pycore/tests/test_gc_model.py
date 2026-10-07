@@ -128,6 +128,35 @@ class TestGcModel(unittest.TestCase):
                         planted += 1
         self.assertGreater(planted, 0)
 
+    def test_bounded_stack_marks_the_same_set(self) -> None:
+        # Chunked scans and the rescan list: a five-entry stack must reach
+        # exactly what an unbounded one does, on random heaps (some with
+        # containers wider than a chunk) and on a deep chain.
+        rescanned = 0
+        heaps = [(f"seed {s}", gc_heapgen.generate(s)) for s in range(min(SEEDS, 120))]
+        g = gc_heapgen.Gen(seed=8, size=0)
+        nxt = (TAG_INT, int_value(0))
+        for i in range(400):
+            nxt = g.b.alloc_tuple([g.b.alloc_list([(TAG_INT, int_value(i))]), nxt])
+        heaps.append(("chain", gc_heapgen.Heap(g.b, g.nodes, [nxt], [], 0x440, HEAP_LIMIT,
+                                               0x100000, EXC_STACK_BASE, 0, set())))
+        for label, h in heaps:
+            mem = gc_model.Memory(dict(h.b.words))
+            kw = dict(spill_sp=h.spill_sp, exc_sp=h.exc_sp, frame_depth=h.frame_depth)
+            free = gc_model.trace(mem, h.reg_roots, **kw)
+            tight = gc_model.trace(mem, h.reg_roots, stack_limit=3, onchip=2,
+                                   rescan_limit=4096, **kw)
+            self.assertFalse(tight.overflow, label)
+            self.assertLessEqual(tight.stack_hw, 5, label)
+            self.assertEqual(tight.marked, free.marked, label)
+            rescanned += tight.rescans > 0
+        self.assertGreater(rescanned, len(heaps) // 2)
+        # The chain needs one rescan entry at a time; a one-entry list holds.
+        _, chain = heaps[-1]
+        res = gc_model.trace(gc_model.Memory(dict(chain.b.words)), chain.reg_roots,
+                             stack_limit=1, onchip=2, rescan_limit=1)
+        self.assertFalse(res.overflow)
+
 
 if __name__ == "__main__":
     unittest.main()

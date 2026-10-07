@@ -473,6 +473,9 @@ module tb_container #(
                         g_dut.dut.core.gc_bad_kind, g_dut.dut.core.gc_reserved_tag,
                         g_dut.dut.core.gc_wild_ptr, g_dut.dut.core.gc_stash_sim);
                 $fwrite(fd, "meta onchip %0d\n", g_dut.dut.core.u_gc.onchip_limit_r);
+                $fwrite(fd, "meta stack_limit %0d\nmeta rescan_limit %0d\nmeta rescans %0d\n",
+                        g_dut.dut.core.u_gc.stack_limit_r, g_dut.dut.core.u_gc.rescan_limit_r,
+                        g_dut.dut.core.gc_rescans);
                 $fwrite(fd, "meta extra_roots %0d\n", g_dut.dut.core.u_gc.extra_roots_r);
                 $fwrite(fd, "meta keep_lo %0d\nmeta keep_hi %0d\nmeta rover_addr %0d\nmeta rover %0d\nmeta onchip_runs %0d\n",
                         g_dut.dut.core.u_gc.keep_lo_r, g_dut.dut.core.u_gc.keep_hi_r,

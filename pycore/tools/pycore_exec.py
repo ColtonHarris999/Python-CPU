@@ -104,12 +104,46 @@ def _except_clauses(phase: str, ret: str | None) -> str:
     return "".join(out)
 
 
-def build_harness(source_text: str, filename: str) -> str:
+def _gc_lines(when: str) -> str:
+    """Harness lines for ``gc_stats``: exact live bytes at a phase boundary.
+
+    ``_bi_gc_collect()`` runs a full (precise) collection and returns the
+    live bytes, so the differences are what compile() and the program keep.
+    """
+    if when == "boot":
+        return "    l0 = _bi_gc_collect()\n"
+    if when == "compiled":
+        return "    l1 = _bi_gc_collect()\n"
+    return (
+        "    l2 = _bi_gc_collect()\n"
+        "    _bi_print(\"\\x0e\")\n"
+        "    _bi_print(\"gc:\")\n"
+        "    _bi_print(l0)\n"
+        "    _bi_print(\":\")\n"
+        "    _bi_print(l1)\n"
+        "    _bi_print(\":\")\n"
+        "    _bi_print(l2)\n"
+        "    _bi_print(\":\")\n"
+        "    _bi_print(_bi_gc_stats(0))\n"
+        "    _bi_print(\":\")\n"
+        "    _bi_print(_bi_gc_stats(1))\n"
+        "    _bi_print(\"\\x0f\")\n"
+    )
+
+
+def build_harness(source_text: str, filename: str, *, gc_stats: bool = False) -> str:
     """Boot module that compiles ``source_text`` on device, then runs it.
 
     Two ``try`` blocks live in separate functions: CPython emits
     ``JUMP_BACKWARD_NO_INTERRUPT`` for two in one function (D13).
+
+    ``gc_stats`` (the collector is on): also report exact live bytes before
+    compile, after compile and after the run (``gc:`` metadata). The
+    harness is otherwise unchanged, so collector-off cycle counts are too.
     """
+    boot = _gc_lines("boot") if gc_stats else ""
+    compiled = _gc_lines("compiled") if gc_stats else ""
+    ran = _gc_lines("ran") if gc_stats else ""
     return f'''\
 """pycore_exec harness: on-device compile() + exec() of a user file."""
 
@@ -156,18 +190,18 @@ def _run_phase(code):
 def managed_entry():
     _bi_print("\\x01")
     _bi_print("\\x02")
-    hm = _bi_heap_mark()
+{boot}    hm = _bi_heap_mark()
     cm = _bi_code_mark()
     code = _compile_phase()
     _bi_print("\\x03")
     hc = _bi_heap_mark()
     cc = _bi_code_mark()
-    status = 2
+{compiled}    status = 2
     if code is not None:
         status = _run_phase(code)
     _bi_print("\\x04")
     hr = _bi_heap_mark()
-    _bi_print("\\x0e")
+{ran}    _bi_print("\\x0e")
     _bi_print("stats:")
     _bi_print(status)
     _bi_print(":")
@@ -417,6 +451,14 @@ class DeviceResult:
     heap_compile: int | None = None
     code_slots: int | None = None
     heap_run: int | None = None
+    # Collector on (gc_stats harness): exact live bytes before compile,
+    # after compile (code object alive) and after the run, the number of
+    # collections (including the harness's three) and the longest pause.
+    gc_live_boot: int | None = None
+    gc_live_compiled: int | None = None
+    gc_live_ran: int | None = None
+    gc_collections: int | None = None
+    gc_max_pause: int | None = None
     stdout: str = ""
     wall_s: float = 0.0
     log_path: str = ""
@@ -441,14 +483,17 @@ def run_device(
     mem_latency: int,
     heartbeat: int,
     console: _Console | None,
+    plusargs: tuple[str, ...] = (),
 ) -> DeviceResult:
     sim = ensure_simulator(quiet=True)
     stdout_path = work / "console.txt"
     if stdout_path.exists():
         stdout_path.unlink()
     log_path = work / "sim.log"
+    # Extra plusargs go first: Verilog takes the first match, so they win.
     cmd = [
         str(sim),
+        *plusargs,
         f"+PROG_HEX={(work / 'program.hex').resolve()}",
         f"+DMEM_HEX={(work / 'dmem.hex').resolve()}",
         f"+CODE_RAM_HEX={(work / 'code_ram.hex').resolve()}",
@@ -544,6 +589,12 @@ def run_device(
                 res.code_slots = int(parts[2])
                 res.heap_run = int(parts[3])
             except (IndexError, ValueError):
+                pass
+        elif kind == "gc":
+            try:
+                (res.gc_live_boot, res.gc_live_compiled, res.gc_live_ran,
+                 res.gc_collections, res.gc_max_pause) = (int(x) for x in rest.split(":"))
+            except ValueError:
                 pass
 
     if m := _PASS_RE.search(log):
@@ -867,6 +918,13 @@ def render_report(
         share = f" ({100 * dev.heap_compile / free:.0f}% of free heap)" if free else ""
         w(f"    heap used                        compile {_n(dev.heap_compile)} B{share}, "
           f"run {_n(dev.heap_run)} B")
+    if dev.gc_live_boot is not None:
+        kept = dev.gc_live_compiled - dev.gc_live_boot
+        w(f"    live after GC                    boot {_n(dev.gc_live_boot)} B, "
+          f"compiled +{_n(kept)} B (code object), after run "
+          f"+{_n(dev.gc_live_ran - dev.gc_live_compiled)} B")
+        w(f"    collections                      {_n(dev.gc_collections)}, "
+          f"longest pause {_n(dev.gc_max_pause)} cycles")
     if run and not run.get("partial") and src_lines and comp.get("cycle"):
         w(f"    compile throughput               {_n(comp['cycle'] // max(1, src_lines))} cycles/line")
     if host and host.get("bytecodes_executed") is not None and run and not run.get("partial"):
@@ -913,6 +971,8 @@ class ExecConfig:
     build_dir: str = DEFAULT_BUILD_DIR
     progress: bool = True
     json_path: str | None = None
+    # Extra simulator plusargs (e.g. "+GC_EN=1"), ahead of the defaults.
+    plusargs: tuple[str, ...] = ()
 
 
 def exec_file(path: pathlib.Path, cfg: ExecConfig, *, out=sys.stdout) -> int:
@@ -945,7 +1005,8 @@ def exec_file(path: pathlib.Path, cfg: ExecConfig, *, out=sys.stdout) -> int:
         host = run_host(prepared_path, path.name, work, cfg.host_python)
 
     try:
-        meta = build_device_image(build_harness(prepared, path.name), work)
+        gc_on = any(a.startswith("+GC_EN=") and a != "+GC_EN=0" for a in cfg.plusargs)
+        meta = build_device_image(build_harness(prepared, path.name, gc_stats=gc_on), work)
     except (ValueError, RuntimeError) as exc:
         print(f"exec: could not build the boot image: {exc}", file=out)
         return 1
@@ -962,6 +1023,7 @@ def exec_file(path: pathlib.Path, cfg: ExecConfig, *, out=sys.stdout) -> int:
             mem_latency=cfg.mem_latency,
             heartbeat=cfg.heartbeat,
             console=console,
+            plusargs=tuple(cfg.plusargs),
         )
     except RuntimeError as exc:
         console.finish()
@@ -976,6 +1038,7 @@ def exec_file(path: pathlib.Path, cfg: ExecConfig, *, out=sys.stdout) -> int:
         "mem_latency": cfg.mem_latency,
         "max_cycles": cfg.max_cycles,
         "pycore_mhz": cfg.pycore_mhz,
+        "plusargs": list(cfg.plusargs),
     }
     text, report = render_report(
         source=path, prepared=prepared, dev=dev, host=host,

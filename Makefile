@@ -115,8 +115,9 @@ EXCORE_RTL_SRCS := \
 	pycore-rtl-unit pycore-str-accel pycore-codc pycore-gic docker-build \
 	docker-lint-file docker-run-file docker-exec-file docker-shell \
 	docker-all-tests test-host test-rtl-modules test-hw test-caching \
-	test-compiler-vs-cpython test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
-	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-fuzz pycore-gc-bench
+	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
+	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
+	pycore-gc-bench docker-pycore-gc-fuzz
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -253,6 +254,15 @@ test-caching:
 test-compiler-vs-cpython:
 	$(PYTHON) pycore/tools/compile_suite.py --jobs $(TEST_JOBS)
 
+# The same suite with the collector on and a 512 KB heap: every program
+# collects 3-7 times, several of them in the middle of compile() (the
+# largest, cs_program, needs about 400 KB at its peak). The report adds the
+# live bytes compile() kept and the longest pause. pycore/docs/gc.md, Testing.
+COMPILER_GC_HEAP ?= 524288
+test-compiler-gc:
+	$(PYTHON) pycore/tools/compile_suite.py --jobs $(TEST_JOBS) --build-dir build/compile_suite_gc \
+		--plusargs "+GC_EN=1 +HEAP_DYN_BYTES=$(COMPILER_GC_HEAP)"
+
 test-all:
 	$(MAKE) test-host test-rtl-modules
 	$(MAKE) test-hw excore-cpu-test pycore-gc
@@ -278,16 +288,23 @@ $(PYCORE_TB_GC_BIN): $(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl
 pycore-gc: $(PYCORE_TB_GC_BIN)
 	$(PYTHON) tools/gc_unit.py --seeds $(GC_UNIT_SEEDS) --jobs $(TEST_JOBS) $(GC_UNIT_ARGS)
 
-# G10 (planning/gc_plan.md §10.2): the quick gate subset against every mutant.
-# MUTANTS=1,5,20 restricts the run.
+# G10 (planning/gc_plan.md §10.2): the quick gates (G3-G8, then G1) against
+# every mutant compiled into the RTL (+GC_MUTANT=<n>), after one run with no
+# mutant. MUTANTS=1,5,20 restricts the run. Results: build/gc_mutants/.
 pycore-gc-mutants: $(PYCORE_TB_GC_BIN)
 	$(PYTHON) tools/gc_mutants.py --jobs $(TEST_JOBS) $(if $(MUTANTS),--only $(MUTANTS))
 
-# GC acceptance (planning/gc_plan.md §10.3): gates G0..G16, written to
-# build/gc_acceptance/status.json. Being ported to the hw_tests.toml runner;
-# see pycore/docs/gc.md, Testing.
-pycore-gc-acceptance:
+# GC acceptance (planning/gc_plan.md §10.3): MODE=quick runs G0-G8, MODE=full
+# G0-G16; status in build/gc_acceptance/status.json and report.md. The gates'
+# test sets and plusargs are the [gate.*] tables of hw_tests.toml.
+pycore-gc-acceptance: $(PYCORE_TB_GC_BIN)
 	$(PYTHON) tools/gc_acceptance.py --mode $(MODE) --jobs $(TEST_JOBS)
+
+# G0: rerun every hardware test on main (a worktree under build/gc_baseline)
+# and rewrite pycore/tests/data/gc_baseline_*. BASELINE_REF picks the commit.
+BASELINE_REF ?= origin/main
+pycore-gc-baseline:
+	$(PYTHON) tools/gc_baseline.py --ref $(BASELINE_REF) --jobs $(TEST_JOBS)
 
 # G8 (planning/gc_plan.md §10.2): randomized differential fuzzing.
 # SEEDS=0..49 (quick) or 0..999 (full). TOP=single|twocore.
@@ -296,9 +313,11 @@ TOP ?= single
 pycore-gc-fuzz:
 	$(PYTHON) pycore/tools/gc_fuzz.py --seeds $(SEEDS) --top $(TOP) --jobs $(TEST_JOBS)
 
-# G13 (planning/gc_plan.md §10.2): bench fixtures + counter table.
+# G13 (planning/gc_plan.md §10.2): bench fixtures + counter table, P3-P7.
+# FUZZ_OUT=build/gc_fuzz also scores P8 over a pycore-gc-fuzz corpus.
+FUZZ_OUT ?=
 pycore-gc-bench:
-	$(PYTHON) tools/gc_bench.py --jobs $(TEST_JOBS)
+	$(PYTHON) tools/gc_bench.py --jobs $(TEST_JOBS) $(if $(FUZZ_OUT),--fuzz-out $(FUZZ_OUT))
 
 pycore-img-%:
 	$(HW_TESTS) --target $@
@@ -418,6 +437,22 @@ pycore-l1d-handoff:
 		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv \
 		pycore/tb/tb_l1d_handoff.sv
 	./$(BUILD_DIR)/pycore_l1d_handoff/Vtb_l1d_handoff
+
+# Non-blocking L1D port and pipelined L2 against a shadow memory, at the
+# CI latency and at 30 cycles.
+pycore-mem-nb:
+	mkdir -p $(BUILD_DIR)
+	$(VERILATOR) -sv --binary --timing \
+		+incdir+pycore/rtl +incdir+excore/rtl/singlecore \
+		--top-module tb_mem_nb \
+		--Mdir $(BUILD_DIR)/pycore_mem_nb \
+		-Wall -Wno-fatal \
+		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv \
+		pycore/tb/tb_mem_nb.sv
+	./$(BUILD_DIR)/pycore_mem_nb/Vtb_mem_nb +SEED=1 | tee $(BUILD_DIR)/pycore_mem_nb/run1.log
+	grep -q "^PASS" $(BUILD_DIR)/pycore_mem_nb/run1.log
+	./$(BUILD_DIR)/pycore_mem_nb/Vtb_mem_nb +SEED=2 +MEM_LATENCY=30 | tee $(BUILD_DIR)/pycore_mem_nb/run2.log
+	grep -q "^PASS" $(BUILD_DIR)/pycore_mem_nb/run2.log
 
 pycore-ram:
 	mkdir -p $(BUILD_DIR)
@@ -691,7 +726,7 @@ excore-test: excore-asm-tests excore-cpu-test
 
 pycore-rtl-unit: pycore-tag-decode pycore-exec \
 	pycore-type-pairs pycore-mem pycore-cache-lru pycore-cache pycore-ram \
-	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff \
+	pycore-str-accel pycore-codc pycore-gic pycore-l1d-handoff pycore-mem-nb \
 	pycore-fetch pycore-frame pycore-frame-fib pycore-regfile
 
 DOCKER_MAKE = docker run --rm $(DOCKER_RUN_FLAGS) \
@@ -732,6 +767,11 @@ docker-all-tests: docker-build
 # `make docker-test-alu` runs `make test-alu` in the image. CI uses these.
 docker-test-%: docker-build
 	$(DOCKER_MAKE) make test-$* TEST_JOBS=$(TEST_JOBS)
+
+# Nightly GC fuzzing (.github/workflows/gc-nightly.yml): SEEDS and TOP as for
+# pycore-gc-fuzz.
+docker-pycore-gc-fuzz: docker-build
+	$(DOCKER_MAKE) make pycore-gc-fuzz SEEDS=$(SEEDS) TOP=$(TOP) TEST_JOBS=$(TEST_JOBS)
 
 clean:
 	rm -rf $(BUILD_DIR)

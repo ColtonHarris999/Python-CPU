@@ -1,0 +1,55 @@
+name: GC nightly
+
+# The garbage collector's long tier (pycore/docs/gc.md, Testing): the
+# [gc-long] area of pycore/programs/hw_tests.toml (steady-state plateaus,
+# allocation-site churn, benches, compile loops) and 50 fuzz seeds on each
+# top. Too slow for the per-PR matrix in all-tests.yml, which runs [gc].
+# Same docker targets as all-tests.yml. On 4-core runners: gc-long ~17 min,
+# fuzz ~80 min single-core and ~3 h two-core (run 37286990167).
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gc-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gc-long:
+    name: gc-long
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-test-gc-long
+      - name: Keep the logs of a failing run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gc-long-logs
+          path: build/hw/gc-*/*.log
+          if-no-files-found: ignore
+
+  gc-fuzz:
+    name: gc-fuzz (${{ matrix.top }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        top: [single, twocore]
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-pycore-gc-fuzz SEEDS=0..49 TOP=${{ matrix.top }}
+      - name: Keep the fuzz corpus of a failing run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gc-fuzz-${{ matrix.top }}
+          path: build/gc_fuzz
+          if-no-files-found: ignore
