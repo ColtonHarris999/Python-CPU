@@ -123,6 +123,11 @@ fib, list traffic, integer dicts, an integer n-body, and a nested-loop
 spectral kernel. The suite report ends with the geometric mean of cold exec
 cycles and of the dispatch-instruction share.
 
+`benchmarks/research/` is the set those papers actually time: pyperformance,
+the Computer Language Benchmarks Game, and SciMark, rewritten onto the
+grammar PyCore can compile. `--research` / `make cpython-baseline-research`
+runs it. The measured table is `pycore/docs/cpython_benchmarks.md`.
+
 ## Formula
 
 ```

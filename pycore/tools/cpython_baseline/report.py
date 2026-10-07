@@ -131,14 +131,14 @@ def render_suite(records: list[dict], machine: dict) -> str:
     w("")
     w(f"Suite on {machine['name']}  ({len(records)} programs)")
     w(
-        f"  {'program':<22}{'compile':>14}{'interpret':>14}{'run':>14}"
+        f"  {'program':<24}{'compile':>14}{'interpret':>14}{'run':>14}"
         f"{'exec':>14}{'L1D':>8}{'LLC':>8}{'disp%':>8}"
     )
     exec_cycles = []
     shares = []
     for record in records:
         if "phases" not in record:
-            w(f"  {Path_name(record):<22}  {record.get('status')}: {record.get('message')}")
+            w(f"  {Path_name(record):<24}  {record.get('status')}: {record.get('message')}")
             continue
         phases = record["phases"]
         name = record["program"].rsplit("/", 1)[-1]
@@ -147,7 +147,7 @@ def render_suite(records: list[dict], machine: dict) -> str:
         l1d = phases["run_cold"]["caches"]["l1d"]["hit_rate"]
         llc = phases["run_cold"]["caches"]["llc"]["hit_rate"]
         w(
-            f"  {name:<22}{_n(phases['compile_cold']['cycles']):>14}"
+            f"  {name:<24}{_n(phases['compile_cold']['cycles']):>14}"
             f"{_n(phases['interpret']['cycles']):>14}"
             f"{_n(phases['run']['cycles']):>14}"
             f"{_n(phases['run_cold']['cycles']):>14}"
@@ -158,7 +158,7 @@ def render_suite(records: list[dict], machine: dict) -> str:
     geo = _geomean(exec_cycles)
     geo_share = _geomean(shares) if shares else None
     w(
-        f"  {'geomean':<22}{'':>14}{'':>14}{'':>14}"
+        f"  {'geomean':<24}{'':>14}{'':>14}{'':>14}"
         f"{_n(round(geo)) if geo else '-':>14}"
         f"{'':>8}{'':>8}{(f'{geo_share:.1f}%' if geo_share else '-'):>8}"
     )
