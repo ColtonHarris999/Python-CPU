@@ -743,6 +743,7 @@ full = { names = ["gc-verify-containers", "containers-two-core"] }
 #                under test)
 #   bump_cursor  no extra collections: the result depends on the bump
 #                cursor or on a fill-until-OOM sequence
+#   no_boundary  no boundary collections in mode b (modes a and c still run)
 [gate.G7]
 sets = [{ areas = ["gc"], names = ["gc-mutant-*"] }]
 plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_LOG=1 +GC_SITE_STATS=1 +GC_DUMP_EACH={out}"
@@ -761,6 +762,9 @@ recipe_heap = [
     "gc-live-exceeds-heap", "gc-live-exceeds-heap-two-core",
     "gc-memoryerror-*",
 ]
+# Shrinks the mark stack and rescan list so that its explicit collection
+# overflows; a boundary collection would raise MemoryError outside its try.
+no_boundary = ["gc-mark-overflow-recover"]
 bump_cursor = [
     "heap-mark-release", "heap-release-stale-trap",
     # Fill-until-OOM, then drop: first-fit leaves a 64 B hole while the junk
