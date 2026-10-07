@@ -117,7 +117,7 @@ EXCORE_RTL_SRCS := \
 	docker-all-tests test-host test-rtl-modules test-hw test-caching \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
 	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
-	pycore-gc-bench docker-pycore-gc-fuzz
+	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -562,6 +562,14 @@ pycore-img-allocator-bytes:
 
 pycore-python-tests:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
+
+# Simulated CPython 3.14 baseline (Callgrind + a simple-core cycle model).
+# CPYTHON_BASELINE_MACHINE is a preset (pycore, gem5_classic, skylake, romer)
+# or left as pycore to match this hart's caches.
+CPYTHON_BASELINE_MACHINE ?= pycore
+cpython-baseline:
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m cpython_baseline.baseline \
+		--suite --machine $(CPYTHON_BASELINE_MACHINE)
 
 pycore-compile-suite: test-compiler-vs-cpython
 

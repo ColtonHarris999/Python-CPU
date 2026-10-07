@@ -1,0 +1,34 @@
+# Cache geometry of the as-built PyCore hart (pycore/docs/memory_hierarchy.md):
+# 8KB 4-way L1I, 8KB 4-way L1D, 128KB 8-way L2, 64B lines.
+# L2 hit is 8 cycles, L1 hit is 1, and CI's RAM latency is +4 on an L2 miss,
+# so a memory reference that misses L2 returns in 12 cycles.
+#
+# This times the CPython 3.14 x86-64 binary with those cache latencies. It is
+# not a model of the bytecode hart. The branch penalty is RegCPython's x86
+# pipeline length (16), because the binary under test is x86-64.
+name = "pycore"
+description = "PyCore's L1/L2 sizes and latencies, simple x86 core"
+model = "simple-core"
+frequency_mhz = 100
+branch_penalty = 16
+
+[l1i]
+size_bytes = 8192
+associativity = 4
+line_bytes = 64
+hit_latency = 1
+
+[l1d]
+size_bytes = 8192
+associativity = 4
+line_bytes = 64
+hit_latency = 1
+
+[llc]
+size_bytes = 131072
+associativity = 8
+line_bytes = 64
+hit_latency = 8
+
+[memory]
+latency = 12
