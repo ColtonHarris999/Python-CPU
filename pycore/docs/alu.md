@@ -286,7 +286,8 @@ PyCore has:
   `x // 0.0`, `0.0 ** -n`, complex `/ 0j`) traps: `DIV_ZERO` for INT,
   `FPU_EXCEPTION` for FLOAT / COMPLEX.
 
-Deviations (in addition to those in `bytecode_support.md`):
+Deviations (in addition to those in `bytecode_support.md`; tracked with
+costs to lift as `L-ALU-*` in `limitations.md`):
 
 1. **A negative base with a fractional exponent traps `FPU_EXCEPTION`.**
    CPython returns a complex number there (`(-8.0) ** (1/3)` is
