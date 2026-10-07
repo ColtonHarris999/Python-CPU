@@ -13,7 +13,10 @@ module pycore_promote (
                 value_out_o = entry_value_i;
             end
             PY_PROMOTE_INT_TO_FLOAT: begin
-                value_out_o = $realtobits($itor($signed(entry_value_i)));
+                // Bit-level int64 -> binary64 (round-to-nearest-even), so
+                // the path synthesizes: sign-magnitude, leading-zero count,
+                // normalize, round.
+                value_out_o = pycore_i64_to_f64(entry_value_i);
             end
             PY_PROMOTE_BOOL_TO_INT: begin
                 value_out_o = {63'b0, entry_value_i[0]};

@@ -3779,4 +3779,7 @@ localparam logic [31:0] PY_BI_GC_COLLECT   = 32'd22;
 localparam logic [31:0] PY_BI_HEAP_FREE    = 32'd23;
 localparam logic [31:0] PY_BI_GC_STATS     = 32'd24;
 
+// IEEE 754 binary64 bit-level helpers (needs PY_ALU_* above).
+`include "pycore_fp_defs.svh"
+
 `endif

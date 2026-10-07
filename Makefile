@@ -39,14 +39,23 @@ HOST_COMPILE ?=
 RUN_MAX_CYCLES ?=
 RUN_BUILD_DIR ?=
 
+# Multi-cycle arithmetic units of the execute fabric (pycore/docs/alu.md).
+PYCORE_ARITH_SRCS := \
+	pycore/rtl/pycore_umul_seq.sv \
+	pycore/rtl/pycore_udiv_seq.sv \
+	pycore/rtl/pycore_mul.sv \
+	pycore/rtl/pycore_div.sv \
+	pycore/rtl/pycore_ipow.sv \
+	pycore/rtl/pycore_fp_add.sv \
+	pycore/rtl/pycore_fp_mul.sv \
+	pycore/rtl/pycore_fp_divrem.sv \
+	pycore/rtl/pycore_fpu.sv
+
 PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_tag_decode.sv \
 	pycore/rtl/pycore_promote.sv \
 	pycore/rtl/pycore_int_alu.sv \
-	pycore/rtl/pycore_mul.sv \
-	pycore/rtl/pycore_div.sv \
-	pycore/rtl/pycore_fpu.sv \
-	pycore/rtl/pycore_complex_alu.sv \
+	$(PYCORE_ARITH_SRCS) \
 	pycore/rtl/pycore_str_accel.sv \
 	pycore/rtl/pycore_exec.sv \
 	pycore/rtl/pycore_regfile.sv \
@@ -329,10 +338,7 @@ pycore-exec:
 		pycore/rtl/pycore_tag_decode.sv \
 		pycore/rtl/pycore_promote.sv \
 		pycore/rtl/pycore_int_alu.sv \
-		pycore/rtl/pycore_mul.sv \
-		pycore/rtl/pycore_div.sv \
-		pycore/rtl/pycore_fpu.sv \
-		pycore/rtl/pycore_complex_alu.sv \
+		$(PYCORE_ARITH_SRCS) \
 		pycore/rtl/pycore_exec.sv \
 		pycore/tb/tb_exec.sv
 	./$(BUILD_DIR)/pycore_exec/Vtb_exec
@@ -347,10 +353,7 @@ pycore-type-pairs:
 		pycore/rtl/pycore_tag_decode.sv \
 		pycore/rtl/pycore_promote.sv \
 		pycore/rtl/pycore_int_alu.sv \
-		pycore/rtl/pycore_mul.sv \
-		pycore/rtl/pycore_div.sv \
-		pycore/rtl/pycore_fpu.sv \
-		pycore/rtl/pycore_complex_alu.sv \
+		$(PYCORE_ARITH_SRCS) \
 		pycore/rtl/pycore_exec.sv \
 		pycore/tb/tb_type_pairs.sv
 	./$(BUILD_DIR)/pycore_type_pairs/Vtb_type_pairs

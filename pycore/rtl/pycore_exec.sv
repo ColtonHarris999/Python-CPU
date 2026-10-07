@@ -1,9 +1,24 @@
 `include "pycore_defs.svh"
 
+// Execute fabric: tag decode, promotion, and the arithmetic units.
+//
+// Single-cycle (combinational) paths: the integer ALU (add / sub / logic /
+// shift / compare), BOOL logic, string compare / short concat, and the
+// FPU's combinational operations (negate, truthiness, compares).
+//
+// Multi-cycle units hold S_EXEC through stall_o until they finish:
+//   pycore_mul    INT *      (also the engine behind INT **)
+//   pycore_div    INT // %
+//   pycore_ipow   INT **
+//   pycore_fpu    every FLOAT and COMPLEX arithmetic operation
+// Each has a level start_i / one-cycle done_o handshake, and the stall is
+// simply "started and not done", so the same units drop into a scoreboard
+// later without changing their interfaces.  Cycle counts: docs/alu.md.
 module pycore_exec #(
-    parameter int MUL_LATENCY = 0,
-    parameter int DIV_LATENCY = 0,
-    parameter int FPU_LATENCY = 0
+    parameter int MUL_STEP     = 16,
+    parameter int DIV_RL       = 2,
+    parameter int FPU_MUL_STEP = 14,
+    parameter int FPU_DIV_RL   = 2
 ) (
     input  logic        clk_i,
     input  logic        rst_n_i,
@@ -40,27 +55,33 @@ module pycore_exec #(
     logic [63:0] promoted_rs2;
     logic [63:0] unit_a;
     logic [63:0] unit_b;
-    logic [127:0] complex_a;
-    logic [127:0] complex_b;
+    logic [127:0] fpu_a;
+    logic [127:0] fpu_b;
     logic [63:0] int_result;
-    logic [63:0] mul_result;
-    logic [63:0] div_result;
-    logic [63:0] fpu_result;
-    logic [127:0] complex_result;
     logic        int_zero;
     logic        int_overflow;
-    logic        mul_done;
-    logic        mul_stall;
-    logic        div_done;
-    logic        div_stall;
-    logic        div_zero;
-    logic        fpu_done;
-    logic        fpu_stall;
-    logic        fpu_exception;
-    logic        complex_trap;
-    logic [4:0]  complex_trap_code;
+
+    // Integer multiplier, shared between INT * and the INT ** sequencer.
+    logic        mul_start;
+    logic [63:0] mul_a, mul_b;
+    logic [63:0] mul_lo, mul_hi;
+    logic        mul_done, mul_stall, mul_busy;
+    logic        mul_direct_start;
+    // Integer divider.
+    logic        div_start;
+    logic [63:0] div_quot, div_rem;
+    logic        div_zero, div_done, div_stall, div_busy;
+    // Integer power.
+    logic        pow_start;
+    logic        pow_mul_start;
+    logic [63:0] pow_mul_a, pow_mul_b;
     logic [63:0] pow_result;
-    logic        pow_trap;
+    logic        pow_trap, pow_done, pow_stall, pow_busy;
+    // FPU (FLOAT and COMPLEX).
+    logic        fpu_start;
+    logic [127:0] fpu_result;
+    logic        fpu_exception, fpu_done, fpu_stall, fpu_busy;
+
     // 128-bit INT keeps a 64-bit signed fast path: the math leaves operate on
     // value[63:0] and the result_o is sign-/zero-extended back to 128 bits below.
     assign rs1_tag = pycore_get_tag(rs1_i);
@@ -98,6 +119,7 @@ module pycore_exec #(
         .value_out_o(promoted_rs2)
     );
 
+    // Any real-numeric operand of a COMPLEX operation becomes {0.0, real}.
     function automatic [127:0] pycore_value_as_complex(
         input logic [PYCORE_TAG_WIDTH-1:0] tag,
         input logic [PYCORE_VAL_WIDTH-1:0] value
@@ -110,12 +132,12 @@ module pycore_exec #(
                     pycore_value_as_complex = {64'd0, value[63:0]};
                 end
                 PY_TAG_BOOL: begin
-                    real_bits = value[0] ? 64'h3FF0000000000000 : 64'd0;
+                    real_bits = value[0] ? PY_F64_ONE : PY_F64_PZERO;
                     pycore_value_as_complex = {64'd0, real_bits};
                 end
                 default: begin
-                    // INT (and any unexpected numeric promote path): cast i64→f64.
-                    real_bits = $realtobits($itor($signed(value[63:0])));
+                    // INT (and any unexpected numeric promote path): i64 -> f64.
+                    real_bits = pycore_i64_to_f64(value[63:0]);
                     pycore_value_as_complex = {64'd0, real_bits};
                 end
             endcase
@@ -129,8 +151,13 @@ module pycore_exec #(
             unit_a = {63'b0, rs1_value[0]};
             unit_b = {63'b0, rs2_value[0]};
         end
-        complex_a = pycore_value_as_complex(rs1_tag, rs1_value_wide);
-        complex_b = pycore_value_as_complex(rs2_tag, rs2_value_wide);
+        if (exec_unit_sel == PY_EXEC_COMPLEX) begin
+            fpu_a = pycore_value_as_complex(rs1_tag, rs1_value_wide);
+            fpu_b = pycore_value_as_complex(rs2_tag, rs2_value_wide);
+        end else begin
+            fpu_a = {64'd0, promoted_rs1};
+            fpu_b = {64'd0, promoted_rs2};
+        end
     end
 
     pycore_int_alu int_alu (
@@ -142,89 +169,92 @@ module pycore_exec #(
         .overflow_flag_o(int_overflow)
     );
 
+    // ---- integer multi-cycle units ----
+    logic int_route;
+    assign int_route = valid_i && (exec_unit_sel == PY_EXEC_INT) && !tag_trap &&
+                       !string_path_valid_i;
+
+    assign mul_direct_start = int_route && (alu_op_i == PY_ALU_MUL);
+    assign pow_start        = int_route && (alu_op_i == PY_ALU_POWER);
+    assign div_start        = int_route &&
+                              ((alu_op_i == PY_ALU_FLOOR_DIV) || (alu_op_i == PY_ALU_MOD));
+
+    // The ** sequencer owns the multiplier while it runs.
+    assign mul_start = pow_start ? pow_mul_start : mul_direct_start;
+    assign mul_a     = pow_start ? pow_mul_a : unit_a;
+    assign mul_b     = pow_start ? pow_mul_b : unit_b;
+
     pycore_mul #(
-        .LATENCY(MUL_LATENCY)
+        .STEP(MUL_STEP)
     ) mul_unit (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
-        .start_i(valid_i && exec_unit_sel == PY_EXEC_INT && alu_op_i == PY_ALU_MUL && !tag_trap),
-        .op_a_i(unit_a),
-        .op_b_i(unit_b),
-        .result_o(mul_result),
+        .start_i(mul_start),
+        .op_a_i(mul_a),
+        .op_b_i(mul_b),
+        .result_o(mul_lo),
+        .result_hi_o(mul_hi),
         .done_o(mul_done),
-        .stall_o(mul_stall)
+        .stall_o(mul_stall),
+        .busy_o(mul_busy)
     );
 
     pycore_div #(
-        .LATENCY(DIV_LATENCY)
+        .RL(DIV_RL)
     ) div_unit (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
-        .start_i(valid_i && exec_unit_sel == PY_EXEC_INT &&
-               (alu_op_i == PY_ALU_FLOOR_DIV || alu_op_i == PY_ALU_MOD) && !tag_trap),
-        .is_modulo_i(alu_op_i == PY_ALU_MOD),
+        .start_i(div_start),
         .op_a_i(unit_a),
         .op_b_i(unit_b),
-        .result_o(div_result),
+        .quot_o(div_quot),
+        .rem_o(div_rem),
         .div_zero_o(div_zero),
         .done_o(div_done),
-        .stall_o(div_stall)
+        .stall_o(div_stall),
+        .busy_o(div_busy)
     );
 
+    pycore_ipow pow_unit (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .start_i(pow_start),
+        .base_i(unit_a),
+        .exp_i(unit_b),
+        .mul_start_o(pow_mul_start),
+        .mul_a_o(pow_mul_a),
+        .mul_b_o(pow_mul_b),
+        .mul_lo_i(mul_lo),
+        .mul_hi_i(mul_hi),
+        .mul_done_i(mul_done),
+        .result_o(pow_result),
+        .trap_o(pow_trap),
+        .done_o(pow_done),
+        .stall_o(pow_stall),
+        .busy_o(pow_busy)
+    );
+
+    // ---- floating point / complex ----
+    assign fpu_start = valid_i && !tag_trap && !string_path_valid_i &&
+                       ((exec_unit_sel == PY_EXEC_FLOAT) || (exec_unit_sel == PY_EXEC_COMPLEX));
+
     pycore_fpu #(
-        .LATENCY(FPU_LATENCY)
+        .MUL_STEP(FPU_MUL_STEP),
+        .DIV_RL(FPU_DIV_RL)
     ) fpu_unit (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
-        .start_i(valid_i && exec_unit_sel == PY_EXEC_FLOAT && !tag_trap),
+        .start_i(fpu_start),
         .op_i(alu_op_i),
-        .op_a_i(unit_a),
-        .op_b_i(unit_b),
+        .complex_i(exec_unit_sel == PY_EXEC_COMPLEX),
+        .op_a_i(fpu_a),
+        .op_b_i(fpu_b),
         .result_o(fpu_result),
         .exception_o(fpu_exception),
         .done_o(fpu_done),
-        .stall_o(fpu_stall)
+        .stall_o(fpu_stall),
+        .busy_o(fpu_busy)
     );
-
-    pycore_complex_alu complex_alu (
-        .op_a_i(complex_a),
-        .op_b_i(complex_b),
-        .op_i(alu_op_i),
-        .result_o(complex_result),
-        .trap_o(complex_trap),
-        .trap_code_o(complex_trap_code)
-    );
-
-    always_comb begin
-        logic signed [63:0] base;
-        logic signed [63:0] exp;
-        logic signed [127:0] wide;
-        logic signed [63:0] accum;
-        int i;
-
-        base = unit_a;
-        exp = unit_b;
-        accum = 64'sd1;
-        wide = 128'sd0;
-        pow_result = 64'd1;
-        pow_trap = 1'b0;
-        if (exp < 0) begin
-            pow_trap = 1'b1;
-        end else if (exp > 63) begin
-            pow_trap = 1'b1;
-        end else begin
-            for (i = 0; i < 64; i++) begin
-                if (i < exp[31:0]) begin
-                    wide = accum * base;
-                    if (wide[127:64] != {64{wide[63]}}) begin
-                        pow_trap = 1'b1;
-                    end
-                    accum = wide[63:0];
-                end
-            end
-            pow_result = accum;
-        end
-    end
 
     always_comb begin
         logic [63:0] selected_value;
@@ -280,13 +310,12 @@ module pycore_exec #(
 
         selected_value = 64'b0;
         wide_value = '0;
-        stall_o = mul_stall || div_stall || fpu_stall;
+        stall_o = 1'b0;
         trap_o = valid_i && tag_trap;
         trap_code_o = tag_trap_code;
         result_o = pycore_make_entry(PY_TAG_OBJECT, '0);
 
         if (string_ord_valid) begin
-            stall_o = 1'b0;
             if (!string_ord_ok) begin
                 trap_o = 1'b1;
                 trap_code_o = PY_TRAP_TYPE;
@@ -298,7 +327,6 @@ module pycore_exec #(
                     {{(PYCORE_VAL_WIDTH-1){1'b0}}, string_ord_bool});
             end
         end else if (string_cmp_valid) begin
-            stall_o = 1'b0;
             trap_o = 1'b0;
             trap_code_o = PY_TRAP_NONE;
             result_o = pycore_make_entry(
@@ -306,12 +334,10 @@ module pycore_exec #(
                 {{(PYCORE_VAL_WIDTH-1){1'b0}},
                  (alu_op_i == PY_ALU_EQ) ? string_cmp_eq : !string_cmp_eq});
         end else if (string_concat_valid) begin
-            stall_o = 1'b0;
             trap_o = 1'b0;
             trap_code_o = PY_TRAP_NONE;
             result_o = pycore_short_str_concat(rs1_value_wide, rs2_value_wide);
         end else if (string_path_valid_i) begin
-            stall_o = 1'b0;
             trap_o = valid_i && string_trap_i;
             trap_code_o = string_trap_code_i;
             result_o = string_result_i;
@@ -319,15 +345,18 @@ module pycore_exec #(
             unique case (exec_unit_sel)
                 PY_EXEC_INT: begin
                     if (alu_op_i == PY_ALU_MUL) begin
-                        selected_value = mul_result;
+                        selected_value = mul_lo;
+                        stall_o = mul_stall;
                     end else if (alu_op_i == PY_ALU_FLOOR_DIV || alu_op_i == PY_ALU_MOD) begin
-                        selected_value = div_result;
+                        selected_value = (alu_op_i == PY_ALU_MOD) ? div_rem : div_quot;
+                        stall_o = div_stall;
                         if (div_zero) begin
                             trap_o = valid_i;
                             trap_code_o = PY_TRAP_DIV_ZERO;
                         end
                     end else if (alu_op_i == PY_ALU_POWER) begin
                         selected_value = pow_result;
+                        stall_o = pow_stall;
                         if (pow_trap) begin
                             trap_o = valid_i;
                             trap_code_o = PY_TRAP_TYPE;
@@ -339,18 +368,12 @@ module pycore_exec #(
                 PY_EXEC_BOOL: begin
                     selected_value = {63'b0, int_result[0]};
                 end
-                PY_EXEC_FLOAT: begin
-                    selected_value = fpu_result;
+                PY_EXEC_FLOAT, PY_EXEC_COMPLEX: begin
+                    selected_value = fpu_result[63:0];
+                    stall_o = fpu_stall;
                     if (fpu_exception) begin
                         trap_o = valid_i;
                         trap_code_o = PY_TRAP_FPU_EXCEPTION;
-                    end
-                end
-                PY_EXEC_COMPLEX: begin
-                    selected_value = 64'b0;
-                    if (complex_trap) begin
-                        trap_o = valid_i;
-                        trap_code_o = complex_trap_code;
                     end
                 end
                 default: begin
@@ -360,7 +383,7 @@ module pycore_exec #(
             endcase
 
             if (exec_unit_sel == PY_EXEC_COMPLEX && !trap_o) begin
-                result_o = pycore_make_entry(result_tag, complex_result);
+                result_o = pycore_make_entry(result_tag, fpu_result);
             end else begin
                 if (result_tag == PY_TAG_INT) begin
                     wide_value = {{64{selected_value[63]}}, selected_value};
@@ -371,5 +394,13 @@ module pycore_exec #(
             end
         end
     end
+
+    // Flags and status that the single-instruction FSM does not consume yet
+    // (the scoreboard will).
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic unused_ok;
+    assign unused_ok = int_zero | int_overflow | mul_busy | div_busy | pow_busy | fpu_busy |
+                       mul_done | div_done | pow_done | fpu_done;
+    /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule
