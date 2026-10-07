@@ -69,7 +69,7 @@ These limit every firmware builtin:
 | `eval` | Evaluate a Python expression from a string or code object. | in ROM | Code-object form (`"eval"` mode returns the expression value). String form probes `_bi_code_kind` and compiles SHORT_STR / LONG_STR (`img_eval_str_direct`). |
 | `exec` | Execute Python statements from a string or code object. | in ROM | Code-object form: `code()` then `None`. Module-mode `STORE_NAME`/`LOAD_NAME` hit the boot globals dict, so this is module-scope `exec`. String form probes `_bi_code_kind` and compiles (`img_exec_str_direct`). Non-code arg → `CALL_FILTER`. |
 | `filter` | Construct an iterator of items for which a function returns true. | in ROM | Returns a **list**; `function is None` uses TO_BOOL. LIST grow → excore. |
-| `float` | Convert a string or number to floating point. | in progress | `x * 1.0` for numerics; `_parse_float_string` helper; no auto str dispatch. |
+| `float` | Convert a string or number to floating point. | in ROM | `_bi_code_kind` dispatch: STR → `_float_from_str` (correctly rounded for ≤ 18 significant digits, whitespace / underscores / `inf` / `nan`, ValueError on malformed); else `x * 1.0`. Residual: > 18 digits within ~1e-18 of a rounding boundary (`pycore/docs/limitations.md`). |
 | `format` | Convert a value to a formatted representation ("format_spec"). | in progress | Empty spec → INT/BOOL/None stringify; non-empty specs blocked (`FORMAT_WITH_SPEC`). |
 | `frozenset` | Return a new frozenset object. | blocked | `PY_TAG_FROZENSET` reserved / unimplemented. |
 | `getattr` | Return the named attribute of an object, with optional default. | in ROM | `obj.__dict__[name]` or default; instance dict only (no MRO). |
@@ -96,13 +96,13 @@ These limit every firmware builtin:
 | `oct` | Convert an integer to an octal string prefixed with '0o'. | in ROM | String concat digit loop. |
 | `open` | Open a file and return a corresponding file object. | blocked | See `open.md`. |
 | `ord` | Return the Unicode code point for a one-character string. | native | `BI_ORD` (id 10): one-character STR → INT. SHORT is a handle decode; LONG is STRACC `SA_ORD`. Non-STR / multi-character → TYPE trap. |
-| `pow` | Return base**exp, optionally modulo mod. | in ROM | Binary modexp for non-neg exp; neg exp+mod → `raise`. |
+| `pow` | Return base**exp, optionally modulo mod. | in ROM | `long_pow` semantics: result sign follows `mod`, `pow(x, 0, 1) == 0`, negative exp → modular inverse (ValueError if not invertible), overflow-safe `_mulmod` for `|mod|` up to 2 ** 62. |
 | `print` | Print objects to a stream (default stdout), separated by sep and ended by end. | in ROM | ROM `*args`/`sep=`/`end=` → `_bi_print` (`BI_PRINT` → `CONSOLE_TX`). LONG_STR Phase 2. |
 | `property` | Return a property attribute with optional getter/setter/deleter. | blocked | See `property.md`. |
 | `range` | Return an immutable sequence of numbers (start, stop, step). | implemented | Interim **list** materialization. Native `BI_RANGE` (`PY_TAG_RANGE`) preferred. |
 | `repr` | Return a string containing a printable representation of an object. | in progress | INT/BOOL/None only; containers/str quoting blocked. |
 | `reversed` | Return a reverse iterator over a sequence. | in ROM | Returns a **list**. LIST grow → excore. |
-| `round` | Round a number to a given precision in decimal digits. | in ROM | Half-away-from-zero (not banker's rounding). |
+| `round` | Round a number to a given precision in decimal digits. | in ROM | Ties to even; `round(x)` returns `int`; `round(x, n)` bit-identical to CPython for `|n| <= 22` via exact-tie detection (two-product); int `round(k, -n)`. NaN/inf 1-arg → ValueError. |
 | `set` | Create a new set, optionally from an iterable. | implemented | `{*()}` / `{*iterable}` → SET_UPDATE (excore). Native `BI_SET` still on-core. |
 | `setattr` | Set a named attribute on an object. | in ROM | `obj.__dict__[name] = value` (instance dict only). |
 | `slice` | Return a slice object representing indices for extended slicing. | blocked | `BINARY_SLICE`/`STORE_SLICE` deferred; no slice object kind. |
@@ -136,10 +136,10 @@ pycore_firmware/builtins/builtins.md    # this inventory
 | --- | --- |
 | Python modules | 73 |
 | Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`; `ord` / `chr` now shipped notes) |
-| Status: in ROM | 31 (incl. `print`, `exec`, `eval`, `compile`) |
+| Status: in ROM | 32 (incl. `print`, `exec`, `eval`, `compile`, `float`); plus 24 underscore helper entries (`_mulmod`, `_round_float`, `_float_from_str`, ...) that ROM bodies LOAD_GLOBAL |
 | Status: native | 4 (`ord`, `chr`, `int` CALL convert, `str` CALL convert) |
 | Status: implemented | 5 (`len` miss path, `list_append`, `max` notes, `range` list form, `set` Python form) |
-| Status: in progress | 9 |
+| Status: in progress | 8 |
 | Status: blocked | 25 |
 
 ### In ROM (seeded as CODE_OBJECT in boot builtins dict)
@@ -147,6 +147,7 @@ pycore_firmware/builtins/builtins.md    # this inventory
 Wave 1–2: `abs`, `all`, `any`, `bool`, `enumerate`, `map`, `sum`, `zip`  
 Wave 3: `bin`, `dict`, `divmod`, `filter`, `hex`, `list`, `min`, `oct`,
 `pow`, `reversed`, `round`, `sorted`, `tuple`  
+`float` (str parsing via `_bi_code_kind` dispatch)  
 Wave 4B: `delattr`, `getattr`, `hasattr`, `isinstance`, `issubclass`,
 `setattr`  
 `exec`, `eval` (precompiled `CODE_OBJECT` forms)  
@@ -156,7 +157,8 @@ Coverage: `img_firmware_rom_subset`, `img_firmware_iterators`,
 `img_firmware_wave3a`, `img_firmware_wave3_strings`, `img_firmware_wave3_pow`,
 `img_firmware_wave3_containers`, `img_firmware_sorted_kw`,
 `img_firmware_filter_pred`, `img_firmware_attr_helpers`,
-`img_firmware_isinstance`. Attr specials: `img_attr_dunder_*`.
+`img_firmware_isinstance`, `img_fw_pow_neg_mod`, `img_fw_pow_mulmod`,
+`img_fw_round_half_even`, `img_fw_float_str`. Attr specials: `img_attr_dunder_*`.
 
 ### Native (hardware owns the builtins-dict CALL)
 
@@ -189,7 +191,7 @@ form; `BI_SET` owns dict)
 
 ### In progress (usable subset / hardware gaps)
 
-`callable`, `dir`, `float`, `format`, `iter`, `next`, `repr`,
+`callable`, `dir`, `format`, `iter`, `next`, `repr`,
 `type`, `vars`
 
 ### Blocked (stub + notes/plans)

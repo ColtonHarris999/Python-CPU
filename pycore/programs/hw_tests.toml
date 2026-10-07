@@ -361,6 +361,9 @@ algo-sort = { src = "algo_sort", cycles = 200_000 }
 sorted-str = { core = "twocore", src = "sorted_str", cycles = 100_000 }
 fw-range-zero-step = { src = "fw_range_zero_step", cycles = 200_000 }
 fw-pow-neg-mod = { src = "fw_pow_neg_mod", cycles = 200_000 }
+fw-pow-mulmod = { src = "fw_pow_mulmod", cycles = 2_000_000 }
+fw-round-half-even = { src = "fw_round_half_even", cycles = 400_000 }
+fw-float-str = { src = "fw_float_str", cycles = 2_000_000 }
 builtin-max = { src = "builtin_max", cycles = 50_000 }
 builtin-len-list = { src = "builtin_len_list", cycles = 50_000 }
 builtin-len-long-str = { src = "builtin_len_long_str", cycles = 50_000 }

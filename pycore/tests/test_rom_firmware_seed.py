@@ -48,8 +48,19 @@ def _load_firmware(name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    # Device-native tag probe (OBK_BUILTIN) that ROM bodies LOAD_GLOBAL.
+    mod.__dict__["_bi_code_kind"] = image_from_source._host_code_kind
     spec.loader.exec_module(mod)
     return getattr(mod, name)
+
+
+def _same_float(a: float, b: float) -> bool:
+    import math
+    import struct
+
+    if math.isnan(a) and math.isnan(b):
+        return True
+    return struct.pack("<d", a) == struct.pack("<d", b)
 
 
 class RomFirmwareSeedTest(unittest.TestCase):
@@ -332,7 +343,8 @@ class RomFirmwareSemanticsTest(unittest.TestCase):
         self.assertEqual(divmod_(17, 5), (3, 2))
         self.assertEqual(pow_(2, 10), 1024)
         self.assertEqual(pow_(2, 10, 100), 24)
-        self.assertEqual(round_(5), 5.0)
+        self.assertEqual(round_(5), 5)
+        self.assertIs(type(round_(5)), int)
         self.assertEqual(min_(9, 4), 4)
         self.assertEqual(min_([3, 1, 2]), 1)
         self.assertEqual(min_(8, 3, 5), 3)
@@ -370,9 +382,183 @@ class RomFirmwareSemanticsTest(unittest.TestCase):
         self.assertEqual(sum_([1, 2, 3], start=10), 16)
 
     def test_pow_negative_exp_with_mod_raises(self) -> None:
+        """Only a non-invertible base raises; pow(2, -1, 5) is 3 as in CPython."""
         pow_ = _load_firmware("pow")
+        self.assertEqual(pow_(2, -1, 5), 3)
         with self.assertRaises(ValueError):
-            pow_(2, -1, 5)
+            pow_(2, -1, 4)
+        with self.assertRaises(ValueError):
+            pow_(2, 3, 0)
+
+    def test_pow_mod_matches_cpython(self) -> None:
+        """Modular pow: sign of mod, negative exponents, overflow-safe mulmod."""
+        import random
+
+        pow_ = _load_firmware("pow")
+        cases = [
+            (2, 3, -5),
+            (-2, 3, 5),
+            (3, -1, 7),
+            (3, -2, 7),
+            (7, 0, 1),
+            (0, 0, 3),
+            (5, 2, 1),
+            (123456789, 987654321, 2**62 - 57),
+            (2**62 - 1, 2**61, 2**62 - 1),
+            (-(2**62) + 1, 12345, 2**62 - 57),
+            (2**62 - 3, -1, 2**62 - 57),
+            (3, 10**18, -(2**62 - 57)),
+        ]
+        rng = random.Random(7)
+        for _ in range(300):
+            m = rng.choice(
+                [rng.randint(1, 2**31), rng.randint(2**31, 2**62), -rng.randint(1, 2**62)]
+            )
+            b = rng.randint(-(2**62), 2**62)
+            e = rng.randint(0, 2**40)
+            cases.append((b, e, m))
+        for b, e, m in cases:
+            with self.subTest(b=b, e=e, m=m):
+                self.assertEqual(pow_(b, e, m), pow(b, e, m))
+        for _ in range(100):
+            m = rng.randint(2, 2**62)
+            b = rng.randint(-(2**62), 2**62)
+            e = -rng.randint(1, 1000)
+            try:
+                expect = pow(b, e, m)
+            except ValueError:
+                with self.assertRaises(ValueError):
+                    pow_(b, e, m)
+            else:
+                self.assertEqual(pow_(b, e, m), expect)
+
+    def test_round_half_even_and_ndigits_match_cpython(self) -> None:
+        """round(): ties to even, int result for 1-arg, bit-exact round(x, n)."""
+        import random
+
+        round_ = _load_firmware("round")
+        self.assertEqual(round_(0.5), 0)
+        self.assertEqual(round_(1.5), 2)
+        self.assertEqual(round_(2.5), 2)
+        self.assertEqual(round_(-0.5), 0)
+        self.assertEqual(round_(-2.5), -2)
+        self.assertIs(type(round_(2.5)), int)
+        self.assertEqual(round_(True), 1)
+        self.assertIs(type(round_(True)), int)
+        self.assertEqual(round_(7, 2), 7)
+        self.assertEqual(round_(15, -1), 20)
+        self.assertEqual(round_(25, -1), 20)
+        self.assertEqual(round_(-35, -1), -40)
+        self.assertEqual(round_(123456, -3), 123000)
+        self.assertEqual(round_(5, -30), 0)
+        self.assertTrue(_same_float(round_(2.675, 2), round(2.675, 2)))
+        self.assertTrue(_same_float(round_(0.125, 2), round(0.125, 2)))
+        self.assertTrue(_same_float(round_(-0.0, 1), round(-0.0, 1)))
+        self.assertTrue(_same_float(round_(1e300, -290), round(1e300, -290)))
+        nan = float("nan")
+        inf = float("inf")
+        self.assertTrue(_same_float(round_(nan, 1), nan))
+        self.assertTrue(_same_float(round_(inf, 1), inf))
+        with self.assertRaises(ValueError):
+            round_(nan)
+        with self.assertRaises(ValueError):
+            round_(inf)
+        with self.assertRaises(ValueError):
+            round_(1.7976931348623157e308, -308)
+        rng = random.Random(11)
+        for _ in range(3000):
+            x = rng.choice(
+                [
+                    rng.uniform(-1e6, 1e6),
+                    rng.randint(-10**7, 10**7) / 1000.0,
+                    rng.randint(-10**5, 10**5) + 0.5,
+                    rng.uniform(-1, 1) * 10.0 ** rng.randint(-20, 20),
+                    rng.randint(0, 2**53) * 1.0,
+                ]
+            )
+            n = rng.randint(-22, 22)
+            with self.subTest(x=x, n=n):
+                self.assertTrue(_same_float(round_(x, n), round(x, n)))
+                if abs(x) < 2**62:
+                    self.assertEqual(round_(x), round(x))
+            k = rng.randint(-(2**62), 2**62)
+            m = rng.randint(-18, 3)
+            self.assertEqual(round_(k, m), round(k, m))
+
+    def test_float_from_str_matches_cpython(self) -> None:
+        """float(str) is correctly rounded for <= 18 significant digits."""
+        import random
+
+        float_ = _load_firmware("float")
+        self.assertTrue(_same_float(float_(3), 3.0))
+        self.assertTrue(_same_float(float_(True), 1.0))
+        self.assertTrue(_same_float(float_(), 0.0))
+        self.assertTrue(_same_float(float_(" -1_000.5e-1\n"), -100.05))
+        for s in [
+            "0",
+            "-0.0",
+            ".5",
+            "1.",
+            "2.675",
+            "1e22",
+            "1e23",
+            "9007199254740993",
+            "123456789012345678",
+            "1.7976931348623157e308",
+            "1.7976931348623158e308",
+            "1.7976931348623159e308",
+            "2.2250738585072011e-308",
+            "4.9e-324",
+            "2.4703282292062327e-324",
+            "2.4703282292062328e-324",
+            "1e-400",
+            "1e400",
+            "17976931348623157e292",
+            "1000000000000000000e-331",
+            "inf",
+            "-Infinity",
+            "nan",
+            "  +1.5E+3  ",
+            "1_0e1_0",
+        ]:
+            with self.subTest(s=s):
+                self.assertTrue(_same_float(float_(s), float(s)), (s, float_(s)))
+        for s in [
+            "",
+            " ",
+            "-",
+            ".",
+            "1..2",
+            "1e",
+            "1e+",
+            "e5",
+            "1x",
+            "--1",
+            "1 2",
+            "- 1",
+            "1__0",
+            "_1",
+            "1_",
+            "1_.5",
+            "1e_5",
+            "inf_",
+            "in f",
+            "nanx",
+        ]:
+            with self.subTest(s=s):
+                with self.assertRaises(ValueError):
+                    float_(s)
+        with self.assertRaises(TypeError):
+            float_(None)
+        rng = random.Random(5)
+        for _ in range(3000):
+            digits = rng.randint(0, 10 ** rng.randint(1, 18))
+            e = rng.randint(-345, 320)
+            s = f"{digits}e{e}"
+            if rng.random() < 0.3:
+                s = f"{rng.uniform(-1000, 1000):.{rng.randint(0, 15)}f}"
+            with self.subTest(s=s):
+                self.assertTrue(_same_float(float_(s), float(s)), (s, float_(s)))
 
     def test_range_zero_step_raises_valueerror(self) -> None:
         range_ = _load_firmware("range")
