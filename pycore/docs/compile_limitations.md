@@ -163,9 +163,9 @@ well. Heap does not need to grow.
   `SyntaxError` (D6). The subset gate caps the compiler's own
   functions at 200, so this is not what rejects the tree. It will
   reject a larger function someone later adds.
-- **Wrapped int64.** Packed node and operator-stack fields must fit a
+- **int64 ceiling.** Packed node and operator-stack fields must fit a
   signed 64-bit int. Host CPython will not catch a field that spills
-  past bit 62; the device truncates it. `_pyc_ops_push` rejects an
+  past bit 62; the device traps `OVERFLOW`. `_pyc_ops_push` rejects an
   over-wide operator-stack field. A self-hosted compile of a huge
   `def` or call site can trip this where the host differential did
   not.

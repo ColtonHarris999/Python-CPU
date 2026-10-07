@@ -137,3 +137,4 @@ about a minute before its first output.
 | `TRAP MEM_FAULT` during compile | The compiler ran out of heap. It keeps its whole working set, roughly 10–16 KB per source line, and about 15 MB is free at boot (16 MB data window), so the limit is around a thousand lines. Simulation time runs out long before that. |
 | `UNSUPPORTED` | `class`, `import`, `with`, annotations, generator expressions, slice steps, and the other `compiler.md` exclusions. |
 | `TRAP DIV_ZERO`, `MEM_FAULT` during run | Division by zero, a missing dict key, a bad or negative index, or an unbound name. These are hardware traps, not catchable exceptions yet. |
+| `TRAP OVERFLOW`, `VALUE` during run | An `int` result left the signed 64-bit range (CPython would have made a big int), or a negative shift count. The hart has no big-int fallback yet. |

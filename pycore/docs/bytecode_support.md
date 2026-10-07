@@ -254,6 +254,13 @@ this milestone:
    Latin-1 (U+0000–U+00FF). Code points above U+00FF raise a recoverable
    firmware trap — slower, never silently wrong. `isidentifier` is
    firmware-only in v1. See [`string_accel.md`](string_accel.md) §Unicode.
+19. **INT arithmetic is 64-bit with trapping, not arbitrary precision.**
+   `BINARY_OP` / unary results that leave the signed 64-bit range (`+ -
+   *`, unary `-`, `<<`, `**`, `INT64_MIN // -1`) raise fatal
+   `PY_TRAP_OVERFLOW` (21) where CPython promotes to a big int; a negative
+   shift count raises `PY_TRAP_VALUE` (22) (`ValueError`). `INT ** INT`
+   with a negative exponent returns a `FLOAT` as in CPython. Nothing wraps
+   silently. See [`alu.md`](alu.md) §Semantics.
 
 
 

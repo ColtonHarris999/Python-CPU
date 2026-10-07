@@ -119,7 +119,8 @@ boundary, still correct. Affected: `upper` / `lower` / `swapcase` /
 
 This sits next to the 64-bit `int` ceiling in
 [`bytecode_support.md`](bytecode_support.md): `int` is a correctness
-ceiling (overflow wraps); the STRACC LUT is a performance ceiling.
+ceiling (overflow traps `PY_TRAP_OVERFLOW`); the STRACC LUT is a
+performance ceiling.
 
 ---
 

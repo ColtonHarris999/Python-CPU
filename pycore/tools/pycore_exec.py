@@ -86,6 +86,11 @@ TRAP_HINTS = {
     "ATTR_ERROR": "a missing attribute",
     "RAISE": "an exception that escaped every handler",
     "SLICE": "an unsupported slice (list/tuple slicing, or a step)",
+    "OVERFLOW": (
+        "an int result outside the signed 64-bit range (CPython would promote "
+        "to a big int; the hart has no big-int fallback yet)"
+    ),
+    "VALUE": "a negative shift count (ValueError in CPython)",
 }
 
 

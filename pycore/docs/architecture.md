@@ -156,6 +156,8 @@ whose ownership is being transferred.
 | 18 | `PY_TRAP_SLICE` | **recoverable** | slice helper |
 | 19 | `PY_TRAP_DICT_UPDATE` | **recoverable** | uncontaminated `A.update(B)`; excore grows A to fit `used(A)+used(B)` and inserts all of B, overwriting dups. Contaminated (OBJECT-key) operands are owned by pycore (`pycore_cont_bulk.svh`) instead of trapping |
 | 20 | `PY_TRAP_DICT_MERGE` | **recoverable** | non-empty uncontaminated `DICT_MERGE`; excore builds a fresh dict C (A then B, duplicate key → fatal `TYPE`). Contaminated operands build C in pycore (`pycore_cont_bulk.svh`) |
+| 21 | `PY_TRAP_OVERFLOW` | fatal | an INT result left the signed 64-bit range (`+ - *`, unary `-`, `<<`, `INT ** INT`, `INT64_MIN // -1`) where CPython would promote to a big int. Raised by `pycore_exec` instead of wrapping; a firmware big-int fallback would make it recoverable |
+| 22 | `PY_TRAP_VALUE` | fatal | operand outside the operation's domain where CPython raises `ValueError`: a negative shift count |
 
 `pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
 truth for the fatal/recoverable split. `EXCORE_EN=1` intercepts a recoverable
@@ -266,8 +268,9 @@ rather than widening every leave:
 
 - `INT` uses a **64-bit signed fast path**. The ALU, multiplier, divider, and
   power unit operate on `value[63:0]`; `pycore_exec` sign-extends the 64-bit
-  result into `value[127:64]`. Overflow wraps at 64 bits (not CPython
-  arbitrary precision).
+  result into `value[127:64]`. A result that does not fit traps
+  `PY_TRAP_OVERFLOW` (not CPython arbitrary precision, but never a silent
+  wrap).
 - `FLOAT` stores the IEEE 754 double in `value[63:0]` with `value[127:64] = 0`.
 - `COMPLEX` stores two binary64 values (real/imag); `pycore_fpu` sequences
   ADD/SUB/MUL/TRUE_DIV/NEG/POS/EQ/NE/NOT on its scalar datapaths.
@@ -335,10 +338,14 @@ verification are in `pycore/docs/alu.md`.
 are converted to IEEE 754 double before entering the FPU, matching Python's `/`
 result type.
 
-Integer overflow wraps for add/sub/mul and shift results. This is PyCore's
-largest semantic deviation from CPython because Python integers are arbitrary
-precision. Programs relying on values outside signed 64-bit range can silently
-diverge unless preprocessing or software trapping rejects them.
+Integer results outside the signed 64-bit range (`+ - *`, unary `-`, `<<`,
+`**`, `INT64_MIN // -1`) raise `PY_TRAP_OVERFLOW`; a negative shift count
+raises `PY_TRAP_VALUE`. Python integers are arbitrary precision, so this is
+PyCore's largest semantic deviation from CPython, but it is a reported one:
+a program that needs values outside 64 bits halts at the first such
+operation instead of silently diverging. `INT ** INT` with a negative
+exponent is re-routed to the FPU and returns a `FLOAT`, as in Python. See
+`alu.md` for the per-operation rules.
 
 ## Control: multi-cycle, non-pipelined
 

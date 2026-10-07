@@ -74,9 +74,11 @@ positional-only `/`, annotations, nested f-strings, format specs,
 `f"{x=}"`, a positional `*x` after a keyword argument, and
 `class`/`import`/`with` are `SyntaxError`.
 
-**Packed node fields must fit a wrapping signed int64** (§7). The firmware
+**Packed node fields must fit a signed int64** (§7). The firmware
 runs on arbitrary-precision ints under host CPython, so a field that spills
-past bit 62 passes every host test and is silently truncated on hardware.
+past bit 62 passes every host test and halts the hardware with
+`PY_TRAP_OVERFLOW` (the ALU reports results outside 64 bits rather than
+wrapping them; see `alu.md`).
 `_pyc_ops_push` rejects an over-wide operator-stack field outright, and
 `test_compiler_parser.py::test_packed_node_fields_fit_a_wrapping_int64`
 sweeps the corpus for node and token arrays.
