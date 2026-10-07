@@ -591,6 +591,14 @@ localparam logic [4:0] PY_TRAP_DICT_UPDATE = 5'd19;
 // dest is non-empty. Recoverable — merge into a fresh dict (dup key → TYPE),
 // COMPLETED with push of result handle + pop handled by firmware convention.
 localparam logic [4:0] PY_TRAP_DICT_MERGE = 5'd20;
+// PY_TRAP_OVERFLOW: an INT result left the signed 64-bit range (+ - * unary -
+// <<, INT ** INT, INT64_MIN // -1). CPython would promote to an arbitrary
+// precision int; the hardware reports it instead of wrapping. Fatal until a
+// firmware big-int fallback exists.
+localparam logic [4:0] PY_TRAP_OVERFLOW = 5'd21;
+// PY_TRAP_VALUE: operand out of the operation's domain where CPython raises
+// ValueError (negative shift count). Fatal.
+localparam logic [4:0] PY_TRAP_VALUE = 5'd22;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a

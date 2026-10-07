@@ -240,7 +240,9 @@ module pycore_tag_decode (
                 end
 
                 PY_ALU_LSHIFT, PY_ALU_RSHIFT: begin
-                    if (rs1_tag_i == PY_TAG_INT && rs2_tag_i == PY_TAG_INT) begin
+                    // bool is an int subclass: True << 1 == 2, 8 >> True == 4.
+                    if ((rs1_tag_i == PY_TAG_INT || rs1_tag_i == PY_TAG_BOOL) &&
+                        (rs2_tag_i == PY_TAG_INT || rs2_tag_i == PY_TAG_BOOL)) begin
                         `PYCORE_ROUTE_INT_BINARY(PY_TAG_INT)
                     end else begin
                         `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)

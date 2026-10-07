@@ -14,6 +14,11 @@
 // Each has a level start_i / one-cycle done_o handshake, and the stall is
 // simply "started and not done", so the same units drop into a scoreboard
 // later without changing their interfaces.  Cycle counts: docs/alu.md.
+//
+// INT results that leave the signed 64-bit range (+ - * unary - << **,
+// INT64_MIN // -1) raise PY_TRAP_OVERFLOW instead of wrapping; a negative
+// shift count raises PY_TRAP_VALUE.  INT ** INT with a negative exponent is
+// a float in Python and is re-routed to the FPU with both operands promoted.
 module pycore_exec #(
     parameter int MUL_STEP     = 16,
     parameter int DIV_RL       = 2,
@@ -60,6 +65,11 @@ module pycore_exec #(
     logic [63:0] int_result;
     logic        int_zero;
     logic        int_overflow;
+    logic        int_value_error;
+    logic        mul_overflow;
+    logic        div_overflow;
+    // INT ** INT with exp < 0: Python returns a float.
+    logic        pow_to_float;
 
     // Integer multiplier, shared between INT * and the INT ** sequencer.
     logic        mul_start;
@@ -105,17 +115,34 @@ module pycore_exec #(
         .trap_code_o(tag_trap_code)
     );
 
+    // INT ** INT with a negative exponent: `2 ** -1 == 0.5`.  Decode sees
+    // only the tags, so the re-route to the FPU (both operands promoted to
+    // FLOAT, FLOAT result) is decided here from the exponent's sign.
+    assign pow_to_float = (exec_unit_sel == PY_EXEC_INT) && (alu_op_i == PY_ALU_POWER) &&
+                          (rs2_tag == PY_TAG_INT) && rs2_value[63];
+
+    logic [2:0] promote_rs1_mode_eff, promote_rs2_mode_eff;
+    always_comb begin
+        promote_rs1_mode_eff = promote_rs1 ? promote_rs1_mode : PY_PROMOTE_NONE;
+        promote_rs2_mode_eff = promote_rs2 ? promote_rs2_mode : PY_PROMOTE_NONE;
+        if (pow_to_float) begin
+            promote_rs1_mode_eff = (rs1_tag == PY_TAG_BOOL) ? PY_PROMOTE_BOOL_TO_FLOAT
+                                                             : PY_PROMOTE_INT_TO_FLOAT;
+            promote_rs2_mode_eff = PY_PROMOTE_INT_TO_FLOAT;
+        end
+    end
+
     pycore_promote promote_a (
         .entry_tag_i(rs1_tag),
         .entry_value_i(rs1_value),
-        .promote_mode_i(promote_rs1 ? promote_rs1_mode : PY_PROMOTE_NONE),
+        .promote_mode_i(promote_rs1_mode_eff),
         .value_out_o(promoted_rs1)
     );
 
     pycore_promote promote_b (
         .entry_tag_i(rs2_tag),
         .entry_value_i(rs2_value),
-        .promote_mode_i(promote_rs2 ? promote_rs2_mode : PY_PROMOTE_NONE),
+        .promote_mode_i(promote_rs2_mode_eff),
         .value_out_o(promoted_rs2)
     );
 
@@ -147,9 +174,11 @@ module pycore_exec #(
     always_comb begin
         unit_a = promoted_rs1;
         unit_b = promoted_rs2;
+        // BOOL operands carry their truth value in bit 0.  An INT routed to
+        // the BOOL unit (`not x`) must keep its full value: `not 2` is False.
         if (exec_unit_sel == PY_EXEC_BOOL) begin
-            unit_a = {63'b0, rs1_value[0]};
-            unit_b = {63'b0, rs2_value[0]};
+            if (rs1_tag == PY_TAG_BOOL) unit_a = {63'b0, rs1_value[0]};
+            if (rs2_tag == PY_TAG_BOOL) unit_b = {63'b0, rs2_value[0]};
         end
         if (exec_unit_sel == PY_EXEC_COMPLEX) begin
             fpu_a = pycore_value_as_complex(rs1_tag, rs1_value_wide);
@@ -166,13 +195,14 @@ module pycore_exec #(
         .op_i(alu_op_i),
         .result_o(int_result),
         .zero_flag_o(int_zero),
-        .overflow_flag_o(int_overflow)
+        .overflow_flag_o(int_overflow),
+        .value_error_o(int_value_error)
     );
 
     // ---- integer multi-cycle units ----
     logic int_route;
     assign int_route = valid_i && (exec_unit_sel == PY_EXEC_INT) && !tag_trap &&
-                       !string_path_valid_i;
+                       !string_path_valid_i && !pow_to_float;
 
     assign mul_direct_start = int_route && (alu_op_i == PY_ALU_MUL);
     assign pow_start        = int_route && (alu_op_i == PY_ALU_POWER);
@@ -236,7 +266,15 @@ module pycore_exec #(
 
     // ---- floating point / complex ----
     assign fpu_start = valid_i && !tag_trap && !string_path_valid_i &&
-                       ((exec_unit_sel == PY_EXEC_FLOAT) || (exec_unit_sel == PY_EXEC_COMPLEX));
+                       ((exec_unit_sel == PY_EXEC_FLOAT) || (exec_unit_sel == PY_EXEC_COMPLEX) ||
+                        pow_to_float);
+
+    // 64 x 64 -> 128 product fits the INT when the high word is the sign
+    // extension of the low word.  INT64_MIN // -1 is the one quotient that
+    // does not fit (its remainder, 0, does).
+    assign mul_overflow = mul_done && (mul_hi != {64{mul_lo[63]}});
+    assign div_overflow = div_done && (alu_op_i == PY_ALU_FLOOR_DIV) &&
+                          (unit_a == 64'h8000_0000_0000_0000) && (unit_b == 64'hffff_ffff_ffff_ffff);
 
     pycore_fpu #(
         .MUL_STEP(FPU_MUL_STEP),
@@ -342,27 +380,41 @@ module pycore_exec #(
             trap_code_o = string_trap_code_i;
             result_o = string_result_i;
         end else if (!tag_trap) begin
-            unique case (exec_unit_sel)
+            unique case (pow_to_float ? PY_EXEC_FLOAT : exec_unit_sel)
                 PY_EXEC_INT: begin
                     if (alu_op_i == PY_ALU_MUL) begin
                         selected_value = mul_lo;
                         stall_o = mul_stall;
+                        if (mul_overflow) begin
+                            trap_o = valid_i;
+                            trap_code_o = PY_TRAP_OVERFLOW;
+                        end
                     end else if (alu_op_i == PY_ALU_FLOOR_DIV || alu_op_i == PY_ALU_MOD) begin
                         selected_value = (alu_op_i == PY_ALU_MOD) ? div_rem : div_quot;
                         stall_o = div_stall;
                         if (div_zero) begin
                             trap_o = valid_i;
                             trap_code_o = PY_TRAP_DIV_ZERO;
+                        end else if (div_overflow) begin
+                            trap_o = valid_i;
+                            trap_code_o = PY_TRAP_OVERFLOW;
                         end
                     end else if (alu_op_i == PY_ALU_POWER) begin
                         selected_value = pow_result;
                         stall_o = pow_stall;
                         if (pow_trap) begin
                             trap_o = valid_i;
-                            trap_code_o = PY_TRAP_TYPE;
+                            trap_code_o = PY_TRAP_OVERFLOW;
                         end
                     end else begin
                         selected_value = int_result;
+                        if (int_value_error) begin
+                            trap_o = valid_i;
+                            trap_code_o = PY_TRAP_VALUE;
+                        end else if (int_overflow && (result_tag == PY_TAG_INT)) begin
+                            trap_o = valid_i;
+                            trap_code_o = PY_TRAP_OVERFLOW;
+                        end
                     end
                 end
                 PY_EXEC_BOOL: begin
@@ -384,6 +436,8 @@ module pycore_exec #(
 
             if (exec_unit_sel == PY_EXEC_COMPLEX && !trap_o) begin
                 result_o = pycore_make_entry(result_tag, fpu_result);
+            end else if (pow_to_float) begin
+                result_o = pycore_make_entry(PY_TAG_FLOAT, {64'b0, selected_value});
             end else begin
                 if (result_tag == PY_TAG_INT) begin
                     wide_value = {{64{selected_value[63]}}, selected_value};
@@ -399,8 +453,8 @@ module pycore_exec #(
     // (the scoreboard will).
     /* verilator lint_off UNUSEDSIGNAL */
     logic unused_ok;
-    assign unused_ok = int_zero | int_overflow | mul_busy | div_busy | pow_busy | fpu_busy |
-                       mul_done | div_done | pow_done | fpu_done;
+    assign unused_ok = int_zero | mul_busy | div_busy | pow_busy | fpu_busy |
+                       pow_done | fpu_done;
     /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

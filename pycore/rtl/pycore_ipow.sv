@@ -4,15 +4,16 @@
 // shared pycore_mul.  The multiplier is owned by this sequencer only while
 // busy_o is high; pycore_exec muxes the bus.
 //
-//   exp < 0           TYPE trap in the accept cycle (the result would be a
-//                     float; not implemented, as before)
+//   exp < 0           trap in the accept cycle (the result is a float in
+//                     Python; pycore_exec re-routes that case to the FPU
+//                     before it reaches this unit)
 //   exp == 0          1, in the accept cycle
 //   otherwise         bits(exp) - 1 squarings plus one multiply per set
 //                     bit below the MSB, each a full pycore_mul pass, with a
-//                     TYPE trap as soon as an intermediate product leaves
-//                     the signed 64-bit range (Python would promote to a
-//                     big int).  Bases 0, 1 and -1 never overflow, so any
-//                     exponent is accepted for them.
+//                     trap (pycore_exec reports PY_TRAP_OVERFLOW) as soon as
+//                     an intermediate product leaves the signed 64-bit range
+//                     (Python would promote to a big int).  Bases 0, 1 and
+//                     -1 never overflow, so any exponent is accepted for them.
 //
 // Handshake as in pycore_umul_seq.sv; trap_o takes the place of done_o
 // when the operation ends in a trap.
