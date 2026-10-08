@@ -1,6 +1,6 @@
 # Computer Language Benchmarks Game, mandelbrot.
 # The usual Python 3 entry maps each pixel to a complex c and iterates
-# z = z² + c up to 50 times, emitting a 1 bit when |z| stays ≤ 2.
+# z = z*z + c up to 50 times, emitting a 1 bit when |z| stays <= 2.
 # Complex numbers and the PBM writer are not used: two floats, and a count
 # of the pixels that stay inside. Official pictures are 200 to 16000 on a
 # side. SIZE=32 keeps the 50-iteration limit and finishes under Callgrind.

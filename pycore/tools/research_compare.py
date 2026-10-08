@@ -26,6 +26,7 @@ CPython record that already succeeded, unless ``--force`` is set.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import math
 import sys
@@ -460,18 +461,29 @@ def suite_rows(programs: list[dict]) -> list[dict]:
         bytecodes = None if not cpy else cpy.get("bytecodes_executed")
         ccyc = _event_cycles(run_cold)
         pcyc = pyc_run.get("cycle")
+        verdict = None if not pyc else pyc.get("verdict")
+        # A trap or a rejected compile still leaves a cycle counter. It is
+        # not an execution of the benchmark, so it stays out of the ratios.
+        finished = verdict in ("PASS", "MISMATCH") and not pyc_run.get("partial")
+        compile_done = (
+            verdict not in (None, "UNSUPPORTED")
+            and pyc_comp.get("cycle")
+            and not pyc_comp.get("partial")
+        )
         out.append({
             "program": item["program"],
-            "verdict": None if not pyc else pyc.get("verdict"),
+            "verdict": verdict,
             "stdout_match": item.get("stdout_match"),
+            "finished": finished,
             "cpy_compile": _event_cycles(compile_cold),
             "pyc_compile": pyc_comp.get("cycle"),
             "cpy_interpret": _event_cycles(interpret),
             "cpy_run": _event_cycles(_phase(cpy, "run")),
             "cpy_exec": ccyc,
-            "pyc_exec": pcyc,
-            "exec_ratio": _div(pcyc, ccyc),
-            "compile_ratio": _div(pyc_comp.get("cycle"), _event_cycles(compile_cold)),
+            "pyc_exec": pcyc if finished else None,
+            "pyc_exec_partial": None if finished else pcyc,
+            "exec_ratio": _div(pcyc, ccyc) if finished else None,
+            "compile_ratio": _div(pyc_comp.get("cycle"), _event_cycles(compile_cold)) if compile_done else None,
             "cpy_l1d": None if not _cache(run_cold, "l1d") else _cache(run_cold, "l1d").get("hit_rate"),
             "pyc_l1d": _hit_rate(pyc_run, "l1d_hit", "l1d_miss"),
             "cpy_l1i": None if not _cache(run_cold, "l1i") else _cache(run_cold, "l1i").get("hit_rate"),
@@ -517,6 +529,8 @@ def render_markdown(payload: dict) -> str:
     w("(`pycore/tools/cpython_baseline/benchmarks/research/`).")
     w("Regenerate with `make research-compare`.")
     w("")
+    w(f"Recorded {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}.")
+    w("")
     w("## How to read the numbers")
     w("")
     w("Cycles are the result. The hart's simulated time uses")
@@ -539,6 +553,15 @@ def render_markdown(payload: dict) -> str:
     w("L1 hit rates on PyCore count the hart's own accesses during that")
     w("phase. LLC hit rate and branch MPKI are Callgrind results; the")
     w("phase mark does not count L2 misses or mispredicted branches.")
+    w("")
+    w("Two files needed a source change before the hart could finish them.")
+    w("`mandelbrot.py` and `spectral_norm.py` had a non-ASCII character in")
+    w("a comment. The on-device compiler raises `SyntaxError` on that, so")
+    w("the comments are ASCII and the kernels are unchanged.")
+    w("`binary_trees.py` tested a leaf with `node == 0`. A list compared")
+    w("with an int TYPE-traps, and a node is a non-empty list, so the test")
+    w("is `not node`. The printed checksums are the ones in")
+    w("`cpython_benchmarks.md`.")
     w("")
     w("## Suite")
     w("")
@@ -568,9 +591,10 @@ def render_markdown(payload: dict) -> str:
                 ct=_dur(_seconds_at(row["cpy_exec"], 1000.0)),
             )
         )
-    geo_exec_c = _geomean([r["cpy_exec"] for r in summary if r.get("cpy_exec")])
-    geo_exec_p = _geomean([r["pyc_exec"] for r in summary if r.get("pyc_exec")])
-    geo_ratio = _geomean([r["exec_ratio"] for r in summary if r.get("exec_ratio")])
+    finished_rows = [r for r in summary if r.get("finished") and r.get("cpy_exec") and r.get("pyc_exec")]
+    geo_exec_c = _geomean([r["cpy_exec"] for r in finished_rows])
+    geo_exec_p = _geomean([r["pyc_exec"] for r in finished_rows])
+    geo_ratio = _geomean([r["exec_ratio"] for r in finished_rows])
     w(
         "| geomean | | | | | {ce} | {pe} | {er} | | | | | | | | | {pt} | {ct} |".format(
             ce=_cell(round(geo_exec_c) if geo_exec_c else None),
@@ -585,7 +609,7 @@ def render_markdown(payload: dict) -> str:
     w("of the same source. `exec ×` is PyCore run cycles divided by CPython")
     w("`run_cold` cycles. `disp%` is the dispatch edge's share of CPython's")
     w("cold-exec instructions. The geometric mean uses programs that")
-    w("produced a positive exec cycle count.")
+    w("finished (PASS or MISMATCH) with a positive exec cycle count.")
     w("")
     w("| program | cpy warm exec | cpy branch MPKI | pyc excore handoffs | pyc excore wait | excore share of exec |")
     w("| --- | ---: | ---: | ---: | ---: | ---: |")
@@ -720,8 +744,12 @@ def run_cpython(programs: list[Path], out: Path, machine_name: str, *, force: bo
     by_name = {
         _program_name(r): r
         for r in existing.get("programs") or []
-        if not force and r.get("status") == "ok"
+        if r.get("status") == "ok"
     }
+    # --force reruns the selected programs only. The others stay on disk.
+    if force:
+        for program in programs:
+            by_name.pop(program.name, None)
     machine = load_machine(machine_name)
     work = out / "callgrind"
 
@@ -869,11 +897,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.skip_pycore:
         pycore_reports = {}
-        for program in programs:
-            report = _load_json(out / "pycore" / program.stem / "report.json")
-            if report is None:
-                raise SystemExit(f"no PyCore report for {program.name}")
-            pycore_reports[program.name] = report
     else:
         pycore_reports = run_pycore(
             programs, out,
@@ -883,6 +906,15 @@ def main(argv: list[str] | None = None) -> int:
             jobs=max(1, args.jobs),
             force=args.force,
         )
+    # A partial invocation still reports every program that already has a
+    # saved hart report, so --program reruns one kernel without dropping
+    # the others.
+    for program in research_programs():
+        if program.name in pycore_reports:
+            continue
+        saved = _load_json(out / "pycore" / program.stem / "report.json")
+        if saved is not None:
+            pycore_reports[program.name] = saved
 
     payload = build_payload(
         cpython_payload,
