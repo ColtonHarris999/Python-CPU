@@ -155,7 +155,11 @@ module pycore_system #(
         .gic_hit_count_o(gic_hit_count),
         .gic_miss_count_o(gic_miss_count),
         .gic_fill_count_o(gic_fill_count),
-        .gic_flush_count_o(gic_flush_count)
+        .gic_flush_count_o(gic_flush_count),
+        .fw_caps_valid_i(1'b0),
+        .fw_caps_i(32'h0),
+        .accel_cfg_o(),
+        .console_base_o()
     );
 
     pycore_mem_hier #(
@@ -210,6 +214,7 @@ module pycore_system #(
         .excore_ack_o(),
         .excore_rdata_o(),
         .excore_fault_o(),
+        .excore_ready_o(),
         .flush_req_i(1'b0),
         .inv_req_i(1'b0),
         .flush_done_o(),

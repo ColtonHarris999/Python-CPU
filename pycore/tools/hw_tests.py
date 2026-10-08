@@ -69,7 +69,21 @@ SIM = {
     "twocore": ROOT / "build" / "sim_img_twocore" / "Vtb_container",
 }
 SIM_TARGET = {"single": "pycore-sim-img", "twocore": "pycore-sim-img-twocore"}
-DEFAULT_FW_HEX = ROOT / "build" / "excore_fw" / "list_grow.hex"
+DEFAULT_FW_HEX = ROOT / "build" / "excore_fw" / "full.hex"
+
+# accelerator_split_plan.md §12.1. Until P3, CA=1 still uses today's
+# container arms, so no-ca and all-on differ only in the latched word.
+ACCEL_PROFILES = {
+    "all-on": 0x0073,
+    "no-ca": 0x0072,
+    "no-stracc": 0x0071,
+    "no-codc": 0x0063,
+    "no-gic": 0x0053,
+    "gc-off": 0x0073,
+    "gc-engine": 0x0077,
+    "gc-soft": 0x007B,
+    "all-off": 0x0000,
+}
 KINDS = {"run", "trap", "stdout", "coderam", "container", "container_boot", "excore", "make"}
 # Kinds that boot a host-built image through managed_entry().
 IMAGE_KINDS = {"run", "trap", "stdout", "coderam"}
@@ -711,11 +725,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fw-hex", default=os.environ.get("EXCORE_FW_HEX", str(DEFAULT_FW_HEX)))
     ap.add_argument("--no-prepare", action="store_true", help="skip building sims and fixtures")
     ap.add_argument("--plusargs", default="", help="extra simulator plusargs for every run, ahead of each test's own")
+    ap.add_argument("--accel", choices=sorted(ACCEL_PROFILES),
+                    help="ACCEL_CFG profile (accelerator_split_plan.md §12.1)")
     ap.add_argument("--out", help="directory for the run logs (default build/hw)")
     args = ap.parse_args(argv)
 
     tests = load_manifest()
     plusargs = args.plusargs
+    if args.accel:
+        plusargs = f"{plusargs} +ACCEL_CFG={ACCEL_PROFILES[args.accel]:x}".strip()
     if args.gate:
         spec = gate_spec(args.gate, args.mode)
         picked = gate_tests(spec, tests)

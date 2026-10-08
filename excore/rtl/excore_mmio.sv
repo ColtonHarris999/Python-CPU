@@ -48,9 +48,15 @@ module excore_mmio #(
     output logic         sp_we_o,
     output logic [31:0]  sp_addr_o,
     output logic [127:0] sp_wdata_o,
+    input  logic          sp_ready_i,
     input  logic          sp_ack_i,
     input  logic [127:0]  sp_rdata_i,
-    input  logic          sp_fault_i
+    input  logic          sp_fault_i,
+
+    // Page 1 (addr[11:8] == 1): firmware capability and the ACCEL_CFG mirror.
+    input  logic [15:0]  mb_accel_cfg_i,
+    output logic         fw_caps_valid_o,
+    output logic [31:0]  fw_caps_o
 );
 
     // -------------------------------------------------------------------
@@ -88,7 +94,18 @@ module excore_mmio #(
     localparam logic [7:0] OFF_CONSOLE_TX = 8'hF0;
 
     logic [7:0] off;
-    assign off = cpu_addr_i[7:0];
+    logic [11:0] off12;
+    logic        page0;
+    assign off   = cpu_addr_i[7:0];
+    assign off12 = cpu_addr_i[11:0];
+    assign page0 = (cpu_addr_i[11:8] == 4'h0);
+    localparam logic [11:0] OFF_FW_CAPS       = 12'h100;
+    localparam logic [11:0] OFF_FW_CAPS_VALID = 12'h104;
+    localparam logic [11:0] OFF_MB_ACCEL_CFG  = 12'h108;
+    logic [31:0] fw_caps_r;
+    logic        fw_caps_valid_r;
+    assign fw_caps_o       = fw_caps_r;
+    assign fw_caps_valid_o = fw_caps_valid_r;
 
     // -------------------------------------------------------------------
     // Result staging registers (written by firmware SW before RES_GO).
@@ -118,23 +135,20 @@ module excore_mmio #(
     logic [31:0]  sp_addr_r;
     logic [127:0] sp_data_r;   // staging window for SP_DATA0..3
     logic         sp_busy_r;
-    logic         sp_req_sent_r;  // req_o must pulse exactly one cycle —
-                                   // pycore_mem_bank samples req_i on every
-                                   // edge and acks unconditionally one cycle
-                                   // later, so holding req_o high across
-                                   // multiple cycles would issue duplicate
-                                   // transactions (mirrors pycore_mem_stage's
-                                   // req_sent_r discipline for PTR ops).
+    // Held until the slave accepts (sp_ready_i). A one-cycle pulse is lost
+    // when the L2 xbar is busy. Dropping req the cycle after ready keeps a
+    // mem_bank (ready tied 1, ack one cycle later) from seeing a second beat.
+    logic         sp_accepted_r;
     logic         sp_fault_sticky_r;
     logic         sp_pending_we_r;
 
     logic sp_read_go_w, sp_write_go_w;
     // A write of SP_CTRL from the CPU with bit0/bit1 set is the strobe;
     // decoded combinationally from the current bus cycle.
-    assign sp_read_go_w  = cpu_req_i && cpu_we_i && (off == OFF_SP_CTRL) && cpu_wdata_i[0];
-    assign sp_write_go_w = cpu_req_i && cpu_we_i && (off == OFF_SP_CTRL) && cpu_wdata_i[1];
+    assign sp_read_go_w  = cpu_req_i && cpu_we_i && page0 && (off == OFF_SP_CTRL) && cpu_wdata_i[0];
+    assign sp_write_go_w = cpu_req_i && cpu_we_i && page0 && (off == OFF_SP_CTRL) && cpu_wdata_i[1];
 
-    assign sp_req_o   = sp_busy_r && !sp_req_sent_r;
+    assign sp_req_o   = sp_busy_r && !sp_accepted_r;
     assign sp_we_o    = sp_pending_we_r;
     assign sp_addr_o  = sp_addr_r;
     assign sp_wdata_o = sp_data_r;
@@ -142,18 +156,20 @@ module excore_mmio #(
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
             sp_busy_r         <= 1'b0;
-            sp_req_sent_r     <= 1'b0;
+            sp_accepted_r     <= 1'b0;
             sp_pending_we_r   <= 1'b0;
             sp_fault_sticky_r <= 1'b0;
             sp_addr_r         <= 32'h0;
+            fw_caps_r         <= 32'h0;
+            fw_caps_valid_r   <= 1'b0;
         end else begin
             if (sp_busy_r) begin
-                if (sp_req_sent_r && sp_ack_i) begin
+                if (sp_accepted_r && sp_ack_i) begin
                     sp_busy_r         <= 1'b0;
-                    sp_req_sent_r     <= 1'b0;
+                    sp_accepted_r     <= 1'b0;
                     sp_fault_sticky_r <= sp_fault_i;
-                end else if (!sp_req_sent_r) begin
-                    sp_req_sent_r <= 1'b1;
+                end else if (!sp_accepted_r && sp_req_o && sp_ready_i) begin
+                    sp_accepted_r <= 1'b1;
                 end
             end else if (sp_read_go_w || sp_write_go_w) begin
                 sp_busy_r         <= 1'b1;
@@ -166,7 +182,7 @@ module excore_mmio #(
     // SP_DATA capture on a completed read; data staging for writes is
     // updated by ordinary register writes below (SP_DATA0..3).
     logic sp_read_capture;
-    assign sp_read_capture = sp_busy_r && sp_req_sent_r && sp_ack_i && !sp_pending_we_r;
+    assign sp_read_capture = sp_busy_r && sp_accepted_r && sp_ack_i && !sp_pending_we_r;
 
     // -------------------------------------------------------------------
     // Register writes (address decode).
@@ -193,7 +209,13 @@ module excore_mmio #(
                 result_accepted_r <= 1'b0;
             end
 
-            if (cpu_req_i && cpu_we_i) begin
+            if (cpu_req_i && cpu_we_i && !page0) begin
+                if (off12 == OFF_FW_CAPS) begin
+                    fw_caps_r <= cpu_wdata_i;
+                end else if (off12 == OFF_FW_CAPS_VALID) begin
+                    fw_caps_valid_r <= cpu_wdata_i[0];
+                end
+            end else if (cpu_req_i && cpu_we_i && page0) begin
                 unique case (off)
                     OFF_RES_CODE: begin
                         res_code_r       <= cpu_wdata_i[3:0];
@@ -242,7 +264,13 @@ module excore_mmio #(
     always_comb begin
         rdata_comb = 32'h0;
 
-        if (off == OFF_MB_STATUS) begin
+        if (!page0 && (off12 == OFF_FW_CAPS)) begin
+            rdata_comb = fw_caps_r;
+        end else if (!page0 && (off12 == OFF_FW_CAPS_VALID)) begin
+            rdata_comb = {31'b0, fw_caps_valid_r};
+        end else if (!page0 && (off12 == OFF_MB_ACCEL_CFG)) begin
+            rdata_comb = {16'b0, mb_accel_cfg_i};
+        end else if (page0 && (off == OFF_MB_STATUS)) begin
             rdata_comb = {30'b0, result_accepted_r, mb_trap_pending_i};
         end else if (off == OFF_MB_TRAP_CODE) begin
             rdata_comb = {27'b0, mb_trap_code_i};

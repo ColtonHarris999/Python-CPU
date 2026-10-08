@@ -54,6 +54,7 @@ module pycore_mem_xbar #(
     input  logic [ADDR_WIDTH-1:0]   excore_addr_i,
     input  logic [DMEM_DATA_W-1:0]  excore_wdata_i,
     output logic                    excore_ack_o,
+    output logic                    excore_ready_o,
     output logic [DMEM_DATA_W-1:0]  excore_rdata_o,
     output logic                    excore_fault_o,
 
@@ -105,7 +106,11 @@ module pycore_mem_xbar #(
     assign pmode     = pmode_r || (idle_take && dmem_req_i && dmem_pipe_i);
     assign pipe_take = pmode && dmem_req_i && dmem_pipe_i && l2_gnt_i;
     assign take_dmem   = idle_take && dmem_req_i && !dmem_pipe_i;
-    assign take_excore = idle_take && !dmem_req_i && excore_req_i;
+    // Valid/ready: ready while an excore request would be captured this
+    // cycle. The master holds req until it sees ready, then drops it, so a
+    // one-cycle pulse is not lost when the xbar is busy.
+    assign excore_ready_o = idle_take && !dmem_req_i;
+    assign take_excore = excore_ready_o && excore_req_i;
     assign take_imem   = idle_take && !dmem_req_i && !excore_req_i && imem_req_i;
     assign imem_uaddr = ADDR_WIDTH'(CODE_BASE) + imem_addr_i;
     assign imem_hi    = imem_uaddr[3];

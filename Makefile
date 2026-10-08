@@ -97,8 +97,10 @@ PYCORE_MEM_SRCS := \
 	pycore/rtl/pycore_mem_xbar.sv
 
 # ---- excore (Phase B: standalone excore, no pycore integration yet) -------
-EXCORE_FW_SRC ?= excore/fw/list_grow.s
-EXCORE_FW_HEX ?= $(BUILD_DIR)/excore_fw/list_grow.hex
+EXCORE_FW_SRC ?= excore/fw/full.s
+EXCORE_FW_HEX ?= $(BUILD_DIR)/excore_fw/full.hex
+EXCORE_FW_MIN_SRC ?= excore/fw/min.s
+EXCORE_FW_MIN_HEX ?= $(BUILD_DIR)/excore_fw/min.hex
 
 # Vendored singlecore RV32 sources are pulled in via `include from
 # excore_cpu.sv; every Verilator invoke that builds PYCORE_RTL_SRCS /
@@ -742,11 +744,15 @@ pycore-excore-extend-disabled: pycore-excore-integration-fixtures
 
 # excore-fw: assemble excore firmware as a build step. Generated hex is
 # never committed (see excore/tools/asm_rv32.py) — no external toolchain.
-$(EXCORE_FW_HEX): $(EXCORE_FW_SRC) excore/tools/asm_rv32.py
+$(EXCORE_FW_HEX): $(EXCORE_FW_SRC) excore/fw/list_grow.s excore/tools/asm_rv32.py
 	mkdir -p $(dir $@)
 	$(PYTHON3) excore/tools/asm_rv32.py $(EXCORE_FW_SRC) -o $@
 
-excore-fw: $(EXCORE_FW_HEX)
+$(EXCORE_FW_MIN_HEX): $(EXCORE_FW_MIN_SRC) excore/tools/asm_rv32.py
+	mkdir -p $(dir $@)
+	$(PYTHON3) excore/tools/asm_rv32.py $(EXCORE_FW_MIN_SRC) -o $@
+
+excore-fw: $(EXCORE_FW_HEX) $(EXCORE_FW_MIN_HEX)
 
 excore-asm-tests:
 	$(PYTHON3) -m unittest discover -s excore/tests -p "test_*.py"

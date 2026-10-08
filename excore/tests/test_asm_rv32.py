@@ -164,6 +164,16 @@ class TestDirectivesAndSymbols(unittest.TestCase):
         with self.assertRaises(asm.AsmError):
             asm.assemble("frobnicate x1, x2, x3\n")
 
+    def test_forward_li_keeps_later_label(self) -> None:
+        # A18: pass 1 used to reserve 2 words for a forward `li` and pass 2
+        # emitted 1, so the label after it moved.
+        src = "li x1, later\nlater:\nnop\n"
+        words = asm.assemble(src)
+        self.assertEqual(len(words), 2)
+        # addi x1, x0, 4  — later is at address 4
+        self.assertEqual(words[0], 0x00400093)
+        self.assertEqual(words[1], 0x00000013)
+
 
 class TestEndToEndProgram(unittest.TestCase):
     def test_loop_program_assembles_and_encodes_expected_word_count(self) -> None:

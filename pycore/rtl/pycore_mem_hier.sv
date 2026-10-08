@@ -74,6 +74,7 @@ module pycore_mem_hier #(
     input  logic [ADDR_WIDTH-1:0]   excore_addr_i,
     input  logic [DMEM_DATA_W-1:0]  excore_wdata_i,
     output logic                    excore_ack_o,
+    output logic                    excore_ready_o,
     output logic [DMEM_DATA_W-1:0]  excore_rdata_o,
     output logic                    excore_fault_o,
 
@@ -128,14 +129,31 @@ module pycore_mem_hier #(
     typedef enum logic [2:0] {
         SQ_IDLE,
         SQ_FLUSH_IDLE,
+        SQ_FLUSH_ARM,
         SQ_FLUSH_WAIT,
         SQ_INV_IDLE,
+        SQ_INV_ARM,
         SQ_INV_WAIT
     } seq_e;
     seq_e seq_r;
     logic flush_pend_r;
     logic inv_pend_r;
+    logic flush_hold_r, inv_hold_r;
     logic flush_done_r;
+    logic l1d_cpu_req, l1d_cpu_ack, l1d_cpu_fault;
+    logic code_wr_c, code_fault_r;
+    logic block_new;
+    // R10: a data-path store into the code region faults. The IO window
+    // sits above that region and is decoded separately (P1).
+    assign code_wr_c = dmem_req_i && dmem_we_i &&
+        (dmem_addr_i >= ADDR_WIDTH'(PYCORE_CODE_ADDR_BASE)) &&
+        (dmem_addr_i < ADDR_WIDTH'(PYCORE_IO_BASE));
+    // Block new L1D accepts from the moment a flush or invalidate is
+    // requested until it finishes, so the level is sampled in ST_IDLE.
+    assign block_new = (seq_r != SQ_IDLE);
+    assign l1d_cpu_req = dmem_req_i && !block_new && !code_wr_c;
+    assign dmem_ack_o = code_fault_r || l1d_cpu_ack;
+    assign dmem_fault_o = code_fault_r || l1d_cpu_fault;
     logic inv_done_r;
 
     assign l1d_idle_o   = l1d_idle;
@@ -229,23 +247,23 @@ module pycore_mem_hier #(
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
         .cache_en_i(cache_en_i),
-        .req_i(dmem_req_i),
+        .req_i(l1d_cpu_req),
         .we_i(dmem_we_i),
         .wstrb_i(dmem_wstrb_i),
         .addr_i(dmem_addr_i),
         .wdata_i(dmem_wdata_i),
         .line_i(dmem_line_i),
         .wline_i(dmem_wline_i),
-        .ack_o(dmem_ack_o),
+        .ack_o(l1d_cpu_ack),
         .rdata_o(dmem_rdata_o),
-        .fault_o(dmem_fault_o),
+        .fault_o(l1d_cpu_fault),
         .rdata_line_o(dmem_rdata_line_o),
         .pipe_i(1'b0),
         /* verilator lint_off PINCONNECTEMPTY */
         .gnt_o(),
         .last_o(),
         /* verilator lint_on PINCONNECTEMPTY */
-        .nb_req_i(dmem_nb_req_i),
+        .nb_req_i(dmem_nb_req_i && !block_new),
         .nb_pf_i(dmem_nb_pf_i),
         .nb_addr_i(dmem_nb_addr_i),
         .nb_id_i(dmem_nb_id_i),
@@ -315,6 +333,7 @@ module pycore_mem_hier #(
         .excore_addr_i(excore_addr_i),
         .excore_wdata_i(excore_wdata_i),
         .excore_ack_o(excore_ack_o),
+        .excore_ready_o(excore_ready_o),
         .excore_rdata_o(excore_rdata_o),
         .excore_fault_o(excore_fault_o),
         .l2_req_o(l2_req),
@@ -342,6 +361,7 @@ module pycore_mem_hier #(
         .WRITE_BACK(1'b1),
         .ZERO_LINE_BYPASS(1'b1),
         .HIT_CYCLES(L2_HIT_CYCLES),
+        .HIT_PLUSARG(1'b1),
         .PIPE(1'b1)
     ) l2 (
         .clk_i(clk_i),
@@ -422,24 +442,30 @@ module pycore_mem_hier #(
         .fault_o(ram_fault)
     );
 
-    // Pulse flush_req_i / inv_req_i for one cycle (or hold; pending is
-    // captured). *_done_o is a one-cycle pulse when L1D reports done.
-    // Do not re-assert flush_all while the cache is scanning: a held
-    // flush_all_i on return to IDLE would restart the walk.
+    // Hold flush_all / inv_all as a level until L1D leaves IDLE (it has
+    // consumed the request), then drop the level before the walk returns
+    // to IDLE — a level still high on that edge would restart the walk.
+    // New accepts are blocked from SQ_IDLE onward (block_new).
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
-            seq_r        <= SQ_IDLE;
-            flush_pend_r <= 1'b0;
-            inv_pend_r   <= 1'b0;
-            flush_done_r <= 1'b0;
-            inv_done_r   <= 1'b0;
-            l1d_flush_all <= 1'b0;
-            l1d_inv_all   <= 1'b0;
-        end else begin
+            seq_r         <= SQ_IDLE;
+            flush_pend_r  <= 1'b0;
+            inv_pend_r    <= 1'b0;
+            flush_hold_r  <= 1'b0;
+            inv_hold_r    <= 1'b0;
             flush_done_r  <= 1'b0;
             inv_done_r    <= 1'b0;
             l1d_flush_all <= 1'b0;
             l1d_inv_all   <= 1'b0;
+            code_fault_r  <= 1'b0;
+        end else begin
+            flush_done_r  <= 1'b0;
+            inv_done_r    <= 1'b0;
+            code_fault_r  <= 1'b0;
+            l1d_flush_all <= flush_hold_r;
+            l1d_inv_all   <= inv_hold_r;
+            if (code_wr_c && !block_new)
+                code_fault_r <= 1'b1;
             if (flush_req_i)
                 flush_pend_r <= 1'b1;
             if (inv_req_i)
@@ -454,28 +480,55 @@ module pycore_mem_hier #(
                 end
                 SQ_FLUSH_IDLE: begin
                     if (l1d_idle) begin
-                        l1d_flush_all <= 1'b1;
-                        seq_r         <= SQ_FLUSH_WAIT;
+                        flush_hold_r <= 1'b1;
+                        seq_r        <= SQ_FLUSH_ARM;
+                    end
+                end
+                SQ_FLUSH_ARM: begin
+                    // Cache-off stays in IDLE and pulses flush_done. Cache-on
+                    // leaves IDLE for the walk; drop the level before it
+                    // returns, or the walk would restart.
+                    if (l1d_flush_done) begin
+                        flush_hold_r <= 1'b0;
+                        flush_pend_r <= 1'b0;
+                        flush_done_r <= 1'b1;
+                        seq_r        <= SQ_IDLE;
+                    end else if (!l1d_idle) begin
+                        flush_hold_r <= 1'b0;
+                        seq_r        <= SQ_FLUSH_WAIT;
                     end
                 end
                 SQ_FLUSH_WAIT: begin
                     if (l1d_flush_done) begin
                         flush_pend_r <= 1'b0;
+                        flush_hold_r <= 1'b0;
                         flush_done_r <= 1'b1;
                         seq_r        <= SQ_IDLE;
                     end
                 end
                 SQ_INV_IDLE: begin
                     if (l1d_idle) begin
-                        l1d_inv_all <= 1'b1;
-                        seq_r       <= SQ_INV_WAIT;
+                        inv_hold_r <= 1'b1;
+                        seq_r      <= SQ_INV_ARM;
+                    end
+                end
+                SQ_INV_ARM: begin
+                    if (l1d_inv_done) begin
+                        inv_hold_r   <= 1'b0;
+                        inv_pend_r   <= 1'b0;
+                        inv_done_r   <= 1'b1;
+                        seq_r        <= SQ_IDLE;
+                    end else if (!l1d_idle) begin
+                        inv_hold_r <= 1'b0;
+                        seq_r      <= SQ_INV_WAIT;
                     end
                 end
                 SQ_INV_WAIT: begin
                     if (l1d_inv_done) begin
-                        inv_pend_r <= 1'b0;
-                        inv_done_r <= 1'b1;
-                        seq_r      <= SQ_IDLE;
+                        inv_pend_r   <= 1'b0;
+                        inv_hold_r   <= 1'b0;
+                        inv_done_r   <= 1'b1;
+                        seq_r        <= SQ_IDLE;
                     end
                 end
                 default: seq_r <= SQ_IDLE;

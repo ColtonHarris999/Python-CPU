@@ -57,7 +57,7 @@ DEFAULT_MAX_CYCLES = 200_000
 ENSURE_SIM = REPO_ROOT / "tools" / "ensure_sim.py"
 SIM_IMG_BIN = REPO_ROOT / "build" / "sim_img" / "Vtb_container"
 SIM_TWOCORE_BIN = REPO_ROOT / "build" / "sim_img_twocore" / "Vtb_container"
-EXCORE_FW_HEX = REPO_ROOT / "build" / "excore_fw" / "list_grow.hex"
+EXCORE_FW_HEX = REPO_ROOT / "build" / "excore_fw" / "full.hex"
 
 EXECUTIVE_SUMMARY = """\
 PyCore runs a CPython 3.14 bytecode subset on a SystemVerilog hart, with an

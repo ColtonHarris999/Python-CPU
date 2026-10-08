@@ -841,8 +841,7 @@
                                                     {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 7'd67;
                                             end
-                                        end else if (EXCORE_EN &&
-                                            pycore_trap_recoverable(PY_TRAP_BUILTIN_CALL)) begin
+                                        end else if (pycore_route_excore(PY_RCLASS_BUILTIN, accel_cfg_r, EXCORE_PRESENT, PY_TRAP_BUILTIN_CALL)) begin
                                             // E0=builtin handle, E1=bound_self,
                                             // E2=arg0, E3=arg1 (if present)
                                             trap_marshal_pending_r     <= 1'b1;

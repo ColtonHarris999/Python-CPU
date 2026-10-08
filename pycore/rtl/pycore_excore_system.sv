@@ -65,7 +65,10 @@ module pycore_excore_system #(
     logic [ADDR_WIDTH-1:0]  core_dmem_nb_addr;
 
     // ---- excore's slot-port master (into L2, not L1D) --------------------
-    logic          sp_req, sp_we, sp_ack, sp_fault;
+    logic          sp_req, sp_we, sp_ack, sp_fault, excore_ready;
+    logic          fw_caps_valid;
+    logic [31:0]   fw_caps;
+    logic [15:0]   accel_cfg_w;
     logic [31:0]   sp_addr;
     logic [127:0]  sp_wdata, sp_rdata;
 
@@ -133,7 +136,7 @@ module pycore_excore_system #(
         .HEAP_INIT_PTR(HEAP_INIT_PTR),
         .BOOT_EN(BOOT_EN),
         .CONTAINER_CALL_SPIKE_EN(CONTAINER_CALL_SPIKE_EN),
-        .EXCORE_EN(EXCORE_EN),
+        .EXCORE_PRESENT(EXCORE_EN),
         .MAX_TRAP_ENTRIES(MAX_TRAP_ENTRIES),
         .MAX_RES_ENTRIES(MAX_RES_ENTRIES)
     ) core (
@@ -192,7 +195,11 @@ module pycore_excore_system #(
         .gic_hit_count_o(),
         .gic_miss_count_o(),
         .gic_fill_count_o(),
-        .gic_flush_count_o()
+        .gic_flush_count_o(),
+        .fw_caps_valid_i(fw_caps_valid),
+        .fw_caps_i(fw_caps),
+        .accel_cfg_o(accel_cfg_w),
+        .console_base_o()
     );
 
     // =========================================================================
@@ -245,9 +252,13 @@ module pycore_excore_system #(
         .sp_we_o(sp_we),
         .sp_addr_o(sp_addr),
         .sp_wdata_o(sp_wdata),
+        .sp_ready_i(excore_ready && (mem_owner_r == OWNER_EXCORE)),
         .sp_ack_i(sp_ack),
         .sp_rdata_i(sp_rdata),
-        .sp_fault_i(sp_fault)
+        .sp_fault_i(sp_fault),
+        .mb_accel_cfg_i(accel_cfg_w),
+        .fw_caps_valid_o(fw_caps_valid),
+        .fw_caps_o(fw_caps)
     );
 
     trap_mailbox #(
@@ -446,6 +457,7 @@ module pycore_excore_system #(
         .excore_ack_o(sp_ack),
         .excore_rdata_o(sp_rdata),
         .excore_fault_o(sp_fault),
+        .excore_ready_o(excore_ready),
         .flush_req_i(l1d_flush_req),
         .inv_req_i(l1d_inv_req),
         .flush_done_o(l1d_flush_done),

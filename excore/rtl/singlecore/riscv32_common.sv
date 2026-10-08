@@ -232,16 +232,16 @@ typedef enum logic [2:0] {
     ,bgeu = 7
 }   branch_ops;
 
-function automatic bool take_branch(ext_operand alu_result, funct3 f3); begin
-    logic is_zero = (alu_result[31:0] == 32'd0) ? true : false;
-
+// Compare the register operands directly. Subtracting and testing the sign
+// bit is wrong when the subtraction overflows (BLT/BGE, A17).
+function automatic bool take_branch(word rs1, word rs2, funct3 f3); begin
     case (f3)
-        beq:    return is_zero;
-        bne:    return !is_zero;
-        blt:    return alu_result[`word_size - 1];  // (in1 < in2) ? true : false;
-        bge:    return !alu_result[`word_size - 1]; //(in1 >= in2) ? true : false;
-        bltu:   return alu_result[`word_size];  // (pos_in1 < pos_in2) ? true : false;
-        bgeu:   return !alu_result[`word_size]; //(pos_in1 >= pos_in2) ? true : false;
+        beq:    return rs1 == rs2;
+        bne:    return rs1 != rs2;
+        blt:    return $signed(rs1) < $signed(rs2);
+        bge:    return $signed(rs1) >= $signed(rs2);
+        bltu:   return rs1 < rs2;
+        bgeu:   return rs1 >= rs2;
         default:
             return false;
     endcase
@@ -250,6 +250,7 @@ endfunction
 
 function automatic word_address compute_next_pc(
      ext_operand    rd1
+    ,ext_operand    rd2
     ,ext_operand    alu_result
     ,word           imm
     ,word_address   pc
@@ -264,12 +265,30 @@ function automatic word_address compute_next_pc(
             in2 = imm[`word_size-1:0];
         end
         q_branch:
-            if (take_branch(alu_result, f3))
+            if (take_branch(rd1[`word_size-1:0], rd2[`word_size-1:0], f3))
                 in2 = imm[`word_size-1:0];
         default: begin end
     endcase
     return in1 + in2;
 end
+endfunction
+
+// Unknown opcodes (including SYSTEM) and a non M/I funct7 on OP are illegal.
+function automatic logic instr_illegal(opcode_q op_q, funct3 f3, funct7 f7);
+    if (op_q == q_unknown)
+        return 1'b1;
+    if (op_q == q_op) begin
+        if (f7 == f7_ext_mul)
+            return 1'b0;
+        if ((f3 == f3_addsub) || (f3 == f3_sral))
+            return !((f7 == f7_add) || (f7 == f7_sub));
+        return (f7 != f7_add);
+    end
+    if (op_q == q_op_imm) begin
+        if ((f3 == f3_sll) || (f3 == f3_sral))
+            return !((f7 == f7_add) || ((f3 == f3_sral) && (f7 == f7_sub)));
+    end
+    return 1'b0;
 endfunction
 
 function automatic ext_operand execute(
@@ -295,7 +314,43 @@ function automatic ext_operand execute(
         q_branch:           result = { 1'b0, operand1[`word_size-1:0] } - { 1'b0, operand2[`word_size-1:0] };
         q_load, q_store, q_amo:    result = operand1 + operand2;
         q_op, q_op_imm: begin
-            case (f3)
+            if ((op_q == q_op) && (f7 == f7_ext_mul)) begin
+                logic signed [31:0] sa, sb;
+                logic [31:0] ua, ub;
+                logic signed [63:0] sprod, suprod;
+                logic [63:0] uprod;
+                sa = operand1[31:0];
+                sb = operand2[31:0];
+                ua = operand1[31:0];
+                ub = operand2[31:0];
+                sprod  = sa * sb;
+                uprod  = ua * ub;
+                suprod = sa * $signed({1'b0, ub});
+                case (f3)
+                    3'd0: result = {1'b0, sprod[31:0]};
+                    3'd1: result = {1'b0, sprod[63:32]};
+                    3'd2: result = {1'b0, suprod[63:32]};
+                    3'd3: result = {1'b0, uprod[63:32]};
+                    3'd4: begin
+                        if (ub == 32'd0)
+                            result = {1'b0, 32'hFFFF_FFFF};
+                        else if ((ua == 32'h8000_0000) && (ub == 32'hFFFF_FFFF))
+                            result = {1'b0, 32'h8000_0000};
+                        else
+                            result = {1'b0, sa / sb};
+                    end
+                    3'd5: result = {1'b0, (ub == 32'd0) ? 32'hFFFF_FFFF : (ua / ub)};
+                    3'd6: begin
+                        if (ub == 32'd0)
+                            result = {1'b0, ua};
+                        else if ((ua == 32'h8000_0000) && (ub == 32'hFFFF_FFFF))
+                            result = {1'b0, 32'h0};
+                        else
+                            result = {1'b0, sa % sb};
+                    end
+                    default: result = {1'b0, (ub == 32'd0) ? ua : (ua % ub)};
+                endcase
+            end else case (f3)
                 f3_addsub:
                     if (op_q == q_op_imm)
                         result = operand1 + operand2;

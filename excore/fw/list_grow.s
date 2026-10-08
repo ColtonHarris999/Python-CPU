@@ -73,6 +73,12 @@
     .equ SP_DATA2,       0xE8
     .equ SP_DATA3,       0xEC
     .equ CONSOLE_TX,     0xF0
+    # Page 1 (above the 8-bit mailbox). Firmware writes these at reset.
+    .equ FW_CAPS,        0x100
+    .equ FW_CAPS_VALID,  0x104
+    .equ MB_ACCEL_CFG,   0x108
+    # full variant: EMULATE|CA|STRACC, ABI 1, variant id 2.
+    .equ FW_CAPS_FULL,   0x00020107
 
     .equ SP_CTRL_READ,   1
     .equ SP_CTRL_WRITE,  2
@@ -175,9 +181,25 @@
     .equ SCR_C_SLOTS,    0xB8
     .equ SCR_C_HEAP,     0xBC
     .equ SCR_ZIDX,       0xC0
+    # keys_rich_eq temps. Must not alias SET_UPDATE's loop bound (A1).
+    .equ SCR_KREQ0,      0xC4
+    .equ SCR_KREQ1,      0xC8
+    # SET_UPDATE loop state. Must not alias float_to_int (A15).
+    .equ SCR_SU_LEN,     0xCC
+    .equ SCR_SU_SAV,     0xD0
+    .equ SCR_SU_IDX,     0xD4
+    .equ SCR_SU_BUF,     0xD8
+    .equ SCR_LSTR_N,     0xDC
+    .equ SCR_LSTR_A,     0xE0
+    .equ SCR_LSTR_B,     0xE4
+    .equ SCR_LSTR_I,     0xE8
 
 reset:
     li   s11, MMIO_BASE            # s11: persistent MMIO base, never clobbered
+    li   t0, FW_CAPS_FULL
+    sw   t0, FW_CAPS(s11)
+    li   t0, 1
+    sw   t0, FW_CAPS_VALID(s11)
 
 wait_trap:
     lw   t0, MB_STATUS(s11)
@@ -358,6 +380,9 @@ poll_copy_tag_rd:
 
     sw   t3, SP_ADDR(s11)
     sw   t4, SP_DATA0(s11)
+    sw   x0, SP_DATA1(s11)
+    sw   x0, SP_DATA2(s11)
+    sw   x0, SP_DATA3(s11)
     li   t0, SP_CTRL_WRITE
     sw   t0, SP_CTRL(s11)
 poll_copy_tag_wr:
@@ -392,8 +417,14 @@ poll_append_val:
 
     addi t3, t3, 16
     lw   t4, MB_E1_TAG(s11)
+    andi t4, t4, 15
     sw   t3, SP_ADDR(s11)
     sw   t4, SP_DATA0(s11)
+    # A16: the value-slot write left DATA1..3 live. The tag slot's upper
+    # bits must be zero or the GC tracer follows garbage.
+    sw   x0, SP_DATA1(s11)
+    sw   x0, SP_DATA2(s11)
+    sw   x0, SP_DATA3(s11)
     li   t0, SP_CTRL_WRITE
     sw   t0, SP_CTRL(s11)
 poll_append_tag:
@@ -1007,6 +1038,10 @@ sp_write_poll:
     lw   t0, SP_STATUS(s11)
     andi t1, t0, SP_STATUS_BUSY
     bne  t1, x0, sp_write_poll
+    andi t1, t0, SP_STATUS_FAULT
+    beq  t1, x0, sp_write_ok
+    j    fatal_mem
+sp_write_ok:
     jalr x0, ra, 0
 
 load_e1e2_to_scratch:
@@ -1556,9 +1591,10 @@ hash_sstr:
     xor  a0, a0, t0
     jalr x0, ra, 0
 hash_lstr:
-    lw   a0, SCR_KVAL0(x0)
-    lw   t0, SCR_KVAL2(x0)
-    xor  a0, a0, t0
+    # LONG_STR hash is the cached content hash in value[95:64] (VAL2),
+    # the same word pycore_stracc_hash uses. addr XOR hash misses after
+    # a rehash (A2).
+    lw   a0, SCR_KVAL2(x0)
     jalr x0, ra, 0
 hash_float:
     sw   ra, SCR_RA3(x0)
@@ -1586,14 +1622,19 @@ keys_rich_eq:
     sw   ra, SCR_A0(x0)
     lw   a2, SCR_KTAG(x0)
     lw   a3, SCR_SKTAG(x0)
+    li   t0, TAG_LONG_STR
+    bne  a2, t0, kreq_num
+    bne  a3, t0, kreq_num
+    j    kreq_lstr
+kreq_num:
     mv   a4, a2
     lw   t3, SCR_KVAL0(x0)
     lw   t4, SCR_KVAL1(x0)
     jal  ra, norm_numeric
     beq  a0, x0, kreq_bits
     sw   a1, SCR_A1(x0)
-    sw   t3, SCR_TMP_L0(x0)
-    sw   t4, SCR_TMP_L1(x0)
+    sw   t3, SCR_KREQ0(x0)
+    sw   t4, SCR_KREQ1(x0)
     mv   a4, a3
     lw   t3, SCR_SKVAL0(x0)
     lw   t4, SCR_SKVAL1(x0)
@@ -1602,8 +1643,8 @@ keys_rich_eq:
     lw   t0, SCR_A1(x0)
     bne  t0, x0, kreq_fb
     bne  a1, x0, kreq_fb
-    lw   t5, SCR_TMP_L0(x0)
-    lw   t6, SCR_TMP_L1(x0)
+    lw   t5, SCR_KREQ0(x0)
+    lw   t6, SCR_KREQ1(x0)
     bne  t3, t5, kreq_no
     bne  t4, t6, kreq_no
     li   a0, 1
@@ -1631,10 +1672,72 @@ kreq_bits:
     li   a0, 1
     lw   ra, SCR_A0(x0)
     jalr x0, ra, 0
+kreq_yes:
+    li   a0, 1
+    lw   ra, SCR_A0(x0)
+    jalr x0, ra, 0
 kreq_no:
     li   a0, 0
     lw   ra, SCR_A0(x0)
     jalr x0, ra, 0
+
+# Both keys are LONG_STR. Address match is tier 1. Otherwise compare
+# nchars, content hash, nbytes+kind, then the payload bytes (A3).
+kreq_lstr:
+    lw   t0, SCR_KVAL0(x0)
+    lw   t1, SCR_SKVAL0(x0)
+    beq  t0, t1, kreq_yes
+    lw   t0, SCR_KVAL1(x0)
+    lw   t1, SCR_SKVAL1(x0)
+    bne  t0, t1, kreq_no
+    lw   t0, SCR_KVAL2(x0)
+    lw   t1, SCR_SKVAL2(x0)
+    bne  t0, t1, kreq_no
+    lw   t0, SCR_KVAL3(x0)
+    lw   t1, SCR_SKVAL3(x0)
+    li   t2, 0x03FFFFFF
+    and  t0, t0, t2
+    and  t1, t1, t2
+    bne  t0, t1, kreq_no
+    # nbytes is VAL3[23:0]. Payload starts at object+16.
+    lw   t0, SCR_KVAL3(x0)
+    li   t2, 0x00FFFFFF
+    and  t0, t0, t2
+    sw   t0, SCR_LSTR_N(x0)
+    lw   t0, SCR_KVAL0(x0)
+    addi t0, t0, 16
+    sw   t0, SCR_LSTR_A(x0)
+    lw   t0, SCR_SKVAL0(x0)
+    addi t0, t0, 16
+    sw   t0, SCR_LSTR_B(x0)
+    sw   x0, SCR_LSTR_I(x0)
+kreq_lstr_loop:
+    lw   t0, SCR_LSTR_I(x0)
+    lw   t1, SCR_LSTR_N(x0)
+    bgeu t0, t1, kreq_yes
+    lw   a0, SCR_LSTR_A(x0)
+    add  a0, a0, t0
+    jal  ra, sp_read
+    lw   t3, SP_DATA0(s11)
+    lw   t4, SP_DATA1(s11)
+    lw   t5, SP_DATA2(s11)
+    lw   t6, SP_DATA3(s11)
+    lw   a0, SCR_LSTR_B(x0)
+    lw   t0, SCR_LSTR_I(x0)
+    add  a0, a0, t0
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    bne  t0, t3, kreq_no
+    lw   t0, SP_DATA1(s11)
+    bne  t0, t4, kreq_no
+    lw   t0, SP_DATA2(s11)
+    bne  t0, t5, kreq_no
+    lw   t0, SP_DATA3(s11)
+    bne  t0, t6, kreq_no
+    lw   t0, SCR_LSTR_I(x0)
+    addi t0, t0, 16
+    sw   t0, SCR_LSTR_I(x0)
+    j    kreq_lstr_loop
 
 norm_numeric:
     li   t0, TAG_INT
@@ -1832,7 +1935,7 @@ su_src_list:
     mv   a0, s10
     jal  ra, sp_read
     lw   t0, SP_DATA0(s11)         # src_len (dense count)
-    sw   t0, SCR_TMP_L0(x0)
+    sw   t0, SCR_SU_LEN(x0)
     addi a0, s10, 16
     jal  ra, sp_read
     lw   s8, SP_DATA0(s11)
@@ -1841,7 +1944,7 @@ su_src_list:
 
 su_src_tuple:
     lw   t0, MB_E1_VAL2(s11)
-    sw   t0, SCR_TMP_L0(x0)
+    sw   t0, SCR_SU_LEN(x0)
     mv   s8, s10
     li   s9, 0
     j    su_maybe_grow
@@ -1850,15 +1953,15 @@ su_src_set:
     mv   a0, s10
     jal  ra, sp_read
     lw   t0, SP_DATA0(s11)         # src used (upper bound on new elems)
-    sw   t0, SCR_TMP_L1(x0)
+    sw   t0, SCR_SU_SAV(x0)
     lw   t1, SP_DATA2(s11)         # src slots (walk count)
-    sw   t1, SCR_TMP_L0(x0)
+    sw   t1, SCR_SU_LEN(x0)
     addi a0, s10, 16
     jal  ra, sp_read
     lw   s8, SP_DATA0(s11)
     li   s9, 1
     # For grow sizing use src used, not slots.
-    lw   t0, SCR_TMP_L1(x0)
+    lw   t0, SCR_SU_SAV(x0)
     # Fall through with t0=src_used for need; walk count stays TMP_L0.
     j    su_maybe_grow_set
 
@@ -1869,20 +1972,20 @@ su_src_dict:
     mv   a0, s10
     jal  ra, sp_read
     lw   t0, SP_DATA0(s11)         # used(dict) → grow sizing upper bound
-    sw   t0, SCR_TMP_L1(x0)
+    sw   t0, SCR_SU_SAV(x0)
     lw   t1, SP_DATA2(s11)         # slots(dict) → walk count
-    sw   t1, SCR_TMP_L0(x0)
+    sw   t1, SCR_SU_LEN(x0)
     addi a0, s10, 32              # dict pointers: table_ptr at word0
     jal  ra, sp_read
     lw   s8, SP_DATA0(s11)
     li   s9, 2
-    lw   t0, SCR_TMP_L1(x0)
+    lw   t0, SCR_SU_SAV(x0)
     j    su_maybe_grow_set
 
 su_maybe_grow:
-    lw   t0, SCR_TMP_L0(x0)        # src_len
+    lw   t0, SCR_SU_LEN(x0)        # src_len
 su_maybe_grow_set:
-    sw   t0, SCR_FTI1(x0)          # save src_count across calls
+    sw   t0, SCR_SU_BUF(x0)          # save src_count across calls
     # need_used_upper = used + src_count (duplicates shrink actual used)
     add  t1, s2, t0
     mv   a0, t1
@@ -1890,8 +1993,8 @@ su_maybe_grow_set:
     jal  ra, dict_needs_grow
     beq  a0, x0, su_loop_init
     # Force grow: set s2 temporarily to need for sizing, then restore.
-    sw   s2, SCR_FTI0(x0)
-    lw   t0, SCR_FTI1(x0)
+    sw   s2, SCR_SU_IDX(x0)
+    lw   t0, SCR_SU_BUF(x0)
     add  s2, s2, t0
     sw   x0, SCR_KVAL0(x0)
     sw   x0, SCR_KVAL1(x0)
@@ -1899,13 +2002,13 @@ su_maybe_grow_set:
     sw   x0, SCR_KVAL3(x0)
     sw   x0, SCR_KTAG(x0)
     jal  ra, set_grow_rehash_keep
-    lw   s2, SCR_FTI0(x0)
+    lw   s2, SCR_SU_IDX(x0)
 
 su_loop_init:
     li   s6, 0
     li   s4, 0                     # no new heap unless we grew (s4 set in grow)
 su_loop:
-    lw   t0, SCR_TMP_L0(x0)
+    lw   t0, SCR_SU_LEN(x0)
     beq  s6, t0, su_done
     li   t1, 2
     beq  s9, t1, su_load_dict
@@ -1974,11 +2077,11 @@ su_load_dict:
     sw   a1, SCR_KTAG(x0)
 su_insert:
     # set_probe clobbers s6 (start idx) and s8 (probe count).
-    sw   s6, SCR_FTI0(x0)
-    sw   s8, SCR_FTI1(x0)
+    sw   s6, SCR_SU_IDX(x0)
+    sw   s8, SCR_SU_BUF(x0)
     jal  ra, set_probe
-    lw   s6, SCR_FTI0(x0)
-    lw   s8, SCR_FTI1(x0)
+    lw   s6, SCR_SU_IDX(x0)
+    lw   s8, SCR_SU_BUF(x0)
     lw   t0, SCR_FOUND(x0)
     bne  t0, x0, su_next
     lw   a0, SCR_IDX(x0)

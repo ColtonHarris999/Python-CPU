@@ -39,6 +39,8 @@ module pycore_cache #(
     // Forward it as one full-line request without displacing an L1 line.
     parameter bit    ZERO_LINE_BYPASS = 1'b0,
     parameter int    HIT_CYCLES  = 1,
+    // L2 sets this so +L2_HIT=N overrides HIT_CYCLES. Other caches ignore it.
+    parameter bit    HIT_PLUSARG = 1'b0,
     // 1: down port is a 4-beat line burst (L2 → RAM). 0: each beat is a
     // separate word request (L1D → L2, whose CPU port has no line_i).
     parameter bit    DOWN_LINE   = 1'b1,
@@ -428,8 +430,17 @@ module pycore_cache #(
     end
 
     int hit_cycles_eff;
+    int hit_plus_sim;
+    initial begin
+        hit_plus_sim = 0;
+        if (HIT_PLUSARG)
+            void'($value$plusargs("L2_HIT=%d", hit_plus_sim));
+    end
     always_comb begin
-        hit_cycles_eff = (HIT_CYCLES < 1) ? 1 : HIT_CYCLES;
+        if (hit_plus_sim > 0)
+            hit_cycles_eff = hit_plus_sim;
+        else
+            hit_cycles_eff = (HIT_CYCLES < 1) ? 1 : HIT_CYCLES;
     end
 
     always_comb begin

@@ -599,6 +599,13 @@ localparam logic [4:0] PY_TRAP_OVERFLOW = 5'd21;
 // PY_TRAP_VALUE: operand out of the operation's domain where CPython raises
 // ValueError (negative shift count). Fatal.
 localparam logic [4:0] PY_TRAP_VALUE = 5'd22;
+// Accelerator-split traps. The plan's snapshot numbered EMULATE/FALLBACK as
+// 21/22; those codes are OVERFLOW and VALUE on this tree, so the new traps
+// occupy the next free codes. EMULATE and FALLBACK are recoverable.
+// CONFIG is fatal (boot capability check).
+localparam logic [4:0] PY_TRAP_EMULATE  = 5'd23;
+localparam logic [4:0] PY_TRAP_FALLBACK = 5'd24;
+localparam logic [4:0] PY_TRAP_CONFIG   = 5'd25;
 
 // Trap taxonomy: does a given trap code represent a condition the excore can
 // service and hand control back to pycore for (Phase C), as opposed to a
@@ -614,7 +621,145 @@ function automatic logic pycore_trap_recoverable(input logic [4:0] code);
                                   (code == PY_TRAP_BUILTIN_CALL) ||
                                   (code == PY_TRAP_SLICE) ||
                                   (code == PY_TRAP_DICT_UPDATE) ||
-                                  (code == PY_TRAP_DICT_MERGE);
+                                  (code == PY_TRAP_DICT_MERGE) ||
+                                  (code == PY_TRAP_EMULATE) ||
+                                  (code == PY_TRAP_FALLBACK);
+    end
+endfunction
+
+// -------------------------------------------------------------------------
+// Accelerator routing (accelerator_split_plan.md §4.4).
+// LOCAL: the enabled unit runs the operation.
+// EXCORE: trap to the excore (legacy growth traps, or FALLBACK).
+// FATAL: no unit and no excore (CONFIG, or the historical fatal code).
+//
+// PY_CA_HW stays 0 until the container accelerator absorbs container
+// commands (P3). Until then CA=1 still means today's arms plus excore
+// growth, so a CA-class offload routes to the excore when one is present.
+// -------------------------------------------------------------------------
+typedef enum logic [1:0] {
+    PY_ROUTE_LOCAL  = 2'd0,
+    PY_ROUTE_EXCORE = 2'd1,
+    PY_ROUTE_FATAL  = 2'd2
+} pycore_route_e;
+
+typedef enum logic [2:0] {
+    PY_RCLASS_CA      = 3'd0,
+    PY_RCLASS_STRACC  = 3'd1,
+    PY_RCLASS_GC      = 3'd2,
+    PY_RCLASS_BUILTIN = 3'd3,
+    PY_RCLASS_EMULATE = 3'd4
+} pycore_route_class_e;
+
+// Flipped to 1 in P3, when the CA owns container commands.
+localparam bit PY_CA_HW = 1'b0;
+
+// ACCEL_CFG bits (§4.2). Default: CA, STRACC, CODC, GIC, CACHE; GC = 0.
+localparam int PY_ACCEL_CA_BIT     = 0;
+localparam int PY_ACCEL_STRACC_BIT = 1;
+localparam int PY_ACCEL_GC_LSB     = 2;
+localparam int PY_ACCEL_CODC_BIT   = 4;
+localparam int PY_ACCEL_GIC_BIT    = 5;
+localparam int PY_ACCEL_CACHE_BIT  = 6;
+localparam int PY_ACCEL_STRICT_BIT = 7;
+localparam logic [15:0] PY_ACCEL_CFG_DEFAULT = 16'h0073;
+localparam logic [7:0]  PY_FW_ABI            = 8'd1;
+// FW_CAPS: [0] EMULATE [1] CA fallback [2] STRACC fallback [3] soft GC
+// [15:8] ABI [31:16] variant (1 = min, 2 = full).
+localparam logic [31:0] PY_FW_CAPS_FULL = 32'h0002_0107;
+localparam logic [31:0] PY_FW_CAPS_MIN  = 32'h0001_0001;
+
+function automatic pycore_route_e pycore_route(
+    input pycore_route_class_e cls,
+    input logic [15:0]         accel_cfg,
+    input logic                excore_present
+);
+    logic [1:0] gc_mode;
+    begin
+        gc_mode = accel_cfg[PY_ACCEL_GC_LSB +: 2];
+        case (cls)
+            PY_RCLASS_CA: begin
+                if (accel_cfg[PY_ACCEL_CA_BIT] && PY_CA_HW)
+                    pycore_route = PY_ROUTE_LOCAL;
+                else if (excore_present)
+                    pycore_route = PY_ROUTE_EXCORE;
+                else
+                    pycore_route = PY_ROUTE_FATAL;
+            end
+            PY_RCLASS_STRACC: begin
+                if (accel_cfg[PY_ACCEL_STRACC_BIT])
+                    pycore_route = PY_ROUTE_LOCAL;
+                else if (excore_present)
+                    pycore_route = PY_ROUTE_EXCORE;
+                else
+                    pycore_route = PY_ROUTE_FATAL;
+            end
+            PY_RCLASS_GC: begin
+                if (gc_mode == 2'd1)
+                    pycore_route = PY_ROUTE_LOCAL;
+                else if ((gc_mode == 2'd2) && excore_present)
+                    pycore_route = PY_ROUTE_EXCORE;
+                else
+                    pycore_route = PY_ROUTE_FATAL;
+            end
+            PY_RCLASS_BUILTIN, PY_RCLASS_EMULATE: begin
+                if (excore_present)
+                    pycore_route = PY_ROUTE_EXCORE;
+                else
+                    pycore_route = PY_ROUTE_FATAL;
+            end
+            default: pycore_route = PY_ROUTE_FATAL;
+        endcase
+    end
+endfunction
+
+// Drop-in for the old `EXCORE_EN && pycore_trap_recoverable(code)` sites.
+function automatic logic pycore_route_excore(
+    input pycore_route_class_e cls,
+    input logic [15:0]         accel_cfg,
+    input logic                excore_present,
+    input logic [4:0]          code
+);
+    begin
+        pycore_route_excore = pycore_trap_recoverable(code) &&
+            (pycore_route(cls, accel_cfg, excore_present) == PY_ROUTE_EXCORE);
+    end
+endfunction
+
+// STRICT boot check (§4.3). Returns 1 when the configuration cannot run.
+function automatic logic pycore_accel_cfg_bad(
+    input logic [15:0] cfg,
+    input logic [31:0] fw_caps,
+    input logic        fw_caps_valid,
+    input logic        excore_present
+);
+    logic [1:0] gc_mode;
+    logic       strict;
+    logic       need_ex;
+    begin
+        gc_mode = cfg[PY_ACCEL_GC_LSB +: 2];
+        strict  = cfg[PY_ACCEL_STRICT_BIT];
+        need_ex = !cfg[PY_ACCEL_CA_BIT] || !cfg[PY_ACCEL_STRACC_BIT] ||
+                  (gc_mode == 2'd2);
+        pycore_accel_cfg_bad = 1'b0;
+        if (gc_mode == 2'd3)
+            pycore_accel_cfg_bad = 1'b1;
+        if (strict) begin
+            if (need_ex && !excore_present)
+                pycore_accel_cfg_bad = 1'b1;
+            if (excore_present && !fw_caps_valid)
+                pycore_accel_cfg_bad = 1'b1;
+            if (excore_present && fw_caps_valid) begin
+                if (!cfg[PY_ACCEL_CA_BIT] && !fw_caps[1])
+                    pycore_accel_cfg_bad = 1'b1;
+                if (!cfg[PY_ACCEL_STRACC_BIT] && !fw_caps[2])
+                    pycore_accel_cfg_bad = 1'b1;
+                if ((gc_mode == 2'd2) && !fw_caps[3])
+                    pycore_accel_cfg_bad = 1'b1;
+                if (fw_caps[15:8] != PY_FW_ABI)
+                    pycore_accel_cfg_bad = 1'b1;
+            end
+        end
     end
 endfunction
 
@@ -3727,6 +3872,27 @@ localparam logic [31:0] PYCORE_CODE_RAM_BYTE_BASE =
 localparam logic [31:0] PYCORE_BOOT_RECORD_ADDR = 32'h0000_03E0;
 localparam logic [31:0] PYCORE_BOOT_RECORD_BYTES = 32'd96;
 
+// Machine-configuration page (accelerator_split_plan.md §4.1). Sits in the
+// hole above the frame stack (ends 0xF09000) and below the RF spill LIFO.
+localparam logic [31:0] PYCORE_MCFG_BASE         = 32'h00F0_9000;
+localparam logic [31:0] PYCORE_MCFG_MAGIC        = 32'h4746_434D; // 'MCFG'
+localparam logic [31:0] PYCORE_MCFG_VERSION      = 32'd1;
+localparam logic [31:0] PYCORE_ACCEL_CFG_ADDR    = 32'h00F0_9010;
+localparam logic [31:0] PYCORE_CONSOLE_BASE_ADDR = 32'h00F0_9020;
+localparam logic [31:0] PYCORE_ROM_ID_ADDR       = 32'h00F0_9030;
+localparam logic [31:0] PYCORE_FW_CAPS_ADDR      = 32'h00F0_9040;
+localparam logic [31:0] PYCORE_MCFG_LIMIT        = 32'h00F0_A000;
+// Excore context page and CA staging page (used from P7 / P8).
+localparam logic [31:0] PYCORE_CTX_PAGE_BASE     = 32'h00F0_A000;
+localparam logic [31:0] PYCORE_CTX_PAGE_BYTES    = 32'h0000_1000;
+localparam logic [31:0] PYCORE_CA_STAGING_BASE   = 32'h00F0_B000;
+localparam logic [31:0] PYCORE_CA_STAGING_BYTES  = 32'h0000_4000;
+// IO window (§7). Decoded before L1D; not a cacheable address.
+localparam logic [31:0] PYCORE_IO_BASE           = 32'h0200_0000;
+localparam logic [31:0] PYCORE_IO_LIMIT          = 32'h0201_0000;
+localparam logic [31:0] PYCORE_CONSOLE_STRIDE    = 32'h0000_0100;
+localparam logic [31:0] PYCORE_DATA_LIMIT        = 32'h0100_0000;
+
 // -------------------------------------------------------------------------
 // Garbage collector metadata (planning/gc_plan.md §4.3, pycore/docs/gc.md).
 // Lives in the 512 KB above the RF spill LIFO (top of the 16 MB data
@@ -3799,5 +3965,8 @@ localparam logic [31:0] PY_BI_GC_STATS     = 32'd24;
 
 // IEEE 754 binary64 bit-level helpers (needs PY_ALU_* above).
 `include "pycore_fp_defs.svh"
+
+// Key spec aliases. Bodies are above; this header is the CA's include.
+`include "pycore_keyspec.svh"
 
 `endif

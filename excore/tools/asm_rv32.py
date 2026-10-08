@@ -308,7 +308,7 @@ class PendingWord:
     line: SourceLine
 
 
-def expand_pseudo_count(line: SourceLine, asm: Assembler) -> int:
+def expand_pseudo_count(line: SourceLine, asm: Assembler, seed: dict[str, int] | None = None) -> int:
     """Number of 4-byte words a pseudo-op or real instruction occupies.
 
     `li` needs to know at pass-1 time whether the immediate fits in 12 bits
@@ -324,12 +324,14 @@ def expand_pseudo_count(line: SourceLine, asm: Assembler) -> int:
     lit = parse_int_literal(imm_tok)
     if lit is None:
         lit = asm.equs.get(imm_tok, asm.labels.get(imm_tok))
+    if lit is None and seed is not None:
+        lit = seed.get(imm_tok)
     if lit is not None and -2048 <= lit <= 2047:
         return 1
     return 2
 
 
-def assemble_pass1(lines: list[SourceLine]) -> Assembler:
+def assemble_pass1(lines: list[SourceLine], seed_labels: dict[str, int] | None = None) -> Assembler:
     asm = Assembler()
     addr = 0
     for line in lines:
@@ -358,7 +360,7 @@ def assemble_pass1(lines: list[SourceLine]) -> Assembler:
         if line.mnemonic not in ALL_MNEMONICS:
             raise AsmError(f"line {line.lineno}: unknown mnemonic {line.mnemonic!r}")
 
-        addr += WORD_BYTES * expand_pseudo_count(line, asm)
+        addr += WORD_BYTES * expand_pseudo_count(line, asm, seed_labels)
 
     return asm
 
@@ -531,8 +533,37 @@ def parse_mem_operand(tok: str, asm: Assembler) -> tuple[int, int]:
 
 def assemble(text: str) -> list[int]:
     lines = parse_lines(text)
-    asm = assemble_pass1(lines)
+    seed: dict[str, int] | None = None
+    asm = None
+    for _ in range(32):
+        asm = assemble_pass1(lines, seed)
+        if seed == asm.labels:
+            break
+        seed = dict(asm.labels)
+    else:
+        raise AsmError("li relaxation did not converge")
     return assemble_pass2(lines, asm)
+
+
+_INCLUDE_RE = re.compile(r'^\s*\.include\s+"([^"]+)"\s*(?:#.*)?$')
+
+
+def expand_includes(text: str, base: pathlib.Path, seen: set[pathlib.Path] | None = None) -> str:
+    """Inline `.include "path"` relative to `base` (the including file)."""
+    if seen is None:
+        seen = set()
+    out: list[str] = []
+    for raw in text.splitlines():
+        m = _INCLUDE_RE.match(raw)
+        if not m:
+            out.append(raw)
+            continue
+        inc = (base.parent / m.group(1)).resolve()
+        if inc in seen:
+            raise AsmError(f"include cycle involving {inc}")
+        seen.add(inc)
+        out.append(expand_includes(inc.read_text(encoding="utf-8"), inc, seen))
+    return "\n".join(out) + "\n"
 
 
 def words_to_hex(words: list[int]) -> str:
@@ -546,7 +577,7 @@ def main() -> None:
     args = parser.parse_args()
 
     src_path = pathlib.Path(args.source)
-    words = assemble(src_path.read_text(encoding="utf-8"))
+    words = assemble(expand_includes(src_path.read_text(encoding="utf-8"), src_path.resolve()))
     out_path = pathlib.Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(words_to_hex(words), encoding="ascii")

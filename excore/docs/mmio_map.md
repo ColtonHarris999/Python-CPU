@@ -3,7 +3,8 @@
 Implemented in `excore/rtl/excore_mmio.sv`. All registers are 32-bit,
 word-aligned, accessed via `LW`/`SW` at `0xF000_0000 + offset` from
 `excore_cpu`. Offsets below are the low byte of the address
-(`excore_mmio` decodes `cpu_addr_i[7:0]`).
+(`excore_mmio` decodes page 0 on `cpu_addr_i[7:0]` and page 1 on
+`cpu_addr_i[11:0]`).
 
 ## Mailbox (read side — populated by the pycore trap message)
 
@@ -59,6 +60,18 @@ Firmware sequence for a slot read: write `SP_ADDR`, write `SP_CTRL` with
 bit0 set, poll `SP_STATUS.busy` until clear, check `SP_STATUS.fault`, read
 `SP_DATA0..3`. A write is the same sequence with `SP_DATA0..3` written
 *before* `SP_CTRL` bit1, and no `SP_DATA` read afterward.
+
+The slot port is valid/ready: `req` stays high until `sp_ready` (the L2
+xbar is free), then drops, so a busy xbar does not lose the beat and a
+direct mem_bank does not see it twice.
+
+## Page 1 — capabilities
+
+| Offset | Name | Fields |
+| --- | --- | --- |
+| `0x100` | `FW_CAPS` | firmware writes at reset. `[0]` EMULATE, `[1]` CA fallback, `[2]` STRACC fallback, `[3]` software GC, `[15:8]` ABI, `[31:16]` variant |
+| `0x104` | `FW_CAPS_VALID` | bit0, set after `FW_CAPS` |
+| `0x108` | `MB_ACCEL_CFG` | read-only mirror of pycore's `accel_cfg_r` |
 
 ## Console (write-only)
 

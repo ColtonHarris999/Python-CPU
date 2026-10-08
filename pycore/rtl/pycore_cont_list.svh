@@ -1267,9 +1267,7 @@
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r       <=
                                                     CP_LIST_WB;
-                                            end else if (EXCORE_EN &&
-                                                pycore_trap_recoverable(
-                                                    PY_TRAP_LIST_DELETE)) begin
+                                            end else if (pycore_route_excore(PY_RCLASS_CA, accel_cfg_r, EXCORE_PRESENT, PY_TRAP_LIST_DELETE)) begin
                                                 trap_marshal_pending_r     <= 1'b1;
                                                 trap_marshal_code_r        <=
                                                     PY_TRAP_LIST_DELETE;
@@ -1329,8 +1327,7 @@
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r        <= CP_LIST_BUF;
-                                        end else if (EXCORE_EN &&
-                                                     pycore_trap_recoverable(PY_TRAP_LIST_GROW)) begin
+                                        end else if (pycore_route_excore(PY_RCLASS_CA, accel_cfg_r, EXCORE_PRESENT, PY_TRAP_LIST_GROW)) begin
                                             // Full, but the excore can service
                                             // this: marshal the operands it
                                             // needs (list handle + element —
@@ -1485,9 +1482,7 @@
                                             tos_r             <= tos_r - RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
-                                        end else if (EXCORE_EN &&
-                                            pycore_trap_recoverable(
-                                                PY_TRAP_LIST_EXTEND)) begin
+                                        end else if (pycore_route_excore(PY_RCLASS_CA, accel_cfg_r, EXCORE_PRESENT, PY_TRAP_LIST_EXTEND)) begin
                                             trap_marshal_pending_r     <= 1'b1;
                                             trap_marshal_code_r        <=
                                                 PY_TRAP_LIST_EXTEND;

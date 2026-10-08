@@ -35,6 +35,8 @@ module pycore_trap (
     // since it can be any PY_TRAP_* code the firmware chooses to report.
     input  logic        excore_fatal_i,
     input  logic [4:0]  excore_fatal_code_i,
+    // PY_TRAP_CONFIG: boot rejected ACCEL_CFG (fatal, not recoverable).
+    input  logic        config_i,
     input  logic [31:0] fault_pc_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs1_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] fault_rs2_i,
@@ -55,8 +57,10 @@ module pycore_trap (
                     raise_i || attr_error_i ||
                     list_grow_i || list_extend_i || dict_grow_i || list_delete_i ||
                     set_grow_i || set_update_i ||
-                    excore_fatal_i;
-        if (excore_fatal_i) begin
+                    excore_fatal_i || config_i;
+        if (config_i) begin
+            next_code = PY_TRAP_CONFIG;
+        end else if (excore_fatal_i) begin
             next_code = excore_fatal_code_i;
         end else if (type_trap_i) begin
             next_code = PY_TRAP_TYPE;

@@ -79,6 +79,7 @@ module excore_cpu #(
     memory_io_req data_mem_req;
     memory_io_rsp data_mem_rsp;
 
+    logic core_illegal;
     riscv_multicycle core (
         .clk(clk_i),
         .reset(reset),
@@ -86,7 +87,8 @@ module excore_cpu #(
         .inst_mem_req(inst_mem_req),
         .inst_mem_rsp(inst_mem_rsp),
         .data_mem_req(data_mem_req),
-        .data_mem_rsp(data_mem_rsp)
+        .data_mem_rsp(data_mem_rsp),
+        .illegal_o(core_illegal)
     );
 
     logic        mmio_pending_r;
@@ -121,6 +123,9 @@ module excore_cpu #(
             fault_o        <= 1'b0;
             fault_pc_o     <= 32'h0;
         end else begin
+            // A17: SYSTEM and unknown opcodes fault instead of executing as NOP.
+            if (core_illegal && !fault_o)
+                fault_o <= 1'b1;
             // Defaults each cycle.
             inst_mem_rsp <= memory_io_no_rsp;
             data_mem_rsp <= memory_io_no_rsp;

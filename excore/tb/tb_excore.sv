@@ -15,7 +15,7 @@
 // (not 1) produces exactly a "-> 4" result while remaining faithful to the
 // documented doubling rule; "cap 0 -> 4" and "cap 4 -> 8" match literally.
 module tb_excore #(
-    parameter string FW_HEX = "build/excore_fw/list_grow.hex"
+    parameter string FW_HEX = "build/excore_fw/full.hex"
 );
     localparam int DATA_W = 128;
 
@@ -99,9 +99,13 @@ module tb_excore #(
         .sp_we_o(sp_we),
         .sp_addr_o(sp_addr),
         .sp_wdata_o(sp_wdata),
+        .sp_ready_i(1'b1),
         .sp_ack_i(sp_ack),
         .sp_rdata_i(sp_rdata),
-        .sp_fault_i(sp_fault)
+        .sp_fault_i(sp_fault),
+        .mb_accel_cfg_i(16'h0073),
+        .fw_caps_valid_o(),
+        .fw_caps_o()
     );
 
     pycore_mem_bank #(

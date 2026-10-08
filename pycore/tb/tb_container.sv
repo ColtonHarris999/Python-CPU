@@ -720,8 +720,9 @@ module tb_container #(
         $display("fetch mem_req=%0d buf_hit=%0d",
                  g_dut.dut.core.fetch.mem_req_count_r,
                  g_dut.dut.core.fetch.buf_hit_count_r);
-        $display("PERF instr=%0d excore_traps=%0d excore_wait=%0d",
-                 instr_issued, trap_req_count, excore_wait_cycles);
+        $display("PERF instr=%0d excore_traps=%0d excore_wait=%0d accel_cfg=%h",
+                 instr_issued, trap_req_count, excore_wait_cycles,
+                 g_dut.dut.core.accel_cfg_r);
         if (g_dut.dut.core.gc_en_sim) begin
             $display("GC collections=%0d live=%0d free=%0d largest=%0d max_pause=%0d total_pause=%0d mark_cyc=%0d sweep_cyc=%0d port_busy_mark=%0d stack_hw=%0d stack_spills=%0d run_pops=%0d need_heap=%0d reclaimed=%0d stash_cyc=%0d zero_lines=%0d epoch=%0d mark_xacts=%0d",
                      g_dut.dut.core.gc_collections_r, g_dut.dut.core.gc_live_last_r,

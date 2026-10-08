@@ -140,6 +140,11 @@ list-del-nested = { core = "twocore", src = "list_del_nested", cycles = 100_000 
 dict-mixed-ops = { core = "twocore", src = "dict_mixed_ops", cycles = 200_000 }
 set-update = { core = "twocore", src = "set_update", cycles = 100_000 }
 set-update-tuple = { core = "twocore", src = "set_update_tuple", cycles = 100_000 }
+# Appendix A regressions. A1 is fixed in the excore firmware (P0).
+# A10 and A12 stay wrong until the container accelerator (P3).
+a1-set-dup = { core = "twocore", src = "a1_set_dup", cycles = 200_000 }
+a10-set-none = { src = "a10_set_none", cycles = 100_000, xfail = "A10: set() treats None as an empty slot" }
+a12-contains-rich = { src = "a12_contains_rich", cycles = 100_000, xfail = "A12: list `in` has no int/float cross-equality" }
 map-add = { core = "twocore", src = "map_add", cycles = 150_000 }
 dict-update = { core = "twocore", src = "dict_update", cycles = 150_000 }
 dict-update-obj = { core = "twocore", src = "dict_update_obj", cycles = 200_000 }
