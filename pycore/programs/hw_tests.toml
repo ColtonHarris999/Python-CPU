@@ -402,6 +402,7 @@ firmware-isinstance = { src = "firmware_isinstance", cycles = 200_000 }
 firmware-tuple-empty = { src = "firmware_tuple_empty", cycles = 100_000 }
 firmware-min-varargs = { src = "firmware_min_varargs", cycles = 200_000 }
 print-empty = { kind = "stdout", core = "twocore", src = "print_empty", cycles = 200_000 }
+print-i64 = { kind = "stdout", core = "twocore", src = "print_i64", cycles = 200_000 }
 print-basic = { kind = "stdout", core = "twocore", src = "print_basic", cycles = 200_000 }
 print-sep-end = { kind = "stdout", core = "twocore", src = "print_sep_end", cycles = 200_000 }
 print-end-only = { kind = "stdout", core = "twocore", src = "print_end_only", cycles = 200_000 }

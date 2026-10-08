@@ -315,6 +315,11 @@ module pycore_core #(
     logic [12:0]                   fw_caps_wait_r;
     logic [15:0]                   accel_cfg_r;
     logic [31:0]                   console_base_r;
+    // Iterative decimal conversion for _bi_print (one digit per cycle).
+    logic [7:0]                    fmt_dig_r [0:19];
+    logic [4:0]                    fmt_n_r, fmt_i_r;
+    logic [63:0]                   fmt_mag_r;
+    logic                          fmt_neg_r;
     // Latched for software and later phases; not consumed by the hart yet.
     /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0]                   fw_caps_copy_r;
