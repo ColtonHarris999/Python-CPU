@@ -149,6 +149,7 @@ container-store-subscr = { file = "list_store_subscr.py", cycles = 50_000 }
 container-dict-lookup = { file = "dict_build_lookup.py", cycles = 50_000 }
 container-dict-store = { file = "dict_store_subscr.py", cycles = 50_000 }
 container-list-empty = { file = "list_empty.py", cycles = 50_000 }
+container-list-append-grow = { file = "list_append_grow.py", cycles = 100_000 }
 container-dict-multi-pair = { file = "dict_multi_pair.py", cycles = 50_000 }
 container-dict-collision = { file = "dict_collision.py", cycles = 50_000 }
 container-dict-insert-new-key = { file = "dict_insert_new_key.py", cycles = 50_000 }
@@ -448,16 +449,16 @@ list-del-shift-excore = { core = "twocore", src = "list_del_shift_excore", cycle
 dict-grow-basic = { core = "twocore", src = "dict_grow_basic", cycles = 100_000 }
 dict-grow-large = { core = "twocore", src = "dict_grow_large", cycles = 200_000 }
 set-grow-basic = { core = "twocore", src = "set_grow_basic", cycles = 100_000 }
-container-list-append-full-fatal = { kind = "container", hex = "pycore/programs/list_append_full_fatal.hex", plusargs = "+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=9" }
+container-list-append-full-fatal = { kind = "container", hex = "pycore/programs/list_append_full_fatal.hex", plusargs = "+CA_EN=0 +EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=9" }
 container-list-extend-full-fatal = { kind = "container", hex = "pycore/programs/list_extend_full_fatal.hex", plusargs = "+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=10" }
 container-list-extend-type-fatal = { kind = "container", hex = "pycore/programs/list_extend_type_fatal.hex", plusargs = "+EXPECT_TRAP=1 +EXPECTED_TRAP_CODE=1" }
-excore-grow-from-zero = { kind = "excore", core = "twocore", stem = "grow_from_zero", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=55 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=20000", needs = ["pycore-excore-integration-fixtures"] }
+excore-grow-from-zero = { kind = "excore", core = "twocore", stem = "grow_from_zero", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=55 +EXPECTED_TRAP_REQ_COUNT=0 +MAX_CYCLES=20000", needs = ["pycore-excore-integration-fixtures"] }
 excore-fast-path-no-trap = { kind = "excore", core = "twocore", stem = "fast_path_no_trap", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=9 +EXPECTED_TRAP_REQ_COUNT=0", needs = ["pycore-excore-integration-fixtures"] }
 excore-grow-oom-fatal = { kind = "make", core = "twocore", target = "pycore-excore-grow-oom-fatal", needs = ["pycore-excore-integration-fixtures"] }
-excore-alias-stability = { kind = "excore", core = "twocore", stem = "alias_stability", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=30 +EXPECTED_TRAP_REQ_COUNT=1", needs = ["pycore-excore-integration-fixtures"] }
-excore-mixed-tags-preserved = { kind = "excore", core = "twocore", stem = "mixed_tags_preserved", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=1677 +EXPECTED_TRAP_REQ_COUNT=1", needs = ["pycore-excore-integration-fixtures"] }
-excore-grow-repeated = { kind = "excore", core = "twocore", stem = "grow_repeated", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=3850 +EXPECTED_TRAP_REQ_COUNT=3 +MAX_CYCLES=20000", needs = ["pycore-excore-integration-fixtures"] }
-excore-append-across-call = { kind = "excore", core = "twocore", stem = "append_across_call", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=77 +EXPECTED_TRAP_REQ_COUNT=1", needs = ["pycore-excore-integration-fixtures"] }
+excore-alias-stability = { kind = "excore", core = "twocore", stem = "alias_stability", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=30 +EXPECTED_TRAP_REQ_COUNT=0", needs = ["pycore-excore-integration-fixtures"] }
+excore-mixed-tags-preserved = { kind = "excore", core = "twocore", stem = "mixed_tags_preserved", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=1677 +EXPECTED_TRAP_REQ_COUNT=0", needs = ["pycore-excore-integration-fixtures"] }
+excore-grow-repeated = { kind = "excore", core = "twocore", stem = "grow_repeated", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=3850 +EXPECTED_TRAP_REQ_COUNT=0 +MAX_CYCLES=20000", needs = ["pycore-excore-integration-fixtures"] }
+excore-append-across-call = { kind = "excore", core = "twocore", stem = "append_across_call", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=77 +EXPECTED_TRAP_REQ_COUNT=0", needs = ["pycore-excore-integration-fixtures"] }
 excore-disabled = { kind = "make", target = "pycore-excore-disabled", needs = ["pycore-excore-integration-fixtures"] }
 excore-extend-grow-list = { kind = "excore", core = "twocore", stem = "extend_grow_list", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=6 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=50000", needs = ["pycore-excore-integration-fixtures"] }
 excore-extend-grow-tuple = { kind = "excore", core = "twocore", stem = "extend_grow_tuple", plusargs = "+EXPECTED_TAG=1 +EXPECTED_VALUE=60 +EXPECTED_TRAP_REQ_COUNT=1 +MAX_CYCLES=50000", needs = ["pycore-excore-integration-fixtures"] }

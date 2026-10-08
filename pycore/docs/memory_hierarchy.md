@@ -95,6 +95,19 @@ A 64 B fetch line buffer (P4b) folds `CACHE` / `EXTENDED_ARG` inside the
 line. RTL `L1I hits/misses` therefore count fills **behind** that buffer, not
 per wordcode slot. memsim E2 is still slot-granular; E9 calls this out.
 
+An L1I miss is one L2 read. L2 returns the whole 64 B line on
+`rdata_line_o` (`LINE_REPLY`) and L1I installs it. L2 is not inclusive:
+nothing back-invalidates L1D when L2 evicts a line.
+
+Held dmem masters (container, frame, RF spill, exc stack) drop `req` in
+the ack cycle. L1D captures a request once; hit counters are not doubled.
+The flush/invalidate sequencer quiesces the L1D CPU port from the idle
+check until the walk is acknowledged, and holds `flush_all` / `inv_all`
+only until L1D leaves idle. The excore slot port holds its request until
+ack; the xbar locks the grant so the level request is not taken twice.
+A store or delete of the active globals or builtins dict flushes the GIC,
+including `ns[name] = …`, which is not a `STORE_NAME`.
+
 ### Result caches (not line caches)
 
 | Structure | Entries | Ways | Key | Payload |
