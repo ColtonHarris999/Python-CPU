@@ -22,6 +22,12 @@ print("in", 2 in xs, 5 in xs, 5 not in xs)
 print("big", (2 ** 40 + 1) >> 20, (2 ** 40) // 2 ** 30, -(2 ** 40) < 0)
 s = "abc"
 print("str", s + "de", len(s))
+# Adjacent literals longer than 15 characters are one LOAD_CONST.
+joined = (
+    "0123456789abcdef"
+    "0123456789"
+)
+print("join", len(joined), ord(joined[16]))
 print("strcmp", s == "abc", s < "abd", "b" in s)
 print("index", s[0], s[2], s[-1])
 print("slice", s[1:], s[:2], "hello"[1:4])
