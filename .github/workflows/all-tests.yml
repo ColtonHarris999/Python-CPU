@@ -25,13 +25,19 @@ permissions:
 # PR updates cancel the previous run for that PR. Push and workflow_dispatch
 # on main must not: the post-merge run of 4d62c75 was cancelled in three
 # seconds when a second refs/heads/main event shared this group.
+# A title or body edit is also pull_request (`edited`). It must not cancel
+# the run a push just started, or that run's all-tests gate fails the
+# required check. Retargeting still cancels: the base ref actually changed.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref.from) }}
 
 jobs:
   changes:
     name: classify
+    # Title and body edits share the head SHA with the run already in
+    # progress. Queue behind it, then skip. Retargets fall through.
+    if: github.event.action != 'edited' || github.event.changes.base.ref.from
     runs-on: ubuntu-latest
     outputs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
@@ -176,10 +182,15 @@ jobs:
   all-tests:
     name: all-tests
     needs: [changes, docs, host-tools, rtl-modules, hardware, compiler-vs-cpython, caching]
-    if: always()
+    # always() so a failed or skipped dependency still reaches this gate.
+    # !cancelled() so a run superseded by concurrency is skipped instead of
+    # failing the required check. A title or body edit has no new code; the
+    # require step is skipped and this job stays green for the same SHA.
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - name: Require every job that ran
+        if: github.event.action != 'edited' || github.event.changes.base.ref.from
         run: |
           set -euo pipefail
           echo "docs_only=${{ needs.changes.outputs.docs_only }}"
