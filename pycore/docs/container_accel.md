@@ -151,9 +151,24 @@ Checked values, two-core, zero list-grow traps:
 | `grow_repeated` | 3850 |
 | `append_across_call` | 77 |
 
-`+CA_EN=0` still raises trap 9 on a full append when no excore is
-present, which is the `container-list-append-full-fatal` and
-`excore-disabled` checks.
+The same four commands run on the single-core top, which has no excore.
+Cache on, latency 4, zero excore traps:
+
+| Fixture | Result | Cycles |
+| --- | ---: | ---: |
+| `extend_grow_list` | 6 | 898 |
+| `extend_self` | 60 | 904 |
+| `extend_mixed_tags` | 1677 | 1,060 |
+| `extend_grow_to_fit` | 146 | 1,848 |
+| `dict-grow-basic` | 10 | 3,403 |
+| `dict-grow-large` | 210 | 13,500 |
+| `set-grow-basic` | 5 | 2,466 |
+| `list-del-shift-excore` | 80 | 1,816 |
+
+`extend_oom_fatal` with the heap pinned is still trap 7, in 559 cycles.
+`+CA_EN=0` still raises trap 9 on a full append, trap 10 on a growing
+extend, trap 11 on dict growth, and trap 13 on set growth, when no
+excore is present.
 
 ## Groundwork that landed with it
 

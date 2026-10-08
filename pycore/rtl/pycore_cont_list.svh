@@ -1267,7 +1267,7 @@
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r       <=
                                                     CP_LIST_WB;
-                                            end else if (EXCORE_EN &&
+                                            end else if ((ca_en_sim || EXCORE_EN) &&
                                                 pycore_trap_recoverable(
                                                     PY_TRAP_LIST_DELETE)) begin
                                                 trap_marshal_pending_r     <= 1'b1;
@@ -1495,7 +1495,7 @@
                                             tos_r             <= tos_r - RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
-                                        end else if (EXCORE_EN &&
+                                        end else if ((ca_en_sim || EXCORE_EN) &&
                                             pycore_trap_recoverable(
                                                 PY_TRAP_LIST_EXTEND)) begin
                                             trap_marshal_pending_r     <= 1'b1;
