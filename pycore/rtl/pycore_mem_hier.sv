@@ -78,6 +78,9 @@ module pycore_mem_hier #(
     output logic [DMEM_DATA_W-1:0]  excore_rdata_o,
     output logic                    excore_fault_o,
 
+    output logic                    console_emit_valid_o,
+    output logic [7:0]              console_emit_byte_o,
+
     input  logic                    flush_req_i,
     input  logic                    inv_req_i,
     output logic                    flush_done_o,
@@ -150,10 +153,28 @@ module pycore_mem_hier #(
         (dmem_addr_i < ADDR_WIDTH'(PYCORE_IO_BASE));
     // Block new L1D accepts from the moment a flush or invalidate is
     // requested until it finishes, so the level is sampled in ST_IDLE.
+    wire io_hit = dmem_req_i &&
+        (dmem_addr_i >= ADDR_WIDTH'(PYCORE_IO_BASE)) &&
+        (dmem_addr_i < ADDR_WIDTH'(PYCORE_IO_LIMIT));
+    logic io_ack, io_fault;
     assign block_new = (seq_r != SQ_IDLE);
-    assign l1d_cpu_req = dmem_req_i && !block_new && !code_wr_c;
-    assign dmem_ack_o = code_fault_r || l1d_cpu_ack;
-    assign dmem_fault_o = code_fault_r || l1d_cpu_fault;
+    assign l1d_cpu_req = dmem_req_i && !block_new && !code_wr_c && !io_hit;
+    assign dmem_ack_o = code_fault_r || io_ack || l1d_cpu_ack;
+    assign dmem_fault_o = code_fault_r || (io_ack && io_fault) || l1d_cpu_fault;
+
+    pycore_console u_console (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .req_i(io_hit && !block_new),
+        .we_i(dmem_we_i),
+        .addr_i(32'(dmem_addr_i)),
+        .wdata_i(dmem_wdata_i),
+        .wstrb_i(dmem_wstrb_i),
+        .ack_o(io_ack),
+        .fault_o(io_fault),
+        .emit_valid_o(console_emit_valid_o),
+        .emit_byte_o(console_emit_byte_o)
+    );
     logic inv_done_r;
 
     assign l1d_idle_o   = l1d_idle;

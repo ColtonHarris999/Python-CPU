@@ -44,6 +44,7 @@ from encoding import (
     BI_MAX,
     BI_ORD,
     BI_PRINT,
+    BI_WRITE,
     BI_RANGE,
     BI_SET,
     BI_TO_BYTES,
@@ -3374,6 +3375,7 @@ def build_builtins_dict(
         (tag_constant("len", string_heap), heap.alloc_builtin(BI_LEN)),
         # Native console sink; public print is the ROM CODE_OBJECT below.
         (tag_constant("_bi_print", string_heap), heap.alloc_builtin(BI_PRINT)),
+        (tag_constant("_bi_write", string_heap), heap.alloc_builtin(BI_WRITE)),
         (tag_constant("range", string_heap), heap.alloc_builtin(BI_RANGE)),
         (tag_constant("set", string_heap), heap.alloc_builtin(BI_SET)),
         (tag_constant("ord", string_heap), heap.alloc_builtin(BI_ORD)),

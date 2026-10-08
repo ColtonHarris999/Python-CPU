@@ -358,6 +358,7 @@ BI_MAX = 4
 # LIST_APPEND opcode (`PY_OP_LIST_APPEND` / `CONT_LIST_APPEND`) and never as
 # an OBK_BUILTIN. Do not reassign without regenerating every boot image.
 BI_PRINT = 6
+BI_WRITE = 25
 BI_LEN = 7
 BI_RANGE = 8
 BI_SET = 9

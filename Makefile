@@ -78,6 +78,7 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_ram.sv \
 	pycore/rtl/pycore_mem_xbar.sv \
 	pycore/rtl/pycore_mem_hier.sv \
+	pycore/rtl/pycore_console.sv \
 	pycore/rtl/pycore_mem_stage.sv \
 	pycore/rtl/pycore_exc_stack.sv \
 	pycore/rtl/pycore_gc.sv \
@@ -290,12 +291,12 @@ PYCORE_TB_GC_BIN := $(BUILD_DIR)/tb_gc/Vtb_gc
 GC_UNIT_SEEDS ?= 200
 GC_UNIT_ARGS ?=
 
-$(PYCORE_TB_GC_BIN): $(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl/pycore_gc.sv \
+$(PYCORE_TB_GC_BIN): $(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl/pycore_console.sv pycore/rtl/pycore_gc.sv \
 		pycore/tb/tb_gc.sv pycore/tb/gc_tb_util.svh pycore/rtl/pycore_defs.svh
 	mkdir -p $(BUILD_DIR)/tb_gc
 	$(VERILATOR) -sv --binary --timing +incdir+pycore/rtl +incdir+pycore/tb \
 		--top-module tb_gc --Mdir $(BUILD_DIR)/tb_gc -Wall -Wno-fatal -MAKEFLAGS OPT_FAST=-O2 \
-		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl/pycore_gc.sv pycore/tb/tb_gc.sv
+		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl/pycore_console.sv pycore/rtl/pycore_gc.sv pycore/tb/tb_gc.sv
 
 pycore-gc: $(PYCORE_TB_GC_BIN)
 	$(PYTHON) tools/gc_unit.py --seeds $(GC_UNIT_SEEDS) --jobs $(TEST_JOBS) $(GC_UNIT_ARGS)
@@ -462,7 +463,7 @@ pycore-l1d-handoff:
 		--top-module tb_l1d_handoff \
 		--Mdir $(BUILD_DIR)/pycore_l1d_handoff \
 		-Wall -Wno-fatal \
-		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv \
+		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl/pycore_console.sv \
 		pycore/tb/tb_l1d_handoff.sv
 	./$(BUILD_DIR)/pycore_l1d_handoff/Vtb_l1d_handoff
 
@@ -475,7 +476,7 @@ pycore-mem-nb:
 		--top-module tb_mem_nb \
 		--Mdir $(BUILD_DIR)/pycore_mem_nb \
 		-Wall -Wno-fatal \
-		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv \
+		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl/pycore_console.sv \
 		pycore/tb/tb_mem_nb.sv
 	./$(BUILD_DIR)/pycore_mem_nb/Vtb_mem_nb +SEED=1 | tee $(BUILD_DIR)/pycore_mem_nb/run1.log
 	grep -q "^PASS" $(BUILD_DIR)/pycore_mem_nb/run1.log

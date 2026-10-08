@@ -3962,6 +3962,9 @@ localparam logic [127:0] PYCORE_GC_POISON_WORD =
 localparam logic [31:0] PY_BI_GC_COLLECT   = 32'd22;
 localparam logic [31:0] PY_BI_HEAP_FREE    = 32'd23;
 localparam logic [31:0] PY_BI_GC_STATS     = 32'd24;
+// _bi_write: one TX_STR store of a SHORT_STR. _bi_print also accepts
+// int / bool / None and formats them into that store.
+localparam logic [31:0] PY_BI_WRITE        = 32'd25;
 
 // IEEE 754 binary64 bit-level helpers (needs PY_ALU_* above).
 `include "pycore_fp_defs.svh"

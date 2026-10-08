@@ -163,6 +163,25 @@ module tb_container #(
             end
             // Capture on the MMIO request pulse (req is one-cycle; ack is
             // registered one cycle later so req&&ack never overlaps).
+            // Pycore console (IO window). Excore CONSOLE_TX remains a debug port.
+            always @(posedge clk) begin
+                if (dut.mem_hier.console_emit_valid_o) begin
+                    if ((phase_marks != 0) &&
+                        (dut.mem_hier.console_emit_byte_o >= 8'h01) &&
+                        (dut.mem_hier.console_emit_byte_o <= 8'h07)) begin
+                        $display("PHASE_MARK id=%0d cycle=%0d instr=%0d excore_traps=%0d excore_wait=%0d l1i_hit=%0d l1i_miss=%0d l1d_hit=%0d l1d_miss=%0d",
+                                 dut.mem_hier.console_emit_byte_o, cycle_count,
+                                 instr_issued, trap_req_count,
+                                 excore_wait_cycles,
+                                 dut.l1i_hit_count, dut.l1i_miss_count,
+                                 dut.l1d_hit_count, dut.l1d_miss_count);
+                        $fflush();
+                    end else if (stdout_fd != 0) begin
+                        $fwrite(stdout_fd, "%c", dut.mem_hier.console_emit_byte_o);
+                        $fflush(stdout_fd);
+                    end
+                end
+            end
             always @(posedge clk) begin
                 if (dut.ex_mmio_req && dut.ex_mmio_we &&
                     (dut.ex_mmio_addr[7:0] == 8'hF0)) begin
@@ -207,6 +226,43 @@ module tb_container #(
             );
 
             initial trap_req_count = 0; // pycore_system never marshals a trap
+            int stdout_fd;
+            int phase_marks;
+            initial begin
+                string stdout_path;
+                stdout_fd = 0;
+                phase_marks = 0;
+                void'($value$plusargs("PHASE_MARKS=%d", phase_marks));
+                stdout_path = STDOUT_PATH;
+                void'($value$plusargs("STDOUT_PATH=%s", stdout_path));
+                if (stdout_path.len() > 0) begin
+                    stdout_fd = $fopen(stdout_path, "w");
+                    if (stdout_fd == 0) begin
+                        $error("[FAIL] could not open STDOUT_PATH=%s", stdout_path);
+                        $finish;
+                    end
+                end
+            end
+            always @(posedge clk) begin
+                if (dut.mem_hier.console_emit_valid_o) begin
+                    if ((phase_marks != 0) &&
+                        (dut.mem_hier.console_emit_byte_o >= 8'h01) &&
+                        (dut.mem_hier.console_emit_byte_o <= 8'h07)) begin
+                        $display("PHASE_MARK id=%0d cycle=%0d instr=%0d excore_traps=%0d excore_wait=%0d l1i_hit=%0d l1i_miss=%0d l1d_hit=%0d l1d_miss=%0d",
+                                 dut.mem_hier.console_emit_byte_o, cycle_count,
+                                 instr_issued, trap_req_count,
+                                 excore_wait_cycles,
+                                 dut.l1i_hit_count, dut.l1i_miss_count,
+                                 dut.l1d_hit_count, dut.l1d_miss_count);
+                    end else if (stdout_fd != 0) begin
+                        $fwrite(stdout_fd, "%c", dut.mem_hier.console_emit_byte_o);
+                        $fflush(stdout_fd);
+                    end
+                end
+            end
+            final begin
+                if (stdout_fd != 0) $fclose(stdout_fd);
+            end
             assign gcs_ex_req  = 1'b0;
             assign gcs_ex_we   = 1'b0;
             assign gcs_ex_addr = '0;

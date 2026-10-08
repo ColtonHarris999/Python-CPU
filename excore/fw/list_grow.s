@@ -2797,9 +2797,9 @@ do_builtin_call:
     lw   t0, SP_DATA0(s11)
     li   t1, TAG_INT
     bne  t0, t1, bi_fatal_illegal
-    li   t1, BI_PRINT
-    bne  s1, t1, bi_fatal_illegal
-    j    do_bi_print
+    # Print is a pycore store into the IO window. Reaching BI_PRINT
+    # here means the CALL FSM failed to sink it.
+    j    bi_fatal_illegal
 
 do_bi_print:
     # CALL oparg is argc: arg = (MB_INSTR_LO >> 8) | (MB_INSTR_HI << 24).
