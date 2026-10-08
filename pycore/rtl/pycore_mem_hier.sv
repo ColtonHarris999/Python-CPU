@@ -107,9 +107,11 @@ module pycore_mem_hier #(
     logic [ADDR_WIDTH-1:0]  l1i_down_addr;
     logic [IMEM_DATA_W-1:0] l1i_down_wdata, l1i_down_rdata;
     logic [PYCORE_LINE_BYTES*8-1:0] l1i_line;
+    logic [PYCORE_LINE_BYTES*8-1:0] l1i_down_rline;
 
     logic                   l1d_flush_all, l1d_inv_all;
     logic                   l1d_flush_done, l1d_inv_done, l1d_idle;
+    logic                   l1d_quiesce;
 
     logic                   l2_req, l2_we, l2_ack, l2_fault;
     logic [DMEM_DATA_W/8-1:0] l2_wstrb;
@@ -117,6 +119,7 @@ module pycore_mem_hier #(
     logic [DMEM_DATA_W-1:0] l2_wdata, l2_rdata;
     logic                   l2_line;
     logic [PYCORE_LINE_BYTES*8-1:0] l2_wline;
+    logic [PYCORE_LINE_BYTES*8-1:0] l2_rline;
     logic                   l2_pipe, l2_gnt, l2_last;
 
     logic                   ram_req, ram_we, ram_line, ram_ack, ram_last, ram_fault;
@@ -128,8 +131,10 @@ module pycore_mem_hier #(
     typedef enum logic [2:0] {
         SQ_IDLE,
         SQ_FLUSH_IDLE,
+        SQ_FLUSH_ACK,
         SQ_FLUSH_WAIT,
         SQ_INV_IDLE,
+        SQ_INV_ACK,
         SQ_INV_WAIT
     } seq_e;
     seq_e seq_r;
@@ -138,6 +143,9 @@ module pycore_mem_hier #(
     logic flush_done_r;
     logic inv_done_r;
 
+    // Quiesce from the idle check until the walk finishes, so a CPU
+    // request cannot be accepted in the cycle flush/inv is taken.
+    assign l1d_quiesce = (seq_r != SQ_IDLE);
     assign l1d_idle_o   = l1d_idle;
     assign flush_done_o = flush_done_r;
     assign inv_done_o   = inv_done_r;
@@ -154,7 +162,8 @@ module pycore_mem_hier #(
         .WRITE_INV_NO_ALLOC(1'b1),
         .WRITE_BACK(1'b0),
         .HIT_CYCLES(L1I_HIT_CYCLES),
-        .DOWN_LINE(1'b0)
+        .DOWN_LINE(1'b0),
+        .LINE_REPLY(1'b1)
     ) l1i (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
@@ -196,9 +205,11 @@ module pycore_mem_hier #(
         .down_ack_i(l1i_down_ack),
         .down_last_i(1'b0),
         .down_rdata_i(l1i_down_rdata),
+        .down_rline_i(l1i_down_rline),
         .down_fault_i(l1i_down_fault),
         .inv_all_i(1'b0),
         .flush_all_i(1'b0),
+        .cpu_quiesce_i(1'b0),
         .inv_busy_o(),
         .flush_busy_o(),
         .inv_done_o(),
@@ -266,9 +277,11 @@ module pycore_mem_hier #(
         .down_ack_i(l1d_down_ack),
         .down_last_i(l1d_down_last),
         .down_rdata_i(l1d_down_rdata),
+        .down_rline_i('0),
         .down_fault_i(l1d_down_fault),
         .inv_all_i(l1d_inv_all),
         .flush_all_i(l1d_flush_all),
+        .cpu_quiesce_i(l1d_quiesce),
         .inv_busy_o(),
         .flush_busy_o(),
         .inv_done_o(l1d_inv_done),
@@ -295,6 +308,7 @@ module pycore_mem_hier #(
         .imem_wdata_i(l1i_down_wdata),
         .imem_ack_o(l1i_down_ack),
         .imem_rdata_o(l1i_down_rdata),
+        .imem_rline_o(l1i_down_rline),
         .imem_fault_o(l1i_down_fault),
         .dmem_req_i(l1d_down_req),
         .dmem_we_i(l1d_down_we),
@@ -329,6 +343,7 @@ module pycore_mem_hier #(
         .l2_last_i(l2_last),
         .l2_ack_i(l2_ack),
         .l2_rdata_i(l2_rdata),
+        .l2_rline_i(l2_rline),
         .l2_fault_i(l2_fault)
     );
 
@@ -357,7 +372,7 @@ module pycore_mem_hier #(
         .ack_o(l2_ack),
         .rdata_o(l2_rdata),
         .fault_o(l2_fault),
-        .rdata_line_o(),
+        .rdata_line_o(l2_rline),
         .pipe_i(l2_pipe),
         .gnt_o(l2_gnt),
         .last_o(l2_last),
@@ -384,9 +399,11 @@ module pycore_mem_hier #(
         .down_ack_i(ram_ack),
         .down_last_i(ram_last),
         .down_rdata_i(ram_rdata),
+        .down_rline_i('0),
         .down_fault_i(ram_fault),
         .inv_all_i(1'b0),
         .flush_all_i(1'b0),
+        .cpu_quiesce_i(1'b0),
         .inv_busy_o(),
         .flush_busy_o(),
         .inv_done_o(),
@@ -422,10 +439,9 @@ module pycore_mem_hier #(
         .fault_o(ram_fault)
     );
 
-    // Pulse flush_req_i / inv_req_i for one cycle (or hold; pending is
-    // captured). *_done_o is a one-cycle pulse when L1D reports done.
-    // Do not re-assert flush_all while the cache is scanning: a held
-    // flush_all_i on return to IDLE would restart the walk.
+    // Hold flush_all / inv_all until L1D leaves idle (acknowledged), then
+    // drop them so the walk cannot restart when it returns to idle.
+    // cpu_quiesce blocks new accepts from the idle check onward.
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
             seq_r        <= SQ_IDLE;
@@ -455,8 +471,18 @@ module pycore_mem_hier #(
                 SQ_FLUSH_IDLE: begin
                     if (l1d_idle) begin
                         l1d_flush_all <= 1'b1;
-                        seq_r         <= SQ_FLUSH_WAIT;
+                        seq_r         <= SQ_FLUSH_ACK;
                     end
+                end
+                SQ_FLUSH_ACK: begin
+                    if (l1d_flush_done) begin
+                        flush_pend_r <= 1'b0;
+                        flush_done_r <= 1'b1;
+                        seq_r        <= SQ_IDLE;
+                    end else if (!l1d_idle) begin
+                        seq_r <= SQ_FLUSH_WAIT;
+                    end else
+                        l1d_flush_all <= 1'b1;
                 end
                 SQ_FLUSH_WAIT: begin
                     if (l1d_flush_done) begin
@@ -468,8 +494,18 @@ module pycore_mem_hier #(
                 SQ_INV_IDLE: begin
                     if (l1d_idle) begin
                         l1d_inv_all <= 1'b1;
-                        seq_r       <= SQ_INV_WAIT;
+                        seq_r       <= SQ_INV_ACK;
                     end
+                end
+                SQ_INV_ACK: begin
+                    if (l1d_inv_done) begin
+                        inv_pend_r <= 1'b0;
+                        inv_done_r <= 1'b1;
+                        seq_r      <= SQ_IDLE;
+                    end else if (!l1d_idle) begin
+                        seq_r <= SQ_INV_WAIT;
+                    end else
+                        l1d_inv_all <= 1'b1;
                 end
                 SQ_INV_WAIT: begin
                     if (l1d_inv_done) begin

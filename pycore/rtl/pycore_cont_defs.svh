@@ -11,9 +11,11 @@
         gc_need_bytes_r  <= (NEED); \
         gc_alloc_phase_r <= 4'd0; \
         gc_runsw_cnt_r   <= gc_runsw_cnt_r + 32'd1; \
-        gc_retry_count_r <= (cur_pc_r != gc_retry_pc_r) ? 2'd0 : \
+        gc_retry_count_r <= ((cur_pc_r != gc_retry_pc_r) || \
+                             (heap_ptr_r != gc_retry_heap_r)) ? 2'd0 : \
                             (gc_retry_count_r == 2'd3) ? 2'd3 : gc_retry_count_r + 2'd1; \
-        gc_retry_pc_r    <= cur_pc_r;
+        gc_retry_pc_r    <= cur_pc_r; \
+        gc_retry_heap_r  <= heap_ptr_r;
 // CALL: revert the prelude's commits (CALL_PHASE_GC_UNWIND), then abort.
 // The container-launched protocol CALL itself (below the protocol frame's
 // depth) has no undo record: out of memory. Ordinary CALLs in the protocol

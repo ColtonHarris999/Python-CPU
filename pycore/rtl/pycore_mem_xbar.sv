@@ -32,6 +32,7 @@ module pycore_mem_xbar #(
     input  logic [IMEM_DATA_W-1:0]  imem_wdata_i,
     output logic                    imem_ack_o,
     output logic [IMEM_DATA_W-1:0]  imem_rdata_o,
+    output logic [PYCORE_LINE_BYTES*8-1:0] imem_rline_o,
     output logic                    imem_fault_o,
 
     input  logic                    dmem_req_i,
@@ -69,6 +70,7 @@ module pycore_mem_xbar #(
     input  logic                    l2_last_i,
     input  logic                    l2_ack_i,
     input  logic [DMEM_DATA_W-1:0]  l2_rdata_i,
+    input  logic [PYCORE_LINE_BYTES*8-1:0] l2_rline_i,
     input  logic                    l2_fault_i
 );
     typedef enum logic [1:0] { G_NONE, G_IMEM, G_DMEM, G_EXCORE } grant_e;
@@ -79,6 +81,10 @@ module pycore_mem_xbar #(
     logic   excore_ack_r;
     logic   fault_hold_r;
     logic [DMEM_DATA_W-1:0] rdata_hold_r;
+    logic [PYCORE_LINE_BYTES*8-1:0] rline_hold_r;
+    // Set when an excore request is accepted; cleared only after req
+    // drops, so a level request is not captured twice (slot port).
+    logic excore_lock_r;
 
     logic                    l2_req_r;
     logic                    l2_we_r;
@@ -105,7 +111,7 @@ module pycore_mem_xbar #(
     assign pmode     = pmode_r || (idle_take && dmem_req_i && dmem_pipe_i);
     assign pipe_take = pmode && dmem_req_i && dmem_pipe_i && l2_gnt_i;
     assign take_dmem   = idle_take && dmem_req_i && !dmem_pipe_i;
-    assign take_excore = idle_take && !dmem_req_i && excore_req_i;
+    assign take_excore = idle_take && !dmem_req_i && excore_req_i && !excore_lock_r;
     assign take_imem   = idle_take && !dmem_req_i && !excore_req_i && imem_req_i;
     assign imem_uaddr = ADDR_WIDTH'(CODE_BASE) + imem_addr_i;
     assign imem_hi    = imem_uaddr[3];
@@ -131,6 +137,7 @@ module pycore_mem_xbar #(
 
     assign imem_ack_o   = imem_ack_r;
     assign imem_rdata_o = imem_hi_r ? rdata_hold_r[127:64] : rdata_hold_r[63:0];
+    assign imem_rline_o = rline_hold_r;
     assign imem_fault_o = imem_ack_r && fault_hold_r;
 
     always_ff @(posedge clk_i or negedge rst_n_i) begin
@@ -142,6 +149,8 @@ module pycore_mem_xbar #(
             excore_ack_r <= 1'b0;
             fault_hold_r <= 1'b0;
             rdata_hold_r <= '0;
+            rline_hold_r <= '0;
+            excore_lock_r <= 1'b0;
             l2_req_r     <= 1'b0;
             l2_we_r      <= 1'b0;
             l2_wstrb_r   <= '0;
@@ -162,6 +171,10 @@ module pycore_mem_xbar #(
             imem_ack_r   <= 1'b0;
             dmem_ack_r   <= 1'b0;
             excore_ack_r <= 1'b0;
+            if (!excore_req_i)
+                excore_lock_r <= 1'b0;
+            else if (take_excore)
+                excore_lock_r <= 1'b1;
             if (take_dmem) begin
                 grant_r    <= G_DMEM;
                 imem_hi_r  <= 1'b0;
@@ -195,6 +208,7 @@ module pycore_mem_xbar #(
                 l2_wline_r <= '0;
             end else if (l2_req_r && l2_ack_i) begin
                 rdata_hold_r <= l2_rdata_i;
+                rline_hold_r <= l2_rline_i;
                 fault_hold_r <= l2_fault_i;
                 imem_ack_r   <= (grant_r == G_IMEM);
                 dmem_ack_r   <= (grant_r == G_DMEM);

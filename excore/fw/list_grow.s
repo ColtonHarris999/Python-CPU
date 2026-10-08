@@ -175,6 +175,18 @@
     .equ SCR_C_SLOTS,    0xB8
     .equ SCR_C_HEAP,     0xBC
     .equ SCR_ZIDX,       0xC0
+    # SET_UPDATE walk state. keys_rich_eq clobbers SCR_TMP_L0 and
+    # float_to_int clobbers SCR_FTI*, so the loop must not live there.
+    .equ SCR_SU_LEN,     0xC4
+    .equ SCR_SU_I,       0xC8
+    .equ SCR_SU_BASE,    0xCC
+    .equ SCR_LE_A,       0xD0
+    .equ SCR_LE_B,       0xD4
+    .equ SCR_LE_N,       0xD8
+    .equ SCR_LE_W0,      0xDC
+    .equ SCR_LE_W1,      0xE0
+    .equ SCR_LE_W2,      0xE4
+    .equ SCR_LE_W3,      0xE8
 
 reset:
     li   s11, MMIO_BASE            # s11: persistent MMIO base, never clobbered
@@ -1007,6 +1019,10 @@ sp_write_poll:
     lw   t0, SP_STATUS(s11)
     andi t1, t0, SP_STATUS_BUSY
     bne  t1, x0, sp_write_poll
+    andi t1, t0, SP_STATUS_FAULT
+    beq  t1, x0, sp_write_ok
+    j    fatal_mem
+sp_write_ok:
     jalr x0, ra, 0
 
 load_e1e2_to_scratch:
@@ -1555,10 +1571,11 @@ hash_sstr:
     lw   t0, SCR_KVAL3(x0)
     xor  a0, a0, t0
     jalr x0, ra, 0
+# LONG_STR hash is the cached FNV in value[95:64] (KVAL2), the same word
+# pycore_stracc_hash reads. XORing the address made lookups miss after an
+# excore rehash (A2).
 hash_lstr:
-    lw   a0, SCR_KVAL0(x0)
-    lw   t0, SCR_KVAL2(x0)
-    xor  a0, a0, t0
+    lw   a0, SCR_KVAL2(x0)
     jalr x0, ra, 0
 hash_float:
     sw   ra, SCR_RA3(x0)
@@ -1615,6 +1632,11 @@ kreq_fb:
     bne  a2, t1, kreq_no
     bne  a3, t1, kreq_no
 kreq_bits:
+    li   t1, TAG_LONG_STR
+    bne  a2, t1, kreq_bits_raw
+    bne  a3, t1, kreq_no
+    j    lstr_eq
+kreq_bits_raw:
     bne  a2, a3, kreq_no
     lw   t0, SCR_KVAL0(x0)
     lw   t1, SCR_SKVAL0(x0)
@@ -1634,6 +1656,120 @@ kreq_bits:
 kreq_no:
     li   a0, 0
     lw   ra, SCR_A0(x0)
+    jalr x0, ra, 0
+
+# LONG_STR equality is payload equality, not handle identity (A3).
+# nchars and (nbytes, kind) must match; then the bytes at addr+16.
+lstr_eq:
+    lw   t0, SCR_KVAL1(x0)
+    lw   t1, SCR_SKVAL1(x0)
+    bne  t0, t1, kreq_no
+    lw   t0, SCR_KVAL3(x0)
+    lw   t1, SCR_SKVAL3(x0)
+    li   t3, 0x03FFFFFF
+    and  t0, t0, t3
+    and  t1, t1, t3
+    bne  t0, t1, kreq_no
+    lw   t0, SCR_KVAL0(x0)
+    lw   t1, SCR_SKVAL0(x0)
+    beq  t0, t1, lstr_yes
+    lw   t2, SCR_KVAL3(x0)
+    li   t3, 0x00FFFFFF
+    and  t2, t2, t3
+    beq  t2, x0, lstr_yes
+    addi t0, t0, 16
+    addi t1, t1, 16
+    sw   t0, SCR_LE_A(x0)
+    sw   t1, SCR_LE_B(x0)
+    sw   t2, SCR_LE_N(x0)
+lstr_loop:
+    lw   a0, SCR_LE_A(x0)
+    jal  ra, sp_read
+    lw   t0, SP_DATA0(s11)
+    sw   t0, SCR_LE_W0(x0)
+    lw   t0, SP_DATA1(s11)
+    sw   t0, SCR_LE_W1(x0)
+    lw   t0, SP_DATA2(s11)
+    sw   t0, SCR_LE_W2(x0)
+    lw   t0, SP_DATA3(s11)
+    sw   t0, SCR_LE_W3(x0)
+    lw   a0, SCR_LE_B(x0)
+    jal  ra, sp_read
+    lw   t2, SCR_LE_N(x0)
+    lw   t0, SP_DATA0(s11)
+    lw   t1, SCR_LE_W0(x0)
+    jal  ra, lstr_cmp_word
+    bne  a0, x0, kreq_no
+    jal  ra, lstr_advance
+    beq  a0, x0, lstr_yes
+    lw   t0, SP_DATA1(s11)
+    lw   t1, SCR_LE_W1(x0)
+    jal  ra, lstr_cmp_word
+    bne  a0, x0, kreq_no
+    jal  ra, lstr_advance
+    beq  a0, x0, lstr_yes
+    lw   t0, SP_DATA2(s11)
+    lw   t1, SCR_LE_W2(x0)
+    jal  ra, lstr_cmp_word
+    bne  a0, x0, kreq_no
+    jal  ra, lstr_advance
+    beq  a0, x0, lstr_yes
+    lw   t0, SP_DATA3(s11)
+    lw   t1, SCR_LE_W3(x0)
+    jal  ra, lstr_cmp_word
+    bne  a0, x0, kreq_no
+    jal  ra, lstr_advance
+    beq  a0, x0, lstr_yes
+    lw   t0, SCR_LE_A(x0)
+    addi t0, t0, 16
+    sw   t0, SCR_LE_A(x0)
+    lw   t0, SCR_LE_B(x0)
+    addi t0, t0, 16
+    sw   t0, SCR_LE_B(x0)
+    j    lstr_loop
+lstr_yes:
+    li   a0, 1
+    lw   ra, SCR_A0(x0)
+    jalr x0, ra, 0
+
+# Compare one 32-bit lane. t0/t1 = words, SCR_LE_N = bytes still to match.
+# Returns a0=0 match (and consumes min(4, n) from SCR_LE_N is NOT done here).
+# a0=1 mismatch. Does not consume the count; caller calls lstr_advance.
+lstr_cmp_word:
+    lw   t2, SCR_LE_N(x0)
+    beq  t2, x0, lstr_cmp_ok
+    li   t3, 4
+    bltu t2, t3, lstr_cmp_mask
+    bne  t0, t1, lstr_cmp_bad
+lstr_cmp_ok:
+    li   a0, 0
+    jalr x0, ra, 0
+lstr_cmp_mask:
+    slli t4, t2, 3
+    li   t3, 1
+    sll  t3, t3, t4
+    addi t3, t3, -1
+    and  t0, t0, t3
+    and  t1, t1, t3
+    bne  t0, t1, lstr_cmp_bad
+    j    lstr_cmp_ok
+lstr_cmp_bad:
+    li   a0, 1
+    jalr x0, ra, 0
+
+# Subtract min(4, SCR_LE_N) from the count. a0=1 if bytes remain, else 0.
+lstr_advance:
+    lw   t2, SCR_LE_N(x0)
+    li   t3, 4
+    bltu t2, t3, lstr_adv_done
+    addi t2, t2, -4
+    sw   t2, SCR_LE_N(x0)
+    beq  t2, x0, lstr_adv_done
+    li   a0, 1
+    jalr x0, ra, 0
+lstr_adv_done:
+    sw   x0, SCR_LE_N(x0)
+    li   a0, 0
     jalr x0, ra, 0
 
 norm_numeric:
@@ -1833,6 +1969,7 @@ su_src_list:
     jal  ra, sp_read
     lw   t0, SP_DATA0(s11)         # src_len (dense count)
     sw   t0, SCR_TMP_L0(x0)
+    sw   t0, SCR_SU_LEN(x0)
     addi a0, s10, 16
     jal  ra, sp_read
     lw   s8, SP_DATA0(s11)
@@ -1842,6 +1979,7 @@ su_src_list:
 su_src_tuple:
     lw   t0, MB_E1_VAL2(s11)
     sw   t0, SCR_TMP_L0(x0)
+    sw   t0, SCR_SU_LEN(x0)
     mv   s8, s10
     li   s9, 0
     j    su_maybe_grow
@@ -1853,6 +1991,7 @@ su_src_set:
     sw   t0, SCR_TMP_L1(x0)
     lw   t1, SP_DATA2(s11)         # src slots (walk count)
     sw   t1, SCR_TMP_L0(x0)
+    sw   t1, SCR_SU_LEN(x0)
     addi a0, s10, 16
     jal  ra, sp_read
     lw   s8, SP_DATA0(s11)
@@ -1872,6 +2011,7 @@ su_src_dict:
     sw   t0, SCR_TMP_L1(x0)
     lw   t1, SP_DATA2(s11)         # slots(dict) → walk count
     sw   t1, SCR_TMP_L0(x0)
+    sw   t1, SCR_SU_LEN(x0)
     addi a0, s10, 32              # dict pointers: table_ptr at word0
     jal  ra, sp_read
     lw   s8, SP_DATA0(s11)
@@ -1905,7 +2045,7 @@ su_loop_init:
     li   s6, 0
     li   s4, 0                     # no new heap unless we grew (s4 set in grow)
 su_loop:
-    lw   t0, SCR_TMP_L0(x0)
+    lw   t0, SCR_SU_LEN(x0)
     beq  s6, t0, su_done
     li   t1, 2
     beq  s9, t1, su_load_dict
@@ -1973,12 +2113,13 @@ su_load_dict:
     sw   t0, SCR_KVAL3(x0)
     sw   a1, SCR_KTAG(x0)
 su_insert:
-    # set_probe clobbers s6 (start idx) and s8 (probe count).
-    sw   s6, SCR_FTI0(x0)
-    sw   s8, SCR_FTI1(x0)
+    # set_probe clobbers s6 (index) and s8 (buffer). float_to_int also
+    # clobbers SCR_FTI*, so those are not a safe save (A15).
+    sw   s6, SCR_SU_I(x0)
+    sw   s8, SCR_SU_BASE(x0)
     jal  ra, set_probe
-    lw   s6, SCR_FTI0(x0)
-    lw   s8, SCR_FTI1(x0)
+    lw   s6, SCR_SU_I(x0)
+    lw   s8, SCR_SU_BASE(x0)
     lw   t0, SCR_FOUND(x0)
     bne  t0, x0, su_next
     lw   a0, SCR_IDX(x0)

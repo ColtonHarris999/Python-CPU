@@ -400,6 +400,7 @@ module pycore_core #(
     logic [31:0]  gc_need_bytes_r;
     logic [1:0]   gc_retry_count_r;
     logic [31:0]  gc_retry_pc_r;
+    logic [31:0]  gc_retry_heap_r;
     logic [31:0]  gc_retry_largest_r;
     logic [31:0]  gc_boundary_cnt_r;
     logic [31:0]  gc_runsw_cnt_r;
@@ -1509,10 +1510,23 @@ module pycore_core #(
         (container_op_r == CONT_LOAD_GLOBAL) &&
         (container_phase_r == CP_INIT) &&
         ({32'b0, gic_namei_full} < names_base_r[127:64]);
+    // A namespace-dict write that is not STORE_NAME (ns['x'] = …) used
+    // to leave the GIC stale (A7). Flush when the dict being mutated is
+    // the active globals or builtins dict. Targeted name-hash
+    // invalidation replaces this full flush once the container
+    // accelerator owns the write.
+    wire gic_ns_dict = (cont_rs2_addr == globals_base_r) ||
+                       (cont_rs2_addr == builtins_base_r);
     assign gic_flush =
         ((state_r == S_CONTAINER) &&
          (container_op_r == CONT_STORE_NAME) &&
          (container_phase_r == CP_INIT)) ||
+        ((state_r == S_CONTAINER) &&
+         (container_phase_r == CP_INIT) && gic_ns_dict &&
+         ((container_op_r == CONT_STORE_DICT) ||
+          (container_op_r == CONT_DELETE_DICT) ||
+          (container_op_r == CONT_DICT_UPDATE) ||
+          (container_op_r == CONT_DICT_MERGE))) ||
         ((state_r == S_TRAP_WAIT) && trap_res_valid_i && !trap_res_seen_r) ||
         ((state_r == S_BOOT) && (boot_phase_r == 4'd3) &&
          !container_dmem_pending_r) ||
@@ -1955,6 +1969,12 @@ module pycore_core #(
     logic gc_force_collect;
     assign gc_force_collect = (gc_every_n_runs_sim != 32'd0) &&
                               ((gc_runsw_cnt_r + 32'd1) >= gc_every_n_runs_sim);
+    // Aligned requests fit an exact run. Adding 64 B of slack to an
+    // already-aligned excore request rejected a run of the right size
+    // and the retry guard then reported MemoryError (A42).
+    logic [31:0] gc_need_fit;
+    assign gc_need_fit = (gc_need_bytes_r[5:0] == 6'd0) ? gc_need_bytes_r
+                                                        : (gc_need_bytes_r + 32'd64);
     assign gc_alloc_collect = (state_r == S_GC_ALLOC) && (gc_alloc_phase_r == 4'd0) &&
                               !gc_collected_r && gc_auto_sim && (gc_need_bytes_r != 32'd0) &&
                               (((run_list_head_r == 32'd0) &&
@@ -2092,11 +2112,16 @@ module pycore_core #(
     // S_GC_ALLOC requests are one-cycle pulses, like STRACC's.
     logic gcalloc_req;
     assign gcalloc_req = gcalloc_dmem_active && !gcalloc_issued_r;
-    assign dmem_req_o   = rf_spill_dmem_active  ? 1'b1 :
-                          frame_dmem_active     ? 1'b1 :
-                          container_dmem_active ? 1'b1 :
+    // Held-request masters (frame, container, RF spill, exc stack) keep
+    // their pending bit through the ack cycle. L1D captures any req that
+    // is high in ST_IDLE, so that overlap issued the transaction twice
+    // (A6). Drop req in the ack cycle. STRACC, the GC engine and the
+    // allocator already pulse.
+    assign dmem_req_o   = rf_spill_dmem_active  ? !dmem_ack_i :
+                          frame_dmem_active     ? !dmem_ack_i :
+                          container_dmem_active ? !dmem_ack_i :
                           stracc_dmem_active    ? 1'b1 :
-                          exc_dmem_active       ? 1'b1 :
+                          exc_dmem_active       ? !dmem_ack_i :
                           gc_eng_dmem_active    ? 1'b1 :
                           gcalloc_dmem_active   ? gcalloc_req : ms_dmem_req;
     assign dmem_we_o    = rf_spill_dmem_active  ? (state_r == S_RF_SPILL) :
@@ -3021,6 +3046,7 @@ module pycore_core #(
             gc_need_bytes_r          <= '0;
             gc_retry_count_r         <= '0;
             gc_retry_pc_r            <= 32'hFFFF_FFFF;
+            gc_retry_heap_r          <= 32'hFFFF_FFFF;
             gc_retry_largest_r       <= '0;
             gc_boundary_cnt_r        <= '0;
             gc_runsw_cnt_r           <= '0;
@@ -3278,6 +3304,7 @@ module pycore_core #(
                 gc_res_abort_r   <= 1'b0;
                 gc_retry_count_r <= 2'd0;
                 gc_retry_pc_r    <= 32'hFFFF_FFFF;
+                gc_retry_heap_r  <= 32'hFFFF_FFFF;
             end
 
             // Clear one-cycle pulses by default.
@@ -4437,7 +4464,7 @@ module pycore_core #(
                             gc_retry_largest_r <= gc_largest_size;
                             if (gc_abort_r && (gc_retry_count_r != 2'd0) &&
                                 (gc_largest_size <= gc_retry_largest_r) &&
-                                (gc_largest_size < gc_need_bytes_r + 32'd64) &&
+                                (gc_largest_size < gc_need_fit) &&
                                 (gc_mutant_sim != 8'd36)) begin
                                 gc_oom_raise_r   <= 1'b1;
                                 gc_alloc_phase_r <= 4'd7;
@@ -4497,7 +4524,7 @@ module pycore_core #(
                                 gc_run_idx_r  <= gc_run_idx_r + 32'd1;
                                 if (((gc_mutant_sim == 8'd27)
                                         ? gc_run_peek_size >= gc_need_bytes_r
-                                        : gc_run_peek_size >= gc_need_bytes_r + 32'd64) ||
+                                        : gc_run_peek_size >= gc_need_fit) ||
                                     ((gc_need_bytes_r == 32'd0) &&
                                      (gc_run_peek_size != 32'd0))) begin
                                     gc_cand_base_r <= gc_run_peek_base;
@@ -4577,7 +4604,7 @@ module pycore_core #(
                                 gc_run_pops_r   <= gc_run_pops_r + 32'd1;
                                 if (gc_mutant_sim != 8'd28) run_list_head_r <= dmem_rdata_i[63:32];
                                 if (((gc_mutant_sim == 8'd27) ? dmem_rdata_i[95:64] >= gc_need_bytes_r
-                                     : dmem_rdata_i[95:64] >= gc_need_bytes_r + 32'd64) ||
+                                     : dmem_rdata_i[95:64] >= gc_need_fit) ||
                                     ((gc_need_bytes_r == 32'd0) && (dmem_rdata_i[95:64] != 32'd0))) begin
                                     gc_cand_base_r <= gc_hdr_base;
                                     gc_cand_size_r <= dmem_rdata_i[95:64];
