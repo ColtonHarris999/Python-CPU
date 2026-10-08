@@ -127,7 +127,8 @@ EXCORE_RTL_SRCS := \
 	docker-all-tests test-host test-rtl-modules test-hw test-caching \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
 	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
-	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research
+	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
+	research-compare
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -602,6 +603,19 @@ cpython-baseline:
 cpython-baseline-research:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m cpython_baseline.baseline \
 		--research --machine $(CPYTHON_BASELINE_MACHINE)
+
+# Research set on the hart and on the CPython baseline, side by side.
+# PYCORE_RESEARCH_MHZ is the clock assumed for PyCore's time column.
+# Finished programs are reused; pass FORCE=1 to measure them again.
+PYCORE_RESEARCH_MHZ ?= 1000
+RESEARCH_COMPARE_JOBS ?= 2
+research-compare:
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) pycore/tools/research_compare.py \
+		--pycore-mhz $(PYCORE_RESEARCH_MHZ) \
+		--jobs $(RESEARCH_COMPARE_JOBS) \
+		--out build/research_compare \
+		--doc pycore/docs/research_comparison.md \
+		$(if $(FORCE),--force,)
 
 pycore-compile-suite: test-compiler-vs-cpython
 

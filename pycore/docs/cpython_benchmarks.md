@@ -119,11 +119,16 @@ stays on. One Callgrind run of fannkuch(7) is the long one; the set is
 minutes, not the multi-hour official pyperformance job.
 
 The cycle model, the cache penalties, and the meaning of `interpret` are
-in `pycore/tools/cpython_baseline/README.md`. Compare a future PyCore run
-with **compile_cold** and with **run_cold** (the cold exec, which is
+in `pycore/tools/cpython_baseline/README.md`. Compare a PyCore run with
+**compile_cold** and with **run_cold** (the cold exec, which is
 `interpret` + `run`). The warm exec is the steady state after PEP 659 has
 rewritten the code object. PyCore does not specialize, so the cold exec is
 the fair column.
+
+`make research-compare` runs this set on the hart and under this tool,
+then writes `pycore/docs/research_comparison.md`. The hart's time column
+uses `PYCORE_RESEARCH_MHZ` (default 1000). A finished program is kept;
+`FORCE=1` measures it again.
 
 ## Results on the `pycore` preset
 
