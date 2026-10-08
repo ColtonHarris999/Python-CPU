@@ -738,6 +738,7 @@ pycore-excore-extend-disabled: pycore-excore-integration-fixtures
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CA_EN=0 \
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=10 \
 		$(PYCORE_MEM_PLUSARGS)

@@ -54,6 +54,7 @@ module pycore_mem_xbar #(
     input  logic [DMEM_DATA_W/8-1:0] excore_wstrb_i,
     input  logic [ADDR_WIDTH-1:0]   excore_addr_i,
     input  logic [DMEM_DATA_W-1:0]  excore_wdata_i,
+    output logic                    excore_gnt_o,
     output logic                    excore_ack_o,
     output logic [DMEM_DATA_W-1:0]  excore_rdata_o,
     output logic                    excore_fault_o,
@@ -131,6 +132,7 @@ module pycore_mem_xbar #(
     assign dmem_rdata_o = pmode_r ? l2_rdata_i : rdata_hold_r;
     assign dmem_fault_o = pmode_r ? (l2_ack_i && l2_fault_i) : (dmem_ack_r && fault_hold_r);
 
+    assign excore_gnt_o   = take_excore;
     assign excore_ack_o   = excore_ack_r;
     assign excore_rdata_o = rdata_hold_r;
     assign excore_fault_o = excore_ack_r && fault_hold_r;

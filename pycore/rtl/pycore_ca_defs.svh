@@ -5,4 +5,6 @@
 localparam logic [6:0] PY_CA_L_APPEND = 7'd1;
 localparam logic [6:0] PY_CA_L_EXTEND = 7'd2;
 localparam logic [6:0] PY_CA_L_DEL    = 7'd3;
+localparam logic [6:0] PY_CA_D_GROW   = 7'd4;
+localparam logic [6:0] PY_CA_S_GROW   = 7'd5;
 `endif

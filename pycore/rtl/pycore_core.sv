@@ -1118,7 +1118,7 @@ module pycore_core #(
 
     logic        ca_cmd_pend_r, ca_issued_r;
     logic [6:0]  ca_op_r;
-    logic [PYCORE_ENTRY_WIDTH-1:0] ca_a_r, ca_b_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] ca_a_r, ca_b_r, ca_c_r;
     logic        ca_cmd_valid, ca_cmd_ready, ca_dr_valid, ca_dr_ready;
     logic        ca_dr_ok, ca_dr_short, ca_dr_fault, ca_cr_valid, ca_idle;
     logic [31:0] ca_dr_heap, ca_dr_need;
@@ -1134,6 +1134,7 @@ module pycore_core #(
         .cmd_op_i(ca_op_r),
         .cmd_a_i(ca_a_r),
         .cmd_b_i(ca_b_r),
+        .cmd_c_i(ca_c_r),
         .cmd_heap_ptr_i(heap_ptr_r),
         .cmd_heap_limit_i(heap_limit_r),
         .dr_valid_o(ca_dr_valid),
@@ -1811,6 +1812,16 @@ module pycore_core #(
         : ((heap_init_ptr_sim + gc_heap_dyn_bytes_sim > PYCORE_HEAP_LIMIT)
                ? PYCORE_HEAP_LIMIT : heap_init_ptr_sim + gc_heap_dyn_bytes_sim);
 
+    // Extend / mid-list delete / dict grow / set grow are already marshaled
+    // for excore. With CA_EN they run on the container accelerator instead.
+    wire ca_take_trap = ca_en_sim && trap_marshal_pending_r &&
+                        (container_phase_r == CP_DONE) && !ca_cmd_pend_r &&
+                        !gc_abort_r &&
+                        ((trap_marshal_code_r == PY_TRAP_LIST_EXTEND) ||
+                         (trap_marshal_code_r == PY_TRAP_LIST_DELETE) ||
+                         (trap_marshal_code_r == PY_TRAP_DICT_GROW) ||
+                         (trap_marshal_code_r == PY_TRAP_SET_GROW));
+
     // Engine.
     logic         gc_start;
     /* verilator lint_off UNUSEDSIGNAL */
@@ -2016,12 +2027,6 @@ module pycore_core #(
     logic gc_force_collect;
     assign gc_force_collect = (gc_every_n_runs_sim != 32'd0) &&
                               ((gc_runsw_cnt_r + 32'd1) >= gc_every_n_runs_sim);
-    // Aligned requests fit an exact run. Adding 64 B of slack to an
-    // already-aligned excore request rejected a run of the right size
-    // and the retry guard then reported MemoryError (A42).
-    logic [31:0] gc_need_fit;
-    assign gc_need_fit = (gc_need_bytes_r[5:0] == 6'd0) ? gc_need_bytes_r
-                                                        : (gc_need_bytes_r + 32'd64);
     assign gc_alloc_collect = (state_r == S_GC_ALLOC) && (gc_alloc_phase_r == 4'd0) &&
                               !gc_collected_r && gc_auto_sim && (gc_need_bytes_r != 32'd0) &&
                               (((run_list_head_r == 32'd0) &&
@@ -2898,6 +2903,7 @@ module pycore_core #(
                         state_next = S_CA;
                     end else if (container_phase_r == CP_DONE) begin
                         state_next = gc_abort_r ? S_GC_ALLOC
+                                   : ca_take_trap ? S_CA
                                    : trap_marshal_pending_r ? S_TRAP_MARSHAL : S_FETCH;
                     end
                 end
@@ -3297,6 +3303,10 @@ module pycore_core #(
             container_old_order_r           <= '0;
             ca_cmd_pend_r              <= 1'b0;
             ca_issued_r                <= 1'b0;
+            ca_op_r                    <= '0;
+            ca_a_r                     <= '0;
+            ca_b_r                     <= '0;
+            ca_c_r                     <= '0;
             trap_marshal_pending_r     <= 1'b0;
             trap_marshal_code_r        <= '0;
             trap_marshal_entry_count_r <= '0;
@@ -3899,6 +3909,21 @@ module pycore_core #(
                 //   BUILD_TUPLE / SUBSCR_TUPLE: like LIST without a header slot.
                 // ----------------------------------------------------------
                 S_CONTAINER: begin
+                    if (ca_take_trap) begin
+                        ca_cmd_pend_r          <= 1'b1;
+                        ca_issued_r            <= 1'b0;
+                        ca_a_r                 <= trap_marshal_entries_r[0];
+                        ca_b_r                 <= trap_marshal_entries_r[1];
+                        ca_c_r                 <= trap_marshal_entries_r[2];
+                        trap_marshal_pending_r <= 1'b0;
+                        unique case (trap_marshal_code_r)
+                            PY_TRAP_LIST_EXTEND: ca_op_r <= PY_CA_L_EXTEND;
+                            PY_TRAP_LIST_DELETE: ca_op_r <= PY_CA_L_DEL;
+                            PY_TRAP_DICT_GROW:   ca_op_r <= PY_CA_D_GROW;
+                            PY_TRAP_SET_GROW:    ca_op_r <= PY_CA_S_GROW;
+                            default:             ca_op_r <= PY_CA_L_APPEND;
+                        endcase
+                    end
 
                     // ---- dmem ack: shared clearing --------------------------
                     if (container_dmem_pending_r && dmem_ack_i) begin
@@ -4529,7 +4554,7 @@ module pycore_core #(
                             gc_retry_largest_r <= gc_largest_size;
                             if (gc_abort_r && (gc_retry_count_r != 2'd0) &&
                                 (gc_largest_size <= gc_retry_largest_r) &&
-                                (gc_largest_size < gc_need_fit) &&
+                                (gc_largest_size < gc_need_bytes_r + 32'd64) &&
                                 (gc_mutant_sim != 8'd36)) begin
                                 gc_oom_raise_r   <= 1'b1;
                                 gc_alloc_phase_r <= 4'd7;
@@ -4589,7 +4614,7 @@ module pycore_core #(
                                 gc_run_idx_r  <= gc_run_idx_r + 32'd1;
                                 if (((gc_mutant_sim == 8'd27)
                                         ? gc_run_peek_size >= gc_need_bytes_r
-                                        : gc_run_peek_size >= gc_need_fit) ||
+                                        : gc_run_peek_size >= gc_need_bytes_r + 32'd64) ||
                                     ((gc_need_bytes_r == 32'd0) &&
                                      (gc_run_peek_size != 32'd0))) begin
                                     gc_cand_base_r <= gc_run_peek_base;
@@ -4669,7 +4694,7 @@ module pycore_core #(
                                 gc_run_pops_r   <= gc_run_pops_r + 32'd1;
                                 if (gc_mutant_sim != 8'd28) run_list_head_r <= dmem_rdata_i[63:32];
                                 if (((gc_mutant_sim == 8'd27) ? dmem_rdata_i[95:64] >= gc_need_bytes_r
-                                     : dmem_rdata_i[95:64] >= gc_need_fit) ||
+                                     : dmem_rdata_i[95:64] >= gc_need_bytes_r + 32'd64) ||
                                     ((gc_need_bytes_r == 32'd0) && (dmem_rdata_i[95:64] != 32'd0))) begin
                                     gc_cand_base_r <= gc_hdr_base;
                                     gc_cand_size_r <= dmem_rdata_i[95:64];
@@ -4841,16 +4866,52 @@ module pycore_core #(
                             container_mem_fault_r <= 1'b1;
                         end else if (ca_dr_ok) begin
                             heap_ptr_r   <= ca_dr_heap;
-                            tos_r        <= tos_r - RF_AW'(1);
                             fetch_skip_r <= 1'b1;
-                            if (ca_b_r[PYCORE_TAG_MSB:PYCORE_TAG_LSB] == PY_TAG_OBJECT) begin
-                                container_wb_we_r   <= 1'b1;
-                                container_wb_addr_r <= RF_AW'(
-                                    {2'b0, tos_r} - 9'd1 - {2'b0, cur_arg_r[6:0]});
-                                container_wb_data_r <= pycore_make_entry(
-                                    PY_TAG_MUT_COLLEC,
-                                    pycore_mut_set_contaminated(
-                                        ca_a_r[PYCORE_VAL_MSB:PYCORE_VAL_LSB]));
+                            if (ca_op_r == PY_CA_L_DEL) begin
+                                tos_r <= tos_r - RF_AW'(2);
+                            end else if (ca_op_r == PY_CA_D_GROW) begin
+                                // Same pops as excore: ATTR/MAP_ADD 2,
+                                // NAME/GLOBAL 1, STORE_SUBSCR 3.
+                                if ((cur_opcode_r == PY_OP_STORE_ATTR) ||
+                                    (cur_opcode_r == PY_OP_MAP_ADD))
+                                    tos_r <= tos_r - RF_AW'(2);
+                                else if ((cur_opcode_r == PY_OP_STORE_NAME) ||
+                                         (cur_opcode_r == PY_OP_STORE_GLOBAL))
+                                    tos_r <= tos_r - RF_AW'(1);
+                                else
+                                    tos_r <= tos_r - RF_AW'(3);
+                                if (ca_b_r[PYCORE_TAG_MSB:PYCORE_TAG_LSB] == PY_TAG_OBJECT) begin
+                                    if (cur_opcode_r == PY_OP_MAP_ADD) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd2
+                                            - {2'b0, cur_arg_r[6:0]});
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_MUT_COLLEC,
+                                            pycore_mut_set_contaminated(
+                                                ca_a_r[PYCORE_VAL_MSB:PYCORE_VAL_LSB]));
+                                    end else if (cur_opcode_r == PY_OP_STORE_SUBSCR) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(2));
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_MUT_COLLEC,
+                                            pycore_mut_set_contaminated(
+                                                ca_a_r[PYCORE_VAL_MSB:PYCORE_VAL_LSB]));
+                                    end
+                                end
+                            end else begin
+                                tos_r <= tos_r - RF_AW'(1);
+                                if (((ca_op_r == PY_CA_L_APPEND) ||
+                                     (ca_op_r == PY_CA_S_GROW)) &&
+                                    (ca_b_r[PYCORE_TAG_MSB:PYCORE_TAG_LSB] == PY_TAG_OBJECT)) begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, tos_r} - 9'd1 - {2'b0, cur_arg_r[6:0]});
+                                    container_wb_data_r <= pycore_make_entry(
+                                        PY_TAG_MUT_COLLEC,
+                                        pycore_mut_set_contaminated(
+                                            ca_a_r[PYCORE_VAL_MSB:PYCORE_VAL_LSB]));
+                                end
                             end
                         end
                     end

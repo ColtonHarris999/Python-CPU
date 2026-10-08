@@ -40,14 +40,18 @@ Stage A0 uses the core's dmem port. The CA is the only master while
 copy of the line. A later stage gives the CA its own arbitrated port on
 the same side of L1D and lets the core keep running after data ready.
 
-`+CA_EN=0` puts list growth back on the excore trap path. `+CA_EN=1`
-(the default) handles it in the CA.
+`+CA_EN=0` puts these commands back on the excore trap path. `+CA_EN=1`
+(the default) handles them in the CA. Buffers are placed at the raw
+`heap_ptr`, the same address the excore firmware used, so a grown
+object compares the same on either path.
 
 ## What a command does
 
-`PY_CA_L_APPEND` is the command that is in the hardware. pycore raises
-it from `LIST_APPEND` when `len == cap`, which used to be excore trap 9.
-The CA:
+Five commands are in the hardware. Spare capacity, the last-element
+list delete, and an empty extend stay on the existing pycore fast path
+and do not enter the CA.
+
+`PY_CA_L_APPEND` (`LIST_APPEND` when `len == cap`, formerly trap 9):
 
 1. Reads the list header `{capacity, length}` and the `ob_item` pointer.
    The object address does not move.
@@ -63,17 +67,44 @@ The CA:
 5. Signals data ready. pycore stores the new `heap_ptr`, pops the
    appended value, and fetches the next instruction.
 
+`PY_CA_L_EXTEND` (non-empty list or tuple source, formerly trap 10)
+snapshots the source length and buffer first, including a self-extend.
+If `cap >= len + src_len` it copies onto the existing buffer and leaves
+the heap pointer where it was. Otherwise it doubles from `cap*2` (or 4)
+until the buffer fits, copies the destination elements and then the
+source, and publishes the header before `ob_item`. pycore pops 1.
+
+`PY_CA_L_DEL` (mid-list delete, formerly trap 12) shifts elements
+`[idx+1, len)` down one slot, writes `len-1`, and leaves capacity and
+the heap pointer unchanged. pycore pops 2.
+
+`PY_CA_D_GROW` (formerly trap 11) sizes the new table the way the
+firmware does: 4× used below 50,000 else 2×, at least 8, a power of
+two, strictly above used, and at least twice the old slot count. The
+new order buffer is at `heap_ptr` and the table follows it. Occupied
+slots are rehashed; tombstones are not copied. The new key is inserted
+into an empty slot and appended to the order buffer. pycore pops 3 for
+`STORE_SUBSCR`, 2 for `STORE_ATTR` and `MAP_ADD`, and 1 for `STORE_NAME`
+and `STORE_GLOBAL`.
+
+`PY_CA_S_GROW` (formerly trap 13) uses that same slot count for an
+element table of stride 32, rehashes, inserts the element, and pops 1.
+
 ```text
-  list object (stable)              element buffer (moves)
+  list object (stable)              element buffer (moves on grow)
   ┌────────────────────┐            ┌────────┬────────┐
   │ cap │ len          │            │ value  │ tag    │  × capacity
   │ 0   │ ob_item ───────────────►  └────────┴────────┘
   └────────────────────┘              stride 32 bytes
-```
 
-Spare capacity still uses the existing pycore fast path and does not
-enter the CA. `LIST_EXTEND`, mid-list delete, and dict and set growth
-are still excore traps. Those are the next commands on the same port.
+  dict object (stable, 48 B)        order (stride 32) then table (stride 64)
+  ┌────────────────────┐            ┌────────┬────────┐
+  │ slots │ used       │            │ key    │ tag    │  × slots
+  │ order_len │ version│            └────────┴────────┘
+  │ table │ order ────────────────► ┌────┬────┬────┬────┐
+  └────────────────────┘            │key │ktag│val │vtag│  × slots
+                                    └────┴────┴────┴────┘
+```
 
 ## Data ready and container ready
 
@@ -136,8 +167,10 @@ memory-mapped console cannot be correct on top of them.
   installs it.
 - The flush sequencer quiesces L1D before it asserts flush or
   invalidate, and holds the request until L1D leaves idle.
-- The excore slot port holds its request until ack. The crossbar locks
-  the grant so the level request is not taken twice.
+- The excore slot port drops its request once the crossbar grants it,
+  then waits for ack. A level request held through the ack cycle was
+  counted twice by the slot-port bank. The crossbar still locks the
+  grant for the rest of the beat.
 - A store or delete of the active globals or builtins dict flushes the
   global-name cache. `ns[name] = …` used to leave a stale hit.
 - STRACC hashes a code unit only when it stores it. Strings longer than
@@ -146,7 +179,10 @@ memory-mapped console cannot be correct on top of them.
 - Excore `SET_UPDATE` keeps its loop bound in scratch that equality does
   not clobber. Long-string keys use the cached FNV hash and compare by
   payload, not by address.
-- An already line-aligned GC request fits a free run of that size.
+- A GC retry is keyed off the heap pointer moving, so a collect that
+  does not free enough does not spin. An honest fit still needs 64
+  bytes of slack past the request; mutant 27 is the run that accepts
+  an exact fit.
 
 Containers and the excore area are green on both tops after these
 changes (81 container runs, the excore area including the trap-count
