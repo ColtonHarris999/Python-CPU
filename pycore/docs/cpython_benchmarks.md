@@ -130,6 +130,11 @@ then writes `pycore/docs/research_comparison.md`. The hart's time column
 uses `PYCORE_RESEARCH_MHZ` (default 1000). A finished program is kept;
 `FORCE=1` measures it again.
 
+`make research-compare-machines` runs the same set on every preset in
+`pycore/tools/cpython_baseline/machines/` and writes
+`pycore/docs/research_machines.md` with the comparison chart. It reuses
+a machine that already finished. PyCore is not remeasured.
+
 ## Results on the `pycore` preset
 
 Machine: 8KB 4-way L1I, 8KB 4-way L1D, 128KB 8-way L2, 64B lines,

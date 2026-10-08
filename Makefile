@@ -128,7 +128,7 @@ EXCORE_RTL_SRCS := \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
 	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
 	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
-	research-compare
+	research-compare research-compare-machines
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -615,6 +615,18 @@ research-compare:
 		--jobs $(RESEARCH_COMPARE_JOBS) \
 		--out build/research_compare \
 		--doc pycore/docs/research_comparison.md \
+		$(if $(FORCE),--force,)
+
+# CPython research set on every machines/*.toml preset, charted against
+# the hart numbers already in build/research_compare. Does not rerun PyCore.
+research-compare-machines:
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) pycore/tools/research_compare.py \
+		--skip-pycore \
+		--machines all \
+		--pycore-mhz $(PYCORE_RESEARCH_MHZ) \
+		--jobs $(RESEARCH_COMPARE_JOBS) \
+		--out build/research_compare \
+		--chart-doc pycore/docs/research_machines.md \
 		$(if $(FORCE),--force,)
 
 pycore-compile-suite: test-compiler-vs-cpython

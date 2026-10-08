@@ -39,7 +39,7 @@ _TOOLS = Path(__file__).resolve().parent
 if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
-from cpython_baseline.machine import load_machine  # noqa: E402
+from cpython_baseline.machine import load_machine, preset_names  # noqa: E402
 from cpython_baseline.runner import measure  # noqa: E402
 from pycore_exec import ExecConfig, exec_file  # noqa: E402
 
@@ -112,6 +112,15 @@ def _dur(seconds: float | None) -> str:
     if seconds >= 1e-3:
         return f"{seconds * 1e3:.2f} ms"
     return f"{seconds * 1e6:.1f} us"
+
+
+def _tick_dur(seconds: float) -> str:
+    """Axis ticks are exact decades, so drop the trailing zeros used in table cells."""
+    if seconds >= 1:
+        return f"{seconds:g} s"
+    if seconds >= 1e-3:
+        return f"{seconds * 1e3:g} ms"
+    return f"{seconds * 1e6:g} us"
 
 
 def _ns_at(cycles: float | None, mhz: float) -> float | None:
@@ -736,10 +745,18 @@ def _pycore_reusable(report: dict | None) -> bool:
     return report.get("verdict") in ("PASS", "MISMATCH")
 
 
-def run_cpython(programs: list[Path], out: Path, machine_name: str, *, force: bool) -> dict:
+def run_cpython(
+    programs: list[Path],
+    out: Path,
+    machine_name: str,
+    *,
+    force: bool,
+    dest_name: str = "cpython.json",
+    work_name: str = "callgrind",
+) -> dict:
     from cpython_baseline.runner import python_identity  # noqa: PLC0415
 
-    dest = out / "cpython.json"
+    dest = out / dest_name
     existing = _load_json(dest) or {}
     by_name = {
         _program_name(r): r
@@ -751,7 +768,7 @@ def run_cpython(programs: list[Path], out: Path, machine_name: str, *, force: bo
         for program in programs:
             by_name.pop(program.name, None)
     machine = load_machine(machine_name)
-    work = out / "callgrind"
+    work = out / work_name
 
     def save() -> dict:
         payload = {
@@ -853,6 +870,324 @@ def run_pycore(
     return reports
 
 
+def _exec_cycles(record: dict | None) -> int | None:
+    if not record or record.get("status") != "ok":
+        return None
+    return _event_cycles(_phase(record, "run_cold"))
+
+
+def _pyc_exec_cycles(report: dict | None) -> int | None:
+    phase = _pyc_phase(report, "run") or {}
+    if phase.get("partial"):
+        return None
+    if report and report.get("verdict") not in ("PASS", "MISMATCH"):
+        return None
+    value = phase.get("cycle")
+    return None if not value else int(value)
+
+
+# Stable left-to-right order: the hart, then CPython presets from the
+# slow-clock paper machines to the desktop.
+_MACHINE_ORDER = ("pycore-hart", "romer", "pycore", "gem5_classic", "skylake")
+
+_SERIES_COLOR = {
+    "pycore-hart": "#1b4f72",
+    "romer": "#6c3483",
+    "pycore": "#1a5276",
+    "gem5_classic": "#1e8449",
+    "skylake": "#b9770e",
+}
+
+
+def _clock_label(mhz: float) -> str:
+    if mhz >= 1000 and mhz % 1000 == 0:
+        return f"{mhz / 1000:g} GHz"
+    if mhz >= 1000:
+        return f"{mhz / 1000:.1f} GHz"
+    return f"{mhz:g} MHz"
+
+
+def _series_label(key: str, mhz: float) -> str:
+    if key == "pycore-hart":
+        return f"PyCore hart {_clock_label(mhz)}"
+    machine = load_machine(key)
+    short = {
+        "pycore": "CPython, PyCore caches",
+        "gem5_classic": "CPython, gem5 classic",
+        "skylake": "CPython, Skylake",
+        "romer": "CPython, Romer",
+    }
+    return f"{short.get(key, 'CPython ' + key)} {_clock_label(machine.frequency_mhz)}"
+
+
+def machine_chart_data(
+    pycore_reports: dict[str, dict],
+    machine_payloads: dict[str, dict],
+    *,
+    pycore_mhz: float,
+) -> dict:
+    """Cold-exec cycles and time for the hart and every CPython machine."""
+    names = sorted({
+        name
+        for payload in machine_payloads.values()
+        for name in (_program_name(r) for r in payload.get("programs") or [])
+    } | set(pycore_reports))
+    programs = []
+    for name in names:
+        entry = {"program": name, "series": {}}
+        pcyc = _pyc_exec_cycles(pycore_reports.get(name))
+        if pcyc:
+            entry["series"]["pycore-hart"] = {
+                "cycles": pcyc,
+                "seconds": pcyc / (pycore_mhz * 1e6),
+                "mhz": pycore_mhz,
+            }
+        for machine_name, payload in machine_payloads.items():
+            record = next(
+                (r for r in payload.get("programs") or [] if _program_name(r) == name),
+                None,
+            )
+            ccyc = _exec_cycles(record)
+            mhz = (payload.get("machine") or {}).get("frequency_mhz")
+            if ccyc and mhz:
+                entry["series"][machine_name] = {
+                    "cycles": ccyc,
+                    "seconds": ccyc / (float(mhz) * 1e6),
+                    "mhz": float(mhz),
+                }
+        programs.append(entry)
+    series_keys = [key for key in _MACHINE_ORDER if any(key in item["series"] for item in programs)]
+    for key in machine_payloads:
+        if key not in series_keys:
+            series_keys.append(key)
+    if "pycore-hart" not in series_keys and any("pycore-hart" in item["series"] for item in programs):
+        series_keys.insert(0, "pycore-hart")
+    geomean = {}
+    for key in series_keys:
+        cycles = [item["series"][key]["cycles"] for item in programs if key in item["series"]]
+        seconds = [item["series"][key]["seconds"] for item in programs if key in item["series"]]
+        mhz = next(item["series"][key]["mhz"] for item in programs if key in item["series"])
+        geomean[key] = {
+            "cycles": _geomean([float(c) for c in cycles]),
+            "seconds": _geomean(seconds),
+            "mhz": mhz,
+            "programs": len(cycles),
+        }
+    return {
+        "pycore_mhz": pycore_mhz,
+        "series": [
+            {"key": key, "label": _series_label(key, pycore_mhz), "color": _SERIES_COLOR.get(key, "#566573")}
+            for key in series_keys
+        ],
+        "programs": programs,
+        "geomean": geomean,
+    }
+
+
+def _xml(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def render_chart_svg(data: dict) -> str:
+    """Log-scale grouped bars of cold-exec time. One group per program, plus the geomean."""
+    series = data["series"]
+    groups = list(data["programs"]) + [{
+        "program": "geomean",
+        "series": {
+            key: {"seconds": value["seconds"], "cycles": value["cycles"]}
+            for key, value in data["geomean"].items()
+            if value.get("seconds")
+        },
+    }]
+    times = [
+        item["series"][spec["key"]]["seconds"]
+        for item in groups
+        for spec in series
+        if spec["key"] in item["series"] and item["series"][spec["key"]]["seconds"] > 0
+    ]
+    if not times:
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"640\" height=\"80\"><text x=\"16\" y=\"40\">no machine data</text></svg>\n"
+    vmin = 10 ** math.floor(math.log10(min(times)))
+    vmax = 10 ** math.ceil(math.log10(max(times) * 1.05))
+    if vmax <= vmin:
+        vmax = vmin * 10
+    width = 1040
+    height = 560
+    left, right, top, bottom = 72, 24, 108, 92
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+    n_series = len(series)
+    n_groups = len(groups)
+    gap = 18
+    group_w = plot_w / n_groups
+    bar_w = min(14.0, (group_w - gap) / max(1, n_series))
+
+    def y_of(seconds: float) -> float:
+        frac = (math.log10(seconds) - math.log10(vmin)) / (math.log10(vmax) - math.log10(vmin))
+        return top + plot_h * (1.0 - frac)
+
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="#fbfcfd"/>',
+        '<text x="72" y="28" font-family="sans-serif" font-size="18" fill="#1c2833">Research cold-exec time</text>',
+        '<text x="72" y="48" font-family="sans-serif" font-size="12" fill="#566573">PyCore at its assumed clock. Each CPython bar uses that preset\'s clock. The scale is logarithmic.</text>',
+    ]
+    decade = vmin
+    while decade <= vmax * 1.001:
+        y = y_of(decade)
+        parts.append(f'<line x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}" stroke="#d5d8dc"/>')
+        label = _tick_dur(decade)
+        parts.append(
+            f'<text x="{left - 8}" y="{y + 4:.1f}" text-anchor="end" font-family="sans-serif" font-size="11" fill="#566573">{_xml(label)}</text>'
+        )
+        decade *= 10
+    parts.append(f'<line x1="{left}" y1="{top + plot_h}" x2="{width - right}" y2="{top + plot_h}" stroke="#1c2833"/>')
+    for index, group in enumerate(groups):
+        origin = left + index * group_w + (group_w - (n_series * bar_w)) / 2
+        for s_index, spec in enumerate(series):
+            point = group["series"].get(spec["key"])
+            if not point or not point.get("seconds"):
+                continue
+            y = y_of(point["seconds"])
+            h = top + plot_h - y
+            x = origin + s_index * bar_w
+            parts.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w - 1:.1f}" height="{max(h, 0):.1f}" fill="{spec["color"]}"/>'
+            )
+        label = group["program"].removesuffix(".py")
+        lx = left + index * group_w + group_w / 2
+        parts.append(
+            f'<text x="{lx:.1f}" y="{top + plot_h + 16}" text-anchor="end" transform="rotate(-40 {lx:.1f} {top + plot_h + 16})" font-family="sans-serif" font-size="11" fill="#1c2833">{_xml(label)}</text>'
+        )
+    legend_x = left
+    legend_y = 62
+    for spec in series:
+        need = 20 + len(spec["label"]) * 6.3
+        if legend_x + need > width - right:
+            legend_x = left
+            legend_y += 18
+        parts.append(f'<rect x="{legend_x}" y="{legend_y}" width="12" height="12" fill="{spec["color"]}"/>')
+        parts.append(
+            f'<text x="{legend_x + 16}" y="{legend_y + 11}" font-family="sans-serif" font-size="11" fill="#1c2833">{_xml(spec["label"])}</text>'
+        )
+        legend_x += need
+    parts.append("</svg>")
+    return "\n".join(parts) + "\n"
+
+
+def render_machines_markdown(data: dict) -> str:
+    lines = ["# CPython research benchmarks across machines", ""]
+    lines.append(
+        "Cold-exec time for the research set. PyCore is the measured hart. "
+        "Every other series is CPython 3.14 under the simple-core model "
+        "(`cpython_baseline`) at that preset's own clock, so a faster clock "
+        "is part of the machine. The same cycle counts are in the table."
+    )
+    lines.append("")
+    lines.append("Regenerate with `make research-compare-machines`.")
+    lines.append("")
+    lines.append(f"Recorded {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}.")
+    lines.append("")
+    lines.append("![Research cold-exec time](research_machines.svg)")
+    lines.append("")
+    lines.append("## Geometric mean")
+    lines.append("")
+    lines.append("| machine | clock | programs | geomean cycles | geomean time |")
+    lines.append("| --- | ---: | ---: | ---: | ---: |")
+    for spec in data["series"]:
+        stats = data["geomean"].get(spec["key"]) or {}
+        cycles = stats.get("cycles")
+        lines.append(
+            f"| {spec['label']} | {stats.get('mhz', '-'):g} MHz | {stats.get('programs', '-')} | "
+            f"{_n(round(cycles)) if cycles else '-'} | {_dur(stats.get('seconds'))} |"
+        )
+    lines.append("")
+    lines.append("## Cold exec, per program")
+    lines.append("")
+    header = "| program | " + " | ".join(spec["label"] for spec in data["series"]) + " |"
+    rule = "| --- | " + " | ".join("---:" for _ in data["series"]) + " |"
+    lines.append(header)
+    lines.append(rule)
+    for item in data["programs"]:
+        cells = []
+        for spec in data["series"]:
+            point = item["series"].get(spec["key"])
+            if not point:
+                cells.append("-")
+            else:
+                cells.append(f"{_dur(point['seconds'])} ({_n(point['cycles'])})")
+        lines.append(f"| {item['program']} | " + " | ".join(cells) + " |")
+    lines.append("")
+    lines.append("Each cell is simulated time at that machine's clock, then the cycle count.")
+    lines.append("Time is cycles / clock. A smaller bar is a faster machine.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _machine_names(spec: str) -> list[str]:
+    if spec == "all":
+        names = preset_names()
+    else:
+        names = [part.strip() for part in spec.split(",") if part.strip()]
+    for name in names:
+        load_machine(name)
+    return names
+
+
+def _copy_payload(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def run_machines(
+    programs: list[Path],
+    out: Path,
+    names: list[str],
+    *,
+    jobs: int,
+    force: bool,
+) -> dict[str, dict]:
+    """Callgrind the research set on each preset. One directory per machine."""
+    out.mkdir(parents=True, exist_ok=True)
+    # The single-machine file is the pycore preset from `make research-compare`.
+    preset_file = out / "cpython.json"
+    preset = _load_json(preset_file)
+    if preset and (preset.get("machine") or {}).get("name") == "pycore":
+        cached = out / "machines" / "pycore" / "cpython.json"
+        if not cached.is_file():
+            _copy_payload(preset_file, cached)
+
+    def one(name: str) -> tuple[str, dict]:
+        print(f"machine {name}: start", flush=True)
+        payload = run_cpython(
+            programs,
+            out / "machines" / name,
+            name,
+            force=force,
+            dest_name="cpython.json",
+            work_name="callgrind",
+        )
+        print(f"machine {name}: {len(payload.get('programs') or [])} programs", flush=True)
+        return name, payload
+
+    payloads: dict[str, dict] = {}
+    if jobs <= 1:
+        for name in names:
+            key, payload = one(name)
+            payloads[key] = payload
+        return payloads
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = [pool.submit(one, name) for name in names]
+        for fut in as_completed(futures):
+            key, payload = fut.result()
+            payloads[key] = payload
+    return payloads
+
+
 def _select(programs: list[Path], names: list[str]) -> list[Path]:
     if not names:
         return programs
@@ -868,7 +1203,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--doc", type=Path, default=None, help="Also write the markdown report here")
-    parser.add_argument("--machine", default="pycore", help="CPython baseline preset or TOML")
+    parser.add_argument("--machine", default="pycore", help="CPython baseline preset used for the one-core comparison")
+    parser.add_argument(
+        "--machines",
+        default="",
+        help="Comma-separated presets, or 'all', for the multi-machine chart",
+    )
+    parser.add_argument(
+        "--chart-doc",
+        type=Path,
+        default=None,
+        help="Write the machine chart markdown here (svg beside it)",
+    )
     parser.add_argument("--pycore-mhz", type=float, default=1000.0)
     parser.add_argument("--max-cycles", type=int, default=2_000_000_000)
     parser.add_argument("--mem-latency", type=int, default=4)
@@ -937,6 +1283,32 @@ def main(argv: list[str] | None = None) -> int:
         doc.write_text(text, encoding="utf-8")
         _write_payload(doc.with_suffix(".json"), payload)
     print(f"wrote {out / 'comparison.md'}", flush=True)
+    if args.machines:
+        names = _machine_names(args.machines)
+        if args.report_only or args.skip_cpython:
+            payloads = {}
+            for name in names:
+                loaded = _load_json(out / "machines" / name / "cpython.json")
+                if loaded is None and name == "pycore":
+                    loaded = cpython_payload
+                if loaded is None:
+                    raise SystemExit(f"no saved baseline for machine {name}")
+                payloads[name] = loaded
+        else:
+            payloads = run_machines(programs, out, names, jobs=max(1, args.jobs), force=args.force)
+        chart = machine_chart_data(pycore_reports, payloads, pycore_mhz=args.pycore_mhz)
+        svg = render_chart_svg(chart)
+        (out / "research_machines.svg").write_text(svg, encoding="utf-8")
+        chart_md = render_machines_markdown(chart)
+        (out / "research_machines.md").write_text(chart_md, encoding="utf-8")
+        _write_payload(out / "research_machines.json", chart)
+        print(f"wrote {out / 'research_machines.md'}", flush=True)
+        if args.chart_doc:
+            doc = args.chart_doc if args.chart_doc.is_absolute() else REPO / args.chart_doc
+            doc.parent.mkdir(parents=True, exist_ok=True)
+            doc.write_text(chart_md, encoding="utf-8")
+            doc.with_suffix(".svg").write_text(svg, encoding="utf-8")
+            _write_payload(doc.with_suffix(".json"), chart)
     bad = [
         item["program"] for item in payload["programs"]
         if item.get("verdict") != "PASS" or item.get("stdout_match") is False

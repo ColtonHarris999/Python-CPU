@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="560" viewBox="0 0 1040 560">
+<rect width="100%" height="100%" fill="#fbfcfd"/>
+<text x="72" y="28" font-family="sans-serif" font-size="18" fill="#1c2833">Research cold-exec time</text>
+<text x="72" y="48" font-family="sans-serif" font-size="12" fill="#566573">PyCore at its assumed clock. Each CPython bar uses that preset's clock. The scale is logarithmic.</text>
+<line x1="72" y1="468.0" x2="1016" y2="468.0" stroke="#d5d8dc"/>
+<text x="64" y="472.0" text-anchor="end" font-family="sans-serif" font-size="11" fill="#566573">1 ms</text>
+<line x1="72" y1="348.0" x2="1016" y2="348.0" stroke="#d5d8dc"/>
+<text x="64" y="352.0" text-anchor="end" font-family="sans-serif" font-size="11" fill="#566573">10 ms</text>
+<line x1="72" y1="228.0" x2="1016" y2="228.0" stroke="#d5d8dc"/>
+<text x="64" y="232.0" text-anchor="end" font-family="sans-serif" font-size="11" fill="#566573">100 ms</text>
+<line x1="72" y1="108.0" x2="1016" y2="108.0" stroke="#d5d8dc"/>
+<text x="64" y="112.0" text-anchor="end" font-family="sans-serif" font-size="11" fill="#566573">1 s</text>
+<line x1="72" y1="468" x2="1016" y2="468" stroke="#1c2833"/>
+<rect x="81.0" y="344.1" width="12.6" height="123.9" fill="#1b4f72"/>
+<rect x="94.6" y="149.2" width="12.6" height="318.8" fill="#6c3483"/>
+<rect x="108.1" y="155.7" width="12.6" height="312.3" fill="#1a5276"/>
+<rect x="121.7" y="275.2" width="12.6" height="192.8" fill="#1e8449"/>
+<rect x="135.3" y="340.3" width="12.6" height="127.7" fill="#b9770e"/>
+<text x="114.9" y="484" text-anchor="end" transform="rotate(-40 114.9 484)" font-family="sans-serif" font-size="11" fill="#1c2833">binary_trees</text>
+<rect x="166.8" y="218.3" width="12.6" height="249.7" fill="#1b4f72"/>
+<rect x="180.4" y="119.5" width="12.6" height="348.5" fill="#6c3483"/>
+<rect x="193.9" y="118.7" width="12.6" height="349.3" fill="#1a5276"/>
+<rect x="207.5" y="235.4" width="12.6" height="232.6" fill="#1e8449"/>
+<rect x="221.1" y="303.1" width="12.6" height="164.9" fill="#b9770e"/>
+<text x="200.7" y="484" text-anchor="end" transform="rotate(-40 200.7 484)" font-family="sans-serif" font-size="11" fill="#1c2833">fannkuch</text>
+<rect x="252.6" y="364.5" width="12.6" height="103.5" fill="#1b4f72"/>
+<rect x="266.2" y="167.1" width="12.6" height="300.9" fill="#6c3483"/>
+<rect x="279.8" y="167.1" width="12.6" height="300.9" fill="#1a5276"/>
+<rect x="293.3" y="289.0" width="12.6" height="179.0" fill="#1e8449"/>
+<rect x="306.9" y="358.5" width="12.6" height="109.5" fill="#b9770e"/>
+<text x="286.5" y="484" text-anchor="end" transform="rotate(-40 286.5 484)" font-family="sans-serif" font-size="11" fill="#1c2833">fasta</text>
+<rect x="338.5" y="276.2" width="12.6" height="191.8" fill="#1b4f72"/>
+<rect x="352.0" y="134.6" width="12.6" height="333.4" fill="#6c3483"/>
+<rect x="365.6" y="141.4" width="12.6" height="326.6" fill="#1a5276"/>
+<rect x="379.1" y="261.6" width="12.6" height="206.4" fill="#1e8449"/>
+<rect x="392.7" y="331.3" width="12.6" height="136.7" fill="#b9770e"/>
+<text x="372.4" y="484" text-anchor="end" transform="rotate(-40 372.4 484)" font-family="sans-serif" font-size="11" fill="#1c2833">knucleotide</text>
+<rect x="424.3" y="365.4" width="12.6" height="102.6" fill="#1b4f72"/>
+<rect x="437.8" y="126.5" width="12.6" height="341.5" fill="#6c3483"/>
+<rect x="451.4" y="132.2" width="12.6" height="335.8" fill="#1a5276"/>
+<rect x="465.0" y="251.9" width="12.6" height="216.1" fill="#1e8449"/>
+<rect x="478.5" y="318.5" width="12.6" height="149.5" fill="#b9770e"/>
+<text x="458.2" y="484" text-anchor="end" transform="rotate(-40 458.2 484)" font-family="sans-serif" font-size="11" fill="#1c2833">mandelbrot</text>
+<rect x="510.1" y="349.8" width="12.6" height="118.2" fill="#1b4f72"/>
+<rect x="523.7" y="132.3" width="12.6" height="335.7" fill="#6c3483"/>
+<rect x="537.2" y="133.3" width="12.6" height="334.7" fill="#1a5276"/>
+<rect x="550.8" y="255.8" width="12.6" height="212.2" fill="#1e8449"/>
+<rect x="564.3" y="329.9" width="12.6" height="138.1" fill="#b9770e"/>
+<text x="544.0" y="484" text-anchor="end" transform="rotate(-40 544.0 484)" font-family="sans-serif" font-size="11" fill="#1c2833">monte_carlo</text>
+<rect x="595.9" y="390.1" width="12.6" height="77.9" fill="#1b4f72"/>
+<rect x="609.5" y="181.2" width="12.6" height="286.8" fill="#6c3483"/>
+<rect x="623.0" y="187.4" width="12.6" height="280.6" fill="#1a5276"/>
+<rect x="636.6" y="307.7" width="12.6" height="160.3" fill="#1e8449"/>
+<rect x="650.2" y="375.7" width="12.6" height="92.3" fill="#b9770e"/>
+<text x="629.8" y="484" text-anchor="end" transform="rotate(-40 629.8 484)" font-family="sans-serif" font-size="11" fill="#1c2833">nbody</text>
+<rect x="681.7" y="183.1" width="12.6" height="284.9" fill="#1b4f72"/>
+<rect x="695.3" y="115.5" width="12.6" height="352.5" fill="#6c3483"/>
+<rect x="708.9" y="116.4" width="12.6" height="351.6" fill="#1a5276"/>
+<rect x="722.4" y="236.5" width="12.6" height="231.5" fill="#1e8449"/>
+<rect x="736.0" y="307.1" width="12.6" height="160.9" fill="#b9770e"/>
+<text x="715.6" y="484" text-anchor="end" transform="rotate(-40 715.6 484)" font-family="sans-serif" font-size="11" fill="#1c2833">nqueens</text>
+<rect x="767.5" y="309.0" width="12.6" height="159.0" fill="#1b4f72"/>
+<rect x="781.1" y="145.8" width="12.6" height="322.2" fill="#6c3483"/>
+<rect x="794.7" y="153.6" width="12.6" height="314.4" fill="#1a5276"/>
+<rect x="808.2" y="272.6" width="12.6" height="195.4" fill="#1e8449"/>
+<rect x="821.8" y="339.8" width="12.6" height="128.2" fill="#b9770e"/>
+<text x="801.5" y="484" text-anchor="end" transform="rotate(-40 801.5 484)" font-family="sans-serif" font-size="11" fill="#1c2833">sor</text>
+<rect x="853.4" y="340.9" width="12.6" height="127.1" fill="#1b4f72"/>
+<rect x="866.9" y="140.0" width="12.6" height="328.0" fill="#6c3483"/>
+<rect x="880.5" y="143.8" width="12.6" height="324.2" fill="#1a5276"/>
+<rect x="894.1" y="266.4" width="12.6" height="201.6" fill="#1e8449"/>
+<rect x="907.6" y="333.6" width="12.6" height="134.4" fill="#b9770e"/>
+<text x="887.3" y="484" text-anchor="end" transform="rotate(-40 887.3 484)" font-family="sans-serif" font-size="11" fill="#1c2833">spectral_norm</text>
+<rect x="939.2" y="314.1" width="12.6" height="153.9" fill="#1b4f72"/>
+<rect x="952.7" y="141.2" width="12.6" height="326.8" fill="#6c3483"/>
+<rect x="966.3" y="145.0" width="12.6" height="323.0" fill="#1a5276"/>
+<rect x="979.9" y="265.2" width="12.6" height="202.8" fill="#1e8449"/>
+<rect x="993.4" y="333.8" width="12.6" height="134.2" fill="#b9770e"/>
+<text x="973.1" y="484" text-anchor="end" transform="rotate(-40 973.1 484)" font-family="sans-serif" font-size="11" fill="#1c2833">geomean</text>
+<rect x="72" y="62" width="12" height="12" fill="#1b4f72"/>
+<text x="88" y="73" font-family="sans-serif" font-size="11" fill="#1c2833">PyCore hart 1 GHz</text>
+<rect x="199.1" y="62" width="12" height="12" fill="#6c3483"/>
+<text x="215.1" y="73" font-family="sans-serif" font-size="11" fill="#1c2833">CPython, Romer 100 MHz</text>
+<rect x="357.7" y="62" width="12" height="12" fill="#1a5276"/>
+<text x="373.7" y="73" font-family="sans-serif" font-size="11" fill="#1c2833">CPython, PyCore caches 100 MHz</text>
+<rect x="566.7" y="62" width="12" height="12" fill="#1e8449"/>
+<text x="582.7" y="73" font-family="sans-serif" font-size="11" fill="#1c2833">CPython, gem5 classic 1 GHz</text>
+<rect x="756.8000000000001" y="62" width="12" height="12" fill="#b9770e"/>
+<text x="772.8000000000001" y="73" font-family="sans-serif" font-size="11" fill="#1c2833">CPython, Skylake 3.4 GHz</text>
+</svg>

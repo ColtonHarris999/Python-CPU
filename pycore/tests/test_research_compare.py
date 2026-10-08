@@ -17,6 +17,9 @@ sys.path.insert(0, str(_TOOLS))
 from research_compare import (  # noqa: E402
     build_payload,
     compare_program,
+    machine_chart_data,
+    render_chart_svg,
+    render_machines_markdown,
     render_markdown,
 )
 
@@ -137,6 +140,34 @@ class CompareProgramTest(unittest.TestCase):
         data = next(line for line in text.splitlines() if line.startswith("| fannkuch.py |"))
         self.assertEqual(header.count("|"), data.count("|"))
         self.assertEqual(payload["suite"][0]["exec_ratio"], 0.25)
+
+
+class MachineChartTest(unittest.TestCase):
+    def test_chart_scales_time_by_each_machines_clock(self):
+        record = _cpython()
+        record["status"] = "ok"
+        pycore = {"fannkuch.py": _pycore()}
+        cpython_machine = {
+            "machine": {"name": "romer", "frequency_mhz": 100.0},
+            "programs": [record],
+        }
+        data = machine_chart_data(pycore, {"romer": cpython_machine}, pycore_mhz=1000.0)
+        hart = data["programs"][0]["series"]["pycore-hart"]
+        romer = data["programs"][0]["series"]["romer"]
+        self.assertEqual(hart["cycles"], 250)
+        self.assertAlmostEqual(hart["seconds"], 250 / 1e9)
+        self.assertEqual(romer["cycles"], 1000)
+        self.assertAlmostEqual(romer["seconds"], 1000 / 1e8)
+        svg = render_chart_svg(data)
+        self.assertIn("<svg", svg)
+        self.assertIn("PyCore hart", svg)
+        self.assertIn("Romer", svg)
+        self.assertIn("10 us", svg)
+        self.assertNotIn("10.00", svg)
+        text = render_machines_markdown(data)
+        self.assertIn("research_machines.svg", text)
+        self.assertIn("fannkuch.py", text)
+        self.assertEqual(data["geomean"]["pycore-hart"]["programs"], 1)
 
 
 if __name__ == "__main__":
