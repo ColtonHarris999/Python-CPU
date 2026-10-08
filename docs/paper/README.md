@@ -8,14 +8,19 @@ or planning markdown.
 
 | Path | Topic |
 | --- | --- |
+| `systems/pycore_diagrams.tex` | Figure atlas: hart, register ring, memory system, accelerators |
 | `systems/call_fsm.tex` | `S_CALL` FSM, shared argument binder, CPython call shapes |
+
+`pycore_diagrams.tex` inputs one picture per file from `systems/figures/`.
+Shared TikZ styles are `systems/figures/tikz_styles.tex`.
+Copy a `tikzpicture` into the paper and keep that style file in the preamble.
 
 ## Build
 
 ```bash
 cd docs/paper/systems
-pdflatex call_fsm.tex
-pdflatex call_fsm.tex   # TOC
+make
+# or: pdflatex pycore_diagrams.tex && pdflatex pycore_diagrams.tex
 ```
 
 Needs a TeX distribution with `tikz`, `booktabs`, `hyperref`, `listings`,

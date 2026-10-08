@@ -1,0 +1,103 @@
+% Garbage collector. Requires tikz_styles.tex.
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.6mm and 3mm]
+  \node[trap, minimum width=42mm] (fail) {allocation does not fit\\abort before commit};
+  \node[acc, right=of fail] (alloc) {S\_GC\_ALLOC};
+  \node[acc, below=of alloc] (enter) {S\_GC\_ENTER\\drain the dmem beat};
+  \node[acc, below=of enter] (roots) {S\_GC\_ROOTS\\registers and RF};
+  \node[acc, below=of roots] (run) {S\_GC\_RUN\\mark and sweep};
+  \node[rf, below=of run] (resume) {pop a free run\\re-dispatch};
+  \draw[arr] (fail) -- (alloc);
+  \draw[arr] (alloc) -- (enter);
+  \draw[arr] (enter) -- (roots);
+  \draw[arr] (roots) -- (run);
+  \draw[arr] (run) -- (resume);
+  \node[anno, align=left, anchor=north west] at ($(fail.south west)+(0,-2.6)$)
+    {Off unless \texttt{+GC\_EN=1}.\\
+     With the collector off, an empty heap\\
+     region is still the bump pointer.};
+\end{tikzpicture}
+\caption{Where a collection sits in the core.
+Collections start at instruction boundaries.
+An allocation that does not fit aborts that instruction before the first architectural commit, the core collects, and the instruction is fetched again.
+\texttt{S\_GC\_ENTER} waits until any outstanding data beat from the abort has acknowledged, so a skip-clear cannot treat that read data as the first word of the static prune map.
+If the free-run list still has a run, \texttt{S\_GC\_ALLOC} satisfies the request without a collection.}
+\label{fig:gc-core}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[node distance=3mm and 4mm]
+  \node[ctl] (roots) {root stream};
+  \node[acc, right=of roots] (tr) {tracer};
+  \node[rf, right=of tr] (q) {queue\\4 entries};
+  \node[acc, right=of q] (mk) {marker};
+  \node[mem, below=of mk] (bm) {on-chip bitmap\\one 128-bit word / cycle};
+  \node[rf, left=of bm] (stk) {mark stack\\256 on chip};
+  \node[mem, left=of stk] (spill) {spill 32\\to dmem};
+  \node[mem, below=of spill] (re) {rescan list\\4096};
+  \draw[arr] (roots) -- (tr);
+  \draw[arr] (tr) -- (q);
+  \draw[arr] (q) -- (mk);
+  \draw[arr] (mk) -- (bm);
+  \draw[arr] (mk) -- (stk);
+  \draw[arr] (stk) -- (spill);
+  \draw[arr] (mk) -- (re);
+  \node[anno, align=left, anchor=north] at ($(re.south)+(0,-0.15)$)
+    {One outstanding request. The marker wins a tie with the tracer.};
+\end{tikzpicture}
+\caption{Mark engine inside \texttt{pycore\_gc}.
+The tracer walks memory-resident roots and the slots of each popped object, and emits child handles into the queue.
+The marker tests the first granule of an extent, sets every granule, and pushes kinds that have children.
+The bitmap is the on-chip array \texttt{bm\_q} (\texttt{PYCORE\_GC\_BITMAP\_WORDS} words, one bit per 16-byte granule).
+The 256-entry on-chip stack spills its oldest 32 entries to \texttt{0xFC0000} when full and refills 32 when empty.
+A pop scans at most 128 slots; the rest of the range is pushed first as a continuation, so a wide container holds at most 129 stack entries.
+A child that still does not fit is left unmarked and the range is written once to the rescan list.
+When the stack drains, that range is scanned again.
+The collection is abandoned only when the rescan list itself is full.}
+\label{fig:gc-mark}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.4mm]
+  \node[mem, minimum width=68mm] (sw) {sweep bitmap words up to the high-water word};
+  \node[ctl, minimum width=68mm, below=of sw] (skip) {words above the high-water mark are one free run};
+  \node[rf, minimum width=68mm, below=of skip] (keep) {jump the kept run; do not paint it};
+  \node[acc, minimum width=68mm, below=of keep] (clr) {write zero back to every non-zero word};
+  \node[mem, minimum width=68mm, below=of clr] (hdr) {free-run header \quad first 1024 on chip};
+  \node[mem, minimum width=68mm, below=of hdr] (ov) {overflow headers in the run table, then in place};
+  \foreach \p/\q in {sw/skip,skip/keep,keep/clr,clr/hdr,hdr/ov} \draw[arr] (\p) -- (\q);
+\end{tikzpicture}
+\caption{Sweep and the free-run list.
+The sweep clears the bitmap as it scans, so the next collection starts from a clean map.
+After reset, and after an abandoned collection, the idle engine clears the bitmap in the background, one word per cycle.
+Free runs are not a moving collector: a live object stays at its address.
+The first 1024 run headers stay on chip.
+Further headers go to \texttt{PYCORE\_GC\_RUN\_TABLE}.
+Past that table they occupy the run's first granule, so the list has no fixed cap.
+Allocator traffic in \texttt{S\_GC\_ALLOC} reads a header and zero-fills the granted line.}
+\label{fig:gc-sweep}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=1.7mm and 2mm]
+  \node[mem, font=\tiny\sffamily, minimum width=22mm] (k0) {K\_TUPLE};
+  \node[mem, font=\tiny\sffamily, minimum width=22mm, right=of k0] (k1) {K\_CODE};
+  \node[mem, font=\tiny\sffamily, minimum width=22mm, right=of k1] (k2) {K\_LIST};
+  \node[mem, font=\tiny\sffamily, minimum width=22mm, right=of k2] (k3) {K\_DICT};
+  \node[mem, font=\tiny\sffamily, minimum width=22mm, below=of k0] (k4) {K\_SET};
+  \node[ink, font=\tiny\sffamily, minimum width=22mm, right=of k4] (k5) {K\_OBJ};
+  \node[mem, font=\tiny\sffamily, minimum width=22mm, right=of k5] (k6) {K\_STR};
+  \node[acc, font=\tiny\sffamily, minimum width=22mm, right=of k6] (k7) {K\_DICTT};
+\end{tikzpicture}
+\caption{Mark-stack entry kinds.
+An entry is 67 bits: kind, size, and address.
+\texttt{K\_TUPLE} is also the continuation kind for 32-byte slots (tuples, list buffers, set tables, dict order).
+\texttt{K\_DICTT} continues a dict hash table, whose slots are 64 bytes.
+\texttt{K\_OBJ} covers the \texttt{OBJECT} header kinds: instance, type, bound method, builtin, bytearray, exception, cell, and function.
+Strings are traced for the object header; the payload bytes hold no pointers.}
+\label{fig:gc-kinds}
+\end{figure}

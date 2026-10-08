@@ -1,0 +1,212 @@
+% Containers, objects, calls, and traps. Requires tikz_styles.tex.
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[node distance=1.5mm and 3.5mm]
+  % LIST
+  \node[font=\tiny\sffamily\bfseries, anchor=west] at (0,0) {LIST};
+  \node[slot, fill=pyhi, minimum width=34mm, anchor=north west] (lh) at (0,-0.25)
+    {capacity $|$ length};
+  \node[slot, fill=pyhi, minimum width=34mm, below=1mm of lh] (lb)
+    {0 $|$ ob\_item};
+  \node[slot, fill=pymem, minimum width=34mm, below=2.2mm of lb] (lv)
+    {element value};
+  \node[slot, fill=pymem, minimum width=34mm, below=1mm of lv] (lt)
+    {element tag};
+  % TUPLE
+  \node[font=\tiny\sffamily\bfseries, anchor=west] at (4.6,0) {TUPLE};
+  \node[slot, fill=pyrf, minimum width=34mm, anchor=north west] (th) at (4.6,-0.25)
+    {handle: size $|$ addr};
+  \node[slot, fill=pymem, minimum width=34mm, below=2.2mm of th] (tv)
+    {element value};
+  \node[slot, fill=pymem, minimum width=34mm, below=1mm of tv] (tt)
+    {element tag};
+  % DICT
+  \node[font=\tiny\sffamily\bfseries, anchor=west] at (9.2,0) {DICT};
+  \node[slot, fill=pyink, minimum width=42mm, anchor=north west] (dh) at (9.2,-0.25)
+    {slot\_count $|$ used};
+  \node[slot, fill=pyink, minimum width=42mm, below=1mm of dh] (dv)
+    {version $|$ order\_len};
+  \node[slot, fill=pyink, minimum width=42mm, below=1mm of dv] (dp)
+    {order\_ptr $|$ table\_ptr};
+  \node[slot, fill=pymem, minimum width=42mm, below=2mm of dp] (do)
+    {order: key value, key tag};
+  \node[slot, fill=pyacc, minimum width=42mm, below=1mm of do] (dt)
+    {table slot 64\,B: key, val};
+\end{tikzpicture}
+\caption{Sequence and dict layout, 16-byte slots.
+A list is a stable 32-byte object plus a relocatable element buffer.
+Growing the buffer does not move the handle.
+Each element is a value slot and a tag slot (32 bytes).
+An empty list allocates no buffer.
+A tuple stores its length in the handle, so it has no header.
+A dict is a stable 48-byte object, an insertion-order key sidecar, and a relocatable open-addressed table.
+Empty and deleted table slots are \texttt{UNINIT} and \texttt{TOMBSTONE}.
+New keys append to the sidecar and bump \texttt{version}; a value overwrite does neither.
+Iteration of a dict follows the sidecar, never hash-slot order.}
+\label{fig:layouts}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=1.4mm]
+  \node[slot, fill=pyhi, minimum width=86mm] (h)
+    {obj$+0$ \quad ob\_kind \quad ob\_flags \quad ob\_type};
+  \node[slot, fill=pyres, minimum width=86mm, below=of h] (t)
+    {obj$+16$ \quad self tag \quad PY\_TAG\_OBJECT};
+  \node[slot, fill=pymem, minimum width=86mm, below=of t] (f)
+    {obj$+32$ onward \quad field value, field tag, stride 32\,B};
+\end{tikzpicture}
+\caption{General heap object.
+The handle is \texttt{OBJECT} plus the object address.
+The kind is not in the tag: \texttt{LOAD\_ATTR} and \texttt{CALL} read \texttt{ob\_head} first.
+Kinds in use are instance (dict at field 0), type (dict, base, name), bound method, builtin, exception, cell, and function (code object plus a cell tuple).
+Lists, dicts, and sets are \texttt{MUT\_COLLEC}, not \texttt{OBJECT}.
+Strings are \texttt{SHORT\_STR} or \texttt{LONG\_STR}.
+Range has its own tag.}
+\label{fig:object}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.4mm and 3mm]
+  \node[ctl] (op) {opcode};
+  \node[acc, right=of op] (init) {CP\_INIT};
+  \node[mem, right=of init] (hdr) {CP\_HDR};
+  \node[mem, below=of hdr] (val) {CP\_VAL};
+  \node[mem, left=of val] (tag) {CP\_TAG};
+  \node[ctl, left=of tag] (done) {CP\_DONE};
+  \node[acc, below=5mm of tag] (probe) {CP\_DICT\_PROBE};
+  \node[ink, right=of probe] (attr) {CP\_ATTR\_*};
+  \draw[arr] (op) -- (init);
+  \draw[arr] (init) -- (hdr);
+  \draw[arr] (hdr) -- (val);
+  \draw[arr] (val) -- (tag);
+  \draw[arr] (tag) -- (done);
+  \draw[arr] (hdr.south) -- ++(0,-0.15) -| (probe.north);
+  \draw[arr] (probe) -- (attr);
+  \draw[arr] (done.north) -- ++(0,0.45) -| (op.north);
+\end{tikzpicture}
+\caption{Container microcode (\texttt{S\_CONTAINER}).
+Decode sets \texttt{dec\_is\_container} and execute transfers here, skipping \texttt{S\_MEM} and \texttt{S\_WB}.
+The phase register is \texttt{container\_phase\_r}.
+Shared phases read or write a header, a value slot, and a tag slot, then \texttt{CP\_DONE} returns to fetch.
+Dict and set operations insert a probe loop.
+Attribute operations insert a walk of the instance dict and the type MRO.
+The arms live in the \texttt{pycore\_cont\_*.svh} files included into the core.
+Fifty-six of the sixty-four \texttt{CONT\_*} codes are in use.
+A recoverable failure sets \texttt{trap\_marshal\_pending\_r} and \texttt{CP\_DONE} leaves for the mailbox instead of fetch.}
+\label{fig:contfsm}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[node distance=2mm and 2.4mm]
+  \node[ctl, minimum width=28mm, font=\tiny\sffamily] (py) {PyCore};
+  \node[ex, minimum width=28mm, font=\tiny\sffamily, right=14mm of py] (ex) {excore};
+  \node[mem, font=\tiny\sffamily, below=of py, minimum width=34mm, align=left] (pyl)
+    {hash and probe\\rich equality\\tombstone skip\\spare-cap append\\last-element delete\\empty extend\\tuple scan};
+  \node[ex, font=\tiny\sffamily, below=of ex, minimum width=36mm, align=left] (exl)
+    {LIST\_GROW append\\LIST\_EXTEND\\mid-list delete\\DICT\_GROW rehash\\SET\_GROW\\uncontaminated\\SET/DICT update};
+  \draw[arr] (py) -- (pyl);
+  \draw[arr] (ex) -- (exl);
+  \draw[darr] (pyl.east) -- node[anno, above, font=\tiny] {before any commit} (exl.west);
+\end{tikzpicture}
+\caption{What stays on PyCore, and what is finished by excore.
+Hashing, equality, and the open-addressed probe stay on the hart.
+Capacity changes and the long memmoves go to firmware, which must complete the semantic effect rather than resize and retry.
+The trap is raised before any register-file, heap, or data-memory commit, which is what makes a later \texttt{RETRY} legal.
+No current handler returns \texttt{RETRY}; they return \texttt{COMPLETED}.
+Contaminated containers (an \texttt{OBJECT} key or element) and tuple-sourced set updates stay on PyCore in \texttt{pycore\_cont\_bulk}.}
+\label{fig:split}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.6mm and 3mm]
+  \node[ctl] (call) {CALL / CALL\_KW\\CALL\_FUNCTION\_EX};
+  \node[mem, right=of call] (codc) {CODC or\\dmem fields};
+  \node[acc, right=of codc] (bind) {shared binder\\args, defaults,\\*args, **kwargs};
+  \node[rf, below=of bind] (spill) {spill if needed};
+  \node[ink, left=of spill] (frame) {push 32\,B frame};
+  \node[ctl, left=of frame] (go) {redirect fetch\\to entry slot};
+  \draw[arr] (call) -- (codc);
+  \draw[arr] (codc) -- (bind);
+  \draw[arr] (bind) -- (spill);
+  \draw[arr] (spill) -- (frame);
+  \draw[arr] (frame) -- (go);
+\end{tikzpicture}
+\caption{Call, as it sits among the other machines.
+The phase-by-phase binder is the sibling note \texttt{call\_fsm.tex}.
+A user function is a code object, except a closure, which is an \texttt{OBK\_FUNCTION} wrapping the code object and a cell tuple.
+\texttt{CALL} checks the callable, binds positional and keyword arguments against \texttt{co\_varnames}, then enters the frame manager.
+Builtins with a hardware fast path (\texttt{len}, \texttt{range}, \texttt{set}, two-argument \texttt{max}, \texttt{int} and \texttt{str} conversion) dispatch inside this FSM.
+Other builtin calls raise the recoverable \texttt{PY\_TRAP\_BUILTIN\_CALL}.
+Return pops the descriptor, writes the result into the caller's ring, and fills any spilled prefix the caller needs.}
+\label{fig:call}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.4mm]
+  \node[ink, minimum width=72mm] (n0)
+    {node$+0$ \quad previous pointer};
+  \node[ink, minimum width=72mm, below=of n0] (n1)
+    {node$+16$ \quad saved active exception};
+  \node[ctl, below=4mm of n1] (ops)
+    {PUSH\_EXC\_INFO \quad CHECK\_EXC\_MATCH \quad POP\_EXCEPT \quad RAISE};
+\end{tikzpicture}
+\caption{Exception-info stack.
+The arena is 4\,KB at \texttt{0xF00000}, 32 bytes per node, depth 128.
+It is a data-memory LIFO owned by \texttt{pycore\_exc\_stack}, separate from both the operand ring and the call-frame stack.
+The native-method table and the \texttt{StopIteration} sidecar sit in the same arena.
+\texttt{FOR\_ITER} exhaustion compares the raised type by identity with the sidecar latched at boot, and redirects to \texttt{POP\_ITER} without a user handler.
+A user \texttt{raise} with no handler is still fatal \texttt{PY\_TRAP\_RAISE}.}
+\label{fig:exc}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.2mm and 4mm]
+  \node[trap, minimum width=38mm, align=left, font=\tiny\sffamily] (fat)
+    {\textbf{fatal}\\
+     type, stack, div0\\
+     FPU, illegal, call filter\\
+     mem fault, align\\
+     attr error, raise\\
+     overflow, value};
+  \node[ex, minimum width=42mm, align=left, font=\tiny\sffamily, right=of fat] (rec)
+    {\textbf{recoverable}\\
+     list grow, extend, delete\\
+     dict grow, update, merge\\
+     set grow, set update\\
+     builtin call, slice};
+  \node[ctl, minimum width=28mm, below=4mm of fat] (halt) {S\_HALT};
+  \node[ex, minimum width=36mm, below=4mm of rec] (mb) {mailbox};
+  \draw[arr] (fat) -- (halt);
+  \draw[arr] (rec) -- (mb);
+\end{tikzpicture}
+\caption{Trap classes.
+\texttt{pycore\_trap\_recoverable} in \texttt{pycore\_defs.svh} is the split.
+With excore disabled, a recoverable code is fatal too.
+\texttt{COMPLETED} applies the popped and pushed entries and resumes at the next instruction.
+\texttt{RETRY} redirects fetch to the same PC.
+\texttt{FATAL} enters \texttt{pycore\_trap} with the firmware's code.
+\texttt{NEED\_HEAP} collects if the collector is enabled, and halts otherwise.}
+\label{fig:traps}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=1.3mm]
+  \node[slot, fill=pyhi, minimum width=88mm] (b0) {\texttt{0x3E0} \quad module code object};
+  \node[slot, fill=pyhi, minimum width=88mm, below=of b0] (b1) {\texttt{0x400} \quad globals dict};
+  \node[slot, fill=pyhi, minimum width=88mm, below=of b1] (b2) {\texttt{0x420} \quad builtins dict};
+  \node[anno, below=1mm of b2] {each pair is a 16-byte value slot and a 16-byte tag slot};
+\end{tikzpicture}
+\caption{Boot record, read by \texttt{S\_BOOT} when \texttt{BOOT\_EN=1}.
+The walker checks the tags, caches \texttt{co\_consts} and \texttt{co\_names}, latches the globals and builtins bases, and redirects fetch to the module entry slot.
+A serialized code object is eight tagged fields: entry slot, consts, names, packed metadata, defaults, varnames, keyword defaults, and the raw exception table.
+\texttt{LOAD\_CONST} indexes \texttt{co\_consts} with two data reads (value, then tag).
+\texttt{LOAD\_GLOBAL} and \texttt{LOAD\_NAME} probe the frame globals and then the builtins dict; a miss is \texttt{MEM\_FAULT}.}
+\label{fig:boot}
+\end{figure}

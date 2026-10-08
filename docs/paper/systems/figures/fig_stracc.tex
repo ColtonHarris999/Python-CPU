@@ -1,0 +1,96 @@
+% String accelerator. Requires tikz_styles.tex.
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=3.5mm and 5mm]
+  \node[ctl] (core) {core frozen\\in S\_STRACC};
+  \node[acc, right=of core, minimum width=34mm] (cmd)
+    {command\\op, variant,\\a, b, c, heap};
+  \node[acc, right=of cmd] (eng) {one engine};
+  \node[mem, below=of eng] (dmem) {dmem master\\128-bit};
+  \node[rf, below=of cmd] (res) {result entry\\or SHORT\_STR};
+  \node[trap, left=of res] (oom) {need heap\\no commit};
+  \draw[arr] (core) -- (cmd);
+  \draw[arr] (cmd) -- (eng);
+  \draw[arr] (eng) -- (dmem);
+  \draw[arr] (eng) -- (res);
+  \draw[darr] (eng) -- (oom);
+\end{tikzpicture}
+\caption{String accelerator (\texttt{pycore\_str\_accel}) as a master.
+It runs only while the core is in \texttt{S\_STRACC}, so it cannot race L1D.
+The command carries up to three tagged operands and the current heap pointer.
+A result that fits in a \texttt{SHORT\_STR} is assembled in the destination register and does not allocate.
+A result that needs a heap object either advances the bump pointer or returns \texttt{res\_need\_heap} with the heap untouched, so the core can collect and re-dispatch.
+Small kind-1 concatenations whose result is at most 15 bytes never leave the execute fabric.}
+\label{fig:stracc-top}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2mm and 2mm]
+  \node[ctl] (idle) {IDLE};
+  \node[ctl, right=of idle] (prep) {PREP};
+  \node[mem, right=of prep] (iss) {MEM\_ISSUE};
+  \node[mem, right=of iss] (wait) {MEM\_WAIT};
+  \node[acc, below=of wait] (step) {STEP};
+  \node[rf, left=of step] (done) {DONE};
+  \draw[arr] (idle) -- (prep);
+  \draw[arr] (prep) -- (iss);
+  \draw[arr] (iss) -- (wait);
+  \draw[arr] (wait) -- (step);
+  \draw[arr] (step.west) -- (done.east);
+  \draw[arr] (step.north) -- ++(0,0.35) -| (iss.south);
+  \draw[arr] (done.north) -- ++(0,0.9) -| (idle.south);
+\end{tikzpicture}
+\caption{STRACC control.
+\texttt{PREP} resolves a fast path (identity, empty operands, a case-map that the handle flags already answer) or selects an engine.
+The memory loop issues one 128-bit beat, waits for \texttt{ack}, then steps the engine.
+Kind~1, 2, and 4 move 16, 8, and 4 code units per beat.
+Engines are copy, compare, search, hash, character, replace, join, trim, classify, map, affix, expand, and split.}
+\label{fig:stracc-fsm}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.2mm]
+  \node[hi, minimum width=78mm] (t1) {tier 1 \quad same address \quad interned identity};
+  \node[ctl, minimum width=78mm, below=of t1] (t2)
+    {tier 2 \quad hash, nbytes, nchars, or kind differ};
+  \node[acc, minimum width=78mm, below=of t2] (t3)
+    {tier 3 \quad SA\_CMP over the payloads};
+  \foreach \p/\q in {t1/t2,t2/t3} \draw[arr] (\p) -- (\q);
+  \node[anno, anchor=north] at ($(t3.south)+(0,-0.15)$)
+    {Interning is an optimization. Runtime concatenations are valid dict keys.};
+\end{tikzpicture}
+\caption{String equality, cheapest test first.
+Mixed \texttt{SHORT\_STR} and \texttt{LONG\_STR} compare unequal, because the canonical form says they cannot be the same text.
+Same-tag long strings with matching metadata issue \texttt{SA\_CMP}, including ordering, not only \texttt{==}.
+Dict and set probes take tier~3 when the metadata matches.
+The hash in the handle is FNV-1a over the payload.}
+\label{fig:streq}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm,y=0.62cm]
+  \fill[pyink] (0,3.2) rectangle (7.4,4.3);
+  \fill[pymem] (0,0) rectangle (7.4,3.2);
+  \draw[pyedge] (0,0) rectangle (7.4,4.3);
+  \draw[pyedge] (0,3.2) -- (7.4,3.2);
+  \node[font=\tiny] at (3.7,3.75) {header \quad flags, kind, nbytes, hash, nchars};
+  \node[font=\tiny] at (3.7,1.6) {payload code units, padded to 16\,B};
+  \node[anno, anchor=west] at (7.6,3.75) {obj$+0$};
+  \node[anno, anchor=west] at (7.6,1.6) {obj$+16$};
+  \node[font=\tiny\sffamily, align=left, anchor=north west] at (0,-0.35)
+    {kind 1: 1 byte, U+0000--U+00FF\\
+     kind 2: 2 bytes, BMP \quad kind 4: 4 bytes, non-BMP\\
+     index and iteration are O(1) per character for every kind};
+\end{tikzpicture}
+\caption{Long-string object in the heap.
+The header mirrors the handle, with the address field replaced by zero.
+Payload bytes are fixed-width code units, as in CPython's \texttt{PyUnicodeObject}, not UTF-8.
+Case mapping and the \texttt{is*} classifiers are a Latin-1 lookup table in the map and classify lanes.
+A code point above U+00FF raises a recoverable firmware trap.
+That is a performance boundary: the operation is still defined, it is just not done in the accelerator.
+Structural operations (length, index, slice, compare, search, hash, split, trim, pad, \texttt{ord}) are exact for all of Unicode.}
+\label{fig:strobj}
+\end{figure}

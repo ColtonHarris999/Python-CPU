@@ -1,0 +1,413 @@
+% =============================================================================
+% PyCore microarchitecture diagram atlas
+% =============================================================================
+% Build from this directory:
+%   pdflatex pycore_diagrams.tex && pdflatex pycore_diagrams.tex
+% Requires: article, tikz, booktabs, hyperref, geometry, microtype, amsmath
+% Figure sources: figures/fig_*.tex   styles: figures/tikz_styles.tex
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=0.85in]{geometry}
+\usepackage{microtype}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,backgrounds,decorations.pathreplacing}
+
+\input{figures/tikz_styles.tex}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue!50!black,
+  citecolor=black
+}
+
+\captionsetup{font=small,labelfont=bf,skip=6pt}
+
+\title{PyCore Microarchitecture Diagrams\\
+\large A figure atlas for the research paper}
+\author{PyCore systems notes\\
+\texttt{docs/paper/systems/pycore\_diagrams.tex}}
+\date{October 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+PyCore is a research CPU whose instruction set is a CPython~3.14 bytecode subset.
+This note is a diagram atlas of the hart as built: the two-core system, the control
+states, the tagged register ring, the memory hierarchy, and every accelerator
+(integer, floating-point, string, and the collector), plus the container layouts
+those accelerators read.
+Each figure is drawn against the RTL names in \texttt{pycore/rtl} so it can be
+lifted into a paper with the caption edited and the geometry left alone.
+Numbers are the parameters in \texttt{pycore\_defs.svh}.
+The call binder's internal phases stay in the sibling note \texttt{call\_fsm.tex}.
+\end{abstract}
+
+\tableofcontents
+\listoffigures
+\newpage
+
+\section{How to use these figures}
+\label{sec:how}
+
+The atlas is the block diagram a reader needs before any opcode table.
+It is not a second architecture manual: \texttt{pycore/docs/architecture.md}
+remains the prose source of truth, and a figure that disagrees with that file
+or with the RTL is wrong.
+
+\paragraph{Color.}
+Blue is control state.
+Green is memory.
+Amber is the register file.
+Purple is an accelerator.
+Orange is excore or the mailbox.
+Red is a trap.
+A dashed box is specified and not built, or reserved.
+
+\paragraph{Lifting a figure.}
+Each figure is a separate file under \texttt{figures/}, and every picture
+uses the styles in \texttt{tikz\_styles.tex}.
+Copy one \texttt{tikzpicture} into the paper, input the style file from the
+preamble, and rewrite the caption for the venue.
+The labels are RTL identifiers on purpose (\texttt{rf\_wm\_r},
+\texttt{S\_STRACC}, \texttt{CP\_DICT\_PROBE}).
+
+\paragraph{What is in scope.}
+The hart, its memory system, the accelerators, the container object model,
+and the excore contract.
+Out of scope are the on-device compiler, the firmware bodies under
+\texttt{pycore\_firmware/}, and the excore pipeline itself.
+Those have their own documents.
+
+\paragraph{Three facts that keep the diagrams honest.}
+The core is multi-cycle and non-pipelined: one instruction is in flight.
+Integers are a signed 64-bit fast path; overflow traps instead of growing a
+big integer.
+The collector is built and off unless the simulation is started with
+\texttt{+GC\_EN=1}.
+
+\section{The machine}
+\label{sec:machine}
+
+\input{figures/fig_system.tex}
+
+PyCore's ISA is the bytecode, not a RISC that a compiler lowers bytecode onto.
+That is why containers, calls, and strings are states in the same control
+machine as fetch, rather than coprocessor instructions issued by a host core.
+
+Table~\ref{tab:states} is the state register in \texttt{pycore\_core.sv}.
+Figure~\ref{fig:fsm} draws the edges that matter for a paper; it omits the
+self-loops where a state waits on \texttt{ack} or \texttt{stall\_o}.
+
+\begin{table}[htbp]
+\centering
+\caption{Control states.}
+\label{tab:states}
+\footnotesize
+\begin{tabular}{@{}clp{0.55\textwidth}@{}}
+\toprule
+Id & State & Role \\
+\midrule
+0 & \texttt{S\_FETCH} & Present one real instruction. \\
+1 & \texttt{S\_DECODE} & Form ring addresses and latch operands. \\
+2 & \texttt{S\_EXEC} & Execute fabric and branch unit. \\
+3 & \texttt{S\_MEM} & Pointer load/store only. \\
+4 & \texttt{S\_WB} & One register write, stack-pointer update. \\
+5 & \texttt{S\_HALT} & Fatal trap. Architectural state freezes. \\
+6 & \texttt{S\_CALL} & Bind arguments and push a frame. \\
+7 & \texttt{S\_RETURN} & Pop a frame and write the result. \\
+8 & \texttt{S\_CONTAINER} & Heap and name operations. \\
+9 & \texttt{S\_BOOT} & Read the boot record. \\
+10 & \texttt{S\_TRAP\_MARSHAL} & Hand operands to the mailbox. \\
+11 & \texttt{S\_TRAP\_WAIT} & Apply \texttt{COMPLETED} / \texttt{RETRY} / \texttt{FATAL}. \\
+12 & \texttt{S\_STRACC} & String accelerator owns the data port. \\
+13 & \texttt{S\_RF\_SPILL} & Evict a ring prefix to the spill LIFO. \\
+14 & \texttt{S\_RF\_FILL} & Restore a spilled prefix. \\
+15 & \texttt{S\_RF\_INIT} & Clear unfilled locals to \texttt{UNINIT}, 32 at a time. \\
+16 & \texttt{S\_CODE\_WRITE} & Core writes code RAM (blit / patch). \\
+17 & \texttt{S\_GC\_ENTER} & Drain an outstanding data beat, start the engine. \\
+18 & \texttt{S\_GC\_ROOTS} & Stream register and ring roots. \\
+19 & \texttt{S\_GC\_RUN} & Mark and sweep. \\
+20 & \texttt{S\_GC\_ALLOC} & Grant a free run, or collect if the list is empty. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\input{figures/fig_control.tex}
+
+\section{Tagged values}
+\label{sec:tags}
+
+Every architectural value is one 132-bit entry.
+The tag is stored beside the payload so that a later custom register-file
+macro can replace \texttt{pycore\_regfile} without a tag-lookup pipeline.
+
+\input{figures/fig_tags.tex}
+
+\section{Register stack}
+\label{sec:rf}
+
+The operand stack and the locals of every live frame share one 256-entry
+ring.
+Pointers move; entries do not slide.
+A call that does not fit spills a prefix of the ring to data memory and
+restores it on return.
+The call-frame stack is a third structure and holds only descriptors.
+
+\input{figures/fig_regstack.tex}
+
+\begin{table}[htbp]
+\centering
+\caption{Ring and stack parameters (\texttt{pycore\_defs.svh}).}
+\label{tab:rf}
+\small
+\begin{tabular}{@{}llp{0.46\textwidth}@{}}
+\toprule
+Parameter & Value & Meaning \\
+\midrule
+\texttt{PYCORE\_RF\_DEPTH} & 256 & Entries in the ring. \\
+\texttt{PYCORE\_RF\_RESERVE} & 16 & Entries a callee window may not consume. \\
+\texttt{PYCORE\_RF\_WINDOW\_CAP} & 240 & Maximum resident window. Larger is \texttt{CALL\_FILTER}. \\
+\texttt{PYCORE\_RF\_SPILL\_HYST} & 32 & Extra entries spilled so the next call does not spill immediately. \\
+\texttt{PYCORE\_RF\_INIT\_CHUNK} & 32 & Unfilled locals cleared per \texttt{S\_RF\_INIT} burst. \\
+\texttt{PYCORE\_RF\_SPILL\_BASE} & \texttt{0xF40000} & Spill LIFO, 256\,KB, 8192 entries. \\
+\texttt{PYCORE\_FRAME\_STACK\_BASE} & \texttt{0xF01000} & Frame descriptors, 32\,KB, 1024 frames. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The register file has two combinational read ports and one write port.
+\texttt{S\_WB}, container writeback, return writeback, and spill-fill
+writeback share the write port.
+Container operations may redirect the first read address for the duration
+of \texttt{S\_CONTAINER}.
+There is no forwarding network because the previous instruction has retired
+before decode of the next one reads the file.
+
+\section{Memory system}
+\label{sec:mem}
+
+The hart presents two master ports, instruction and data.
+Behind them is a modified Harvard hierarchy: split level-1 caches, a unified
+inclusive level-2, and a 16\,MB RAM.
+The port contract is the one the core was written against when memory was a
+single-cycle SRAM, so every cache drops in underneath without retiming the
+control machine.
+
+\input{figures/fig_memory.tex}
+
+\begin{table}[htbp]
+\centering
+\caption{Line caches. Hit latencies are model parameters.}
+\label{tab:caches}
+\small
+\begin{tabular}{@{}lrrllp{0.28\textwidth}@{}}
+\toprule
+Level & Size & Ways & Line & Hit & Policy \\
+\midrule
+L1I & 8\,KB & 4 & 64\,B & 1 & read-only, write-invalidate \\
+L1D & 8\,KB & 4 & 64\,B & 1 & write-back, write-allocate, LRU \\
+L2 & 128\,KB & 8 & 64\,B & 8 & unified, inclusive, write-back \\
+RAM & 16\,MB & --- & 64\,B & --- & 4 beats; CI latency 4 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Data width on the CPU side of L1D is 128 bits with a 16-bit strobe.
+Instruction width is 64 bits, one slot.
+A 64-byte line is four data beats.
+
+\section{Accelerators}
+\label{sec:accel}
+
+An accelerator here is any unit that gives a bytecode operation a datapath
+shorter than a firmware trap.
+They fall into three places, drawn together in Figure~\ref{fig:accel-all}
+and then one at a time.
+
+\begin{enumerate}
+\item The execute fabric, inside \texttt{S\_EXEC}: integer ALU, multiplier,
+      divider, integer power, and the FPU.
+\item Port-owning engines that freeze the core: the string accelerator and
+      the collector, plus the container FSM, which is microcoded in the
+      core rather than a separate module.
+\item Excore, for the grow and bulk-update cases the container FSM raises
+      before it has committed anything.
+\end{enumerate}
+
+\input{figures/fig_accel.tex}
+
+\begin{table}[htbp]
+\centering
+\caption{Arithmetic latency, in cycles, counting the accept cycle.
+Divider latency depends on the number of quotient bits $n$.
+Integer power does $k = \mathrm{bits}(e)-1$ squarings and
+$p = \mathrm{popcount}(e)-1$ extra multiplies.}
+\label{tab:lat}
+\small
+\begin{tabular}{@{}llr@{}}
+\toprule
+Unit & Operation & Cycles \\
+\midrule
+\texttt{pycore\_int\_alu} & add, logic, shift, compare & 1 \\
+\texttt{pycore\_mul} & 64$\times$64 signed, step 16 & 5 \\
+\texttt{pycore\_div} & floor division and remainder & $5 + \lceil n/2 \rceil$ \\
+\texttt{pycore\_ipow} & non-negative integer power & $4 + 6k + 5p$ \\
+\texttt{pycore\_fp\_add} & binary64 add / sub & 4 \\
+\texttt{pycore\_fp\_mul} & binary64 multiply & 6 \\
+\texttt{pycore\_fp\_divrem} & binary64 divide or square root & 32 \\
+\texttt{pycore\_fp\_divrem} & \texttt{fmod}, exponent gap $d \ge 0$ & $5 + \lceil(d+1)/2\rceil$ \\
+\texttt{pycore\_fp\_pow} & general binary64 power & 166 \\
+\texttt{pycore\_fpu} & general \texttt{float ** float} & 171 \\
+\texttt{pycore\_fpu} & complex add / mul / div & 10 / 34 / 128 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\texttt{NB\_TRUE\_DIVIDE} always yields \texttt{FLOAT}, including
+\texttt{INT / INT}: both operands are converted to binary64 before the
+divider.
+\texttt{INT ** INT} with a negative exponent takes that same floating-point
+path.
+A negative base with a fractional exponent traps; the FPU has no complex power.
+
+\subsection{Floating point}
+
+\input{figures/fig_fpu.tex}
+
+\subsection{Strings}
+
+\input{figures/fig_stracc.tex}
+
+\begin{table}[htbp]
+\centering
+\caption{STRACC commands (\texttt{PY\_SA\_*}).
+The variant field selects a direction, a character class, or a case map.}
+\label{tab:sa}
+\small
+\begin{tabular}{@{}clp{0.55\textwidth}@{}}
+\toprule
+Id & Command & Use \\
+\midrule
+0 & \texttt{CONCAT} & Long concatenation. Short results stay on the ALU. \\
+1 & \texttt{REPEAT} & String repeat. \\
+2 & \texttt{SLICE} & Slice of a long string. \\
+3 & \texttt{PAD} & Left, right, or both. \\
+4 & \texttt{CMP} & Payload compare after the handle rejects fail. \\
+5 & \texttt{SEARCH} & Find, count, contains, prefix, suffix. \\
+6 & \texttt{HASH} & FNV-1a into the handle. \\
+7 & \texttt{CHAR\_AT} & O(1) index, every kind. \\
+8 & \texttt{ITER\_NEXT} & One character per \texttt{FOR\_ITER} step. \\
+9 & \texttt{REPLACE} & Substring replace. \\
+10 & \texttt{JOIN} & Join over a list of strings. \\
+11 & \texttt{TRIM} & Left, right, or both. \\
+12 & \texttt{CLASSIFY} & Latin-1 \texttt{is*} tests. \\
+13 & \texttt{MAP} & Latin-1 case map. \\
+14 & \texttt{SPLIT} & Split, lines, partition. \\
+15 & \texttt{AFFIX} & Prefix or suffix strip. \\
+16 & \texttt{ZFILL} & Zero fill. \\
+17 & \texttt{EXPANDTABS} & Tab expansion. \\
+18 & \texttt{ORD} & One long character to an integer. \\
+19 & \texttt{CHR} & Integer code point to one character. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Garbage collection}
+
+\input{figures/fig_gc.tex}
+
+The collector is precise: it traces from tags, not from a conservative scan
+of every word.
+It does not move objects, so a handle cached in the ring or in a CODC payload
+stays valid across a collection.
+Roots are the live ring suffix, the frame descriptors, the exception stack,
+the spill LIFO, the boot record, and the extra roots the image records for
+builtins that the static prune map would otherwise hide.
+
+\section{Containers, calls, and traps}
+\label{sec:obj}
+
+The container FSM is the accelerator for everything whose payload is a
+pointer graph rather than a scalar.
+Figure~\ref{fig:layouts} is the memory image those phases walk.
+Figure~\ref{fig:split} is the cut between what the hart finishes and what
+it hands to excore.
+
+\input{figures/fig_objects.tex}
+
+\begin{table}[htbp]
+\centering
+\caption{Set layout, the compact cousin of the dict.
+No order sidecar. Elements only. The same hash, rich equality, and tombstone rules.}
+\label{tab:set}
+\small
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Address & Contents \\
+\midrule
+obj$+0$ & \texttt{slot\_count}, \texttt{used} \\
+obj$+16$ & \texttt{table\_ptr} (0 when the table is empty) \\
+table $+\,32i$ & element value, then element tag \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\texttt{BUILD\_SET} and \texttt{SET\_ADD} probe and insert on PyCore.
+A load of two thirds or more raises \texttt{SET\_GROW}.
+\texttt{DELETE\_SUBSCR} and \texttt{STORE\_SUBSCR} on a set are type errors.
+
+\subsection{Iterator payload}
+
+\texttt{GET\_ITER} rewrites a list, tuple, range, string, dict, or set into
+an \texttt{ITER} value.
+The 128-bit payload is
+\[
+  \mathrm{magic}[127{:}120],\;
+  \mathrm{kind}[119{:}116],\;
+  \mathrm{aux}[115{:}96],\;
+  \mathrm{index}[95{:}64],\;
+  \mathrm{size}[63{:}32],\;
+  \mathrm{addr}[31{:}0].
+\]
+Kinds 0--3 are list, tuple, range, and string.
+Kind 4 is a heap iterator for a user \texttt{\_\_iter\_\_}.
+Kinds 5 and 6 are dict and set.
+Dict and set iterators snapshot a mutation counter and raise
+\texttt{PY\_TRAP\_TYPE} if the container changes size during the loop.
+
+\section{Figure index for the paper}
+\label{sec:index}
+
+A first paper figure set, in the order a systems section usually wants them:
+
+\begin{enumerate}
+\item Figure~\ref{fig:twocore} --- the chip: two harts, one heap.
+\item Figure~\ref{fig:hart} --- what is inside PyCore.
+\item Figure~\ref{fig:entry} and Figure~\ref{fig:tags} --- the value the
+      datapath actually carries.
+\item Figure~\ref{fig:ring} and Figure~\ref{fig:spill} --- the register stack.
+\item Figure~\ref{fig:hier} and Figure~\ref{fig:map} --- memory.
+\item Figure~\ref{fig:accel-all} --- accelerators on one page.
+\item Figure~\ref{fig:exec}, Figure~\ref{fig:fpu}, Figure~\ref{fig:stracc-top},
+      Figure~\ref{fig:gc-mark} --- one diagram of how each family works.
+\item Figure~\ref{fig:layouts} and Figure~\ref{fig:split} --- objects, and
+      the cut with excore.
+\end{enumerate}
+
+The remaining figures are the working drawings underneath those: cache
+microarchitecture, the data-port mux, each integer and floating-point
+datapath, the string engines, the collector's sweep, the container phases,
+boot, and the trap split.
+
+\end{document}

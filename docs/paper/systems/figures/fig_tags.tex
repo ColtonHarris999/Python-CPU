@@ -1,0 +1,98 @@
+% Tagged value format. Requires tikz_styles.tex.
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=0.118cm,y=1cm]
+  % 132 bits, drawn as tag + four 32-bit lanes of the value.
+  \fill[pyacc] (0,0) rectangle (32,1.15);
+  \fill[pyctl] (32,0) rectangle (132,1.15);
+  \draw[pyedge, line width=0.6pt] (0,0) rectangle (132,1.15);
+  \foreach \b in {32,64,96} {
+    \draw[pyedge] (\b,0) -- (\b,1.15);
+  }
+  \node at (16,0.72) {\scriptsize tag};
+  \node at (16,0.28) {\tiny\ttfamily [131:128]};
+  \node at (64,0.72) {\scriptsize value};
+  \node at (64,0.28) {\tiny\ttfamily [127:0]};
+  \node[anno, anchor=north] at (16,-0.12) {4 bits};
+  \node[anno, anchor=north] at (82,-0.12) {128 bits, co-located with the tag};
+  \draw[decorate, decoration={brace, amplitude=3pt, mirror}]
+    (32,-0.55) -- (96,-0.55);
+  \node[anno] at (64,-1.05) {INT / FLOAT fast path uses [63:0]};
+  \draw[decorate, decoration={brace, amplitude=3pt}]
+    (64,1.35) -- (128,1.35);
+  \node[anno] at (96,1.78) {COMPLEX imag [127:64]};
+\end{tikzpicture}
+\caption{Architectural register entry.
+Every value the machine stores in the register file is 132 bits,
+\texttt{\{tag[3:0], value[127:0]\}} (\texttt{PYCORE\_ENTRY\_WIDTH}).
+The tag travels with the value, so a silicon register file does not need a second tag SRAM.
+Helpers \texttt{pycore\_get\_tag}, \texttt{pycore\_get\_val}, and \texttt{pycore\_make\_entry} are the only legal way to slice an entry.}
+\label{fig:entry}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[node distance=1.5mm and 2.2mm]
+  \node[hi, minimum width=33mm, align=left, font=\tiny\sffamily] (t0)
+    {\texttt{0000} CONTROL\\UNINIT / NONE / NULL};
+  \node[acc, minimum width=33mm, align=left, font=\tiny\sffamily, right=of t0] (t1)
+    {\texttt{0001} INT\\signed i64 in [63:0]};
+  \node[acc, minimum width=33mm, align=left, font=\tiny\sffamily, right=of t1] (t2)
+    {\texttt{0010} FLOAT\\binary64 in [63:0]};
+  \node[acc, minimum width=33mm, align=left, font=\tiny\sffamily, right=of t2] (t3)
+    {\texttt{0011} COMPLEX\\real [63:0], imag [127:64]};
+
+  \node[hi, minimum width=33mm, align=left, font=\tiny\sffamily, below=of t0] (t4)
+    {\texttt{0100} BOOL\\truth in value[0]};
+  \node[ink, minimum width=33mm, align=left, font=\tiny\sffamily, right=of t4] (t5)
+    {\texttt{0101} ITER\\hybrid iterator};
+  \node[mem, minimum width=33mm, align=left, font=\tiny\sffamily, right=of t5] (t6)
+    {\texttt{0110} TUPLE\\\{size, addr\}};
+  \node[mem, minimum width=33mm, align=left, font=\tiny\sffamily, right=of t6] (t7)
+    {\texttt{0111} SHORT\_STR\\$\le$15 Latin-1 bytes};
+
+  \node[mem, minimum width=33mm, align=left, font=\tiny\sffamily, below=of t4] (t8)
+    {\texttt{1000} LONG\_STR\\STRACC handle};
+  \node[mem, minimum width=33mm, align=left, font=\tiny\sffamily, right=of t8] (t9)
+    {\texttt{1001} MUT\_COLLEC\\LIST/DICT/SET/bytearray};
+  \node[ink, minimum width=33mm, align=left, font=\tiny\sffamily, right=of t9] (tA)
+    {\texttt{1010} OBJECT\\kind in \texttt{ob\_head}};
+  \node[ink, minimum width=33mm, align=left, font=\tiny\sffamily, right=of tA] (tB)
+    {\texttt{1011} RANGE\\inline i32 or tuple};
+
+  \node[res, minimum width=33mm, align=left, font=\tiny\sffamily, below=of t8] (tC)
+    {\texttt{1100} BYTES\\reserved};
+  \node[ink, minimum width=33mm, align=left, font=\tiny\sffamily, right=of tC] (tD)
+    {\texttt{1101} CODE\_OBJECT\\code-object handle};
+  \node[trap, minimum width=33mm, align=left, font=\tiny\sffamily, right=of tD] (tE)
+    {\texttt{1110} TOMBSTONE\\dict/set deleted slot};
+  \node[res, minimum width=33mm, align=left, font=\tiny\sffamily, right=of tE] (tF)
+    {\texttt{1111} FROZENSET\\reserved};
+\end{tikzpicture}
+\caption{The sixteen tags.
+All four tag bits are allocated, so a new kind does not widen the register file:
+heap objects share \texttt{OBJECT} and carry \texttt{ob\_kind} in the header, and mutable containers share \texttt{MUT\_COLLEC} with a kind in \texttt{value[127:124]}.
+Arithmetic on \texttt{OBJECT}, \texttt{ITER}, \texttt{MUT\_COLLEC}, unbound \texttt{CONTROL}, or a reserved tag traps unless a dedicated opcode path owns that tag.
+\texttt{INT} is a 64-bit signed fast path; a result that does not fit raises \texttt{PY\_TRAP\_OVERFLOW} instead of becoming a big integer.}
+\label{fig:tags}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2mm]
+  \node[mem, minimum width=28mm] (short) {SHORT\_STR\\kind 1, $n\le 15$};
+  \node[mem, right=12mm of short] (long) {LONG\_STR handle};
+  \node[mem, below=8mm of long] (obj) {heap object\\header + payload};
+  \draw[arr] (short.east) -- node[anno, above] {result exceeds 15} (long.west);
+  \draw[arr] (long) -- (obj);
+  \node[anno, align=left, anchor=north west] at ($(obj.south west)+(0,-0.15)$)
+    {addr[31:0] \quad nchars[63:32] \quad hash[95:64]\\
+     nbytes[119:96] \quad kind[121:120] \quad flags[127:122]};
+\end{tikzpicture}
+\caption{String representation.
+A string is a \texttt{SHORT\_STR} exactly when it is kind~1 (Latin-1) and holds at most 15 characters.
+Every other string is a \texttt{LONG\_STR} handle whose payload lives in the object heap.
+\texttt{len}, \texttt{hash}, and truthiness read the handle and do not touch memory.
+The canonical rule is mandatory in both directions: the accelerator must return a \texttt{SHORT\_STR} for every qualifying result and must not allocate a short \texttt{LONG\_STR}.}
+\label{fig:strtag}
+\end{figure}
