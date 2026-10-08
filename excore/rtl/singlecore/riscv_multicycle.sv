@@ -21,7 +21,8 @@ module riscv_multicycle #(
     ,output memory_io_req   inst_mem_req
     ,input  memory_io_rsp   inst_mem_rsp
     ,output memory_io_req   data_mem_req
-    ,input  memory_io_rsp   data_mem_rsp);
+    ,input  memory_io_rsp   data_mem_rsp
+    ,output logic           illegal_o);
 
 import riscv::*;
 
@@ -168,12 +169,16 @@ always_comb begin
         f7);
     next_pc_comb = compute_next_pc(
         cast_to_ext_operand(rd1),
+        cast_to_ext_operand(rd2),
         exec_result_comb,
         imm,
         pc,
         op_q,
         f3);
 end
+
+assign illegal_o = (current_stage == stage_execute) &&
+                   instr_illegal(op_q, f3, f7);
 
 word exec_result;
 word next_pc;

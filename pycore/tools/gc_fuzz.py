@@ -43,7 +43,7 @@ sys.path.insert(0, str(TOOLS))
 
 SIM = {"single": ROOT / "build" / "sim_img" / "Vtb_container",
        "twocore": ROOT / "build" / "sim_img_twocore" / "Vtb_container"}
-EXCORE_FW = ROOT / "build" / "excore_fw" / "list_grow.hex"
+EXCORE_FW = ROOT / "build" / "excore_fw" / "full.hex"
 ENSURE = {"single": "img", "twocore": "twocore"}
 MEASURE_K = 101
 MODE_B_K = 61

@@ -158,13 +158,16 @@ whose ownership is being transferred.
 | 20 | `PY_TRAP_DICT_MERGE` | **recoverable** | non-empty uncontaminated `DICT_MERGE`; excore builds a fresh dict C (A then B, duplicate key → fatal `TYPE`). Contaminated operands build C in pycore (`pycore_cont_bulk.svh`) |
 | 21 | `PY_TRAP_OVERFLOW` | fatal | an INT result left the signed 64-bit range (`+ - *`, unary `-`, `<<`, `INT ** INT`, `INT64_MIN // -1`) where CPython would promote to a big int. Raised by `pycore_exec` instead of wrapping; a firmware big-int fallback would make it recoverable |
 | 22 | `PY_TRAP_VALUE` | fatal | operand outside the operation's domain where CPython raises `ValueError`: a negative shift count |
+| 23 | `PY_TRAP_EMULATE` | **recoverable** | unimplemented Python (P7). Codes 21/22 were already OVERFLOW/VALUE when this landed |
+| 24 | `PY_TRAP_FALLBACK` | **recoverable** | a disabled accelerator's command, served by `excore_full` (P8) |
+| 25 | `PY_TRAP_CONFIG` | fatal | boot `ACCEL_CFG` has no fallback (`STRICT`) |
 
 `pycore_trap_recoverable(code)` (`pycore_defs.svh`) is the single source of
-truth for the fatal/recoverable split. `EXCORE_EN=1` intercepts a recoverable
-code in the detecting container-op phase *before* it would have reached
-`pycore_trap`, and routes it to `S_TRAP_MARSHAL` instead. `EXCORE_EN=0`, or
-any non-recoverable code, is completely untouched — `pycore_trap` sees exactly
-what it always has.
+truth for the fatal/recoverable split. The core parameter is
+`EXCORE_PRESENT` (the topology strap: 1 on `pycore_excore_system`, 0 on
+`pycore_system`). Offload sites call `pycore_route_excore`, which is
+`EXCORE_PRESENT` and a recoverable code until the container accelerator
+absorbs the operation. `+ACCEL_CFG` selects the profile without a rebuild.
 
 The excore's result (`RES_CODE`, `excore/docs/mmio_map.md`) has three
 values, and the restartability requirement each implies:

@@ -85,6 +85,7 @@ module pycore_exc_stack #(
     logic                    dmem_we_r;
     logic [ADDR_WIDTH-1:0]   dmem_addr_r;
     logic [127:0]            dmem_wdata_r;
+    logic [127:0]            dmem_cap_r;
     logic                    pop_beat0_r; // 0 = reading slot1, 1 = reading slot0
 
     assign exc_sp_o   = sp_r;
@@ -128,14 +129,19 @@ module pycore_exc_stack #(
             dmem_addr_r      <= '0;
             dmem_wdata_r     <= '0;
             pop_beat0_r      <= 1'b0;
+            dmem_cap_r       <= '0;
         end else begin
             push_done_r  <= 1'b0;
             pop_done_r   <= 1'b0;
             push_fault_r <= 1'b0;
             pop_fault_r  <= 1'b0;
 
-            if (dmem_req_r && dmem_ack_i)
+            // Capture rdata in the ack cycle (A6). The following state
+            // reads dmem_cap_r, which still holds the beat after req drops.
+            if (dmem_req_r && dmem_ack_i) begin
                 dmem_req_r <= 1'b0;
+                dmem_cap_r <= dmem_rdata_i;
+            end
 
             unique case (state_r)
                 ST_IDLE: begin
@@ -197,17 +203,17 @@ module pycore_exc_stack #(
                 ST_POP_S1: begin
                     if (!dmem_req_r) begin
                         if (!pop_beat0_r) begin
-                            pop_exc_valid_r <= dmem_rdata_i[127];
-                            pop_exc_tag_r   <= dmem_rdata_i[123:120];
-                            pop_exc_addr_r  <= dmem_rdata_i[63:0];
+                            pop_exc_valid_r <= dmem_cap_r[127];
+                            pop_exc_tag_r   <= dmem_cap_r[123:120];
+                            pop_exc_addr_r  <= dmem_cap_r[63:0];
                             dmem_addr_r     <= head_r;
                             dmem_we_r       <= 1'b0;
                             dmem_req_r      <= 1'b1;
                             pop_beat0_r     <= 1'b1;
                         end else begin
-                            pop_prev_r  <= dmem_rdata_i[31:0];
+                            pop_prev_r  <= dmem_cap_r[31:0];
                             sp_r        <= head_r;
-                            head_r      <= dmem_rdata_i[31:0];
+                            head_r      <= dmem_cap_r[31:0];
                             depth_r     <= depth_r - 1'b1;
                             pop_done_r  <= 1'b1;
                             state_r     <= ST_IDLE;

@@ -87,8 +87,16 @@ module pycore_ram #(
         t_first_eff = (t_first_i < 1) ? 1 : t_first_i;
     endfunction
 
+    int t_beat_plus;
+    initial begin
+        t_beat_plus = 0;
+        void'($value$plusargs("T_BEAT=%d", t_beat_plus));
+    end
     function automatic int t_beat_eff();
-        t_beat_eff = (T_BEAT < 1) ? 1 : T_BEAT;
+        if (t_beat_plus > 0)
+            t_beat_eff = t_beat_plus;
+        else
+            t_beat_eff = (T_BEAT < 1) ? 1 : T_BEAT;
     endfunction
 
     function automatic logic [ADDR_WIDTH-1:0] beat_addr(

@@ -44,6 +44,7 @@ from encoding import (
     BI_MAX,
     BI_ORD,
     BI_PRINT,
+    BI_WRITE,
     BI_RANGE,
     BI_SET,
     BI_TO_BYTES,
@@ -51,7 +52,16 @@ from encoding import (
     GC_EXTRA_ROOTS,
     GC_EXTRA_ROOTS_COUNT,
     GC_COMPILER_CLEANUP_MAGIC,
+    ACCEL_CFG_ADDR,
+    ACCEL_CFG_DEFAULT,
+    CONSOLE_BASE_ADDR,
+    FW_CAPS_ADDR,
     HEAP_BASE,
+    IO_BASE,
+    MCFG_BASE,
+    MCFG_MAGIC,
+    MCFG_VERSION,
+    ROM_ID_ADDR,
     NATIVE_METHOD_COUNT,
     OB_FLAG_EXC_TYPE,
     OB_FLAG_INT_TYPE,
@@ -3365,6 +3375,7 @@ def build_builtins_dict(
         (tag_constant("len", string_heap), heap.alloc_builtin(BI_LEN)),
         # Native console sink; public print is the ROM CODE_OBJECT below.
         (tag_constant("_bi_print", string_heap), heap.alloc_builtin(BI_PRINT)),
+        (tag_constant("_bi_write", string_heap), heap.alloc_builtin(BI_WRITE)),
         (tag_constant("range", string_heap), heap.alloc_builtin(BI_RANGE)),
         (tag_constant("set", string_heap), heap.alloc_builtin(BI_SET)),
         (tag_constant("ord", string_heap), heap.alloc_builtin(BI_ORD)),
@@ -4361,8 +4372,22 @@ def write_image_outputs(
         frozen_type_dicts=result.gc_frozen_type_dicts))
     write_gc_extra_roots(result.heap.words, result.heap_init_ptr,
                          result.gc_frozen_type_dicts)
+    write_mcfg_page(result.heap.words)
     result.heap.write_hex(dmem_hex)
     write_meta(meta, result, expected_tag=expected_tag, expected_value=expected_value)
+
+
+def write_mcfg_page(words: dict[int, int]) -> None:
+    """Machine-configuration page. Magic missing means the core keeps defaults.
+
+    variant 0 is rom_accel (the only ROM until P8). FW_CAPS is filled by
+    pycore at boot; the slot is present so the write hits a real line.
+    """
+    words[MCFG_BASE] = MCFG_MAGIC | (MCFG_VERSION << 32)
+    words[ACCEL_CFG_ADDR] = ACCEL_CFG_DEFAULT
+    words[CONSOLE_BASE_ADDR] = IO_BASE
+    words[ROM_ID_ADDR] = 0
+    words[FW_CAPS_ADDR] = 0
 
 
 def write_gc_extra_roots(words: dict[int, int], dyn_base: int,

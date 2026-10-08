@@ -633,6 +633,115 @@
                         // --------------------------------------------------
                         4'd13: begin
                             unique case (call_sub_r)
+                                // Console store for _bi_print / _bi_write.
+                                // Sub 90 formats the arg; sub 91 waits the ack
+                                // and returns None.
+                                7'd90: begin
+                                    begin
+                                        logic [PYCORE_ENTRY_WIDTH-1:0] ent;
+                                        logic [127:0] word;
+                                        logic ok;
+                                        logic defer_int;
+                                        ent  = rf_rs1;
+                                        word = '0;
+                                        ok   = 1'b0;
+                                        defer_int = 1'b0;
+                                        if (pycore_get_tag(ent) == PY_TAG_SHORT_STR) begin
+                                            word = pycore_get_val(ent);
+                                            ok   = 1'b1;
+                                        end else if ((call_bi_id_r == PY_BI_PRINT) &&
+                                                     (pycore_get_tag(ent) == PY_TAG_INT)) begin
+                                            fmt_neg_r <= pycore_get_val(ent)[63] &&
+                                                (pycore_get_val(ent)[63:0] != 64'd0);
+                                            fmt_mag_r <= pycore_get_val(ent)[63]
+                                                ? (64'b0 - pycore_get_val(ent)[63:0])
+                                                : pycore_get_val(ent)[63:0];
+                                            fmt_n_r    <= 5'd0;
+                                            fmt_i_r    <= 5'd0;
+                                            call_sub_r <= 7'd93;
+                                            defer_int  = 1'b1;
+                                            ok         = 1'b1;
+                                        end else if ((call_bi_id_r == PY_BI_PRINT) &&
+                                                     (pycore_get_tag(ent) == PY_TAG_BOOL)) begin
+                                            word = pycore_get_val(ent)[0]
+                                                ? PY_STR_TRUE : PY_STR_FALSE;
+                                            ok   = 1'b1;
+                                        end else if ((call_bi_id_r == PY_BI_PRINT) &&
+                                                     pycore_is_none(pycore_get_tag(ent),
+                                                                    pycore_get_val(ent))) begin
+                                            word = PY_STR_NONE;
+                                            ok   = 1'b1;
+                                        end
+                                        if (!ok) begin
+                                            container_type_trap_r <= 1'b1;
+                                        end else if (!defer_int) begin
+                                            container_dmem_addr_r    <= console_base_r;
+                                            container_dmem_we_r      <= 1'b1;
+                                            container_dmem_wstrb_r   <= {DMEM_DATA_W/8{1'b1}};
+                                            container_dmem_wdata_r   <= word;
+                                            container_dmem_pending_r <= 1'b1;
+                                            call_sub_r               <= 7'd91;
+                                        end
+                                    end
+                                end
+                                7'd91: begin
+                                    if (!container_dmem_pending_r) begin
+                                        container_dmem_we_r <= 1'b0;
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {1'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_CONTROL, 128'(PY_CTL_NONE));
+                                        tos_r        <= RF_AW'({1'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= '0;
+                                    end
+                                end
+                                // One decimal digit per cycle, least-significant
+                                // first. Then stream the characters to TX_RAW.
+                                7'd93: begin
+                                    if (fmt_mag_r == 64'd0) begin
+                                        if (fmt_n_r == 5'd0) begin
+                                            fmt_dig_r[0] <= 8'h30;
+                                            fmt_n_r      <= 5'd1;
+                                        end
+                                        fmt_i_r    <= 5'd0;
+                                        call_sub_r <= 7'd94;
+                                    end else begin
+                                        fmt_dig_r[fmt_n_r] <= 8'h30 + 8'(fmt_mag_r % 64'd10);
+                                        // unsigned divide by 10
+                                        fmt_mag_r <= fmt_mag_r / 64'd10;
+                                        fmt_n_r   <= fmt_n_r + 5'd1;
+                                    end
+                                end
+                                7'd94: begin
+                                    if (!container_dmem_pending_r) begin
+                                        if (fmt_neg_r && (fmt_i_r == 5'd0)) begin
+                                            container_dmem_addr_r    <= console_base_r + 32'h10;
+                                            container_dmem_we_r      <= 1'b1;
+                                            container_dmem_wstrb_r   <= 16'h0001;
+                                            container_dmem_wdata_r   <= 128'h2d;
+                                            container_dmem_pending_r <= 1'b1;
+                                            fmt_i_r <= 5'd1;
+                                        end else if ((fmt_i_r - (fmt_neg_r ? 5'd1 : 5'd0)) < fmt_n_r) begin
+                                            begin
+                                                logic [4:0] k;
+                                                k = fmt_i_r - (fmt_neg_r ? 5'd1 : 5'd0);
+                                                container_dmem_addr_r    <= console_base_r + 32'h10;
+                                                container_dmem_we_r      <= 1'b1;
+                                                container_dmem_wstrb_r   <= 16'h0001;
+                                                container_dmem_wdata_r   <=
+                                                    {120'b0, fmt_dig_r[fmt_n_r - 5'd1 - k]};
+                                                container_dmem_pending_r <= 1'b1;
+                                                fmt_i_r <= fmt_i_r + 5'd1;
+                                            end
+                                        end else begin
+                                            container_dmem_we_r <= 1'b0;
+                                            call_sub_r <= 7'd91;
+                                        end
+                                    end
+                                end
                                 6'd0: begin
                                     if (!container_dmem_pending_r) begin
                                         call_bi_id_r <= container_rd_data_r[31:0];
@@ -841,8 +950,16 @@
                                                     {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 7'd67;
                                             end
-                                        end else if (EXCORE_EN &&
-                                            pycore_trap_recoverable(PY_TRAP_BUILTIN_CALL)) begin
+                                        end else if ((call_bi_id_r == PY_BI_PRINT) ||
+                                                     (call_bi_id_r == PY_BI_WRITE)) begin
+                                            if (cur_arg_r[15:0] != 16'd1) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd1);
+                                                call_sub_r <= 7'd90;
+                                            end
+                                        end else if (pycore_route_excore(PY_RCLASS_BUILTIN, accel_cfg_r, EXCORE_PRESENT, PY_TRAP_BUILTIN_CALL)) begin
                                             // E0=builtin handle, E1=bound_self,
                                             // E2=arg0, E3=arg1 (if present)
                                             trap_marshal_pending_r     <= 1'b1;

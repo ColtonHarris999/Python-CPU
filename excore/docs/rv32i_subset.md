@@ -49,6 +49,11 @@ multicycle stage machine (`fetch → decode → execute → mem → writeback`)
 advances correctly. MMIO requests are one-cycle pulses into `excore_mmio`
 (same as before).
 
+`BLT`/`BGE` compare the register operands. A signed subtraction's sign bit
+is wrong on overflow, so that form is not used. `MUL`/`MULH`/`MULHSU`/
+`MULHU`/`DIV`/`DIVU`/`REM`/`REMU` execute as the M extension. `SYSTEM` and
+any other opcode raise `excore_cpu.fault_o` instead of completing as a NOP.
+
 ## FSM (vendored hart)
 
 Five stages in `riscv_multicycle.sv`: `stage_fetch`, `stage_decode`,

@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 ENSURE_SIM = REPO_ROOT / "tools" / "ensure_sim.py"
 SIM_TWOCORE_BIN = REPO_ROOT / "build" / "sim_img_twocore" / "Vtb_container"
-EXCORE_FW_HEX = REPO_ROOT / "build" / "excore_fw" / "list_grow.hex"
+EXCORE_FW_HEX = REPO_ROOT / "build" / "excore_fw" / "full.hex"
 HOST_REFERENCE = pathlib.Path(__file__).resolve().parent / "host_reference.py"
 DEFS_SVH = REPO_ROOT / "pycore" / "rtl" / "pycore_defs.svh"
 

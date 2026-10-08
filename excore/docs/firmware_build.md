@@ -10,10 +10,11 @@ CPython bytecode/opcode facts, not to a fixed, publicly specified ISA).
 ## Building firmware
 
 ```sh
-python3 excore/tools/asm_rv32.py excore/fw/list_grow.s -o build/excore_fw/list_grow.hex
+python3 excore/tools/asm_rv32.py excore/fw/full.s -o build/excore_fw/full.hex
+python3 excore/tools/asm_rv32.py excore/fw/min.s -o build/excore_fw/min.hex
 ```
 
-`list_grow.s` is the current firmware image and dispatches:
+`full.s` includes `list_grow.s`, which is the handler image, and dispatches:
 
 | Code | Trap |
 | --- | --- |

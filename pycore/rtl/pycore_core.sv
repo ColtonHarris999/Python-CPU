@@ -57,13 +57,11 @@ module pycore_core #(
     // CONT_GET_ITER may launch a CALL from a synthetic CALL-ready stack.
     // Production object-iterator launch sites are added in §10 step 6.
     parameter bit CONTAINER_CALL_SPIKE_EN = 1'b0,
-    // EXCORE_EN = 1 : a recoverable trap (pycore_trap_recoverable(code))
-    //                 enters S_TRAP_MARSHAL / S_TRAP_WAIT instead of
-    //                 halting -- see pycore_excore_system.sv (Phase C).
-    // EXCORE_EN = 0 : default.  Every legacy unit tb instantiates
-    //                 pycore_core (via pycore_system) without overriding
-    //                 this, so trap behavior is byte-identical to Phase A.
-    parameter bit EXCORE_EN = 1'b0,
+    // EXCORE_PRESENT = 1 : a recoverable trap enters S_TRAP_MARSHAL /
+    // S_TRAP_WAIT instead of halting. Topology strap: 1 on
+    // pycore_excore_system, 0 on pycore_system. Which unit actually runs
+    // is pycore_route(accel_cfg), not this bit.
+    parameter bit EXCORE_PRESENT = 1'b0,
     parameter int MAX_TRAP_ENTRIES = 4,
     parameter int MAX_RES_ENTRIES  = 2
 ) (
@@ -131,7 +129,13 @@ module pycore_core #(
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] gic_hit_count_o,
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] gic_miss_count_o,
     output logic [PYCORE_PERF_CNT_WIDTH-1:0] gic_fill_count_o,
-    output logic [PYCORE_PERF_CNT_WIDTH-1:0] gic_flush_count_o
+    output logic [PYCORE_PERF_CNT_WIDTH-1:0] gic_flush_count_o,
+    // Excore firmware capability word (written at reset into excore MMIO).
+    // Tied off on the single-core top.
+    input  logic                          fw_caps_valid_i,
+    input  logic [31:0]                   fw_caps_i,
+    output logic [15:0]                   accel_cfg_o,
+    output logic [31:0]                   console_base_o
 );
 
     localparam int RF_AW = $clog2(RF_DEPTH);
@@ -307,6 +311,29 @@ module pycore_core #(
     logic                          call_args_is_list_r; // EX expand source tag
     // Boot phase counter — reset walker for S_BOOT.
     logic [3:0]                    boot_phase_r;
+    logic [2:0]                    mcfg_step_r;
+    logic [12:0]                   fw_caps_wait_r;
+    logic [15:0]                   accel_cfg_r;
+    logic [31:0]                   console_base_r;
+    // Iterative decimal conversion for _bi_print (one digit per cycle).
+    logic [7:0]                    fmt_dig_r [0:19];
+    logic [4:0]                    fmt_n_r, fmt_i_r;
+    logic [63:0]                   fmt_mag_r;
+    logic                          fmt_neg_r;
+    // Latched for software and later phases; not consumed by the hart yet.
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic [31:0]                   fw_caps_copy_r;
+    logic [31:0]                   rom_id_r;
+    /* verilator lint_on UNUSEDSIGNAL */
+    logic                          config_trap_r;
+    logic                          accel_plus_v;
+    logic [15:0]                   accel_plus_r;
+    logic                          cache_plus_v;
+    logic                          cache_plus_r;
+    logic                          gc_plus_v;
+    logic                          gc_plus_r;
+    assign accel_cfg_o    = accel_cfg_r;
+    assign console_base_o = console_base_r;
     // Scratchpad regs latched during S_CALL / S_RETURN for a pending
     // frame transition.  Preserved across the code-object reads so the
     // frame push finally uses the callee's freshly-read fields.
@@ -461,6 +488,26 @@ module pycore_core #(
                              container_call_spike_en_sim));
         void'($value$plusargs("HEAP_INIT_PTR=%d", heap_init_ptr_sim));
         void'($value$plusargs("CODE_RAM_INIT_SLOT=%d", code_ram_init_slot_sim));
+        accel_plus_v = 1'b0;
+        accel_plus_r = PY_ACCEL_CFG_DEFAULT;
+        cache_plus_v = 1'b0;
+        cache_plus_r = 1'b1;
+        gc_plus_v    = 1'b0;
+        gc_plus_r    = 1'b0;
+        if ($value$plusargs("ACCEL_CFG=%h", accel_plus_r))
+            accel_plus_v = 1'b1;
+        begin
+            int cv;
+            if ($value$plusargs("CACHE_EN=%d", cv) ||
+                $value$plusargs("PYCORE_CACHE_EN=%d", cv)) begin
+                cache_plus_v = 1'b1;
+                cache_plus_r = (cv != 0);
+            end
+            if ($value$plusargs("GC_EN=%d", cv)) begin
+                gc_plus_v = 1'b1;
+                gc_plus_r = (cv != 0);
+            end
+        end
     end
 
     // Same plusarg as pycore_system / pycore_excore_system so CACHE_EN=0
@@ -1102,8 +1149,8 @@ module pycore_core #(
         .addr_o(stracc_addr),
         .wdata_o(stracc_wdata),
         .wline_o(stracc_wline),
-        .ack_i(dmem_ack_i),
-        .last_i(dmem_ack_i),
+        .ack_i(dmem_ack_i && stracc_dmem_active),
+        .last_i(dmem_ack_i && stracc_dmem_active),
         .rdata_i(dmem_rdata_i),
         .fault_i(dmem_fault_i),
         .bytes_scanned_o(),
@@ -1473,7 +1520,7 @@ module pycore_core #(
     pycore_codc u_codc (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
-        .cache_en_i(cache_en_sim),
+        .cache_en_i(cache_en_sim && accel_cfg_r[PY_ACCEL_CODC_BIT]),
         .lookup_i(codc_lookup),
         .lookup_key_i(codc_lookup_key),
         .hit_o(codc_hit),
@@ -1509,10 +1556,24 @@ module pycore_core #(
         (container_op_r == CONT_LOAD_GLOBAL) &&
         (container_phase_r == CP_INIT) &&
         ({32'b0, gic_namei_full} < names_base_r[127:64]);
+    // A namespace-dict write (subscript, delete, MAP_ADD) must drop the GIC
+    // even when it is not STORE_NAME. Flush once the object base is known
+    // (CP_HDR, the cycle after CP_INIT latches container_base_r) and it is
+    // the active globals or builtins dict (A7).
+    logic gic_ns_store;
+    assign gic_ns_store =
+        (state_r == S_CONTAINER) &&
+        (container_phase_r == CP_HDR) &&
+        ((container_op_r == CONT_STORE_DICT) ||
+         (container_op_r == CONT_DELETE_DICT) ||
+         (container_op_r == CONT_MAP_ADD)) &&
+        ((container_base_r == globals_base_r) ||
+         (container_base_r == builtins_base_r));
     assign gic_flush =
         ((state_r == S_CONTAINER) &&
          (container_op_r == CONT_STORE_NAME) &&
          (container_phase_r == CP_INIT)) ||
+        gic_ns_store ||
         ((state_r == S_TRAP_WAIT) && trap_res_valid_i && !trap_res_seen_r) ||
         ((state_r == S_BOOT) && (boot_phase_r == 4'd3) &&
          !container_dmem_pending_r) ||
@@ -1528,7 +1589,7 @@ module pycore_core #(
     pycore_gic u_gic (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
-        .cache_en_i(cache_en_sim),
+        .cache_en_i(cache_en_sim && accel_cfg_r[PY_ACCEL_GIC_BIT]),
         .lookup_i(gic_lookup),
         .lookup_key_i(gic_lookup_key),
         .hit_o(gic_hit),
@@ -1999,10 +2060,10 @@ module pycore_core #(
             if (gc_inv_wr_pending && (heap_zero_r < gc_inv_wr_end))
                 $fatal(1, "[GC-INV] heap write at %h above heap_zero_r %h",
                        gc_inv_wr_end - 32'd16, heap_zero_r);
-            gc_inv_wr_pending <= gc_en_sim && !gc_state && dmem_req_o && dmem_we_o &&
-                                 (dmem_addr_o >= heap_init_ptr_sim) &&
-                                 (dmem_addr_o < gc_heap_limit_eff);
-            gc_inv_wr_end     <= dmem_addr_o + (dmem_line_o ? 32'd64 : 32'd16);
+            gc_inv_wr_pending <= gc_en_sim && !gc_state && heap_wr_e &&
+                                 (heap_wr_addr_e >= heap_init_ptr_sim) &&
+                                 (heap_wr_addr_e < gc_heap_limit_eff);
+            gc_inv_wr_end     <= heap_wr_addr_e + (heap_wr_line_e ? 32'd64 : 32'd16);
             gc_inv_hdr_pending <= gcalloc_req && gcalloc_we_r && !gcalloc_line_r &&
                                   (gcalloc_wdata_r != 128'd0);
             gc_inv_hdr_end     <= gcalloc_addr_r + 32'd16;
@@ -2092,13 +2153,23 @@ module pycore_core #(
     // S_GC_ALLOC requests are one-cycle pulses, like STRACC's.
     logic gcalloc_req;
     assign gcalloc_req = gcalloc_dmem_active && !gcalloc_issued_r;
-    assign dmem_req_o   = rf_spill_dmem_active  ? 1'b1 :
-                          frame_dmem_active     ? 1'b1 :
-                          container_dmem_active ? 1'b1 :
-                          stracc_dmem_active    ? 1'b1 :
-                          exc_dmem_active       ? 1'b1 :
-                          gc_eng_dmem_active    ? 1'b1 :
-                          gcalloc_dmem_active   ? gcalloc_req : ms_dmem_req;
+    // Held-request masters keep their pending flag through the ack cycle.
+    // L1D returns to ST_IDLE on a hit in that same cycle and would accept
+    // the still-high req as a second transaction (A6). Drop req while ack
+    // is high. Pulsed masters (allocator, PTR mem stage) are unchanged.
+    logic dmem_req_level;
+    logic dmem_req_held;
+    assign dmem_req_held = rf_spill_dmem_active || frame_dmem_active ||
+                           container_dmem_active || stracc_dmem_active ||
+                           exc_dmem_active || gc_eng_dmem_active;
+    assign dmem_req_level = rf_spill_dmem_active  ? 1'b1 :
+                            frame_dmem_active     ? 1'b1 :
+                            container_dmem_active ? 1'b1 :
+                            stracc_dmem_active    ? 1'b1 :
+                            exc_dmem_active       ? 1'b1 :
+                            gc_eng_dmem_active    ? 1'b1 :
+                            gcalloc_dmem_active   ? gcalloc_req : ms_dmem_req;
+    assign dmem_req_o = dmem_req_level && !(dmem_req_held && dmem_ack_i);
     assign dmem_we_o    = rf_spill_dmem_active  ? (state_r == S_RF_SPILL) :
                           frame_dmem_active     ? (state_r == S_CALL) :
                           container_dmem_active ? container_dmem_we_r  :
@@ -2144,6 +2215,23 @@ module pycore_core #(
         else if (dmem_req_o && !dmem_ack_i) dmem_busy_r <= 1'b1;
         else if (dmem_ack_i) dmem_busy_r <= 1'b0;
     end
+`ifndef SYNTHESIS
+    // A6: a held master must not present req on the cycle L1D acks it.
+    always @(posedge clk_i) begin
+        if (rst_n_i && dmem_ack_i && dmem_req_o && dmem_req_held)
+            $error("[A6] held dmem request still high in the ack cycle");
+    end
+`endif
+
+    // Heap-write event bus. Every master that stores into the heap drives
+    // one beat. The core dmem port is the only driver until the CA attaches
+    // (P3); GC watches and heap_zero_r snoop this bus, not a single port.
+    logic        heap_wr_e;
+    logic [31:0] heap_wr_addr_e;
+    logic        heap_wr_line_e;
+    assign heap_wr_e      = dmem_req_o && dmem_we_o;
+    assign heap_wr_addr_e = 32'(dmem_addr_o);
+    assign heap_wr_line_e = dmem_line_o;
 
     // ---------------------------------------------------------------------
     // Trap aggregation (single in-flight instruction).
@@ -2314,6 +2402,7 @@ module pycore_core #(
         .raise_i(raise_sig),
         .excore_fatal_i(excore_fatal_sig),
         .excore_fatal_code_i(excore_fatal_code_r),
+        .config_i(config_trap_r),
         .fault_pc_i(fault_pc),
         .fault_rs1_i(fault_rs1),
         .fault_rs2_i(fault_rs2),
@@ -2940,6 +3029,21 @@ module pycore_core #(
             call_phase_r         <= '0;
             return_phase_r       <= '0;
             boot_phase_r         <= '0;
+            mcfg_step_r          <= '0;
+            fw_caps_wait_r       <= '0;
+            begin
+                logic [15:0] cfg0;
+                cfg0 = accel_plus_v ? accel_plus_r : PY_ACCEL_CFG_DEFAULT;
+                if (cache_plus_v)
+                    cfg0[PY_ACCEL_CACHE_BIT] = cache_plus_r;
+                if (gc_plus_v)
+                    cfg0[PY_ACCEL_GC_LSB +: 2] = gc_plus_r ? 2'd1 : 2'd0;
+                accel_cfg_r <= cfg0;
+            end
+            console_base_r       <= PYCORE_IO_BASE;
+            fw_caps_copy_r       <= '0;
+            rom_id_r             <= '0;
+            config_trap_r        <= 1'b0;
             call_mode_r          <= 2'd0; // CALL_MODE_POS
             call_n_pos_r         <= '0;
             call_n_kwargs_r      <= '0;
@@ -3232,9 +3336,9 @@ module pycore_core #(
             if (gc_state) gc_total_pause_r <= gc_total_pause_r + 64'd1;
             if (gc_clean_done)
                 gc_pyc_dirty_r <= 1'b0;
-            else if (!gc_state && dmem_req_o && dmem_we_o &&
+            else if (!gc_state && heap_wr_e &&
                      (gc_clean_busy_addr != 32'd0) &&
-                     ((dmem_addr_o >> 4) == (gc_clean_busy_addr >> 4)))
+                     ((heap_wr_addr_e >> 4) == (gc_clean_busy_addr >> 4)))
                 gc_pyc_dirty_r <= 1'b1;
             gc_pause_cur_r <= gc_state ? gc_pause_cur_r + 32'd1 : 32'd0;
             if (gc_en_sim && gc_to_fetch && (gc_boundary_every_sim != 32'd0))
@@ -3264,11 +3368,11 @@ module pycore_core #(
                 // STRACC writes pieces past heap_ptr_r before a later piece
                 // answers NEED_HEAP, and the aborted op never moves
                 // heap_ptr_r over them (review round 4, B30; mutant 49).
-                if (gc_en_sim && !gc_state && dmem_req_o && dmem_we_o &&
-                    (dmem_addr_o >= heap_init_ptr_sim) && (dmem_addr_o < gc_heap_limit_eff) &&
-                    (dmem_addr_o + (dmem_line_o ? 32'd64 : 32'd16) > hz) &&
+                if (gc_en_sim && !gc_state && heap_wr_e &&
+                    (heap_wr_addr_e >= heap_init_ptr_sim) && (heap_wr_addr_e < gc_heap_limit_eff) &&
+                    (heap_wr_addr_e + (heap_wr_line_e ? 32'd64 : 32'd16) > hz) &&
                     (gc_mutant_sim != 8'd49))
-                    hz = dmem_addr_o + (dmem_line_o ? 32'd64 : 32'd16);
+                    hz = heap_wr_addr_e + (heap_wr_line_e ? 32'd64 : 32'd16);
                 if (hz != heap_zero_r) heap_zero_r <= hz;
             end
             if (state_r == S_CALL) gc_stracc_unwind_r <= 1'b0;
@@ -3301,6 +3405,7 @@ module pycore_core #(
             container_set_grow_trap_r       <= 1'b0;
             container_set_update_trap_r     <= 1'b0;
             excore_fatal_trap_r   <= 1'b0;
+            config_trap_r         <= 1'b0;
             call_filter_trap_r    <= 1'b0;
             stracc_finishing_r    <= 1'b0;
             codc_fill_r           <= 1'b0;
@@ -4140,7 +4245,100 @@ module pycore_core #(
                                 end
                                 redirect_pending_r <= 1'b1;
                                 redirect_tgt_r     <= call_entry_slot_r[31:0];
-                                boot_phase_r       <= BOOT_PHASE_DONE;
+                                // MCFG page, then DONE. Redirect waits in
+                                // S_BOOT until boot_phase hits DONE.
+                                mcfg_step_r        <= 3'd0;
+                                boot_phase_r       <= 4'd13;
+                            end
+                        end
+
+                        // Machine-configuration page (§4.1). Magic miss
+                        // (old images, BOOT fixtures) keeps the reset
+                        // default. +ACCEL_CFG / +CACHE_EN / +GC_EN overlay
+                        // the page. EXCORE_PRESENT waits for FW_CAPS.
+                        4'd13: begin
+                            if (mcfg_step_r == 3'd0) begin
+                                container_dmem_addr_r    <= PYCORE_MCFG_BASE;
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_wstrb_r   <= '1;
+                                container_dmem_pending_r <= 1'b1;
+                                mcfg_step_r              <= 3'd1;
+                            end else if ((mcfg_step_r == 3'd1) &&
+                                         !container_dmem_pending_r) begin
+                                if (container_rd_data_r[31:0] == PYCORE_MCFG_MAGIC) begin
+                                    container_dmem_addr_r    <= PYCORE_ACCEL_CFG_ADDR;
+                                    container_dmem_we_r      <= 1'b0;
+                                    container_dmem_pending_r <= 1'b1;
+                                    mcfg_step_r              <= 3'd2;
+                                end else begin
+                                    mcfg_step_r <= 3'd5;
+                                end
+                            end else if ((mcfg_step_r == 3'd2) &&
+                                         !container_dmem_pending_r) begin
+                                begin
+                                    logic [15:0] cfg_page;
+                                    cfg_page = container_rd_data_r[15:0];
+                                    if (!accel_plus_v)
+                                        accel_cfg_r <= cfg_page;
+                                end
+                                container_dmem_addr_r    <= PYCORE_CONSOLE_BASE_ADDR;
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_pending_r <= 1'b1;
+                                mcfg_step_r              <= 3'd3;
+                            end else if ((mcfg_step_r == 3'd3) &&
+                                         !container_dmem_pending_r) begin
+                                if (container_rd_data_r[31:0] != 32'd0)
+                                    console_base_r <= container_rd_data_r[31:0];
+                                container_dmem_addr_r    <= PYCORE_ROM_ID_ADDR;
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_pending_r <= 1'b1;
+                                mcfg_step_r              <= 3'd4;
+                            end else if ((mcfg_step_r == 3'd4) &&
+                                         !container_dmem_pending_r) begin
+                                rom_id_r    <= container_rd_data_r[31:0];
+                                mcfg_step_r <= 3'd5;
+                            end else if (mcfg_step_r == 3'd5) begin
+                                // Re-apply plusarg overlays after the page.
+                                begin
+                                    logic [15:0] cfg1;
+                                    cfg1 = accel_plus_v ? accel_plus_r : accel_cfg_r;
+                                    if (cache_plus_v)
+                                        cfg1[PY_ACCEL_CACHE_BIT] = cache_plus_r;
+                                    if (gc_plus_v)
+                                        cfg1[PY_ACCEL_GC_LSB +: 2] = gc_plus_r ? 2'd1 : 2'd0;
+                                    accel_cfg_r <= cfg1;
+                                end
+                                fw_caps_wait_r <= 13'd0;
+                                mcfg_step_r    <= 3'd6;
+                            end else if (mcfg_step_r == 3'd6) begin
+                                if (!EXCORE_PRESENT || fw_caps_valid_i ||
+                                    (fw_caps_wait_r == 13'd4095)) begin
+                                    fw_caps_copy_r <= fw_caps_valid_i ? fw_caps_i : 32'h0;
+                                    container_dmem_addr_r    <= PYCORE_FW_CAPS_ADDR;
+                                    container_dmem_we_r      <= 1'b1;
+                                    container_dmem_wstrb_r   <= 16'h000F;
+                                    container_dmem_wdata_r   <=
+                                        {96'b0, fw_caps_valid_i ? fw_caps_i : 32'h0};
+                                    container_dmem_pending_r <= 1'b1;
+                                    if (pycore_accel_cfg_bad(
+                                            accel_cfg_r,
+                                            fw_caps_valid_i ? fw_caps_i : 32'h0,
+                                            fw_caps_valid_i || !EXCORE_PRESENT,
+                                            EXCORE_PRESENT))
+                                        config_trap_r <= 1'b1;
+                                    mcfg_step_r <= 3'd7;
+                                end else begin
+                                    fw_caps_wait_r <= fw_caps_wait_r + 13'd1;
+                                end
+                            end else if ((mcfg_step_r == 3'd7) &&
+                                         !container_dmem_pending_r) begin
+                                // The caps beat was a store. Leave the port
+                                // idle so the first container read does not
+                                // inherit we=1 and clobber a dict slot.
+                                container_dmem_we_r      <= 1'b0;
+                                container_dmem_wstrb_r   <= {DMEM_DATA_W/8{1'b1}};
+                                container_dmem_pending_r <= 1'b0;
+                                boot_phase_r <= BOOT_PHASE_DONE;
                             end
                         end
 
@@ -4260,9 +4458,11 @@ module pycore_core #(
                         // First cycle observing the result: latch it.
                         // NEED_HEAP (plan §3.6): RES_HEAP_PTR is the byte
                         // need, not a new bump; pop=push=0; heap unmoved.
-                        if (trap_res_code_i != TRAP_RES_NEED_HEAP) begin
-                            if ((trap_res_code_i == TRAP_RES_COMPLETED) &&
-                                (trap_res_heap_ptr_i > heap_limit_r)) begin
+                        // A21: a FATAL (or any non-COMPLETED) result must not
+                        // adopt a stale RES_HEAP_PTR. NEED_HEAP carries a
+                        // byte count, not a bump. RETRY leaves the bump.
+                        if (trap_res_code_i == TRAP_RES_COMPLETED) begin
+                            if (trap_res_heap_ptr_i > heap_limit_r) begin
 `ifndef SYNTHESIS
                                 $fatal(1, "[GC-INV] excore RES_HEAP_PTR %h > heap_limit %h",
                                        trap_res_heap_ptr_i, heap_limit_r);
@@ -4270,8 +4470,9 @@ module pycore_core #(
                                 container_mem_fault_r <= 1'b1;
                             end
                             heap_ptr_r <= trap_res_heap_ptr_i;
-                            tos_r      <= tos_r - RF_AW'({5'b0, trap_res_pop_count_i});
                         end
+                        if (trap_res_code_i != TRAP_RES_NEED_HEAP)
+                            tos_r <= tos_r - RF_AW'({5'b0, trap_res_pop_count_i});
                         trap_res_code_r2    <= trap_res_code_i;
                         trap_res_heap_r2    <= trap_res_heap_ptr_i;
                         trap_res_fatal_r2   <= trap_res_fatal_code_i;

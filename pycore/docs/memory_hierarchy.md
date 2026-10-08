@@ -123,15 +123,27 @@ heap ended at `0xF0000`). Constants are mirrored in
 0x0000_0440 – 0x00EF_FFFF   object heap (~15 MB, bump, 64 B start-align)
 0x00F0_0000 – 0x00F0_0FFF   exception-info arena (4 KB)
 0x00F0_1000 – 0x00F0_8FFF   call-frame stack (32 KB, 1024 frames)
+0x00F0_9000 – 0x00F0_9FFF   machine-configuration page (MCFG, ACCEL_CFG, CONSOLE_BASE)
+0x00F0_A000 – 0x00F0_AFFF   excore context page
+0x00F0_B000 – 0x00F0_EFFF   container-accelerator staging page
 0x00F4_0000 – 0x00F7_FFFF   RF spill LIFO (256 KB, 8192 entries)
-0x00F8_0000 – 0x00FF_FFFF   reserved
+0x00F8_0000 – 0x00FF_FFFF   GC metadata (see gc.md)
 0x0100_0000                 DATA_LIMIT == CODE address base (ROM + RAM)
+0x0200_0000 – 0x0200_FFFF   IO window (console channels; decoded before L1D in P1)
 ```
 
 The static boot image takes about 380 KB of the heap, so about 15 MB is
 free when a program starts. On-device `compile()` keeps its whole
 working set (roughly 10–15 KB per source line), so this is what sets the
 largest file the hart can compile.
+
+Held dmem masters drop `req` in the ack cycle, so an L1D hit is one
+lookup (A6). The flush sequencer holds `flush_all` until L1D leaves
+IDLE and blocks new accepts for the whole walk. A data-path store into
+the code region (`CODE_ADDR_BASE` .. `IO_BASE`) faults. L2 is not
+inclusive: nothing back-invalidates L1D. `+L2_HIT` and `+T_BEAT`
+override the L2 hit delay and the DRAM beat spacing; `+MEM_LATENCY`
+remains the first-beat latency.
 
 The native-method sidecar sits in the exc arena immediately below the
 StopIteration latch (`NATIVE_METHOD_TABLE_ADDR = 0xF00DE0`).

@@ -41,9 +41,7 @@
                                                  (pycore_is_list(cont_rs2_tag, cont_rs2_val) ||
                                                   pycore_is_set(cont_rs2_tag, cont_rs2_val) ||
                                                   pycore_is_dict(cont_rs2_tag, cont_rs2_val)) &&
-                                                 EXCORE_EN &&
-                                                 pycore_trap_recoverable(
-                                                     PY_TRAP_SET_UPDATE)) begin
+                                                 pycore_route_excore(PY_RCLASS_CA, accel_cfg_r, EXCORE_PRESENT, PY_TRAP_SET_UPDATE)) begin
                                         // Uncontaminated LIST/SET/DICT source:
                                         // excore inserts all elements, pop 1.
                                         trap_marshal_pending_r     <= 1'b1;
@@ -621,9 +619,7 @@
                                         !pycore_is_dict(cont_rs2_tag, cont_rs2_val)) begin
                                         container_type_trap_r <= 1'b1;
                                     end else if (!cont_rs1_contam && !cont_rs2_contam &&
-                                                 EXCORE_EN &&
-                                                 pycore_trap_recoverable(
-                                                     PY_TRAP_DICT_UPDATE)) begin
+                                                 pycore_route_excore(PY_RCLASS_CA, accel_cfg_r, EXCORE_PRESENT, PY_TRAP_DICT_UPDATE)) begin
                                         // Uncontaminated: excore does the whole
                                         // grow-to-fit + insert-all, pop 1 (source).
                                         trap_marshal_pending_r     <= 1'b1;
@@ -1200,9 +1196,7 @@
                                             fetch_skip_r <= 1'b1;
                                             container_phase_r <= CP_DONE;
                                         end else if (!cont_rs1_contam && !cont_rs2_contam &&
-                                                     EXCORE_EN &&
-                                                     pycore_trap_recoverable(
-                                                         PY_TRAP_DICT_MERGE)) begin
+                                                     pycore_route_excore(PY_RCLASS_CA, accel_cfg_r, EXCORE_PRESENT, PY_TRAP_DICT_MERGE)) begin
                                             // Non-empty, uncontaminated: excore
                                             // builds a fresh merged dict C (dup
                                             // key → fatal TYPE) and returns it via
