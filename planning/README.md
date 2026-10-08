@@ -9,7 +9,6 @@ under `pycore/docs/`, `excore/docs/`, and `pycore_firmware/builtins/`.
 | [`cleanup_report.md`](cleanup_report.md) | Simplification and dead-code backlog, written as independent work items for agents |
 | [`accelerator_split_plan.md`](accelerator_split_plan.md) | Container accelerator, console `print`, `bytes`, startup accelerator config and excore fallbacks, and the excore as emulator (track 5 of the master plan) |
 | [`cpython_baseline_bytecode.md`](cpython_baseline_bytecode.md) | Opcode inventory of the measured CPython baseline suite. No new hart opcode is required |
-| [`implicit_string_concat_plan.md`](implicit_string_concat_plan.md) | Parser plan that lets `fasta.py` and `knucleotide.py` compile on device. One `LOAD_CONST`, no new opcode |
 | [`old/`](old/) | Archived designs and plans. Code comments cite them by section (`compiler_design.md §6.1`), so they stay in the repo |
 
 ## Graduated

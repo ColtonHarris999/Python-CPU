@@ -574,6 +574,10 @@ def _pyc_close_call(want):
 def _pyc_parse_expr():
     global opnd_n, ops_n, _lex_col
     want = 1
+    # 1 while the operand just pushed came from a STRING token. Grouping
+    # and other atoms clear it, so ("a") "b" stays a syntax error while
+    # "a" "b" and ("a" "b") join into one Constant (one LOAD_CONST).
+    str_lit = 0
     start_opnd = opnd_n
     start_ops = ops_n
     while 1:
@@ -583,6 +587,17 @@ def _pyc_parse_expr():
             break
         if kind == TOK_INDENT:
             _pyc_parse_error("unexpected indent")
+        if want == 0 and kind == TOK_STRING:
+            if str_lit == 0 or opnd_n < 1:
+                _pyc_parse_error("adjacent string literal")
+            piece = _pyc_parse_string(text)
+            top = opnd[opnd_n - 1]
+            if nd_kind[top] != ND["Constant"] or nd_a[top] != 2:
+                _pyc_parse_error("adjacent string literal")
+            nd_obj[top] = nd_obj[top] + piece
+            _pyc_tok_advance()
+            continue
+        str_lit = 0
         if want:
             if kind == TOK_NUMBER:
                 line = _pyc_tok_line()
@@ -601,6 +616,7 @@ def _pyc_parse_expr():
                 _pyc_opnd_push(nid)
                 _pyc_tok_advance()
                 want = 0
+                str_lit = 1
                 continue
             if kind == 59:
                 line = _pyc_tok_line()

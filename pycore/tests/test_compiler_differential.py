@@ -106,6 +106,13 @@ EVAL_CORPUS = [
     "'abcdef'[2:]",
     "'abcdef'[:2]",
     "'a' + 'b'",
+    # Adjacent literals are one constant, joined before operators reduce.
+    '"ab" "cd"',
+    "\"a\" 'b' \"c\"",
+    '"a\\n" "b"',
+    'r"\\n" "b"',
+    '("ab"\n "cd")',
+    '"ab" "cd" + "e"',
     "'ab' * 3",
     "'a' in 'abc'",
     "'z' not in 'abc'",
@@ -177,6 +184,7 @@ EXEC_CORPUS = [
     "x = [1, 2, 3]\nx[0] = 9\ny = x[0]\n",
     "d = {}\nd['k'] = 5\nv = d['k']\n",
     "x = (1, 2, 3)\na, b, c = x\n",
+    's = ("ab" "cd")\nn = len(s)\n',
     "x = 1\ny = 2\nx, y = y, x\n",
     "x = [i for i in range(5)]\ny = sum(x)\n",
     # T3 functions: every parameter form the grammar accepts
@@ -316,6 +324,8 @@ REJECT_CORPUS = [
     ("eval", "f(k=1, *a)", "positional argument follows keyword"),
     ("exec", "del *a\n", "starred"),
     ("exec", "for *a in b:\n    pass\n", "starred assignment target"),
+    ("eval", '("a") "b"', "adjacent string literal"),
+    ("eval", '1 "a"', "adjacent string literal"),
 ]
 
 
@@ -414,6 +424,68 @@ class TestCompilerDifferential(unittest.TestCase):
             with self.subTest(src=src):
                 with self.assertRaises(SyntaxError):
                     self.compile_fn(src, "<s>", "exec")
+
+    def test_long_adjacent_literal_is_one_load_const(self) -> None:
+        """A join longer than 15 characters is one constant, not BUILD_STRING."""
+        import dis
+        import io
+        import contextlib
+
+        src = (
+            's = (\n'
+            '    "0123456789abcdef"\n'
+            '    "0123456789"\n'
+            ')\n'
+            "print(len(s))\n"
+            "print(ord(s[16]))\n"
+        )
+        dummy = self.compile_fn("x = 1\n", "<p>", "exec")
+        ram = dummy._ram
+        before = set(ram.words)
+        code = self.compile_fn(src, "<s>", "exec")
+        ops = {
+            dis.opname[word & 0xFF]
+            for slot, word in ram.words.items()
+            if slot not in before
+        }
+        self.assertIn("LOAD_CONST", ops)
+        self.assertNotIn("BUILD_STRING", ops)
+        self.assertIn("0123456789abcdef0123456789", code._consts)
+        got = io.StringIO()
+        with contextlib.redirect_stdout(got):
+            code()
+        self.assertEqual(got.getvalue(), "26\n48\n")
+
+    def test_baseline_alu_literals_compile(self) -> None:
+        """fasta and knucleotide split the ALU sequence across literals."""
+        import contextlib
+        import io
+        import pathlib as _pathlib
+
+        root = (
+            _pathlib.Path(__file__).resolve().parents[1]
+            / "tools"
+            / "cpython_baseline"
+            / "benchmarks"
+            / "research"
+        )
+        cases = (
+            ("fasta.py", "N = 5000", "N = 30", "23258\n"),
+            ("knucleotide.py", "N = 8000", "N = 200", "1827507\n"),
+        )
+        for name, old, new, stdout in cases:
+            with self.subTest(program=name):
+                src = (root / name).read_text(encoding="utf-8").replace(old, new, 1)
+                want = io.StringIO()
+                with contextlib.redirect_stdout(want):
+                    exec(compile(src, name, "exec"), {"__name__": "__main__"})
+                code = self.compile_fn(src, name, "exec")
+                code._globals["__name__"] = "__main__"
+                got = io.StringIO()
+                with contextlib.redirect_stdout(got):
+                    code()
+                self.assertEqual(got.getvalue(), want.getvalue())
+                self.assertEqual(got.getvalue(), stdout)
 
 
 class EmittedOpcodeGapTest(unittest.TestCase):

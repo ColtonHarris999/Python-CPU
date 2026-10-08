@@ -1,6 +1,7 @@
 # CPython baseline suite: bytecode the hart already has
 
-Status: **evaluation, no hart opcode to add.** Snapshot of the suite in
+Status: **evaluation, no hart opcode to add.** Adjacent string literals
+now compile (`pycore/docs/compiler.md`). Snapshot of the suite in
 `pycore/tools/cpython_baseline/benchmarks/`.
 
 This is the list of bytecodes those programs need, and what each one
@@ -22,12 +23,10 @@ an int) and is not what these files are shaped for.
 
 Every opcode either producer emits for this suite is already `execute`
 or an accepted partial form in `pycore/targets/pycore.json`. There is
-no bytecode implementation plan to send. The one change that lets the
-whole suite compile on device is the parser plan
-[`implicit_string_concat_plan.md`](implicit_string_concat_plan.md):
-`fasta.py` and `knucleotide.py` split a long literal across adjacent
-string tokens, and the on-device parser rejects that. CPython folds it
-to one constant. The hart already loads and indexes that constant.
+no bytecode implementation plan to send. `fasta.py` and `knucleotide.py`
+split a long literal across adjacent string tokens. The parser joins
+those into one `LOAD_CONST` (`pycore/docs/compiler.md`). The hart
+already loads and indexes that constant.
 
 Container growth (`list.append`, dict insert past the load factor) stays
 on the excore traps the accelerator-split work is moving. This suite
@@ -64,8 +63,7 @@ Results against CPython, same source, stand-in execution:
 | `binary_trees.py`, `mandelbrot.py`, `spectral_norm.py` | full published sizes in this tree (N=8, 32, 20/10) | checksum matches |
 | `nqueens.py` N=5, `nbody.py` 5 steps, `monte_carlo.py` 50 samples, `sor.py` N=8 / 2 cycles, `binary_trees.py` N=4, `mandelbrot.py` size 8, `spectral_norm.py` N=6 / 3 iters | reduced so the stand-in's 65536-step cap holds | matches CPython on that source |
 | `fannkuch.py` N=1..4 | `while`/`else` and the pancake swaps | matches the published flip counts 0, 1, 2, 4 |
-| `fasta.py`, `knucleotide.py` | source as written | `SyntaxError` (`unmatched bracket`) |
-| same two, adjacent strings joined by hand, N=30 and N=200 | dict `for`, `in`, `ord`, long-string index, float pick | matches CPython |
+| `fasta.py`, `knucleotide.py` | full source compiles; device run at N=30 and N=200 | prints `23258` and `1827507`, matching CPython. The ALU literal is one 287-character `LOAD_CONST` |
 
 The stand-in uses CPython arithmetic, so a match means the compiler's
 bytecode has CPython's result. It does not measure the FPU. `nbody`'s

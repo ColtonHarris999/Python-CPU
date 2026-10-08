@@ -72,7 +72,13 @@ keyword whose name is `None`; `**x` in a dict display is a marker key
 expressions, `raise from`, `except*`, a second comprehension `for` or `if`,
 positional-only `/`, annotations, nested f-strings, format specs,
 `f"{x=}"`, a positional `*x` after a keyword argument, and
-`class`/`import`/`with` are `SyntaxError`.
+`class`/`import`/`with` are `SyntaxError`. Adjacent string literals
+(`"ab" "cd"`, including across a newline inside `()`, `[]`, or `{}`)
+are one `Constant` and one `LOAD_CONST`. A string after a grouped
+expression (`("a") "b"`) or a non-string atom (`1 "a"`) is
+`SyntaxError: adjacent string literal`. The join is token-level, so
+`"ab" "cd" + "e"` is `("abcd") + "e"`, and the existing `str +` fold
+then makes one constant. `BUILD_STRING` is not used.
 
 **Packed node fields must fit a signed int64** (§7). The firmware
 runs on arbitrary-precision ints under host CPython, so a field that spills

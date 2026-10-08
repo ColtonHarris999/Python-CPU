@@ -1,6 +1,10 @@
 # Implicit string-literal concatenation
 
-Status: **plan, not started.**
+**Archived.** Landed in the on-device parser. As built:
+[`pycore/docs/compiler.md`](../../../pycore/docs/compiler.md) (Parser, step F).
+Nothing from this plan is still open.
+
+Status: **done.**
 
 Audience: firmware-compiler agent.
 

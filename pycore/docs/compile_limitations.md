@@ -437,7 +437,6 @@ whether `make run-file HOST_COMPILE=1` can already run the construct via CPython
 | `except*` | `except* is not supported` | `CHECK_EG_MATCH`, `CALL_INTRINSIC_2` (T11) | no |
 | `raise X from Y` | `raise-from is not supported` | `RAISE_VARARGS` oparg 2 | no |
 | slice step, slice store | `slice step` / `slice assignment` | `BINARY_SLICE` has no step; `STORE_SLICE` is deferred | step rejected; unit step folded for strings |
-| adjacent string literals (`"ab" "cd"`, or the same split across lines inside `()`) | `unexpected input after statement` / `unmatched bracket` | compiler only. CPython makes one constant. Emit one `LOAD_CONST`. `BUILD_STRING` traps when the result is longer than 15 bytes, and the fasta ALU string is about 287 characters. Plan: [`planning/implicit_string_concat_plan.md`](../../planning/implicit_string_concat_plan.md) | yes. Host `compile()` already folds them, so a host-built image has one string constant |
 | `del` of a global / module name | `del of a global name is not supported` | `DELETE_NAME`, `DELETE_GLOBAL` are not in the catalog (D11) | no |
 | `del` of a cell | `cannot delete closed-over name` | `DELETE_DEREF` (`trap`) | no |
 | bytes literals | `bytes literals are not supported` | `BYTES` tag is reserved | no |
