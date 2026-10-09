@@ -1,0 +1,197 @@
+% Accelerator map, execute fabric, handshake, integer units.
+% Requires tikz_styles.tex.
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[ctl] (exec) at (6.2,3.55) {S\_EXEC};
+  \node[acc, minimum width=22mm] (alu) at (1.4,2.15) {int ALU\\1 cycle};
+  \node[acc, minimum width=18mm] (mul) at (4.2,2.15) {mul\\5 cyc};
+  \node[acc, minimum width=18mm] (div) at (6.6,2.15) {div\\5--37};
+  \node[acc, minimum width=18mm] (ipow) at (9.0,2.15) {int pow};
+  \node[acc, minimum width=32mm] (fpu) at (11.8,2.15) {FPU};
+  \node[acc, minimum width=28mm] (cont) at (1.8,0.45) {container FSM};
+  \node[acc, minimum width=22mm] (sa) at (5.4,0.45) {STRACC};
+  \node[acc, minimum width=22mm] (gc) at (8.4,0.45) {GC};
+  \node[ex, minimum width=28mm] (excore) at (11.6,0.45) {excore};
+  \draw[arr] (exec) -- (div);
+  \draw[arr] (exec.west) -- ++(-0.35,0) |- (alu.north);
+  \draw[arr] (exec.east) -- ++(0.45,0) |- (fpu.north);
+  \draw[darr] (gc.east) -- node[anno, above] {before commit} (excore.west);
+\end{tikzpicture}
+\caption{Accelerators, together.
+Three kinds of hardware sit off the simple pipeline.
+The execute fabric is tag-routed arithmetic and stays inside \texttt{S\_EXEC}.
+The container FSM, the string accelerator, and the collector are multi-cycle masters of the data port; the core is frozen in their state until they finish.
+Excore is the firmware accelerator for the cases those units refuse to do in place: growing a container and the uncontaminated bulk updates.
+Negative integer powers never reach the integer power unit; execute promotes both operands and reissues them on the FPU.}
+\label{fig:accel-all}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[node distance=3.2mm and 3.6mm]
+  \node[rf] (rs) {rs1, rs2\\132-bit};
+  \node[ctl, right=of rs] (td) {\texttt{tag\_decode}};
+  \node[ctl, right=of td] (pr) {\texttt{promote}};
+  \node[acc, below=of pr] (intu) {INT units};
+  \node[acc, right=of intu] (fpu) {FPU};
+  \node[hi, left=of intu] (bool) {BOOL};
+  \node[mem, below=of intu] (str) {short-string\\fast path};
+  \node[ctl, right=5mm of fpu] (pack) {pack\\tag $+$ value};
+  \node[trap, below=of pack] (tr) {trap};
+  \draw[arr] (rs) -- (td);
+  \draw[arr] (td) -- (pr);
+  \draw[arr] (pr) -- (intu);
+  \draw[arr] (pr) -- (fpu);
+  \draw[arr] (pr) -- (bool);
+  \draw[arr] (td.south) -- ++(0,-0.9) -| (str.north);
+  \draw[arr] (intu) -- (pack);
+  \draw[arr] (fpu) -- (pack);
+  \draw[arr] (bool.east) -- ++(0.3,0) |- (pack.west);
+  \draw[arr] (str.east) -- ++(0.4,0) |- (pack.south);
+  \draw[darr] (td.east) -- ++(0.25,0) |- (tr.north);
+  \node[anno, anchor=west, align=left] at ($(pack.east)+(0.25,0.15)$)
+    {BOOL$\to$INT\\BOOL$\to$FLOAT\\INT$\to$FLOAT};
+\end{tikzpicture}
+\caption{Execute fabric (\texttt{pycore\_exec}).
+Tag decode chooses the unit, the promotion, and the result tag.
+Promotion is a combinational rewrite of the 64-bit lane.
+The integer ALU, BOOL operations, short-string compare and concatenation, and the FPU's compares and unary operations finish in the issue cycle.
+Multiplier, divider, integer power, and the FPU hold \texttt{S\_EXEC} through \texttt{stall\_o}.
+The result is written back as a fresh 132-bit entry.
+An integer result is sign-extended from 64 bits into the high half.}
+\label{fig:exec}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1.15cm,y=0.7cm]
+  \draw[pyedge] (0,2.2) -- (10.2,2.2);
+  \draw[pyedge] (0,1.1) -- (10.2,1.1);
+  \draw[pyedge] (0,0) -- (10.2,0);
+  \node[anchor=east, font=\tiny] at (-0.1,2.2) {start};
+  \node[anchor=east, font=\tiny] at (-0.1,1.1) {busy};
+  \node[anchor=east, font=\tiny] at (-0.1,0) {done};
+  \draw[pyacc, line width=2.2pt] (0.6,2.2) -- (7.4,2.2);
+  \draw[pyctl, line width=2.2pt] (0.8,1.1) -- (7.2,1.1);
+  \draw[pyedge, line width=2.2pt] (7.0,0) -- (7.8,0);
+  \foreach \x in {0.6,2.2,3.8,5.4,7.0} {
+    \draw[pyedge, thin] (\x,-0.25) -- (\x,2.55);
+  }
+  \node[anno] at (3.8,-0.6) {level start \quad one-cycle done \quad stall $=$ start and not done};
+  \node[anno] at (5.0,2.7) {dropping start aborts and returns the unit to idle};
+\end{tikzpicture}
+\caption{Shared handshake of every multi-cycle arithmetic unit.
+\texttt{start} is a level.
+The unit accepts it when idle and not already in the done cycle, so a requester that holds \texttt{start} and swaps operands the cycle after \texttt{done} gets back-to-back issue.
+\texttt{busy} is the structural-hazard bit a later scoreboard would use.
+Traps (\texttt{div\_zero}, integer overflow, FPU exception) replace \texttt{done} and are reported with \texttt{stall} low.
+The core leaves \texttt{S\_EXEC} by dropping \texttt{start}, which is what aborts a unit today.}
+\label{fig:hs}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=3mm and 3mm]
+  \node[rf] (a) {a[63:0]};
+  \node[rf, right=of a] (b) {b[63:0]};
+  \node[acc, below=of a, minimum width=22mm] (add) {add / sub};
+  \node[acc, right=of add, minimum width=22mm] (log) {and / or / xor / not};
+  \node[acc, right=of log, minimum width=22mm] (sh) {shifts};
+  \node[acc, below=of log] (cmp) {compares};
+  \node[trap, right=of cmp] (ov) {overflow};
+  \node[trap, below=of ov] (ve) {value error};
+  \draw[arr] (a) -- (add);
+  \draw[arr] (b) -- (log);
+  \draw[arr] (add) -- (cmp);
+  \draw[arr] (sh) -- (ov);
+  \draw[arr] (sh) -- (ve);
+\end{tikzpicture}
+\caption{Integer ALU (\texttt{pycore\_int\_alu}), combinational in the issue cycle.
+It covers \texttt{+ - << >> \& | \textasciicircum\ \textasciitilde}, unary plus and minus, and the integer compares.
+Beside the result it reports two flags.
+\texttt{overflow\_flag} is set when add, subtract, unary minus, or a shift leaves the signed 64-bit range.
+\texttt{value\_error} is a negative shift count.
+Execute turns those into \texttt{PY\_TRAP\_OVERFLOW} and \texttt{PY\_TRAP\_VALUE}.
+Compares reuse the subtractor and ignore the overflow flag.
+A shift of 64 or more is the sign fill for \texttt{>>}, and either zero or overflow for \texttt{<<}, matching CPython's long-shift rules on a 64-bit limb.}
+\label{fig:alu}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=3.5mm]
+  \node[rf] (b) {multiplier};
+  \node[ctl, below=of b] (ch) {16-bit chunk\\top chunk signed};
+  \node[acc, below=of ch] (pp) {65 $\times$ 17 partial product};
+  \node[rf, left=8mm of pp] (a) {sext(multiplicand)};
+  \node[acc, below=of pp] (acc) {acc $\leftarrow$ (acc $\gg$ 16) $+$ product};
+  \node[rf, below=of acc] (lo) {low word, shifted in};
+  \node[ctl, right=8mm of acc] (n) {4 steps $+$ register};
+  \draw[arr] (b) -- (ch);
+  \draw[arr] (ch) -- (pp);
+  \draw[arr] (a) -- (pp);
+  \draw[arr] (pp) -- (acc);
+  \draw[arr] (acc) -- (lo);
+  \draw[arr] (n) -- (acc);
+\end{tikzpicture}
+\caption{Signed 64$\times$64 multiplier (\texttt{pycore\_mul}, \texttt{STEP}$=16$).
+Each cycle multiplies the full multiplicand by one chunk of the multiplier and folds it into a shift-right accumulator.
+The multiplier is treated as unsigned chunks with only the top chunk signed, so the running sum is the exact signed product with no final correction.
+Four steps plus the registered result are 5 cycles.
+The low 64 bits are the Python product when it fits; a high half that is not the sign extension of the low half is \texttt{PY\_TRAP\_OVERFLOW}.
+The same multiplier is the engine behind integer power.
+\texttt{STEP} is the area-versus-latency knob; the rest of the core does not depend on it.}
+\label{fig:mul}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.6mm]
+  \node[ctl, minimum width=56mm] (c0) {accept \quad sign and magnitude};
+  \node[ctl, minimum width=56mm, below=of c0] (c1) {leading-zero count \quad align \quad load};
+  \node[acc, minimum width=56mm, below=of c1] (run) {radix-4 restoring steps};
+  \node[acc, minimum width=56mm, below=of run] (fix) {Python floor fix-up};
+  \node[rf, minimum width=56mm, below=of fix] (out) {quotient and remainder};
+  \node[trap, right=6mm of c0] (z) {div 0};
+  \foreach \p/\q in {c0/c1,c1/run,run/fix,fix/out} \draw[arr] (\p) -- (\q);
+  \draw[darr] (c0) -- (z);
+  \node[anno, align=left, anchor=north west] at ($(run.east)+(0.2,-0.15)$)
+    {three parallel\\subtractions\\of $d$, $2d$, $3d$\\two quotient bits\\per cycle};
+\end{tikzpicture}
+\caption{Floor divider (\texttt{pycore\_div}, \texttt{RL}$=2$) on \texttt{pycore\_udiv\_seq}.
+Only $n = \mathrm{bits}(|a|) - \mathrm{bits}(|b|) + 1$ quotient bits are iterated, rounded up to a multiple of two.
+Latency is $5 + \lceil n/2 \rceil$: 5 cycles when $|a| < |b|$, 37 for a full 64-bit quotient.
+The five fixed cycles are accept, leading-zero and alignment, core load, core result, and the floor fix-up.
+Division by zero is combinational in the accept cycle and does not start the unit.
+\texttt{INT64\_MIN // -1} overflows.
+The same restoring core with \texttt{SQRT}$=1$ is the floating-point square root.}
+\label{fig:div}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=3mm and 5mm]
+  \node[rf] (e) {exponent};
+  \node[ctl, below=of e] (z) {$e = 0$ \quad result 1};
+  \node[ctl, right=of z] (bits) {walk bits MSB first};
+  \node[acc, below=of bits] (sq) {square};
+  \node[acc, right=of sq] (mu) {multiply if bit set};
+  \node[acc, below=of sq] (mul) {shared \texttt{pycore\_mul}};
+  \node[trap, right=of mul] (ov) {overflow};
+  \draw[arr] (e) -- (z);
+  \draw[arr] (z) -- (bits);
+  \draw[arr] (bits) -- (sq);
+  \draw[arr] (sq) -- (mu);
+  \draw[arr] (sq) -- (mul);
+  \draw[arr] (mu) -- (mul);
+  \draw[arr] (mul) -- (ov);
+  \node[anno, anchor=west] at ($(ov.east)+(0.2,0)$) {abort mid-chain};
+\end{tikzpicture}
+\caption{Integer power (\texttt{pycore\_ipow}).
+A non-negative exponent does $\mathrm{bits}(e)-1$ squarings and $\mathrm{popcount}(e)-1$ extra multiplies, each a full multiplier pass, plus four cycles of sequencing.
+A zero exponent finishes in the issue cycle.
+A negative exponent is a float in Python and is re-routed before this unit.
+The unit traps as soon as an intermediate product leaves the signed 64-bit range, so the long chains that complete are bases $0$, $1$, and $-1$.}
+\label{fig:ipow}
+\end{figure}

@@ -1,0 +1,132 @@
+% Two-core system and the pycore hart. Requires tikz_styles.tex.
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[ctl, minimum width=16mm] (fetch) at (1.5,7.35) {fetch};
+  \node[ctl, minimum width=16mm] (dec) at (3.6,7.35) {decode};
+  \node[acc, minimum width=20mm] (exec) at (6.0,7.35) {exec};
+  \node[acc, minimum width=20mm] (cont) at (8.5,7.35) {container};
+  \node[rf, minimum width=16mm] (rf) at (1.5,5.85) {regfile};
+  \node[rf, minimum width=16mm] (frm) at (3.6,5.85) {frame};
+  \node[acc, minimum width=16mm] (gc) at (6.0,5.85) {GC};
+  \node[acc, minimum width=20mm] (str) at (8.5,5.85) {STRACC};
+  \node[ink, minimum width=18mm] (exc) at (1.5,4.45) {exc stack};
+  \node[trap, minimum width=16mm] (trap) at (3.6,4.45) {trap};
+
+  \begin{scope}[on background layer]
+    \node[grp, fill=pyctl!30, inner sep=7pt,
+          fit=(fetch)(cont)(exc)(str)] (core) {};
+  \end{scope}
+  \node[anno, anchor=south west, font=\tiny\ttfamily]
+    at ($(core.north west)+(0.08,0.02)$) {pycore\_core};
+
+  \node[mem, minimum width=18mm] (l1i) at (1.7,2.35) {L1I\\8\,KB};
+  \node[mem, minimum width=18mm] (l1d) at (4.3,2.35) {L1D\\8\,KB};
+  \node[mem, minimum width=20mm] (l2) at (7.2,2.35) {L2\\128\,KB};
+  \node[mem, minimum width=18mm] (ram) at (10.0,2.35) {RAM\\16\,MB};
+
+  \node[ex, minimum width=20mm] (mb) at (4.3,0.75) {mailbox};
+  \node[ex, minimum width=22mm] (excore) at (8.6,0.75) {excore\\RV32};
+  \node[ex, minimum width=20mm] (fw) at (11.6,0.75) {firmware\\imem};
+
+  \draw[arr] (fetch) -- (dec);
+  \draw[arr] (dec) -- (exec);
+  \draw[arr] (exec) -- (cont);
+  \draw[arr] (fetch) -- (rf);
+  \draw[arr] (dec) -- (frm);
+  \draw[arr] (exec) -- (gc);
+  \draw[arr] (cont) -- (str);
+
+  \draw[arr] ($(core.south west)+(0.55,0)$) -- ++(0,-0.28) -| (l1i.north);
+  \draw[arr] ($(core.south west)+(3.2,0)$) -- (l1d.north);
+  \draw[arr] (l1i.east) -- ++(0.25,0) |- (l2.north west);
+  \draw[arr] (l1d.east) -- (l2.west);
+  \draw[arr] (l2.east) -- (ram.west);
+  \draw[arr] (excore.north) -- ++(0,0.32) -| (l2.south);
+  \draw[arr] (fw.west) -- (excore.east);
+  \draw[arr] (trap.south) -- ($(trap.south |- core.south)+(0,-0.22)$) -| (mb.north);
+  \draw[arr] (mb.east) -- (excore.west);
+
+  \node[anno, anchor=north] at ($(l1i.south)+(0,-0.02)$) {imem};
+  \node[anno, anchor=north] at ($(l1d.south)+(0,-0.02)$) {dmem};
+\end{tikzpicture}
+\caption{Two-core system.
+PyCore is the CPython-bytecode hart.
+Excore is an RV32 multicycle hart that finishes recoverable traps in firmware.
+Instruction memories stay private: fetch uses L1I, and excore has its own firmware memory.
+The shared resource is the data heap.
+PyCore's data masters share one port into L1D.
+Excore's slot port attaches at L2 and never at L1D.
+PyCore is frozen in \texttt{S\_TRAP\_MARSHAL} / \texttt{S\_TRAP\_WAIT} while excore owns memory.
+\texttt{pycore\_system} is the same hart with the mailbox tied off.}
+\label{fig:twocore}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[ctl, minimum width=17mm] (boot) at (0.9,8.6) {S\_BOOT};
+  \node[ctl, minimum width=19mm] (fe) at (3.2,8.6) {S\_FETCH};
+  \node[ctl, minimum width=19mm] (id) at (5.5,8.6) {S\_DECODE};
+  \node[ctl, minimum width=17mm] (ex) at (7.7,8.6) {S\_EXEC};
+  \node[ctl, minimum width=16mm] (mem) at (9.8,8.6) {S\_MEM};
+  \node[ctl, minimum width=16mm] (wb) at (11.9,8.6) {S\_WB};
+
+  \node[acc, minimum width=46mm] (fabric) at (7.7,7.05)
+    {tag decode, promote, ALU / mul / div / pow / FPU};
+  \node[ctl, minimum width=16mm] (br) at (3.2,7.05) {branch};
+
+  \node[acc, minimum width=24mm] (cont) at (5.5,5.45) {S\_CONTAINER};
+  \node[acc, minimum width=20mm] (sa) at (8.4,5.45) {S\_STRACC};
+  \node[ctl, minimum width=16mm] (call) at (10.7,5.45) {S\_CALL};
+  \node[ctl, minimum width=18mm] (ret) at (13.0,5.45) {S\_RETURN};
+
+  \node[rf, minimum width=18mm] (init) at (5.5,4.0) {S\_RF\_INIT};
+  \node[mem, minimum width=24mm] (cw) at (8.2,4.0) {S\_CODE\_WRITE};
+  \node[rf, minimum width=20mm] (spill) at (10.7,4.0) {S\_RF\_SPILL};
+  \node[rf, minimum width=18mm] (fill) at (13.0,4.0) {S\_RF\_FILL};
+
+  \node[ex, minimum width=28mm] (mar) at (1.6,2.45) {S\_TRAP\_MARSHAL};
+  \node[ex, minimum width=22mm] (wait) at (4.8,2.45) {S\_TRAP\_WAIT};
+  \node[trap, minimum width=16mm] (halt) at (4.8,1.15) {S\_HALT};
+  \node[acc, minimum width=52mm] (gc) at (10.2,2.45) {S\_GC\_ENTER \ldots\ S\_GC\_ALLOC};
+
+  \node[rf, minimum width=128mm] (ring) at (7.2,0.15)
+    {operand ring \quad 256 $\times$ 132-bit entries};
+
+  \node[mem, minimum width=16mm] (codc) at (1.2,-1.15) {CODC};
+  \node[mem, minimum width=16mm] (gic) at (3.3,-1.15) {GIC};
+  \node[ink, minimum width=22mm] (frame) at (6.0,-1.15) {frame stack};
+  \node[ink, minimum width=20mm] (excst) at (8.8,-1.15) {exc LIFO};
+  \node[trap, minimum width=24mm] (tblock) at (11.8,-1.15) {pycore\_trap};
+
+  \draw[arr] (boot) -- (fe);
+  \draw[arr] (fe) -- (id);
+  \draw[arr] (id) -- (ex);
+  \draw[arr] (ex) -- (mem);
+  \draw[arr] (mem) -- (wb);
+  \draw[arr] (wb.north) -- ++(0,0.42) -| (fe.north);
+  \draw[arr] (ex) -- (fabric);
+  \draw[arr] (id) -- (br);
+  \draw[arr] (ex.south) ++(-0.35,0) -- ++(0,-0.28) -| (cont.north);
+  \draw[arr] (ex.south) ++(0.35,0) -- ++(0,-0.28) -| (sa.north);
+  \draw[arr] (wb.south) -- ++(0,-0.35) -| (call.north);
+  \draw[arr] (call) -- (ret);
+  \draw[arr] (call) -- (spill);
+  \draw[arr] (ret) -- (fill);
+  \draw[arr] (cont.south west) -- ++(-0.35,0) |- (mar.north);
+  \draw[arr] (mar) -- (wait);
+  \draw[darr] (wait) -- (halt);
+
+  \node[anno] at (7.6,9.25) {one instruction in flight};
+\end{tikzpicture}
+\caption{PyCore hart.
+The machine is multi-cycle: one instruction is in flight, so the register file needs no forwarding.
+The steady path is fetch, decode, execute, a thin memory stage, and writeback.
+Container operations, the string accelerator, and calls leave that path and retire from their own states.
+\texttt{S\_MEM} serves the internal pointer opcodes.
+Image bytecode reaches the heap from the container FSM, calls, STRACC, and the collector.
+CODC and GIC are combinational result caches, not line caches.
+State transitions are Figure~\ref{fig:fsm}.}
+\label{fig:hart}
+\end{figure}

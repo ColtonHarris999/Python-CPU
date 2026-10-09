@@ -1,0 +1,250 @@
+% Memory hierarchy, map, caches, and the dmem mux. Requires tikz_styles.tex.
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[node distance=4mm and 5mm]
+  \node[ctl] (fe) {fetch};
+  \node[ctl, below=of fe] (ms) {mem stage};
+  \node[acc, below=of ms] (cont) {container};
+  \node[acc, below=of cont] (sa) {STRACC};
+  \node[acc, below=of sa] (gc) {GC};
+  \node[rf, below=of gc] (spill) {RF spill};
+  \node[ink, below=of spill] (fr) {frame / exc};
+  \node[ex, below=of fr] (excore) {excore};
+
+  \node[mem, right=14mm of ms, minimum width=26mm] (l1i) {L1I\\4-way, 8\,KB\\read-only};
+  \node[mem, right=14mm of cont, minimum width=26mm] (l1d) {L1D\\4-way, 8\,KB\\write-back};
+  \node[mem, right=12mm of l1d, minimum width=28mm] (l2) {L2 unified\\8-way, 128\,KB\\inclusive};
+  \node[mem, right=8mm of l2, minimum width=24mm] (ram) {RAM\\16\,MB\\4-beat line};
+
+  \draw[arr] (fe.east) -- (l1i.west);
+  \draw[arr] (ms.east) -- ++(0.4,0) |- (l1d.west);
+  \draw[arr] (cont.east) -- (l1d.west);
+  \draw[arr] (sa.east) -- ++(0.35,0) |- (l1d.west);
+  \draw[arr] (gc.east) -- ++(0.45,0) |- (l1d.west);
+  \draw[arr] (spill.east) -- ++(0.55,0) |- (l1d.west);
+  \draw[arr] (fr.east) -- ++(0.65,0) |- (l1d.west);
+  \draw[arr] (l1i.east) -- ++(0.35,0) |- (l2.north west);
+  \draw[arr] (l1d.east) -- (l2.west);
+  \draw[arr] (l2.east) -- (ram.west);
+  \draw[arr] (excore.east) -- ++(1.6,0) |- (l2.south west);
+
+  \node[anno, anchor=north] at ($(excore.south)+(0.2,-0.15)$) {no L1D};
+  \node[res, above=6mm of l1i] (codc) {CODC};
+  \node[res, right=2mm of codc] (gic) {GIC};
+  \node[res, right=2mm of gic, dashed] (ftb) {FTB\\not built};
+  \draw[darr] (codc.south) -- ++(0,-0.25) -| (fe.north);
+\end{tikzpicture}
+\caption{Memory hierarchy behind an unchanged port.
+A request is captured on the cycle \texttt{req} is high.
+\texttt{ack} pulses for one cycle when the data is ready, any latency later, with \texttt{fault} beside it.
+At most one ordinary request is outstanding per master.
+\texttt{PYCORE\_CACHE\_EN=0} is a combinational bypass to the next level.
+Line size is 64\,B everywhere.
+L1 hit latency is 1 cycle; L2 hit latency is 8 cycles (\texttt{PYCORE\_L2\_HIT\_CYCLES}), a model parameter.
+The crossbar adds \texttt{PYCORE\_CODE\_ADDR\_BASE} $= \mathtt{0x01000000}$ to instruction addresses so code and data do not alias in L2.
+CODC and GIC sit beside the line caches.
+The frame-top buffer (\texttt{PYCORE\_FTB\_FRAMES} $= 4$) is a named parameter only.}
+\label{fig:hier}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+  % Data map, not to scale. Low addresses at the bottom.
+  \begin{scope}[local bounding box=data]
+    \fill[black!6] (0,0) rectangle (5.4,0.55);
+    \fill[pyhi] (0,0.55) rectangle (5.4,1.05);
+    \fill[pymem] (0,1.05) rectangle (5.4,4.55);
+    \fill[pyink] (0,4.55) rectangle (5.4,5.15);
+    \fill[pyctl] (0,5.15) rectangle (5.4,5.75);
+    \fill[pyrf] (0,5.75) rectangle (5.4,6.55);
+    \fill[pyacc] (0,6.55) rectangle (5.4,7.85);
+    \draw[pyedge] (0,0) rectangle (5.4,7.85);
+    \foreach \y in {0.55,1.05,4.55,5.15,5.75,6.55}
+      \draw[pyedge] (0,\y) -- (5.4,\y);
+    \node[font=\tiny, anchor=west] at (0.12,0.28) {reserved \texttt{0x0}};
+    \node[font=\tiny, anchor=west] at (0.12,0.80) {boot record, 96\,B};
+    \node[font=\tiny, anchor=west] at (0.12,2.80) {object heap, $\sim$15\,MB};
+    \node[font=\tiny, anchor=west] at (0.12,4.85) {exc arena, 4\,KB};
+    \node[font=\tiny, anchor=west] at (0.12,5.45) {frame stack, 32\,KB};
+    \node[font=\tiny, anchor=west] at (0.12,6.15) {RF spill, 256\,KB};
+    \node[font=\tiny, anchor=west] at (0.12,7.20) {GC metadata, 512\,KB};
+    \node[anno, anchor=south] at (2.7,8.0) {data, not to scale};
+  \end{scope}
+  \begin{scope}[xshift=7.2cm, local bounding box=code]
+    \fill[pymem] (0,0) rectangle (5.6,2.3);
+    \fill[pyhi] (0,2.3) rectangle (5.6,5.4);
+    \draw[pyedge] (0,0) rectangle (5.6,5.4);
+    \draw[pyedge] (0,2.3) -- (5.6,2.3);
+    \node[font=\tiny, align=center] at (2.8,1.15)
+      {code ROM\\slots \texttt{0x0000}--\texttt{0x1FFF}\\64\,KB, read-only};
+    \node[font=\tiny, align=center] at (2.8,3.85)
+      {code RAM\\slots \texttt{0x2000}--\texttt{0x21FFF}\\1\,MB, writable};
+    \node[anno, anchor=south] at (2.8,5.55) {code, after $+$\texttt{0x01000000}};
+  \end{scope}
+  \node[font=\tiny\sffamily, align=left, anchor=north west] at (0,-0.35)
+    {Heap base \texttt{0x440}. Heap limit \texttt{0xF00000}.\\
+     Exc \texttt{0xF00000}. Frames \texttt{0xF01000}. Spill \texttt{0xF40000}.\\
+     GC meta \texttt{0xF80000}--\texttt{0xFFFFFF}. Data limit $=$ code base.};
+\end{tikzpicture}
+\caption{Address map.
+The heap is a bump pointer from \texttt{PYCORE\_HEAP\_BASE} with no free list until the collector is enabled.
+The static boot image occupies about 380\,KB of that heap.
+Code is a separate slot space: the architectural PC is a slot index, and fetch sends \texttt{pc}$\ll 3$.
+\texttt{pycore\_code\_mem} is compiled and not instantiated; the live path is \texttt{pycore\_mem\_hier} into \texttt{pycore\_ram}.}
+\label{fig:map}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=3.5mm and 4mm]
+  \node[bus] (req) {addr};
+  \node[mem, right=of req] (idx) {set index};
+  \node[mem, right=of idx] (tag) {tag compare\\$N$ ways};
+  \node[rf, right=of tag] (lru) {LRU};
+  \node[mem, below=of tag] (hit) {hit data};
+  \node[acc, left=of hit] (miss) {miss};
+  \node[mem, below=of miss] (fill) {line fill\\64\,B};
+  \node[trap, right=of fill] (wbv) {dirty victim\\writeback};
+  \node[ctl, right=of hit] (ack) {ack\\1 cycle};
+
+  \draw[arr] (req) -- (idx);
+  \draw[arr] (idx) -- (tag);
+  \draw[arr] (tag) -- (lru);
+  \draw[arr] (tag) -- (hit);
+  \draw[arr] (tag) -- (miss);
+  \draw[arr] (miss) -- (fill);
+  \draw[arr] (fill) -- (wbv);
+  \draw[arr] (hit) -- (ack);
+  \draw[arr] (fill.east) -- ++(0.3,0) |- (ack.south);
+\end{tikzpicture}
+\caption{One \texttt{pycore\_cache}, three instantiations (L1I, L1D, L2).
+L1I is read-only and write-invalidate / no-allocate: a store drops a hit line and forwards the write, and does not allocate.
+L1D and L2 are write-back and write-allocate.
+An all-zero full-line write on L1D bypasses allocation; STRACC uses full-line installs so a new result line is not filled only to be overwritten.
+\texttt{rdata\_line} returns the whole responding line with \texttt{ack}, which is how the fetch buffer fills.}
+\label{fig:cache}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[acc, minimum width=32mm] (nb) at (0,1.6) {L1D non-blocking\\up to 4 fills};
+  \node[mem, minimum width=32mm] (hold) at (4.6,1.6) {ordinary miss\\one-entry hold};
+  \node[mem, minimum width=28mm] (inst) at (0,0) {install oldest};
+  \node[rf, minimum width=28mm] (wbb) at (4.6,0) {writeback\\one line};
+  \node[mem, minimum width=36mm] (pipe) at (9.0,0.8) {L2 pipe port\\in order, 4 beats};
+  \draw[arr] (nb) -- (hold);
+  \draw[arr] (nb) -- (inst);
+  \draw[arr] (inst) -- (wbb);
+  \draw[arr] (hold) -- (wbb);
+  \draw[arr] (wbb) -- (pipe);
+  \draw[arr] (hold.east) -- ++(0.35,0) |- (pipe.north);
+\end{tikzpicture}
+\caption{The two opt-in ports.
+Nothing changes for a master that ignores them: an ordinary request takes the same number of cycles as before.
+The collector is the first user.
+While marking, it prefetches the line of each object it pushes and the next lines of the range it is scanning.
+A prefetch fills L1D and does not produce an answer.}
+\label{fig:nb}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.4mm]
+  \node[ex, minimum width=52mm] (a) {recoverable trap detected};
+  \node[mem, minimum width=52mm, below=of a] (b) {L1D writeback $+$ invalidate};
+  \node[ex, minimum width=52mm, below=of b] (c) {mailbox accepts \texttt{trap\_req}};
+  \node[ex, minimum width=52mm, below=of c] (d) {grant flips to excore};
+  \node[ctl, minimum width=52mm, below=of d] (e) {firmware completes the effect};
+  \node[mem, minimum width=52mm, below=of e] (f) {L1D invalidate};
+  \node[ctl, minimum width=52mm, below=of f] (g) {\texttt{trap\_res} to PyCore};
+  \node[mem, minimum width=52mm, below=of g] (h) {flush CODC and GIC};
+  \node[ctl, minimum width=52mm, below=of h] (i) {grant returns to PyCore};
+  \foreach \p/\q in {a/b,b/c,c/d,d/e,e/f,f/g,g/h,h/i}
+    \draw[arr] (\p) -- (\q);
+\end{tikzpicture}
+\caption{The only sharing event.
+There is no cache coherence protocol.
+PyCore issues no data request while excore owns memory, and excore polls the mailbox while PyCore owns it.
+L1I is not flushed on the handoff.
+L2 is left in place; excore's writes land there and become visible to PyCore after the L1D invalidate.
+A code-RAM blit or patch invalidates L1I and flushes CODC.
+\texttt{STORE\_NAME} / \texttt{STORE\_GLOBAL} and a change of \texttt{globals\_base\_r} flush the GIC.
+A return that restores the same globals base does not.}
+\label{fig:handoff}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=3mm and 10mm]
+  \node[mem, minimum width=48mm, align=left, font=\tiny\sffamily] (codc)
+    {\textbf{CODC} \quad 4 entries, 2 ways\\
+     key: code-object base\\
+     set: \texttt{addr}$\gg 6$\\
+     payload 576 bits:\\
+     entry slot, consts, names,\\
+     metadata, defaults};
+  \node[mem, minimum width=48mm, align=left, font=\tiny\sffamily, right=of codc] (gic)
+    {\textbf{GIC} \quad 16 entries, 2 ways\\
+     key: \{\,code, namei\,\}\\
+     set: \texttt{namei[2:0]}\\
+     payload: one 132-bit entry\\
+     fill only on a hit resolve\\
+     a miss is never cached};
+  \draw[darr] ($(codc.south)+(0,-0.15)$) -- ++(0,-0.01);
+\end{tikzpicture}
+\caption{Result caches.
+Both answer in the same cycle as the lookup.
+Fill and LRU update on the following clock edge.
+\texttt{CACHE\_EN=0} forces a miss.
+CODC is flushed on \texttt{MAKE\_FUNCTION}, code release, \texttt{trap\_res}, and reset.
+The GIC is flushed as a whole on purpose: consulting a dict version to do better would itself be a data-memory access.}
+\label{fig:resultcache}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=3.5mm and 4mm]
+  \node[mem] (l1i) {L1I line\\64\,B, 8 slots};
+  \node[ctl, right=of l1i] (buf) {fetch line buffer};
+  \node[ctl, right=of buf] (fold) {skip CACHE\\fold EXTENDED\_ARG};
+  \node[ctl, right=of fold] (pc) {architectural PC\\one slot};
+  \draw[arr] (l1i) -- (buf);
+  \draw[arr] (buf) -- (fold);
+  \draw[arr] (fold) -- (pc);
+  \node[anno, align=left, anchor=north west] at ($(l1i.south west)+(0,-0.35)$)
+    {Later slots in the same line, including the skips, do not issue another imem request.\\
+     L1I hit and miss counters therefore count fills behind this buffer, not wordcode slots.\\
+     A code-RAM write drops the buffer so a later fetch cannot observe a stale slot.};
+\end{tikzpicture}
+\caption{Fetch.
+The image keeps CPython's \texttt{CACHE} and \texttt{EXTENDED\_ARG} bytes.
+The slot index equals the CPython code-unit index, so branch arguments are not rewritten.
+The live code image is ROM plus RAM in the unified RAM, selected by the slot address.}
+\label{fig:fetch}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=1.6mm]
+  \node[rf, minimum width=62mm] (s1) {1 \quad RF spill / fill};
+  \node[ink, minimum width=62mm, below=of s1] (s2) {2 \quad frame push / pop};
+  \node[acc, minimum width=62mm, below=of s2] (s3) {3 \quad container, boot, code-object fields};
+  \node[acc, minimum width=62mm, below=of s3] (s4) {4 \quad STRACC};
+  \node[ink, minimum width=62mm, below=of s4] (s5) {5 \quad exception stack};
+  \node[acc, minimum width=62mm, below=of s5] (s6) {6 \quad GC engine};
+  \node[acc, minimum width=62mm, below=of s6] (s7) {7 \quad GC run allocator};
+  \node[ctl, minimum width=62mm, below=of s7] (s8) {8 \quad mem stage (pointer ops)};
+  \node[mem, right=8mm of s4] (port) {one\\dmem\\port};
+  \foreach \n in {s1,s2,s3,s4,s5,s6,s7,s8}
+    \draw[arr] (\n.east) -- (port.west);
+\end{tikzpicture}
+\caption{Who drives the data port.
+The mux is a priority encode, but the owners are mutually exclusive by core state.
+PyCore never arbitrates two live masters in one cycle.
+The port is 128-bit data, 16-byte aligned, with a 16-bit write strobe.
+A misaligned or out-of-range access raises \texttt{ADDR\_ALIGN} or \texttt{MEM\_FAULT}.
+GC also has the non-blocking prefetch port into L1D, which is not this mux.}
+\label{fig:dmux}
+\end{figure}

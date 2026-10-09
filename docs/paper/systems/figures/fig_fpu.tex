@@ -1,0 +1,133 @@
+% FPU sequencer and the four floating-point datapaths.
+% Requires tikz_styles.tex.
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[rf, minimum width=26mm] (ops) at (0,1.3) {binary64\\or complex};
+  \node[ctl, minimum width=24mm] (seq) at (3.2,1.3) {sequencer};
+  \node[ctl, minimum width=28mm] (kind) at (3.2,2.7) {comb / direct / sequence};
+  \node[acc, minimum width=20mm] (add) at (0,0) {fp\_add\\4 cyc};
+  \node[acc, minimum width=20mm] (mul) at (2.6,0) {fp\_mul\\6 cyc};
+  \node[acc, minimum width=28mm] (div) at (5.6,0) {divrem\\div, fmod, sqrt};
+  \node[acc, minimum width=24mm] (pow) at (2.6,-1.5) {fp\_pow};
+  \node[acc, minimum width=24mm] (um) at (5.6,-1.5) {75$\times$53 mul\\shared};
+  \draw[arr] (ops) -- (seq);
+  \draw[arr] (kind) -- (seq);
+  \draw[arr] (seq) -- (add);
+  \draw[arr] (seq) -- (mul);
+  \draw[arr] (seq) -- (div);
+  \draw[arr] (mul) -- (pow);
+  \draw[arr] (mul.east) -- ++(0.25,0) |- (um.north);
+  \draw[arr] (pow) -- (um);
+\end{tikzpicture}
+\caption{FPU (\texttt{pycore\_fpu}).
+One adder, one multiplier, one divider, and one power unit.
+The divider is also the square root.
+The significand multiplier is a single \texttt{pycore\_umul\_seq} of 75$\times$53, step 14, muxed between \texttt{fp\_mul} (53$\times$53, zero-extended) and \texttt{fp\_pow}.
+The sequencer never runs those two at once.
+Scalar add, subtract, multiply, and divide pass through.
+Remainder, floor division, general powers, and complex arithmetic are sequences of those datapaths in CPython's order.
+Compares, \texttt{not}, and unary plus and minus are combinational.}
+\label{fig:fpu}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.4mm]
+  \node[ctl, minimum width=62mm] (c0) {C0 \quad unpack, order by magnitude};
+  \node[ctl, minimum width=62mm, below=of c0] (c1) {C1 \quad align, sticky, add or subtract};
+  \node[ctl, minimum width=62mm, below=of c1] (c2) {C2 \quad leading-zero normalize};
+  \node[acc, minimum width=62mm, below=of c2] (c3) {C3 \quad round to nearest even, pack};
+  \foreach \p/\q in {c0/c1,c1/c2,c2/c3} \draw[arr] (\p) -- (\q);
+\end{tikzpicture}
+\caption{Binary64 add and subtract (\texttt{pycore\_fp\_add}).
+Three registered stages; the round and pack of the last stage are combinational, so \texttt{done} is four cycles after accept.
+Specials (NaN, infinity) can be decided in C0 and carried forward.
+Subnormals, signed zeros, and the guard/round/sticky scheme are in the shared packer \texttt{pycore\_f64\_pack\_round}.
+Each stage already has its own valid bit so the unit can later accept a new operation while an old one drains.}
+\label{fig:fpadd}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.4mm]
+  \node[ctl, minimum width=64mm] (c0) {C0 \quad unpack, normalize subnormals};
+  \node[acc, minimum width=64mm, below=of c0] (st) {C1--C4 \quad 53$\times$53 on the shared multiplier};
+  \node[acc, minimum width=64mm, below=of st] (pk) {C5 \quad normalize one bit, round, pack};
+  \foreach \p/\q in {c0/st,st/pk} \draw[arr] (\p) -- (\q);
+  \node[anno, anchor=west] at ($(st.east)+(0.25,0)$) {STEP $= 14$\\$\lceil 53/14\rceil = 4$};
+\end{tikzpicture}
+\caption{Binary64 multiply (\texttt{pycore\_fp\_mul}).
+The 53$\times$53 significand product is iterative.
+At the default step, \texttt{done} is the sixth cycle counting accept as the first.
+The parent owns the multiplier; this unit only presents operands and waits for the product.}
+\label{fig:fpmul}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=3mm and 6mm]
+  \node[acc, minimum width=34mm] (divu) {restoring core\\radix 4};
+  \node[ctl, above=of divu] (div) {divide\\56 quotient bits\\32 cycles};
+  \node[ctl, left=of divu] (fmod) {fmod\\exact\\by exponent gap};
+  \node[ctl, right=of divu] (sqrt) {sqrt\\56 root bits\\32 cycles};
+  \draw[arr] (div) -- (divu);
+  \draw[arr] (fmod) -- (divu);
+  \draw[arr] (sqrt) -- (divu);
+  \node[anno, align=left, anchor=north] at ($(divu.south)+(0,-0.2)$)
+    {Specials finish in 3 cycles. $|a|<|b|$ fmod finishes in 4.\\
+     Otherwise fmod takes $5+\lceil(d+1)/2\rceil$ cycles, $d$ the exponent difference.};
+\end{tikzpicture}
+\caption{Divider, remainder, and square root (\texttt{pycore\_fp\_divrem} on \texttt{pycore\_udiv\_seq}).
+Division iterates 56 quotient bits, two per cycle.
+Square root uses the same remainder register and the same three subtractors, with the divisor multiples replaced by the root-digit candidates $q(8Q+q)$ for $q \in \{1,2,3\}$.
+The final remainder is the sticky bit, so the root is correctly rounded.
+The sequencer sends $x^{0.5}$ here (35 cycles including the power special-case setup) instead of through the general power unit.}
+\label{fig:fpdiv}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\begin{tikzpicture}[node distance=2.6mm]
+  \node[rf, minimum width=70mm] (in) {$x = m'\,2^{E}$, \quad $m'$ in $[2/3,\,4/3)$};
+  \node[acc, minimum width=70mm, below=of in] (log)
+    {log2 \quad signed-digit normalization \quad ROM of $\log_2(1+d_j 2^{-j})$};
+  \node[acc, minimum width=70mm, below=of log] (mul)
+    {multiply \quad $L = E + \log_2 m'$ by the 53-bit significand of $y$};
+  \node[trap, minimum width=70mm, below=of mul] (lim)
+    {$|P| \ge 2^{11}$ \quad overflow to $+\infty$ or underflow to $+0$};
+  \node[acc, minimum width=70mm, below=of lim] (exp)
+    {exp2 \quad restoring recurrence on the fraction of $P$};
+  \node[ctl, minimum width=70mm, below=of exp] (pk)
+    {pack \quad $Z \cdot 2^{\lfloor P \rfloor}$, round to nearest even};
+  \foreach \p/\q in {in/log,log/mul,mul/lim,lim/exp,exp/pk} \draw[arr] (\p) -- (\q);
+\end{tikzpicture}
+\caption{Binary64 power (\texttt{pycore\_fp\_pow}): $x^{y} = 2^{y \log_2 x}$ for positive finite $x$ and finite $y$.
+Both transcendental steps are digit recurrences on one fixed-point datapath (two barrel shifters and two adders per cycle).
+The only multiplier is the shared 75$\times$53 unit.
+Log2 is about 80 cycles, the multiply 5, and exp2 about 72, plus a few cycles of setup.
+A power-of-two base skips the log stage.
+The sequencer adds the CPython special cases around this unit, so a general \texttt{float ** float} is 171 cycles, 91 for a power-of-two base, and 19 when overflow or underflow is decided at the multiply.
+$x^{\pm 1}$, $x^{2}$, and $x^{-2}$ stay on multiply and divide instead.}
+\label{fig:fppow}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=2.2mm and 3mm]
+  \node[acc, minimum width=28mm] (add) {$+$ / $-$\\two adds\\10 cyc};
+  \node[acc, right=of add, minimum width=32mm] (mul) {$\times$\\4 muls, 2 adds\\34 cyc};
+  \node[acc, right=of mul, minimum width=36mm] (div) {$/$ Smith scaling\\3 div, 3 mul, 3 add\\128 cyc};
+  \node[ctl, below=of div] (rec) {inf / zero recovery\\two more adds};
+  \draw[arr] (div) -- (rec);
+\end{tikzpicture}
+\caption{Complex sequences, all on the scalar datapaths.
+A complex value is two binary64 lanes.
+Addition and subtraction are two adds.
+Multiplication is CPython's four-multiply product.
+Division is Smith's algorithm.
+When that algorithm would return \texttt{nan+nanj} and exactly one operand holds an infinity, two further adds rebuild the result from signs.
+Finite operands skip that recovery and keep the 128-cycle path.
+A negative base raised to a fractional real power is not a complex result here; it traps \texttt{FPU\_EXCEPTION}.}
+\label{fig:cplx}
+\end{figure}

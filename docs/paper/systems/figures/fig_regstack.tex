@@ -1,0 +1,116 @@
+% Register ring, spill, and the call-frame stack. Requires tikz_styles.tex.
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+  % Unwrapped case: tos > wm.
+  \draw[pyedge] (0,0) rectangle (14.2,1.35);
+  \fill[black!8] (0,0) rectangle (3.1,1.35);
+  \fill[pyrf] (3.1,0) rectangle (5.3,1.35);
+  \fill[pyhi] (5.3,0) rectangle (10.4,1.35);
+  \fill[white] (10.4,0) rectangle (14.2,1.35);
+  \draw[pyedge] (3.1,0) -- (3.1,1.35);
+  \draw[pyedge] (5.3,0) -- (5.3,1.35);
+  \draw[pyedge] (10.4,0) -- (10.4,1.35);
+  \node[font=\tiny\sffamily] at (1.55,0.85) {not resident};
+  \node[font=\tiny\sffamily] at (1.55,0.42) {stale slots};
+  \node[font=\tiny\sffamily] at (4.2,0.85) {older};
+  \node[font=\tiny\sffamily] at (4.2,0.42) {frames};
+  \node[font=\tiny\sffamily] at (7.85,0.85) {this frame};
+  \node[font=\tiny\sffamily] at (7.85,0.42) {locals then stack};
+  \node[font=\tiny\sffamily] at (12.3,0.85) {free};
+  \node[font=\tiny] at (3.1,1.58) {\texttt{rf\_wm\_r}};
+  \node[font=\tiny] at (5.3,1.58) {\texttt{locals\_base}};
+  \node[font=\tiny] at (10.4,1.58) {\texttt{tos\_r}};
+  \node[anno] at (7.1,-0.38) {resident suffix $[\texttt{rf\_wm\_r},\,\texttt{tos\_r})$};
+  \node[anno] at (7.1,-0.82) {indices are mod 256; the suffix may wrap through slot 0};
+  \draw[arr] (14.35,0.67) .. controls (15.1,1.6) and (15.1,-0.3) .. (14.35,0.2);
+\end{tikzpicture}
+\caption{Operand ring, the common case \texttt{tos\_r} $>$ \texttt{rf\_wm\_r}.
+The physical file is 256 entries and does not shift.
+\texttt{tos\_r} is the next free slot; the top value sits at \texttt{tos\_r}$-1$.
+\texttt{locals\_base} is the callee's slot 0.
+Frame 0 is an ordinary frame: nothing reserves \texttt{RF[0..31]}.
+The three pointers live in \texttt{pycore\_core}.
+The regfile module's own push, pop, and TOS ports are tied off.}
+\label{fig:ring}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=3mm and 6mm]
+  \node[rf, minimum width=34mm] (need) {callee window\\$n_\mathrm{locals}+\texttt{co\_stacksize}$};
+  \node[trap, right=of need] (filt) {$> 240$?\\CALL\_FILTER};
+  \node[ctl, below=of need] (fit) {resident $+$ window\\$\le 256$?};
+  \node[rf, right=of fit] (spill) {spill $n$ entries\\$n =$ overflow $+ 32$};
+  \node[mem, below=of spill] (lifo) {dmem LIFO\\0xF40000};
+  \node[ctl, left=of lifo] (push) {push frame\\then enter};
+  \node[ctl, below=of push] (ret) {RETURN};
+  \node[rf, right=of ret] (fill) {fill until\\locals\_base resident};
+
+  \draw[arr] (need) -- (filt);
+  \draw[arr] (need) -- (fit);
+  \draw[arr] (fit) -- node[anno, above] {no} (spill);
+  \draw[arr] (spill) -- (lifo);
+  \draw[arr] (fit.south) -- ++(0,-0.35) -| node[anno, pos=0.25, above] {yes} (push.north);
+  \draw[arr] (spill.west) -- ++(-0.3,0) |- (push.east);
+  \draw[arr] (ret) -- (fill);
+  \draw[arr] (fill) -- (lifo);
+\end{tikzpicture}
+\caption{Spill and fill around a call.
+A callee must keep its whole window resident.
+The window is capped at \texttt{RF\_WINDOW\_CAP} $= 240$ (256 entries minus a 16-entry reserve); a larger frame is \texttt{CALL\_FILTER}.
+If the live suffix plus that window would exceed 256, \texttt{S\_RF\_SPILL} evicts the overflow plus \texttt{RF\_SPILL\_HYST} $= 32$ entries, clamped to the resident count.
+Each entry is two 16-byte beats, value then tag, at the spill stack pointer.
+\texttt{S\_RF\_FILL} restores them on return until \texttt{locals\_base} is inside the suffix.
+Spilling in the middle of a frame is not implemented.}
+\label{fig:spill}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=6mm and 14mm]
+  \node[slot, minimum width=92mm, fill=pyrf] (s0)
+    {slot 0 \quad pc\_return \quad tos base \quad locals base};
+  \node[slot, minimum width=92mm, fill=pyhi, below=1.2mm of s0] (s1)
+    {slot 1 \quad globals base \quad saved instance \quad ret mode \quad caller code};
+  \node[anno, below=1mm of s1] {32 bytes, two 128-bit beats, region 0xF01000--0xF08FFF};
+  \node[mem, below=9mm of s1, xshift=-32mm] (frames) {frame descriptors\\1024 deep};
+  \node[rf, right=of frames] (ring) {operand ring\\values};
+  \node[mem, right=of ring] (spill) {spill LIFO\\8192 entries};
+  \draw[arr] (frames) -- node[anno, above] {CALL / RETURN} (ring);
+  \draw[arr] (ring) -- node[anno, above] {spill / fill} (spill);
+\end{tikzpicture}
+\caption{Three different stacks.
+The call frame in \texttt{pycore\_frame} stores pointers, not register values: return PC, TOS base, locals base, globals base, the saved instance, the return-mode bit, and the caller's code-object address.
+The operand values stay in the ring.
+Values that do not fit the ring move to the spill LIFO at \texttt{0xF40000} (256\,KB).
+Return pops slot~1 then slot~0, restores those pointers, and reloads the caller's \texttt{co\_consts} and \texttt{co\_names}.}
+\label{fig:frames}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[rf, minimum width=22mm] (base) at (0,0) {\texttt{locals\_base}};
+  \node[slot, fill=pyhi, minimum width=14mm] (l0) at (3.2,0) {local 0};
+  \node[slot, fill=pyhi, minimum width=14mm] (l1) at (4.9,0) {local 1};
+  \node[slot, fill=pyhi, minimum width=14mm] (lk) at (6.6,0) {local $i$};
+  \node[slot, fill=pyctl, minimum width=16mm] (tos1) at (9.0,0) {TOS value};
+  \node[slot, fill=white, minimum width=16mm] (tos) at (11.0,0) {next free};
+  \draw[arr] (base) -- (l0);
+  \draw[decorate, decoration={brace, amplitude=3pt}] (2.55,0.55) -- (7.35,0.55);
+  \node[anno] at (4.95,1.05) {\texttt{locals\_base} $+$ index};
+  \draw[decorate, decoration={brace, amplitude=3pt, mirror}] (8.25,-0.55) -- (11.75,-0.55);
+  \node[anno] at (10.0,-1.15) {\texttt{tos\_r}$-1$ is top; \texttt{tos\_r} is empty};
+  \node[anno, anchor=west] at (0,-1.85)
+    {Two read ports, one write port. Container ops steal the rs1 address.};
+\end{tikzpicture}
+\caption{How decode addresses the ring.
+\texttt{LOAD\_FAST} $i$ reads \texttt{locals\_base}+$i$.
+Stack opcodes read and write relative to \texttt{tos\_r}.
+\texttt{S\_WB} commits one entry and applies the stack delta.
+Container, return, and spill-fill writeback share that single write port, in that priority.
+While \texttt{S\_CONTAINER} runs, rs1 is redirected to \texttt{container\_rf\_addr\_r} so a multi-element build does not need a third read port.
+Unbound locals are \texttt{CONTROL/UNINIT}; reading one traps rather than returning leftover bits.}
+\label{fig:addr}
+\end{figure}

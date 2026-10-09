@@ -1,0 +1,44 @@
+% Shared TikZ style for the PyCore diagram atlas.
+% Input from the article preamble. A standalone figure can use the same file.
+\definecolor{pyedge}{RGB}{55,65,75}
+\definecolor{pyctl}{RGB}{214,228,240}
+\definecolor{pymem}{RGB}{210,230,214}
+\definecolor{pyrf}{RGB}{255,236,186}
+\definecolor{pyacc}{RGB}{226,214,240}
+\definecolor{pyex}{RGB}{255,214,180}
+\definecolor{pytrap}{RGB}{245,208,208}
+\definecolor{pyres}{RGB}{236,236,236}
+\definecolor{pyink}{RGB}{232,220,228}
+\definecolor{pyhi}{RGB}{255,248,220}
+
+\tikzset{
+  pybox/.style={
+    draw=pyedge, line width=0.55pt, rounded corners=1.5pt,
+    align=center, inner sep=3.2pt, font=\scriptsize\sffamily,
+    minimum height=7.2mm
+  },
+  ctl/.style={pybox, fill=pyctl},
+  mem/.style={pybox, fill=pymem},
+  rf/.style={pybox, fill=pyrf},
+  acc/.style={pybox, fill=pyacc},
+  ex/.style={pybox, fill=pyex},
+  trap/.style={pybox, fill=pytrap},
+  res/.style={pybox, fill=pyres, dashed},
+  ink/.style={pybox, fill=pyink},
+  hi/.style={pybox, fill=pyhi},
+  arr/.style={-{Latex[length=1.7mm,width=1.35mm]}, draw=pyedge, line width=0.65pt},
+  darr/.style={arr, dashed},
+  bus/.style={
+    draw=pyedge, fill=black!4, font=\tiny\ttfamily,
+    inner sep=2.2pt, align=center, rounded corners=1pt
+  },
+  slot/.style={
+    draw=pyedge, line width=0.45pt, align=center,
+    font=\tiny\sffamily, inner sep=2pt, minimum height=5.6mm
+  },
+  grp/.style={
+    draw=pyedge, dashed, rounded corners=2.5pt, inner sep=5pt, line width=0.5pt
+  },
+  anno/.style={font=\tiny\sffamily, text=black!75, align=center},
+  every picture/.append style={font=\scriptsize\sffamily, line join=round}
+}
