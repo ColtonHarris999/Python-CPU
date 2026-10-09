@@ -81,6 +81,7 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_mem_stage.sv \
 	pycore/rtl/pycore_exc_stack.sv \
 	pycore/rtl/pycore_gc.sv \
+	pycore/rtl/pycore_ca.sv \
 	pycore/rtl/pycore_core.sv \
 	pycore/rtl/pycore_system.sv \
 	excore/rtl/excore_cpu.sv \
@@ -734,6 +735,7 @@ pycore-excore-disabled: pycore-excore-integration-fixtures
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CA_EN=0 \
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=9 \
 		$(PYCORE_MEM_PLUSARGS)
@@ -762,6 +764,7 @@ pycore-excore-extend-disabled: pycore-excore-integration-fixtures
 		+BOOT_EN=1 \
 		+CHECK_ENTRY_RETURN=0 \
 		+HEAP_INIT_PTR=$$HEAP_INIT_PTR \
+		+CA_EN=0 \
 		+EXPECT_TRAP=1 \
 		+EXPECTED_TRAP_CODE=10 \
 		$(PYCORE_MEM_PLUSARGS)

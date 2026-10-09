@@ -1267,7 +1267,7 @@
                                                 container_dmem_pending_r <= 1'b1;
                                                 container_phase_r       <=
                                                     CP_LIST_WB;
-                                            end else if (EXCORE_EN &&
+                                            end else if ((ca_en_sim || EXCORE_EN) &&
                                                 pycore_trap_recoverable(
                                                     PY_TRAP_LIST_DELETE)) begin
                                                 trap_marshal_pending_r     <= 1'b1;
@@ -1329,6 +1329,16 @@
                                             container_dmem_we_r      <= 1'b0;
                                             container_dmem_pending_r <= 1'b1;
                                             container_phase_r        <= CP_LIST_BUF;
+                                        end else if (ca_en_sim) begin
+                                            // Full list: the container accelerator
+                                            // grows the buffer and appends.
+                                            // Nothing has been committed.
+                                            ca_cmd_pend_r  <= 1'b1;
+                                            ca_issued_r    <= 1'b0;
+                                            ca_op_r        <= PY_CA_L_APPEND;
+                                            ca_a_r         <= rs1_r;
+                                            ca_b_r         <= rs2_r;
+                                            container_phase_r <= CP_DONE;
                                         end else if (EXCORE_EN &&
                                                      pycore_trap_recoverable(PY_TRAP_LIST_GROW)) begin
                                             // Full, but the excore can service
@@ -1485,7 +1495,7 @@
                                             tos_r             <= tos_r - RF_AW'(1);
                                             fetch_skip_r      <= 1'b1;
                                             container_phase_r <= CP_DONE;
-                                        end else if (EXCORE_EN &&
+                                        end else if ((ca_en_sim || EXCORE_EN) &&
                                             pycore_trap_recoverable(
                                                 PY_TRAP_LIST_EXTEND)) begin
                                             trap_marshal_pending_r     <= 1'b1;

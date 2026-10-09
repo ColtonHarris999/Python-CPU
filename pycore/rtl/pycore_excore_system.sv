@@ -65,7 +65,7 @@ module pycore_excore_system #(
     logic [ADDR_WIDTH-1:0]  core_dmem_nb_addr;
 
     // ---- excore's slot-port master (into L2, not L1D) --------------------
-    logic          sp_req, sp_we, sp_ack, sp_fault;
+    logic          sp_req, sp_we, sp_ack, sp_gnt, sp_fault;
     logic [31:0]   sp_addr;
     logic [127:0]  sp_wdata, sp_rdata;
 
@@ -245,6 +245,7 @@ module pycore_excore_system #(
         .sp_we_o(sp_we),
         .sp_addr_o(sp_addr),
         .sp_wdata_o(sp_wdata),
+        .sp_gnt_i(sp_gnt),
         .sp_ack_i(sp_ack),
         .sp_rdata_i(sp_rdata),
         .sp_fault_i(sp_fault)
@@ -443,6 +444,7 @@ module pycore_excore_system #(
         .excore_wstrb_i({DMEM_DATA_W/8{1'b1}}),
         .excore_addr_i(sp_addr),
         .excore_wdata_i(sp_wdata),
+        .excore_gnt_o(sp_gnt),
         .excore_ack_o(sp_ack),
         .excore_rdata_o(sp_rdata),
         .excore_fault_o(sp_fault),

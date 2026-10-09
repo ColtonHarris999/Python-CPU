@@ -99,6 +99,7 @@ module tb_excore #(
         .sp_we_o(sp_we),
         .sp_addr_o(sp_addr),
         .sp_wdata_o(sp_wdata),
+        .sp_gnt_i(1'b1),
         .sp_ack_i(sp_ack),
         .sp_rdata_i(sp_rdata),
         .sp_fault_i(sp_fault)

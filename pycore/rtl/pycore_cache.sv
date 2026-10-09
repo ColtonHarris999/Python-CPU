@@ -42,6 +42,9 @@ module pycore_cache #(
     // 1: down port is a 4-beat line burst (L2 → RAM). 0: each beat is a
     // separate word request (L1D → L2, whose CPU port has no line_i).
     parameter bit    DOWN_LINE   = 1'b1,
+    // 1: one down-port read returns the whole line on down_rline_i
+    // (L1I fill from L2's rdata_line). 0: assemble the line from beats.
+    parameter bit    LINE_REPLY  = 1'b0,
     parameter logic [31:0] REGION_BASE  = 32'd0,
     parameter logic [31:0] REGION_LIMIT = 32'd0,
     // L2: accept pipelined line requests (pipe_i) back to back while they
@@ -115,10 +118,15 @@ module pycore_cache #(
     input  logic                  down_ack_i,
     input  logic                  down_last_i,
     input  logic [DATA_WIDTH-1:0] down_rdata_i,
+    input  logic [LINE_BYTES*8-1:0] down_rline_i,
     input  logic                  down_fault_i,
 
     input  logic                  inv_all_i,
     input  logic                  flush_all_i,
+    // Block new CPU/NB accepts (flush/inv sequencer holds this from the
+    // idle check until the walk finishes, so a request cannot land in
+    // the same cycle as flush_all).
+    input  logic                  cpu_quiesce_i,
     output logic                  inv_busy_o,
     output logic                  flush_busy_o,
     output logic                  inv_done_o,
@@ -245,7 +253,8 @@ module pycore_cache #(
     logic              last_r;
     logic              pipe_ok, pipe_take;
     assign pipe_ok   = PIPE && cache_en_i && (state_r == ST_IDLE) && !pmiss_r &&
-                       (pq_cnt_r < (PQ_W+1)'(PQ_DEPTH)) && !inv_all_i && !flush_all_i;
+                       (pq_cnt_r < (PQ_W+1)'(PQ_DEPTH)) && !inv_all_i && !flush_all_i &&
+                       !cpu_quiesce_i;
     assign pipe_take = pipe_ok && req_i && pipe_i;
 
     // Ordinary request held for later (NB). Masters may pulse req_i for
@@ -521,6 +530,7 @@ module pycore_cache #(
                         !(c_we && WRITE_INV_NO_ALLOC) && !(c_we && READ_ONLY) &&
                         (hit_cycles_eff <= 1);
     assign leg_take = cache_en_i && (state_r == ST_IDLE) && !inv_all_i && !flush_all_i &&
+                      !cpu_quiesce_i &&
                       !pmiss_r && c_req && !(PIPE && pipe_i && !lp_v_r) && (pq_cnt_r == '0) &&
                       (!nb_busy || leg_hit_ok);
     assign lp_cap   = NB && cache_en_i && (state_r == ST_IDLE) && !inv_all_i && !flush_all_i &&
@@ -530,6 +540,7 @@ module pycore_cache #(
     // A waiting ordinary request blocks new non-blocking reads, so the port
     // drains and the ordinary miss path gets the down port.
     assign nb_gnt_o = NB && cache_en_i && (state_r == ST_IDLE) && !inv_all_i && !flush_all_i &&
+                      !cpu_quiesce_i &&
                       !c_req && !ins_ready &&
                       (nb_pf_i ? (nb_hit || nb_inflight || nb_wbconf ||
                                   (ms_cnt_r < (NS_W+1)'(NB_SLOTS)))
@@ -610,6 +621,25 @@ module pycore_cache #(
         if (rst_n_i && cache_en_i && req_i &&
             (flush_all_i || inv_all_i || flush_busy_o || inv_busy_o))
             $error("%m: req_i while flush/inv (request would be dropped)");
+    end
+
+    // A6: a request captured while idle must not be captured again on the
+    // ack cycle just because the master still holds req.
+    logic              leg_took_r;
+    logic [ADDR_WIDTH-1:0] leg_took_addr_r;
+    always_ff @(posedge clk_i or negedge rst_n_i) begin
+        if (!rst_n_i) begin
+            leg_took_r      <= 1'b0;
+            leg_took_addr_r <= '0;
+        end else begin
+            leg_took_r      <= leg_take;
+            leg_took_addr_r <= c_addr;
+        end
+    end
+    always_ff @(posedge clk_i) begin
+        if (rst_n_i && cache_en_i && leg_took_r && leg_take &&
+            (leg_took_addr_r == c_addr))
+            $error("%m: duplicate capture of a held request at %h", c_addr);
     end
 
 `ifndef SYNTHESIS
@@ -988,15 +1018,31 @@ module pycore_cache #(
                 ST_FILL_ISSUE: begin
                     down_req_r   <= 1'b1;
                     down_we_r    <= 1'b0;
-                    down_line_r  <= DOWN_LINE;
+                    down_line_r  <= DOWN_LINE && !LINE_REPLY;
                     down_wstrb_r <= '0;
-                    down_addr_r  <= down_fill_addr;
+                    down_addr_r  <= LINE_REPLY ? line_align(cap_addr_r) : down_fill_addr;
                     state_r      <= ST_FILL_WAIT;
                 end
                 ST_FILL_WAIT: begin
                     if (down_ack_i) begin
                         if (down_fault_i) begin
                             state_r <= ST_FAULT;
+                        end else if (LINE_REPLY) begin
+                            logic [LINE_W-1:0] installed;
+                            installed = down_rline_i;
+                            if (cap_we_r)
+                                installed = merge_word(installed, cap_word,
+                                                       cap_wdata_r, cap_wstrb_r);
+                            data_q[cap_set][cap_way_r]  <= installed;
+                            tag_q[cap_set][cap_way_r]   <= cap_tag;
+                            valid_q[cap_set][cap_way_r] <= 1'b1;
+                            dirty_q[cap_set][cap_way_r] <= cap_we_r;
+                            ages_q[cap_set]             <= lru_ages_next;
+                            cap_line_r                  <= installed;
+                            ack_r   <= 1'b1;
+                            rdata_r <= line_word(installed, cap_word);
+                            rline_r <= installed;
+                            state_r <= ST_IDLE;
                         end else begin
                             cap_line_r[beat_r*DATA_WIDTH +: DATA_WIDTH] <= down_rdata_i;
                             if (down_beat_last) begin

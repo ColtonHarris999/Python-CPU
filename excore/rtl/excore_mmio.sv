@@ -48,6 +48,11 @@ module excore_mmio #(
     output logic         sp_we_o,
     output logic [31:0]  sp_addr_o,
     output logic [127:0] sp_wdata_o,
+    // High the cycle the slave accepts the request. Req stays high until
+    // then, so a busy crossbar cannot drop a one-cycle pulse, and drops
+    // as soon as the request is taken so a memory that counts req cycles
+    // sees one beat.
+    input  logic          sp_gnt_i,
     input  logic          sp_ack_i,
     input  logic [127:0]  sp_rdata_i,
     input  logic          sp_fault_i
@@ -118,13 +123,7 @@ module excore_mmio #(
     logic [31:0]  sp_addr_r;
     logic [127:0] sp_data_r;   // staging window for SP_DATA0..3
     logic         sp_busy_r;
-    logic         sp_req_sent_r;  // req_o must pulse exactly one cycle —
-                                   // pycore_mem_bank samples req_i on every
-                                   // edge and acks unconditionally one cycle
-                                   // later, so holding req_o high across
-                                   // multiple cycles would issue duplicate
-                                   // transactions (mirrors pycore_mem_stage's
-                                   // req_sent_r discipline for PTR ops).
+    logic         sp_accepted_r;
     logic         sp_fault_sticky_r;
     logic         sp_pending_we_r;
 
@@ -134,7 +133,7 @@ module excore_mmio #(
     assign sp_read_go_w  = cpu_req_i && cpu_we_i && (off == OFF_SP_CTRL) && cpu_wdata_i[0];
     assign sp_write_go_w = cpu_req_i && cpu_we_i && (off == OFF_SP_CTRL) && cpu_wdata_i[1];
 
-    assign sp_req_o   = sp_busy_r && !sp_req_sent_r;
+    assign sp_req_o   = sp_busy_r && !sp_accepted_r;
     assign sp_we_o    = sp_pending_we_r;
     assign sp_addr_o  = sp_addr_r;
     assign sp_wdata_o = sp_data_r;
@@ -142,21 +141,22 @@ module excore_mmio #(
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) begin
             sp_busy_r         <= 1'b0;
-            sp_req_sent_r     <= 1'b0;
+            sp_accepted_r     <= 1'b0;
             sp_pending_we_r   <= 1'b0;
             sp_fault_sticky_r <= 1'b0;
             sp_addr_r         <= 32'h0;
         end else begin
             if (sp_busy_r) begin
-                if (sp_req_sent_r && sp_ack_i) begin
+                if (!sp_accepted_r && sp_gnt_i)
+                    sp_accepted_r <= 1'b1;
+                else if (sp_accepted_r && sp_ack_i) begin
                     sp_busy_r         <= 1'b0;
-                    sp_req_sent_r     <= 1'b0;
+                    sp_accepted_r     <= 1'b0;
                     sp_fault_sticky_r <= sp_fault_i;
-                end else if (!sp_req_sent_r) begin
-                    sp_req_sent_r <= 1'b1;
                 end
             end else if (sp_read_go_w || sp_write_go_w) begin
                 sp_busy_r         <= 1'b1;
+                sp_accepted_r     <= 1'b0;
                 sp_pending_we_r   <= sp_write_go_w;
                 sp_fault_sticky_r <= 1'b0; // cleared at the start of a new go
             end
@@ -166,7 +166,7 @@ module excore_mmio #(
     // SP_DATA capture on a completed read; data staging for writes is
     // updated by ordinary register writes below (SP_DATA0..3).
     logic sp_read_capture;
-    assign sp_read_capture = sp_busy_r && sp_req_sent_r && sp_ack_i && !sp_pending_we_r;
+    assign sp_read_capture = sp_busy_r && sp_accepted_r && sp_ack_i && !sp_pending_we_r;
 
     // -------------------------------------------------------------------
     // Register writes (address decode).

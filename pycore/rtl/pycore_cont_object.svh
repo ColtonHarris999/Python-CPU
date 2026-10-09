@@ -560,7 +560,7 @@
                                         container_order_ptr_r <= cont_dict_order_ptr;
                                         if ((container_slot_count_r == 32'd0) ||
                                             (cont_dict_table_ptr == 32'd0)) begin
-                                            if (EXCORE_EN &&
+                                            if ((ca_en_sim || EXCORE_EN) &&
                                                 pycore_trap_recoverable(PY_TRAP_DICT_GROW)) begin
                                                 trap_marshal_pending_r     <= 1'b1;
                                                 trap_marshal_code_r        <= PY_TRAP_DICT_GROW;
@@ -603,7 +603,7 @@
                                         if (container_probe_n_r >= container_slot_count_r) begin
                                             if (container_tomb_valid_r) begin
                                                 if (cont_dict_needs_grow) begin
-                                                    if (EXCORE_EN &&
+                                                    if ((ca_en_sim || EXCORE_EN) &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_DICT_GROW)) begin
                                                         trap_marshal_pending_r     <= 1'b1;
@@ -641,7 +641,7 @@
                                                     container_phase_r <= CP_DICT_WR_KVAL;
                                                 end
                                             end else begin
-                                                if (EXCORE_EN &&
+                                                if ((ca_en_sim || EXCORE_EN) &&
                                                     pycore_trap_recoverable(
                                                         PY_TRAP_DICT_GROW)) begin
                                                     trap_marshal_pending_r     <= 1'b1;
@@ -669,7 +669,7 @@
                                             if (pycore_dict_slot_empty(
                                                     container_rd_data_r)) begin
                                                 if (cont_dict_needs_grow) begin
-                                                    if (EXCORE_EN &&
+                                                    if ((ca_en_sim || EXCORE_EN) &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_DICT_GROW)) begin
                                                         trap_marshal_pending_r     <= 1'b1;
@@ -1982,7 +1982,7 @@
                                         container_order_ptr_r <= cont_dict_order_ptr;
                                         if ((container_slot_count_r == 32'd0) ||
                                             (cont_dict_table_ptr == 32'd0)) begin
-                                            if (EXCORE_EN &&
+                                            if ((ca_en_sim || EXCORE_EN) &&
                                                 pycore_trap_recoverable(PY_TRAP_DICT_GROW)) begin
                                                 trap_marshal_pending_r     <= 1'b1;
                                                 trap_marshal_code_r        <= PY_TRAP_DICT_GROW;
@@ -2025,7 +2025,7 @@
                                         if (container_probe_n_r >= container_slot_count_r) begin
                                             if (container_tomb_valid_r) begin
                                                 if (cont_dict_needs_grow) begin
-                                                    if (EXCORE_EN &&
+                                                    if ((ca_en_sim || EXCORE_EN) &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_DICT_GROW)) begin
                                                         trap_marshal_pending_r     <= 1'b1;
@@ -2063,7 +2063,7 @@
                                                     container_phase_r <= CP_DICT_WR_KVAL;
                                                 end
                                             end else begin
-                                                if (EXCORE_EN &&
+                                                if ((ca_en_sim || EXCORE_EN) &&
                                                     pycore_trap_recoverable(
                                                         PY_TRAP_DICT_GROW)) begin
                                                     trap_marshal_pending_r     <= 1'b1;
@@ -2091,7 +2091,7 @@
                                             if (pycore_dict_slot_empty(
                                                     container_rd_data_r)) begin
                                                 if (cont_dict_needs_grow) begin
-                                                    if (EXCORE_EN &&
+                                                    if ((ca_en_sim || EXCORE_EN) &&
                                                         pycore_trap_recoverable(
                                                             PY_TRAP_DICT_GROW)) begin
                                                         trap_marshal_pending_r     <= 1'b1;

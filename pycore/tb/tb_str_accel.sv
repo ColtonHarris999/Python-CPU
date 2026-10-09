@@ -251,7 +251,7 @@ module tb_str_accel;
         input logic [31:0] addr,
         input logic [31:0] nchars,
         input logic [2:0]  kind,
-        input logic [31:0] units [0:7],
+        input logic [31:0] units [0:31],
         output logic [PYCORE_ENTRY_WIDTH-1:0] handle
     );
         logic [31:0] nbytes, digest, i, bi, off;
@@ -407,8 +407,8 @@ module tb_str_accel;
         check(!res_trap && !res_need_heap, "grant retry fits");
 
         begin
-            logic [31:0] u_alpha [0:7];
-            logic [31:0] u_emoji [0:7];
+            logic [31:0] u_alpha [0:31];
+            logic [31:0] u_emoji [0:31];
             logic [PYCORE_ENTRY_WIDTH-1:0] h_alpha, h_emoji;
             u_alpha[0] = 32'h03B1; // α
             u_emoji[0] = 32'h1F642; // 🙂 is U+1F642? actually U+1F642 is slightly smiling; 🙂 is U+1F642... wait 🙂 is U+1F642 no: slightly smiling face is U+1F642, 🙂 is U+1F642. Python '🙂' is U+1F642? Let me use U+1F600 😀 to be safe... model uses 🙂. ord('🙂') = 0x1F642.
@@ -573,8 +573,8 @@ module tb_str_accel;
 
         begin
             logic [PYCORE_ENTRY_WIDTH-1:0] h_alpha, h_emoji, h_chr;
-            logic [31:0] u_alpha [0:7];
-            logic [31:0] u_emoji [0:7];
+            logic [31:0] u_alpha [0:31];
+            logic [31:0] u_emoji [0:31];
             u_alpha[0] = 32'h03B1;
             u_emoji[0] = 32'h1F600;
             plant_units(PYCORE_HEAP_BASE + 32'h200, 32'd1, 3'd2, u_alpha, h_alpha);
@@ -614,6 +614,66 @@ module tb_str_accel;
             issue(PY_SA_ORD, 0, h_chr, mk_none(), mk_none(),
                   PYCORE_HEAP_BASE + 32'h3C0);
             check(res_entry[31:0] == 32'hD800, "chr/ord surrogate");
+        end
+
+        // A27: rfind of a missing needle must return -1, not wrap.
+        issue(PY_SA_SEARCH, PY_SA_RFIND, mk_short("banana"), mk_short("x"),
+              mk_none(), PYCORE_HEAP_BASE);
+        check(!res_trap, "rfind miss trap");
+        check(res_entry[PYCORE_VAL_MSB:PYCORE_VAL_LSB] == {128{1'b1}},
+              "rfind miss");
+
+        // A27: strip of a kind-2 character, both operands LONG.
+        begin
+            logic [PYCORE_ENTRY_WIDTH-1:0] h_euro_s, h_euro;
+            logic [31:0] u_one [0:31];
+            logic [31:0] u_four [0:31];
+            u_one[0] = 32'h20AC;
+            u_four[0] = 32'h20AC;
+            u_four[1] = 32'h0061;
+            u_four[2] = 32'h0062;
+            u_four[3] = 32'h20AC;
+            plant_units(PYCORE_HEAP_BASE + 32'h400, 32'd1, 3'd2, u_one, h_euro);
+            plant_units(PYCORE_HEAP_BASE + 32'h440, 32'd4, 3'd2, u_four, h_euro_s);
+            issue(PY_SA_TRIM, PY_SA_TRIM_BOTH, h_euro_s, h_euro, mk_none(),
+                  PYCORE_HEAP_BASE + 32'h500);
+            check(!res_trap, "strip euro trap");
+            check(pycore_stracc_nchars(res_entry[127:0]) == 32'd2, "strip euro nchars");
+        end
+
+        // A27: lstrip of a 17-character set against a longer LONG string.
+        begin
+            logic [PYCORE_ENTRY_WIDTH-1:0] h_set, h_hay;
+            logic [31:0] u_set [0:31];
+            logic [31:0] u_hay [0:31];
+            int ui;
+            for (ui = 0; ui < 17; ui++)
+                u_set[ui] = 32'h61 + ui;
+            for (ui = 0; ui < 26; ui++)
+                u_hay[ui] = 32'h61 + ui;
+            plant_units(PYCORE_HEAP_BASE + 32'h600, 32'd17, 3'd1, u_set, h_set);
+            plant_units(PYCORE_HEAP_BASE + 32'h680, 32'd26, 3'd1, u_hay, h_hay);
+            issue(PY_SA_TRIM, PY_SA_TRIM_LEFT, h_hay, h_set, mk_none(),
+                  PYCORE_HEAP_BASE + 32'h780);
+            expect_short("rstuvwxyz", "lstrip set");
+        end
+
+        // A26: a copy past 16 payload bytes must hash each unit once.
+        begin
+            logic [31:0] expect_h, bi;
+            logic [7:0] ch;
+            string s17;
+            s17 = "abcdefghijklmnopq";
+            expect_h = PYCORE_STRACC_FNV_OFFSET;
+            for (bi = 0; bi < 17; bi++) begin
+                ch = s17[bi];
+                expect_h = pycore_stracc_fnv_step(expect_h, ch);
+            end
+            issue(PY_SA_CONCAT, 0, mk_short("abcdefghij"), mk_short("klmnopq"),
+                  mk_none(), PYCORE_HEAP_BASE + 32'h800);
+            check(!res_trap, "17 concat trap");
+            check(pycore_stracc_nchars(res_entry[127:0]) == 32'd17, "17 nchars");
+            check(pycore_stracc_hash(res_entry[127:0]) == expect_h, "17 hash");
         end
 
         $display("tb_str_accel PASS");

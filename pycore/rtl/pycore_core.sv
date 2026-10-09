@@ -1,4 +1,5 @@
 `include "pycore_defs.svh"
+`include "pycore_ca_defs.svh"
 
 // PyCore CPU core: a multi-cycle, non-pipelined machine. Exactly one
 // instruction is in flight at a time; a control FSM walks it through
@@ -190,6 +191,9 @@ module pycore_core #(
     localparam logic [4:0] S_GC_ROOTS     = 5'd18;
     localparam logic [4:0] S_GC_RUN       = 5'd19;
     localparam logic [4:0] S_GC_ALLOC     = 5'd20;
+    // S_CA: container accelerator owns dmem. The core is frozen until
+    // data-ready (stage A0: container-ready is the same cycle).
+    localparam logic [4:0] S_CA          = 5'd21;
 
     // trap_res_code_i values (mirrors excore/docs/mmio_map.md RES_CODE).
     localparam logic [3:0] TRAP_RES_COMPLETED = 4'd0;
@@ -400,6 +404,7 @@ module pycore_core #(
     logic [31:0]  gc_need_bytes_r;
     logic [1:0]   gc_retry_count_r;
     logic [31:0]  gc_retry_pc_r;
+    logic [31:0]  gc_retry_heap_r;
     logic [31:0]  gc_retry_largest_r;
     logic [31:0]  gc_boundary_cnt_r;
     logic [31:0]  gc_runsw_cnt_r;
@@ -1111,6 +1116,47 @@ module pycore_core #(
         .cmd_count_o()
     );
 
+    logic        ca_cmd_pend_r, ca_issued_r;
+    logic [6:0]  ca_op_r;
+    logic [PYCORE_ENTRY_WIDTH-1:0] ca_a_r, ca_b_r, ca_c_r;
+    logic        ca_cmd_valid, ca_cmd_ready, ca_dr_valid, ca_dr_ready;
+    logic        ca_dr_ok, ca_dr_short, ca_dr_fault, ca_cr_valid, ca_idle;
+    logic [31:0] ca_dr_heap, ca_dr_need;
+    logic        ca_req, ca_we;
+    logic [31:0] ca_addr;
+    logic [127:0] ca_wdata;
+
+    pycore_ca u_ca (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .cmd_valid_i(ca_cmd_valid),
+        .cmd_ready_o(ca_cmd_ready),
+        .cmd_op_i(ca_op_r),
+        .cmd_a_i(ca_a_r),
+        .cmd_b_i(ca_b_r),
+        .cmd_c_i(ca_c_r),
+        .cmd_heap_ptr_i(heap_ptr_r),
+        .cmd_heap_limit_i(heap_limit_r),
+        .dr_valid_o(ca_dr_valid),
+        .dr_ready_i(ca_dr_ready),
+        .dr_ok_o(ca_dr_ok),
+        .dr_short_o(ca_dr_short),
+        .dr_fault_o(ca_dr_fault),
+        .dr_heap_o(ca_dr_heap),
+        .dr_need_o(ca_dr_need),
+        .cr_valid_o(ca_cr_valid),
+        .ca_idle_o(ca_idle),
+        .req_o(ca_req),
+        .we_o(ca_we),
+        .addr_o(ca_addr),
+        .wdata_o(ca_wdata),
+        .ack_i(dmem_ack_i && (state_r == S_CA)),
+        .fault_i(dmem_fault_i),
+        .rdata_i(dmem_rdata_i)
+    );
+    assign ca_cmd_valid = ca_cmd_pend_r && !ca_issued_r && (state_r == S_CA);
+    assign ca_dr_ready  = (state_r == S_CA) && ca_dr_valid;
+
     assign stracc_dmem_active = stracc_req &&
         ((state_r == S_STRACC) ||
          ((state_r == S_CONTAINER) && stracc_issued_r));
@@ -1509,10 +1555,23 @@ module pycore_core #(
         (container_op_r == CONT_LOAD_GLOBAL) &&
         (container_phase_r == CP_INIT) &&
         ({32'b0, gic_namei_full} < names_base_r[127:64]);
+    // A namespace-dict write that is not STORE_NAME (ns['x'] = …) used
+    // to leave the GIC stale (A7). Flush when the dict being mutated is
+    // the active globals or builtins dict. Targeted name-hash
+    // invalidation replaces this full flush once the container
+    // accelerator owns the write.
+    wire gic_ns_dict = (cont_rs2_addr == globals_base_r) ||
+                       (cont_rs2_addr == builtins_base_r);
     assign gic_flush =
         ((state_r == S_CONTAINER) &&
          (container_op_r == CONT_STORE_NAME) &&
          (container_phase_r == CP_INIT)) ||
+        ((state_r == S_CONTAINER) &&
+         (container_phase_r == CP_INIT) && gic_ns_dict &&
+         ((container_op_r == CONT_STORE_DICT) ||
+          (container_op_r == CONT_DELETE_DICT) ||
+          (container_op_r == CONT_DICT_UPDATE) ||
+          (container_op_r == CONT_DICT_MERGE))) ||
         ((state_r == S_TRAP_WAIT) && trap_res_valid_i && !trap_res_seen_r) ||
         ((state_r == S_BOOT) && (boot_phase_r == 4'd3) &&
          !container_dmem_pending_r) ||
@@ -1704,6 +1763,7 @@ module pycore_core #(
     logic [31:0] gc_rescan_limit_sim;
     logic [7:0]  gc_onchip_sim;
     logic [7:0]  gc_mutant_sim;
+    bit          ca_en_sim;
     initial begin
         int v;
         gc_en_sim = 1'b0;
@@ -1720,6 +1780,8 @@ module pycore_core #(
         gc_rescan_limit_sim = 32'd0;
         gc_onchip_sim = 8'd0;
         gc_mutant_sim = 8'd0;
+        ca_en_sim = 1'b1;
+        if ($value$plusargs("CA_EN=%d", v)) ca_en_sim = (v != 0);
         if ($value$plusargs("GC_EN=%d", v)) gc_en_sim = (v != 0);
         if ($value$plusargs("GC_VERIFY_ONLY=%d", v)) gc_verify_only_sim = (v != 0);
         if ($value$plusargs("GC_AUTO=%d", v)) gc_auto_sim = (v != 0);
@@ -1749,6 +1811,16 @@ module pycore_core #(
         (gc_heap_dyn_bytes_sim == 32'd0) ? gc_heap_limit_sim
         : ((heap_init_ptr_sim + gc_heap_dyn_bytes_sim > PYCORE_HEAP_LIMIT)
                ? PYCORE_HEAP_LIMIT : heap_init_ptr_sim + gc_heap_dyn_bytes_sim);
+
+    // Extend / mid-list delete / dict grow / set grow are already marshaled
+    // for excore. With CA_EN they run on the container accelerator instead.
+    wire ca_take_trap = ca_en_sim && trap_marshal_pending_r &&
+                        (container_phase_r == CP_DONE) && !ca_cmd_pend_r &&
+                        !gc_abort_r &&
+                        ((trap_marshal_code_r == PY_TRAP_LIST_EXTEND) ||
+                         (trap_marshal_code_r == PY_TRAP_LIST_DELETE) ||
+                         (trap_marshal_code_r == PY_TRAP_DICT_GROW) ||
+                         (trap_marshal_code_r == PY_TRAP_SET_GROW));
 
     // Engine.
     logic         gc_start;
@@ -2092,31 +2164,42 @@ module pycore_core #(
     // S_GC_ALLOC requests are one-cycle pulses, like STRACC's.
     logic gcalloc_req;
     assign gcalloc_req = gcalloc_dmem_active && !gcalloc_issued_r;
-    assign dmem_req_o   = rf_spill_dmem_active  ? 1'b1 :
-                          frame_dmem_active     ? 1'b1 :
-                          container_dmem_active ? 1'b1 :
+    // Held-request masters (frame, container, RF spill, exc stack) keep
+    // their pending bit through the ack cycle. L1D captures any req that
+    // is high in ST_IDLE, so that overlap issued the transaction twice
+    // (A6). Drop req in the ack cycle. STRACC, the GC engine and the
+    // allocator already pulse.
+    wire ca_dmem_active = (state_r == S_CA);
+    assign dmem_req_o   = ca_dmem_active        ? ca_req :
+                          rf_spill_dmem_active  ? !dmem_ack_i :
+                          frame_dmem_active     ? !dmem_ack_i :
+                          container_dmem_active ? !dmem_ack_i :
                           stracc_dmem_active    ? 1'b1 :
-                          exc_dmem_active       ? 1'b1 :
+                          exc_dmem_active       ? !dmem_ack_i :
                           gc_eng_dmem_active    ? 1'b1 :
                           gcalloc_dmem_active   ? gcalloc_req : ms_dmem_req;
-    assign dmem_we_o    = rf_spill_dmem_active  ? (state_r == S_RF_SPILL) :
+    assign dmem_we_o    = ca_dmem_active        ? ca_we :
+                          rf_spill_dmem_active  ? (state_r == S_RF_SPILL) :
                           frame_dmem_active     ? (state_r == S_CALL) :
                           container_dmem_active ? container_dmem_we_r  :
                           stracc_dmem_active    ? stracc_we           :
                           exc_dmem_active       ? exc_dmem_we         :
                           gc_eng_dmem_active    ? gc_eng_we           :
                           gcalloc_dmem_active   ? gcalloc_we_r        : ms_dmem_we;
-    assign dmem_line_o  = stracc_dmem_active    ? stracc_line :
+    assign dmem_line_o  = ca_dmem_active        ? 1'b0 :
+                          stracc_dmem_active    ? stracc_line :
                           gc_eng_dmem_active    ? gc_eng_line :
                           gcalloc_dmem_active   ? gcalloc_line_r : 1'b0;
-    assign dmem_wstrb_o = rf_spill_dmem_active  ? {DMEM_DATA_W/8{1'b1}} :
+    assign dmem_wstrb_o = ca_dmem_active        ? {DMEM_DATA_W/8{1'b1}} :
+                          rf_spill_dmem_active  ? {DMEM_DATA_W/8{1'b1}} :
                           frame_dmem_active     ? {DMEM_DATA_W/8{1'b1}} :
                           container_dmem_active ? container_dmem_wstrb_r :
                           stracc_dmem_active    ? stracc_wstrb        :
                           exc_dmem_active       ? exc_dmem_wstrb      :
                           gc_eng_dmem_active    ? gc_eng_wstrb        :
                           gcalloc_dmem_active   ? {DMEM_DATA_W/8{1'b1}} : ms_dmem_wstrb;
-    assign dmem_addr_o  = rf_spill_dmem_active  ? rf_spill_dmem_addr[ADDR_WIDTH-1:0] :
+    assign dmem_addr_o  = ca_dmem_active        ? ca_addr :
+                          rf_spill_dmem_active  ? rf_spill_dmem_addr[ADDR_WIDTH-1:0] :
                           frame_dmem_active     ?
                               ((state_r == S_CALL) ? frame_push_addr : frame_pop_addr) :
                           container_dmem_active ? container_dmem_addr_r :
@@ -2124,7 +2207,8 @@ module pycore_core #(
                           exc_dmem_active       ? exc_dmem_addr        :
                           gc_eng_dmem_active    ? gc_eng_addr          :
                           gcalloc_dmem_active   ? gcalloc_addr_r       : ms_dmem_addr;
-    assign dmem_wdata_o = rf_spill_dmem_active  ? (
+    assign dmem_wdata_o = ca_dmem_active        ? ca_wdata :
+                          rf_spill_dmem_active  ? (
                               rf_spill_half_r
                                   ? {124'b0, pycore_get_tag(rf_rs1)}
                                   : pycore_get_val(rf_rs1)
@@ -2136,7 +2220,8 @@ module pycore_core #(
                           gc_eng_dmem_active    ? gc_eng_wdata         :
                           gcalloc_dmem_active   ? gcalloc_wdata_r      : ms_dmem_wdata;
     // Engine line writes (GC_POISON, CACHE_EN=1) carry one poison word in each 16 B slot.
-    assign dmem_wline_o = stracc_dmem_active    ? stracc_wline :
+    assign dmem_wline_o = ca_dmem_active        ? '0 :
+                          stracc_dmem_active    ? stracc_wline :
                           gc_eng_dmem_active    ? {4{gc_eng_wdata}} : '0;
 
     always_ff @(posedge clk_i or negedge rst_n_i) begin
@@ -2814,8 +2899,11 @@ module pycore_core #(
                         state_next = S_CALL;
                     end else if (container_call_exc_unwind_r) begin
                         state_next = S_RETURN;
+                    end else if (ca_cmd_pend_r) begin
+                        state_next = S_CA;
                     end else if (container_phase_r == CP_DONE) begin
                         state_next = gc_abort_r ? S_GC_ALLOC
+                                   : ca_take_trap ? S_CA
                                    : trap_marshal_pending_r ? S_TRAP_MARSHAL : S_FETCH;
                     end
                 end
@@ -2861,6 +2949,12 @@ module pycore_core #(
                     if (gc_oom_raise_r) state_next = S_CONTAINER;
                     else if (gc_alloc_collect) state_next = S_GC_ENTER;
                     else if (gc_alloc_exit) state_next = S_FETCH;
+                end
+                S_CA: begin
+                    if (gc_abort_r)
+                        state_next = S_GC_ALLOC;
+                    else if (!ca_cmd_pend_r)
+                        state_next = S_FETCH;
                 end
                 S_HALT: begin
                     state_next = S_HALT;
@@ -3021,6 +3115,7 @@ module pycore_core #(
             gc_need_bytes_r          <= '0;
             gc_retry_count_r         <= '0;
             gc_retry_pc_r            <= 32'hFFFF_FFFF;
+            gc_retry_heap_r          <= 32'hFFFF_FFFF;
             gc_retry_largest_r       <= '0;
             gc_boundary_cnt_r        <= '0;
             gc_runsw_cnt_r           <= '0;
@@ -3206,6 +3301,12 @@ module pycore_core #(
             container_src_kind_r            <= '0;
             container_bulk_size_r           <= '0;
             container_old_order_r           <= '0;
+            ca_cmd_pend_r              <= 1'b0;
+            ca_issued_r                <= 1'b0;
+            ca_op_r                    <= '0;
+            ca_a_r                     <= '0;
+            ca_b_r                     <= '0;
+            ca_c_r                     <= '0;
             trap_marshal_pending_r     <= 1'b0;
             trap_marshal_code_r        <= '0;
             trap_marshal_entry_count_r <= '0;
@@ -3278,6 +3379,7 @@ module pycore_core #(
                 gc_res_abort_r   <= 1'b0;
                 gc_retry_count_r <= 2'd0;
                 gc_retry_pc_r    <= 32'hFFFF_FFFF;
+                gc_retry_heap_r  <= 32'hFFFF_FFFF;
             end
 
             // Clear one-cycle pulses by default.
@@ -3807,6 +3909,21 @@ module pycore_core #(
                 //   BUILD_TUPLE / SUBSCR_TUPLE: like LIST without a header slot.
                 // ----------------------------------------------------------
                 S_CONTAINER: begin
+                    if (ca_take_trap) begin
+                        ca_cmd_pend_r          <= 1'b1;
+                        ca_issued_r            <= 1'b0;
+                        ca_a_r                 <= trap_marshal_entries_r[0];
+                        ca_b_r                 <= trap_marshal_entries_r[1];
+                        ca_c_r                 <= trap_marshal_entries_r[2];
+                        trap_marshal_pending_r <= 1'b0;
+                        unique case (trap_marshal_code_r)
+                            PY_TRAP_LIST_EXTEND: ca_op_r <= PY_CA_L_EXTEND;
+                            PY_TRAP_LIST_DELETE: ca_op_r <= PY_CA_L_DEL;
+                            PY_TRAP_DICT_GROW:   ca_op_r <= PY_CA_D_GROW;
+                            PY_TRAP_SET_GROW:    ca_op_r <= PY_CA_S_GROW;
+                            default:             ca_op_r <= PY_CA_L_APPEND;
+                        endcase
+                    end
 
                     // ---- dmem ack: shared clearing --------------------------
                     if (container_dmem_pending_r && dmem_ack_i) begin
@@ -4729,6 +4846,76 @@ module pycore_core #(
                 end
 
                 S_HALT: ;  // state_next = S_HALT (from always_comb)
+
+                S_CA: begin
+                    if (ca_cmd_valid && ca_cmd_ready)
+                        ca_issued_r <= 1'b1;
+                    if (ca_dr_valid) begin
+                        ca_cmd_pend_r <= 1'b0;
+                        ca_issued_r   <= 1'b0;
+                        if (ca_dr_short) begin
+                            // Same contract as an excore NEED_HEAP: collect
+                            // and retry when the GC is on, otherwise the
+                            // allocation is a memory fault.
+                            if (gc_en_sim && !gc_verify_only_sim) begin
+                                `GC_ABORT_COMMON(ca_dr_need)
+                            end else begin
+                                container_mem_fault_r <= 1'b1;
+                            end
+                        end else if (ca_dr_fault) begin
+                            container_mem_fault_r <= 1'b1;
+                        end else if (ca_dr_ok) begin
+                            heap_ptr_r   <= ca_dr_heap;
+                            fetch_skip_r <= 1'b1;
+                            if (ca_op_r == PY_CA_L_DEL) begin
+                                tos_r <= tos_r - RF_AW'(2);
+                            end else if (ca_op_r == PY_CA_D_GROW) begin
+                                // Same pops as excore: ATTR/MAP_ADD 2,
+                                // NAME/GLOBAL 1, STORE_SUBSCR 3.
+                                if ((cur_opcode_r == PY_OP_STORE_ATTR) ||
+                                    (cur_opcode_r == PY_OP_MAP_ADD))
+                                    tos_r <= tos_r - RF_AW'(2);
+                                else if ((cur_opcode_r == PY_OP_STORE_NAME) ||
+                                         (cur_opcode_r == PY_OP_STORE_GLOBAL))
+                                    tos_r <= tos_r - RF_AW'(1);
+                                else
+                                    tos_r <= tos_r - RF_AW'(3);
+                                if (ca_b_r[PYCORE_TAG_MSB:PYCORE_TAG_LSB] == PY_TAG_OBJECT) begin
+                                    if (cur_opcode_r == PY_OP_MAP_ADD) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {2'b0, tos_r} - 9'd2
+                                            - {2'b0, cur_arg_r[6:0]});
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_MUT_COLLEC,
+                                            pycore_mut_set_contaminated(
+                                                ca_a_r[PYCORE_VAL_MSB:PYCORE_VAL_LSB]));
+                                    end else if (cur_opcode_r == PY_OP_STORE_SUBSCR) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(tos_r - RF_AW'(2));
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_MUT_COLLEC,
+                                            pycore_mut_set_contaminated(
+                                                ca_a_r[PYCORE_VAL_MSB:PYCORE_VAL_LSB]));
+                                    end
+                                end
+                            end else begin
+                                tos_r <= tos_r - RF_AW'(1);
+                                if (((ca_op_r == PY_CA_L_APPEND) ||
+                                     (ca_op_r == PY_CA_S_GROW)) &&
+                                    (ca_b_r[PYCORE_TAG_MSB:PYCORE_TAG_LSB] == PY_TAG_OBJECT)) begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {2'b0, tos_r} - 9'd1 - {2'b0, cur_arg_r[6:0]});
+                                    container_wb_data_r <= pycore_make_entry(
+                                        PY_TAG_MUT_COLLEC,
+                                        pycore_mut_set_contaminated(
+                                            ca_a_r[PYCORE_VAL_MSB:PYCORE_VAL_LSB]));
+                                end
+                            end
+                        end
+                    end
+                end
 
                 default: ;  // state_next = S_FETCH (from always_comb)
 

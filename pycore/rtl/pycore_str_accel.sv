@@ -126,6 +126,12 @@ module pycore_str_accel #(
     logic [127:0] src_word_r;
     logic [31:0]  src_word_addr_r;
     logic         src_word_valid_r;
+    // Operand B has its own line so a trim/search that reads both LONG
+    // strings does not invalidate A's line and livelock (A27).
+    logic [127:0] b_word_r;
+    logic [31:0]  b_word_addr_r;
+    logic         b_word_valid_r;
+    logic         mem_src_b_r;
     logic [127:0] dst_word_r;
     logic [31:0]  dst_word_addr_r;
     logic         dst_word_dirty_r;
@@ -327,6 +333,7 @@ module pycore_str_accel #(
     task automatic issue_read(input logic [31:0] addr);
         mem_kind_r <= MEM_RD;
         mem_we_r <= 1'b0;
+        mem_src_b_r <= 1'b0;
         mem_addr_r <= {addr[31:4], 4'b0};
         mem_wdata_r <= '0;
         mem_wstrb_r <= 16'h0;
@@ -379,6 +386,8 @@ module pycore_str_accel #(
             bytes_written_r <= '0;
             cmd_count_r <= '0;
             src_word_valid_r <= 1'b0;
+            b_word_valid_r <= 1'b0;
+            mem_src_b_r <= 1'b0;
             dst_word_dirty_r <= 1'b0;
             mem_we_r <= 1'b0;
             have_hay_r <= 1'b0;
@@ -401,6 +410,7 @@ module pycore_str_accel #(
                         heap_limit_r <= cmd_heap_limit_i;
                         cmd_count_r <= cmd_count_r + 32'd1;
                         src_word_valid_r <= 1'b0;
+                        b_word_valid_r <= 1'b0;
                         dst_word_dirty_r <= 1'b0;
                         have_hay_r <= 1'b0;
                         state_r <= ST_PREP;
@@ -975,9 +985,15 @@ module pycore_str_accel #(
                             set_trap(PY_TRAP_MEM_FAULT);
                         else begin
                             if (mem_kind_r == MEM_RD) begin
-                                src_word_r <= rdata_i;
-                                src_word_addr_r <= mem_addr_r;
-                                src_word_valid_r <= 1'b1;
+                                if (mem_src_b_r) begin
+                                    b_word_r <= rdata_i;
+                                    b_word_addr_r <= mem_addr_r;
+                                    b_word_valid_r <= 1'b1;
+                                end else begin
+                                    src_word_r <= rdata_i;
+                                    src_word_addr_r <= mem_addr_r;
+                                    src_word_valid_r <= 1'b1;
+                                end
                             end else if (mem_kind_r == MEM_WR_DST)
                                 dst_word_dirty_r <= 1'b0;
                             else if (mem_kind_r == MEM_WR_HDR) begin
@@ -1297,13 +1313,14 @@ module pycore_str_accel #(
         end
     endtask
 
-    task automatic consume_unit(input logic [31:0] unit);
-        logic [31:0] byte_addr, word_addr, next_hash;
-        logic [3:0]  boff;
-        int unsigned bi;
-        logic [127:0] next_word;
+    // Hash and case flags advance only when the unit is accepted. A
+    // destination-word flush returns without consuming; the caller retries
+    // the same unit. Stepping the hash on that flush double-hashes the
+    // first unit of every new 16 B word (A26).
+    task automatic accept_unit_meta(input logic [31:0] unit);
+        logic [31:0] next_hash;
         logic [7:0]  ubyte;
-
+        int unsigned bi;
         flags_r <= pycore_stracc_case_flags_step(flags_r, unit);
         next_hash = hash_r;
         for (bi = 0; bi < 4; bi++) begin
@@ -1313,8 +1330,15 @@ module pycore_str_accel #(
             end
         end
         hash_r <= next_hash;
+    endtask
+
+    task automatic consume_unit(input logic [31:0] unit);
+        logic [31:0] byte_addr, word_addr;
+        logic [3:0]  boff;
+        logic [127:0] next_word;
 
         if (dst_short_r) begin
+            accept_unit_meta(unit);
             short_bytes_r[out_idx_r] <= unit[7:0];
             bytes_written_r <= bytes_written_r + 32'd1;
             out_idx_r <= out_idx_r + 32'd1;
@@ -1325,6 +1349,7 @@ module pycore_str_accel #(
             if (dst_word_dirty_r && (dst_word_addr_r != word_addr))
                 issue_write(dst_word_addr_r, dst_word_r, MEM_WR_DST);
             else begin
+                accept_unit_meta(unit);
                 next_word = (dst_word_dirty_r && (dst_word_addr_r == word_addr))
                           ? dst_word_r : 128'd0;
                 next_word = pycore_stracc_insert_unit(next_word, boff, dst_kind_r, unit);
@@ -1394,7 +1419,17 @@ module pycore_str_accel #(
         end else begin
             byte_addr = saddr + 32'd16 + (idx * {29'b0, skind});
             word_addr = {byte_addr[31:4], 4'b0};
-            if (!src_word_valid_r || (src_word_addr_r != word_addr))
+            if (sel == SRC_B) begin
+                if (!b_word_valid_r || (b_word_addr_r != word_addr)) begin
+                    issue_read(word_addr);
+                    mem_src_b_r <= 1'b1;
+                end else begin
+                    boff = byte_addr[3:0];
+                    unit = pycore_stracc_unit_from_word(b_word_r, boff, skind);
+                    got = 1'b1;
+                    bytes_scanned_r <= bytes_scanned_r + {29'b0, skind};
+                end
+            end else if (!src_word_valid_r || (src_word_addr_r != word_addr))
                 issue_read(word_addr);
             else begin
                 boff = byte_addr[3:0];
@@ -1474,9 +1509,14 @@ module pycore_str_accel #(
                     match_i_r <= 32'd0;
                     if ((var_r == PY_SA_STARTSWITH) || (var_r == PY_SA_ENDSWITH))
                         set_res(pycore_make_entry(PY_TAG_BOOL, 128'd0), heap_ptr_r);
-                    else if (rfind_r)
-                        pos_r <= pos_r - 32'd1;
-                    else
+                    else if (rfind_r) begin
+                        // pos_r is unsigned. Decrementing 0 wraps and the
+                        // `pos < start` check never fires (A27, rfind).
+                        if (pos_r == 32'd0)
+                            search_done();
+                        else
+                            pos_r <= pos_r - 32'd1;
+                    end else
                         pos_r <= pos_r + 32'd1;
                 end else if (match_i_r + 32'd1 == nlen_r) begin
                     have_hay_r <= 1'b0;
