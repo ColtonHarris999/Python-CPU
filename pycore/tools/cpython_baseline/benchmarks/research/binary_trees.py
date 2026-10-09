@@ -16,7 +16,10 @@ def make(depth):
 
 
 def check(node):
-    if node == 0:
+    # A leaf is the int 0 and a node is a two-element list. Comparing a
+    # list with an int TYPE-traps on the hart. An empty list is never a
+    # node, so truthiness distinguishes them: 0 is false, a node is true.
+    if not node:
         return 1
     return 1 + check(node[0]) + check(node[1])
 

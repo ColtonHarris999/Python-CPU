@@ -2,7 +2,7 @@
 # Sebastien Loisel; fixed by Isaac Gouy; sped up by Josh Goldfoot.
 # MathWorld Hundred-Dollar Challenge, problem 3.
 #
-# Official size is n=130, ten applications of AᵀA. N=20 keeps that iteration
+# Official size is n=130, ten applications of A transpose A. N=20 keeps that iteration
 # count and finishes under Callgrind. eval_A and the power iteration are the
 # published ones.
 # Checksum: the spectral norm, scaled by 1e9 and truncated toward zero.
