@@ -16,7 +16,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 AREAS = {
     "alu", "strings", "containers", "control-flow", "calls", "objects",
     "variables", "exceptions", "builtins", "memory", "excore", "compiler",
-    "gc",
+    "gc", "gc-gen",
 }
 # Areas in the manifest that are not CI matrix jobs (make test-gc-long).
 OFF_MATRIX = {"gc-long"}

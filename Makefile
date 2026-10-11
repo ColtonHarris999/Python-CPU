@@ -3,6 +3,10 @@ PYTHON ?= python3.14
 # Hardware tests share two Verilator binaries. TEST_JOBS parallelizes the
 # runs after the binaries exist; it defaults to the machine's CPU count.
 TEST_JOBS ?= $(shell nproc 2>/dev/null || echo 2)
+# Parallel C++ compile inside one Verilator build (cycles are unchanged;
+# rebuilding the three simulators after an RTL edit drops from about 6 to
+# about 2 minutes on 4 cores with make -j3).
+VERILATOR_BUILD_JOBS ?= $(TEST_JOBS)
 # excore tooling is plain Python 3 (not CPython-3.14-coupled — RV32I
 # encodings come from the ISA spec, not from probing a running interpreter).
 PYTHON3 ?= python3
@@ -128,7 +132,7 @@ EXCORE_RTL_SRCS := \
 	docker-all-tests test-host test-rtl-modules test-hw test-caching \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
 	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
-	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
+	pycore-gc-bench gc-dev gc-check gc-perf pycore-gc-genstats docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
 	research-compare research-compare-machines
 
 pycore-preprocess:
@@ -194,6 +198,7 @@ PYCORE_SIM_VERILATOR_FLAGS := \
 	-GCODE_RAM_HEX=\"\" \
 	-GFW_HEX=\"\" \
 	-Wall -Wno-fatal \
+	--build-jobs $(VERILATOR_BUILD_JOBS) \
 	-MAKEFLAGS OPT_FAST=-O2
 
 $(PYCORE_SIM_IMG_BIN): $(PYCORE_SIM_DEPS)
@@ -234,7 +239,7 @@ pycore-sim-img-twocore: $(PYCORE_SIM_TWOCORE_BIN)
 # `smoke` test. `python3.14 pycore/tools/hw_tests.py --list` lists them all.
 #   test-gc-long               long GC loops (nightly / on demand, not per PR)
 HW_AREAS := alu strings containers control-flow calls objects variables \
-	exceptions builtins memory excore compiler gc
+	exceptions builtins memory excore compiler gc gc-gen
 HW_TESTS = $(PYTHON) pycore/tools/hw_tests.py --jobs $(TEST_JOBS) \
 	$(if $(HW_PLUSARGS),--plusargs "$(HW_PLUSARGS)")
 
@@ -294,7 +299,8 @@ $(PYCORE_TB_GC_BIN): $(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl
 		pycore/tb/tb_gc.sv pycore/tb/gc_tb_util.svh pycore/rtl/pycore_defs.svh
 	mkdir -p $(BUILD_DIR)/tb_gc
 	$(VERILATOR) -sv --binary --timing +incdir+pycore/rtl +incdir+pycore/tb \
-		--top-module tb_gc --Mdir $(BUILD_DIR)/tb_gc -Wall -Wno-fatal -MAKEFLAGS OPT_FAST=-O2 \
+		--top-module tb_gc --Mdir $(BUILD_DIR)/tb_gc -Wall -Wno-fatal \
+		--build-jobs $(VERILATOR_BUILD_JOBS) -MAKEFLAGS OPT_FAST=-O2 \
 		$(PYCORE_MEM_SRCS) pycore/rtl/pycore_mem_hier.sv pycore/rtl/pycore_gc.sv pycore/tb/tb_gc.sv
 
 pycore-gc: $(PYCORE_TB_GC_BIN)
@@ -311,6 +317,26 @@ pycore-gc-mutants: $(PYCORE_TB_GC_BIN)
 # test sets and plusargs are the [gate.*] tables of hw_tests.toml.
 pycore-gc-acceptance: $(PYCORE_TB_GC_BIN)
 	$(PYTHON) tools/gc_acceptance.py --mode $(MODE) --jobs $(TEST_JOBS)
+
+# Fast GC tiers (tools/gc_check.py; generational GC plan §10). Same gate
+# code as pycore-gc-acceptance on smaller or cached inputs. gc-dev is the
+# edit-compile-test loop (~3 min, stops at the first failure); gc-check runs
+# before review and in CI (under 10 min on 4 cores, simulator rebuild
+# included). gc-perf compares the collector benchmarks with the ledger in
+# pycore/tests/data/gc_perf.tsv (GC_PERF_UPDATE=1 rewrites it).
+gc-dev:
+	$(PYTHON) tools/gc_check.py --tier dev --jobs $(TEST_JOBS)
+
+gc-check:
+	$(PYTHON) tools/gc_check.py --tier check --jobs $(TEST_JOBS)
+
+# Survival, remembered-set size and minor/full marking ratio over a dump
+# sequence (DUMPS=<dir> from +GC_DUMP_EACH; generational GC plan Phase 0).
+pycore-gc-genstats:
+	$(PYTHON) pycore/tools/gc_genstats.py $(DUMPS)
+
+gc-perf: $(PYCORE_SIM_IMG_BIN)
+	$(PYTHON) tools/gc_perf.py --jobs $(TEST_JOBS) $(if $(GC_PERF_UPDATE),--update)
 
 # G0: rerun every hardware test on main (a worktree under build/gc_baseline)
 # and rewrite pycore/tests/data/gc_baseline_*. BASELINE_REF picks the commit.

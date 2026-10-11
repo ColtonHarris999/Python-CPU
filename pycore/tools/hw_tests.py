@@ -47,6 +47,7 @@ import concurrent.futures
 import csv
 import dataclasses
 import fnmatch
+import hashlib
 import os
 import pathlib
 import re
@@ -462,6 +463,23 @@ class Runner:
     def _build(self, t: Test) -> tuple[bool, str]:
         d = self.work_dir(t)
         log = d / "build.log"
+        cmd = self._build_cmd(t, d)
+        if cmd is None:
+            return True, ""
+        # Image cache: the same source built by the same tools gives the same
+        # image, so every gate and tier after the first reuses it.
+        stamp = d / "image.key"
+        key = image_key(t, cmd)
+        if stamp.exists() and stamp.read_text(encoding="utf-8") == key:
+            return True, ""
+        stamp.unlink(missing_ok=True)
+        rc, out = _run(cmd, log)
+        if rc != 0:
+            return False, f"image build failed (log: {log.relative_to(ROOT)})"
+        stamp.write_text(key, encoding="utf-8")
+        return True, ""
+
+    def _build_cmd(self, t: Test, d: pathlib.Path) -> list[str] | None:
         if t.kind in ("run", "coderam"):
             cmd = [
                 self.python, "pycore/tools/run_image_test.py",
@@ -485,11 +503,8 @@ class Runner:
             if t.kind == "stdout":
                 cmd += ["--expected-tag", "1", "--expected-value", "0"]
         else:
-            return True, ""
-        rc, out = _run(cmd, log)
-        if rc != 0:
-            return False, f"image build failed (log: {log.relative_to(ROOT)})"
-        return True, ""
+            return None
+        return cmd
 
     # -- one simulation ---------------------------------------------------
     def added(self, t: Test, cfg: Config) -> list[str]:
@@ -606,6 +621,38 @@ class Runner:
                 return res
         res.passed = True
         return res
+
+
+# What an image build reads besides its own source: the host tools (compiler,
+# encoder, image writer), the shared RTL constants they mirror, and the ROM
+# firmware the host golden runs against.
+_TOOL_INPUTS = ("pycore/tools/**/*.py", "pycore/rtl/pycore_defs.svh", "pycore_firmware/**/*")
+_TOOLS_KEY: list[str] = []
+
+
+def _tools_key() -> str:
+    if not _TOOLS_KEY:
+        h = hashlib.sha256()
+        files = sorted({p for g in _TOOL_INPUTS for p in ROOT.glob(g) if p.is_file()})
+        for p in files:
+            h.update(str(p.relative_to(ROOT)).encode())
+            h.update(p.read_bytes())
+        _TOOLS_KEY.append(h.hexdigest())
+    return _TOOLS_KEY[0]
+
+
+def image_key(t: Test, cmd: list[str]) -> str:
+    """Cache key of one image build: command, source and tool contents, and
+    the interpreter. Outputs missing on disk invalidate it too."""
+    h = hashlib.sha256()
+    h.update("\0".join(cmd).encode())
+    h.update(t.source.read_bytes())
+    h.update(_tools_key().encode())
+    h.update(sys.version.encode())
+    outs = [pathlib.Path(x) for x in cmd if x.endswith((".hex", ".meta"))]
+    if not all(p.exists() for p in outs):
+        return "missing-output"
+    return h.hexdigest()
 
 
 def configs_for(t: Test, configs: list[Config]) -> list[Config]:

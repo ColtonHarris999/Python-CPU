@@ -630,11 +630,34 @@ gc-growth-paths = { core = "twocore", file = "img_gc_growth_paths.py", cycles = 
 gc-excore-churn = { core = "twocore", file = "img_gc_excore_churn.py", cycles = 8_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=8192" }
 gc-wide-live-list = { src = "gc_wide_live_list", cycles = 10_000_000, plusargs = "+GC_EN=1" }
 
+# Generational-collection fixtures (planning: generational GC plan, Phase 0).
+# Each builds a structure, collects so it is old, then stores fresh objects
+# into it through one barrier site, collects again and checks everything is
+# still there. They pass with today's full collector; with +GC_GEN=1 they are
+# the barrier's per-site regression set. Same PR-tier budget as [gc]
+# (gen-wide-list, a 20,000-slot list, is the exception, like
+# gc-wide-live-list).
+[gc-gen]
+gen-list-store = { src = "gen_list_store", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-list-append = { src = "gen_list_append", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-dict-store = { src = "gen_dict_store", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-store-attr = { src = "gen_store_attr", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-store-global = { src = "gen_store_global", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-set-add = { src = "gen_set_add", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-dict-update = { src = "gen_dict_update", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-wide-list = { src = "gen_wide_list", cycles = 10_000_000, plusargs = "+GC_EN=1" }
+gen-two-owners = { src = "gen_two_owners", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-delete = { src = "gen_delete", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-deep-chain = { src = "gen_deep_chain", cycles = 2_000_000, plusargs = "+GC_EN=1" }
+
 # Long GC loops: steady-state plateaus, allocation-site churn, benches and
 # compile loops (millions of cycles each, up to ~150M uncached). Not in
 # test-hw, test-caching or the per-PR CI matrix: `make test-gc-long` runs
 # them (nightly / on demand).
 [gc-long]
+# STORE_DEREF into an old cell: the function is built with compile(), so
+# most of its 6.4M cycles are the on-device compiler.
+gen-store-deref = { src = "gen_store_deref", cycles = 16_000_000, plusargs = "+GC_EN=1" }
 gc-verify-closures = { src = "gc_verify_closures", cycles = 20_500_000, plusargs = "+GC_EN=1" }
 gc-root-heap-iter = { src = "gc_root_heap_iter", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_POISON=1 +GC_AT_BOUNDARY_EVERY=11 +MAX_CYCLES_SCALE=40" }
 gc-fuzz-11 = { src = "gc_fuzz_11", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_POISON=1 +GC_AT_BOUNDARY_EVERY=11 +MAX_CYCLES_SCALE=40" }
@@ -716,9 +739,9 @@ full = { core = "", configs = ["1,4", "caching"] }
 # gc_model.py oracle. `exit` adds a collection at halt to every existing
 # image test in MODE=full; those must each collect at least once.
 [gate.G4]
-sets = [{ areas = ["gc"], names = ["gc-mutant-*"] }]
+sets = [{ areas = ["gc", "gc-gen"], names = ["gc-mutant-*"] }]
 plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_DUMP_EACH={out}"
-full = { sets = [{ areas = ["gc", "gc-long"] }], configs = ["1,4", "0,4"] }
+full = { sets = [{ areas = ["gc", "gc-gen", "gc-long"] }], configs = ["1,4", "0,4"] }
 
 [gate.G4-exit]
 full_only = true
@@ -744,10 +767,10 @@ full = { names = ["gc-verify-containers", "containers-two-core"] }
 #   bump_cursor  no extra collections: the result depends on the bump
 #                cursor or on a fill-until-OOM sequence
 [gate.G7]
-sets = [{ areas = ["gc"], names = ["gc-mutant-*"] }]
+sets = [{ areas = ["gc", "gc-gen"], names = ["gc-mutant-*"] }]
 plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_LOG=1 +GC_SITE_STATS=1 +GC_DUMP_EACH={out}"
 modes = ["a"]
-full = { sets = [{ areas = ["gc", "gc-long"] }, { baseline = true, images = true }], modes = ["b", "a", "c"] }
+full = { sets = [{ areas = ["gc", "gc-gen", "gc-long"] }, { baseline = true, images = true }], modes = ["b", "a", "c"] }
 recipe_heap = [
     "gc-fragmented-alloc", "gc-fragmented-alloc-two-core",
     # Fills each grant to a _bi_heap_free() margin so the next growth answers
@@ -789,7 +812,7 @@ compile_limit = 16384
 # the collector on and a collection at exit (`caching_plusargs`).
 [gate.G12]
 full_only = true
-areas = ["gc", "gc-long"]
+areas = ["gc", "gc-gen", "gc-long"]
 plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_DUMP_EACH={out}"
 configs = ["0,1", "0,4", "0,30", "1,1", "1,4", "1,30"]
 caching_plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_AT_EXIT=1 +MAX_CYCLES_SCALE=40"

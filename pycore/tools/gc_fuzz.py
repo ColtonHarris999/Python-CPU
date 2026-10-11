@@ -21,13 +21,22 @@ to 48 characters so Q+Q cannot double every iteration (seed 67 measure trap 7
 at live=311 KB). Both runs poison freed memory, dump the first 20 collections
 for the gc_model oracle, and scan for shadow-heap and invariant failures.
 
+The measuring run is most of the cost (collections every 101 instructions in
+the full heap), and the peak it yields depends only on the program. With
+`--peaks FILE` a seed whose program text matches a cached peak takes it from
+the file and cuts its measuring run off after the 20 dumps
+(`+GC_DUMP_STOP=1`), so the oracle still sees the same collections. The
+nightly full run refreshes the file with `--write-peaks FILE`.
+
     python3.14 pycore/tools/gc_fuzz.py --seeds 0..49 --top single --jobs 6
+    python3.14 pycore/tools/gc_fuzz.py --seeds 0,4,9 --peaks pycore/tests/data/gc_fuzz_peaks.tsv
 """
 
 from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import hashlib
 import json
 import os
 import pathlib
@@ -478,9 +487,9 @@ LIVE_RE = re.compile(r"^\[GC-LOG\] .*\blive=(\d+)", re.M)
 SITE_RE = re.compile(r"^\[GC-SITE\] (.*)$", re.M)
 
 
-def run_problems(text: str) -> list[str]:
+def run_problems(text: str, truncated: bool = False) -> list[str]:
     p = []
-    if "PASS:" not in text:
+    if "PASS:" not in text and not (truncated and "[GC-DUMP-STOP]" in text):
         tail = [ln for ln in text.splitlines() if ln.strip()][-2:]
         p.append(f"no PASS: {tail}")
     if "[GC-SHADOW]" in text:
@@ -506,7 +515,36 @@ def check_dumps(dump_dir: pathlib.Path) -> tuple[list[str], set[str], int]:
     return problems, kinds, len(dumps)
 
 
-def one_seed(seed: int, top: str, out: str, mutant: int = 0) -> dict:
+def program_sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def load_peaks(path: pathlib.Path | None) -> dict[tuple[str, int], tuple[str, int]]:
+    """(top, seed) -> (program sha, peak live bytes) from a --peaks file."""
+    out: dict[tuple[str, int], tuple[str, int]] = {}
+    if path is None or not path.exists():
+        return out
+    for ln in path.read_text(encoding="utf-8").splitlines():
+        if ln.startswith("#") or not ln.strip():
+            continue
+        top, seed, sha, peak = ln.split("\t")[:4]
+        out[(top, int(seed))] = (sha, int(peak))
+    return out
+
+
+def write_peaks(path: pathlib.Path, recs: list[dict]) -> None:
+    """Merge the full measuring runs of `recs` into `path`."""
+    old = load_peaks(path)
+    for r in recs:
+        if r.get("peak_measured") and not r["problems"]:
+            old[(r["top"], r["seed"])] = (r["sha"], r["peak"])
+    rows = [f"{top}\t{seed}\t{sha}\t{peak}" for (top, seed), (sha, peak) in sorted(old.items())]
+    path.write_text("# gc_fuzz.py peak live bytes per seed (--write-peaks); "
+                    "top seed program_sha256[:16] peak\n" + "\n".join(rows) + "\n", encoding="utf-8")
+
+
+def one_seed(seed: int, top: str, out: str, mutant: int = 0,
+             cached: tuple[str, int] | None = None) -> dict:
     outp = pathlib.Path(out)
     rec: dict = {"seed": seed, "top": top, "problems": [], "kinds": [], "sites": [], "dumps": 0}
     try:
@@ -514,6 +552,10 @@ def one_seed(seed: int, top: str, out: str, mutant: int = 0) -> dict:
     except Exception as exc:  # noqa: BLE001 - generator or build failure is a seed failure
         rec["problems"].append(f"build: {exc}")
         return rec
+    rec["sha"] = program_sha((d / f"img_gc_fuzz_{seed}.py").read_text(encoding="utf-8"))
+    # A cached peak for this exact program replaces the full measuring run.
+    use_cache = cached is not None and cached[0] == rec["sha"] and cached[1] > 0
+    rec["peak_measured"] = not use_cache
     base = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_POISON=1 +GC_LOG=1 +GC_SITE_STATS=1 +MAX_CYCLES_SCALE=40"
     if mutant:
         base += f" +GC_MUTANT={mutant}"
@@ -527,6 +569,8 @@ def one_seed(seed: int, top: str, out: str, mutant: int = 0) -> dict:
         dump_dir.mkdir()
         if run_name == "measure":
             plus = f"{base} +GC_AT_BOUNDARY_EVERY={MEASURE_K}"
+            if use_cache:
+                plus += " +GC_DUMP_STOP=1"
         else:
             # 2× still OOMs seed 2 (EVERY_N_RUNS=1): live 63 KB, free 67 KB
             # in 183 runs, largest 11 KB, trap 7. 2.25× PASSES. 2.5× is the
@@ -540,12 +584,13 @@ def one_seed(seed: int, top: str, out: str, mutant: int = 0) -> dict:
             rec["heap"] = heap
         plus += f" +GC_DUMP_EACH={dump_dir}"
         text = sim(top, d, meta, plus, d / f"{run_name}.log")
-        rec["problems"] += [f"{run_name}: {x}" for x in run_problems(text)]
+        truncated = run_name == "measure" and use_cache
+        rec["problems"] += [f"{run_name}: {x}" for x in run_problems(text, truncated)]
         lives = [int(x) for x in LIVE_RE.findall(text)]
         if run_name == "measure":
             if not lives:
                 rec["problems"].append("measure: no collection logged")
-            peak = max(lives, default=0)
+            peak = cached[1] if use_cache else max(lives, default=0)
             rec["peak"] = peak
             if rec["problems"]:
                 return rec
@@ -576,6 +621,8 @@ def main() -> int:
     ap.add_argument("--out", default=str(ROOT / "build" / "gc_fuzz"))
     ap.add_argument("--emit", type=int, help="print the program for one seed and exit")
     ap.add_argument("--mutant", type=int, default=0, help="G10: +GC_MUTANT for every run")
+    ap.add_argument("--peaks", help="cached peaks (TSV); seeds found there skip the full measuring run")
+    ap.add_argument("--write-peaks", help="merge this run's measured peaks into this TSV")
     args = ap.parse_args()
     if args.emit is not None:
         print(generate(args.emit, growth=(args.top == "twocore")))
@@ -588,8 +635,10 @@ def main() -> int:
     out = pathlib.Path(args.out).resolve()
     t0 = time.time()
     recs = []
+    peaks = load_peaks(pathlib.Path(args.peaks) if args.peaks else None)
     with cf.ProcessPoolExecutor(max_workers=max(1, args.jobs)) as ex:
-        futs = {ex.submit(one_seed, s, args.top, str(out), args.mutant): s for s in seeds}
+        futs = {ex.submit(one_seed, s, args.top, str(out), args.mutant, peaks.get((args.top, s))): s
+                for s in seeds}
         for n, fut in enumerate(cf.as_completed(futs), 1):
             if fut.cancelled():
                 continue
@@ -607,9 +656,13 @@ def main() -> int:
                       f"{time.time() - t0:.0f}s", flush=True)
     recs.sort(key=lambda x: x["seed"])
     (out / f"results_{args.top}.json").write_text(json.dumps(recs, indent=1), encoding="utf-8")
+    if args.write_peaks:
+        write_peaks(pathlib.Path(args.write_peaks), recs)
+    cached_n = sum(1 for x in recs if not x.get("peak_measured", True))
     failing = [x["seed"] for x in recs if x["problems"]]
     kinds = sorted(set().union(*[set(x["kinds"]) for x in recs])) if recs else []
     print(f"G8 top={args.top} seeds={len(recs)} failing={len(failing)} first_failures={failing[:10]}")
+    print(f"G8 cached_peaks={cached_n}")
     print(f"G8 kinds={','.join(kinds)}")
     # §4.1 kinds that a live program can produce. BYTEARRAY is image-only
     # (the builder rejects it) and is checked by G3, not the fuzz corpus.

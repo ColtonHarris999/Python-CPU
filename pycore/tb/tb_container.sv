@@ -244,6 +244,8 @@ module tb_container #(
     //                        architectural state (independent of the RTL's
     //                        stream), and a coherent memory image
     //   +GC_DUMP_MAX=<n>     dump at most the first n collections (default 20)
+    //   +GC_DUMP_STOP=1      end the run after the last dump GC_DUMP_MAX allows
+    //                        ("[GC-DUMP-STOP]"; gc_fuzz.py's cached-peak runs)
     // ---------------------------------------------------------------------
     `define GC_MEMH g_dut.dut.mem_hier
     `include "gc_tb_util.svh"
@@ -252,6 +254,7 @@ module tb_container #(
     string       gc_dump_dir;
     int          gc_dump_max;
     int          gc_dump_n;
+    bit          gc_dump_stop;
     logic [3:0]   gc_rt_tag [0:511];
     logic [127:0] gc_rt_val [0:511];
     int          gc_rt_n;
@@ -262,6 +265,7 @@ module tb_container #(
         gc_dump_n = 0;
         void'($value$plusargs("GC_DUMP_EACH=%s", gc_dump_dir));
         void'($value$plusargs("GC_DUMP_MAX=%d", gc_dump_max));
+        gc_dump_stop = $test$plusargs("GC_DUMP_STOP");
     end
 
     task automatic gc_add_root(input logic [PYCORE_ENTRY_WIDTH-1:0] e);
@@ -507,6 +511,11 @@ module tb_container #(
                 end
                 $fclose(fd);
                 gc_dump_n++;
+                if (gc_dump_stop && (gc_dump_n >= gc_dump_max)) begin
+                    gc_site_report();
+                    $display("[GC-DUMP-STOP] %0d dumps written; cycles=%0d", gc_dump_n, cycle_count);
+                    $finish;
+                end
             end
         end
     end

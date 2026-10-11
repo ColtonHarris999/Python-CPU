@@ -46,7 +46,7 @@ CONFIGS = [hw_tests.config("1,4")] + [hw_tests.Config(*c) for c in hw_tests.CACH
 AUX_STEPS = ["test-host", "test-rtl-modules", "excore-cpu-test"]
 # The collector's own areas: a baseline taken on a commit that has them
 # records only the rest (G0 is the collector-off reference).
-GC_AREAS = ("gc", "gc-long")
+GC_AREAS = ("gc", "gc-gen", "gc-long")
 TSV_HEADER = ["test", "area", "core", "cache_en", "mem_latency", "index", "kind", "code",
               "value", "cycles"]
 WARN_RE = re.compile(r"^%Warning-([A-Z0-9_]+): ([^:]+):\d+:\d+: (.*)$")
@@ -86,6 +86,82 @@ def worktree(ref: str) -> pathlib.Path:
         subprocess.run(["git", "worktree", "add", "--detach", str(path), ref], cwd=ROOT, check=True)
     else:
         subprocess.run(["git", "checkout", "--detach", ref], cwd=path, check=True)
+    return path
+
+
+CACHE = ROOT / "build" / "gc_baseline_cache"
+
+
+def merge_base(ref: str = "origin/main") -> str:
+    """The commit this branch forked from (HEAD itself when it is on `ref`)."""
+    res = subprocess.run(["git", "merge-base", "HEAD", ref], cwd=ROOT, capture_output=True, text=True)
+    if res.returncode != 0:
+        res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True,
+                             check=True)
+    return res.stdout.strip()
+
+
+def cached_rows(configs: list[hw_tests.Config], core: str = "", jobs: int = 2,
+                ref: str = "origin/main") -> pathlib.Path:
+    """G1's reference: the collector-off rows of the merge base with `ref`,
+    measured once per (commit, configs, core) and cached under
+    build/gc_baseline_cache/. The checked-in G0 file goes stale whenever a
+    later PR changes cycle counts (371 of 372 G1 runs differed on b14600b);
+    the merge base is what a branch must stay cycle-identical to."""
+    sha = merge_base(ref)
+    key = "_".join(sorted(c.slug for c in configs)) + (f"_{core}" if core else "")
+    path = CACHE / f"{sha}_{key}.tsv"
+    if path.exists():
+        return path
+    wt = CACHE / "wt"
+    if not (wt / ".git").exists():
+        CACHE.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "worktree", "add", "--detach", str(wt), sha], cwd=ROOT, check=True,
+                       capture_output=True)
+    else:
+        subprocess.run(["git", "checkout", "--detach", "--force", sha], cwd=wt, check=True,
+                       capture_output=True)
+    logs = wt / "build" / "gc_baseline_cache"
+    logs.mkdir(parents=True, exist_ok=True)
+    sims = ["pycore-sim-img"] + ([] if core == "single" else ["pycore-sim-img-twocore", "excore-fw"])
+    t0 = time.time()
+    print(f"[gc_baseline] measuring the merge base {sha[:10]} ({key}) once; cached in "
+          f"{path.relative_to(ROOT)}", flush=True)
+    if sh(["make", f"-j{len(sims)}", *sims, f"TEST_JOBS={jobs}"], wt, logs / "sim_build.log") != 0:
+        raise SystemExit(f"merge-base simulator build failed; see {logs / 'sim_build.log'}")
+    tests = {t.name: t for t in hw_tests.load_manifest(wt / "pycore" / "programs" / "hw_tests.toml")}
+    # Only the collector areas the merge base has (its hw_tests rejects others).
+    areas = {t.area for t in tests.values()}
+    skip_gc = [a for area in GC_AREAS if area in areas for a in ("--exclude-area", area)]
+    out = wt / "build" / "hw"
+    rows: list[dict[str, str]] = []
+    for cfg in configs:
+        cmd = [sys.executable, "pycore/tools/hw_tests.py", "--area", "all", *skip_gc,
+               "--config", f"{cfg.cache_en},{cfg.latency}", "--jobs", str(jobs)]
+        res = subprocess.run(cmd, cwd=wt, capture_output=True, text=True)
+        (logs / f"hw_{cfg.slug}.out").write_text(res.stdout + res.stderr, encoding="utf-8")
+        for line in res.stdout.splitlines():
+            m = LINE_RE.match(line)
+            if not m or m.group(3) not in tests or tests[m.group(3)].area in GC_AREAS:
+                continue
+            t = tests[m.group(3)]
+            if core and t.core != core:
+                continue
+            r = hw_tests.Result(t, cfg, m.group(1) == "PASS", "", log=out / t.name / f"sim-{cfg.slug}.log")
+            if r.passed:
+                r.sims = hw_tests.parse_sims(r.text())
+                r.passed = bool(r.sims)
+            rows += rows_for(r)
+    if not rows:
+        raise SystemExit(f"merge-base run produced no rows; see {logs}")
+    tmp = path.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(f"# G1 merge-base baseline at {sha}; tools/gc_baseline.py cached_rows\n")
+        fh.write("\t".join(TSV_HEADER) + "\n")
+        for row in rows:
+            fh.write("\t".join(row[k] for k in TSV_HEADER) + "\n")
+    tmp.rename(path)
+    print(f"[gc_baseline] {len(rows)} merge-base rows in {time.time() - t0:.0f}s", flush=True)
     return path
 
 

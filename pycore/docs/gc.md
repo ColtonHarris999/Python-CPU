@@ -526,6 +526,44 @@ prefetch in parentheses): `bench_full` mark 603,098 cycles (1,051,606);
 (568,952; 968,978 before chunked scans), 0 spills / 47,967 mark
 transactions; `bench_churn` 47 collections, max pause 38,443 (44,142).
 
+## Generational collection (planned)
+
+Status: Phase 0 (tests and tools) only; no RTL yet. The design is a
+non-moving, sticky-mark-bit collector: a set bitmap bit survives the sweep
+and means "old", a minor collection marks from the roots plus a remembered
+set of old owners the program wrote into, and the marker's existing
+already-marked test stops it at every old object. A hardware owner-logging
+barrier fills the remembered set at no mutator cycles; a port guard turns a
+missed barrier site into a forced full collection. Precision changes on
+purpose: a minor frees exactly the unreachable storage allocated since the
+last collection; a full (major) collection frees everything unreachable, as
+today; unreachable old objects wait for the next major.
+
+Decisions taken (the defaults the plan recommended):
+
+| # | Decision |
+| --- | --- |
+| D1 | Sticky mark bits, owner-logging barrier, window-checked port guard (no copying nursery: identity hashing, headerless tuples and raw header pointers rule it out) |
+| D2 | Promote at first survival in v1; aging only if measured tenured garbage drives majors |
+| D3 | Nursery size chosen from end-to-end measurements when the policy lands |
+| D4 | Tests, tools and oracle first; RTL after the open collector follow-ups merge |
+| D5 | `+GC_GEN=1` stays opt-in until the collector is on by default |
+| D6 | Zero freed memory in pieces just ahead of the bump pointer, as its own change first |
+| D7 | G1 compares with the cached merge-base baseline |
+
+Measured with `pycore/tools/gc_genstats.py` over dump sequences on
+`b14600b` (what a minor at each collection would have done if everything
+live at the previous one were old):
+
+| Workload | Phase | Young survival | Remembered owners (avg/max) | Minor ÷ full marking |
+| --- | --- | ---: | ---: | ---: |
+| `gc-bench-churn` | run | 1.9% | 0 / 0 | 0.03 |
+| `binary_trees` | run | 9.7% | | 0.24 |
+| `nqueens` | run | 0.2% | | 0.12 |
+| `knucleotide` | run | 44.7% | | 0.03 |
+| `cs_program` | compile | 41.2% | 1.2 / 2 | 0.52 |
+| `mutate_old` (adversarial) | run | 83.3% | 2 / 2 | 0.51 |
+
 ## Clock and timing
 
 `tools/gc_timing.sh` estimates the engine's logic depth: sv2v, the mark
@@ -592,6 +630,8 @@ pause ~= port-busy cycles / f_mem + engine-only cycles / f_gc.
 
 | Tier | Command | What | When |
 | --- | --- | --- | --- |
+| Inner loop | `make gc-dev` | rebuild; G2 if the oracle changed; G3 at 50 seeds × 2 configs; G4-G6 on `[gc]` + `[gc-gen]`; G8 on 6 seeds with cached peaks; stops at the first failure (`tools/gc_check.py`) | every edit-compile-test iteration (~3 min) |
+| Pre-review | `make gc-check` | rebuild; G1 against the merge base; G2-G7 as in `MODE=quick`; G8 on 16 seeds (10 fixed that cover every kind and site row, 6 rotating by commit) with cached peaks; the performance ledger | before pushing a collector change (target under 10 min on 4 cores) |
 | PR | `make test-gc` | engine unit testbench (200 seeded heaps × 6 memory configs, G3) and the `[gc]` area of `hw_tests.toml` (64 programs) | every PR (CI `gc` area job) |
 | Long | `make test-gc-long` | the `[gc-long]` area: steady-state plateaus, allocation-site churn, benches, compile loops | nightly (`.github/workflows/gc-nightly.yml`) / on demand |
 | Compiler | `make test-compiler-gc` | the compile suite with the collector on and a 512 KB heap: 3-7 collections per program, several inside `compile()`; output must match CPython | nightly / on demand |
@@ -599,9 +639,40 @@ pause ~= port-busy cycles / f_mem + engine-only cycles / f_gc.
 | Acceptance | `make pycore-gc-acceptance MODE=quick` | gates G0-G8 | before merging a collector change |
 | Acceptance | `make pycore-gc-acceptance MODE=full` | gates G0-G16 | before a collector design change or turning it on by default |
 | Mutants | `make pycore-gc-mutants [MUTANTS=1,5]` | the quick gates against each of the 49 mutants (G10) | after a change to the gates or the RTL they cover |
+| Performance | `make gc-perf [GC_PERF_UPDATE=1]` | six collector benchmarks against `pycore/tests/data/gc_perf.tsv`; fails when total or GC cycles rise more than 2% | in `gc-check`; a PR that changes collector cost updates the ledger and says why |
+
+`gc-dev` and `gc-check` run the same gate functions as `MODE=quick` on
+smaller or cached inputs, so they do not change what a gate checks:
+
+- **G8 peak cache.** G8's measuring run (a collection every 101
+  instructions in the full heap) was two thirds of the gate, and its only
+  product besides the 20 dumps is the peak live size, which depends on the
+  program, not the RTL. `pycore/tests/data/gc_fuzz_peaks.tsv` caches the
+  peak per seed and program hash; `gc_fuzz.py --peaks` then stops the
+  measuring run after its 20 dumps (`+GC_DUMP_STOP=1`). Refresh it with
+  `gc_fuzz.py --write-peaks` after a generator change (a changed program
+  hash just falls back to the full measuring run).
+- **G1 against the merge base.** The checked-in G0 file is a record of
+  `78860e7`; later PRs changed cycle counts, so G1 against it reported 371
+  of 372 runs different on `b14600b`. G1 now compares with the merge base
+  of `origin/main`, measured once per merge base in a worktree and cached
+  under `build/gc_baseline_cache/` (`gc_acceptance.py --g1-ref checked-in`
+  restores the old reference).
+- **Image cache.** `hw_tests.py` keys each image by its source, the build
+  command and the host tools, so gates and tiers after the first reuse it.
+- **G3 on processes**, not threads (the oracle check is Python), and the
+  simulators build with `--build-jobs` (all three in about 2 minutes on 4
+  cores with `make -j3`).
+
+`make pycore-gc-acceptance MODE=quick` took 43.6 minutes on `b14600b` on 4
+cores, 90% of it in G8.
 
 A new PR-tier program must stay under 2M cycles at the default config;
-anything longer goes in `[gc-long]`. The exception is `gc-wide-live-list`
+anything longer goes in `[gc-long]`. `[gc-gen]` holds the
+generational-collection fixtures (`img_gen_*`): each makes a structure
+old with a collection, stores fresh objects into it through one write path,
+collects again and checks them. They pass with today's collector and are the
+per-site regression set for the generational barrier. The exception is `gc-wide-live-list`
 (6.7M cycles, almost all of it building a list wider than the mark stack),
 kept per PR because it guards the bounded-marking rules. A known bug is
 marked `xfail = "<why>"` in `hw_tests.toml`: the run must fail, and the
@@ -674,6 +745,7 @@ Plusargs the gates use (give any of them to a test with
 | `+GC_PHASE_PROF=1` | one `[GC-PHASE]` line per collection: cycles in each engine phase (clear, cleanup, preload, roots, mark, sweep), objects, mark transactions |
 | `+GC_POISON=1` | poison reclaimed granules so a use-after-free faults (the sweep writes whole aligned 64 B lines in one line write when `CACHE_EN=1`, 16 B words otherwise) |
 | `+GC_AT_EXIT=1` | collect once at halt |
+| `+GC_DUMP_STOP=1` | end the run after the last dump `+GC_DUMP_MAX` allows (`[GC-DUMP-STOP]`; G8 with cached peaks) |
 | `+GC_EVERY_N_RUNS=1` | collect when a run cannot satisfy the allocation (G7 mode a) |
 | `+GC_AT_BOUNDARY_EVERY=K` | collect every K instructions (G7 mode b, G8 measure) |
 | `+HEAP_DYN_BYTES=N` | shrink the dynamic heap |

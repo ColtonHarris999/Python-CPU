@@ -148,20 +148,24 @@ def main() -> int:
     ap.add_argument("--first", type=int, default=0)
     ap.add_argument("--jobs", type=int, default=int(os.environ.get("TEST_JOBS", os.cpu_count() or 2)))
     ap.add_argument("--mutant", type=int, default=0)
-    ap.add_argument("--configs", default="all", help="'all' or 'default' (CACHE_EN=1, LAT=4)")
+    ap.add_argument("--configs", default="all",
+                    help="'all', 'default' (CACHE_EN=1, LAT=4) or 'dev' (1,4 and 0,30: the "
+                         "cached and the slowest uncached path, for make gc-dev)")
     args = ap.parse_args()
     if not BIN.exists():
         print(f"missing {BIN}; run make {BIN.relative_to(ROOT)}")
         return 2
     OUT.mkdir(parents=True, exist_ok=True)
-    configs = CONFIGS if args.configs == "all" else [(1, 4)]
+    configs = {"all": CONFIGS, "default": [(1, 4)], "dev": [(1, 4), (0, 30)]}[args.configs]
     tasks = [(s, ce, lat) for s in range(args.first, args.first + args.seeds) for ce, lat in configs]
     bad = 0
     max_spill = 0
     max_hw = 0
     max_resc = 0
     infos = {s: prepare(s) for s in range(args.first, args.first + args.seeds)}
-    with cf.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
+    # Processes, not threads: the oracle check is Python and would serialise
+    # on the GIL.
+    with cf.ProcessPoolExecutor(max_workers=max(1, args.jobs)) as ex:
         futs = [ex.submit(one, s, ce, lat, args.mutant, infos[s]) for s, ce, lat in tasks]
         for f in cf.as_completed(futs):
             label, problems, stats = f.result()

@@ -52,6 +52,16 @@ class Context:
     head: str
     cache: dict = field(default_factory=dict)
     mutant: int = 0              # G10: deliberate collector bug under test
+    # G1's reference: "merge-base" (measured once per merge base with
+    # origin/main and cached, tools/gc_baseline.py cached_rows) or
+    # "checked-in" (pycore/tests/data/gc_baseline_cycles.tsv, the G0 record).
+    g1_ref: str = "merge-base"
+    # G8 overrides for the fast tiers (tools/gc_check.py): a seed list in
+    # place of the gate's 0..seeds-1, a peak cache (gc_fuzz.py --peaks), and
+    # whether the subset must still cover every kind and site row.
+    g8_seeds: str = ""
+    g8_peaks: str = ""
+    g8_coverage: bool = True
 
     @property
     def full(self) -> bool:
@@ -152,8 +162,12 @@ def failures(results: list[hw_tests.Result]) -> list[str]:
 # Baseline helpers
 # --------------------------------------------------------------------------
 
+# compare_to_baseline() reads this file; G1 points it at the merge-base rows.
+_REF = {"path": BASELINE_TSV}
+
+
 def load_baseline() -> list[dict[str, str]]:
-    with BASELINE_TSV.open(encoding="utf-8") as fh:
+    with _REF["path"].open(encoding="utf-8") as fh:
         return list(csv.DictReader((ln for ln in fh if not ln.startswith("#")), delimiter="\t"))
 
 
@@ -163,7 +177,7 @@ def keyed(rows: list[dict[str, str]]) -> dict[tuple, dict[str, str]]:
 
 
 def baseline_commit() -> str:
-    first = BASELINE_TSV.read_text(encoding="utf-8").splitlines()[0]
+    first = _REF["path"].read_text(encoding="utf-8").splitlines()[0]
     m = re.search(r"at ([0-9a-f]{40})", first)
     return m.group(1) if m else ""
 
@@ -182,12 +196,12 @@ _CHANGED: dict[str, set[str]] = {}
 def changed_since_baseline() -> set[str]:
     """Tests whose program file differs from the baseline commit: G0 measured
     a different program, so their rows are not compared."""
-    if "names" not in _CHANGED:
-        sha = baseline_commit()
+    sha = baseline_commit()
+    if sha not in _CHANGED:
         rc, out = run(["git", "diff", "--name-only", sha, "--", "pycore/programs"]) if sha else (1, "")
         files = set(out.split()) if rc == 0 else set()
-        _CHANGED["names"] = {t.name for t in all_tests() if set(program_files(t)) & files}
-    return _CHANGED["names"]
+        _CHANGED[sha] = {t.name for t in all_tests() if set(program_files(t)) & files}
+    return _CHANGED[sha]
 
 
 def compare_to_baseline(results: list[hw_tests.Result], check_cycles: bool = True) -> list[str]:
@@ -282,13 +296,31 @@ def gate_G0(ctx: Context) -> Result:
 def gate_G1(ctx: Context) -> Result:
     if not BASELINE_TSV.is_file():
         return Result("fail", f"missing {BASELINE_TSV.relative_to(ROOT)}")
-    res = gate_runs(ctx, "G1")
-    if not res:
-        return Result("fail", "G1 selected no tests (empty baseline?)")
-    diffs = compare_to_baseline(res)
-    changed = sorted(changed_since_baseline() & {r.test.name for r in res})
-    lines = [f"{len(res)} runs over {len({r.test.name for r in res})} tests, {len(diffs)} differences; "
-             f"not compared (program changed since G0): {', '.join(changed) or 'none'}"]
+    sp = spec(ctx, "G1")
+    tests = None
+    if ctx.g1_ref == "merge-base":
+        configs = hw_tests.gate_configs(sp)
+        ref = gc_baseline.cached_rows(configs, sp.get("core", ""), ctx.jobs)
+        with ref.open(encoding="utf-8") as fh:
+            have = {r["test"] for r in csv.DictReader((ln for ln in fh if not ln.startswith("#")),
+                                                      delimiter="\t")}
+        tests = [t for t in hw_tests.gate_tests({k: v for k, v in sp.items() if k != "baseline"},
+                                                all_tests()) if t.name in have]
+        _REF["path"] = ref
+    try:
+        res = gate_runs(ctx, "G1", tests=tests)
+        if not res:
+            return Result("fail", "G1 selected no tests (empty baseline?)")
+        diffs = compare_to_baseline(res)
+        changed_now = changed_since_baseline()
+        ref_name = (f"merge base {baseline_commit()[:10]}" if ctx.g1_ref == "merge-base"
+                    else f"G0 at {baseline_commit()[:10]}")
+    finally:
+        _REF["path"] = BASELINE_TSV
+    changed = sorted(changed_now & {r.test.name for r in res})
+    lines = [f"{len(res)} runs over {len({r.test.name for r in res})} tests against the {ref_name}, "
+             f"{len(diffs)} differences; not compared (program changed since then): "
+             f"{', '.join(changed) or 'none'}"]
     problems = list(diffs)
     if ctx.full:
         for step in gc_baseline.AUX_STEPS:
@@ -299,9 +331,9 @@ def gate_G1(ctx: Context) -> Result:
                 problems.append(f"aux step {step} failed")
     lines += problems[:200]
     if problems:
-        return Result("fail", f"{len(problems)} differences from G0 with GC_EN=0", lines)
-    return Result("pass", f"{len(res)} runs: every result and cycle count identical to G0 with GC_EN=0",
-                  lines)
+        return Result("fail", f"{len(problems)} differences from the {ref_name} with GC_EN=0", lines)
+    return Result("pass", f"{len(res)} runs: every result and cycle count identical to the {ref_name} "
+                  "with GC_EN=0", lines)
 
 
 # --------------------------------------------------------------------------
@@ -648,11 +680,17 @@ def gate_G8(ctx: Context) -> Result:
     problems: list[str] = []
     sp = spec(ctx, "G8")
     n = int(sp.get("seeds", 50))
+    seeds = ctx.g8_seeds or f"0..{n - 1}"
+    if ctx.g8_seeds:
+        import gc_fuzz  # noqa: PLC0415
+        n = len(gc_fuzz.parse_seeds(seeds))
     for top in sp.get("tops", ["single"]):
-        cmd = [sys.executable, str(ROOT / "pycore" / "tools" / "gc_fuzz.py"), "--seeds", f"0..{n - 1}",
+        cmd = [sys.executable, str(ROOT / "pycore" / "tools" / "gc_fuzz.py"), "--seeds", seeds,
                "--top", top, "--jobs", str(ctx.jobs), "--out", str(ctx.out / "G8")]
         if ctx.mutant:
             cmd += ["--mutant", str(ctx.mutant)]
+        if ctx.g8_peaks:
+            cmd += ["--peaks", ctx.g8_peaks]
         rc, out = run(cmd, timeout=24 * 3600)
         (ctx.out / f"G8_{top}.log").write_text(out, encoding="utf-8")
         m = re.search(r"^G8 top=\S+ seeds=(\d+) failing=(\d+)", out, re.M)
@@ -663,12 +701,15 @@ def gate_G8(ctx: Context) -> Result:
             continue
         if int(m.group(1)) < n or int(m.group(2)) or rc != 0:
             problems.append(f"{top}: {m.group(0)}")
-        if not cov or "missing" in cov.group(1):
+        if ctx.g8_coverage and (not cov or "missing" in cov.group(1)):
             problems.append(f"{top}: coverage incomplete: {cov.group(1) if cov else 'no report'}")
+        elif not cov or "missing" in cov.group(1):
+            lines.append(f"{top}: coverage of this seed subset (not required): "
+                         f"{cov.group(1) if cov else 'no report'}")
     if problems:
         return Result("fail", "; ".join(problems[:4]), lines + problems)
-    return Result("pass", f"{n} seeds per top ({', '.join(sp.get('tops', ['single']))}), "
-                  "0 failures, coverage complete", lines)
+    return Result("pass", f"{n} seeds per top ({', '.join(sp.get('tops', ['single']))}), 0 failures, "
+                  + ("coverage complete" if ctx.g8_coverage else "coverage not required"), lines)
 
 
 # --------------------------------------------------------------------------

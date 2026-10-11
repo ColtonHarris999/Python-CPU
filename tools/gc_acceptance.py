@@ -80,6 +80,9 @@ def main() -> int:
     ap.add_argument("--only", default="", help="comma-separated gate ids (writes mode=partial)")
     ap.add_argument("--jobs", type=int, default=int(os.environ.get("TEST_JOBS", os.cpu_count() or 2)))
     ap.add_argument("--record-review", default="")
+    ap.add_argument("--g1-ref", choices=["merge-base", "checked-in"], default="merge-base",
+                    help="G1's reference: the merge base with origin/main, measured once and "
+                         "cached (default), or the checked-in G0 file")
     args = ap.parse_args()
     if args.record_review:
         return record_review(pathlib.Path(args.record_review))
@@ -98,7 +101,8 @@ def main() -> int:
     if not only and args.mode == "quick":
         only = list(QUICK_GATES)
     started = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-    ctx = gc_gates.Context(root=ROOT, out=OUT, mode=args.mode, jobs=args.jobs, head=head)
+    ctx = gc_gates.Context(root=ROOT, out=OUT, mode=args.mode, jobs=args.jobs, head=head,
+                           g1_ref=args.g1_ref)
     status: dict = {
         "schema": 1,
         "mode": mode,
