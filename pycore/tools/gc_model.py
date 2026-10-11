@@ -27,18 +27,19 @@ Dump format (written by pycore/tb/tb_gc.sv and pycore/tb/tb_container.sv):
     root <tag> <value-hex>      testbench-recorded register/RF roots, in order
     mem <addr-hex> <word-hex>   non-zero 16 B words
 
-Generational dumps (generational GC plan §4) add `meta gen 1`, `meta minor`,
-`meta old_hi`, `meta force_major`, `meta remset_n`, `meta barrier_idle`, and:
+Generational dumps (pycore/docs/gc_gen_protocol.md §10) add `meta gen 1`,
+`meta minor`, `meta old_hi`, `meta force_major`, `meta remset_n`, and:
 
     remset <kind> <size> <addr-hex>   one SSB entry: K_* kind, slot count, owner
+                                      (old or young: the barrier does not look)
     oldbm <word> <bits-hex>           pre-collection mark bitmap, nonzero words;
                                       bit b of word w is granule 128*w + b
     event <name> [<lo-hex> <hi-hex>]  what happened since the previous dump:
                                       release (of [lo, hi)), abandon, enable, reset
 
-A minor is checked against `trace_minor` (exact under the plan's precision
-contract (b)) and against the full trace (safety, barrier completeness); a
-major exactly as before. `check_sequence()` checks a dump sequence: each
+A minor is checked against `trace_minor` (exact under contract P2) and
+against the full trace (safety, barrier completeness); a major exactly as
+before. `check_sequence()` checks a dump sequence: each
 dump's old bitmap must follow from the previous collection and the events
 between them.
 """
@@ -621,9 +622,14 @@ def granules_bitmap(marked: bytearray) -> dict[int, int]:
 def trace_minor(mem: Memory, reg_roots: list[tuple[int, int]], old: bytearray,
                 remset: list[tuple[int, int, int]], **kw) -> TraceResult:
     """A sticky-mark-bit minor: `old` granules start marked (the bitmap the
-    previous collection left, static granules included), remembered owners
-    are scanned unconditionally after the roots, and the rest is `trace`."""
-    return trace(mem, reg_roots, pruned=set(_ones(old)), remset=remset, **kw)
+    previous collection left, static granules included), the remembered
+    owners that are old are scanned unconditionally after the roots, and the
+    rest is `trace`. The barrier logs owners without looking at the bitmap,
+    so the remembered set can name young owners too; the engine's P_REMSET
+    reads each owner's bit and skips a young one, which the roots reach if
+    it is live (gc_gen_protocol.md B4)."""
+    return trace(mem, reg_roots, pruned=set(_ones(old)),
+                 remset=[e for e in remset if old[e[1] >> 4]], **kw)
 
 
 def _ones(marked: bytearray):
@@ -899,20 +905,16 @@ def gen_invariants(dump: Dump, old: bytearray) -> list[str]:
     """Entry-state invariants of a generational dump (plan §3.7)."""
     m = dump.meta
     out = []
-    if m.get("barrier_idle", 1) != 1:
-        out.append("collection entered with barrier requests in flight (barrier_idle=0)")
     if dump.minor and m.get("force_major", 0):
         out.append("a minor ran with force_major set")
     if "remset_n" in m and m["remset_n"] != len(dump.remset):
         out.append(f"remset_n {m['remset_n']} but {len(dump.remset)} remset lines")
-    if dump.minor:
-        young = [(k, a) for k, a, _ in dump.remset if not old[a >> 4]]
-        if young:
-            out.append(f"{len(young)} remset entries name a non-old owner, first "
-                       f"{KIND_NAMES[young[0][0]] if young[0][0] < len(KIND_NAMES) else young[0][0]} "
-                       f"at {young[0][1]:#x}")
+    # K3. A release leaves its stale bits for the major it forces to clear,
+    # so the kept run (which may lie in released memory) is exempt then.
     klo, khi = m.get("keep_lo", 0), m.get("keep_hi", 0)
-    set_in_keep = [g for g in range(klo >> 4, khi >> 4) if old[g]] if khi > klo else []
+    released = any(e[0] == "release" for e in dump.events)
+    set_in_keep = ([g for g in range(klo >> 4, khi >> 4) if old[g]]
+                   if khi > klo and not released else [])
     if set_in_keep:
         out.append(f"kept run [{klo:#x}, {khi:#x}) holds {len(set_in_keep)} set bits, first at "
                    f"{set_in_keep[0] << 4:#x}")
@@ -923,12 +925,12 @@ def gen_invariants(dump: Dump, old: bytearray) -> list[str]:
     return out
 
 
-# Granule state table (pycore/docs/gc_gen_protocol.md §1), for dynamic
+# Granule state table (pycore/docs/gc_gen_protocol.md §2), for dynamic
 # granules, as the RTL shows them: the bit at entry (oldbm), whether the full
 # trace reaches the granule, what the collection did with it (`free`: in the
 # run list; `kept`: the kept bump run; `held`: neither, so an object or a
-# pad shorter than 64 B), and the bit at the next entry. A release between
-# the two collections clears the bit (the `released` rows).
+# pad shorter than 64 B), and the bit at the next entry. Nothing between
+# two collections changes a bit (T1, T2).
 #   (entry bit, kind, reachable) -> allowed (exit, next bit)
 STATE_TABLE: dict[tuple[int, str, bool], set[tuple[str, int]]] = {
     (1, "minor", True): {("held", 1)},
@@ -941,26 +943,20 @@ STATE_TABLE: dict[tuple[int, str, bool], set[tuple[str, int]]] = {
     (0, "major", True): {("held", 1)},
     (0, "major", False): {("free", 0), ("kept", 0), ("held", 0)},
 }
-# Every (row, exit, next bit) any check_sequence call has seen; the unit
-# tests require each legal one, released or not, to be exercised.
-STATES_SEEN: set[tuple[int, str, bool, str, int, bool]] = set()
+# Every (entry bit, kind, reachable, exit, next bit) any check_sequence call
+# has seen; the unit tests require each legal one to be exercised.
+STATES_SEEN: set[tuple[int, str, bool, str, int]] = set()
 
 
-def table_rows() -> set[tuple[int, str, bool, str, int, bool]]:
-    """Every legal transition: STATE_TABLE, plus each row with a release
-    before the next entry, which leaves the bit clear whatever the exit."""
-    out = set()
-    for (e, k, r), exits in STATE_TABLE.items():
-        for x, n in exits:
-            out.add((e, k, r, x, n, False))
-            out.add((e, k, r, x, 0, True))
-    return out
+def table_rows() -> set[tuple[int, str, bool, str, int]]:
+    """Every legal transition of STATE_TABLE, one tuple per allowed outcome."""
+    return {(e, k, r, x, n) for (e, k, r), exits in STATE_TABLE.items() for x, n in exits}
 
 
-def check_states(d: Dump, o: Outcome, nxt: bytearray | None, released: bytearray | None) -> list[str]:
+def check_states(d: Dump, o: Outcome, nxt: bytearray | None) -> list[str]:
     """Check every dynamic granule of collection `d` against STATE_TABLE.
     `nxt` is the next entry's bitmap (None: no next dump, or an event made
-    it unconstrained); `released` marks granules released in between."""
+    it unconstrained)."""
     if o.post is None or o.freed is None or not d.gen:
         return []
     m = d.meta
@@ -971,37 +967,38 @@ def check_states(d: Dump, o: Outcome, nxt: bytearray | None, released: bytearray
     seen: dict[tuple, int] = {}
     for g in range(lo, hi):
         x = "free" if o.freed[g] else "kept" if klo <= g < khi else "held"
-        rel = bool(released and released[g])
-        key = (entry[g], kind, bool(o.reach[g]), x, nxt[g] if nxt is not None else -1, rel)
+        key = (entry[g], kind, bool(o.reach[g]), x, nxt[g] if nxt is not None else -1)
         if key not in seen:
             seen[key] = g
     out = []
-    legal = table_rows()
     for key, g in seen.items():
-        e, k, r, x, n, rel = key
-        if n == -1:
-            ok = any((x, nn) in STATE_TABLE[(e, k, r)] for nn in (0, 1))
-        elif rel:
-            ok = n == 0 and any(x == xx for xx, _ in STATE_TABLE[(e, k, r)])
-        else:
-            ok = (x, n) in STATE_TABLE[(e, k, r)]
+        e, k, r, x, n = key
+        allowed = STATE_TABLE[(e, k, r)]
+        ok = any(x == xx for xx, _ in allowed) if n == -1 else (x, n) in allowed
         if n != -1:
-            STATES_SEEN.add((e, k, r, x, n, rel) if (e, k, r, x, n, rel) in legal else key)
+            STATES_SEEN.add(key)
         if not ok:
             out.append(f"STATE: granule {g << 4:#x}: bit {e} at entry, {'reachable' if r else 'unreachable'}, "
                        f"{k} left it {x}" + (f", bit {n} at the next entry" if n != -1 else "")
-                       + (" after a release" if rel else "") + " (not in the state table)")
+                       + " (not in the state table)")
     return out
+
+
+# Events after which the next collection must be a major (gc_gen_protocol.md
+# R1, N1-N5). After the last three the entry bitmap is also unconstrained.
+FORCING_EVENTS = ("release", "abandon", "enable", "reset")
+UNCONSTRAINING_EVENTS = ("abandon", "enable", "reset")
 
 
 def check_sequence(dumps: list[Dump], *, compare_hw: bool = False,
                    mutant: int = 0) -> list[tuple[Dump, list[str]]]:
-    """check_dump for each dump, plus the sequence rules of plan §4: the old
-    bitmap at each generational entry must be the bitmap the previous
+    """check_dump for each dump, plus the sequence rules: the old bitmap at
+    each generational entry must be exactly the bitmap the previous
     collection left (its marked set; trace_minor's marks include the old
-    set), minus released ranges. After an abandoned collection, an enable or
-    a reset the bitmap is unconstrained and the collection must be a major.
-    Each collection's granules are also checked against STATE_TABLE."""
+    set), since nothing between collections changes a bit. A release, an
+    abandoned collection, an enable or a reset forces the next collection to
+    be a major; after the last three the bitmap is unconstrained. Each
+    collection's granules are also checked against STATE_TABLE."""
     outs = [_check(d, compare_hw=compare_hw, mutant=mutant) for d in dumps]
     out = []
     for i, d in enumerate(dumps):
@@ -1010,29 +1007,21 @@ def check_sequence(dumps: list[Dump], *, compare_hw: bool = False,
         prev = dumps[i - 1] if i else None
         prev_post = outs[i - 1].post if i else None
         names = [e[0] for e in d.events]
-        for name, lo, hi in d.events:
-            if name not in ("release", "abandon", "enable", "reset"):
+        for name in names:
+            if name not in FORCING_EVENTS:
                 problems.append(f"unknown event {name!r}")
-            elif name == "release":
-                inside = [a for _, a, _ in d.remset if lo <= a < hi]
-                if inside:
-                    problems.append(f"remset entry at {inside[0]:#x} inside released [{lo:#x}, {hi:#x})")
         if d.gen:
-            fresh = (prev is None or not prev.gen or prev_post is None
-                     or any(n in ("abandon", "enable", "reset") for n in names))
-            if fresh:
-                if d.minor and (prev is not None or names):
-                    problems.append("SEQUENCE: a minor after an abandon, enable or reset "
-                                    "(it must be a major)")
-            else:
-                want = bytearray(prev_post)
-                for name, lo, hi in d.events:
-                    if name == "release":
-                        want[lo >> 4:hi >> 4] = bytes((hi >> 4) - (lo >> 4))
+            if d.minor and (any(n in FORCING_EVENTS for n in names)
+                            or (prev is not None and (not prev.gen or prev_post is None))):
+                problems.append("SEQUENCE: a minor after a release, abandon, enable or reset "
+                                "(it must be a major)")
+            constrained = (prev is not None and prev.gen and prev_post is not None
+                           and not any(n in UNCONSTRAINING_EVENTS for n in names))
+            if constrained:
                 got = bitmap_granules(d.oldbm)
-                if got != want:
-                    extra = next((g for g in _ones(got) if not want[g]), None)
-                    lost = next((g for g in _ones(want) if not got[g]), None)
+                if got != prev_post:
+                    extra = next((g for g in _ones(got) if not prev_post[g]), None)
+                    lost = next((g for g in _ones(prev_post) if not got[g]), None)
                     what = (f"set bit at {extra << 4:#x} the previous collection did not leave"
                             if extra is not None else f"bit at {lost << 4:#x} the previous "
                             f"collection left is clear")
@@ -1040,17 +1029,12 @@ def check_sequence(dumps: list[Dump], *, compare_hw: bool = False,
                                     f"{'minor' if prev.minor else 'major'}'s result: {what}")
         # The state table, with this collection's exit read from the next
         # dump's entry bitmap when nothing between them unconstrains it.
-        nxt = released = None
+        nxt = None
         if i + 1 < len(dumps):
             n = dumps[i + 1]
-            if n.gen and not any(e[0] in ("abandon", "enable", "reset") for e in n.events):
+            if n.gen and not any(e[0] in UNCONSTRAINING_EVENTS for e in n.events):
                 nxt = bitmap_granules(n.oldbm)
-                rels = [(lo, hi) for name, lo, hi in n.events if name == "release"]
-                if rels:
-                    released = bytearray(HEAP_LIMIT >> 4)
-                    for lo, hi in rels:
-                        released[lo >> 4:hi >> 4] = b"\x01" * ((hi >> 4) - (lo >> 4))
-        problems += check_states(d, o, nxt, released)
+        problems += check_states(d, o, nxt)
         out.append((d, problems))
     return out
 

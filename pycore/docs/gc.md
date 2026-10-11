@@ -535,8 +535,9 @@ non-moving, sticky-mark-bit collector: a set bitmap bit survives the sweep
 and means "old", a minor collection marks from the roots plus a remembered
 set of old owners the program wrote into, and the marker's existing
 already-marked test stops it at every old object. A hardware owner-logging
-barrier fills the remembered set at no mutator cycles; a port guard turns a
-missed barrier site into a forced full collection. Precision changes on
+barrier fills the remembered set at no mutator cycles and never reads the
+bitmap; an address-compare port guard turns a missed barrier site into a
+forced full collection, and so does a heap release. Precision changes on
 purpose: a minor frees exactly the unreachable storage allocated since the
 last collection; a full (major) collection frees everything unreachable, as
 today; unreachable old objects wait for the next major.

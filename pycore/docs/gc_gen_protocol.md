@@ -12,9 +12,11 @@ starts from that bitmap. It marks from the roots and from a remembered set
 of old *owners* that the program wrote into since the last collection. The
 marker's existing already-marked test stops it at every old object. A
 **major** clears the bitmap and marks everything, as today. The barrier logs
-owners in hardware at the container operations, at no mutator cycles. A
-guard on the data-memory port turns any write into old memory that no
-operation declared into a forced major.
+owners in hardware at the container operations, at no mutator cycles,
+without looking at the bitmap. The collector skips the logged owners that
+turn out to be young. A guard on the data-memory port, a pure address
+compare, turns any managed write that no operation declared into a forced
+major. A release also forces a major.
 
 ## 1. Precision contract
 
@@ -35,8 +37,8 @@ operation declared into a forced major.
   accumulate.
 - **P5 (barrier).** At a minor's entry, every reference from a set (old)
   granule to a reachable clear dynamic granule starts in an owner that is
-  in the remembered set. A missed log that the guard sees forces a major
-  (§3.3). One the guard cannot see is a bug, and it is caught by the oracle
+  in the remembered set. A write that no operation declared forces a major
+  (B3). One the guard cannot see is a bug, and it is caught by the oracle
   (`BARRIER:`) and by the testbench checker.
 
 `gc.md` invariant 2 ("no floating garbage") holds for majors only. Every
@@ -62,14 +64,16 @@ granules, below `dyn_base`, are never freed, so only their bit matters.
 
 - **T1.** A bit is never set between collections. Allocation is white: a
   new object's granules stay 0.
-- **T2.** A bit is cleared between collections only by a release (§6).
+- **T2.** A bit is never cleared between collections either. A release
+  leaves the bitmap alone and forces a major (§6).
 - **T3.** An abandoned collection, a run-time enable and a reset leave the
-  bitmap unconstrained, and the next collection is a major (§8).
+  bitmap unconstrained (the idle-time clear may run), and the next
+  collection is a major (§8).
 
 **Transitions across a collection.** This table is executable:
 `gc_model.STATE_TABLE` checks every dynamic granule of every dump sequence
 (`gc_model.py --check DIR --sequence`). `test_gc_model.TestGcModelMinor.
-test_state_table` requires all 27 legal rows to occur.
+test_state_table` requires all 14 legal rows to occur.
 
 | Bit at entry | Kind | Full trace reaches it | Allowed outcome (exit, bit at next entry) |
 | --- | --- | --- | --- |
@@ -82,47 +86,53 @@ test_state_table` requires all 27 legal rows to occur.
 | 0 | major | yes | held, 1 |
 | 0 | major | no | free 0, kept 0, pad 0 |
 
-"Held" means neither in the run list nor in the kept run. A release
-between the two collections clears the next bit whatever the outcome; those
-are the remaining rows.
+"Held" means neither in the run list nor in the kept run. Each allowed
+outcome is one row, 14 in all. The "bit at next entry" column holds when
+the next collection follows with no event between; after an abandon,
+enable or reset it is unconstrained (T3).
 
-## 3. Guard and barrier request life cycle
+## 3. Guard and barrier
 
 **Terms.** An *operation* is one container op, one container-accelerator
 (CA) command, or one excore trap dispatch. Each operation starts with
-`bar_op_begin`, which increments `op_epoch_r` and empties the permit
-windows. A *window* is an address range `[lo, hi)` that the operation
-declares it will write.
+`bar_op_begin`, which empties the permit windows. A *window* is an address
+range `[lo, hi)` that the operation declares it will write. The *current
+run* is the bump run the allocator is carving, `[run_base, run_end)`.
 
-- **B1, log.** `bar_log(kind, size, addr, windows)` enqueues an owner
-  lookup, and adds the windows to the current epoch's window set. The
-  windows are the owner's header and its buffer, table or order array as
-  currently allocated.
+Neither the barrier nor the guard reads the bitmap. The bitmap port stays
+the engine's alone, and there is no request queue between a write and its
+effect.
+
+- **B1, log.** `bar_log(kind, size, addr, windows)` adds the windows to the
+  operation's window set and offers the entry `(kind, addr, size)` to the
+  dedup filter. The whole entry must match for a hit. A miss writes the
+  SSB entry and the filter in the same cycle. The windows are the owner's
+  header and its buffer, table or order array as currently allocated. The
+  owner may be old or young; the barrier does not know and does not ask.
 - **B2, permit.** `bar_permit(windows)` adds windows only. It is for writes
   that cannot create an old-to-young reference (§4).
-- **B3, guarded write.** A managed write is any data-memory write with
-  `HEAP_BASE <= addr < heap_limit`, the static image included, that does not
-  come from a raw master (STRACC on new strings, run zeroing, the GC
-  engine). The window match is decided in the write's issue cycle and
-  travels with the request. A managed write that matches no window enqueues
-  a guard lookup tagged with the current epoch.
-- **B4, lookup.** The barrier owns one bitmap read port while the engine
-  is idle. It serves one FIFO entry per cycle and registers the result.
-  - An owner lookup whose owner is set (old) is checked against the
-    dedup filter. The whole entry must match for a hit. A miss writes the
-    SSB entry and the filter.
-  - An owner lookup whose owner is clear (young) is dropped. A young owner
-    is traced anyway.
-  - A guard lookup whose address is set sets `force_major_r` and counts a
-    `guard_hit`.
-- **B5, retirement.** A request retires when its result has been applied.
-  `barrier_idle = fifo_empty && !lookup_in_flight`.
+- **B3, guard.** A managed write is any data-memory write with
+  `HEAP_BASE <= addr < heap_limit`, the static image included, that does
+  not come from a raw master (STRACC on new strings, run zeroing, the GC
+  engine). A managed write that lies in no window and outside the current
+  run sets `force_major_r` and counts a `guard_hit`. The decision is two
+  range compares per window in the write's issue cycle; it is registered
+  one cycle later. The current run is exempt because it holds no set bit
+  (K3, T1), so nothing written there can be an old owner.
+- **B4, young owners.** The engine's `P_REMSET` phase reads each SSB
+  owner's bit, which it reads anyway for the mark test. A clear (young)
+  owner is skipped: if it is reachable, the trace from the roots scans it.
+  A set (old) owner is pushed without the mark test. `trace_minor` models
+  exactly this.
+- **B5, current-run owners.** A log whose owner lies in `[run_base,
+  heap_ptr)` may be dropped before the filter: that owner is young.
+  This saves SSB entries for objects that are built and filled in the same
+  interval. It is an optimization; B4 makes correctness independent of it.
 - **B6, overflow.** An SSB push into a full SSB is refused. It sets
   `force_major_r` sticky in the same cycle and counts `remset_overflows`.
   Dropping the entry is then safe, because the next collection is a major.
-- **B7, FIFO bound.** The FIFO is 4 deep. A push into a full FIFO fires
-  `[GC-INV]` (plan §3.7 item 4). The bound is argued in §9 from the site
-  table. GG8 checks it with `bar_fifo_hw`.
+  Young owners take SSB space too, so the SSB size (Phase 6) is chosen from
+  logs per interval, not from old owners per interval.
 
 ## 4. Barrier sites
 
@@ -237,45 +247,54 @@ exists today, so the plan's permit row for it has no site.
 | `S_MEM` `MEM_STORE_PTR` (opcode 201) | **guarded, never raw.** It writes any aligned address. The compiler does not emit it; removing the opcode is the cleaner fix |
 | Frame push, RF spill, exception-info stack | outside the heap |
 
-- **S7. New storage skips the lookup.** A write into `[heap_ptr at op
-  start, heap_ptr)` targets storage this operation allocated. It is clear
-  in the bitmap, so a lookup could only answer "young". Skipping it keeps
-  the many `BUILD_*` and binder writes out of the FIFO. It is an
-  optimization; correctness does not depend on it.
+- **S7. New storage is never an old owner.** A write into the current run
+  (B3) targets young memory, so the guard ignores it. That covers the many
+  `BUILD_*` and binder writes, which carry no window.
 
 ## 5. Collection entry ordering
 
 - **E1.** Collections start only at instruction boundaries, from
-  `S_GC_ENTER` in `pycore_core.sv`. No operation epoch is open there.
-- **E2.** `S_GC_ENTER` waits for every outstanding data-memory beat (as
-  today), then for `barrier_idle`. Every write issued before entry has
-  then had its guard lookup, and every accepted log is in the SSB.
+  `S_GC_ENTER` in `pycore_core.sv`. No operation is open there.
+- **E2.** `S_GC_ENTER` waits for every outstanding data-memory beat, as
+  today. A log and a guard hit take effect at most one cycle after their
+  write issues (B1, B3), and the wait already spans that cycle, so every
+  write issued before entry is then reflected in the SSB and in
+  `force_major_r`. There is nothing else to drain.
 - **E3.** After E2, the kind is decided in one cycle from
   `force_major_r`, the SSB state and the policy inputs:
   `minor = gen_en && !force_major && !explicit && !at_exit && !major_due`.
-  Because E2 drains first, an overflow or guard hit caused by any write
-  before entry is visible here. A same-cycle overflow and collection
-  request therefore resolve to a major (B6).
+  An overflow or guard hit caused by any write before entry is visible here.
+  A same-cycle overflow and collection request therefore resolve to a major
+  (B6).
 - **E4.** The core is stalled in `S_GC_*` until the engine finishes, so
-  nothing enqueues during a collection. The engine empties the SSB, the
-  filter and the windows after its sweep, and not before.
-- **E5.** The dump is written at entry, after E2: `meta barrier_idle` is
-  always 1 there, and the oracle checks it.
+  nothing is logged during a collection. The engine empties the SSB, the
+  filter and the windows after its sweep, and not before. A major also
+  clears `force_major_r`.
+- **E5.** The dump is written at entry, after E2.
 
 ## 6. Release
 
 `_bi_heap_release(mark)` returns `[mark, heap_ptr)` to the allocator.
 
-- **R1.** The bitmap bits of `[mark, heap_ptr)` are cleared. The two
-  partial words at the ends are cleared with masks, so neighbouring
-  objects keep their bits. This happens in the zeroing pass the release
-  already runs.
-- **R2.** Every SSB and filter entry whose address lies in the range is
-  invalidated: one compare per entry, overlapped with the zeroing.
-- **R3.** If R2 is ever too slow, the fallback is to set `force_major_r`
-  and discard the SSB. That is also safe.
+- **R1.** A release sets `force_major_r`. It changes no bitmap bit and no
+  SSB entry. The released range becomes part of the current run.
+- **R2.** Until the next collection the released range breaks two
+  assumptions: it may hold set bits inside the current run (so B3 and B5
+  exempt writes into old-marked memory), and SSB entries may name owners
+  that no longer exist. Neither matters, because that collection is a
+  major: it clears the bitmap and ignores the SSB.
+- **R3.** The kept run of that major may overlap the released range and
+  hold set bits. K3 is exempt for it; the major's `M_CLEAR` clears them
+  before the sweep.
 - **R4.** The next dump records `event release <lo> <hi>`. The oracle then
-  expects the range clear at entry and no SSB entry inside it.
+  requires a major, and requires its entry bitmap to equal what the
+  previous collection left.
+- Releases are rare: programs call `_bi_heap_release` explicitly, in
+  practice around a `compile()` (`compiler.md`, "compile() does not
+  `_bi_heap_release` internally"), so one forced major per release costs
+  little. If a profile
+  ever shows otherwise, the earlier design (a masked bitmap clear in the
+  release's zeroing pass, plus SSB invalidation by range) is the upgrade.
 
 ## 7. Kept-run exclusion
 
@@ -286,8 +305,9 @@ exists today, so the plan's permit row for it has no site.
   runs around it, through the existing `keep_ahead` and `keep_here` tests
   in `pycore_gc.sv`, not by painting bits. The comment there that says
   `M_SW_KEEP` "sets its bits" is stale and is corrected with the RTL change.
-- **K3.** The kept range holds no set bit at entry. `[GC-INV]` checks this at
-  `S_GC_ENTER`, and so does the oracle (`gen_invariants`).
+- **K3.** The kept range holds no set bit at entry, except at the major
+  after a release (R3). `[GC-INV]` checks this at `S_GC_ENTER`, and so does
+  the oracle (`gen_invariants`).
 
 ## 8. Enable, reset and abandon
 
@@ -296,8 +316,7 @@ exists today, so the plan's permit row for it has no site.
   initialized by a collection and never assumed.
 - **N2.** A run-time enable (a future configuration bit) sets
   `force_major_r`.
-- **N3.** A reset while a lookup is pending empties the FIFO and sets
-  `force_major_r`.
+- **N3.** A reset empties the SSB and the filter and sets `force_major_r`.
 - **N4.** An abandoned collection (rescan list full, data-memory fault)
   raises `MemoryError` as today, sets `force_major_r` and discards the
   SSB. In generational mode the idle-time bitmap clear runs only after an
@@ -305,38 +324,22 @@ exists today, so the plan's permit row for it has no site.
 - **N5.** The next dump records `event abandon`, `enable` or `reset`. The
   oracle then requires a major and does not constrain the entry bitmap.
 
-## 9. FIFO bound
+## 9. Barrier throughput
 
 Inputs, from the audit:
 
 - At most one data-memory write per cycle system-wide: one core port, and
   the excore slot port is exclusive with it through `mem_owner_r`.
-- Guard-eligible writes (container leg, CA, `S_MEM`) are at least two cycles
-  apart. A held master issues its next beat only after the acknowledgement
-  (inferred from the handshake at `pycore_core.sv:2173-2180, 3929-3933`).
 - Each instruction writes at most one existing owner (S1-S3). A pycore op
   and the CA command or trap it raises write the same owner, so at most two
   log pulses arrive per instruction, and never in the same cycle as each
   other.
 
-Argument:
-
-1. Arrivals: at most one log pulse and one guard lookup in any cycle.
-   Guard lookups come at most every other cycle.
-2. Service: one lookup per cycle, as long as the barrier owns the bitmap
-   port. It does whenever the engine is idle and the idle-time clear is
-   off. In generational mode that clear runs only after an abandon.
-3. From 1 and 2, the FIFO holds at most 2 entries after any cycle, plus one
-   lookup in flight. The 4-deep FIFO has one entry of slack.
-4. After an abandon, `force_major_r` is set (N4) while the idle clear owns
-   the port. Every lookup result is then irrelevant: a guard hit would only
-   set `force_major_r` again, and the SSB is discarded by the major. The
-   barrier therefore drops requests instead of queueing them until the
-   next major completes.
-5. A push into a full FIFO fires `[GC-INV]`. `bar_fifo_hw` is reported per
-   run, and GG8 checks it stays at or below 3.
-
-S7 is not needed for this bound. It only keeps the FIFO mostly empty.
+So the barrier handles at most one log per cycle. A log is one filter
+compare and at most one SSB write, both single-cycle, and a guard decision
+is combinational on the write's address. Nothing waits, so there is no
+queue to bound and no back-pressure on the mutator. The SSB write port is
+the barrier's alone between collections (E4).
 
 ## 10. Dump format
 
@@ -346,11 +349,22 @@ A generational dump adds to the format in `gc_model.py`:
 | --- | --- |
 | `meta gen 1`, `meta minor 0/1` | mode and kind |
 | `meta old_hi <addr>` | exclusive bound on set bits |
-| `meta force_major`, `meta remset_n`, `meta barrier_idle` | entry state |
-| `remset <kind> <size> <addr-hex>` | one SSB entry |
+| `meta force_major`, `meta remset_n` | entry state |
+| `remset <kind> <size> <addr-hex>` | one SSB entry, old or young owner |
 | `oldbm <word> <bits-hex>` | the entry bitmap, nonzero 128-bit words |
 | `event <name> [<lo-hex> <hi-hex>]` | `release`, `abandon`, `enable` or `reset` since the previous dump |
 
 The plan proposed `[GC-GEN] event=...` log lines for events. Writing them
 into the next dump instead keeps a dump directory self-contained. The log
 lines are still printed for people reading the log.
+
+## 11. What a minor still costs
+
+A minor marks only young survivors and remembered old owners, but its
+sweep still walks the whole heap bitmap, as a major's does. On a heap whose
+old set is large and stable, the sweep then dominates a minor. The fix is
+for a minor to sweep only the runs installed since the last collection:
+the young objects can be nowhere else, and old memory is unchanged. That
+needs the allocator to record which runs it took, and it is a Phase 6 item,
+decided on measured cycles. Until then the minor's saving is in marking
+alone.

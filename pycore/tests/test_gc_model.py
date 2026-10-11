@@ -216,7 +216,9 @@ class GenCase:
                 for a, ln in allocs:
                     mark(self.old, a, ln)
         self.full = self.reach()
-        owners = [n for n in self.h.nodes if self.is_old(n) and entry(n)]
+        # The barrier logs whatever owner an operation writes, old or young
+        # (gc_gen_protocol.md B1); the engine scans only the old ones.
+        owners = [n for n in self.h.nodes if n.allocs and entry(n)]
         self.gap_nodes = [n for n in self.h.nodes if id(n) in self.full and self.needs_log(n)]
         self.rem_nodes = r.sample(owners, r.randrange(0, len(owners) + 1)) if owners else []
 
@@ -255,11 +257,13 @@ class GenCase:
 
     def minor_live(self, rem_nodes: list[gc_heapgen.Node]) -> set[int]:
         """Python-level minor: old granules stay; young nodes are reached from
-        the roots and from the remembered owners, which are scanned whether
-        or not they are old; any other old node stops the walk."""
+        the roots and from the remembered owners that are old, which are
+        scanned although they are marked; any other old node stops the walk.
+        A remembered young owner is skipped: the roots reach it if it lives."""
         live = set(gc_model._ones(self.old))
         seen: set[int] = set()
-        work = [(n, False) for n in self.h.root_nodes] + [(n, True) for n in rem_nodes]
+        work = [(n, False) for n in self.h.root_nodes] + [(n, True) for n in rem_nodes
+                                                           if self.is_old(n)]
         while work:
             n, forced = work.pop()
             if id(n) in seen or (not forced and self.is_old(n)):
@@ -309,7 +313,7 @@ def make_dump(h: gc_heapgen.Heap, live: set[int], keep: bool = False, **meta: in
 
 def minor_dump(c: GenCase, rem_nodes: list[gc_heapgen.Node], old: bytearray | None = None,
                keep: bool = False) -> gc_model.Dump:
-    d = make_dump(c.h, c.minor_live(rem_nodes), keep, gen=1, minor=1, barrier_idle=1)
+    d = make_dump(c.h, c.minor_live(rem_nodes), keep, gen=1, minor=1)
     d.oldbm = gc_model.granules_bitmap(old if old is not None else c.old)
     d.remset = c.remset(rem_nodes)
     d.meta["remset_n"] = len(d.remset)
@@ -383,15 +387,12 @@ class TestGcModelMinor(unittest.TestCase):
             d.meta.update(change)
             return gc_model.check_dump(d)
 
-        self.assertTrue(any("barrier_idle" in p for p in probs(barrier_idle=0)))
         self.assertTrue(any("force_major" in p for p in probs(force_major=1)))
         self.assertTrue(any("remset_n" in p for p in probs(remset_n=len(rem) + 1)))
-        # A remset entry naming a young owner.
+        # A remset entry naming a young owner is legal: the engine skips it.
         young = next(n for n in c.h.nodes if not c.is_old(n) and entry(n) and n.allocs)
-        d = minor_dump(c, rem)
-        d.remset.append(entry(young))
-        d.meta["remset_n"] += 1
-        self.assertTrue(any("non-old owner" in p for p in gc_model.check_dump(d)))
+        d = minor_dump(c, rem + [young])
+        self.assertEqual(gc_model.check_dump(d), [])
         # Freeing an old granule: a run list that also frees an old object
         # (live in the full trace or not) is a SAFETY failure.
         victim = next(n for n in c.h.nodes if c.is_old(n) and n.allocs[0][0] >= c.h.dyn_base
@@ -407,10 +408,9 @@ class TestGcModelMinor(unittest.TestCase):
         self.assertTrue(any("old_hi" in p for p in probs(old_hi=a)))
 
     def test_sequence_rules(self) -> None:
-        checked = 0
         for seed in range(30):
             h = gc_heapgen.generate(seed)
-            major = make_dump(h, h.expected_live(), gen=1, minor=0, barrier_idle=1)
+            major = make_dump(h, h.expected_live(), gen=1, minor=0)
             post = gc_model._check(major).post
             self.assertIsNotNone(post)
             # The next minor starts from exactly what the major left.
@@ -426,44 +426,41 @@ class TestGcModelMinor(unittest.TestCase):
                 d = minor_dump(c, [], old=bad)
                 ps = [p for _, ps in gc_model.check_sequence([major, d]) for p in ps]
                 self.assertTrue(any(p.startswith("SEQUENCE") for p in ps), f"seed {seed}: {ps}")
-            # A release between them clears its range. Only dead memory is
-            # released; here, an object only roots reference (the minor
-            # retraces it from them), so no old owner is left pointing in.
-            held = {id(k) for n in h.nodes for k in n.children}
-            dyn = [n for n in h.nodes if n.allocs and n.allocs[0][0] >= h.dyn_base
-                   and post[n.allocs[0][0] >> 4] and id(n) not in held]
-            if dyn:
-                lo, ln = dyn[-1].allocs[0]
-                hi = lo + ((ln + 15) & ~15)
-                rel = bytearray(post)
-                rel[lo >> 4:hi >> 4] = bytes((hi >> 4) - (lo >> 4))
-                c.old = rel
-                d = minor_dump(c, [])
-                d.events = [("release", lo, hi)]
-                self.assertEqual([p for _, ps in gc_model.check_sequence([major, d]) for p in ps], [],
-                                 f"seed {seed}: release")
-                c.old = bytearray(post)
-                d = minor_dump(c, [])
-                d.events = [("release", lo, hi)]
-                ps = [p for _, ps in gc_model.check_sequence([major, d]) for p in ps]
-                self.assertTrue(any(p.startswith("SEQUENCE") for p in ps), f"seed {seed}: uncleared")
-                checked += 1
-            # After an abandon (or enable, reset) the next collection is a major.
+            # A release changes no bit (R1) and forces a major: a minor after
+            # it is reported, a major whose bitmap is unchanged is not, and a
+            # major that finds the released range cleared is.
+            lo = h.dyn_base
+            hi = lo + ((h.heap_limit - lo) // 2 & ~15)
+            d = minor_dump(c, [])
+            d.events = [("release", lo, hi)]
+            ps = [p for _, ps in gc_model.check_sequence([major, d]) for p in ps]
+            self.assertTrue(any("must be a major" in p for p in ps), f"seed {seed}: release")
+            m2 = make_dump(h, h.expected_live(), gen=1, minor=0)
+            m2.oldbm, m2.events = gc_model.granules_bitmap(post), [("release", lo, hi)]
+            self.assertEqual([p for _, ps in gc_model.check_sequence([major, m2]) for p in ps], [],
+                             f"seed {seed}: major after release")
+            if any(post[lo >> 4:hi >> 4]):
+                m2.oldbm = gc_model.granules_bitmap(self.cleared(post, lo, hi))
+                ps = [p for _, ps in gc_model.check_sequence([major, m2]) for p in ps]
+                self.assertTrue(any(p.startswith("SEQUENCE") for p in ps), f"seed {seed}: cleared")
+            # After an abandon, enable or reset the next collection is a major
+            # and its bitmap is unconstrained.
             for ev in ("abandon", "enable", "reset"):
                 d = minor_dump(c, [])
                 d.events = [(ev, 0, 0)]
                 ps = [p for _, ps in gc_model.check_sequence([major, d]) for p in ps]
                 self.assertTrue(any("must be a major" in p for p in ps), ev)
-                m2 = make_dump(h, h.expected_live(), gen=1, minor=0, barrier_idle=1)
+                m2 = make_dump(h, h.expected_live(), gen=1, minor=0)
                 m2.events = [(ev, 0, 0)]
                 self.assertEqual([p for _, ps in gc_model.check_sequence([major, m2]) for p in ps], [])
-        self.assertGreater(checked, 5)
-        print(f"G2 gen seeds={GEN_SEEDS} sequence_seeds=30 release_cases={checked}")
+        print("G2 gen sequence_seeds=30")
 
     def test_state_table(self) -> None:
-        # minor -> release -> major -> release -> major, on random heaps and
-        # old sets; then every legal transition of the protocol's state
-        # table must have been seen, and illegal ones are reported.
+        # minor -> major -> major on random heaps and old sets, once plainly
+        # and once with a reset before the first major (so it starts from a
+        # bitmap with reachable granules clear) and a release before the
+        # second; then every legal transition of the protocol's state table
+        # must have been seen, and illegal ones are reported.
         gc_model.STATES_SEEN.clear()
         for seed in range(80):
             c = GenCase(seed)
@@ -472,35 +469,21 @@ class TestGcModelMinor(unittest.TestCase):
             d1 = minor_dump(c, rem, keep=seed % 2 == 0)
             post1 = gc_model._check(d1).post
             mid = h.dyn_base + ((h.heap_limit - h.dyn_base) // 2 & ~15)
-            rel1 = (mid, h.heap_limit) if seed % 3 else (h.dyn_base, mid)
-            # A kept run is memory the allocator already had: no set bit.
-            entry2 = self.cleared(post1, *rel1)
-            d2 = make_dump(h, h.expected_live(), seed % 2 == 1, gen=1, minor=0, barrier_idle=1)
-            klo, khi = d2.meta.get("keep_lo", 0) >> 4, d2.meta.get("keep_hi", 0) >> 4
-            if any(entry2[klo:khi]):
-                d2 = make_dump(h, h.expected_live(), gen=1, minor=0, barrier_idle=1)
-            d2.oldbm = gc_model.granules_bitmap(entry2)
-            d2.events = [("release", *rel1)]
-            post2 = gc_model._check(d2).post
-            # Straddle rel1's edge, so granules it cleared and granules it
-            # left both occur released and not released.
-            q = (h.heap_limit - h.dyn_base) // 4 & ~15
-            rel2 = (mid - q, mid + q) if seed % 4 else (h.dyn_base, h.heap_limit)
-            d3 = make_dump(h, h.expected_live(), gen=1, minor=0, barrier_idle=1)
-            d3.oldbm = gc_model.granules_bitmap(self.cleared(post2, *rel2))
-            d3.events = [("release", *rel2)]
-            ps = [p for _, ps in gc_model.check_sequence([d1, d2, d3]) for p in ps]
-            self.assertEqual(ps, [], f"seed {seed}")
-            # The same without releases: minor -> major -> major.
-            d2 = make_dump(h, h.expected_live(), seed % 2 == 1, gen=1, minor=0, barrier_idle=1)
-            klo, khi = d2.meta.get("keep_lo", 0) >> 4, d2.meta.get("keep_hi", 0) >> 4
-            if any(post1[klo:khi]):
-                d2 = make_dump(h, h.expected_live(), gen=1, minor=0, barrier_idle=1)
-            d2.oldbm = gc_model.granules_bitmap(post1)
-            d3 = make_dump(h, h.expected_live(), gen=1, minor=0, barrier_idle=1)
-            d3.oldbm = gc_model.granules_bitmap(gc_model._check(d2).post)
-            self.assertEqual([p for _, ps in gc_model.check_sequence([d1, d2, d3]) for p in ps], [],
-                             f"seed {seed} without release")
+            half = (mid, h.heap_limit) if seed % 3 else (h.dyn_base, mid)
+            for reset in (False, True):
+                entry2 = self.cleared(post1, *half) if reset else post1
+                # A kept run is memory the allocator already had: no set bit.
+                d2 = make_dump(h, h.expected_live(), seed % 2 == 1, gen=1, minor=0)
+                klo, khi = d2.meta.get("keep_lo", 0) >> 4, d2.meta.get("keep_hi", 0) >> 4
+                if any(entry2[klo:khi]):
+                    d2 = make_dump(h, h.expected_live(), gen=1, minor=0)
+                d2.oldbm = gc_model.granules_bitmap(entry2)
+                d2.events = [("reset", 0, 0)] if reset else []
+                d3 = make_dump(h, h.expected_live(), gen=1, minor=0)
+                d3.oldbm = gc_model.granules_bitmap(gc_model._check(d2).post)
+                d3.events = [("release", h.dyn_base, mid)] if reset else []
+                ps = [p for _, ps in gc_model.check_sequence([d1, d2, d3]) for p in ps]
+                self.assertEqual(ps, [], f"seed {seed} reset={reset}")
         missing = gc_model.table_rows() - gc_model.STATES_SEEN
         self.assertEqual(missing, set(), "state table rows never exercised")
         illegal = gc_model.STATES_SEEN - gc_model.table_rows()
@@ -510,18 +493,18 @@ class TestGcModelMinor(unittest.TestCase):
         c = GenCase(3)
         d1 = minor_dump(c, list({id(n): n for n in c.gap_nodes + c.rem_nodes}.values()))
         post1 = gc_model._check(d1).post
-        d2 = make_dump(c.h, c.h.expected_live(), gen=1, minor=0, barrier_idle=1)
+        d2 = make_dump(c.h, c.h.expected_live(), gen=1, minor=0)
         d2.oldbm = gc_model.granules_bitmap(post1)
         o2 = gc_model._check(d2)
         dead = next(g for g in range(c.h.dyn_base >> 4, c.h.heap_limit >> 4)
                     if not o2.reach[g] and not o2.freed[g])
         nxt = bytearray(o2.post)
         nxt[dead] = 1
-        self.assertTrue(any(p.startswith("STATE") for p in gc_model.check_states(d2, o2, nxt, None)))
+        self.assertTrue(any(p.startswith("STATE") for p in gc_model.check_states(d2, o2, nxt)))
         o1 = gc_model._check(d1)
         old_g = next(g for g in gc_model._ones(c.old) if g >= c.h.dyn_base >> 4)
         o1.freed[old_g] = 1
-        self.assertTrue(any(p.startswith("STATE") for p in gc_model.check_states(d1, o1, None, None)))
+        self.assertTrue(any(p.startswith("STATE") for p in gc_model.check_states(d1, o1, None)))
         print(f"G2 gen state-table rows={len(gc_model.table_rows())} all exercised")
 
     @staticmethod
