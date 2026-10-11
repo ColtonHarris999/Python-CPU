@@ -2387,7 +2387,7 @@ module pycore_core #(
                 if (!dmem_busy_r && gc_guard_cont) gc_guard_hits_cont_r <= gc_guard_hits_cont_r + 32'd1;
 `ifndef SYNTHESIS
                 if (!dmem_busy_r && $test$plusargs("GC_GUARD_LOG"))
-                    $display("[GC-GUARD] state=%0d op=%0d phase=%0d pc=%0d addr=%h", state_r,
+                    $display("[GC-GUARD] state=%0d op=%0d ca=%0d phase=%0d pc=%0d addr=%h", state_r, ca_op_r,
                              container_op_r, container_phase_r, cur_pc_r, dmem_addr_o);
 `endif
             end

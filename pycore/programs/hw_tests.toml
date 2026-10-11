@@ -654,6 +654,7 @@ gen-release = { src = "gen_release", cycles = 2_000_000, plusargs = "+GC_EN=1 +H
 gen-abandon = { src = "gen_abandon", cycles = 4_000_000, plusargs = "+GC_EN=1 +GC_ONCHIP=32 +GC_STACK_LIMIT=32 +GC_RESCAN_LIMIT=8 +HEAP_DYN_BYTES=262144" }
 # gen-dict-update with a one-entry remembered set: under +GC_GEN=1 the SSB
 # overflows, which must force the next collection to be a major (B6).
+gen-barrier-loop = { src = "gen_barrier_loop", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
 gen-remset-overflow = { src = "gen_dict_update", cycles = 1_000_000, plusargs = "+GC_EN=1 +GC_REMSET_LIMIT=1", caching = true }
 
 # Long GC loops: steady-state plateaus, allocation-site churn, benches and
@@ -664,6 +665,7 @@ gen-remset-overflow = { src = "gen_dict_update", cycles = 1_000_000, plusargs = 
 # STORE_DEREF into an old cell: the function is built with compile(), so
 # most of its 6.4M cycles are the on-device compiler.
 gen-store-deref = { src = "gen_store_deref", cycles = 16_000_000, plusargs = "+GC_EN=1" }
+gen-deref-loop = { src = "gen_deref_loop", cycles = 16_000_000, plusargs = "+GC_EN=1" }
 gc-verify-closures = { src = "gc_verify_closures", cycles = 20_500_000, plusargs = "+GC_EN=1" }
 gc-root-heap-iter = { src = "gc_root_heap_iter", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_POISON=1 +GC_AT_BOUNDARY_EVERY=11 +MAX_CYCLES_SCALE=40" }
 gc-fuzz-11 = { src = "gc_fuzz_11", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_POISON=1 +GC_AT_BOUNDARY_EVERY=11 +MAX_CYCLES_SCALE=40" }

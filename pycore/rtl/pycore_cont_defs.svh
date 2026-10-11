@@ -45,15 +45,16 @@
 // Generational barrier pulses (gc_gen_protocol.md B1, B2, §4 S1). A site
 // raises one in the cycle it latches the owner's buffer, table or order
 // pointer, which is no later than its first write into the owner. MUT is
-// the site's mutant number: that mutant skips the pulse.
+// the site's mutant number. A log mutant still declares its windows but
+// logs nothing (the guard cannot see it; the oracle's barrier rule must);
+// a permit mutant drops the pulse (the guard must see it).
 `define BAR_WIN(LO, HI) {32'(HI), 32'(LO)}
 `define BAR_LOG(MUT, K, OWNER, W0, W1, W2) \
-    if (gc_mutant_sim != (MUT)) begin \
-        bar_log_r   <= 1'b1; \
-        bar_kind_r  <= (K); \
-        bar_owner_r <= (OWNER); \
-        bar_win_r   <= {(W2), (W1), (W0)}; \
-    end
+    bar_log_r    <= (gc_mutant_sim != (MUT)); \
+    bar_permit_r <= (gc_mutant_sim == (MUT)); \
+    bar_kind_r   <= (K); \
+    bar_owner_r  <= (OWNER); \
+    bar_win_r    <= {(W2), (W1), (W0)};
 `define BAR_PERMIT(MUT, W0, W1, W2) \
     if (gc_mutant_sim != (MUT)) begin \
         bar_permit_r <= 1'b1; \
