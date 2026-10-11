@@ -652,10 +652,14 @@ gen-delete = { src = "gen_delete", cycles = 1_000_000, plusargs = "+GC_EN=1", ca
 gen-deep-chain = { src = "gen_deep_chain", cycles = 2_000_000, plusargs = "+GC_EN=1" }
 gen-release = { src = "gen_release", cycles = 2_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
 gen-abandon = { src = "gen_abandon", cycles = 4_000_000, plusargs = "+GC_EN=1 +GC_ONCHIP=32 +GC_STACK_LIMIT=32 +GC_RESCAN_LIMIT=8 +HEAP_DYN_BYTES=262144" }
-# gen-dict-update with a one-entry remembered set: under +GC_GEN=1 the SSB
-# overflows, which must force the next collection to be a major (B6).
 gen-barrier-loop = { src = "gen_barrier_loop", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
-gen-remset-overflow = { src = "gen_dict_update", cycles = 1_000_000, plusargs = "+GC_EN=1 +GC_REMSET_LIMIT=1", caching = true }
+# gen-barrier-loop on a 256 KB heap: runs switch often, so some owners the
+# loop logs are young but older than the current run (not dropped by B5).
+gen-barrier-loop-small = { src = "gen_barrier_loop", cycles = 4_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=262144", caching = true }
+gen-unpack-loop = { src = "gen_unpack_loop", cycles = 2_000_000, plusargs = "+GC_EN=1", caching = true }
+# gen-barrier-loop with an 8-entry remembered set: under +GC_GEN=1 the SSB
+# overflows, which must force the next collection to be a major (B6).
+gen-remset-overflow = { src = "gen_barrier_loop", cycles = 2_000_000, plusargs = "+GC_EN=1 +GC_REMSET_LIMIT=8", caching = true }
 
 # Long GC loops: steady-state plateaus, allocation-site churn, benches and
 # compile loops (millions of cycles each, up to ~150M uncached). Not in

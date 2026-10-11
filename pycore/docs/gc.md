@@ -634,17 +634,52 @@ What Phase 3 added (the barrier at the pycore container ops):
   hits, the SSB size and the pushes; the end-of-run `GC-GEN` line counts
   minors, majors, guard hits, logs, filter hits, B5 drops and overflows.
   `+GC_GUARD_LOG` prints every guard hit with its state and address.
-  `+GC_REMSET_LIMIT=N` shrinks the SSB (`gen-remset-overflow` uses 1).
+  `+GC_REMSET_LIMIT=N` shrinks the SSB (`gen-remset-overflow` runs `gen-barrier-loop` with 8).
 - **GG3** is checked on the GG2 runs: no container-leg write may hit the
   guard.
-- **Mutants** 70-79 (each logging site skips its log: list store, list
-  append, dict store, map add, set add, store name, store attr, store
-  deref, set update, dict update), 80 (`P_REMSET` skipped), 82 (the filter
-  hits on its slot alone), 83 (windows ignored), 85 (B5 drops every owner
-  below the bump pointer), 86 (young owners pushed too), 87 (a full SSB does
-  not force a major), 88 (`STORE_ATTR` logs the instance, not its
-  `__dict__`), 90-92 (the list, dict and attribute deletes drop their
-  permits).
+- **Fixtures.** The Phase 0 `gen-*` fixtures collect explicitly, and an
+  explicit collection is a major, so few of their stores are followed by
+  a minor. `gen-barrier-loop` makes its containers old once and then
+  stores through every non-growing site in a loop with churn, so boundary
+  minors land between the stores and the reads (`gen-barrier-loop-small`
+  runs it on a 256 KB heap, where some logged owners are young but older
+  than the current run). `gen-unpack-loop` covers `DICT_UPDATE`,
+  `SET_UPDATE` and comprehension appends, which write a container the same
+  statement built: they reach an old owner only when a collection lands
+  inside the statement. `gen-deref-loop` (in `[gc-long]`, it compiles)
+  does the same for a closure cell.
+- **Mutants**, each killed by a `+GC_GEN=1` run with a collection every
+  400 instructions (oracle: a dump fails `gc_model`; GG3: a container-leg
+  guard hit; sim: a wrong result). A log mutant still declares its windows
+  but logs nothing, so the guard cannot see it.
+
+  | Mutant | Bug | Killed by |
+  | --- | --- | --- |
+  | 70 | `CONT_STORE_LIST` does not log | `gen-list-store`, oracle |
+  | 71 | `CONT_LIST_APPEND` does not log | `gen-unpack-loop`, oracle |
+  | 72 | `CONT_STORE_DICT` does not log | `gen-barrier-loop`, oracle |
+  | 73 | `CONT_MAP_ADD` does not log | `gen-barrier-loop`, oracle |
+  | 74 | `CONT_SET_ADD` does not log | `gen-set-add`, oracle |
+  | 75 | `CONT_STORE_NAME` does not log | `gen-barrier-loop`, oracle |
+  | 76 | `CONT_STORE_ATTR` does not log | `gen-barrier-loop`, oracle |
+  | 77 | `CONT_STORE_DEREF` does not log | `gen-deref-loop`, sim |
+  | 78 | `CONT_SET_UPDATE` does not log | `gen-unpack-loop`, oracle |
+  | 79 | `CONT_DICT_UPDATE` does not log | `gen-unpack-loop`, oracle |
+  | 80 | `P_REMSET` skipped | `gen-list-store`, oracle |
+  | 82 | the filter hits on its slot alone | `gen-barrier-loop`, oracle |
+  | 83 | windows ignored | `gen-dict-store`, GG3 |
+  | 85 | B5 drops every owner below the bump pointer | `gen-list-store`, oracle |
+  | 86 | young owners pushed too | `gen-barrier-loop-small`, oracle |
+  | 87 | a full SSB does not force a major | `gen-remset-overflow`, oracle |
+  | 88 | `STORE_ATTR` logs the instance, not its `__dict__` | `gen-barrier-loop`, oracle |
+  | 90 | the last-element list delete drops its permit | `gen-delete`, GG3 |
+  | 91 | `CONT_DELETE_DICT` drops its permit | `gen-delete`, GG3 |
+  | 92 | `CONT_DELETE_ATTR` drops its permit | `gen-barrier-loop`, GG3 |
+
+  Each is found by `gen-*` fixtures only: a method call such as
+  `list.append` or `dict.update` is not one of these sites (it goes to the
+  container accelerator or the excore), so the ordinary `[gc]` tests
+  reach the sites mostly on young containers.
 
 The nursery budget comes in a later phase; until then a minor runs where a
 full collection would.

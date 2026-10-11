@@ -2391,6 +2391,11 @@ module pycore_core #(
                              container_op_r, container_phase_r, cur_pc_r, dmem_addr_o);
 `endif
             end
+`ifndef SYNTHESIS
+            if ((bar_log_r || bar_permit_r) && $test$plusargs("GC_BAR_LOG"))
+                $display("[GC-BAR] %s op=%0d pc=%0d kind=%0d drop=%0d owner=%h", bar_log_r ? "log" : "permit",
+                         container_op_r, cur_pc_r, bar_kind_r, u_bar.drop, bar_owner_r);
+`endif
             // B6: a log refused by a full SSB.
             if (bar_overflow) gc_force_major_r <= 1'b1;
             // Phase 2 has no barrier at the excore slot port: any trap

@@ -11,6 +11,9 @@ spans several collections while its dict is old. Every value is read back.
 """
 
 
+G = ["module-global-initial", 0]
+
+
 class Box:
     pass
 
@@ -20,6 +23,11 @@ def churn(n):
     for i in range(n):
         t = ("churn", i, [i, i])
     return t
+
+
+def set_global(it):
+    global G
+    G = ["module-global-young", it]
 
 
 def managed_entry():
@@ -52,8 +60,16 @@ def managed_entry():
         del b.d
         b.d = ("dd", it)
         u.update({key: ["upd", it], "u1": ("u1", it)})
-        churn(12)
+        set_global(it)
+        # A young owner the barrier logs after the run it came from was
+        # left behind: it is not dropped (B5) and it dies before the next
+        # minor, which must skip it (B4).
+        tmp = [0, 0, 0, 0]
+        churn(12 + it % 5)
+        tmp[it % 4] = ["tmp-young", it]
+        tmp = None
     big = {i: [i, "big"] for i in range(200)}
+    bl = [[i, "bl"] for i in range(200)]
     total = 0
     for i in range(40):
         for j in range(6):
@@ -64,7 +80,8 @@ def managed_entry():
     total = total + b.a[1] + b.d[1] + b.b + b.c
     total = total + u[key][1] + u["u1"][1] + u["u0"] + u["u2"]
     for i in range(200):
-        total = total + big[i][0]
+        total = total + big[i][0] + bl[i][0]
+    total = total + G[1]
     return total
 
 
