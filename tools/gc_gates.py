@@ -497,6 +497,7 @@ def gate_G6(ctx: Context) -> Result:
 PERF_RE = re.compile(r"^PERF instr=(\d+)", re.M)
 LOG_LIVE_RE = re.compile(r"^\[GC-LOG\] .*\blive=(\d+)", re.M)
 TB_MAX_SCALE = 1 << 20      # the testbench clamps MAX_CYCLES * scale
+K1_BUDGET = 50_000_000_000  # G7 mode b: most collection cycles a K=1 run may take
 
 
 def prev_prime(n: int) -> int:
@@ -562,6 +563,7 @@ def gate_G7(ctx: Context) -> Result:
     tests = hw_tests.gate_tests(sp, all_tests())
     recipe_heap = sp.get("recipe_heap", [])
     bump_cursor = sp.get("bump_cursor", [])
+    no_boundary = sp.get("no_boundary", [])
     base_names = hw_tests.baseline_names()
     gc_on = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40"
     # Instruction counts and cycles from this run's G4 logs; measure if absent.
@@ -578,8 +580,15 @@ def gate_G7(ctx: Context) -> Result:
     run_set = [t for t in tests if t.name not in no_count]
     quick_set = {t.name for t in hw_tests.gate_tests(hw_tests.gate_spec("G7", "quick"), all_tests())}
 
+    def pause_of(name: str) -> int:
+        """About one collection's cycles: the G4 pause, at least 400k."""
+        return max(400_000, hw_tests.parse_gc_line(g4.get(name, "")).get("max_pause", 0))
+
     def k_for(name: str) -> int:
-        if name in quick_set or instr[name] < 50:
+        # [gc] tests collect after every instruction unless that would take
+        # more than K1_BUDGET cycles of collection (a large live heap, e.g.
+        # gc-wide-live-list); those get about 50 collections like the rest.
+        if instr[name] < 50 or (name in quick_set and instr[name] * pause_of(name) <= K1_BUDGET):
             return 1
         return prev_prime(instr[name] // 50)
 
@@ -589,12 +598,13 @@ def gate_G7(ctx: Context) -> Result:
         poison = " +GC_POISON=1" if mode == "c" else ""
         for t in run_set:
             n = t.name
-            if matches(n, bump_cursor):
+            if matches(n, bump_cursor) or (mode == "b" and matches(n, no_boundary)):
                 extra[n] = f"+MAX_CYCLES_SCALE={TB_MAX_SCALE}{poison}"
             elif mode == "b":
                 k = k_for(n)
                 want = instr[n] // max(k, 1)
-                scale = (cycles[n] + (want + 2) * 400_000) // max(1, cycles[n]) + 2
+                # A deep or large live heap takes millions of cycles per collection.
+                scale = (cycles[n] + (want + 2) * pause_of(n)) // max(1, cycles[n]) + 2
                 extra[n] = f"+GC_AT_BOUNDARY_EVERY={k} +MAX_CYCLES_SCALE={min(scale, TB_MAX_SCALE)}"
             elif matches(n, recipe_heap):
                 extra[n] = f"+GC_EVERY_N_RUNS=1 +MAX_CYCLES_SCALE={TB_MAX_SCALE}{poison}"
@@ -625,7 +635,8 @@ def gate_G7(ctx: Context) -> Result:
                 # completed instruction.
                 need = min(50, max(instr[t.name] - 1, 1))
                 r = by_test.get(t.name)
-                if not matches(t.name, bump_cursor) and got < need and r and r.passed:
+                if (not matches(t.name, bump_cursor) and not matches(t.name, no_boundary)
+                        and got < need and r and r.passed):
                     few.append(f"{t.name}: {got} boundary collections (K={k_for(t.name)}, "
                                f"{instr[t.name]} instr)")
         lines.append(f"{name}: {len(res)} runs, {len(diffs)} golden diffs, {len(bad)} failing GC tests, "
