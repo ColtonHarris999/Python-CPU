@@ -528,7 +528,9 @@ transactions; `bench_churn` 47 collections, max pause 38,443 (44,142).
 
 ## Generational collection (planned)
 
-Status: Phase 0 (tests and tools) and Phase 1 (the oracle) only; no RTL yet. The design is a
+Status: Phase 0 (tests and tools) and Phase 1 (the oracle) only; no RTL yet.
+The protocol the RTL will implement is specified in
+[gc_gen_protocol.md](gc_gen_protocol.md). The design is a
 non-moving, sticky-mark-bit collector: a set bitmap bit survives the sweep
 and means "old", a minor collection marks from the roots plus a remembered
 set of old owners the program wrote into, and the marker's existing
