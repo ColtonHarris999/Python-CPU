@@ -87,8 +87,9 @@ CACHING_CONFIGS = [
 ]
 # Areas whose fixtures run many times longer uncached: the compiler (a
 # compile is 10-50x anything else) and the GC loops, which fill the heap on
-# purpose. Their caching = true entries stand for the area at cache off.
-SAMPLED_AREAS = {"compiler", "gc"}
+# purpose (gc-gen: two of its fixtures build 20,000-slot and 2,000-deep
+# structures). Their caching = true entries stand for the area at cache off.
+SAMPLED_AREAS = {"compiler", "gc", "gc-gen"}
 
 PASS_RE = re.compile(
     r"^PASS: \S* \S+ (?:tag=(?P<tag>\d+) value=0x(?P<value>[0-9a-fA-F]+)"

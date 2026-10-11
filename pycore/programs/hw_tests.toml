@@ -636,18 +636,19 @@ gc-wide-live-list = { src = "gc_wide_live_list", cycles = 10_000_000, plusargs =
 # still there. They pass with today's full collector; with +GC_GEN=1 they are
 # the barrier's per-site regression set. Same PR-tier budget as [gc]
 # (gen-wide-list, a 20,000-slot list, is the exception, like
-# gc-wide-live-list).
+# gc-wide-live-list). gen-wide-list and gen-deep-chain run uncached only in
+# full acceptance: like [gc], the area is sampled at cache off.
 [gc-gen]
-gen-list-store = { src = "gen_list_store", cycles = 1_000_000, plusargs = "+GC_EN=1" }
-gen-list-append = { src = "gen_list_append", cycles = 1_000_000, plusargs = "+GC_EN=1" }
-gen-dict-store = { src = "gen_dict_store", cycles = 1_000_000, plusargs = "+GC_EN=1" }
-gen-store-attr = { src = "gen_store_attr", cycles = 1_000_000, plusargs = "+GC_EN=1" }
-gen-store-global = { src = "gen_store_global", cycles = 1_000_000, plusargs = "+GC_EN=1" }
-gen-set-add = { src = "gen_set_add", cycles = 1_000_000, plusargs = "+GC_EN=1" }
-gen-dict-update = { src = "gen_dict_update", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-list-store = { src = "gen_list_store", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
+gen-list-append = { src = "gen_list_append", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
+gen-dict-store = { src = "gen_dict_store", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
+gen-store-attr = { src = "gen_store_attr", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
+gen-store-global = { src = "gen_store_global", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
+gen-set-add = { src = "gen_set_add", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
+gen-dict-update = { src = "gen_dict_update", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
 gen-wide-list = { src = "gen_wide_list", cycles = 10_000_000, plusargs = "+GC_EN=1" }
-gen-two-owners = { src = "gen_two_owners", cycles = 1_000_000, plusargs = "+GC_EN=1" }
-gen-delete = { src = "gen_delete", cycles = 1_000_000, plusargs = "+GC_EN=1" }
+gen-two-owners = { src = "gen_two_owners", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
+gen-delete = { src = "gen_delete", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
 gen-deep-chain = { src = "gen_deep_chain", cycles = 2_000_000, plusargs = "+GC_EN=1" }
 
 # Long GC loops: steady-state plateaus, allocation-site churn, benches and
