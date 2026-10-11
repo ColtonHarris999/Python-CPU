@@ -68,6 +68,7 @@ module pycore_excore_system #(
     logic          sp_req, sp_we, sp_ack, sp_gnt, sp_fault;
     logic [31:0]   sp_addr;
     logic [127:0]  sp_wdata, sp_rdata;
+    logic          ex_wr;  // an accepted excore write (generational guard)
 
     // ---- trap_req / trap_res between pycore_core and trap_mailbox --------
     logic          trap_req_valid;
@@ -179,6 +180,8 @@ module pycore_excore_system #(
         .trap_res_push_count_i(trap_res_push_count),
         .trap_res_heap_ptr_i(trap_res_heap_ptr),
         .trap_res_entries_i(trap_res_entries),
+        .ex_wr_i(ex_wr),
+        .ex_wr_addr_i(sp_addr),
         .trap_out_o(trap_out_o),
         .trap_code_o(trap_code_o),
         .cycle_count_o(cycle_count_o),
@@ -298,6 +301,7 @@ module pycore_excore_system #(
     localparam logic OWNER_PYCORE = 1'b0;
     localparam logic OWNER_EXCORE = 1'b1;
     logic mem_owner_r;
+    assign ex_wr = sp_req && sp_we && sp_gnt && (mem_owner_r == OWNER_EXCORE);
 
     // Hide mailbox ready until L1D writeback-invalidate finishes; hide
     // mailbox trap_res until L1D invalidate finishes. Owner still flips

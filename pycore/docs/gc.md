@@ -609,10 +609,9 @@ What Phase 3 added (the barrier at the pycore container ops):
   forces a major (B6). A collection that ends, of either kind, empties the
   SSB, the filter and the windows.
 - **Guard.** The Phase 2 address compare now also asks whether a
-  container-leg write lies in a window the current operation declared.
-  Writes by the container accelerator and the excore declare nothing yet,
-  so a grow or an in-place extend into an old container still forces a
-  major (Phase 4).
+  container-leg or CA write lies in a window the current operation
+  declared. On the two-core top the same compare watches the excore's
+  writes on the L2 slot port (Phase 4).
 - **Sites** (`gc_gen_protocol.md` §4 S1). Each fires in the phase that
   latches the owner's buffer, table or order pointer, before its first
   write: `CONT_STORE_LIST` (the slot), `CONT_LIST_APPEND` (header and slot),
@@ -642,7 +641,7 @@ What Phase 3 added (the barrier at the pycore container ops):
   a minor. `gen-barrier-loop` makes its containers old once and then
   stores through every non-growing site in a loop with churn, so boundary
   minors land between the stores and the reads (`gen-barrier-loop-small`
-  runs it on a 256 KB heap, where some logged owners are young but older
+  runs it on a 320 KB heap, where some logged owners are young but older
   than the current run). `gen-unpack-loop` covers `DICT_UPDATE`,
   `SET_UPDATE` and comprehension appends, which write a container the same
   statement built: they reach an old owner only when a collection lands
@@ -680,6 +679,45 @@ What Phase 3 added (the barrier at the pycore container ops):
   `list.append` or `dict.update` is not one of these sites (it goes to the
   container accelerator or the excore), so the ordinary `[gc]` tests
   reach the sites mostly on young containers.
+
+Phase 4 (`gc_gen_protocol.md` §4 S2, S3) logs the container accelerator's
+commands and the excore's traps:
+
+- **CA.** When the core issues a command it logs the CA's owner (`ca_a_r`,
+  the list, dict or set, never the instance of a `STORE_ATTR`) with its
+  header as the window: `L_APPEND` and `L_EXTEND` as lists, `D_GROW` with a
+  48-byte header, `S_GROW` with 32 bytes. `L_DEL` only permits the header.
+  The CA declares the old buffer itself (`win_v_o`) once `L_EXTEND` or
+  `L_DEL` has read its pointer, since both can write it in place. Every
+  other CA write goes to the buffer or table it is building at the bump
+  pointer, which the guard already ignores.
+- **Excore.** When pycore hands a trap to the excore it logs E0 with its
+  header: traps 9 and 10 as a list, 11 and 19 as a dict, 13 and 14 as a
+  set; trap 12 permits the header. The excore writes nothing else that
+  existed before the trap. The firmware declares no windows (the protocol
+  left S3a open), so an excore write into E0's existing buffer or table is
+  a guard hit and the next collection is a major. That only happens with
+  the CA off (`+CA_EN=0`), or for `SET_UPDATE` and `DICT_UPDATE` on a
+  container a collection made old between its build and the update. With
+  the CA on, GG2 sees no guard hits at all. `gen-ca-loop-excore` with the
+  CA off has 74 majors out of 119 collections, against 2 of 119 with it on.
+  A trap no longer forces a major by itself.
+- **Counters.** The end-of-run `GC-GEN` line adds `guard_ex`, the excore's
+  guard hits; `guard_cont` now covers the container leg and the CA, and
+  GG3 still requires it to be zero.
+- **Fixtures.** `gen-ca-loop` makes lists, dicts, sets and instances old,
+  then in a loop grows lists past capacity, extends into spare capacity,
+  deletes from the middle, adds dict keys, set elements and instance
+  attributes, with churn between iterations. It runs on the single-core
+  top, on the two-core top (where the CA still serves these), and on the
+  two-core top with `+CA_EN=0`, where the excore does.
+
+  | Mutant | Bug | Killed by |
+  | --- | --- | --- |
+  | 93 | a CA command does not log | `gen-ca-loop`, sim |
+  | 94 | the CA does not declare the old buffer | `gen-ca-loop`, GG3 |
+  | 95 | a trap does not log E0 | `gen-ca-loop-excore`, oracle |
+  | 96 | no guard on the excore port | survives: every excore write to existing memory goes to E0, which the trap logs. The guard is a backstop for a missing log |
 
 The nursery budget comes in a later phase; until then a minor runs where a
 full collection would.

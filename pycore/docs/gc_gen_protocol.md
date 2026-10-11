@@ -1,8 +1,9 @@
 # Generational GC protocol
 
-Status: implemented behind `+GC_GEN=1` for the guard (Phase 2) and for the
-barrier at the pycore container-op sites (§4 S1, Phase 3); the CA and
-excore sites (S2, S3) still force a major through the guard. Each rule has
+Status: implemented behind `+GC_GEN=1`: the guard (Phase 2), the barrier
+at the pycore container-op sites (§4 S1, Phase 3), and the CA and excore
+sites (S2, S3, Phase 4). For S3a the firmware declares no windows, so an
+excore write into E0's existing buffer is a guard hit. Each rule has
 a number that the oracle
 (`pycore/tools/gc_model.py`), the in-RTL `[GC-INV]` checks and the tests
 cite. "The plan" means the generational GC plan; `gc.md` is the collector
@@ -209,7 +210,9 @@ port bypasses the core's mux, so the guard is duplicated there (plan
   through a new memory-mapped `bar_permit` register once it has read the
   buffer, table or order pointer. That is two stores per window, on a path
   that is already slow. The alternative, a pre-read by the core before
-  dispatch, costs pycore cycles on every trap. **Open for review.**
+  dispatch, costs pycore cycles on every trap. **Built: neither.** The core
+  declares E0's header only, and an in-place excore write is a guard hit
+  (a forced major). With the CA on, no GG2 run has one.
 - **S3b.** With the CA on (the default), traps 9-13 go to the CA and the
   excore never sees them.
 

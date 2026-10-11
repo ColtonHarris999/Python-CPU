@@ -116,6 +116,10 @@ module pycore_core #(
     input  logic [1:0]                    trap_res_push_count_i,
     input  logic [31:0]                   trap_res_heap_ptr_i,
     input  logic [PYCORE_ENTRY_WIDTH-1:0] trap_res_entries_i [0:MAX_RES_ENTRIES-1],
+    // Excore slot-port writes, one cycle per accepted write, for the
+    // generational guard (gc_gen_protocol.md S3). Tied off when EXCORE_EN=0.
+    input  logic                          ex_wr_i,
+    input  logic [31:0]                   ex_wr_addr_i,
     // status
     output logic                          trap_out_o,
     output logic [4:0]                    trap_code_o,
@@ -428,7 +432,8 @@ module pycore_core #(
     logic         gc_sticky;
     logic         gc_minor_now;
     logic         gc_guard_hit;
-    logic [31:0]  gc_guard_hits_cont_r;  // guard hits on the container leg
+    logic [31:0]  gc_guard_hits_cont_r;  // guard hits on the container leg and the CA
+    logic [31:0]  gc_guard_hits_ex_r;    // guard hits on the excore slot port
     // Barrier pulses from the container-op sites (gc_gen_protocol.md §4 S1):
     // one-cycle, raised in the cycle the site issues its first write into
     // the owner. bar_win_r holds up to three {hi, lo} windows.
@@ -1147,6 +1152,8 @@ module pycore_core #(
     logic        ca_req, ca_we;
     logic [31:0] ca_addr;
     logic [127:0] ca_wdata;
+    logic        ca_win_v;
+    logic [63:0] ca_win;
 
     pycore_ca u_ca (
         .clk_i(clk_i),
@@ -1174,7 +1181,9 @@ module pycore_core #(
         .wdata_o(ca_wdata),
         .ack_i(dmem_ack_i && (state_r == S_CA)),
         .fault_i(dmem_fault_i),
-        .rdata_i(dmem_rdata_i)
+        .rdata_i(dmem_rdata_i),
+        .win_v_o(ca_win_v),
+        .win_o(ca_win)
     );
     assign ca_cmd_valid = ca_cmd_pend_r && !ca_issued_r && (state_r == S_CA);
     assign ca_dr_ready  = (state_r == S_CA) && ca_dr_valid;
@@ -2303,10 +2312,21 @@ module pycore_core #(
                                                                  : PYCORE_HEAP_BASE)) &&
                        (dmem_addr_o < gc_heap_limit_eff) &&
                        !((dmem_addr_o >= gc_young_from) && (dmem_addr_o < heap_limit_r));
-    wire gc_guard_cont = container_dmem_active && (state_r == S_CONTAINER);
+    // The excore's slot-port writes (S3), while pycore is frozen in a trap
+    // and its own port is idle. Mutant 96 does not guard them.
+    wire gc_guard_ex = gc_gen_sim && ex_wr_i && (gc_mutant_sim != 8'd96) &&
+                       (ex_wr_addr_i >= PYCORE_HEAP_BASE) &&
+                       (ex_wr_addr_i < gc_heap_limit_eff) &&
+                       !((ex_wr_addr_i >= gc_young_from) && (ex_wr_addr_i < heap_limit_r));
+    // Writes on the container leg and by the CA, whose windows the pycore
+    // sites declare; GG3 requires that none of them is a guard hit.
+    wire gc_guard_cont = (container_dmem_active && (state_r == S_CONTAINER)) || ca_dmem_active;
     assign gc_guard_hit = bar_guard_hit;
-    // An operation begins in its first S_CONTAINER cycle.
-    assign bar_op_begin = (state_r == S_CONTAINER) && (container_phase_r == CP_INIT);
+    // An operation begins in its first S_CONTAINER cycle, or when the core
+    // hands a trap to the excore. A CA command continues the container
+    // operation that issued it.
+    assign bar_op_begin = ((state_r == S_CONTAINER) && (container_phase_r == CP_INIT)) ||
+                          (state_r == S_TRAP_MARSHAL);
 
     pycore_gc_barrier u_bar (
         .clk_i(clk_i),
@@ -2323,9 +2343,9 @@ module pycore_core #(
         // B5: an owner the current run allocated since the last collection.
         .drop_lo_i(gc_young_lo_r),
         .drop_hi_i(heap_ptr_r),
-        .wr_i(gc_guard_wr),
-        .wr_cont_i(gc_guard_cont),
-        .wr_addr_i(dmem_addr_o),
+        .wr_i(gc_guard_wr || gc_guard_ex),
+        .wr_cont_i(gc_guard_cont || gc_guard_ex),
+        .wr_addr_i(gc_guard_ex ? ex_wr_addr_i : dmem_addr_o),
         .guard_hit_o(bar_guard_hit),
         // E4: a collection that ends empties the SSB, the filter and the
         // windows, whatever its kind (a major ignores the SSB, an abandon
@@ -2361,6 +2381,7 @@ module pycore_core #(
             gc_majors_r      <= '0;
             gc_guard_hits_r  <= '0;
             gc_guard_hits_cont_r <= '0;
+            gc_guard_hits_ex_r   <= '0;
         end else if (gc_gen_sim) begin
             gc_hp_q    <= heap_ptr_r;
             gc_alloc_q <= (state_r == S_GC_ALLOC);
@@ -2385,10 +2406,12 @@ module pycore_core #(
                 gc_force_major_r <= 1'b1;
                 if (!dmem_busy_r) gc_guard_hits_r <= gc_guard_hits_r + 32'd1;
                 if (!dmem_busy_r && gc_guard_cont) gc_guard_hits_cont_r <= gc_guard_hits_cont_r + 32'd1;
+                if (gc_guard_ex) gc_guard_hits_ex_r <= gc_guard_hits_ex_r + 32'd1;
 `ifndef SYNTHESIS
                 if (!dmem_busy_r && $test$plusargs("GC_GUARD_LOG"))
-                    $display("[GC-GUARD] state=%0d op=%0d ca=%0d phase=%0d pc=%0d addr=%h", state_r, ca_op_r,
-                             container_op_r, container_phase_r, cur_pc_r, dmem_addr_o);
+                    $display("[GC-GUARD] state=%0d op=%0d ca=%0d phase=%0d pc=%0d ex=%0d addr=%h", state_r,
+                             container_op_r, ca_op_r, container_phase_r, cur_pc_r, gc_guard_ex,
+                             gc_guard_ex ? ex_wr_addr_i : dmem_addr_o);
 `endif
             end
 `ifndef SYNTHESIS
@@ -2398,9 +2421,6 @@ module pycore_core #(
 `endif
             // B6: a log refused by a full SSB.
             if (bar_overflow) gc_force_major_r <= 1'b1;
-            // Phase 2 has no barrier at the excore slot port: any trap
-            // the excore runs may write old memory.
-            if (state_r == S_TRAP_MARSHAL) gc_force_major_r <= 1'b1;
             // R1: a release forces a major. Mutant 67 does not.
             if (gc_rel_zero_r && (gc_mutant_sim != 8'd67)) gc_force_major_r <= 1'b1;
             // A minor that leaves no run large enough for the allocation
@@ -4561,6 +4581,33 @@ module pycore_core #(
                 // per the memory-ownership protocol until trap_res arrives.
                 S_TRAP_MARSHAL: begin
                     if (trap_req_ready_i) begin
+                        // S3: the excore writes only E0 among existing
+                        // objects. Log it (permit for LIST_DELETE) with its
+                        // header; its buffer, table or order array is not
+                        // declared, so an in-place write there is a guard
+                        // hit (a forced major). Mutant 95 logs nothing.
+                        unique case (trap_marshal_code_r)
+                            PY_TRAP_LIST_GROW, PY_TRAP_LIST_EXTEND: begin
+                                `BAR_LOG(8'd95, BAR_K_LIST, trap_marshal_entries_r[0][31:0],
+                                         `BAR_WIN(trap_marshal_entries_r[0][31:0],
+                                                  trap_marshal_entries_r[0][31:0] + 32'd32), 64'd0, 64'd0)
+                            end
+                            PY_TRAP_LIST_DELETE: begin
+                                `BAR_PERMIT(8'd255, `BAR_WIN(trap_marshal_entries_r[0][31:0],
+                                                             trap_marshal_entries_r[0][31:0] + 32'd32), 64'd0, 64'd0)
+                            end
+                            PY_TRAP_DICT_GROW, PY_TRAP_DICT_UPDATE: begin
+                                `BAR_LOG(8'd95, BAR_K_DICT, trap_marshal_entries_r[0][31:0],
+                                         `BAR_WIN(trap_marshal_entries_r[0][31:0],
+                                                  trap_marshal_entries_r[0][31:0] + 32'd48), 64'd0, 64'd0)
+                            end
+                            PY_TRAP_SET_GROW, PY_TRAP_SET_UPDATE: begin
+                                `BAR_LOG(8'd95, BAR_K_SET, trap_marshal_entries_r[0][31:0],
+                                         `BAR_WIN(trap_marshal_entries_r[0][31:0],
+                                                  trap_marshal_entries_r[0][31:0] + 32'd32), 64'd0, 64'd0)
+                            end
+                            default: ;
+                        endcase
                         trap_marshal_pending_r <= 1'b0;
                         trap_res_seen_r        <= 1'b0;
                         trap_wait_push_idx_r   <= '0;
@@ -5052,8 +5099,36 @@ module pycore_core #(
                 S_HALT: ;  // state_next = S_HALT (from always_comb)
 
                 S_CA: begin
-                    if (ca_cmd_valid && ca_cmd_ready)
+                    if (ca_cmd_valid && ca_cmd_ready) begin
                         ca_issued_r <= 1'b1;
+                        // S2: the CA's owner is ca_a_r. Its header is the
+                        // only existing memory the core can name; the CA
+                        // declares the old buffer itself (ca_win_v). L_DEL
+                        // moves values already in the list (permit).
+                        // Mutant 93 logs nothing.
+                        unique case (ca_op_r)
+                            PY_CA_L_DEL: begin
+                                `BAR_PERMIT(8'd255, `BAR_WIN(ca_a_r[31:0], ca_a_r[31:0] + 32'd32), 64'd0, 64'd0)
+                            end
+                            PY_CA_D_GROW: begin
+                                `BAR_LOG(8'd93, BAR_K_DICT, ca_a_r[31:0],
+                                         `BAR_WIN(ca_a_r[31:0], ca_a_r[31:0] + 32'd48), 64'd0, 64'd0)
+                            end
+                            PY_CA_S_GROW: begin
+                                `BAR_LOG(8'd93, BAR_K_SET, ca_a_r[31:0],
+                                         `BAR_WIN(ca_a_r[31:0], ca_a_r[31:0] + 32'd32), 64'd0, 64'd0)
+                            end
+                            default: begin
+                                `BAR_LOG(8'd93, BAR_K_LIST, ca_a_r[31:0],
+                                         `BAR_WIN(ca_a_r[31:0], ca_a_r[31:0] + 32'd32), 64'd0, 64'd0)
+                            end
+                        endcase
+                    end
+                    // Mutant 94: the old buffer is not declared.
+                    if (ca_win_v && (gc_mutant_sim != 8'd94)) begin
+                        bar_permit_r <= 1'b1;
+                        bar_win_r    <= {64'd0, 64'd0, ca_win};
+                    end
                     if (ca_dr_valid) begin
                         ca_cmd_pend_r <= 1'b0;
                         ca_issued_r   <= 1'b0;

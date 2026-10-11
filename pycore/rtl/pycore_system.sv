@@ -142,6 +142,8 @@ module pycore_system #(
         .trap_res_push_count_i('0),
         .trap_res_heap_ptr_i('0),
         .trap_res_entries_i('{'0, '0}),
+        .ex_wr_i(1'b0),
+        .ex_wr_addr_i(32'd0),
         .trap_out_o(trap_out_o),
         .trap_code_o(trap_code_o),
         .cycle_count_o(cycle_count_o),

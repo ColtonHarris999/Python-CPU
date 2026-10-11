@@ -701,7 +701,7 @@ def check_sequence_dir(path: str) -> tuple[str, int, int, list[str]]:
 
 
 GEN_SUMMARY = re.compile(r"^GC-GEN minors=(\d+) majors=(\d+) guard_hits=(\d+) guard_cont=(\d+) "
-                         r"logs=(\d+) dups=(\d+) drops=(\d+) overflows=(\d+)", re.M)
+                         r"guard_ex=(\d+) logs=(\d+) dups=(\d+) drops=(\d+) overflows=(\d+)", re.M)
 
 
 def gate_GG2(ctx: Context) -> Result:
@@ -741,7 +741,7 @@ def gate_GG2(ctx: Context) -> Result:
                 rel = rel.relative_to(ctx.out) if rel.is_relative_to(ctx.out) else rel
                 probs += [f"{rel}/{x}" for x in ps]
         minors_total += minors
-        tot = [0] * 8
+        tot = [0] * 9
         gg3: list[str] = []
         for r in res:
             mm = GEN_SUMMARY.search(r.text())
@@ -754,8 +754,8 @@ def gate_GG2(ctx: Context) -> Result:
         lines.append(f"GG2_{arm}: {len(res)} runs, {len(bad)} failing, {n} dumps ({minors} minors), "
                      f"{len(probs)} oracle problems, {len(gcp)} shadow/invariant")
         lines.append(f"GG2_{arm}: barrier minors={tot[0]} majors={tot[1]} guard_hits={tot[2]} "
-                     f"(container {tot[3]}) logs={tot[4]} dups={tot[5]} drops={tot[6]} "
-                     f"overflows={tot[7]}")
+                     f"(container {tot[3]}, excore {tot[4]}) logs={tot[5]} dups={tot[6]} "
+                     f"drops={tot[7]} overflows={tot[8]}")
         problems += [f"GG2_{arm}: {x}" for x in bad + probs + gcp + gg3]
     if minors_total == 0:
         problems.append("GG2 ran no minor collection")

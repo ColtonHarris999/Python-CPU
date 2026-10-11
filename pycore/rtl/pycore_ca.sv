@@ -41,7 +41,12 @@ module pycore_ca (
     output logic [127:0]                  wdata_o,
     input  logic                          ack_i,
     input  logic                          fault_i,
-    input  logic [127:0]                  rdata_i
+    input  logic [127:0]                  rdata_i,
+    // Generational barrier (gc_gen_protocol.md S2a): a one-cycle pulse with
+    // the old buffer [lo, hi) once L_EXTEND or L_DEL has read its pointer.
+    // Both may write it in place; the core declares it as a window.
+    output logic                          win_v_o,
+    output logic [63:0]                   win_o
 );
     typedef enum logic [6:0] {
         PH_IDLE,
@@ -77,6 +82,8 @@ module pycore_ca (
     logic [3:0]  elem_tag_r;
     logic [127:0] elem_val_r;
     logic        dr_valid_r, dr_ok_r, dr_short_r, dr_fault_r;
+    logic        win_v_r;
+    logic [63:0] win_r;
     logic [31:0] dr_heap_r, dr_need_r;
 
     assign cmd_ready_o = (phase_r == PH_IDLE) && !dr_valid_r;
@@ -92,6 +99,8 @@ module pycore_ca (
     assign we_o        = we_r;
     assign addr_o      = addr_r;
     assign wdata_o     = wdata_r;
+    assign win_v_o     = win_v_r;
+    assign win_o       = win_r;
 
     logic        we_r;
     logic [31:0] addr_r;
@@ -225,7 +234,10 @@ module pycore_ca (
             hold_r      <= '0;
             elem_tag_r  <= '0;
             elem_val_r  <= '0;
+            win_v_r     <= 1'b0;
+            win_r       <= '0;
         end else begin
+            win_v_r <= 1'b0;
             if (dr_valid_r && dr_ready_i) begin
                 dr_valid_r <= 1'b0;
                 dr_ok_r    <= 1'b0;
@@ -316,6 +328,8 @@ module pycore_ca (
                     end
                     LE_ITEM: begin
                         old_buf_r <= rdata_i[31:0];
+                        win_v_r   <= 1'b1;
+                        win_r     <= {rdata_i[31:0] + (cap_r << 5), rdata_i[31:0]};
                         if (src_tag_r == PY_TAG_TUPLE) begin
                             src_len_r <= src_val_r[95:64];
                             src_buf_r <= src_val_r[31:0];
@@ -395,6 +409,8 @@ module pycore_ca (
                     end
                     LD_ITEM: begin
                         old_buf_r <= rdata_i[31:0];
+                        win_v_r   <= 1'b1;
+                        win_r     <= {rdata_i[31:0] + (cap_r << 5), rdata_i[31:0]};
                         phase_r   <= LD_PLAN;
                     end
                     LD_RV: begin
