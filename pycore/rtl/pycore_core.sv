@@ -2073,7 +2073,11 @@ module pycore_core #(
     // One collection per request, plus a major after a minor that did not
     // free enough (a minor keeps tenured garbage).
     assign gc_alloc_collect = (state_r == S_GC_ALLOC) && (gc_alloc_phase_r == 4'd0) &&
-                              (!gc_collected_r || (gc_gen_sim && gc_minor_r)) &&
+                              // After a minor, collect again only when it forced the
+                              // next one to be a major (it could not satisfy this
+                              // allocation): a run switch that forces collections
+                              // would otherwise repeat minors forever.
+                              (!gc_collected_r || (gc_gen_sim && gc_minor_r && gc_force_major_r)) &&
                               gc_auto_sim && (gc_need_bytes_r != 32'd0) &&
                               (((run_list_head_r == 32'd0) &&
                                 (gc_run_idx_r >= gc_run_onchip_lat_r) &&

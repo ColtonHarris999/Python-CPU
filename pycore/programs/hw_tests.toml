@@ -652,9 +652,9 @@ gen-delete = { src = "gen_delete", cycles = 1_000_000, plusargs = "+GC_EN=1", ca
 gen-deep-chain = { src = "gen_deep_chain", cycles = 2_000_000, plusargs = "+GC_EN=1" }
 gen-release = { src = "gen_release", cycles = 2_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
 gen-abandon = { src = "gen_abandon", cycles = 4_000_000, plusargs = "+GC_EN=1 +GC_ONCHIP=32 +GC_STACK_LIMIT=32 +GC_RESCAN_LIMIT=8 +HEAP_DYN_BYTES=262144" }
-# gen-dict-store with a 4-entry remembered set: under +GC_GEN=1 the SSB
+# gen-dict-update with a one-entry remembered set: under +GC_GEN=1 the SSB
 # overflows, which must force the next collection to be a major (B6).
-gen-remset-overflow = { src = "gen_dict_store", cycles = 1_000_000, plusargs = "+GC_EN=1 +GC_REMSET_LIMIT=4", caching = true }
+gen-remset-overflow = { src = "gen_dict_update", cycles = 1_000_000, plusargs = "+GC_EN=1 +GC_REMSET_LIMIT=1", caching = true }
 
 # Long GC loops: steady-state plateaus, allocation-site churn, benches and
 # compile loops (millions of cycles each, up to ~150M uncached). Not in

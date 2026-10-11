@@ -634,7 +634,7 @@ What Phase 3 added (the barrier at the pycore container ops):
   hits, the SSB size and the pushes; the end-of-run `GC-GEN` line counts
   minors, majors, guard hits, logs, filter hits, B5 drops and overflows.
   `+GC_GUARD_LOG` prints every guard hit with its state and address.
-  `+GC_REMSET_LIMIT=N` shrinks the SSB (`gen-remset-overflow` uses 4).
+  `+GC_REMSET_LIMIT=N` shrinks the SSB (`gen-remset-overflow` uses 1).
 - **GG3** is checked on the GG2 runs: no container-leg write may hit the
   guard.
 - **Mutants** 70-79 (each logging site skips its log: list store, list
