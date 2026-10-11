@@ -115,6 +115,13 @@
                                     if (!container_dmem_pending_r) begin
                                         container_old_table_r <= cont_dict_table_ptr;
                                         container_old_slots_r <= container_slot_count_r;
+                                        // Barrier: the set, its header (the
+                                        // table pointer included) and the old
+                                        // table. A grown table is young.
+                                        `BAR_LOG(8'd78, BAR_K_SET, container_base_r,
+                                            `BAR_WIN(container_base_r, container_base_r + 32'd32),
+                                            `BAR_WIN(cont_dict_table_ptr, cont_dict_table_ptr + (container_slot_count_r << 5)),
+                                            64'd0)
                                         if (container_src_kind_r == BULK_SRC_TUPLE) begin
                                             container_phase_r <= CP_BULK_SRC_HDR;
                                         end else begin
@@ -690,6 +697,10 @@
                                     if (!container_dmem_pending_r) begin
                                         container_old_table_r <= cont_dict_table_ptr;
                                         container_old_order_r <= cont_dict_order_ptr;
+                                        // Barrier: the dict, its header (the
+                                        // pointer word included), old order
+                                        // array and old table.
+                                        `BAR_LOG_DICT(8'd79, container_base_r, cont_dict_table_ptr, cont_dict_order_ptr, container_slot_count_r)
                                         container_dmem_addr_r    <= container_src_base_r;
                                         container_dmem_we_r      <= 1'b0;
                                         container_dmem_pending_r <= 1'b1;

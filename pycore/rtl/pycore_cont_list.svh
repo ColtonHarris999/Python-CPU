@@ -1188,6 +1188,11 @@
                                         container_buf_r         <= cont_obitem_buf;
                                         container_tag_r        <= cont_rf_rs1_tag;
                                         container_val_r        <= cont_rf_rs1_val;
+                                        // Barrier: the list, its buffer slot.
+                                        `BAR_LOG(8'd70, BAR_K_LIST, container_base_r,
+                                            `BAR_WIN(pycore_list_val_addr(cont_obitem_buf, cont_key_u_st[31:0]),
+                                                     pycore_list_val_addr(cont_obitem_buf, cont_key_u_st[31:0]) + 32'd32),
+                                            64'd0, 64'd0)
                                         // Write value slot into the buffer.
                                         container_dmem_addr_r  <= pycore_list_val_addr(
                                             cont_obitem_buf,
@@ -1257,6 +1262,10 @@
                                             // any commit (no ob_item needed).
                                             if (cont_key_u_st + 64'd1
                                                     == cont_hdr_len) begin
+                                                // Barrier: permit the header.
+                                                `BAR_PERMIT(8'd90,
+                                                    `BAR_WIN(container_base_r, container_base_r + 32'd32),
+                                                    64'd0, 64'd0)
                                                 container_dmem_addr_r  <=
                                                     container_base_r;
                                                 container_dmem_we_r     <= 1'b1;
@@ -1369,6 +1378,13 @@
                                         // container_rd_data_r = {0, ob_item}.
                                         container_buf_r        <= cont_obitem_buf;
                                         container_tag_r         <= cont_rs2_tag;
+                                        // Barrier: the list, its header and
+                                        // the new slot.
+                                        `BAR_LOG(8'd71, BAR_K_LIST, container_base_r,
+                                            `BAR_WIN(container_base_r, container_base_r + 32'd32),
+                                            `BAR_WIN(pycore_list_val_addr(cont_obitem_buf, cont_list_append_idx),
+                                                     pycore_list_val_addr(cont_obitem_buf, cont_list_append_idx) + 32'd32),
+                                            64'd0)
                                         container_dmem_addr_r   <= pycore_list_val_addr(
                                             cont_obitem_buf,
                                             cont_list_append_idx);

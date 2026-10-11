@@ -58,6 +58,13 @@ module pycore_gc #(
     input  logic         minor_i,
     output logic [31:0]  old_hi_w_o,
     output logic         sticky_o,
+    // Remembered set (gc_gen_protocol.md B4): the barrier's SSB, read in
+    // P_REMSET of a minor. Each owner whose bit is set (old) is pushed
+    // without the mark test; a young owner is skipped.
+    input  logic [31:0]  rs_n_i,
+    output logic [31:0]  rs_idx_o,
+    input  logic [66:0]  rs_ent_i,
+    output logic [31:0]  rs_pushed_o,
     output logic         busy_o,
     output logic         done_o,
     // Configuration, sampled at start.
@@ -175,7 +182,7 @@ module pycore_gc #(
     // ---------------------------------------------------------------------
     typedef enum logic [3:0] {
         P_IDLE, P_CLEAR, P_CLEANUP, P_PRELOAD, P_ROOTS_REG, P_ROOTS_MEM,
-        P_MARK, P_SWEEP, P_FINISH
+        P_REMSET, P_MARK, P_SWEEP, P_FINISH
     } phase_e;
     phase_e phase_r;
 
@@ -296,6 +303,19 @@ module pycore_gc #(
     assign root_ready_o = (phase_r == P_ROOTS_REG) && (q_cnt_r < 3'd4);
     logic root_take;
     assign root_take = root_valid_i && root_ready_o;
+
+    // P_REMSET feeder: one SSB entry per cycle. An old owner (bit set) goes
+    // into the queue as a continuation entry, which the marker pushes
+    // without the mark test (or records for a rescan when the stack is
+    // full, like a root). Mutant 86 pushes young owners too.
+    logic [31:0] rs_i_r, rs_pushed_r;
+    logic        rs_old, rs_take, rs_skip;
+    assign rs_idx_o    = rs_i_r;
+    assign rs_pushed_o = rs_pushed_r;
+    assign rs_old  = bm_q[rs_ent_i[BM_AW+10:11]][rs_ent_i[10:4]] || (mut_r == 8'd86);
+    assign rs_take = (phase_r == P_REMSET) && (rs_i_r < rs_n_i) && rs_old &&
+                     !root_take && (tp_cnt_r == 2'd0) && (q_cnt_r < 3'd4);
+    assign rs_skip = (phase_r == P_REMSET) && (rs_i_r < rs_n_i) && !rs_old;
 
     // ---------------------------------------------------------------------
     // Bitmap
@@ -733,7 +753,7 @@ module pycore_gc #(
             frame_depth_r <= '0; stash_en_r <= 1'b0; poison_en_r <= 1'b0;
             stack_limit_r <= STACK_ENTRIES; onchip_limit_r <= 9'(MSTACK_ONCHIP);
             rescan_limit_r <= RESCAN_ENTRIES;
-            resc_cnt_r <= '0; rescans_r <= '0; m_have_ent_r <= 1'b0; m_resc_done_r <= 1'b0;
+            resc_cnt_r <= '0; rescans_r <= '0; rs_i_r <= '0; rs_pushed_r <= '0; m_have_ent_r <= 1'b0; m_resc_done_r <= 1'b0;
             t_re_r <= '0;
             mut_r <= '0; bitmap_clean_r <= 1'b0; shadow_ok_r <= 1'b0; bg_clr_r <= '0;
             gen_r <= 1'b0; minor_r <= 1'b0; sticky_r <= 1'b0; old_hi_w_r <= '0;
@@ -848,6 +868,7 @@ module pycore_gc #(
                 rescan_limit_r <= (rescan_limit_i == 32'd0 || rescan_limit_i > RESCAN_ENTRIES)
                                   ? RESCAN_ENTRIES : rescan_limit_i;
                 resc_cnt_r <= '0; rescans_r <= '0;
+                rs_i_r <= '0; rs_pushed_r <= '0;
                 m_have_ent_r <= 1'b0; m_resc_done_r <= 1'b0;
                 mut_r         <= mutant_i;
                 free_bytes_r <= '0; largest_base_r <= '0; largest_size_r <= '0;
@@ -889,6 +910,9 @@ module pycore_gc #(
                 t_range_r <= 4'd0;
             end
             if (root_take) roots_r <= roots_r + 32'd1;
+            if (rs_take) rs_pushed_r <= rs_pushed_r + 32'd1;
+            if (rs_take || rs_skip) rs_i_r <= rs_i_r + 32'd1;
+            if ((phase_r == P_REMSET) && (rs_i_r >= rs_n_i)) phase_r <= P_ROOTS_REG;
 
             // =============================================================
             // Tracer FSM
@@ -1721,7 +1745,10 @@ module pycore_gc #(
                             bm_q[m_clean_pyc_g_r[BM_AW+10:11]][m_clean_pyc_g_r[10:4]] <= 1'b1;
                         if (m_clean_idle_r && (m_clean_builtins_r != 32'd0))
                             bm_q[m_clean_builtins_r[BM_AW+10:11]][m_clean_builtins_r[10:4]] <= 1'b1;
-                        phase_r <= P_ROOTS_REG;
+                        // B4: the remembered owners go first, before any
+                        // root marks a young object (the bit test must see
+                        // the entry bitmap). Mutant 80 skips P_REMSET.
+                        phase_r <= ((rs_n_i != 32'd0) && (mut_r != 8'd80)) ? P_REMSET : P_ROOTS_REG;
                         m_st_r  <= M_IDLE;
                     end else if ((m_clr_r < ((dyn_base_r + 32'd2047) >> 11)) && shadow_ok_r &&
                         (m_clr_r < 32'(SHADOW_WORDS))) begin
@@ -2322,8 +2349,10 @@ module pycore_gc #(
     end
 
     // Queue input mux and pop.
-    assign q_push = root_take || tp_drain;
-    assign q_din  = root_take ? {1'b1, 1'b0, root_entry_i} : tp_mem[0];
+    assign q_push = root_take || tp_drain || rs_take;
+    assign q_din  = root_take ? {1'b1, 1'b0, root_entry_i} :
+                    tp_drain  ? tp_mem[0] :
+                                qcont(rs_ent_i[66:64], rs_ent_i[63:32], rs_ent_i[31:0]);
     assign q_pop  = (m_st_r == M_IDLE) && (q_cnt_r != 3'd0);
     assign pop_req = (t_st_r == T_POP);
 

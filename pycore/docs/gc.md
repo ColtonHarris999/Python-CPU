@@ -596,8 +596,58 @@ What Phase 2 built (guard only, no remembered set yet):
   guard skips the static image) and 67 (a release does not force a major).
   Each is killed by a `+GC_GEN=1` run of a `[gc]` or `[gc-gen]` test.
 
-The nursery budget, the remembered set and the barrier sites come in later
-phases; until then a minor runs only where a full collection would.
+What Phase 3 added (the barrier at the pycore container ops):
+
+- **Barrier unit** (`pycore_gc_barrier.sv`). A sequential store buffer
+  (SSB, 256 entries of `{kind, size, addr}`, the mark-stack entry format),
+  a 32-entry direct-mapped dedup filter, and eight permit windows. A site's
+  `bar_log` pulse offers its owner to the filter and the SSB and adds up to
+  three windows; `bar_permit` adds windows only. The first `S_CONTAINER`
+  cycle of every operation empties the windows. A log whose owner the
+  current run allocated since the last collection (`[gc_young_lo_r,
+  heap_ptr_r)`) is dropped (B5). A log into a full SSB is refused and
+  forces a major (B6). A collection that ends, of either kind, empties the
+  SSB, the filter and the windows.
+- **Guard.** The Phase 2 address compare now also asks whether a
+  container-leg write lies in a window the current operation declared.
+  Writes by the container accelerator and the excore declare nothing yet,
+  so a grow or an in-place extend into an old container still forces a
+  major (Phase 4).
+- **Sites** (`gc_gen_protocol.md` §4 S1). Each fires in the phase that
+  latches the owner's buffer, table or order pointer, before its first
+  write: `CONT_STORE_LIST` (the slot), `CONT_LIST_APPEND` (header and slot),
+  `CONT_STORE_DICT`, `CONT_MAP_ADD`, `CONT_STORE_NAME` and `CONT_STORE_ATTR`
+  (header, order array, table of the dict; for `STORE_ATTR` the instance's
+  `__dict__`), `CONT_SET_ADD` and `CONT_SET_UPDATE` (header, table),
+  `CONT_DICT_UPDATE` (header, old order and table) and `CONT_STORE_DEREF`
+  (the cell's field 0). `CONT_DELETE_LIST` (last element), `CONT_DELETE_DICT`
+  and `CONT_DELETE_ATTR` permit their windows without logging.
+- **Engine** (`P_REMSET`). In a minor, after the static premarks and before
+  the roots, the engine walks the SSB. An owner whose bit is set (old) goes
+  into the marker queue as a continuation entry, which is pushed without
+  the mark test; a young owner is skipped (B4). Running before the roots
+  means the bit it reads is the entry bit. `gc_model.trace` pushes the
+  remembered owners at the same point.
+- **Dumps and logs.** A generational dump now lists the SSB as captured at
+  the collection's start (`remset` lines, `meta remset_n`) and the number
+  of owners `P_REMSET` pushed. `[GC-GEN]` adds the container-leg guard
+  hits, the SSB size and the pushes; the end-of-run `GC-GEN` line counts
+  minors, majors, guard hits, logs, filter hits, B5 drops and overflows.
+  `+GC_GUARD_LOG` prints every guard hit with its state and address.
+  `+GC_REMSET_LIMIT=N` shrinks the SSB (`gen-remset-overflow` uses 4).
+- **GG3** is checked on the GG2 runs: no container-leg write may hit the
+  guard.
+- **Mutants** 70-79 (each logging site skips its log: list store, list
+  append, dict store, map add, set add, store name, store attr, store
+  deref, set update, dict update), 80 (`P_REMSET` skipped), 82 (the filter
+  hits on its slot alone), 83 (windows ignored), 85 (B5 drops every owner
+  below the bump pointer), 86 (young owners pushed too), 87 (a full SSB does
+  not force a major), 88 (`STORE_ATTR` logs the instance, not its
+  `__dict__`), 90-92 (the list, dict and attribute deletes drop their
+  permits).
+
+The nursery budget comes in a later phase; until then a minor runs where a
+full collection would.
 
 Measured with `pycore/tools/gc_genstats.py` over dump sequences on
 `b14600b` (what a minor at each collection would have done if everything

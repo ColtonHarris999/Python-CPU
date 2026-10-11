@@ -558,6 +558,8 @@
                                     if (!container_dmem_pending_r) begin
                                         container_buf_r <= cont_dict_table_ptr;
                                         container_order_ptr_r <= cont_dict_order_ptr;
+                                        // Barrier: the dict, its header, order array and table.
+                                        `BAR_LOG_DICT(8'd75, container_base_r, cont_dict_table_ptr, cont_dict_order_ptr, container_slot_count_r)
                                         if ((container_slot_count_r == 32'd0) ||
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             if ((ca_en_sim || EXCORE_EN) &&
@@ -1980,6 +1982,14 @@
                                     if (!container_dmem_pending_r) begin
                                         container_buf_r <= cont_dict_table_ptr;
                                         container_order_ptr_r <= cont_dict_order_ptr;
+                                        // Barrier: the dict, its header, order array and table.
+                                        // Mutant 88 logs the instance instead
+                                        // (the windows still cover the writes).
+                                        if (gc_mutant_sim == 8'd88) begin
+                                            `BAR_LOG_DICT_AS(8'd255, BAR_K_OBJ, container_src_buf_r, container_base_r, cont_dict_table_ptr, cont_dict_order_ptr, container_slot_count_r)
+                                        end else begin
+                                            `BAR_LOG_DICT(8'd76, container_base_r, cont_dict_table_ptr, cont_dict_order_ptr, container_slot_count_r)
+                                        end
                                         if ((container_slot_count_r == 32'd0) ||
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             if ((ca_en_sim || EXCORE_EN) &&
@@ -2435,6 +2445,8 @@
                                     if (!container_dmem_pending_r) begin
                                         container_buf_r <= cont_dict_table_ptr;
                                         container_order_ptr_r <= cont_dict_order_ptr;
+                                        // Barrier: permit the dict's header, order array and table.
+                                        `BAR_PERMIT_DICT(8'd92, container_base_r, cont_dict_table_ptr, cont_dict_order_ptr, container_slot_count_r)
                                         if ((container_slot_count_r == 32'd0) ||
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             container_attr_error_r <= 1'b1;

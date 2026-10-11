@@ -42,6 +42,33 @@
     end else begin \
         container_mem_fault_r <= 1'b1; \
     end
+// Generational barrier pulses (gc_gen_protocol.md B1, B2, §4 S1). A site
+// raises one in the cycle it latches the owner's buffer, table or order
+// pointer, which is no later than its first write into the owner. MUT is
+// the site's mutant number: that mutant skips the pulse.
+`define BAR_WIN(LO, HI) {32'(HI), 32'(LO)}
+`define BAR_LOG(MUT, K, OWNER, W0, W1, W2) \
+    if (gc_mutant_sim != (MUT)) begin \
+        bar_log_r   <= 1'b1; \
+        bar_kind_r  <= (K); \
+        bar_owner_r <= (OWNER); \
+        bar_win_r   <= {(W2), (W1), (W0)}; \
+    end
+`define BAR_PERMIT(MUT, W0, W1, W2) \
+    if (gc_mutant_sim != (MUT)) begin \
+        bar_permit_r <= 1'b1; \
+        bar_win_r    <= {(W2), (W1), (W0)}; \
+    end
+// A dict owner: header (48 B), order array (32 B per slot), table (64 B per
+// slot), as currently allocated.
+`define BAR_LOG_DICT_AS(MUT, K, OWNER, OBJ, TBL, ORD, SLOTS) \
+    `BAR_LOG(MUT, K, OWNER, `BAR_WIN((OBJ), (OBJ) + 32'd48), \
+             `BAR_WIN((ORD), (ORD) + ((SLOTS) << 5)), `BAR_WIN((TBL), (TBL) + ((SLOTS) << 6)))
+`define BAR_LOG_DICT(MUT, OBJ, TBL, ORD, SLOTS) \
+    `BAR_LOG_DICT_AS(MUT, BAR_K_DICT, OBJ, OBJ, TBL, ORD, SLOTS)
+`define BAR_PERMIT_DICT(MUT, OBJ, TBL, ORD, SLOTS) \
+    `BAR_PERMIT(MUT, `BAR_WIN((OBJ), (OBJ) + 32'd48), \
+                `BAR_WIN((ORD), (ORD) + ((SLOTS) << 5)), `BAR_WIN((TBL), (TBL) + ((SLOTS) << 6)))
 `define GC_CONT_OOM(NEED) \
     if (gc_en_sim && !gc_verify_only_sim) begin \
         `GC_ABORT_COMMON(NEED) \
@@ -49,6 +76,11 @@
     end else begin \
         container_mem_fault_r <= 1'b1; \
     end
+    // Barrier entry kinds (pycore_gc.sv K_*).
+    localparam logic [2:0] BAR_K_LIST = 3'd2;
+    localparam logic [2:0] BAR_K_DICT = 3'd3;
+    localparam logic [2:0] BAR_K_SET  = 3'd4;
+    localparam logic [2:0] BAR_K_OBJ  = 3'd5;
     // Container sub-operation codes (stored in container_op_r, 6-bit).
     localparam logic [5:0] CONT_BUILD_LIST = 6'd0;
     localparam logic [5:0] CONT_SUBSCR_LIST = 6'd1; // NB_SUBSCR on LIST

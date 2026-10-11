@@ -263,6 +263,7 @@ module tb_container #(
     // bitmap and entry state, captured when the engine starts, and the
     // events since the previous dump.
     logic [127:0] gen_bm [int];
+    logic [66:0]  gen_rs [$];
     bit           gen_force_major_tb, gen_minor_tb, gen_sticky_tb;
     logic [31:0]  gen_old_hi_w_tb;
     string        gen_events [$];
@@ -457,6 +458,9 @@ module tb_container #(
                 gen_sticky_tb      = g_dut.dut.core.u_gc.sticky_r;
                 gen_old_hi_w_tb    = g_dut.dut.core.u_gc.old_hi_w_r;
                 if (gc_dump_dir.len() > 0) begin
+                    gen_rs.delete();
+                    for (int i = 0; i < int'(g_dut.dut.core.bar_n); i++)
+                        gen_rs.push_back(g_dut.dut.core.u_bar.ssb_q[i]);
                     gen_bm.delete();
                     for (int w = 0; w < PYCORE_GC_BITMAP_WORDS; w++)
                         if (g_dut.dut.core.u_gc.bm_q[w] != '0)
@@ -482,9 +486,11 @@ module tb_container #(
                          g_dut.dut.core.gc_objects, g_dut.dut.core.gc_mark_cyc,
                          g_dut.dut.core.gc_sweep_cyc);
             if (gen_log_en && g_dut.dut.core.gc_gen_sim)
-                $display("[GC-GEN] n=%0d kind=%s force_major=%0d guard_hits=%0d old_hi=%0h live=%0d free=%0d mark_cyc=%0d sweep_cyc=%0d abandoned=%0d",
+                $display("[GC-GEN] n=%0d kind=%s force_major=%0d guard_hits=%0d guard_cont=%0d remset=%0d pushed=%0d old_hi=%0h live=%0d free=%0d mark_cyc=%0d sweep_cyc=%0d abandoned=%0d",
                          g_dut.dut.core.gc_collections_r, gen_minor_tb ? "minor" : "major",
                          gen_force_major_tb, g_dut.dut.core.gc_guard_hits_r,
+                         g_dut.dut.core.gc_guard_hits_cont_r, g_dut.dut.core.bar_n,
+                         g_dut.dut.core.gc_rs_pushed,
                          (g_dut.dut.core.u_gc.mark_hi_w_r + 32'd1) << 11,
                          g_dut.dut.core.gc_live_bytes, g_dut.dut.core.gc_free_bytes,
                          g_dut.dut.core.gc_mark_cyc, g_dut.dut.core.gc_sweep_cyc,
@@ -533,8 +539,12 @@ module tb_container #(
                         g_dut.dut.core.gc_mark_cyc, g_dut.dut.core.gc_sweep_cyc,
                         g_dut.dut.core.gc_port_busy_mark);
                 if (g_dut.dut.core.gc_gen_sim) begin
-                    $fwrite(fd, "meta gen 1\nmeta minor %0d\nmeta force_major %0d\nmeta remset_n 0\n",
-                            gen_minor_tb, gen_force_major_tb);
+                    $fwrite(fd, "meta gen 1\nmeta minor %0d\nmeta force_major %0d\nmeta remset_n %0d\n",
+                            gen_minor_tb, gen_force_major_tb, gen_rs.size());
+                    $fwrite(fd, "meta remset_pushed %0d\n", g_dut.dut.core.gc_rs_pushed);
+                    foreach (gen_rs[i])
+                        $fwrite(fd, "remset %0d %0d %0h\n", gen_rs[i][66:64], gen_rs[i][63:32],
+                                gen_rs[i][31:0]);
                     if (gen_sticky_tb)
                         $fwrite(fd, "meta old_hi %0d\n", (gen_old_hi_w_tb + 32'd1) << 11);
                     foreach (gen_bm[w])
@@ -799,6 +809,12 @@ module tb_container #(
                      g_dut.dut.core.gc_stash_cyc_total_r, g_dut.dut.core.gc_zero_lines_r,
                      g_dut.dut.core.gc_epoch_r, g_dut.dut.core.gc_mark_xacts_total_r);
             gc_site_report();
+            if (g_dut.dut.core.gc_gen_sim)
+                $display("GC-GEN minors=%0d majors=%0d guard_hits=%0d guard_cont=%0d logs=%0d dups=%0d drops=%0d overflows=%0d",
+                         g_dut.dut.core.gc_minors_r, g_dut.dut.core.gc_majors_r,
+                         g_dut.dut.core.gc_guard_hits_r, g_dut.dut.core.gc_guard_hits_cont_r,
+                         g_dut.dut.core.bar_logs, g_dut.dut.core.bar_dups,
+                         g_dut.dut.core.bar_drops, g_dut.dut.core.bar_overflows);
         end
         $finish;
     end

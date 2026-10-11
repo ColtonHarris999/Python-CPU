@@ -1,7 +1,9 @@
 # Generational GC protocol
 
-Status: specification for review (generational GC plan, Phase 1b). No RTL
-implements it yet. Each rule has a number that the oracle
+Status: implemented behind `+GC_GEN=1` for the guard (Phase 2) and for the
+barrier at the pycore container-op sites (§4 S1, Phase 3); the CA and
+excore sites (S2, S3) still force a major through the guard. Each rule has
+a number that the oracle
 (`pycore/tools/gc_model.py`), the in-RTL `[GC-INV]` checks and the tests
 cite. "The plan" means the generational GC plan; `gc.md` is the collector
 as it is today.
@@ -126,8 +128,9 @@ effect.
 - **B4, young owners.** The engine's `P_REMSET` phase reads each SSB
   owner's bit, which it reads anyway for the mark test. A clear (young)
   owner is skipped: if it is reachable, the trace from the roots scans it.
-  A set (old) owner is pushed without the mark test. `trace_minor` models
-  exactly this.
+  A set (old) owner is pushed without the mark test. `P_REMSET` runs before
+  the roots, so no root has marked a young owner yet and the bit it reads
+  is the entry bit. `trace_minor` models exactly this.
 - **B5, current-run owners.** A log whose owner lies in `[young_lo,
   heap_ptr)` may be dropped before the filter: that owner is young.
   This saves SSB entries for objects that are built and filled in the same

@@ -175,7 +175,7 @@ def trace(
     `stack_limit` (memory entries, beside `onchip`) bounds the mark stack;
     None is unbounded. `rescan_limit` bounds the rescan list.
 
-    `remset` entries (kind, addr, size) are pushed after the memory roots
+    `remset` entries (kind, addr, size) are pushed before the roots
     without the mark test, as the generational engine's P_REMSET does
     (see trace_minor). With `edges` given, every reference found while
     scanning an object is appended as (owner, child): the owner is the
@@ -397,6 +397,17 @@ def trace(
                 discover(vtag, mem.rd(s + 32))
 
     try:
+        # ---- remembered set (generational minor) ----
+        # P_REMSET runs before the roots, so its bit test sees the entry
+        # bitmap. Each owner is pushed as an already-marked entry: no mark
+        # test, and the root rule when the stack is full (record it for a
+        # rescan).
+        for ent in remset or ():
+            if room():
+                stack_push(ent)
+            else:
+                record(ent)
+
         # ---- roots ----
         for tag, val in reg_roots:
             res.roots += 1
@@ -431,15 +442,6 @@ def trace(
                 glob = (w >> 97) & ((1 << 31) - 1)
                 if glob and mutant != 4:
                     discover(TAG_MUT, (MUT_DICT << 124) | glob)
-
-        # ---- remembered set (generational minor) ----
-        # Each owner is pushed as an already-marked entry: no mark test, and
-        # the root rule when the stack is full (record it for a rescan).
-        for ent in remset or ():
-            if room():
-                stack_push(ent)
-            else:
-                record(ent)
 
         # ---- depth-first marking ----
         while stack or rescan:

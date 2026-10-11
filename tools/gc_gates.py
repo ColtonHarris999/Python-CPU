@@ -700,12 +700,21 @@ def check_sequence_dir(path: str) -> tuple[str, int, int, list[str]]:
     return path, len(ds), sum(1 for d in ds if d.minor), probs
 
 
+GEN_SUMMARY = re.compile(r"^GC-GEN minors=(\d+) majors=(\d+) guard_hits=(\d+) guard_cont=(\d+) "
+                         r"logs=(\d+) dups=(\d+) drops=(\d+) overflows=(\d+)", re.M)
+
+
 def gate_GG2(ctx: Context) -> Result:
     """Every [gc] and [gc-gen] test with +GC_GEN=1, in two arms: boundary
     collections every K instructions (so most collections are minors), and
     the same with every third collection a major. Goldens hold, no shadow or
     invariant failure, and every run's dumps pass the oracle as a sequence
-    (contract P1-P5, the granule state table, the sequence rules)."""
+    (contract P1-P5, the granule state table, the sequence rules).
+
+    GG3 is checked on the same runs: no write by a container operation hits
+    the guard (every site declares the windows it writes). Guard hits from
+    the container accelerator and the excore still force a major until they
+    log (plan Phase 4), so they are counted, not failed."""
     import concurrent.futures as cf
     lines: list[str] = []
     problems: list[str] = []
@@ -732,9 +741,22 @@ def gate_GG2(ctx: Context) -> Result:
                 rel = rel.relative_to(ctx.out) if rel.is_relative_to(ctx.out) else rel
                 probs += [f"{rel}/{x}" for x in ps]
         minors_total += minors
+        tot = [0] * 8
+        gg3: list[str] = []
+        for r in res:
+            mm = GEN_SUMMARY.search(r.text())
+            if not mm:
+                continue
+            v = [int(x) for x in mm.groups()]
+            tot = [a + b for a, b in zip(tot, v)]
+            if v[3]:
+                gg3.append(f"GG3: {r.test.name}: {v[3]} guard hits on the container leg")
         lines.append(f"GG2_{arm}: {len(res)} runs, {len(bad)} failing, {n} dumps ({minors} minors), "
                      f"{len(probs)} oracle problems, {len(gcp)} shadow/invariant")
-        problems += [f"GG2_{arm}: {x}" for x in bad + probs + gcp]
+        lines.append(f"GG2_{arm}: barrier minors={tot[0]} majors={tot[1]} guard_hits={tot[2]} "
+                     f"(container {tot[3]}) logs={tot[4]} dups={tot[5]} drops={tot[6]} "
+                     f"overflows={tot[7]}")
+        problems += [f"GG2_{arm}: {x}" for x in bad + probs + gcp + gg3]
     if minors_total == 0:
         problems.append("GG2 ran no minor collection")
     lines += problems[:300]

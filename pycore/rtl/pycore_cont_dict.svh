@@ -576,6 +576,8 @@
                                     if (!container_dmem_pending_r) begin
                                         container_buf_r <= cont_dict_table_ptr;
                                         container_order_ptr_r <= cont_dict_order_ptr;
+                                        // Barrier: the dict, its header, order array and table.
+                                        `BAR_LOG_DICT(8'd72, container_base_r, cont_dict_table_ptr, cont_dict_order_ptr, container_slot_count_r)
                                         if ((container_slot_count_r == 32'd0) ||
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             // Empty table → DICT_GROW before insert.
@@ -1112,6 +1114,8 @@
                                     if (!container_dmem_pending_r) begin
                                         container_buf_r <= cont_dict_table_ptr;
                                         container_order_ptr_r <= cont_dict_order_ptr;
+                                        // Barrier: permit the dict's header, order array and table.
+                                        `BAR_PERMIT_DICT(8'd91, container_base_r, cont_dict_table_ptr, cont_dict_order_ptr, container_slot_count_r)
                                         if ((container_slot_count_r == 32'd0) ||
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             container_mem_fault_r <= 1'b1;
@@ -1671,6 +1675,11 @@
                                 CP_LIST_BUF: begin
                                     if (!container_dmem_pending_r) begin
                                         container_buf_r <= cont_dict_table_ptr;
+                                        // Barrier: the set, its header and table.
+                                        `BAR_LOG(8'd74, BAR_K_SET, container_base_r,
+                                            `BAR_WIN(container_base_r, container_base_r + 32'd32),
+                                            `BAR_WIN(cont_dict_table_ptr, cont_dict_table_ptr + (container_slot_count_r << 5)),
+                                            64'd0)
                                         if ((container_slot_count_r == 32'd0) ||
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             if ((ca_en_sim || EXCORE_EN) &&
@@ -2138,6 +2147,8 @@
                                     if (!container_dmem_pending_r) begin
                                         container_buf_r <= cont_dict_table_ptr;
                                         container_order_ptr_r <= cont_dict_order_ptr;
+                                        // Barrier: the dict, its header, order array and table.
+                                        `BAR_LOG_DICT(8'd73, container_base_r, cont_dict_table_ptr, cont_dict_order_ptr, container_slot_count_r)
                                         if ((container_slot_count_r == 32'd0) ||
                                             (cont_dict_table_ptr == 32'd0)) begin
                                             if ((ca_en_sim || EXCORE_EN) &&

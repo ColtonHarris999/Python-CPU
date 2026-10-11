@@ -428,6 +428,18 @@ module pycore_core #(
     logic         gc_sticky;
     logic         gc_minor_now;
     logic         gc_guard_hit;
+    logic [31:0]  gc_guard_hits_cont_r;  // guard hits on the container leg
+    // Barrier pulses from the container-op sites (gc_gen_protocol.md §4 S1):
+    // one-cycle, raised in the cycle the site issues its first write into
+    // the owner. bar_win_r holds up to three {hi, lo} windows.
+    logic         bar_log_r, bar_permit_r;
+    logic [2:0]   bar_kind_r;
+    logic [31:0]  bar_owner_r;
+    logic [2:0][63:0] bar_win_r;
+    logic         bar_op_begin, bar_guard_hit, bar_overflow;
+    logic [31:0]  bar_n, bar_rd_idx;
+    logic [66:0]  bar_rd_ent;
+    logic [31:0]  bar_logs, bar_dups, bar_drops, bar_overflows, gc_rs_pushed;
     // Testbench site statistics only (G9): the current CALL abort came from
     // the binder reservation, and the reserved need includes a **kwargs dict.
     /* verilator lint_off UNUSEDSIGNAL */
@@ -1777,12 +1789,14 @@ module pycore_core #(
     bit          gc_gen_sim;           // +GC_GEN=1 (needs +GC_EN=1)
     bit          gc_major_only_sim;    // +GC_MAJOR_ONLY=1: sticky bits, every collection a major
     logic [31:0] gc_major_every_sim;   // +GC_MAJOR_EVERY=M: every M-th collection is a major
+    logic [31:0] gc_remset_limit_sim;  // +GC_REMSET_LIMIT=N: SSB entries (0: all)
     initial begin
         int v;
         gc_en_sim = 1'b0;
         gc_gen_sim = 1'b0;
         gc_major_only_sim = 1'b0;
         gc_major_every_sim = 32'd0;
+        gc_remset_limit_sim = 32'd0;
         gc_verify_only_sim = 1'b0;
         gc_auto_sim = 1'b1;
         gc_at_exit_sim = 1'b0;
@@ -1815,6 +1829,7 @@ module pycore_core #(
         if ($value$plusargs("GC_GEN=%d", v)) gc_gen_sim = (v != 0);
         if ($value$plusargs("GC_MAJOR_ONLY=%d", v)) gc_major_only_sim = (v != 0);
         if ($value$plusargs("GC_MAJOR_EVERY=%d", v)) gc_major_every_sim = v;
+        if ($value$plusargs("GC_REMSET_LIMIT=%d", v)) gc_remset_limit_sim = v;
         // +HEAP_DYN_BYTES=n: heap limit = HEAP_INIT_PTR + n (G7 shrinks each
         // fixture to its static image plus 2x its peak live bytes).
         gc_heap_dyn_bytes_sim = 32'd0;
@@ -1883,6 +1898,10 @@ module pycore_core #(
         .minor_i(gc_minor_now),
         .old_hi_w_o(gc_old_hi_w),
         .sticky_o(gc_sticky),
+        .rs_n_i(bar_n),
+        .rs_idx_o(bar_rd_idx),
+        .rs_ent_i(bar_rd_ent),
+        .rs_pushed_o(gc_rs_pushed),
         .busy_o(gc_busy),
         .done_o(gc_done),
         .dyn_base_i(heap_init_ptr_sim),
@@ -2259,28 +2278,64 @@ module pycore_core #(
                           gc_eng_dmem_active    ? {4{gc_eng_wdata}} : '0;
 
     // ---------------------------------------------------------------------
-    // Generational mode (gc_gen_protocol.md; plan Phase 2: guard only, no
-    // remembered set yet). With +GC_GEN=0 every register here stays at its
-    // reset value and nothing reaches the engine (G1).
+    // Generational mode (gc_gen_protocol.md). With +GC_GEN=0 every register
+    // here stays at its reset value and nothing reaches the engine (G1).
     //
     // Guard (B3): a managed write (any master but STRACC, the engine and
     // the allocator) into [HEAP_BASE, heap limit), the static image
-    // included, that lies outside the young part of the current run forces
-    // the next collection to be a major. Phase 2 declares no windows, so
-    // every write into memory that may be old counts. [gc_young_lo_r,
-    // heap_limit_r) holds no set bit: it is the current run, minus what was
-    // allocated in it before the last collection.
+    // included, that lies outside the young part of the current run and
+    // in no window the current container operation declared forces the
+    // next collection to be a major. [gc_young_lo_r, heap_limit_r) holds
+    // no set bit: it is the current run, minus what was allocated in it
+    // before the last collection.
     // ---------------------------------------------------------------------
     wire gc_guard_master = !stracc_dmem_active && !gc_eng_dmem_active && !gcalloc_dmem_active;
     // Every cycle a write request is up counts for the force (a held
     // request repeats it harmlessly); the counter takes its first cycle.
     wire [31:0] gc_young_from = gc_young_lo_r;
-    assign gc_guard_hit = gc_gen_sim && dmem_req_o && dmem_we_o &&
-                          gc_guard_master && (gc_mutant_sim != 8'd63) &&
-                          (dmem_addr_o >= ((gc_mutant_sim == 8'd66) ? heap_init_ptr_sim
-                                                                    : PYCORE_HEAP_BASE)) &&
-                          (dmem_addr_o < gc_heap_limit_eff) &&
-                          !((dmem_addr_o >= gc_young_from) && (dmem_addr_o < heap_limit_r));
+    wire gc_guard_wr = gc_gen_sim && dmem_req_o && dmem_we_o &&
+                       gc_guard_master && (gc_mutant_sim != 8'd63) &&
+                       (dmem_addr_o >= ((gc_mutant_sim == 8'd66) ? heap_init_ptr_sim
+                                                                 : PYCORE_HEAP_BASE)) &&
+                       (dmem_addr_o < gc_heap_limit_eff) &&
+                       !((dmem_addr_o >= gc_young_from) && (dmem_addr_o < heap_limit_r));
+    wire gc_guard_cont = container_dmem_active && (state_r == S_CONTAINER);
+    assign gc_guard_hit = bar_guard_hit;
+    // An operation begins in its first S_CONTAINER cycle.
+    assign bar_op_begin = (state_r == S_CONTAINER) && (container_phase_r == CP_INIT);
+
+    pycore_gc_barrier u_bar (
+        .clk_i(clk_i),
+        .rst_n_i(rst_n_i),
+        .en_i(gc_gen_sim),
+        .mutant_i(gc_mutant_sim),
+        .limit_i(gc_remset_limit_sim),
+        .op_begin_i(bar_op_begin),
+        .log_i(bar_log_r),
+        .permit_i(bar_permit_r),
+        .kind_i(bar_kind_r),
+        .owner_i(bar_owner_r),
+        .win_i(bar_win_r),
+        // B5: an owner the current run allocated since the last collection.
+        .drop_lo_i(gc_young_lo_r),
+        .drop_hi_i(heap_ptr_r),
+        .wr_i(gc_guard_wr),
+        .wr_cont_i(gc_guard_cont),
+        .wr_addr_i(dmem_addr_o),
+        .guard_hit_o(bar_guard_hit),
+        // E4: a collection that ends empties the SSB, the filter and the
+        // windows, whatever its kind (a major ignores the SSB, an abandon
+        // discards it).
+        .clear_i((state_r == S_GC_RUN) && gc_done),
+        .overflow_o(bar_overflow),
+        .n_o(bar_n),
+        .rd_idx_i(bar_rd_idx),
+        .rd_ent_o(bar_rd_ent),
+        .logs_o(bar_logs),
+        .dups_o(bar_dups),
+        .drops_o(bar_drops),
+        .overflows_o(bar_overflows)
+    );
     // Kind decision (E3). gc_start samples it.
     assign gc_minor_now = gc_gen_sim && !gc_force_major_r && !gc_explicit_r && !gc_exit_req_r &&
                           !gc_major_only_sim &&
@@ -2301,6 +2356,7 @@ module pycore_core #(
             gc_minors_r      <= '0;
             gc_majors_r      <= '0;
             gc_guard_hits_r  <= '0;
+            gc_guard_hits_cont_r <= '0;
         end else if (gc_gen_sim) begin
             gc_hp_q    <= heap_ptr_r;
             gc_alloc_q <= (state_r == S_GC_ALLOC);
@@ -2324,7 +2380,15 @@ module pycore_core #(
             if (gc_guard_hit) begin
                 gc_force_major_r <= 1'b1;
                 if (!dmem_busy_r) gc_guard_hits_r <= gc_guard_hits_r + 32'd1;
+                if (!dmem_busy_r && gc_guard_cont) gc_guard_hits_cont_r <= gc_guard_hits_cont_r + 32'd1;
+`ifndef SYNTHESIS
+                if (!dmem_busy_r && $test$plusargs("GC_GUARD_LOG"))
+                    $display("[GC-GUARD] state=%0d op=%0d phase=%0d pc=%0d addr=%h", state_r,
+                             container_op_r, container_phase_r, cur_pc_r, dmem_addr_o);
+`endif
             end
+            // B6: a log refused by a full SSB.
+            if (bar_overflow) gc_force_major_r <= 1'b1;
             // Phase 2 has no barrier at the excore slot port: any trap
             // the excore runs may write old memory.
             if (state_r == S_TRAP_MARSHAL) gc_force_major_r <= 1'b1;
@@ -3365,6 +3429,11 @@ module pycore_core #(
             container_wb_data_r      <= '0;
             container_type_trap_r    <= 1'b0;
             container_mem_fault_r    <= 1'b0;
+            bar_log_r                <= 1'b0;
+            bar_permit_r             <= 1'b0;
+            bar_kind_r               <= '0;
+            bar_owner_r              <= '0;
+            bar_win_r                <= '0;
             stracc_issued_r          <= 1'b0;
             stracc_finishing_r       <= 1'b0;
             stracc_iter_pending_r    <= 1'b0;
@@ -3504,6 +3573,8 @@ module pycore_core #(
             end
 
             // Clear one-cycle pulses by default.
+            bar_log_r            <= 1'b0;
+            bar_permit_r         <= 1'b0;
             frame_call_valid_r   <= 1'b0;
             frame_return_valid_r <= 1'b0;
             rf_set_locals_r      <= 1'b0;

@@ -3785,6 +3785,9 @@ localparam logic [31:0] PYCORE_GC_RESCAN_ENTRIES   = 32'd4096;
 // Slots one mark-stack pop scans; the rest of the range is pushed first as a
 // continuation entry, so a wide container holds at most this many entries.
 localparam logic [31:0] PYCORE_GC_SCAN_CHUNK       = 32'd128;
+// Generational remembered set: sequential store buffer entries (on chip,
+// gc_gen_protocol.md B1, B6).
+localparam int PYCORE_GC_REMSET_ENTRIES = 256;
 localparam logic [31:0] PYCORE_GC_GRANULE_BYTES    = 32'd16;
 /* verilator lint_on UNUSEDPARAM */
 localparam logic [31:0] PYCORE_GC_BITMAP_WORDS     = PYCORE_HEAP_LIMIT >> 11;

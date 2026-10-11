@@ -85,6 +85,7 @@ PYCORE_RTL_SRCS := \
 	pycore/rtl/pycore_mem_stage.sv \
 	pycore/rtl/pycore_exc_stack.sv \
 	pycore/rtl/pycore_gc.sv \
+	pycore/rtl/pycore_gc_barrier.sv \
 	pycore/rtl/pycore_ca.sv \
 	pycore/rtl/pycore_core.sv \
 	pycore/rtl/pycore_system.sv \

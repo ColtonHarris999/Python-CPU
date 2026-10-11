@@ -172,6 +172,10 @@
                                                     PY_OBK_CELL) begin
                                                 container_type_trap_r <= 1'b1;
                                             end else begin
+                                                // Barrier: the cell, field 0.
+                                                `BAR_LOG(8'd77, BAR_K_OBJ, container_base_r,
+                                                    `BAR_WIN(container_base_r + 32'd32, container_base_r + 32'd64),
+                                                    64'd0, 64'd0)
                                                 container_dmem_addr_r <=
                                                     pycore_obj_field_val_addr(
                                                         container_base_r, 32'd0);
