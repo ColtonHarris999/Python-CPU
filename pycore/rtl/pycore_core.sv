@@ -440,6 +440,7 @@ module pycore_core #(
     logic         bar_log_r, bar_permit_r;
     logic [2:0]   bar_kind_r;
     logic [31:0]  bar_owner_r;
+    logic [31:0]  bar_size_r;
     logic [2:0][63:0] bar_win_r;
     logic         bar_op_begin, bar_guard_hit, bar_overflow;
     logic [31:0]  bar_n, bar_rd_idx;
@@ -2338,6 +2339,7 @@ module pycore_core #(
         .log_i(bar_log_r),
         .permit_i(bar_permit_r),
         .kind_i(bar_kind_r),
+        .size_i(bar_size_r),
         .owner_i(bar_owner_r),
         .win_i(bar_win_r),
         // B5: an owner the current run allocated since the last collection.
@@ -2416,8 +2418,8 @@ module pycore_core #(
             end
 `ifndef SYNTHESIS
             if ((bar_log_r || bar_permit_r) && $test$plusargs("GC_BAR_LOG"))
-                $display("[GC-BAR] %s op=%0d pc=%0d kind=%0d drop=%0d owner=%h", bar_log_r ? "log" : "permit",
-                         container_op_r, cur_pc_r, bar_kind_r, u_bar.drop, bar_owner_r);
+                $display("[GC-BAR] %s op=%0d pc=%0d kind=%0d size=%0d drop=%0d owner=%h", bar_log_r ? "log" : "permit",
+                         container_op_r, cur_pc_r, bar_kind_r, bar_size_r, u_bar.drop, bar_owner_r);
 `endif
             // B6: a log refused by a full SSB.
             if (bar_overflow) gc_force_major_r <= 1'b1;
@@ -3462,6 +3464,7 @@ module pycore_core #(
             bar_permit_r             <= 1'b0;
             bar_kind_r               <= '0;
             bar_owner_r              <= '0;
+            bar_size_r               <= '0;
             bar_win_r                <= '0;
             stracc_issued_r          <= 1'b0;
             stracc_finishing_r       <= 1'b0;
@@ -4582,19 +4585,15 @@ module pycore_core #(
                 S_TRAP_MARSHAL: begin
                     if (trap_req_ready_i) begin
                         // S3: the excore writes only E0 among existing
-                        // objects. Log it (permit for LIST_DELETE) with its
-                        // header; its buffer, table or order array is not
+                        // objects. Log it with its header (LIST_DELETE moves
+                        // values across chunks, so it logs too); its buffer, table or order array is not
                         // declared, so an in-place write there is a guard
                         // hit (a forced major). Mutant 95 logs nothing.
                         unique case (trap_marshal_code_r)
-                            PY_TRAP_LIST_GROW, PY_TRAP_LIST_EXTEND: begin
+                            PY_TRAP_LIST_GROW, PY_TRAP_LIST_EXTEND, PY_TRAP_LIST_DELETE: begin
                                 `BAR_LOG(8'd95, BAR_K_LIST, trap_marshal_entries_r[0][31:0],
                                          `BAR_WIN(trap_marshal_entries_r[0][31:0],
                                                   trap_marshal_entries_r[0][31:0] + 32'd32), 64'd0, 64'd0)
-                            end
-                            PY_TRAP_LIST_DELETE: begin
-                                `BAR_PERMIT(8'd255, `BAR_WIN(trap_marshal_entries_r[0][31:0],
-                                                             trap_marshal_entries_r[0][31:0] + 32'd32), 64'd0, 64'd0)
                             end
                             PY_TRAP_DICT_GROW, PY_TRAP_DICT_UPDATE: begin
                                 `BAR_LOG(8'd95, BAR_K_DICT, trap_marshal_entries_r[0][31:0],
@@ -5104,11 +5103,18 @@ module pycore_core #(
                         // S2: the CA's owner is ca_a_r. Its header is the
                         // only existing memory the core can name; the CA
                         // declares the old buffer itself (ca_win_v). L_DEL
-                        // moves values already in the list (permit).
-                        // Mutant 93 logs nothing.
+                        // only moves values already in the list, but it
+                        // moves them across chunks, so it logs the whole
+                        // list (Phase 5). Mutant 93 logs nothing; mutant 99
+                        // turns the L_DEL log back into a permit.
                         unique case (ca_op_r)
                             PY_CA_L_DEL: begin
-                                `BAR_PERMIT(8'd255, `BAR_WIN(ca_a_r[31:0], ca_a_r[31:0] + 32'd32), 64'd0, 64'd0)
+                                if (gc_mutant_sim == 8'd99) begin
+                                    `BAR_PERMIT(8'd255, `BAR_WIN(ca_a_r[31:0], ca_a_r[31:0] + 32'd32), 64'd0, 64'd0)
+                                end else begin
+                                    `BAR_LOG(8'd93, BAR_K_LIST, ca_a_r[31:0],
+                                             `BAR_WIN(ca_a_r[31:0], ca_a_r[31:0] + 32'd32), 64'd0, 64'd0)
+                                end
                             end
                             PY_CA_D_GROW: begin
                                 `BAR_LOG(8'd93, BAR_K_DICT, ca_a_r[31:0],

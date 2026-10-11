@@ -719,6 +719,33 @@ commands and the excore's traps:
   | 95 | a trap does not log E0 | `gen-ca-loop-excore`, oracle |
   | 96 | no guard on the excore port | survives: every excore write to existing memory goes to E0, which the trap logs. The guard is a backstop for a missing log |
 
+Phase 5 (`gc_gen_protocol.md` B7) refines list stores:
+
+- **Range entries.** `CONT_STORE_LIST` into a list longer than 128 slots
+  logs only the 128-slot chunk of the buffer that holds the slot, clipped
+  to the length, as `{K_TUPLE, n, chunk address}`. A minor then scans that
+  chunk, not the whole list. `P_REMSET` and the tracer needed no change:
+  the entry is an ordinary continuation, and the owner bit test reads the
+  buffer, so a buffer replaced since the last collection is skipped (its
+  installer logged the whole list). The filter keys on the whole entry, so
+  two chunks of one list are two entries.
+- **Deletes.** A middle delete (`L_DEL`, trap 12) shifts values toward the
+  front and can move a young value out of the chunk its store logged, so
+  it now logs the whole list instead of permitting.
+- **Oracle.** Edges carry the slot they came from, and the barrier rule
+  accepts an old-to-young edge whose slot lies in a logged range.
+- **Dicts** still log the whole dict.
+- **Fixtures.** `gen-chunk-loop` stores into two chunks of a 1000-slot old
+  list per iteration (one in the last, partial chunk), and stores a young
+  value at the first slot of a chunk of another list, then deletes from its
+  front so the value moves into the chunk before. `gen-chunk-loop-excore`
+  runs it on the two-core top with the CA off.
+
+  | Mutant | Bug | Killed by |
+  | --- | --- | --- |
+  | 97 | the store logs the next chunk | `gen-chunk-loop`, sim |
+  | 99 | `L_DEL` permits instead of logging | `gen-chunk-loop`, sim |
+
 The nursery budget comes in a later phase; until then a minor runs where a
 full collection would.
 

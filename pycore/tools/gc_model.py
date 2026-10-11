@@ -47,6 +47,7 @@ between them.
 from __future__ import annotations
 
 import argparse
+import bisect
 import pathlib
 import sys
 from dataclasses import dataclass, field
@@ -167,7 +168,7 @@ def trace(
     pruned: set[int] | None = None,
     extra_roots: bool = True,
     remset: list[tuple[int, int, int]] | None = None,
-    edges: list[tuple[int, int]] | None = None,
+    edges: list[tuple[int, int, int | None]] | None = None,
 ) -> TraceResult:
     """Mark everything reachable from the register roots and memory roots.
 
@@ -178,10 +179,11 @@ def trace(
     `remset` entries (kind, addr, size) are pushed before the roots
     without the mark test, as the generational engine's P_REMSET does
     (see trace_minor). With `edges` given, every reference found while
-    scanning an object is appended as (owner, child): the owner is the
-    object whose storage holds the slot (a list for its buffer's slots),
-    the child the address pushed or raw-marked. Root references are not
-    edges.
+    scanning an object is appended as (owner, child, slot): the owner is
+    the object whose storage holds the slot (a list for its buffer's
+    slots), the child the address pushed or raw-marked, and the slot the
+    32 B or 64 B slot it was read from (None for a header field). Root
+    references are not edges.
     """
     res = TraceResult(marked=bytearray(HEAP_LIMIT >> 4))
     marked = res.marked
@@ -198,6 +200,7 @@ def trace(
     # of it has already been recorded.
     cur: tuple[int, int, int] | None = None
     recorded = False
+    slot: int | None = None
 
     def valid(addr: int, length: int) -> bool:
         ok = (addr & 15) == 0 and HEAP_BASE <= addr < HEAP_LIMIT and length <= HEAP_LIMIT - addr
@@ -212,7 +215,7 @@ def trace(
 
     def edge(addr: int) -> None:
         if edges is not None and owner is not None:
-            edges.append((owner, addr))
+            edges.append((owner, addr, slot))
 
     def raw(addr: int, length: int, what: str) -> None:
         if length:
@@ -365,19 +368,24 @@ def trace(
         return ok
 
     def scan_plain(base: int, count: int) -> None:
+        nonlocal slot
         for i in range(count):
             tag = mem.rd(base + 32 * i + 16) & 0xF
             if tag in RESERVED_TAGS:
                 res.reserved += 1
             if tag in PTR_TAGS:
+                slot = base + 32 * i
                 discover(tag, mem.rd(base + 32 * i))
+                slot = None
 
     def slot_empty(tag_word: int) -> bool:
         return tag_word == 0 or ((tag_word & 0xF) == TAG_CONTROL and ((tag_word >> 4) & 0xF) == CTL_UNINIT)
 
     def scan_dict_table(base: int, slots: int) -> None:
+        nonlocal slot
         for i in range(slots):
             s = base + 64 * i
+            slot = s
             ktw = mem.rd(s + 16)
             ktag = ktw & 0xF
             if slot_empty(ktw):
@@ -395,6 +403,7 @@ def trace(
                 res.reserved += 1
             if vtag in PTR_TAGS:
                 discover(vtag, mem.rd(s + 32))
+        slot = None
 
     try:
         # ---- remembered set (generational minor) ----
@@ -641,17 +650,25 @@ def _ones(marked: bytearray):
         g = marked.find(1, g + 1)
 
 
-def barrier_gaps(edges: list[tuple[int, int]], reachable: bytearray, old: bytearray,
+def barrier_gaps(edges: list[tuple[int, int, int | None]], reachable: bytearray, old: bytearray,
                  remset: list[tuple[int, int, int]], dyn_base: int) -> list[tuple[int, int]]:
-    """Edges from an old owner to a reachable young object or buffer whose
-    owner is not in the remembered set (plan §4, rule 3). Only dynamic
-    storage is young: below dyn_base nothing is ever freed, so an unmarked
-    static granule after a major is not a barrier obligation."""
-    logged = {a for _, a, _ in remset}
+    """Edges from an old owner to a reachable young object or buffer that
+    no remembered entry covers (plan §4, rule 3): neither the owner is
+    logged whole nor is the slot inside a logged range (a K_TUPLE entry, one
+    chunk of a large list's buffer). Only dynamic storage is young: below
+    dyn_base nothing is ever freed, so an unmarked static granule after a
+    major is not a barrier obligation."""
+    logged = {a for k, a, _ in remset if k != K_TUPLE}
+    ranges = sorted((a, a + 32 * n) for k, a, n in remset if k == K_TUPLE and n)
+
+    def in_range(s: int) -> bool:
+        i = bisect.bisect_right(ranges, (s, HEAP_LIMIT)) - 1
+        return any(lo <= s < hi for lo, hi in ranges[max(0, i - 8):i + 1])
+
     out = []
-    for o, c in edges:
+    for o, c, s in edges:
         if (old[o >> 4] and o not in logged and dyn_base <= c < HEAP_LIMIT and reachable[c >> 4]
-                and not old[c >> 4]):
+                and not old[c >> 4] and not (s is not None and in_range(s))):
             out.append((o, c))
     return out
 

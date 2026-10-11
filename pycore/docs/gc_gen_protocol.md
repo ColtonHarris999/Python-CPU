@@ -136,6 +136,17 @@ effect.
   heap_ptr)` may be dropped before the filter: that owner is young.
   This saves SSB entries for objects that are built and filled in the same
   interval. It is an optimization; B4 makes correctness independent of it.
+- **B7, range entries (Phase 5).** `CONT_STORE_LIST` into a list longer
+  than one scan chunk (`PYCORE_GC_SCAN_CHUNK`, 128 slots) logs a `K_TUPLE`
+  entry instead of the list: the chunk of the buffer that holds the slot,
+  clipped to the length, `{K_TUPLE, n, buf + 32 * c0}`. `P_REMSET` treats
+  it like any entry. Its bit test reads the buffer's granule, so a buffer
+  that is young (replaced since the last collection) is skipped. That is
+  safe because whatever installed it logged the whole list. Every other
+  list site still logs the whole list, and a write that moves values
+  between slots of an old buffer (`L_DEL`, trap 12) logs too, because it
+  can carry a young value out of its logged chunk. The oracle's barrier
+  rule accepts an edge whose slot lies in a logged range.
 - **B6, overflow.** An SSB push into a full SSB is refused. It sets
   `force_major_r` sticky in the same cycle and counts `remset_overflows`.
   Dropping the entry is then safe, because the next collection is a major.
@@ -186,7 +197,7 @@ never a decoded operand: a `DICT_GROW` raised from `STORE_NAME` or
 | --- | --- | --- |
 | `L_APPEND` | log | header (the new buffer is young) |
 | `L_EXTEND` | log | header; the old buffer when it extends in place |
-| `L_DEL` | permit | header; the old buffer |
+| `L_DEL` | log (Phase 5; permit before) | header; the old buffer. It moves values across chunks (B7) |
 | `D_GROW` | log | header (48 B) |
 | `S_GROW` | log | header (32 B) |
 
@@ -202,7 +213,7 @@ port bypasses the core's mux, so the guard is duplicated there (plan
 | Trap | Class | Note |
 | --- | --- | --- |
 | 9 `LIST_GROW`, 10 `LIST_EXTEND`, 11 `DICT_GROW`, 13 `SET_GROW`, 14 `SET_UPDATE`, 19 `DICT_UPDATE` | log E0 | 10, 14 and 19 can write E0's old buffer or table in place |
-| 12 `LIST_DELETE` | permit E0 | shifts in the old buffer |
+| 12 `LIST_DELETE` | log E0 (Phase 5; permit before) | shifts in the old buffer (B7) |
 | 16 `BUILTIN_CALL`, 20 `DICT_MERGE` | none | 16 only prints; 20 builds a new dict |
 | 18 `SLICE` | none | nothing raises it |
 

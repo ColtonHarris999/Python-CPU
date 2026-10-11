@@ -1169,6 +1169,8 @@
                                         if (cont_key_u_st >= cont_hdr_len) begin
                                             container_mem_fault_r <= 1'b1;
                                         end else begin
+                                            // The length, for the barrier's chunk.
+                                            container_list_hdr_r <= container_rd_data_r;
                                             // Read ob_item (buffer address).
                                             container_dmem_addr_r <= pycore_list_obitem_addr(
                                                 container_base_r);
@@ -1181,6 +1183,7 @@
 
                                 CP_LIST_BUF: begin
                                     if (!container_dmem_pending_r) begin
+                                        logic [31:0] st_len, st_c0, st_n;
                                         // container_rd_data_r = {0, ob_item}.
                                         // Save value from RF (addr settled since
                                         // CP_INIT; unaffected by the intervening
@@ -1188,11 +1191,29 @@
                                         container_buf_r         <= cont_obitem_buf;
                                         container_tag_r        <= cont_rf_rs1_tag;
                                         container_val_r        <= cont_rf_rs1_val;
-                                        // Barrier: the list, its buffer slot.
-                                        `BAR_LOG(8'd70, BAR_K_LIST, container_base_r,
-                                            `BAR_WIN(pycore_list_val_addr(cont_obitem_buf, cont_key_u_st[31:0]),
-                                                     pycore_list_val_addr(cont_obitem_buf, cont_key_u_st[31:0]) + 32'd32),
-                                            64'd0, 64'd0)
+                                        // Barrier: the list, its buffer slot. A
+                                        // list longer than one scan chunk logs
+                                        // only the chunk holding the slot, as a
+                                        // range of its buffer clipped to the
+                                        // length (Phase 5). Mutant 97 logs the
+                                        // next chunk.
+                                        st_len = container_list_hdr_r[31:0];
+                                        st_c0  = ((cont_key_u_st[31:0] / PYCORE_GC_SCAN_CHUNK) +
+                                                  ((gc_mutant_sim == 8'd97) ? 32'd1 : 32'd0)) *
+                                                 PYCORE_GC_SCAN_CHUNK;
+                                        st_n   = (st_c0 >= st_len) ? 32'd0 :
+                                                 ((st_len - st_c0 > PYCORE_GC_SCAN_CHUNK)
+                                                      ? PYCORE_GC_SCAN_CHUNK : (st_len - st_c0));
+                                        if (st_len > PYCORE_GC_SCAN_CHUNK) begin
+                                            `BAR_LOG_RANGE(8'd70, pycore_list_val_addr(cont_obitem_buf, st_c0), st_n,
+                                                `BAR_WIN(pycore_list_val_addr(cont_obitem_buf, cont_key_u_st[31:0]),
+                                                         pycore_list_val_addr(cont_obitem_buf, cont_key_u_st[31:0]) + 32'd32))
+                                        end else begin
+                                            `BAR_LOG(8'd70, BAR_K_LIST, container_base_r,
+                                                `BAR_WIN(pycore_list_val_addr(cont_obitem_buf, cont_key_u_st[31:0]),
+                                                         pycore_list_val_addr(cont_obitem_buf, cont_key_u_st[31:0]) + 32'd32),
+                                                64'd0, 64'd0)
+                                        end
                                         // Write value slot into the buffer.
                                         container_dmem_addr_r  <= pycore_list_val_addr(
                                             cont_obitem_buf,

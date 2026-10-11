@@ -665,6 +665,10 @@ gen-remset-overflow = { src = "gen_barrier_loop", cycles = 8_000_000, plusargs =
 gen-ca-loop = { src = "gen_ca_loop", cycles = 8_000_000, plusargs = "+GC_EN=1", caching = true }
 gen-ca-loop-two-core = { core = "twocore", src = "gen_ca_loop", cycles = 8_000_000, plusargs = "+GC_EN=1" }
 gen-ca-loop-excore = { core = "twocore", src = "gen_ca_loop", cycles = 16_000_000, plusargs = "+GC_EN=1 +CA_EN=0" }
+# Phase 5: stores into two chunks of a 1000-slot old list, and middle
+# deletes that shift a young value across a chunk boundary (CA and excore).
+gen-chunk-loop = { src = "gen_chunk_loop", cycles = 8_000_000, plusargs = "+GC_EN=1", caching = true }
+gen-chunk-loop-excore = { core = "twocore", src = "gen_chunk_loop", cycles = 16_000_000, plusargs = "+GC_EN=1 +CA_EN=0" }
 
 # Long GC loops: steady-state plateaus, allocation-site churn, benches and
 # compile loops (millions of cycles each, up to ~150M uncached). Not in

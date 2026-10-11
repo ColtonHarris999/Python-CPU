@@ -53,8 +53,18 @@
     bar_log_r    <= (gc_mutant_sim != (MUT)); \
     bar_permit_r <= (gc_mutant_sim == (MUT)); \
     bar_kind_r   <= (K); \
+    bar_size_r   <= 32'd0; \
     bar_owner_r  <= (OWNER); \
     bar_win_r    <= {(W2), (W1), (W0)};
+// A range entry (Phase 5): N slots of 32 B from BASE, scanned as a K_TUPLE
+// continuation. P_REMSET's bit test then asks whether the buffer is old.
+`define BAR_LOG_RANGE(MUT, BASE, N, W0) \
+    bar_log_r    <= (gc_mutant_sim != (MUT)); \
+    bar_permit_r <= (gc_mutant_sim == (MUT)); \
+    bar_kind_r   <= BAR_K_TUPLE; \
+    bar_size_r   <= (N); \
+    bar_owner_r  <= (BASE); \
+    bar_win_r    <= {64'd0, 64'd0, (W0)};
 `define BAR_PERMIT(MUT, W0, W1, W2) \
     if (gc_mutant_sim != (MUT)) begin \
         bar_permit_r <= 1'b1; \
@@ -78,6 +88,7 @@
         container_mem_fault_r <= 1'b1; \
     end
     // Barrier entry kinds (pycore_gc.sv K_*).
+    localparam logic [2:0] BAR_K_TUPLE = 3'd0;
     localparam logic [2:0] BAR_K_LIST = 3'd2;
     localparam logic [2:0] BAR_K_DICT = 3'd3;
     localparam logic [2:0] BAR_K_SET  = 3'd4;

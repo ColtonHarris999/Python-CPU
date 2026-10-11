@@ -36,6 +36,9 @@ module pycore_gc_barrier #(
     input  logic         log_i,
     input  logic         permit_i,
     input  logic [2:0]   kind_i,
+    // The entry's size field: 0 for a whole owner; a slot count for a
+    // K_TUPLE range entry (Phase 5: one chunk of a large list's buffer).
+    input  logic [31:0]  size_i,
     input  logic [31:0]  owner_i,
     // Up to three windows per pulse, {hi, lo}; hi <= lo: unused.
     input  logic [2:0][63:0] win_i,
@@ -104,7 +107,7 @@ module pycore_gc_barrier #(
     logic [66:0]   ent;
     logic [FA-1:0] fidx;
     logic          fhit, drop, push;
-    assign ent  = {kind_i, 32'd0, owner_i};
+    assign ent  = {kind_i, size_i, owner_i};
     assign fidx = owner_i[4 +: FA] ^ owner_i[4 + FA +: FA];
     assign fhit = flt_v_r[fidx] && ((flt_q[fidx] == ent) || (mutant_i == 8'd82));
     // Mutant 85 drops every owner below the bump pointer, old ones too.
