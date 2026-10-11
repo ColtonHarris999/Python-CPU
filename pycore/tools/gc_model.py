@@ -26,6 +26,21 @@ Dump format (written by pycore/tb/tb_gc.sv and pycore/tb/tb_container.sv):
     meta <key> <value>          decimal or 0x-hex
     root <tag> <value-hex>      testbench-recorded register/RF roots, in order
     mem <addr-hex> <word-hex>   non-zero 16 B words
+
+Generational dumps (generational GC plan §4) add `meta gen 1`, `meta minor`,
+`meta old_hi`, `meta force_major`, `meta remset_n`, `meta barrier_idle`, and:
+
+    remset <kind> <size> <addr-hex>   one SSB entry: K_* kind, slot count, owner
+    oldbm <word> <bits-hex>           pre-collection mark bitmap, nonzero words;
+                                      bit b of word w is granule 128*w + b
+    event <name> [<lo-hex> <hi-hex>]  what happened since the previous dump:
+                                      release (of [lo, hi)), abandon, enable, reset
+
+A minor is checked against `trace_minor` (exact under the plan's precision
+contract (b)) and against the full trace (safety, barrier completeness); a
+major exactly as before. `check_sequence()` checks a dump sequence: each
+dump's old bitmap must follow from the previous collection and the events
+between them.
 """
 
 from __future__ import annotations
@@ -150,17 +165,31 @@ def trace(
     mutant: int = 0,
     pruned: set[int] | None = None,
     extra_roots: bool = True,
+    remset: list[tuple[int, int, int]] | None = None,
+    edges: list[tuple[int, int]] | None = None,
 ) -> TraceResult:
     """Mark everything reachable from the register roots and memory roots.
 
     `pruned` granules start marked, as the engine's static-map preload does.
     `stack_limit` (memory entries, beside `onchip`) bounds the mark stack;
     None is unbounded. `rescan_limit` bounds the rescan list.
+
+    `remset` entries (kind, addr, size) are pushed after the memory roots
+    without the mark test, as the generational engine's P_REMSET does
+    (see trace_minor). With `edges` given, every reference found while
+    scanning an object is appended as (owner, child): the owner is the
+    object whose storage holds the slot (a list for its buffer's slots),
+    the child the address pushed or raw-marked. Root references are not
+    edges.
     """
     res = TraceResult(marked=bytearray(HEAP_LIMIT >> 4))
     marked = res.marked
     for g in pruned or ():
         marked[g] = 1
+    # The object whose storage is being scanned (None for roots), and the
+    # owner of each continuation or rescan entry that is not a whole object.
+    owner: int | None = None
+    chunk_owner: dict[tuple[int, int, int], int] = {}
     stack: list[tuple[int, int, int]] = []     # (kind, addr, size)
     rescan: list[tuple[int, int, int]] = []
     stack_cap = None if stack_limit is None else onchip + stack_limit
@@ -180,7 +209,13 @@ def trace(
             marked[g] = 1
         res.extents.append((addr, length, what))
 
+    def edge(addr: int) -> None:
+        if edges is not None and owner is not None:
+            edges.append((owner, addr))
+
     def raw(addr: int, length: int, what: str) -> None:
+        if length:
+            edge(addr)
         if length and valid(addr, length):
             mark_range(addr, length, what)
 
@@ -201,6 +236,8 @@ def trace(
             raise _Overflow
         rescan.append(ent)
         res.rescans += 1
+        if owner is not None:
+            chunk_owner.setdefault(ent, owner)
 
     def stack_push(ent: tuple[int, int, int]) -> None:
         stack.append(ent)
@@ -208,6 +245,7 @@ def trace(
 
     def push(kind: int, addr: int, size: int, length: int, what: str) -> None:
         nonlocal recorded
+        edge(addr)
         if not valid(addr, length) or marked[addr >> 4]:
             return
         if room():
@@ -229,6 +267,8 @@ def trace(
         stride = 64 if kind == K_DICTT else 32
         if count > GC_SCAN_CHUNK:
             rest = (kind, base + stride * GC_SCAN_CHUNK, count - GC_SCAN_CHUNK)
+            if owner is not None:
+                chunk_owner[rest] = owner
             if room():
                 stack_push(rest)
             else:
@@ -246,6 +286,7 @@ def trace(
             n = 16 + pad16((val >> 96) & 0xFFFFFF)
             if mutant == 12:
                 n -= 16
+            edge(a32)
             if n and valid(a32, n) and not marked[a32 >> 4]:
                 mark_range(a32, n, "LONG_STR")
             res.kinds_seen.add("LONG_STR")
@@ -297,6 +338,7 @@ def trace(
                 if a32 == 0:
                     pass
                 elif (val >> 96) & 1:
+                    edge(a32)
                     if mutant != 21 and valid(a32, 16) and not marked[a32 >> 4]:
                         mark_range(a32, 16, "STR_SPILL")
                 else:
@@ -389,11 +431,21 @@ def trace(
                 if glob and mutant != 4:
                     discover(TAG_MUT, (MUT_DICT << 124) | glob)
 
+        # ---- remembered set (generational minor) ----
+        # Each owner is pushed as an already-marked entry: no mark test, and
+        # the root rule when the stack is full (record it for a rescan).
+        for ent in remset or ():
+            if room():
+                stack_push(ent)
+            else:
+                record(ent)
+
         # ---- depth-first marking ----
         while stack or rescan:
             if not stack:
                 stack_push(rescan.pop())
             kind, addr, size = stack.pop()
+            owner = chunk_owner.get((kind, addr, size), addr)
             res.objects += 1
             res.kinds_seen.add(KIND_NAMES[kind])
             cur, recorded = (kind, addr, size), False
@@ -496,6 +548,17 @@ class Dump:
     roots: list[tuple[int, int]]
     mem: Memory
     path: str = ""
+    remset: list[tuple[int, int, int]] = field(default_factory=list)   # (kind, addr, size)
+    oldbm: dict[int, int] = field(default_factory=dict)                # word -> 128 bits
+    events: list[tuple[str, int, int]] = field(default_factory=list)   # (name, lo, hi)
+
+    @property
+    def gen(self) -> bool:
+        return bool(self.meta.get("gen", 0))
+
+    @property
+    def minor(self) -> bool:
+        return self.gen and bool(self.meta.get("minor", 0))
 
 
 def parse_int(s: str) -> int:
@@ -506,6 +569,8 @@ def load_dump(path: pathlib.Path) -> Dump:
     meta: dict[str, int] = {}
     roots: list[tuple[int, int]] = []
     words: dict[int, int] = {}
+    d = Dump(meta, roots, Memory(), str(path))
+    d.mem.words = words
     for line in pathlib.Path(path).read_text(encoding="ascii").splitlines():
         parts = line.split()
         if not parts or parts[0].startswith("#"):
@@ -518,7 +583,69 @@ def load_dump(path: pathlib.Path) -> Dump:
             w = int(parts[2], 16)
             if w:
                 words[int(parts[1], 16)] = w
-    return Dump(meta, roots, Memory(words), str(path))
+        elif parts[0] == "remset":
+            d.remset.append((int(parts[1]), int(parts[3], 16), int(parts[2])))
+        elif parts[0] == "oldbm":
+            w = int(parts[2], 16)
+            if w:
+                d.oldbm[int(parts[1])] = w
+        elif parts[0] == "event":
+            lo, hi = (int(parts[2], 16), int(parts[3], 16)) if len(parts) >= 4 else (0, 0)
+            d.events.append((parts[1], lo, hi))
+    return d
+
+
+def bitmap_granules(bm: dict[int, int]) -> bytearray:
+    """A 128-bit-word bitmap as one byte per granule."""
+    out = bytearray(HEAP_LIMIT >> 4)
+    for w, bits in bm.items():
+        while bits:
+            b = bits & -bits
+            g = (w << 7) + b.bit_length() - 1
+            if g < len(out):
+                out[g] = 1
+            bits ^= b
+    return out
+
+
+def granules_bitmap(marked: bytearray) -> dict[int, int]:
+    """The inverse of bitmap_granules: nonzero 128-bit words."""
+    out: dict[int, int] = {}
+    g = marked.find(1)
+    while g >= 0:
+        out[g >> 7] = out.get(g >> 7, 0) | (1 << (g & 127))
+        g = marked.find(1, g + 1)
+    return out
+
+
+def trace_minor(mem: Memory, reg_roots: list[tuple[int, int]], old: bytearray,
+                remset: list[tuple[int, int, int]], **kw) -> TraceResult:
+    """A sticky-mark-bit minor: `old` granules start marked (the bitmap the
+    previous collection left, static granules included), remembered owners
+    are scanned unconditionally after the roots, and the rest is `trace`."""
+    return trace(mem, reg_roots, pruned=set(_ones(old)), remset=remset, **kw)
+
+
+def _ones(marked: bytearray):
+    g = marked.find(1)
+    while g >= 0:
+        yield g
+        g = marked.find(1, g + 1)
+
+
+def barrier_gaps(edges: list[tuple[int, int]], reachable: bytearray, old: bytearray,
+                 remset: list[tuple[int, int, int]], dyn_base: int) -> list[tuple[int, int]]:
+    """Edges from an old owner to a reachable young object or buffer whose
+    owner is not in the remembered set (plan §4, rule 3). Only dynamic
+    storage is young: below dyn_base nothing is ever freed, so an unmarked
+    static granule after a major is not a barrier obligation."""
+    logged = {a for _, a, _ in remset}
+    out = []
+    for o, c in edges:
+        if (old[o >> 4] and o not in logged and dyn_base <= c < HEAP_LIMIT and reachable[c >> 4]
+                and not old[c >> 4]):
+            out.append((o, c))
+    return out
 
 
 def pruned_granules(words: dict[int, int]) -> set[int]:
@@ -594,6 +721,13 @@ def walk_runs(mem: Memory, head: int, dyn_base: int, heap_limit: int,
 
 def check_dump(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> list[str]:
     """Return a list of discrepancies (empty = the collection was exact)."""
+    return _check(dump, compare_hw=compare_hw, mutant=mutant)[0]
+
+
+def _check(dump: Dump, *, compare_hw: bool = False,
+           mutant: int = 0) -> tuple[list[str], bytearray | None]:
+    """check_dump, plus the bitmap the collection leaves (its marked set),
+    or None when it abandoned marking."""
     m = dump.meta
     problems: list[str] = []
     dyn_base, heap_limit = m["dyn_base"], m["heap_limit"]
@@ -619,18 +753,30 @@ def check_dump(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> list
     limits = dict(stack_limit=m.get("stack_limit", GC_MARK_STACK_ENTRIES),
                   onchip=m.get("onchip", 256),
                   rescan_limit=m.get("rescan_limit", GC_RESCAN_ENTRIES))
-    pruned = {g for g in pruned_granules(dump.mem.words) if g < dyn_base >> 4}
-    pruned |= compiler_idle_premark(dump.mem, dyn_base)
-    res_p = trace(dump.mem, dump.roots, pruned=pruned, **kw, **limits)
+    old = bitmap_granules(dump.oldbm) if dump.gen else None
+    if dump.gen:
+        problems += gen_invariants(dump, old)
+    if dump.minor:
+        # A minor neither clears nor preloads: the old bitmap is the start.
+        pruned = set()
+        res_p = trace_minor(dump.mem, dump.roots, old, dump.remset, **kw, **limits)
+    else:
+        pruned = {g for g in pruned_granules(dump.mem.words) if g < dyn_base >> 4}
+        pruned |= compiler_idle_premark(dump.mem, dyn_base)
+        res_p = trace(dump.mem, dump.roots, pruned=pruned, **kw, **limits)
     if m.get("overflow", 0) or res_p.overflow:
         if not res_p.overflow:
             problems.append("RTL abandoned marking (rescan list full) but the oracle's fits")
         elif not m.get("overflow", 0):
             problems.append("oracle's rescan list overflows but the RTL finished marking")
-        return problems
+        return problems, None
     # Bounded marking that rescanned reaches the same set; reuse it only when
     # it is the same trace.
-    res = res_p if not pruned and not res_p.rescans else trace(dump.mem, dump.roots, **kw)
+    edges: list[tuple[int, int]] = []
+    if dump.minor:
+        res = trace(dump.mem, dump.roots, edges=edges, **kw)
+    else:
+        res = res_p if not pruned and not res_p.rescans else trace(dump.mem, dump.roots, **kw)
     for k in ("bad_kind", "reserved", "wild"):
         if getattr(res, k):
             problems.append(f"oracle saw {k}={getattr(res, k)} (heap or roots malformed)")
@@ -643,7 +789,23 @@ def check_dump(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> list
             problems.append(f"SAFETY: static prune map hides {len(hidden)} reachable dynamic "
                             f"granules, first at {hidden[0] << 4:#x} "
                             f"({describe(res, hidden[0] << 4)})")
-    want_all = all_free_runs(res, dyn_base, heap_limit)
+    if dump.minor:
+        # Contract (b): a minor frees exactly the unreachable young storage,
+        # so its runs are judged against trace_minor. Safety and the barrier
+        # are judged against the full trace.
+        missed = [g for g in range(dyn_base >> 4, heap_limit >> 4)
+                  if res.marked[g] and not res_p.marked[g]]
+        if missed:
+            problems.append(f"SAFETY: the minor trace misses {len(missed)} reachable granules, "
+                            f"first at {missed[0] << 4:#x} ({describe(res, missed[0] << 4)})")
+        gaps = barrier_gaps(edges, res.marked, old, dump.remset, dyn_base)
+        if gaps:
+            o, c = gaps[0]
+            problems.append(f"BARRIER: {len(gaps)} old-to-young references from owners not in the "
+                            f"remembered set, first {o:#x} ({describe(res, o)}) -> {c:#x} "
+                            f"({describe(res, c)})")
+    basis = res_p if dump.minor else res
+    want_all = all_free_runs(basis, dyn_base, heap_limit)
     # A collection with no allocation to satisfy keeps the current run
     # [keep_lo, keep_hi): it holds no object, it is free, and the engine
     # lists the free memory around it as separate runs.
@@ -665,6 +827,16 @@ def check_dump(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> list
         want_all = split
     want = [(b, s) for b, s in want_all if s >= 64]
     got = walk_runs(dump.mem, m["run_head"], dyn_base, heap_limit, problems)
+    if dump.minor:
+        got_g = [g for b, s in got for g in range(b >> 4, (b + s) >> 4)]
+        live = [g for g in got_g if res.marked[g]]
+        if live:
+            problems.append(f"SAFETY: minor freed {len(live)} reachable granules, first at "
+                            f"{live[0] << 4:#x} ({describe(res, live[0] << 4)})")
+        freed_old = [g for g in got_g if old[g]]
+        if freed_old:
+            problems.append(f"SAFETY: minor freed {len(freed_old)} old granules, first at "
+                            f"{freed_old[0] << 4:#x}")
     if got != want:
         want_free = {g for b, s in want for g in range(b >> 4, (b + s) >> 4)}
         got_free = {g for b, s in got for g in range(b >> 4, (b + s) >> 4)}
@@ -672,7 +844,7 @@ def check_dump(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> list
         leak = sorted(want_free - got_free)
         if unsafe:
             problems.append(f"SAFETY: {len(unsafe)} reachable granules freed, first at "
-                            f"{unsafe[0] << 4:#x} ({describe(res, unsafe[0] << 4)})")
+                            f"{unsafe[0] << 4:#x} ({describe(basis, unsafe[0] << 4)})")
         if leak:
             problems.append(f"PRECISION: {len(leak)} unreachable granules retained, first at "
                             f"{leak[0] << 4:#x}")
@@ -707,7 +879,81 @@ def check_dump(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> list
         if m["reclaimed"] != free - m["free_before"]:
             problems.append(f"counter reclaimed: RTL {m['reclaimed']} expected "
                             f"{free - m['free_before']} (free {free} - free_before {m['free_before']})")
-    return problems
+    return problems, res_p.marked
+
+
+def gen_invariants(dump: Dump, old: bytearray) -> list[str]:
+    """Entry-state invariants of a generational dump (plan §3.7)."""
+    m = dump.meta
+    out = []
+    if m.get("barrier_idle", 1) != 1:
+        out.append("collection entered with barrier requests in flight (barrier_idle=0)")
+    if dump.minor and m.get("force_major", 0):
+        out.append("a minor ran with force_major set")
+    if "remset_n" in m and m["remset_n"] != len(dump.remset):
+        out.append(f"remset_n {m['remset_n']} but {len(dump.remset)} remset lines")
+    if dump.minor:
+        young = [(k, a) for k, a, _ in dump.remset if not old[a >> 4]]
+        if young:
+            out.append(f"{len(young)} remset entries name a non-old owner, first "
+                       f"{KIND_NAMES[young[0][0]] if young[0][0] < len(KIND_NAMES) else young[0][0]} "
+                       f"at {young[0][1]:#x}")
+    klo, khi = m.get("keep_lo", 0), m.get("keep_hi", 0)
+    set_in_keep = [g for g in range(klo >> 4, khi >> 4) if old[g]] if khi > klo else []
+    if set_in_keep:
+        out.append(f"kept run [{klo:#x}, {khi:#x}) holds {len(set_in_keep)} set bits, first at "
+                   f"{set_in_keep[0] << 4:#x}")
+    if "old_hi" in m:
+        above = old.find(1, m["old_hi"] >> 4)
+        if above >= 0:
+            out.append(f"old bit at {above << 4:#x} at or above old_hi {m['old_hi']:#x}")
+    return out
+
+
+def check_sequence(dumps: list[Dump], *, compare_hw: bool = False,
+                   mutant: int = 0) -> list[tuple[Dump, list[str]]]:
+    """check_dump for each dump, plus the sequence rules of plan §4: the old
+    bitmap at each generational entry must be the bitmap the previous
+    collection left (its marked set; trace_minor's marks include the old
+    set), minus released ranges. After an abandoned collection, an enable or
+    a reset the bitmap is unconstrained and the collection must be a major."""
+    out = []
+    prev_post: bytearray | None = None
+    prev: Dump | None = None
+    for d in dumps:
+        problems, post = _check(d, compare_hw=compare_hw, mutant=mutant)
+        names = [e[0] for e in d.events]
+        for name, lo, hi in d.events:
+            if name not in ("release", "abandon", "enable", "reset"):
+                problems.append(f"unknown event {name!r}")
+            elif name == "release":
+                inside = [a for _, a, _ in d.remset if lo <= a < hi]
+                if inside:
+                    problems.append(f"remset entry at {inside[0]:#x} inside released [{lo:#x}, {hi:#x})")
+        if d.gen:
+            fresh = (prev is None or not prev.gen or prev_post is None
+                     or any(n in ("abandon", "enable", "reset") for n in names))
+            if fresh:
+                if d.minor and (prev is not None or names):
+                    problems.append("SEQUENCE: a minor after an abandon, enable or reset "
+                                    "(it must be a major)")
+            else:
+                want = bytearray(prev_post)
+                for name, lo, hi in d.events:
+                    if name == "release":
+                        want[lo >> 4:hi >> 4] = bytes((hi >> 4) - (lo >> 4))
+                got = bitmap_granules(d.oldbm)
+                if got != want:
+                    extra = next((g for g in _ones(got) if not want[g]), None)
+                    lost = next((g for g in _ones(want) if not got[g]), None)
+                    what = (f"set bit at {extra << 4:#x} the previous collection did not leave"
+                            if extra is not None else f"bit at {lost << 4:#x} the previous "
+                            f"collection left is clear")
+                    problems.append(f"SEQUENCE: old bitmap differs from the previous "
+                                    f"{'minor' if prev.minor else 'major'}'s result: {what}")
+        out.append((d, problems))
+        prev, prev_post = d, post
+    return out
 
 
 def describe(res: TraceResult, addr: int) -> str:
@@ -717,23 +963,35 @@ def describe(res: TraceResult, addr: int) -> str:
     return "?"
 
 
+def dump_order(p: pathlib.Path) -> tuple[int, str]:
+    """Collection order: the number in the name (gc10 after gc9)."""
+    digits = "".join(c for c in p.stem if c.isdigit())
+    return (int(digits) if digits else -1, p.name)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", nargs="*", default=[], help="dump files or directories")
     ap.add_argument("--hw", action="store_true", help="also compare the mark-stack high-water mark")
     ap.add_argument("--mutant", type=int, default=0)
     ap.add_argument("--max", type=int, default=0, help="check at most N dumps per directory")
+    ap.add_argument("--sequence", action="store_true",
+                    help="also apply the generational sequence rules across the dumps, in name order")
     args = ap.parse_args()
     paths: list[pathlib.Path] = []
     for p in map(pathlib.Path, args.check):
         if p.is_dir():
-            found = sorted(p.glob("*.gcdump"), key=lambda x: x.name)
+            found = sorted(p.glob("*.gcdump"), key=dump_order if args.sequence else (lambda x: x.name))
             paths += found[: args.max] if args.max else found
         else:
             paths.append(p)
     bad = 0
-    for p in paths:
-        problems = check_dump(load_dump(p), compare_hw=args.hw, mutant=args.mutant)
+    if args.sequence:
+        checked = [(pathlib.Path(d.path), pr) for d, pr in
+                   check_sequence([load_dump(p) for p in paths], compare_hw=args.hw, mutant=args.mutant)]
+    else:
+        checked = ((p, check_dump(load_dump(p), compare_hw=args.hw, mutant=args.mutant)) for p in paths)
+    for p, problems in checked:
         if problems:
             bad += 1
             print(f"FAIL {p}")

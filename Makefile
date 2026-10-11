@@ -132,7 +132,7 @@ EXCORE_RTL_SRCS := \
 	docker-all-tests test-host test-rtl-modules test-hw test-caching \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
 	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
-	pycore-gc-bench gc-dev gc-check gc-perf pycore-gc-genstats docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
+	pycore-gc-bench gc-dev gc-check gc-perf pycore-gc-genstats pycore-gc-genreplay docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
 	research-compare research-compare-machines
 
 pycore-preprocess:
@@ -334,6 +334,11 @@ gc-check:
 # sequence (DUMPS=<dir> from +GC_DUMP_EACH; generational GC plan Phase 0).
 pycore-gc-genstats:
 	$(PYTHON) pycore/tools/gc_genstats.py $(DUMPS)
+
+# Replay a nursery / major policy over the same dumps (Phase 1), e.g.
+# ARGS="--nursery 200000 --major-garbage 0.5".
+pycore-gc-genreplay:
+	$(PYTHON) pycore/tools/gc_genreplay.py $(DUMPS) $(ARGS)
 
 gc-perf: $(PYCORE_SIM_IMG_BIN)
 	$(PYTHON) tools/gc_perf.py --jobs $(TEST_JOBS) $(if $(GC_PERF_UPDATE),--update)

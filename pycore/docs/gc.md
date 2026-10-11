@@ -528,7 +528,7 @@ transactions; `bench_churn` 47 collections, max pause 38,443 (44,142).
 
 ## Generational collection (planned)
 
-Status: Phase 0 (tests and tools) only; no RTL yet. The design is a
+Status: Phase 0 (tests and tools) and Phase 1 (the oracle) only; no RTL yet. The design is a
 non-moving, sticky-mark-bit collector: a set bitmap bit survives the sweep
 and means "old", a minor collection marks from the roots plus a remembered
 set of old owners the program wrote into, and the marker's existing
@@ -563,6 +563,27 @@ live at the previous one were old):
 | `knucleotide` | run | 44.7% | | 0.03 |
 | `cs_program` | compile | 41.2% | 1.2 / 2 | 0.52 |
 | `mutate_old` (adversarial) | run | 83.3% | 2 / 2 | 0.51 |
+
+The oracle already checks minor collections (`pycore/tools/gc_model.py`).
+`trace_minor` starts from the pre-collection bitmap and scans the remembered
+owners without the mark test. A minor dump is then checked three ways:
+
+- its free runs must equal those of `trace_minor` exactly;
+- no reachable or old granule may be freed;
+- every reference from an old owner to young dynamic storage must start in
+  a logged owner (`BARRIER:` otherwise).
+
+`check_sequence` (`gc_model.py --check DIR --sequence`) checks that each
+dump's old bitmap is what the previous collection left. It allows for the
+`release`, `abandon`, `enable` and `reset` events recorded in the dump.
+The dump additions are listed in the `gc_model.py` docstring.
+
+`pycore/tools/gc_genreplay.py` (`make pycore-gc-genreplay DUMPS=<dir>
+ARGS="--nursery N --major-garbage F"`) replays a nursery and major policy
+over such a dump sequence. It estimates minor and major counts, marking work
+and tenured garbage, so candidate defaults can be ranked. With
+`--check-genstats` it must reproduce `gc_genstats.py`'s totals, and it does
+on every research dump set.
 
 ## Clock and timing
 
