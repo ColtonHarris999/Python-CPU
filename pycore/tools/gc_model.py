@@ -721,13 +721,21 @@ def walk_runs(mem: Memory, head: int, dyn_base: int, heap_limit: int,
 
 def check_dump(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> list[str]:
     """Return a list of discrepancies (empty = the collection was exact)."""
-    return _check(dump, compare_hw=compare_hw, mutant=mutant)[0]
+    return _check(dump, compare_hw=compare_hw, mutant=mutant).problems
 
 
-def _check(dump: Dump, *, compare_hw: bool = False,
-           mutant: int = 0) -> tuple[list[str], bytearray | None]:
-    """check_dump, plus the bitmap the collection leaves (its marked set),
-    or None when it abandoned marking."""
+@dataclass
+class Outcome:
+    """What _check learned about one collection. `post` is the oracle's
+    bitmap after it (None when marking was abandoned), `freed` the granules
+    the RTL's run list frees, `reach` the full trace's reachable set."""
+    problems: list[str]
+    post: bytearray | None = None
+    freed: bytearray | None = None
+    reach: bytearray | None = None
+
+
+def _check(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> Outcome:
     m = dump.meta
     problems: list[str] = []
     dyn_base, heap_limit = m["dyn_base"], m["heap_limit"]
@@ -769,7 +777,7 @@ def _check(dump: Dump, *, compare_hw: bool = False,
             problems.append("RTL abandoned marking (rescan list full) but the oracle's fits")
         elif not m.get("overflow", 0):
             problems.append("oracle's rescan list overflows but the RTL finished marking")
-        return problems, None
+        return Outcome(problems)
     # Bounded marking that rescanned reaches the same set; reuse it only when
     # it is the same trace.
     edges: list[tuple[int, int]] = []
@@ -827,6 +835,11 @@ def _check(dump: Dump, *, compare_hw: bool = False,
         want_all = split
     want = [(b, s) for b, s in want_all if s >= 64]
     got = walk_runs(dump.mem, m["run_head"], dyn_base, heap_limit, problems)
+    freed = bytearray(HEAP_LIMIT >> 4)
+    for b, sz in got:
+        lo, hi = b >> 4, min((b + sz) >> 4, len(freed))
+        if hi > lo:
+            freed[lo:hi] = b"\x01" * (hi - lo)
     if dump.minor:
         got_g = [g for b, s in got for g in range(b >> 4, (b + s) >> 4)]
         live = [g for g in got_g if res.marked[g]]
@@ -879,7 +892,7 @@ def _check(dump: Dump, *, compare_hw: bool = False,
         if m["reclaimed"] != free - m["free_before"]:
             problems.append(f"counter reclaimed: RTL {m['reclaimed']} expected "
                             f"{free - m['free_before']} (free {free} - free_before {m['free_before']})")
-    return problems, res_p.marked
+    return Outcome(problems, res_p.marked, freed, res.marked)
 
 
 def gen_invariants(dump: Dump, old: bytearray) -> list[str]:
@@ -910,18 +923,92 @@ def gen_invariants(dump: Dump, old: bytearray) -> list[str]:
     return out
 
 
+# Granule state table (pycore/docs/gc_gen_protocol.md §1), for dynamic
+# granules, as the RTL shows them: the bit at entry (oldbm), whether the full
+# trace reaches the granule, what the collection did with it (`free`: in the
+# run list; `kept`: the kept bump run; `held`: neither, so an object or a
+# pad shorter than 64 B), and the bit at the next entry. A release between
+# the two collections clears the bit (the `released` rows).
+#   (entry bit, kind, reachable) -> allowed (exit, next bit)
+STATE_TABLE: dict[tuple[int, str, bool], set[tuple[str, int]]] = {
+    (1, "minor", True): {("held", 1)},
+    (1, "minor", False): {("held", 1)},            # tenured garbage waits for a major
+    (0, "minor", True): {("held", 1)},             # young survivor, promoted
+    (0, "minor", False): {("free", 0), ("kept", 0), ("held", 0),
+                          ("held", 1)},            # held+1: reached from a remembered owner
+    (1, "major", True): {("held", 1)},
+    (1, "major", False): {("free", 0), ("held", 0)},
+    (0, "major", True): {("held", 1)},
+    (0, "major", False): {("free", 0), ("kept", 0), ("held", 0)},
+}
+# Every (row, exit, next bit) any check_sequence call has seen; the unit
+# tests require each legal one, released or not, to be exercised.
+STATES_SEEN: set[tuple[int, str, bool, str, int, bool]] = set()
+
+
+def table_rows() -> set[tuple[int, str, bool, str, int, bool]]:
+    """Every legal transition: STATE_TABLE, plus each row with a release
+    before the next entry, which leaves the bit clear whatever the exit."""
+    out = set()
+    for (e, k, r), exits in STATE_TABLE.items():
+        for x, n in exits:
+            out.add((e, k, r, x, n, False))
+            out.add((e, k, r, x, 0, True))
+    return out
+
+
+def check_states(d: Dump, o: Outcome, nxt: bytearray | None, released: bytearray | None) -> list[str]:
+    """Check every dynamic granule of collection `d` against STATE_TABLE.
+    `nxt` is the next entry's bitmap (None: no next dump, or an event made
+    it unconstrained); `released` marks granules released in between."""
+    if o.post is None or o.freed is None or not d.gen:
+        return []
+    m = d.meta
+    lo, hi = m["dyn_base"] >> 4, m["heap_limit"] >> 4
+    entry = bitmap_granules(d.oldbm)
+    klo, khi = m.get("keep_lo", 0) >> 4, m.get("keep_hi", 0) >> 4
+    kind = "minor" if d.minor else "major"
+    seen: dict[tuple, int] = {}
+    for g in range(lo, hi):
+        x = "free" if o.freed[g] else "kept" if klo <= g < khi else "held"
+        rel = bool(released and released[g])
+        key = (entry[g], kind, bool(o.reach[g]), x, nxt[g] if nxt is not None else -1, rel)
+        if key not in seen:
+            seen[key] = g
+    out = []
+    legal = table_rows()
+    for key, g in seen.items():
+        e, k, r, x, n, rel = key
+        if n == -1:
+            ok = any((x, nn) in STATE_TABLE[(e, k, r)] for nn in (0, 1))
+        elif rel:
+            ok = n == 0 and any(x == xx for xx, _ in STATE_TABLE[(e, k, r)])
+        else:
+            ok = (x, n) in STATE_TABLE[(e, k, r)]
+        if n != -1:
+            STATES_SEEN.add((e, k, r, x, n, rel) if (e, k, r, x, n, rel) in legal else key)
+        if not ok:
+            out.append(f"STATE: granule {g << 4:#x}: bit {e} at entry, {'reachable' if r else 'unreachable'}, "
+                       f"{k} left it {x}" + (f", bit {n} at the next entry" if n != -1 else "")
+                       + (" after a release" if rel else "") + " (not in the state table)")
+    return out
+
+
 def check_sequence(dumps: list[Dump], *, compare_hw: bool = False,
                    mutant: int = 0) -> list[tuple[Dump, list[str]]]:
     """check_dump for each dump, plus the sequence rules of plan §4: the old
     bitmap at each generational entry must be the bitmap the previous
     collection left (its marked set; trace_minor's marks include the old
     set), minus released ranges. After an abandoned collection, an enable or
-    a reset the bitmap is unconstrained and the collection must be a major."""
+    a reset the bitmap is unconstrained and the collection must be a major.
+    Each collection's granules are also checked against STATE_TABLE."""
+    outs = [_check(d, compare_hw=compare_hw, mutant=mutant) for d in dumps]
     out = []
-    prev_post: bytearray | None = None
-    prev: Dump | None = None
-    for d in dumps:
-        problems, post = _check(d, compare_hw=compare_hw, mutant=mutant)
+    for i, d in enumerate(dumps):
+        o = outs[i]
+        problems = o.problems
+        prev = dumps[i - 1] if i else None
+        prev_post = outs[i - 1].post if i else None
         names = [e[0] for e in d.events]
         for name, lo, hi in d.events:
             if name not in ("release", "abandon", "enable", "reset"):
@@ -951,8 +1038,20 @@ def check_sequence(dumps: list[Dump], *, compare_hw: bool = False,
                             f"collection left is clear")
                     problems.append(f"SEQUENCE: old bitmap differs from the previous "
                                     f"{'minor' if prev.minor else 'major'}'s result: {what}")
+        # The state table, with this collection's exit read from the next
+        # dump's entry bitmap when nothing between them unconstrains it.
+        nxt = released = None
+        if i + 1 < len(dumps):
+            n = dumps[i + 1]
+            if n.gen and not any(e[0] in ("abandon", "enable", "reset") for e in n.events):
+                nxt = bitmap_granules(n.oldbm)
+                rels = [(lo, hi) for name, lo, hi in n.events if name == "release"]
+                if rels:
+                    released = bytearray(HEAP_LIMIT >> 4)
+                    for lo, hi in rels:
+                        released[lo >> 4:hi >> 4] = b"\x01" * ((hi >> 4) - (lo >> 4))
+        problems += check_states(d, o, nxt, released)
         out.append((d, problems))
-        prev, prev_post = d, post
     return out
 
 
