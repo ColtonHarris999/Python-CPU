@@ -97,7 +97,11 @@ enable or reset it is unconstrained (T3).
 (CA) command, or one excore trap dispatch. Each operation starts with
 `bar_op_begin`, which empties the permit windows. A *window* is an address
 range `[lo, hi)` that the operation declares it will write. The *current
-run* is the bump run the allocator is carving, `[run_base, run_end)`.
+run* is the part of the bump run the allocator is carving that was free
+when the last collection started, `[young_lo, run_end)`: `young_lo` is the
+bump pointer at the start of the last collection, or the base of a run the
+allocator installed since. A run kept across a collection is not young
+below that pointer: its objects were marked by the collection.
 
 Neither the barrier nor the guard reads the bitmap. The bitmap port stays
 the engine's alone, and there is no request queue between a write and its
@@ -124,7 +128,7 @@ effect.
   owner is skipped: if it is reachable, the trace from the roots scans it.
   A set (old) owner is pushed without the mark test. `trace_minor` models
   exactly this.
-- **B5, current-run owners.** A log whose owner lies in `[run_base,
+- **B5, current-run owners.** A log whose owner lies in `[young_lo,
   heap_ptr)` may be dropped before the filter: that owner is young.
   This saves SSB entries for objects that are built and filled in the same
   interval. It is an optimization; B4 makes correctness independent of it.

@@ -50,6 +50,14 @@ module pycore_gc #(
     input  logic         clk_i,
     input  logic         rst_n_i,
     input  logic         start_i,
+    // Generational mode (gc_gen_protocol.md), sampled at start. gen_i keeps
+    // the bitmap between collections (sticky mark bits: set = old); minor_i
+    // starts from it instead of clearing and preloading. gen_i = 0 is
+    // today's collector, cycle for cycle.
+    input  logic         gen_i,
+    input  logic         minor_i,
+    output logic [31:0]  old_hi_w_o,
+    output logic         sticky_o,
     output logic         busy_o,
     output logic         done_o,
     // Configuration, sampled at start.
@@ -193,6 +201,15 @@ module pycore_gc #(
     logic [8:0]  onchip_limit_r;
     logic [7:0]  mut_r;
     logic        bitmap_clean_r;
+    // Generational state. gen_r / minor_r: this collection's mode and kind.
+    // sticky_r: the bitmap holds the old set a completed generational
+    // collection left, so the idle-time clear must not run. old_hi_w_r: the
+    // highest bitmap word that can hold a set bit then (a major clears only
+    // up to it, a minor's sweep skips everything above it and its marks).
+    logic        gen_r, minor_r, sticky_r;
+    logic [31:0] old_hi_w_r;
+    assign old_hi_w_o = old_hi_w_r;
+    assign sticky_o   = sticky_r;
     // Next bitmap word for the idle-time clear: after reset (RAM contents are
     // undefined) and after an aborted collection the engine clears the bitmap
     // while it waits, so the next collection does not pay M_CLEAR's one cycle
@@ -660,6 +677,9 @@ module pycore_gc #(
     assign sw_w    = sw_g_r >> 7;
     assign sw_b    = sw_g_r[6:0];
     assign sw_word = bm_q[sw_w[BM_AW-1:0]];
+    // The sticky sweep keeps every bit: a set bit now means old.
+    logic         sw_clr_ok;
+    assign sw_clr_ok = !gen_r || (minor_r && (mut_r == 8'd60));
     // Last bitmap word of the sweep and its exclusive bit limit (1..128),
     // fixed for a sweep: latched at sweep start so the scan step does not
     // subtract per cycle (it was the start of the engine's critical path).
@@ -716,6 +736,7 @@ module pycore_gc #(
             resc_cnt_r <= '0; rescans_r <= '0; m_have_ent_r <= 1'b0; m_resc_done_r <= 1'b0;
             t_re_r <= '0;
             mut_r <= '0; bitmap_clean_r <= 1'b0; shadow_ok_r <= 1'b0; bg_clr_r <= '0;
+            gen_r <= 1'b0; minor_r <= 1'b0; sticky_r <= 1'b0; old_hi_w_r <= '0;
             clean_busy_addr_r <= '0; clean_done_r <= 1'b0;
             out_r <= 1'b0; out_owner_r <= 1'b0;
             t_want_r <= 1'b0; t_line_r <= 1'b0; t_addr_r <= '0;
@@ -804,7 +825,12 @@ module pycore_gc #(
                 dyn_base_r    <= dyn_base_i;
                 heap_limit_r  <= heap_limit_i;
                 keep_lo_r     <= keep_lo_i;
-                mark_hi_w_r   <= dyn_base_i >> 11;
+                // A minor's sweep must not skip words that hold old bits.
+                // Mutant 61 forgets them (the old_hi bound is never used).
+                mark_hi_w_r   <= (gen_i && minor_i && (mutant_i != 8'd61))
+                                 ? old_hi_w_r : (dyn_base_i >> 11);
+                gen_r         <= gen_i;
+                minor_r       <= gen_i && minor_i;
                 rover_addr_r  <= rover_addr_i;
                 extra_roots_r <= extra_roots_i;
                 keep_hi_r     <= (keep_hi_i > keep_lo_i) ? keep_hi_i : keep_lo_i;
@@ -836,7 +862,10 @@ module pycore_gc #(
                 m_clean_count_r <= '0;
                 m_clean_idx_r <= '0;
                 m_clean_idle_r <= 1'b0;
-                if (bitmap_clean_r) begin
+                // A minor starts from the old bitmap: no clear (and no
+                // preload, M_PRE). Mutant 64: a major skips its clear too.
+                if (bitmap_clean_r || (gen_i && minor_i) ||
+                    (gen_i && sticky_r && (mutant_i == 8'd64))) begin
                     phase_r <= P_CLEANUP;
                     m_st_r  <= M_CLEAN_HDR;
                 end else begin
@@ -845,7 +874,7 @@ module pycore_gc #(
                 end
             end
             // Idle-time bitmap clear (see bg_clr_r).
-            if ((phase_r == P_IDLE) && !start_i && !bitmap_clean_r) begin
+            if ((phase_r == P_IDLE) && !start_i && !bitmap_clean_r && !sticky_r) begin
                 bm_q[bg_clr_r[BM_AW-1:0]] <= '0;
                 if (bg_clr_r == 32'(BM_WORDS - 1)) begin
                     bitmap_clean_r <= 1'b1;
@@ -1541,9 +1570,11 @@ module pycore_gc #(
                     end
                 end
 
+                // A major over a sticky bitmap clears only up to old_hi.
                 M_CLEAR: begin
                     bm_q[m_clr_r[BM_AW-1:0]] <= '0;
-                    if (m_clr_r == 32'(BM_WORDS - 1)) begin
+                    if ((m_clr_r == 32'(BM_WORDS - 1)) ||
+                        (sticky_r && (m_clr_r >= old_hi_w_r))) begin
                         bitmap_clean_r <= 1'b1;
                         bg_clr_r <= 32'd0;
                         phase_r <= P_CLEANUP;
@@ -1682,8 +1713,17 @@ module pycore_gc #(
                 // Static prune map -> bitmap, one word per static bitmap word.
                 // Bits at or above dyn_base are masked off: a dynamic object
                 // must never look pre-marked.
+                // A minor keeps the static words as the last collection
+                // left them (premarks plus every static object it reached).
                 M_PRE: begin
-                    if ((m_clr_r < ((dyn_base_r + 32'd2047) >> 11)) && shadow_ok_r &&
+                    if (minor_r) begin
+                        if (m_clean_idle_r)
+                            bm_q[m_clean_pyc_g_r[BM_AW+10:11]][m_clean_pyc_g_r[10:4]] <= 1'b1;
+                        if (m_clean_idle_r && (m_clean_builtins_r != 32'd0))
+                            bm_q[m_clean_builtins_r[BM_AW+10:11]][m_clean_builtins_r[10:4]] <= 1'b1;
+                        phase_r <= P_ROOTS_REG;
+                        m_st_r  <= M_IDLE;
+                    end else if ((m_clr_r < ((dyn_base_r + 32'd2047) >> 11)) && shadow_ok_r &&
                         (m_clr_r < 32'(SHADOW_WORDS))) begin
                         bm_q[m_clr_r[BM_AW-1:0]] <= shadow_q[m_clr_r[7:0]];
                         m_clr_r <= m_clr_r + 32'd1;
@@ -1948,8 +1988,6 @@ module pycore_gc #(
                 end
 
                 // ---- sweep ----
-                // Kept current run: set its bits so the scan splits runs
-                // around it (one bitmap word per cycle), and count it free.
                 // Kept current run: count it free. The sweep treats
                 // [keep_lo, keep_hi) as allocated and jumps over it, so the
                 // run is never painted into the bitmap (that cost one cycle
@@ -1964,8 +2002,10 @@ module pycore_gc #(
                 end
                 // Clear the bitmap words wholly below the dynamic heap.
                 M_SW_PRE: begin
-                    if (m_clr_r < (sw_g_r >> 7)) begin
-                        if (mut_r != 8'd25) bm_q[m_clr_r[BM_AW-1:0]] <= '0;
+                    if (gen_r && !(minor_r && (mut_r == 8'd60))) begin
+                        m_st_r <= M_SW_SCAN;
+                    end else if (m_clr_r < (sw_g_r >> 7)) begin
+                        if ((mut_r != 8'd25) && sw_clr_ok) bm_q[m_clr_r[BM_AW-1:0]] <= '0;
                         m_clr_r <= m_clr_r + 32'd1;
                     end else begin
                         m_st_r <= M_SW_SCAN;
@@ -2015,7 +2055,7 @@ module pycore_gc #(
                             run_end = sw_g_end_r;
                             emit = 1'b1;
                         end else begin
-                            if (mut_r != 8'd25) bm_q[sw_w[BM_AW-1:0]] <= '0;
+                            if ((mut_r != 8'd25) && sw_clr_ok) bm_q[sw_w[BM_AW-1:0]] <= '0;
                             sw_g_r <= (sw_w + 32'd1) << 7;
                         end
                         if (emit) begin
@@ -2110,7 +2150,7 @@ module pycore_gc #(
                             // At the kept run: jump over it. Leaving this
                             // word, clear it (only granules below the run,
                             // already swept, can be marked).
-                            if (((k_next >> 7) != sw_w) && (mut_r != 8'd25))
+                            if (((k_next >> 7) != sw_w) && (mut_r != 8'd25) && sw_clr_ok)
                                 bm_q[sw_w[BM_AW-1:0]] <= '0;
                             sw_g_r <= k_next;
                         end else if (sw_found) begin
@@ -2120,7 +2160,7 @@ module pycore_gc #(
                         end else if (last_word) begin
                             sw_g_r <= sw_g_end_r;
                         end else begin
-                            if (mut_r != 8'd25) bm_q[sw_w[BM_AW-1:0]] <= '0;
+                            if ((mut_r != 8'd25) && sw_clr_ok) bm_q[sw_w[BM_AW-1:0]] <= '0;
                             sw_g_r <= (sw_w + 32'd1) << 7;
                         end
                     end
@@ -2128,7 +2168,7 @@ module pycore_gc #(
 
                 // Clear the last word, then write the final pending header.
                 M_SW_LAST: begin
-                    if (mut_r != 8'd25) bm_q[sw_end_w_r[BM_AW-1:0]] <= '0;
+                    if ((mut_r != 8'd25) && sw_clr_ok) bm_q[sw_end_w_r[BM_AW-1:0]] <= '0;
                     if (sw_pend_r && (swq_n_r != 3'd4)) begin
                         sw_enq = 1'b1;
                         swq_base_r[swq_n_r[1:0]] <= sw_pend_base_r;
@@ -2161,6 +2201,14 @@ module pycore_gc #(
 
                 M_DONE: begin
                     if (!out_r && !m_want_r && !t_want_r) begin
+                        // A completed generational collection leaves the
+                        // marked set as the old set.
+                        if (gen_r && !overflow_r && !fault_r) begin
+                            sticky_r       <= 1'b1;
+                            bitmap_clean_r <= 1'b0;
+                            bg_clr_r       <= 32'd0;
+                            old_hi_w_r     <= mark_hi_w_r;
+                        end
                         phase_r <= P_IDLE;
                         t_st_r  <= T_IDLE;
                         m_st_r  <= M_IDLE;
@@ -2255,6 +2303,9 @@ module pycore_gc #(
                 if (phase_r != P_IDLE) begin
                     bitmap_clean_r <= 1'b0;
                     bg_clr_r       <= 32'd0;
+                    // Stale marks anywhere: the whole bitmap is cleared at
+                    // idle, and the core forces the next collection major.
+                    sticky_r       <= 1'b0;
                 end
                 if ((phase_r != P_IDLE) && (phase_r != P_FINISH) && (m_st_r != M_DONE)) begin
 `ifndef SYNTHESIS

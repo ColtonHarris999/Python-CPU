@@ -683,6 +683,68 @@ def gate_G7(ctx: Context) -> Result:
 
 
 # --------------------------------------------------------------------------
+# GG2 generational collection (generational GC plan §5, Phase 2)
+# --------------------------------------------------------------------------
+
+def check_sequence_dir(path: str) -> tuple[str, int, int, list[str]]:
+    """One run's dumps as a sequence (gc_model.check_sequence): the dump
+    count, the number of minors, and the problems."""
+    import gc_model  # noqa: PLC0415
+    try:
+        ds = [gc_model.load_dump(x) for x in sorted(pathlib.Path(path).glob("*.gcdump"),
+                                                    key=gc_model.dump_order)]
+        res = gc_model.check_sequence(ds)
+    except Exception as exc:  # noqa: BLE001 - an unreadable dump is a failure
+        return path, 0, 0, [f"unreadable dumps: {exc}"]
+    probs = [f"{pathlib.Path(d.path).name}: {x}" for d, ps in res for x in ps[:4]]
+    return path, len(ds), sum(1 for d in ds if d.minor), probs
+
+
+def gate_GG2(ctx: Context) -> Result:
+    """Every [gc] and [gc-gen] test with +GC_GEN=1, in two arms: boundary
+    collections every K instructions (so most collections are minors), and
+    the same with every third collection a major. Goldens hold, no shadow or
+    invariant failure, and every run's dumps pass the oracle as a sequence
+    (contract P1-P5, the granule state table, the sequence rules)."""
+    import concurrent.futures as cf
+    lines: list[str] = []
+    problems: list[str] = []
+    sp = spec(ctx, "GG2")
+    tests = hw_tests.gate_tests(sp, all_tests())
+    skip = sp.get("no_boundary", [])
+    k = int(sp.get("boundary_every", 400))
+    minors_total = 0
+    for arm, more in sp.get("arms", {"boundary": ""}).items():
+        extra = {t.name: ("" if matches(t.name, skip) else f"+GC_AT_BOUNDARY_EVERY={k} ") + more
+                 for t in tests}
+        res = gate_runs(ctx, "GG2", f"GG2_{arm}", tests=tests, extra=extra)
+        bad = failures(res)
+        gcp = scan_gc_problems(res)
+        dirs = sorted({str(r.out) for r in res if r.out is not None and not r.expected_fail
+                       and any(r.out.glob("*.gcdump"))})
+        n = minors = 0
+        probs: list[str] = []
+        with cf.ProcessPoolExecutor(max_workers=max(1, ctx.jobs)) as ex:
+            for path, nd, nm, ps in ex.map(check_sequence_dir, dirs):
+                n += nd
+                minors += nm
+                rel = pathlib.Path(path)
+                rel = rel.relative_to(ctx.out) if rel.is_relative_to(ctx.out) else rel
+                probs += [f"{rel}/{x}" for x in ps]
+        minors_total += minors
+        lines.append(f"GG2_{arm}: {len(res)} runs, {len(bad)} failing, {n} dumps ({minors} minors), "
+                     f"{len(probs)} oracle problems, {len(gcp)} shadow/invariant")
+        problems += [f"GG2_{arm}: {x}" for x in bad + probs + gcp]
+    if minors_total == 0:
+        problems.append("GG2 ran no minor collection")
+    lines += problems[:300]
+    if problems:
+        return Result("fail", f"{len(problems)} generational problems", lines)
+    return Result("pass", f"{len(tests)} tests x {len(sp.get('arms', {'boundary': ''}))} arms, "
+                  f"{minors_total} minors: goldens equal, dump sequences exact", lines)
+
+
+# --------------------------------------------------------------------------
 # G8 randomized differential fuzzing
 # --------------------------------------------------------------------------
 

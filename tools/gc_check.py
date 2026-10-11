@@ -130,13 +130,15 @@ def main() -> int:
     if args.tier == "dev":
         ctx.g8_seeds = ",".join(map(str, DEV_SEEDS))
         steps = [("G2", step_g2_if_changed), ("G3", step_unit_dev), ("G4", gc_gates.gate_G4),
-                 ("G5", gc_gates.gate_G5), ("G6", gc_gates.gate_G6), ("G8", gc_gates.gate_G8)]
+                 ("G5", gc_gates.gate_G5), ("G6", gc_gates.gate_G6), ("G8", gc_gates.gate_G8),
+                 ("GG2", gc_gates.gate_GG2)]
         fail_fast = not args.keep_going
     else:
         ctx.g8_seeds = ",".join(map(str, sorted(CHECK_FIXED + rotating_seeds(head))))
         steps = [("G1", gc_gates.gate_G1), ("G2", gc_gates.gate_G2), ("G3", gc_gates.gate_G3),
                  ("G4", gc_gates.gate_G4), ("G5", gc_gates.gate_G5), ("G6", gc_gates.gate_G6),
-                 ("G7", gc_gates.gate_G7), ("G8", gc_gates.gate_G8), ("perf", step_perf)]
+                 ("G7", gc_gates.gate_G7), ("G8", gc_gates.gate_G8), ("GG2", gc_gates.gate_GG2),
+                 ("perf", step_perf)]
         fail_fast = False
     if not args.no_build:
         steps.insert(0, ("build", step_build))

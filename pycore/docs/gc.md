@@ -526,11 +526,10 @@ prefetch in parentheses): `bench_full` mark 603,098 cycles (1,051,606);
 (568,952; 968,978 before chunked scans), 0 spills / 47,967 mark
 transactions; `bench_churn` 47 collections, max pause 38,443 (44,142).
 
-## Generational collection (planned)
+## Generational collection (in progress)
 
-Status: Phase 0 (tests and tools) and Phase 1 (the oracle) only; no RTL yet.
-The protocol the RTL will implement is specified in
-[gc_gen_protocol.md](gc_gen_protocol.md). The design is a
+Status: Phase 2 of the plan, behind `+GC_GEN=1` (needs `+GC_EN=1`). The
+protocol is specified in [gc_gen_protocol.md](gc_gen_protocol.md). The design is a
 non-moving, sticky-mark-bit collector: a set bitmap bit survives the sweep
 and means "old", a minor collection marks from the roots plus a remembered
 set of old owners the program wrote into, and the marker's existing
@@ -553,6 +552,52 @@ Decisions taken (the defaults the plan recommended):
 | D5 | `+GC_GEN=1` stays opt-in until the collector is on by default |
 | D6 | Zero freed memory in pieces just ahead of the bump pointer, as its own change first |
 | D7 | G1 compares with the cached merge-base baseline |
+
+What Phase 2 built (guard only, no remembered set yet):
+
+- **Engine** (`pycore_gc.sv`, inputs `gen_i` and `minor_i`). A completed
+  generational collection leaves its marks in the bitmap (`sticky_r`): the
+  sweep never writes zero, and the idle-time clear runs only after an
+  abandoned collection. A minor skips `P_CLEAR` and the static-map preload,
+  so every bit set at entry stops the marker, and its sweep bound starts
+  at `old_hi_w_r`, the highest word a collection marked. A major clears
+  words `[0, old_hi_w_r]` and then runs as before.
+- **Core** (`pycore_core.sv`). The kind is decided when the engine starts:
+  a minor unless `gc_force_major_r` is set, the collection is explicit or
+  at exit, or the policy plusargs ask for a major. `gc_force_major_r`
+  resets to 1 and is set by the guard, by any excore trap (the excore slot
+  port has no guard yet), by a heap release, and by an abandoned
+  collection. The guard is an address compare on every data-memory write
+  except STRACC, the engine and the allocator: a write into
+  `[HEAP_BASE, heap limit)` outside `[gc_young_lo_r, heap_limit_r)` (the
+  part of the current run that was free when the last collection started)
+  forces a major. With no windows declared yet, every container store into an
+  object older than the current run does.
+- **Out of memory.** A minor keeps tenured garbage, so it never declares
+  OOM. An allocation it cannot satisfy collects again, as a major.
+- **Plusargs.** `+GC_GEN=1`; `+GC_MAJOR_ONLY=1` (sticky bookkeeping, every
+  collection a major); `+GC_MAJOR_EVERY=M`; `+GC_GEN_LOG=1` prints one
+  `[GC-GEN]` line per collection (kind, force flag, guard hits, `old_hi`,
+  live, free, mark and sweep cycles).
+- **Dumps.** With `+GC_GEN=1`, `+GC_DUMP_EACH` adds the entry bitmap,
+  the entry state and the events since the previous dump
+  (`gc_gen_protocol.md` §10); `gc_model.py --check DIR --sequence` checks
+  them.
+
+- **Gate GG2** (`make gc-dev` and `make gc-check`). Every `[gc]` and
+  `[gc-gen]` test with `+GC_GEN=1` and a collection every 400 instructions,
+  once as is and once with `+GC_MAJOR_EVERY=3`: goldens hold and every
+  run's dumps pass `gc_model.check_sequence`. About 1,600 minors per run.
+  `img_gen_release` and `img_gen_abandon` cover a release and an abandoned
+  collection followed by an allocation collection.
+- **Mutants** 60 (a minor's sweep clears bits), 61 (a minor ignores
+  `old_hi`), 62 (an abandon does not force a major), 63 (guard off),
+  64 (a major skips its clear), 65 (`force_major` resets to 0), 66 (the
+  guard skips the static image) and 67 (a release does not force a major).
+  Each is killed by a `+GC_GEN=1` run of a `[gc]` or `[gc-gen]` test.
+
+The nursery budget, the remembered set and the barrier sites come in later
+phases; until then a minor runs only where a full collection would.
 
 Measured with `pycore/tools/gc_genstats.py` over dump sequences on
 `b14600b` (what a minor at each collection would have done if everything

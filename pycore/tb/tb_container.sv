@@ -259,6 +259,21 @@ module tb_container #(
     logic [127:0] gc_rt_val [0:511];
     int          gc_rt_n;
     logic [31:0] gc_free_before_tb;
+    // Generational dumps (pycore/docs/gc_gen_protocol.md §10): the entry
+    // bitmap and entry state, captured when the engine starts, and the
+    // events since the previous dump.
+    logic [127:0] gen_bm [int];
+    bit           gen_force_major_tb, gen_minor_tb, gen_sticky_tb;
+    logic [31:0]  gen_old_hi_w_tb;
+    string        gen_events [$];
+    bit           gen_rel_q;
+    bit           gen_log_en;
+    initial begin
+        gen_log_en = $test$plusargs("GC_GEN_LOG=1");
+        gen_rel_q = 0;
+        // N1, N5: the first collection follows a reset.
+        gen_events.push_back("event reset");
+    end
     initial begin
         gc_dump_dir = "";
         gc_dump_max = 20;
@@ -430,6 +445,25 @@ module tb_container #(
 
     /* verilator lint_off BLKSEQ */
     always @(posedge clk) begin
+        if (rst_n && g_dut.dut.core.gc_gen_sim) begin
+            if (g_dut.dut.core.gc_rel_zero_r && !gen_rel_q)
+                gen_events.push_back($sformatf("event release %0h %0h",
+                                               g_dut.dut.core.gc_zero_ptr_r,
+                                               g_dut.dut.core.gc_zero_end_r));
+            gen_rel_q = g_dut.dut.core.gc_rel_zero_r;
+            if (g_dut.dut.core.gc_start) begin
+                gen_force_major_tb = g_dut.dut.core.gc_force_major_r;
+                gen_minor_tb       = g_dut.dut.core.gc_minor_now;
+                gen_sticky_tb      = g_dut.dut.core.u_gc.sticky_r;
+                gen_old_hi_w_tb    = g_dut.dut.core.u_gc.old_hi_w_r;
+                if (gc_dump_dir.len() > 0) begin
+                    gen_bm.delete();
+                    for (int w = 0; w < PYCORE_GC_BITMAP_WORDS; w++)
+                        if (g_dut.dut.core.u_gc.bm_q[w] != '0)
+                            gen_bm[w] = g_dut.dut.core.u_gc.bm_q[w];
+                end
+            end
+        end
         if (rst_n && (g_dut.dut.core.state_r == CORE_S_GC_ENTER)) begin
             gc_record_roots();
             gc_free_before_tb = (g_dut.dut.core.heap_limit_r - g_dut.dut.core.heap_ptr_r)
@@ -447,6 +481,14 @@ module tb_container #(
                          g_dut.dut.core.gc_largest_size, g_dut.dut.core.gc_runs,
                          g_dut.dut.core.gc_objects, g_dut.dut.core.gc_mark_cyc,
                          g_dut.dut.core.gc_sweep_cyc);
+            if (gen_log_en && g_dut.dut.core.gc_gen_sim)
+                $display("[GC-GEN] n=%0d kind=%s force_major=%0d guard_hits=%0d old_hi=%0h live=%0d free=%0d mark_cyc=%0d sweep_cyc=%0d abandoned=%0d",
+                         g_dut.dut.core.gc_collections_r, gen_minor_tb ? "minor" : "major",
+                         gen_force_major_tb, g_dut.dut.core.gc_guard_hits_r,
+                         (g_dut.dut.core.u_gc.mark_hi_w_r + 32'd1) << 11,
+                         g_dut.dut.core.gc_live_bytes, g_dut.dut.core.gc_free_bytes,
+                         g_dut.dut.core.gc_mark_cyc, g_dut.dut.core.gc_sweep_cyc,
+                         g_dut.dut.core.gc_stack_overflow || g_dut.dut.core.gc_eng_fault);
             if (g_dut.dut.core.gc_bad_kind != 0 || g_dut.dut.core.gc_reserved_tag != 0 ||
                 g_dut.dut.core.gc_wild_ptr != 0)
                 $fatal(1, "[GC-INV] collection %0d saw bad_kind=%0d reserved_tag=%0d wild_ptr=%0d",
@@ -490,6 +532,17 @@ module tb_container #(
                 $fwrite(fd, "meta mark_cyc %0d\nmeta sweep_cyc %0d\nmeta port_busy_mark %0d\n",
                         g_dut.dut.core.gc_mark_cyc, g_dut.dut.core.gc_sweep_cyc,
                         g_dut.dut.core.gc_port_busy_mark);
+                if (g_dut.dut.core.gc_gen_sim) begin
+                    $fwrite(fd, "meta gen 1\nmeta minor %0d\nmeta force_major %0d\nmeta remset_n 0\n",
+                            gen_minor_tb, gen_force_major_tb);
+                    if (gen_sticky_tb)
+                        $fwrite(fd, "meta old_hi %0d\n", (gen_old_hi_w_tb + 32'd1) << 11);
+                    foreach (gen_bm[w])
+                        $fwrite(fd, "oldbm %0d %0h\n", w, gen_bm[w]);
+                    foreach (gen_events[e])
+                        $fwrite(fd, "%s\n", gen_events[e]);
+                    gen_events.delete();
+                end
                 for (int k = 0; k < gc_rt_n && k < 512; k++)
                     $fwrite(fd, "root %0d %0h\n", gc_rt_tag[k], gc_rt_val[k]);
                 gc_dump_memory(fd, g_dut.dut.core.gc_heap_limit_eff,
@@ -511,6 +564,9 @@ module tb_container #(
                 end
                 $fclose(fd);
                 gc_dump_n++;
+                if (g_dut.dut.core.gc_gen_sim &&
+                    (g_dut.dut.core.gc_stack_overflow || g_dut.dut.core.gc_eng_fault))
+                    gen_events.push_back("event abandon");
                 if (gc_dump_stop && (gc_dump_n >= gc_dump_max)) begin
                     gc_site_report();
                     $display("[GC-DUMP-STOP] %0d dumps written; cycles=%0d", gc_dump_n, cycle_count);

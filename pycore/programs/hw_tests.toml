@@ -650,6 +650,8 @@ gen-wide-list = { src = "gen_wide_list", cycles = 10_000_000, plusargs = "+GC_EN
 gen-two-owners = { src = "gen_two_owners", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
 gen-delete = { src = "gen_delete", cycles = 1_000_000, plusargs = "+GC_EN=1", caching = true }
 gen-deep-chain = { src = "gen_deep_chain", cycles = 2_000_000, plusargs = "+GC_EN=1" }
+gen-release = { src = "gen_release", cycles = 2_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=16384" }
+gen-abandon = { src = "gen_abandon", cycles = 4_000_000, plusargs = "+GC_EN=1 +GC_ONCHIP=32 +GC_STACK_LIMIT=32 +GC_RESCAN_LIMIT=8 +HEAP_DYN_BYTES=262144" }
 
 # Long GC loops: steady-state plateaus, allocation-site churn, benches and
 # compile loops (millions of cycles each, up to ~150M uncached). Not in
@@ -795,6 +797,19 @@ bump_cursor = [
     # chain is still live, so the last tuple traps 7.
     "gc-root-closure", "gc-mutant-8", "gc-mutant-27", "gc-mutant-34", "gc-mutant-36",
 ]
+
+# GG2: generational collection (+GC_GEN=1, generational GC plan Phase 2).
+# Boundary collections every `boundary_every` instructions, so most are
+# minors; the second arm makes every third collection a major. Every run's
+# dumps must pass gc_model.check_sequence.
+[gate.GG2]
+sets = [{ areas = ["gc", "gc-gen"] }]
+plusargs = "+GC_EN=1 +GC_GEN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_DUMP_EACH={out} +GC_DUMP_MAX=60"
+boundary_every = 400
+arms = { boundary = "", major_every = "+GC_MAJOR_EVERY=3" }
+# Too slow with a collection every 400 instructions (a large live heap), or
+# sized for its own explicit collection (see G7).
+no_boundary = ["gc-wide-live-list", "gc-mark-overflow-recover", "gen-abandon"]
 
 # G8: randomized differential fuzzing (pycore/tools/gc_fuzz.py).
 [gate.G8]

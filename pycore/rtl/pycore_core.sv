@@ -418,6 +418,16 @@ module pycore_core #(
     logic [31:0]  gc_cand_base_r;
     logic [31:0]  gc_cand_size_r;
     logic         gc_rel_zero_r;      // _bi_heap_release left [mark, old ptr) dirty
+    // Generational mode (pycore/docs/gc_gen_protocol.md), +GC_GEN=1.
+    logic         gc_force_major_r;   // next collection must be a major (B3, B6, N1-N4, R1)
+    logic         gc_minor_r;         // kind of the collection in progress (E3)
+    logic [31:0]  gc_young_lo_r;      // heap_ptr_r when the last collection started
+    logic [31:0]  gc_since_major_r;   // collections since the last major
+    logic [31:0]  gc_minors_r, gc_majors_r, gc_guard_hits_r;
+    logic [31:0]  gc_old_hi_w;
+    logic         gc_sticky;
+    logic         gc_minor_now;
+    logic         gc_guard_hit;
     // Testbench site statistics only (G9): the current CALL abort came from
     // the binder reservation, and the reserved need includes a **kwargs dict.
     /* verilator lint_off UNUSEDSIGNAL */
@@ -1764,9 +1774,15 @@ module pycore_core #(
     logic [7:0]  gc_onchip_sim;
     logic [7:0]  gc_mutant_sim;
     bit          ca_en_sim;
+    bit          gc_gen_sim;           // +GC_GEN=1 (needs +GC_EN=1)
+    bit          gc_major_only_sim;    // +GC_MAJOR_ONLY=1: sticky bits, every collection a major
+    logic [31:0] gc_major_every_sim;   // +GC_MAJOR_EVERY=M: every M-th collection is a major
     initial begin
         int v;
         gc_en_sim = 1'b0;
+        gc_gen_sim = 1'b0;
+        gc_major_only_sim = 1'b0;
+        gc_major_every_sim = 32'd0;
         gc_verify_only_sim = 1'b0;
         gc_auto_sim = 1'b1;
         gc_at_exit_sim = 1'b0;
@@ -1796,11 +1812,15 @@ module pycore_core #(
         if ($value$plusargs("GC_RESCAN_LIMIT=%d", v)) gc_rescan_limit_sim = v;
         if ($value$plusargs("GC_ONCHIP=%d", v)) gc_onchip_sim = 8'(v);
         if ($value$plusargs("GC_MUTANT=%d", v)) gc_mutant_sim = 8'(v);
+        if ($value$plusargs("GC_GEN=%d", v)) gc_gen_sim = (v != 0);
+        if ($value$plusargs("GC_MAJOR_ONLY=%d", v)) gc_major_only_sim = (v != 0);
+        if ($value$plusargs("GC_MAJOR_EVERY=%d", v)) gc_major_every_sim = v;
         // +HEAP_DYN_BYTES=n: heap limit = HEAP_INIT_PTR + n (G7 shrinks each
         // fixture to its static image plus 2x its peak live bytes).
         gc_heap_dyn_bytes_sim = 32'd0;
         if ($value$plusargs("HEAP_DYN_BYTES=%d", v)) gc_heap_dyn_bytes_sim = (v + 15) & ~15;
         if (!gc_en_sim) begin
+            gc_gen_sim = 1'b0;
             gc_heap_limit_sim = PYCORE_HEAP_LIMIT;
             gc_heap_dyn_bytes_sim = 32'd0;
         end
@@ -1859,6 +1879,10 @@ module pycore_core #(
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
         .start_i(gc_start),
+        .gen_i(gc_gen_sim),
+        .minor_i(gc_minor_now),
+        .old_hi_w_o(gc_old_hi_w),
+        .sticky_o(gc_sticky),
         .busy_o(gc_busy),
         .done_o(gc_done),
         .dyn_base_i(heap_init_ptr_sim),
@@ -2027,8 +2051,11 @@ module pycore_core #(
     logic gc_force_collect;
     assign gc_force_collect = (gc_every_n_runs_sim != 32'd0) &&
                               ((gc_runsw_cnt_r + 32'd1) >= gc_every_n_runs_sim);
+    // One collection per request, plus a major after a minor that did not
+    // free enough (a minor keeps tenured garbage).
     assign gc_alloc_collect = (state_r == S_GC_ALLOC) && (gc_alloc_phase_r == 4'd0) &&
-                              !gc_collected_r && gc_auto_sim && (gc_need_bytes_r != 32'd0) &&
+                              (!gc_collected_r || (gc_gen_sim && gc_minor_r)) &&
+                              gc_auto_sim && (gc_need_bytes_r != 32'd0) &&
                               (((run_list_head_r == 32'd0) &&
                                 (gc_run_idx_r >= gc_run_onchip_lat_r) &&
                                 (gc_run_wrap_r == 32'd0)) ||
@@ -2042,6 +2069,7 @@ module pycore_core #(
     logic [7:0]   gc_inv_op;
     logic [31:0]  gc_inv_pc;
     logic         gc_inv_was_gc, gc_inv_collected;
+    logic [1:0]   gc_inv_ncoll;   // collections in this pause (a minor then a major: 2)
     logic         gc_inv_hdr_pending;
     logic [31:0]  gc_inv_hdr_end;
     logic         gc_inv_wr_pending;
@@ -2051,6 +2079,7 @@ module pycore_core #(
     initial begin
         gc_inv_was_gc = 1'b0;
         gc_inv_collected = 1'b0;
+        gc_inv_ncoll = 2'd0;
     end
     always @(posedge clk_i) begin
         if (rst_n_i && gc_en_sim) begin
@@ -2095,13 +2124,18 @@ module pycore_core #(
                 !((state_r == S_GC_ENTER) && !gc_inv_was_gc) &&
                 (state_r != S_GC_ALLOC || gc_alloc_phase_r != 4'd3))
                 $fatal(1, "[GC-INV] tos_r moved during a collection");
-            if ((state_r == S_GC_RUN) && gc_done) gc_inv_collected <= 1'b1;
-            if (!gc_state && (state_next == S_GC_ENTER || state_next == S_GC_ALLOC))
+            if ((state_r == S_GC_RUN) && gc_done) begin
+                gc_inv_collected <= 1'b1;
+                gc_inv_ncoll <= gc_inv_ncoll + 2'd1;
+            end
+            if (!gc_state && (state_next == S_GC_ENTER || state_next == S_GC_ALLOC)) begin
                 gc_inv_collected <= 1'b0;
+                gc_inv_ncoll <= 2'd0;
+            end
             // First cycle after a pause: the epoch moved by exactly one per
             // collection, and the result caches were flushed.
             if (gc_inv_was_gc && !gc_state && !freeze_pipeline) begin
-                if ((gc_epoch_r != gc_inv_epoch_at_enter + (gc_inv_collected ? 32'd1 : 32'd0)))
+                if ((gc_epoch_r != gc_inv_epoch_at_enter + 32'(gc_inv_ncoll)))
                     $fatal(1, "[GC-INV] epoch %0d after a pause that started at %0d", gc_epoch_r,
                            gc_inv_epoch_at_enter);
                 for (int s = 0; s < PYCORE_CODC_ENTRIES / PYCORE_CODC_WAYS; s++)
@@ -2223,6 +2257,93 @@ module pycore_core #(
     assign dmem_wline_o = ca_dmem_active        ? '0 :
                           stracc_dmem_active    ? stracc_wline :
                           gc_eng_dmem_active    ? {4{gc_eng_wdata}} : '0;
+
+    // ---------------------------------------------------------------------
+    // Generational mode (gc_gen_protocol.md; plan Phase 2: guard only, no
+    // remembered set yet). With +GC_GEN=0 every register here stays at its
+    // reset value and nothing reaches the engine (G1).
+    //
+    // Guard (B3): a managed write (any master but STRACC, the engine and
+    // the allocator) into [HEAP_BASE, heap limit), the static image
+    // included, that lies outside the young part of the current run forces
+    // the next collection to be a major. Phase 2 declares no windows, so
+    // every write into memory that may be old counts. [gc_young_lo_r,
+    // heap_limit_r) holds no set bit: it is the current run, minus what was
+    // allocated in it before the last collection.
+    // ---------------------------------------------------------------------
+    wire gc_guard_master = !stracc_dmem_active && !gc_eng_dmem_active && !gcalloc_dmem_active;
+    // Every cycle a write request is up counts for the force (a held
+    // request repeats it harmlessly); the counter takes its first cycle.
+    wire [31:0] gc_young_from = gc_young_lo_r;
+    assign gc_guard_hit = gc_gen_sim && dmem_req_o && dmem_we_o &&
+                          gc_guard_master && (gc_mutant_sim != 8'd63) &&
+                          (dmem_addr_o >= ((gc_mutant_sim == 8'd66) ? heap_init_ptr_sim
+                                                                    : PYCORE_HEAP_BASE)) &&
+                          (dmem_addr_o < gc_heap_limit_eff) &&
+                          !((dmem_addr_o >= gc_young_from) && (dmem_addr_o < heap_limit_r));
+    // Kind decision (E3). gc_start samples it.
+    assign gc_minor_now = gc_gen_sim && !gc_force_major_r && !gc_explicit_r && !gc_exit_req_r &&
+                          !gc_major_only_sim &&
+                          !((gc_major_every_sim != 32'd0) &&
+                            (gc_since_major_r + 32'd1 >= gc_major_every_sim));
+    logic [31:0] gc_hp_q;
+    logic        gc_alloc_q;
+    always_ff @(posedge clk_i or negedge rst_n_i) begin
+        if (!rst_n_i) begin
+            // N1: the first generational collection is a major. Mutant 65
+            // starts with a minor over an empty old set.
+            gc_force_major_r <= (gc_mutant_sim != 8'd65);
+            gc_minor_r       <= 1'b0;
+            gc_young_lo_r    <= '0;
+            gc_hp_q          <= '0;
+            gc_alloc_q       <= 1'b0;
+            gc_since_major_r <= '0;
+            gc_minors_r      <= '0;
+            gc_majors_r      <= '0;
+            gc_guard_hits_r  <= '0;
+        end else if (gc_gen_sim) begin
+            gc_hp_q    <= heap_ptr_r;
+            gc_alloc_q <= (state_r == S_GC_ALLOC);
+            if (gc_start) begin
+                gc_minor_r    <= gc_minor_now;
+                gc_young_lo_r <= heap_ptr_r;
+                if (gc_minor_now) begin
+                    gc_minors_r      <= gc_minors_r + 32'd1;
+                    gc_since_major_r <= gc_since_major_r + 32'd1;
+                end else begin
+                    gc_majors_r      <= gc_majors_r + 32'd1;
+                    gc_since_major_r <= '0;
+                    gc_force_major_r <= 1'b0;
+                end
+            end else if (gc_alloc_q && (heap_ptr_r != gc_hp_q)) begin
+                // The allocator installed a run (S_GC_ALLOC moved the bump
+                // pointer to its base). It was free when the last
+                // collection ran: all of it is young.
+                gc_young_lo_r <= heap_ptr_r;
+            end
+            if (gc_guard_hit) begin
+                gc_force_major_r <= 1'b1;
+                if (!dmem_busy_r) gc_guard_hits_r <= gc_guard_hits_r + 32'd1;
+            end
+            // Phase 2 has no barrier at the excore slot port: any trap
+            // the excore runs may write old memory.
+            if (state_r == S_TRAP_MARSHAL) gc_force_major_r <= 1'b1;
+            // R1: a release forces a major. Mutant 67 does not.
+            if (gc_rel_zero_r && (gc_mutant_sim != 8'd67)) gc_force_major_r <= 1'b1;
+            // A minor that leaves no run large enough for the allocation
+            // that triggered it: the retry is a major (plan §3.6 policy,
+            // the part Phase 2 needs; Phase 6 adds the rest).
+            if ((state_r == S_GC_RUN) && gc_done && gc_minor_r && gc_abort_r &&
+                (gc_largest_size < gc_need_bytes_r + 32'd64))
+                gc_force_major_r <= 1'b1;
+            // N4: an abandoned collection leaves stale marks; the engine
+            // clears the bitmap at idle and the next collection is a major.
+            // Mutant 62 forgets.
+            if ((state_r == S_GC_RUN) && gc_done && (gc_stack_overflow || gc_eng_fault) &&
+                (gc_mutant_sim != 8'd62))
+                gc_force_major_r <= 1'b1;
+        end
+    end
 
     always_ff @(posedge clk_i or negedge rst_n_i) begin
         if (!rst_n_i) dmem_busy_r <= 1'b0;
@@ -4552,7 +4673,10 @@ module pycore_core #(
                             // of a multi-grant instruction (STRACC split);
                             // that is not a failed ensure_run.
                             gc_retry_largest_r <= gc_largest_size;
+                            // A minor never declares OOM: it keeps tenured
+                            // garbage, so the retry runs a major first.
                             if (gc_abort_r && (gc_retry_count_r != 2'd0) &&
+                                !(gc_gen_sim && gc_minor_r) &&
                                 (gc_largest_size <= gc_retry_largest_r) &&
                                 (gc_largest_size < gc_need_bytes_r + 32'd64) &&
                                 (gc_mutant_sim != 8'd36)) begin
