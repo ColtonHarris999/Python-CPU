@@ -737,7 +737,7 @@ def torture(ctx: Context, gate: str) -> Result:
         minors = 0
         if gen:
             n_dumps, minors, probs = check_sequences(ctx, res)
-            probs += gen_guard_problems(res)
+            probs += gen_guard_problems(res, spec(ctx, "GG2").get("guard_selftest", []))
         else:
             n_dumps, probs = check_dumps(ctx, dumps_of(res))
         gcp = scan_gc_problems(res)
@@ -800,14 +800,21 @@ def check_sequences(ctx: Context, res: list[hw_tests.Result]) -> tuple[int, int,
     return n, minors, probs
 
 
-def gen_guard_problems(res: list[hw_tests.Result]) -> list[str]:
+def gen_guard_problems(res: list[hw_tests.Result], selftest: list[str]) -> list[str]:
     """GG3: a guard hit by a container operation (every site declares the
-    windows it writes)."""
+    windows it writes), except in the guard's self-test runs, which must
+    have some (a site there declares nothing)."""
     out = []
     for r in res:
         mm = GEN_SUMMARY.search(r.text())
-        if mm and int(mm.group(4)):
-            out.append(f"GG3: {r.test.name}: {mm.group(4)} guard hits on the container leg")
+        if not mm:
+            continue
+        hits = int(mm.group(4))
+        if matches(r.test.name, selftest):
+            if hits == 0 and r.passed:
+                out.append(f"GG3: {r.test.name}: the guard self-test saw no guard hit")
+        elif hits:
+            out.append(f"GG3: {r.test.name}: {hits} guard hits on the container leg")
     return out
 
 
@@ -855,15 +862,13 @@ def gate_GG2(ctx: Context) -> Result:
                 probs += [f"{rel}/{x}" for x in ps]
         minors_total += minors
         tot = [0] * 9
-        gg3: list[str] = []
         for r in res:
             mm = GEN_SUMMARY.search(r.text())
             if not mm:
                 continue
             v = [int(x) for x in mm.groups()]
             tot = [a + b for a, b in zip(tot, v)]
-            if v[3]:
-                gg3.append(f"GG3: {r.test.name}: {v[3]} guard hits on the container leg")
+        gg3 = gen_guard_problems(res, sp.get("guard_selftest", []))
         lines.append(f"GG2_{arm}: {len(res)} runs, {len(bad)} failing, {n} dumps ({minors} minors), "
                      f"{len(probs)} oracle problems, {len(gcp)} shadow/invariant")
         lines.append(f"GG2_{arm}: barrier minors={tot[0]} majors={tot[1]} guard_hits={tot[2]} "

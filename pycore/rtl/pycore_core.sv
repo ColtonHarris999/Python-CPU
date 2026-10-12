@@ -1807,6 +1807,7 @@ module pycore_core #(
     bit          gc_major_only_sim;    // +GC_MAJOR_ONLY=1: sticky bits, every collection a major
     logic [31:0] gc_major_every_sim;   // +GC_MAJOR_EVERY=M: every M-th collection is a major
     logic [31:0] gc_remset_limit_sim;  // +GC_REMSET_LIMIT=N: SSB entries (0: all)
+    logic [7:0]  gc_guard_selftest_sim; // +GC_GUARD_SELFTEST=M: barrier site M neither logs nor permits
     bit          gc_gen_policy_sim;    // +GC_GEN_POLICY=0: no policy majors (plan §3.6)
     logic [31:0] gc_nursery_sim;       // +GC_NURSERY_BYTES=N (0: an eighth of the dynamic heap)
     initial begin
@@ -1816,6 +1817,7 @@ module pycore_core #(
         gc_major_only_sim = 1'b0;
         gc_major_every_sim = 32'd0;
         gc_remset_limit_sim = 32'd0;
+        gc_guard_selftest_sim = 8'd0;
         gc_gen_policy_sim = 1'b1;
         gc_nursery_sim = 32'd0;
         gc_verify_only_sim = 1'b0;
@@ -1851,6 +1853,7 @@ module pycore_core #(
         if ($value$plusargs("GC_MAJOR_ONLY=%d", v)) gc_major_only_sim = (v != 0);
         if ($value$plusargs("GC_MAJOR_EVERY=%d", v)) gc_major_every_sim = v;
         if ($value$plusargs("GC_REMSET_LIMIT=%d", v)) gc_remset_limit_sim = v;
+        if ($value$plusargs("GC_GUARD_SELFTEST=%d", v)) gc_guard_selftest_sim = 8'(v);
         if ($value$plusargs("GC_GEN_POLICY=%d", v)) gc_gen_policy_sim = (v != 0);
         if ($value$plusargs("GC_NURSERY_BYTES=%d", v)) gc_nursery_sim = v;
         // +HEAP_DYN_BYTES=n: heap limit = HEAP_INIT_PTR + n (G7 shrinks each

@@ -48,10 +48,12 @@
 // the site's mutant number. A log mutant still declares its windows but
 // logs nothing (the guard cannot see it; the oracle's barrier rule must);
 // a permit mutant drops the pulse (the guard must see it).
+// +GC_GUARD_SELFTEST=MUT drops the log and the windows of site MUT, so its
+// writes are guard hits (the guard's own test, gc.md GG3).
 `define BAR_WIN(LO, HI) {32'(HI), 32'(LO)}
 `define BAR_LOG(MUT, K, OWNER, W0, W1, W2) \
-    bar_log_r    <= (gc_mutant_sim != (MUT)); \
-    bar_permit_r <= (gc_mutant_sim == (MUT)); \
+    bar_log_r    <= (gc_mutant_sim != (MUT)) && (gc_guard_selftest_sim != (MUT)); \
+    bar_permit_r <= (gc_mutant_sim == (MUT)) && (gc_guard_selftest_sim != (MUT)); \
     bar_kind_r   <= (K); \
     bar_size_r   <= 32'd0; \
     bar_owner_r  <= (OWNER); \
@@ -59,8 +61,8 @@
 // A range entry (Phase 5): N slots of 32 B from BASE, scanned as a K_TUPLE
 // continuation. P_REMSET's bit test then asks whether the buffer is old.
 `define BAR_LOG_RANGE(MUT, BASE, N, W0) \
-    bar_log_r    <= (gc_mutant_sim != (MUT)); \
-    bar_permit_r <= (gc_mutant_sim == (MUT)); \
+    bar_log_r    <= (gc_mutant_sim != (MUT)) && (gc_guard_selftest_sim != (MUT)); \
+    bar_permit_r <= (gc_mutant_sim == (MUT)) && (gc_guard_selftest_sim != (MUT)); \
     bar_kind_r   <= BAR_K_TUPLE; \
     bar_size_r   <= (N); \
     bar_owner_r  <= (BASE); \

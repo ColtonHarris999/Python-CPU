@@ -657,6 +657,14 @@ gen-barrier-loop = { src = "gen_barrier_loop", cycles = 8_000_000, plusargs = "+
 # loop logs are young but older than the current run (not dropped by B5).
 gen-barrier-loop-small = { src = "gen_barrier_loop", cycles = 10_000_000, plusargs = "+GC_EN=1 +HEAP_DYN_BYTES=327680", caching = true }
 gen-unpack-loop = { src = "gen_unpack_loop", cycles = 8_000_000, plusargs = "+GC_EN=1", caching = true }
+# The guard's own test (GG3): gen-barrier-loop with one site's log and
+# windows dropped, so under +GC_GEN=1 its stores are guard hits that force
+# majors. STORE_LIST (70) writes heap lists; STORE_NAME (75) writes the
+# static module dict.
+gen-guard-selftest = { src = "gen_barrier_loop", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_GUARD_SELFTEST=70", caching = true }
+gen-guard-selftest-static = { src = "gen_barrier_loop", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_GUARD_SELFTEST=75", caching = true }
+# Dict comprehensions into a dict a minor made old mid-build (MAP_ADD).
+gen-map-add-loop = { src = "gen_map_add_loop", cycles = 8_000_000, plusargs = "+GC_EN=1", caching = true }
 # gen-barrier-loop with an 8-entry remembered set: under +GC_GEN=1 the SSB
 # overflows, which must force the next collection to be a major (B6).
 gen-remset-overflow = { src = "gen_barrier_loop", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_REMSET_LIMIT=8", caching = true }
@@ -807,7 +815,7 @@ recipe_heap = [
     "gc-memoryerror-*",
     # Grow 200-entry containers among churn; at 2.5x peak live, first-fit
     # leaves no hole large enough for the next table or buffer (trap 7).
-    "gen-barrier-loop", "gen-remset-overflow", "gen-unpack-loop",
+    "gen-barrier-loop", "gen-remset-overflow", "gen-unpack-loop", "gen-map-add-loop",
     "gen-ca-loop", "gen-ca-loop-two-core", "gen-ca-loop-excore",
 ]
 # Shrinks the mark stack and rescan list so that its explicit collection
@@ -834,6 +842,8 @@ arms = { boundary = "", major_every = "+GC_MAJOR_EVERY=3" }
 # Too slow with a collection every 400 instructions (a large live heap), or
 # sized for its own explicit collection (see G7).
 no_boundary = ["gc-wide-live-list", "gc-mark-overflow-recover", "gen-abandon"]
+# GG3 requires guard hits on the container leg here (and none elsewhere).
+guard_selftest = ["gen-guard-selftest", "gen-guard-selftest-static"]
 
 # GG1 (generational GC plan §5, PG1): G13-p1's image tests with the collector
 # on, +GC_GEN=0 against +GC_GEN=1. A run that never collects is identical

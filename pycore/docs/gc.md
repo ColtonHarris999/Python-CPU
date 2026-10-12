@@ -702,10 +702,10 @@ SSB overflows and the majors the policy chose.
 | --- | --- | --- | --- |
 | GG1 | G13-p1's image tests with the collector on, `+GC_GEN=0` and `+GC_GEN=1` | a run without a collection is identical cycle for cycle; one with collections gives the same results | acceptance |
 | GG2 | every `[gc]` and `[gc-gen]` test, a collection every 400 instructions, alone and with `+GC_MAJOR_EVERY=3` | goldens; every run's dumps pass the oracle as a sequence | `gc-dev`, `gc-check`, acceptance |
-| GG3 | on GG2, GG4 and GG5 | no guard hit by a container operation or the CA | with them |
+| GG3 | on GG2, GG4 and GG5 | no guard hit by a container operation or the CA, except in the guard's self-test (`gen-guard-selftest*`, `+GC_GUARD_SELFTEST=M` drops site M's log and windows), which must have some | with them |
 | GG4 | G7's torture modes with `+GC_GEN=1` (MODE=full: b, a, and c with poison and `+GC_MAJOR_EVERY=3`) | goldens; dump sequences exact | acceptance |
 | GG5 | G8's fuzz corpus with `gc_fuzz.py --gen` | no failure; dump sequences exact; at least one minor | acceptance; nightly (`GEN=1`) |
-| GG6 | the generational mutants (`make pycore-gc-gen-mutants`) against GG2, then GG5 | every mutant killed except 96 | acceptance (full) |
+| GG6 | the generational mutants (`make pycore-gc-gen-mutants`) against GG2, then GG5 | every mutant killed except 96 (33 of 34) | acceptance (full) |
 | GG7 | `tools/gc_genbench.py`: the collector benches, generational against full-only | PG2, PG4, PG5, PG6 | acceptance (full) |
 
 GG8 (Yosys area and timing on both tops) is not built: it needs Yosys and
@@ -788,6 +788,12 @@ What Phase 2 built (guard only, no remembered set yet):
   64 (a major skips its clear), 65 (`force_major` resets to 0), 66 (the
   guard skips the static image) and 67 (a release does not force a major).
   Each is killed by a `+GC_GEN=1` run of a `[gc]` or `[gc-gen]` test.
+  Once every site logged (Phase 4), nothing reached the guard and 63 and
+  66 survived; since Phase 7 the guard's self-test kills them:
+  `gen-guard-selftest` and `gen-guard-selftest-static` run
+  `gen-barrier-loop` with `STORE_LIST` (70) or `STORE_NAME` (75, the
+  static module dict) neither logging nor declaring windows, so only the
+  guard's forced majors keep the program correct.
 
 What Phase 3 added (the barrier at the pycore container ops):
 
@@ -850,7 +856,7 @@ What Phase 3 added (the barrier at the pycore container ops):
   | 70 | `CONT_STORE_LIST` does not log | `gen-list-store`, oracle |
   | 71 | `CONT_LIST_APPEND` does not log | `gen-unpack-loop`, oracle |
   | 72 | `CONT_STORE_DICT` does not log | `gen-barrier-loop`, oracle |
-  | 73 | `CONT_MAP_ADD` does not log | `gen-barrier-loop`, oracle |
+  | 73 | `CONT_MAP_ADD` does not log | `gen-map-add-loop`, sim (`gen-barrier-loop`, whose one comprehension used to, no longer does) |
   | 74 | `CONT_SET_ADD` does not log | `gen-set-add`, oracle |
   | 75 | `CONT_STORE_NAME` does not log | `gen-barrier-loop`, oracle |
   | 76 | `CONT_STORE_ATTR` does not log | `gen-barrier-loop`, oracle |

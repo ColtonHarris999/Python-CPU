@@ -55,7 +55,7 @@ GEN_SURVIVORS = {96}
 GEN_GATE_ORDER = ["GG2", "GG5"]
 _LOOP = ["gen-barrier-loop", "gen-barrier-loop-small"]
 GEN_KILLERS: dict[int, list[str]] = {
-    70: ["gen-list-store"], 71: ["gen-unpack-loop"], 72: _LOOP, 73: _LOOP, 74: ["gen-set-add"],
+    63: ["gen-guard-selftest"], 66: ["gen-guard-selftest-static"], 70: ["gen-list-store"], 71: ["gen-unpack-loop"], 72: _LOOP, 73: ["gen-map-add-loop"], 74: ["gen-set-add"],
     75: _LOOP, 76: _LOOP, 77: ["gen-deref-loop"], 78: ["gen-unpack-loop"], 79: ["gen-unpack-loop"],
     80: ["gen-list-store"], 82: _LOOP, 83: ["gen-dict-store"], 85: ["gen-list-store"], 86: _LOOP,
     87: ["gen-remset-overflow"], 88: _LOOP, 90: ["gen-delete"], 91: ["gen-delete"], 92: _LOOP,
