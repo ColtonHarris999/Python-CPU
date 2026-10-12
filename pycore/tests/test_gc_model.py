@@ -215,6 +215,10 @@ class GenCase:
                     self.replaced.add(id(n))
                 for a, ln in allocs:
                     mark(self.old, a, ln)
+        if seed % 4 == 0:
+            # Static granules a major neither preloaded nor reached keep bit
+            # 0 (S1); they are old all the same.
+            self.old[:self.h.dyn_base >> 4] = bytes(self.h.dyn_base >> 4)
         self.full = self.reach()
         # The barrier logs whatever owner an operation writes, old or young
         # (gc_gen_protocol.md B1); the engine scans only the old ones.
@@ -226,12 +230,18 @@ class GenCase:
         a = header(n)
         return a is not None and bool(self.old[a >> 4])
 
+    def old_owner(self, n: gc_heapgen.Node) -> bool:
+        """An owner P_REMSET scans: marked, or static (every static granule
+        is old, gc_gen_protocol.md S4)."""
+        a = header(n)
+        return a is not None and (bool(self.old[a >> 4]) or a < self.h.dyn_base)
+
     def needs_log(self, n: gc_heapgen.Node) -> bool:
         """An old owner holding a young dynamic object or a young buffer."""
-        if not self.is_old(n):
+        if not self.old_owner(n):
             return False
         dyn = self.h.dyn_base
-        return ((id(n) in self.replaced and any(a >= dyn for a, _ in n.allocs[1:]))
+        return (any(a >= dyn and not self.old[a >> 4] for a, _ in n.allocs[1:])
                 or any(header(c) >= dyn and not self.is_old(c) for c in self.refs(n)))
 
     def refs(self, n: gc_heapgen.Node):
@@ -261,15 +271,19 @@ class GenCase:
         scanned although they are marked; any other old node stops the walk.
         A remembered young owner is skipped: the roots reach it if it lives."""
         live = set(gc_model._ones(self.old))
-        seen: set[int] = set()
+        seen: set[tuple[int, bool]] = set()
         work = [(n, False) for n in self.h.root_nodes] + [(n, True) for n in rem_nodes
-                                                           if self.is_old(n)]
+                                                           if self.old_owner(n)]
         while work:
             n, forced = work.pop()
-            if id(n) in seen or (not forced and self.is_old(n)):
+            if (id(n), forced) in seen or (not forced and self.is_old(n)):
                 continue
-            seen.add(id(n))
-            for a, ln in n.allocs:
+            seen.add((id(n), forced))
+            # A remembered owner is scanned as a continuation, which marks
+            # the words it walks (an object's own) but not a container's
+            # header. This shows only on a static owner, whose bit can be 0.
+            own = not forced or entry(n)[0] == gc_model.K_OBJ
+            for a, ln in n.allocs if own else n.allocs[1:]:
                 live.update(range(a >> 4, ((a + ln - 1) >> 4) + 1))
             work.extend((c, False) for c in n.children)
         return live
@@ -327,7 +341,7 @@ class TestGcModelMinor(unittest.TestCase):
         replaced = forced = 0
         for seed in range(GEN_SEEDS):
             c = GenCase(seed)
-            res = gc_model.trace_minor(c.mem(), c.h.reg_roots, c.old, c.remset(c.rem_nodes), **c.kw())
+            res = gc_model.trace_minor(c.mem(), c.h.reg_roots, c.old, c.remset(c.rem_nodes), c.h.dyn_base, **c.kw())
             got = set(gc_model._ones(res.marked))
             want = c.minor_live(c.rem_nodes)
             if got != want:
@@ -339,8 +353,9 @@ class TestGcModelMinor(unittest.TestCase):
         self.assertGreater(replaced, GEN_SEEDS // 4)
         self.assertGreater(forced, GEN_SEEDS // 2)
 
+
     def test_barrier_gaps_match_python_and_complete_barrier_is_safe(self) -> None:
-        gappy = 0
+        gappy = static_unmarked = 0
         for seed in range(GEN_SEEDS):
             c = GenCase(seed)
             edges: list[tuple[int, int]] = []
@@ -350,13 +365,25 @@ class TestGcModelMinor(unittest.TestCase):
             self.assertEqual(got, want, f"seed {seed}: gap owners")
             # Logging every gap owner (plus some others) makes the minor safe.
             rem = list({id(n): n for n in c.gap_nodes + c.rem_nodes}.values())
-            res = gc_model.trace_minor(c.mem(), c.h.reg_roots, c.old, c.remset(rem), **c.kw())
+            res = gc_model.trace_minor(c.mem(), c.h.reg_roots, c.old, c.remset(rem), c.h.dyn_base, **c.kw())
             lost = [g for g in gc_model._ones(full.marked)
                     if g >= c.h.dyn_base >> 4 and not res.marked[g]]
             self.assertEqual(lost, [], f"seed {seed}: complete barrier lost {len(lost)} granules")
+            # Every static owner is old (S4), so the engine scans an
+            # unmarked one it finds logged. With a complete barrier that is
+            # belt and braces: a reachable static object with bit 0 is
+            # reached from the roots or from a logged owner, and its bit 0
+            # makes the minor trace through it. A bit test alone loses
+            # nothing either (gc_gen_protocol.md S4).
+            bit_only = gc_model.trace_minor(c.mem(), c.h.reg_roots, c.old, c.remset(rem), 0, **c.kw())
+            lost = [g for g in gc_model._ones(full.marked)
+                    if g >= c.h.dyn_base >> 4 and not bit_only.marked[g]]
+            self.assertEqual(lost, [], f"seed {seed}: bit-only remset lost {len(lost)} granules")
+            static_unmarked += any(o < c.h.dyn_base and not c.old[o >> 4] for _, o, _ in c.remset(rem))
             self.assertEqual(gc_model.barrier_gaps(edges, full.marked, c.old, c.remset(rem), c.h.dyn_base), [])
             gappy += bool(want)
         self.assertGreater(gappy, GEN_SEEDS // 2)
+        self.assertGreater(static_unmarked, GEN_SEEDS // 10)
 
     def test_check_dump_minor(self) -> None:
         caught = 0

@@ -82,8 +82,12 @@ module tb_gc;
     logic         fr_valid;
     logic [31:0]  fr_base, fr_len;
 
+    // The engine harness runs full collections only (G3): generational mode
+    // is tied off here, and minors are checked on the system tops (GG2, GG4).
     pycore_gc gc (
         .clk_i(clk), .rst_n_i(rst_n), .start_i(start), .busy_o(busy), .done_o(done),
+        .gen_i(1'b0), .minor_i(1'b0), .old_hi_w_o(), .sticky_o(),
+        .rs_n_i(32'd0), .rs_idx_o(), .rs_ent_i(67'd0), .rs_pushed_o(),
         .dyn_base_i(cfg_dyn_base), .heap_limit_i(cfg_heap_limit), .spill_sp_i(cfg_spill_sp),
         .exc_sp_i(cfg_exc_sp), .frame_depth_i(cfg_frame_depth),
         .stash_en_i(cfg_stash), .poison_en_i(cfg_poison), .line_wr_ok_i(1'b0), .zero_base_i(cfg_heap_limit), .keep_lo_i(cfg_keep_lo), .keep_hi_i(cfg_keep_hi), .rover_addr_i(cfg_rover_addr), .clean_skip_i(1'b0), .extra_roots_i(1'b1), .clean_busy_addr_o(), .clean_done_o(),

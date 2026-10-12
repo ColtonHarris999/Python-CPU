@@ -237,8 +237,15 @@ port bypasses the core's mux, so the guard is duplicated there (plan
 - any static list, dict, set or cell.
 
 Each is written only through the S1-S3 sites above, so they need no extra
-site. Every static granule is old, and an SSB entry for a static owner is
-scanned without the mark test like any other. A logged builtins dict scans
+site. Every static granule is old, marked or not: `P_REMSET` treats an entry
+below `dyn_base` as old whatever its bit (`pycore_gc.sv` `rs_old`), and the
+oracle does the same (`gc_model.trace_minor`, `barrier_gaps`). An unmarked
+(S1) static owner would be safe under a bit test too: a static object
+reachable at a minor was either marked by the last major or became
+reachable through a write since, whose owner is logged; and its bit 0 makes
+the minor trace through it when reached. `test_gc_model` checks both rules
+on heaps whose static bits are all clear. The address rule is the contract
+because it does not depend on that argument. A logged builtins dict scans
 its whole table, which costs performance but is still correct. Nothing
 writes the boot record after boot, and the sidecars at `0xF00000` are never
 written.

@@ -631,16 +631,17 @@ def granules_bitmap(marked: bytearray) -> dict[int, int]:
 
 
 def trace_minor(mem: Memory, reg_roots: list[tuple[int, int]], old: bytearray,
-                remset: list[tuple[int, int, int]], **kw) -> TraceResult:
+                remset: list[tuple[int, int, int]], dyn_base: int, **kw) -> TraceResult:
     """A sticky-mark-bit minor: `old` granules start marked (the bitmap the
     previous collection left, static granules included), the remembered
     owners that are old are scanned unconditionally after the roots, and the
     rest is `trace`. The barrier logs owners without looking at the bitmap,
     so the remembered set can name young owners too; the engine's P_REMSET
     reads each owner's bit and skips a young one, which the roots reach if
-    it is live (gc_gen_protocol.md B4)."""
+    it is live (gc_gen_protocol.md B4). A static owner is old whatever its
+    bit (S4): an unmarked one is scanned like a marked one."""
     return trace(mem, reg_roots, pruned=set(_ones(old)),
-                 remset=[e for e in remset if old[e[1] >> 4]], **kw)
+                 remset=[e for e in remset if old[e[1] >> 4] or e[1] < dyn_base], **kw)
 
 
 def _ones(marked: bytearray):
@@ -655,9 +656,9 @@ def barrier_gaps(edges: list[tuple[int, int, int | None]], reachable: bytearray,
     """Edges from an old owner to a reachable young object or buffer that
     no remembered entry covers (plan §4, rule 3): neither the owner is
     logged whole nor is the slot inside a logged range (a K_TUPLE entry, one
-    chunk of a large list's buffer). Only dynamic storage is young: below
-    dyn_base nothing is ever freed, so an unmarked static granule after a
-    major is not a barrier obligation."""
+    chunk of a large list's buffer). Every static owner is old, marked or
+    not (S4); only dynamic storage is young, so a static child is never an
+    obligation."""
     logged = {a for k, a, _ in remset if k != K_TUPLE}
     ranges = sorted((a, a + 32 * n) for k, a, n in remset if k == K_TUPLE and n)
 
@@ -667,7 +668,7 @@ def barrier_gaps(edges: list[tuple[int, int, int | None]], reachable: bytearray,
 
     out = []
     for o, c, s in edges:
-        if (old[o >> 4] and o not in logged and dyn_base <= c < HEAP_LIMIT and reachable[c >> 4]
+        if ((old[o >> 4] or o < dyn_base) and o not in logged and dyn_base <= c < HEAP_LIMIT and reachable[c >> 4]
                 and not old[c >> 4] and not (s is not None and in_range(s))):
             out.append((o, c))
     return out
@@ -792,7 +793,7 @@ def _check(dump: Dump, *, compare_hw: bool = False, mutant: int = 0) -> Outcome:
     if dump.minor:
         # A minor neither clears nor preloads: the old bitmap is the start.
         pruned = set()
-        res_p = trace_minor(dump.mem, dump.roots, old, dump.remset, **kw, **limits)
+        res_p = trace_minor(dump.mem, dump.roots, old, dump.remset, dyn_base, **kw, **limits)
     else:
         pruned = {g for g in pruned_granules(dump.mem.words) if g < dyn_base >> 4}
         pruned |= compiler_idle_premark(dump.mem, dyn_base)

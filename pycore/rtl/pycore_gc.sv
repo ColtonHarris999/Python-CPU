@@ -59,8 +59,8 @@ module pycore_gc #(
     output logic [31:0]  old_hi_w_o,
     output logic         sticky_o,
     // Remembered set (gc_gen_protocol.md B4): the barrier's SSB, read in
-    // P_REMSET of a minor. Each owner whose bit is set (old) is pushed
-    // without the mark test; a young owner is skipped.
+    // P_REMSET of a minor. Each old owner (bit set, or below dyn_base) is
+    // pushed without the mark test; a young owner is skipped.
     input  logic [31:0]  rs_n_i,
     output logic [31:0]  rs_idx_o,
     input  logic [66:0]  rs_ent_i,
@@ -304,15 +304,17 @@ module pycore_gc #(
     logic root_take;
     assign root_take = root_valid_i && root_ready_o;
 
-    // P_REMSET feeder: one SSB entry per cycle. An old owner (bit set) goes
-    // into the queue as a continuation entry, which the marker pushes
+    // P_REMSET feeder: one SSB entry per cycle. An old owner (bit set, or
+    // any static owner: every static granule is old, gc_gen_protocol.md S4)
+    // goes into the queue as a continuation entry, which the marker pushes
     // without the mark test (or records for a rescan when the stack is
     // full, like a root). Mutant 86 pushes young owners too.
     logic [31:0] rs_i_r, rs_pushed_r;
     logic        rs_old, rs_take, rs_skip;
     assign rs_idx_o    = rs_i_r;
     assign rs_pushed_o = rs_pushed_r;
-    assign rs_old  = bm_q[rs_ent_i[BM_AW+10:11]][rs_ent_i[10:4]] || (mut_r == 8'd86);
+    assign rs_old  = bm_q[rs_ent_i[BM_AW+10:11]][rs_ent_i[10:4]] || (rs_ent_i[31:0] < dyn_base_r) ||
+                     (mut_r == 8'd86);
     assign rs_take = (phase_r == P_REMSET) && (rs_i_r < rs_n_i) && rs_old &&
                      !root_take && (tp_cnt_r == 2'd0) && (q_cnt_r < 3'd4);
     assign rs_skip = (phase_r == P_REMSET) && (rs_i_r < rs_n_i) && !rs_old;
