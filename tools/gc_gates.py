@@ -688,10 +688,18 @@ def torture(ctx: Context, gate: str) -> Result:
         """About one collection's cycles: the G4 pause, at least 400k."""
         return max(400_000, hw_tests.parse_gc_line(g4.get(name, "")).get("max_pause", 0))
 
+    area = {t.name: t.area for t in tests}
+
     def k_for(name: str) -> int:
         # [gc] tests collect after every instruction unless that would take
         # more than K1_BUDGET cycles of collection (a large live heap, e.g.
         # gc-wide-live-list); those get about 50 collections like the rest.
+        # The [gc-gen] loop fixtures run tens of thousands of instructions,
+        # each collection costing 10^5 cycles, so one per instruction runs
+        # past the 2-hour runner limit; they are built for a collection
+        # every few hundred instructions (GG2 uses 400) and get 397.
+        if area.get(name) == "gc-gen" and instr[name] >= 10_000:
+            return prev_prime(min(instr[name] // 50, 400))
         if instr[name] < 50 or (name in quick_set and instr[name] * pause_of(name) <= K1_BUDGET):
             return 1
         return prev_prime(instr[name] // 50)
