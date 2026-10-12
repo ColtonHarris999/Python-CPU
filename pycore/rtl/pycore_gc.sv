@@ -970,10 +970,14 @@ module pycore_gc #(
                         end
                     endcase
                     // A minor skips the static root ranges (boot record,
-                    // sidecars, extra roots). Nothing writes them after the
-                    // image is built, and the first generational collection
-                    // is a major, so every target is old (plan §9 item 3).
-                    if (minor_r && ((t_range_r <= 4'd3) || (t_range_r == 4'd7)))
+                    // sidecars). Nothing writes them after the image is
+                    // built, and the first generational collection is a
+                    // major, so every target is old (plan §9 item 3). The
+                    // extra roots (range 7) are not skipped: they turn on
+                    // when a type dict is exposed, possibly after the last
+                    // major, so their static targets can still be unmarked
+                    // (GG4 mode b, gc-builtin-type-dict).
+                    if (minor_r && (t_range_r <= 4'd3))
                         t_left_r <= 32'd0;
                     t_range_r <= t_range_r + 4'd1;
 `ifndef SYNTHESIS
