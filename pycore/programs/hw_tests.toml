@@ -664,7 +664,7 @@ gen-unpack-loop = { src = "gen_unpack_loop", cycles = 8_000_000, plusargs = "+GC
 gen-guard-selftest = { src = "gen_barrier_loop", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_GUARD_SELFTEST=70", caching = true }
 gen-guard-selftest-static = { src = "gen_barrier_loop", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_GUARD_SELFTEST=75", caching = true }
 # Dict comprehensions into a dict a minor made old mid-build (MAP_ADD).
-gen-map-add-loop = { src = "gen_map_add_loop", cycles = 8_000_000, plusargs = "+GC_EN=1", caching = true }
+gen-map-add-loop = { src = "gen_map_add_loop", cycles = 20_000_000, plusargs = "+GC_EN=1", caching = true }
 # gen-barrier-loop with an 8-entry remembered set: under +GC_GEN=1 the SSB
 # overflows, which must force the next collection to be a major (B6).
 gen-remset-overflow = { src = "gen_barrier_loop", cycles = 8_000_000, plusargs = "+GC_EN=1 +GC_REMSET_LIMIT=8", caching = true }
