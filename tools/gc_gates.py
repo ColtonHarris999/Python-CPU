@@ -955,14 +955,17 @@ def fuzz(ctx: Context, gate: str) -> Result:
         if not m:
             problems.append(f"{top}: gc_fuzz.py produced no summary (rc={rc})")
             continue
-        if int(m.group(1)) < n or int(m.group(2)) or rc != 0:
-            problems.append(f"{top}: {m.group(0)}")
+        # Kind and site coverage is G8's requirement; GG5 reports it.
+        # gc_fuzz.py exits 1 on missing coverage too, which is no GG5 failure.
+        need_cov = ctx.g8_coverage and gate == "G8"
+        cov_only = (rc == 1 and not need_cov and not int(m.group(2))
+                    and cov is not None and "missing" in cov.group(1))
+        if int(m.group(1)) < n or int(m.group(2)) or (rc != 0 and not cov_only):
+            problems.append(f"{top}: {m.group(0)} (rc={rc})")
         if gate == "GG5":
             mn = re.search(r"^GG5 minors=(\d+)", out, re.M)
             if not mn or int(mn.group(1)) == 0:
                 problems.append(f"{top}: no minor collection")
-        # Kind and site coverage is G8's requirement; GG5 reports it.
-        need_cov = ctx.g8_coverage and gate == "G8"
         if need_cov and (not cov or "missing" in cov.group(1)):
             problems.append(f"{top}: coverage incomplete: {cov.group(1) if cov else 'no report'}")
         elif not cov or "missing" in cov.group(1):
