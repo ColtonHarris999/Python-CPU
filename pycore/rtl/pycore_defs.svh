@@ -679,9 +679,11 @@ localparam logic [4:0] PY_ALU_GT        = 5'd20;
 localparam logic [4:0] PY_ALU_GE        = 5'd21;
 localparam logic [4:0] PY_ALU_PASS      = 5'd22;
 // PY_ALU_SUBSCR routes BINARY_OP NB_SUBSCR to the S_CONTAINER FSM path rather
-// than to the arithmetic execute fabric.  Values 24-30 are reserved for future
-// ALU operations; ILLEGAL remains 31 to catch undecodable opargs.
+// than to the arithmetic execute fabric.  PY_ALU_ABS is complex abs (hypot
+// → FLOAT), driven from the CALL of `_bi_cabs`, not from an opcode.
+// Values 25-30 are reserved; ILLEGAL remains 31 to catch undecodable opargs.
 localparam logic [4:0] PY_ALU_SUBSCR   = 5'd23;
+localparam logic [4:0] PY_ALU_ABS      = 5'd24;
 localparam logic [4:0] PY_ALU_ILLEGAL   = 5'd31;
 
 // -------------------------------------------------------------------------
@@ -1958,6 +1960,10 @@ localparam logic [127:0] PY_ATTR_NAME_NEXT  =
     128'h85f5f6e6578745f5f000000000000000; // "__next__"  size=8
 localparam logic [127:0] PY_ATTR_NAME_ARGS  =
     128'h46172677300000000000000000000000; // "args" size=4
+localparam logic [127:0] PY_ATTR_NAME_REAL  =
+    128'h47265616c00000000000000000000000; // "real" size=4
+localparam logic [127:0] PY_ATTR_NAME_IMAG  =
+    128'h4696d616700000000000000000000000; // "imag" size=4
 
 // Native built-in method names for LOAD_ATTR on MUT_COLLEC / STR receivers.
 localparam logic [127:0] PY_NMETH_NAME_APPEND     =
@@ -2386,6 +2392,26 @@ function automatic logic pycore_attr_name_is_args(
     begin
         pycore_attr_name_is_args =
             (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_ARGS);
+    end
+endfunction
+
+function automatic logic pycore_attr_name_is_real(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_real =
+            (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_REAL);
+    end
+endfunction
+
+function automatic logic pycore_attr_name_is_imag(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        pycore_attr_name_is_imag =
+            (tag == PY_TAG_SHORT_STR) && (value == PY_ATTR_NAME_IMAG);
     end
 endfunction
 
@@ -3796,6 +3822,10 @@ localparam logic [127:0] PYCORE_GC_POISON_WORD =
 localparam logic [31:0] PY_BI_GC_COLLECT   = 32'd22;
 localparam logic [31:0] PY_BI_HEAP_FREE    = 32'd23;
 localparam logic [31:0] PY_BI_GC_STATS     = 32'd24;
+// complex(real, imag) and the hardware hypot behind abs() on COMPLEX.
+// Positional only; string form and keywords stay CALL_FILTER / TYPE.
+localparam logic [31:0] PY_BI_COMPLEX      = 32'd25;
+localparam logic [31:0] PY_BI_CABS         = 32'd26;
 
 // IEEE 754 binary64 bit-level helpers (needs PY_ALU_* above).
 `include "pycore_fp_defs.svh"

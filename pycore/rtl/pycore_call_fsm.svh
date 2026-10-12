@@ -629,6 +629,8 @@
 //   sub58-59: EXEC_GLOBALS - type-check args, join phase 3 as a 0-arg call
 //   sub60-63: CODE_ALLOC / BLIT / PATCH / NEW (compiler_design.md R-5)
 //   sub64: CODE_KIND (compiler_design.md §11.1) — 7-bit call_sub_r
+//   sub70-71: CABS — COMPLEX hypot on the FPU (PY_ALU_ABS)
+//   sub72-75: COMPLEX — positional complex() (0, 1, or 2 real args)
 //   else: marshal PY_TRAP_BUILTIN_CALL
                         // --------------------------------------------------
                         4'd13: begin
@@ -840,6 +842,33 @@
                                                 container_rf_addr_r <= RF_AW'(
                                                     {1'b0, tos_r} - 9'd1);
                                                 call_sub_r <= 7'd67;
+                                            end
+                                        end else if (call_bi_id_r == PY_BI_CABS) begin
+                                            // 1-arg. Firmware abs() dispatches
+                                            // here only for a COMPLEX tag.
+                                            if (cur_arg_r[15:0] != 16'd1) begin
+                                                call_filter_trap_r <= 1'b1;
+                                            end else begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd1);
+                                                call_sub_r <= 7'd70;
+                                            end
+                                        end else if (call_bi_id_r == PY_BI_COMPLEX) begin
+                                            // Positional complex(). Keywords
+                                            // already CALL_FILTER above.
+                                            if (cur_arg_r[15:0] == 16'd0) begin
+                                                call_sub_r <= 7'd72;
+                                            end else if (cur_arg_r[15:0] == 16'd1) begin
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd1);
+                                                call_sub_r <= 7'd73;
+                                            end else if (cur_arg_r[15:0] == 16'd2) begin
+                                                // imag is TOS; real is under it.
+                                                container_rf_addr_r <= RF_AW'(
+                                                    {1'b0, tos_r} - 9'd1);
+                                                call_sub_r <= 7'd74;
+                                            end else begin
+                                                call_filter_trap_r <= 1'b1;
                                             end
                                         end else if (EXCORE_EN &&
                                             pycore_trap_recoverable(PY_TRAP_BUILTIN_CALL)) begin
@@ -2389,6 +2418,116 @@
                                             default: container_wb_data_r <= pycore_int_entry({32'd0, gc_epoch_r});
                                         endcase
                                         tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 7'd0;
+                                    end
+                                end
+                                // 70: _bi_cabs(z). Latch the complex and start
+                                // the FPU; 71 waits for hypot.
+                                7'd70: begin
+                                    if (cont_rf_rs1_tag != PY_TAG_COMPLEX) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        cabs_val_r    <= cont_rf_rs1_val;
+                                        cabs_active_r <= 1'b1;
+                                        call_sub_r    <= 7'd71;
+                                    end
+                                end
+                                7'd71: begin
+                                    // K_COMB (inf / NaN / a zero component)
+                                    // finishes in this same cycle: stall is
+                                    // low and exec_result is the float.
+                                    // Drop cabs_active in the done cycle so
+                                    // the FPU's next idle cycle does not
+                                    // restart the op.
+                                    if (exec_stall) begin
+                                    end else if (exec_trap) begin
+                                        cabs_active_r <= 1'b0;
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        cabs_active_r       <= 1'b0;
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {1'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <= exec_result;
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 7'd0;
+                                    end
+                                end
+                                // 72: complex() → 0j
+                                7'd72: begin
+                                    container_wb_we_r   <= 1'b1;
+                                    container_wb_addr_r <= RF_AW'(
+                                        {1'b0, tos_r} - 9'd2);
+                                    container_wb_data_r <= pycore_make_entry(
+                                        PY_TAG_COMPLEX, 128'b0);
+                                    tos_r <= RF_AW'({1'b0, tos_r} - 9'd1);
+                                    fetch_skip_r <= 1'b1;
+                                    call_phase_r <= CALL_PHASE_DONE;
+                                    call_sub_r   <= 7'd0;
+                                end
+                                // 73: complex(x). COMPLEX is identity. A real
+                                // number becomes x+0j. Anything else is TYPE
+                                // (no string parse).
+                                7'd73: begin
+                                    if (cont_rf_rs1_tag == PY_TAG_COMPLEX) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {1'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_COMPLEX, cont_rf_rs1_val);
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 7'd0;
+                                    end else if (pycore_is_real_numeric_tag(
+                                            cont_rf_rs1_tag)) begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {1'b0, tos_r} - 9'd3);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_COMPLEX,
+                                            {64'b0, pycore_real_to_f64(
+                                                cont_rf_rs1_tag, cont_rf_rs1_val)});
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd2);
+                                        fetch_skip_r <= 1'b1;
+                                        call_phase_r <= CALL_PHASE_DONE;
+                                        call_sub_r   <= 7'd0;
+                                    end else begin
+                                        container_type_trap_r <= 1'b1;
+                                    end
+                                end
+                                // 74: imag of complex(real, imag). Must be real.
+                                // Held in cplx_imag_r, not container_val_r:
+                                // that register is still live as CALL scratch.
+                                7'd74: begin
+                                    if (!pycore_is_real_numeric_tag(cont_rf_rs1_tag)) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        cplx_imag_r <= pycore_real_to_f64(
+                                            cont_rf_rs1_tag, cont_rf_rs1_val);
+                                        container_rf_addr_r <= RF_AW'(
+                                            {1'b0, tos_r} - 9'd2);
+                                        call_sub_r <= 7'd75;
+                                    end
+                                end
+                                // 75: real, then pack {imag, real}.
+                                7'd75: begin
+                                    if (!pycore_is_real_numeric_tag(cont_rf_rs1_tag)) begin
+                                        container_type_trap_r <= 1'b1;
+                                    end else begin
+                                        container_wb_we_r   <= 1'b1;
+                                        container_wb_addr_r <= RF_AW'(
+                                            {1'b0, tos_r} - 9'd4);
+                                        container_wb_data_r <= pycore_make_entry(
+                                            PY_TAG_COMPLEX,
+                                            {cplx_imag_r,
+                                             pycore_real_to_f64(
+                                                 cont_rf_rs1_tag, cont_rf_rs1_val)});
+                                        tos_r <= RF_AW'({1'b0, tos_r} - 9'd3);
                                         fetch_skip_r <= 1'b1;
                                         call_phase_r <= CALL_PHASE_DONE;
                                         call_sub_r   <= 7'd0;

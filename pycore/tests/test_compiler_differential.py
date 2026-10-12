@@ -65,6 +65,22 @@ EVAL_CORPUS = [
     "1.0 / 2",
     "1e3",
     "1.5e-3",
+    "0j",
+    "1j",
+    "1.5j",
+    "1e2j",
+    ".5j",
+    "1.j",
+    "-1j",
+    "(2+3j).real",
+    "(2+3j).imag",
+    "abs(3+4j)",
+    "1j * 1j",
+    "complex(1, 2)",
+    "complex(1)",
+    "complex()",
+    "complex(1+2j)",
+    "complex(True, False)",
     # T1 comparisons and boolean logic
     "1 < 2",
     "2 <= 2",
@@ -472,6 +488,7 @@ class TestCompilerDifferential(unittest.TestCase):
         cases = (
             ("fasta.py", "N = 5000", "N = 30", "23258\n"),
             ("knucleotide.py", "N = 8000", "N = 200", "1827507\n"),
+            ("mandelbrot.py", "SIZE = 32", "SIZE = 32", "414\n"),
         )
         for name, old, new, stdout in cases:
             with self.subTest(program=name):

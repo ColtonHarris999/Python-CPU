@@ -29,7 +29,7 @@ dict, rather than an imported application.
 | `spectral_norm.py` | pyperformance `bm_spectral_norm`, Benchmarks Game | nested float matvec, `eval_A` | n=130, 10 iterations | n=20, 10 iterations |
 | `fannkuch.py` | pyperformance `bm_fannkuch`, Benchmarks Game | integer permutation walk | n=9 (30 flips) | n=7 (16 flips) |
 | `nqueens.py` | pyperformance `bm_nqueens` | every permutation, diagonal sets | 8 queens (92) | 7 queens (40) |
-| `mandelbrot.py` | Benchmarks Game | float inner loop, early exit | 200–16,000 on a side, 50 iters | 32 on a side, 50 iters |
+| `mandelbrot.py` | Benchmarks Game | `z*z+c`, `abs(z)`, early exit | 200–16,000 on a side, 50 iters | 32 on a side, 50 iters |
 | `binary_trees.py` | Benchmarks Game | recursive allocation and a tree walk | argument up to 21 | argument 8 |
 | `fasta.py` | Benchmarks Game | the benchmark's own LCG and a cumulative-probability pick | ALU 2n, IUB 3n, n≥1000 | ALU once, 5,000 IUB bases |
 | `knucleotide.py` | Benchmarks Game | dict updates on 1- and 2-mers | a multi-megabyte FASTA record | ALU repeated to 8,000 bases |
@@ -62,6 +62,9 @@ the published behavior:
 - `nbody` keeps the five published bodies and `advance(0.01, n)`. Pairs
   are index pairs. Energy before any step, scaled by 1e9, is
   `-169075163`, which is the Benchmarks Game's `-0.169075164`.
+- `mandelbrot` iterates `z = z*z + c` and bails out on `abs(z) > 2`.
+  The picture writer (`sys.argv`, `import`, bytes) is not in this file.
+  SIZE=32 still prints `414`.
 
 ## Not in this set
 

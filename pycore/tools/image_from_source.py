@@ -23,10 +23,12 @@ from typing import Iterable
 
 from encoding import (
     BI_BYTEARRAY,
+    BI_CABS,
     BI_CHR,
     BI_CODE_ALLOC,
     BI_CODE_BLIT,
     BI_CODE_KIND,
+    BI_COMPLEX,
     BI_GC_COLLECT,
     BI_GC_STATS,
     BI_HEAP_FREE,
@@ -2070,6 +2072,8 @@ class _HostEmittedCode:
             return self._globals[name]
         if name == "_bi_code_kind":
             return _host_code_kind
+        if name == "_bi_cabs":
+            return _host_cabs
         if hasattr(_builtins_mod, name):
             return getattr(_builtins_mod, name)
         raise NameError(name)
@@ -2726,6 +2730,13 @@ class _HostCodeRam:
         )
 
 
+def _host_cabs(value: object) -> float:
+    """Host stand-in for ``_bi_cabs`` (hardware hypot on a COMPLEX)."""
+    if isinstance(value, complex):
+        return abs(value)
+    raise TypeError("complex abs")
+
+
 def _host_code_kind(obj: object) -> int:
     """Return the PyCore 4-bit tag of *obj* as an INT (device ``_bi_code_kind``)."""
     if isinstance(obj, str):
@@ -2786,6 +2797,7 @@ def load_rom_firmware_callables() -> dict[str, object]:
         "_bi_code_patch": ram.patch,
         "_bi_code_new": ram.new,
         "_bi_code_kind": _host_code_kind,
+        "_bi_cabs": _host_cabs,
         "_bi_exec_globals": _host_exec_globals,
     }
     for dict_key, stem, func_name in ROM_FIRMWARE_BUILTINS:
@@ -2797,6 +2809,7 @@ def load_rom_firmware_callables() -> dict[str, object]:
             "_bi_print": _host_bi_print,
             "_bi_exec_globals": _host_exec_globals,
             "_bi_code_kind": _host_code_kind,
+            "_bi_cabs": _host_cabs,
             "len": len,
             "range": range,
         }
@@ -3434,6 +3447,12 @@ def build_builtins_dict(
         pyc_g, pyc_entry = package
         pairs.append((tag_constant("_PYC_G", string_heap), pyc_g))
         pairs.append((tag_constant("_PYC_ENTRY", string_heap), pyc_entry))
+    # After firmware and the compiler package, so those code-object addresses
+    # stay put. The builtins dict grows by these two. complex() is the native
+    # constructor (the unseeded complex.py stub is not the dict entry).
+    # _bi_cabs is the hypot abs() calls for a COMPLEX tag.
+    pairs.append((tag_constant("complex", string_heap), heap.alloc_builtin(BI_COMPLEX)))
+    pairs.append((tag_constant("_bi_cabs", string_heap), heap.alloc_builtin(BI_CABS)))
     builtins_dict = heap.alloc_dict(
         pairs, slot_count=_package_dict_slots(len(pairs))
     )

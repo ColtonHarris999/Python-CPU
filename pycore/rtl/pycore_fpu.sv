@@ -19,6 +19,8 @@
 //   NEG POS NOT EQ..GE     combinational, 1 cycle
 //   complex ADD SUB MUL    per-component sequences (_Py_c_sum/_diff/_prod)
 //   complex TRUE_DIV       Smith's algorithm as in _Py_c_quot
+//   complex ABS            scaled hypot → a real FLOAT (inf/NaN/zero are
+//                          combinational; otherwise y/x, square, +1, sqrt, *x)
 //   complex EQ NE NEG NOT  combinational, 1 cycle
 //
 // exception_o replaces done_o when the operation ends in a Python
@@ -137,6 +139,7 @@ module pycore_fpu #(
         S_CDIV_1, S_CDIV_2, S_CDIV_3, S_CDIV_4, S_CDIV_5,
         S_CDIV_6, S_CDIV_7, S_CDIV_8, S_CDIV_9,
         S_CREC_CHK, S_CREC_R, S_CREC_I,     // complex / : inf / zero recovery
+        S_HYP_DIV, S_HYP_SQ, S_HYP_ADD, S_HYP_SQRT, S_HYP_MUL, // complex abs
         S_DONE, S_EXC
     } state_e;
 
@@ -195,6 +198,15 @@ module pycore_fpu #(
     assign br_abs = {1'b0, br[62:0]};
     assign bi_abs = {1'b0, bi[62:0]};
     assign cmp_rb = pycore_f64_cmp(br_abs, bi_abs);
+
+    // complex abs: swap so hyp_x >= hyp_y (both magnitudes, +0 for a zero).
+    logic [63:0] ai_abs;
+    logic [3:0]  cmp_hyp;
+    logic [63:0] hyp_x, hyp_y;
+    assign ai_abs  = {1'b0, ai[62:0]};
+    assign cmp_hyp = pycore_f64_cmp(a_abs, ai_abs);
+    assign hyp_x   = (cmp_hyp[2] || cmp_hyp[1]) ? a_abs : ai_abs;
+    assign hyp_y   = (cmp_hyp[2] || cmp_hyp[1]) ? ai_abs : a_abs;
 
     // ---- complex / : recovery of infinities and zeros (CPython 3.14) ----
     // Smith's algorithm yields nan+nanj when exactly one operand holds an
@@ -382,6 +394,25 @@ module pycore_fpu #(
                     dec_kind   = K_COMB;
                     dec_result = {127'd0, !(pycore_f64_eq(ar, br) && pycore_f64_eq(ai, bi))};
                 end
+                PY_ALU_ABS: begin
+                    // CPython c_abs / hypot: an infinity wins over a NaN,
+                    // then NaN, then a zero component (result is the other
+                    // magnitude, +0 when both are zero). The general case
+                    // is sqrt(x^2+y^2) scaled so the square cannot overflow.
+                    if (pycore_f64_is_inf(ar) || pycore_f64_is_inf(ai)) begin
+                        dec_kind   = K_COMB;
+                        dec_result = {64'd0, PY_F64_PINF};
+                    end else if (pycore_f64_is_nan(ar) || pycore_f64_is_nan(ai)) begin
+                        dec_kind   = K_COMB;
+                        dec_result = {64'd0, PY_F64_QNAN};
+                    end else if (pycore_f64_is_zero(a_abs) || pycore_f64_is_zero(ai_abs)) begin
+                        dec_kind   = K_COMB;
+                        dec_result = {64'd0, hyp_x};
+                    end else begin
+                        dec_kind = K_SEQ;
+                        dec_next = S_HYP_DIV;
+                    end
+                end
                 default: begin
                     dec_kind = K_EXC;
                 end
@@ -491,6 +522,14 @@ module pycore_fpu #(
             S_CREC_R: begin u_add_start = 1'b1; u_a = crec_r1; u_b = crec_r2; end
             S_CREC_I: begin u_add_start = 1'b1; u_sub = 1'b1; u_a = crec_i1; u_b = crec_i2; end
 
+            // ---- complex abs: ratio = y/x, sqrt(1+ratio^2)*x ----
+            // t0 holds the running value, t1 the larger magnitude.
+            S_HYP_DIV:  begin u_div_start = 1'b1; u_a = t0_r; u_b = t1_r; end
+            S_HYP_SQ:   begin u_mul_start = 1'b1; u_a = t0_r; u_b = t0_r; end
+            S_HYP_ADD:  begin u_add_start = 1'b1; u_a = PY_F64_ONE; u_b = t0_r; end
+            S_HYP_SQRT: begin u_div_start = 1'b1; u_sqrt = 1'b1; u_a = t0_r; end
+            S_HYP_MUL:  begin u_mul_start = 1'b1; u_a = t0_r; u_b = t1_r; end
+
             default: ;
         endcase
     end
@@ -540,6 +579,10 @@ module pycore_fpu #(
                         pow_n0_r    <= dec_pow_n;
                         t0_r        <= PY_F64_ONE;        // pow accumulator
                         t1_r        <= a_abs;             // pow base
+                        if (complex_i && (op_i == PY_ALU_ABS)) begin
+                            t0_r <= hyp_y;                // smaller magnitude
+                            t1_r <= hyp_x;                // larger magnitude
+                        end
                     end
                     // K_COMB / K_EXC complete in this cycle.
                 end
@@ -684,6 +727,13 @@ module pycore_fpu #(
                     res_r   <= {crec_scale(u_res, crec_b), t2_r};
                     state_r <= S_DONE;
                 end
+
+                // ---- complex abs ----
+                S_HYP_DIV:  if (u_done) begin t0_r <= u_res; state_r <= S_HYP_SQ; end
+                S_HYP_SQ:   if (u_done) begin t0_r <= u_res; state_r <= S_HYP_ADD; end
+                S_HYP_ADD:  if (u_done) begin t0_r <= u_res; state_r <= S_HYP_SQRT; end
+                S_HYP_SQRT: if (u_done) begin t0_r <= u_res; state_r <= S_HYP_MUL; end
+                S_HYP_MUL:  if (u_done) begin res_r <= {64'd0, u_res}; state_r <= S_DONE; end
 
                 S_DONE, S_EXC: state_r <= S_IDLE;
                 default:       state_r <= S_IDLE;

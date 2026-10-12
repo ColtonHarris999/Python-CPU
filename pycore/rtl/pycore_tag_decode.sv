@@ -88,7 +88,16 @@ module pycore_tag_decode (
         is_trap_o = 1'b0;
         trap_code_o = PY_TRAP_NONE;
 
-        if ((alu_op_i == PY_ALU_ILLEGAL) || (alu_op_i > PY_ALU_PASS)) begin
+        // ABS is 24, above PY_ALU_PASS. Only COMPLEX reaches the FPU hypot;
+        // int/float abs stays in the ROM body.
+        if (alu_op_i == PY_ALU_ABS) begin
+            if (rs1_tag_i == PY_TAG_COMPLEX) begin
+                exec_unit_sel_o = PY_EXEC_COMPLEX;
+                result_tag_o = PY_TAG_FLOAT;
+            end else begin
+                `PYCORE_FORCE_TRAP(PY_TRAP_TYPE)
+            end
+        end else if ((alu_op_i == PY_ALU_ILLEGAL) || (alu_op_i > PY_ALU_PASS)) begin
             `PYCORE_FORCE_TRAP(PY_TRAP_ILLEGAL_OPCODE)
         end else if (pycore_is_trapping_tag(rs1_tag_i) &&
                      !(alu_op_i == PY_ALU_PASS && rs1_tag_i != PY_TAG_UNINIT)) begin

@@ -276,4 +276,19 @@ function automatic logic [63:0] pycore_i64_to_f64(input logic [63:0] v);
     end
 endfunction
 
+// INT / BOOL / FLOAT → binary64. COMPLEX is not a real operand.
+function automatic logic [63:0] pycore_real_to_f64(
+    input logic [3:0] tag,
+    input logic [PYCORE_VAL_WIDTH-1:0] value
+);
+    begin
+        if (tag == PY_TAG_FLOAT)
+            pycore_real_to_f64 = value[63:0];
+        else if (tag == PY_TAG_BOOL)
+            pycore_real_to_f64 = value[0] ? PY_F64_ONE : PY_F64_PZERO;
+        else
+            pycore_real_to_f64 = pycore_i64_to_f64(value[63:0]);
+    end
+endfunction
+
 `endif

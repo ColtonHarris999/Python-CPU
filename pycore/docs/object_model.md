@@ -173,8 +173,11 @@ creation until frame-local namespaces exist.
    `CODE_OBJECT`; writeback is the ordinary method form (`method_flag=1`
    pushes `[func, self]` with no allocation; `method_flag=0` allocates
    `OBK_BOUND_METHOD`). Miss → `PY_TRAP_ATTR_ERROR` (15).
-3. Else the receiver must be `PY_TAG_OBJECT`; else `PY_TRAP_TYPE`.
-4. Read `ob_head`. Before any dict probe, SHORT_STR **special names**:
+3. Else if the receiver is `PY_TAG_COMPLEX`, `.real` and `.imag` return the
+   two binary64 halves as `FLOAT` (data writeback: `method_flag=1` still
+   pushes `[value, NULL]`). Any other name is `PY_TRAP_TYPE`.
+4. Else the receiver must be `PY_TAG_OBJECT`; else `PY_TRAP_TYPE`.
+5. Read `ob_head`. Before any dict probe, SHORT_STR **special names**:
 
    | Name | Receiver | Result |
    | --- | --- | --- |
@@ -186,11 +189,11 @@ creation until frame-local namespaces exist.
    | `args` | `OBK_EXCEPTION` | field1 args tuple |
 
    Specials write back as **data** (replace TOS only; ignore `method_flag`).
-5. Else `OBK_INSTANCE`: probe field0 dict. `OBK_TYPE`: start the MRO at the
+6. Else `OBK_INSTANCE`: probe field0 dict. `OBK_TYPE`: start the MRO at the
    type itself. Other kinds → `PY_TRAP_TYPE`.
-6. On instance miss, walk `ob_type` → `tp_base` (depth guard 8), probing each
+7. On instance miss, walk `ob_type` → `tp_base` (depth guard 8), probing each
    `tp_dict`. Miss → `PY_TRAP_ATTR_ERROR` (15).
-7. Writeback:
+8. Writeback:
    - If the hit value is `OBJECT`/`OBK_BUILTIN` with `builtin_id=0`, unwrap
      `field1` as `CODE_OBJECT` and mark static (no `self` bind).
    - `method_flag = 0`: replace TOS; if source is TYPE (or a native-method

@@ -1071,6 +1071,12 @@ module pycore_core #(
     // P5e: CALL of a STRACC native method. Operands latched in S_CALL,
     // then the core freezes in S_STRACC the same way as opcode routing.
     logic        stracc_from_call_r;
+    // CALL of _bi_cabs holds the complex here and runs PY_ALU_ABS on the
+    // existing FPU while the core stays in S_CALL.
+    logic        cabs_active_r;
+    logic [127:0] cabs_val_r;
+    // Imaginary half of complex(real, imag), held across call subs 74→75.
+    logic [63:0]  cplx_imag_r;
     logic        call_stracc_go_r;
     logic [5:0]  stracc_call_id_r;
     logic [5:0]  stracc_call_op_r;
@@ -1230,9 +1236,9 @@ module pycore_core #(
     pycore_exec exec (
         .clk_i(clk_i),
         .rst_n_i(rst_n_i),
-        .valid_i((state_r == S_EXEC) && is_alu),
-        .alu_op_i(dec_alu_op),
-        .rs1_i(rs1_r),
+        .valid_i(((state_r == S_EXEC) && is_alu) || cabs_active_r),
+        .alu_op_i(cabs_active_r ? PY_ALU_ABS : dec_alu_op),
+        .rs1_i(cabs_active_r ? pycore_make_entry(PY_TAG_COMPLEX, cabs_val_r) : rs1_r),
         .rs2_i(rs2_r),
         .string_path_valid_i(1'b0),
         .string_result_i('0),
@@ -3249,6 +3255,9 @@ module pycore_core #(
             stracc_iter_pending_r    <= 1'b0;
             stracc_item_r            <= '0;
             stracc_from_call_r       <= 1'b0;
+            cabs_active_r            <= 1'b0;
+            cabs_val_r               <= '0;
+            cplx_imag_r              <= '0;
             call_stracc_go_r         <= 1'b0;
             stracc_call_id_r         <= '0;
             stracc_call_op_r         <= PY_SA_SEARCH;

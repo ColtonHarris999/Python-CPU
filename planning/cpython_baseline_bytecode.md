@@ -153,7 +153,7 @@ Those are already in `SUPPORTED_COMPARE_ARGS`.
 | `nqueens` | `set(list)`, `not`, `%` | `PY_BI_SET` from one list, `UNARY_NOT`, `NB_REMAINDER`. Elements are small ints, some negative. The `None`-as-empty-slot bug in `set()` is not hit |
 | `knucleotide` | dict of short strings, `in`, `for` | `BUILD_MAP`, string `NB_ADD` of two one-character strings (result fits in a `SHORT_STR`), `CONTAINS_OP`, dict `FOR_ITER` |
 | `fasta`, `knucleotide` | index a long literal, `ord` | `LOAD_CONST` `LONG_STR`, `SA_CHAR_AT`, `PY_BI_ORD` |
-| `mandelbrot`, `sor`, `monte_carlo`, `spectral_norm` | float arithmetic | FPU add / mul / div. `spectral_norm` also `** 0.5` |
+| `mandelbrot`, `sor`, `monte_carlo`, `spectral_norm` | float arithmetic | FPU add / mul / div. `mandelbrot` also complex mul and hypot. `spectral_norm` also `** 0.5` |
 | `nbody` | float `** -1.5`, `int(energy * 1e9)` | General power path (L-ALU-4) and `int` of a float |
 
 ## Left alone on purpose

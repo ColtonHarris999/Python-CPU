@@ -35,6 +35,8 @@ to-bool-list-trap = { src = "to_bool_list_trap", cycles = 50_000 }
 unary-not = { src = "unary_not", cycles = 50_000 }
 unary-invert = { src = "unary_invert", cycles = 50_000 }
 unary-negative = { src = "unary_negative", cycles = 50_000 }
+complex-ops = { src = "complex_ops", cycles = 300_000 }
+complex-type-trap = { kind = "trap", src = "complex_type_trap", trap = 1, cycles = 200_000 }
 unary-invert-float-trap = { kind = "trap", src = "unary_invert_float_trap", trap = 1, cycles = 50_000 }
 is-op = { src = "is_op", cycles = 50_000 }
 compare-op = { src = "compare_op", cycles = 50_000 }

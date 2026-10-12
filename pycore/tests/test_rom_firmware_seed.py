@@ -64,6 +64,16 @@ def _same_float(a: float, b: float) -> bool:
 
 
 class RomFirmwareSeedTest(unittest.TestCase):
+    def test_abs_dispatches_complex_to_cabs(self) -> None:
+        ns = image_from_source.load_rom_firmware_callables()
+        abs_fn = ns["abs"]
+        self.assertEqual(abs_fn(3 + 4j), 5.0)
+        self.assertEqual(abs_fn(-3), 3)
+        self.assertEqual(abs_fn(-1.5), 1.5)
+        self.assertEqual(abs_fn(0), 0)
+        self.assertTrue(_same_float(ns["_bi_cabs"](complex(float("nan"), 1.0)), float("nan")))
+        self.assertEqual(ns["_bi_cabs"](complex(float("inf"), float("nan"))), float("inf"))
+
     def test_registry_sources_validate(self) -> None:
         for dict_key, stem, func_name in image_from_source.ROM_FIRMWARE_BUILTINS:
             path = image_from_source.FIRMWARE_BUILTINS_DIR / f"{stem}.py"

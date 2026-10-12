@@ -440,7 +440,7 @@ whether `make run-file HOST_COMPILE=1` can already run the construct via CPython
 | `del` of a global / module name | `del of a global name is not supported` | `DELETE_NAME`, `DELETE_GLOBAL` are not in the catalog (D11) | no |
 | `del` of a cell | `cannot delete closed-over name` | `DELETE_DEREF` (`trap`) | no |
 | bytes literals | `bytes literals are not supported` | `BYTES` tag is reserved | no |
-| complex literals (`1j`) | `complex literals are not supported` | complex ALU exists for operations; the literal parser does not | literals via host `compile` only if the image path accepts them |
+| complex literals (`1j`, `1.5j`, `1e2j`) | accepted, constant kind 6 | `complex()` string form (`complex("1+2j")`) is still a TYPE trap; keywords are CALL_FILTER | yes |
 | `\u` and octal escapes | `unsupported escape sequence` | a Unicode / octal decoder. `\n` `\t` `\r` `\\` `\'` `\"` `\xHH` and the short control escapes already decode | yes |
 | `"single"` mode, `flags != 0`, `optimize` not in `{0, -1}` | `ValueError` from the shim | REPL printing for `"single"`; future-flag bits | n/a |
 | more than 240 locals, or frame window over 240 | `too many locals` / `frame window too large` | the register-file window (D6). Not a grammar gap | host images trap `CALL_FILTER` instead |

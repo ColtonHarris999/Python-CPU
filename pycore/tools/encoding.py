@@ -358,6 +358,8 @@ BI_CODE_KIND = 21
 BI_GC_COLLECT = 22
 BI_HEAP_FREE = 23
 BI_GC_STATS = 24
+BI_COMPLEX = 25
+BI_CABS = 26
 
 # Code address space (mirror pycore_defs.svh PYCORE_CODE_RAM_*).
 # The ROM holds IMEM_BLOCK_COUNT * 4096 / 8 slots; code RAM starts right after.

@@ -1,26 +1,22 @@
 # Computer Language Benchmarks Game, mandelbrot.
-# The usual Python 3 entry maps each pixel to a complex c and iterates
-# z = z*z + c up to 50 times, emitting a 1 bit when |z| stays <= 2.
-# Complex numbers and the PBM writer are not used: two floats, and a count
-# of the pixels that stay inside. Official pictures are 200 to 16000 on a
-# side. SIZE=32 keeps the 50-iteration limit and finishes under Callgrind.
+# The published iteration is z = z*z + c with a bailout of abs(z) > 2.
+# This file does that computation: a complex literal, complex(), and abs().
+# The PBM writer (sys.argv, import, bytes) is still later. Official pictures
+# are 200 to 16000 on a side. SIZE=32 keeps the 50-iteration limit and
+# finishes under Callgrind. The inside-pixel count at this size is the same
+# 414 the old squared test printed.
 
 SIZE = 32
 LIMIT = 50
 
 
 def inside(cr, ci):
-    zr = 0.0
-    zi = 0.0
-    tr = 0.0
-    ti = 0.0
+    z = 0j
+    c = complex(cr, ci)
     i = 0
     while i < LIMIT:
-        zi = 2.0 * zr * zi + ci
-        zr = tr - ti + cr
-        tr = zr * zr
-        ti = zi * zi
-        if tr + ti > 4.0:
+        z = z * z + c
+        if abs(z) > 2.0:
             return 0
         i = i + 1
     return 1

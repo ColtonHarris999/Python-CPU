@@ -45,7 +45,7 @@ These limit every firmware builtin:
 
 | Builtin | Description | Status | Notes |
 | --- | --- | --- | --- |
-| `abs` | Return the absolute value of a number. | in ROM | INT/BOOL/FLOAT via `<` + `UNARY_NEGATIVE`. Non-numeric → TYPE trap. |
+| `abs` | Return the absolute value of a number. | in ROM | INT/BOOL/FLOAT via `<` + `UNARY_NEGATIVE`. COMPLEX (tag 3) calls `_bi_cabs` (hardware hypot → FLOAT). Other tags TYPE-trap on `<`. |
 | `aiter` | Return an asynchronous iterator for an asynchronous iterable. | blocked | Async/await deferred (`GET_AWAITABLE`/`SEND`). |
 | `all` | Return True if all elements of the iterable are true (or if empty). | in ROM | Uses widened TO_BOOL; empty → True. |
 | `anext` | Return the next item from an asynchronous iterator. | blocked | Async/await deferred. |
@@ -60,7 +60,7 @@ These limit every firmware builtin:
 | `chr` | Return the Unicode character for an integer code point. | native | `BI_CHR` (id 11): INT → one-character SHORT_STR, 1–4 UTF-8 bytes inline. Rejects > U+10FFFF, negatives, and lone surrogates → TYPE trap (CPython allows surrogates). |
 | `classmethod` | Transform a method into a class method. | blocked | No classmethod kind; image folding rejects `@classmethod`. |
 | `compile` | Compile source into a code object usable by exec/eval. | in ROM | ROM shim over the on-device compiler (T1–T6 grammar, closures); see `compile.md` and `pycore/docs/compiler.md`. `"single"` / `flags != 0` → `ValueError`. |
-| `complex` | Create a complex number from real/imag or a string. | blocked | COMPLEX ALU tag exists; no runtime constructor. |
+| `complex` | Create a complex number from a real and an optional imaginary part. | native | `BI_COMPLEX` (id 25): argc 0 → `0j`; argc 1 INT/BOOL/FLOAT → `x+0j`, COMPLEX identity; argc 2 both real → `real+imag j`. A complex component, a string, or argc>2 → TYPE / CALL_FILTER. No string parse, no keywords. |
 | `delattr` | Delete a named attribute from an object. | in ROM | `del obj.__dict__[name]` (instance dict only; no MRO). |
 | `dict` | Create a new dictionary. | in ROM | From iterable of pairs via `UNPACK_SEQUENCE` + `STORE_SUBSCR`. No kwargs ctor. |
 | `dir` | Return a list of valid attribute names for an object or the local scope. | in progress | Instance `__dict__` keys only; no-arg / MRO names blocked. |
@@ -147,10 +147,10 @@ pycore_firmware/builtins/builtins.md    # this inventory
 | Python modules | 73 |
 | Plan docs | 8 (`compile`, `eval`, `exec`, `open`, `super`, `property`; `ord` / `chr` now shipped notes) |
 | Status: in ROM | 32 (incl. `print`, `exec`, `eval`, `compile`, `float`); plus 24 underscore helper entries (`_mulmod`, `_round_float`, `_float_from_str`, ...) that ROM bodies LOAD_GLOBAL |
-| Status: native | 4 (`ord`, `chr`, `int` CALL convert, `str` CALL convert) |
+| Status: native | 5 (`ord`, `chr`, `int` CALL convert, `str` CALL convert, `complex`) |
 | Status: implemented | 5 (`len` miss path, `list_append`, `max` notes, `range` list form, `set` Python form) |
 | Status: in progress | 8 |
-| Status: blocked | 25 |
+| Status: blocked | 24 |
 
 ### In ROM (seeded as CODE_OBJECT in boot builtins dict)
 
@@ -177,6 +177,10 @@ possible: reading UTF-8 payload bytes as an integer and building a string from
 raw bytes are exactly the primitives Python lacks here. Both complete in one
 cycle with no dmem access, because a one-character string is
 always a `SHORT_STR` and its bytes are inline in the handle.
+
+`complex` (`BI_COMPLEX`, id 25) packs two binary64 values. `_bi_cabs`
+(`BI_CABS`, id 26) is the helper `abs` calls for a COMPLEX; it is not a
+public builtin. The hypot runs on the FPU (`PY_ALU_ABS`).
 
 `int` stays an `OBK_TYPE` (so `int.from_bytes` / `int.to_bytes` remain on
 `tp_dict`) with `OB_FLAG_INT_TYPE`. `CALL` converts: argc 0 → `0`; argc 1
@@ -207,7 +211,7 @@ form; `BI_SET` owns dict)
 ### Blocked (stub + notes/plans)
 
 `aiter`, `anext`, `ascii`, `breakpoint`, `bytearray`, `bytes`,
-`classmethod`, `complex`, `frozenset`,
+`classmethod`, `frozenset`,
 `globals`, `hash`, `help`, `id`, `input`, `locals`, `memoryview`,
 `object`, `open`, `property`, `slice`, `staticmethod`,
 `super`, `from_bytes`, `to_bytes`

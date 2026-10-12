@@ -178,6 +178,7 @@ sequences on them:
 | COMPLEX `*`                 | `_Py_c_prod`: four multiplies, two adds                                  | 34                                             |
 | COMPLEX `/`                 | `_Py_c_quot` (Smith): three divides, three multiplies, three adds        | 128 with finite operands; `+ 1` to inspect the result when an operand holds an infinity, `+ 9` when the inf / zero recovery below runs |
 | COMPLEX compares, `not`, `-`| combinational                                                            | 1                                              |
+| COMPLEX `abs`               | hypot: inf/NaN/zero combinational; else `y/x`, square, `+1`, sqrt, `*x` | one divide, two multiplies, one add, one square root |
 
 Complex division includes CPython 3.14's recovery of infinities and zeros
 (`_Py_c_quot`, after C11 Annex G.5.2): when Smith's algorithm produces

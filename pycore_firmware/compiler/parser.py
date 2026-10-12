@@ -225,6 +225,39 @@ def _pyc_parse_number(text):
     n = len(text)
     if n < 1:
         _pyc_parse_error("invalid number")
+    # One trailing j/J is an imaginary literal. The body is a real number.
+    # Kind 6 is the complex constant (3/4/5 are True/False/None). Hex, bin,
+    # oct, a bare suffix, and a second j are rejected. `1+2j` stays a BinOp.
+    last = text[n - 1]
+    if last == "j" or last == "J":
+        if n < 2:
+            _pyc_parse_error("invalid imaginary literal")
+        body = text[0 : n - 1]
+        if len(body) >= 2 and body[0] == "0":
+            ch0 = body[1]
+            if (
+                ch0 == "x"
+                or ch0 == "X"
+                or ch0 == "o"
+                or ch0 == "O"
+                or ch0 == "b"
+                or ch0 == "B"
+            ):
+                _pyc_parse_error("invalid imaginary literal")
+        saw_digit = 0
+        k = 0
+        bn = len(body)
+        while k < bn:
+            bch = body[k]
+            if bch >= "0" and bch <= "9":
+                saw_digit = 1
+            k = k + 1
+        if saw_digit == 0:
+            _pyc_parse_error("invalid imaginary literal")
+        pair = _pyc_parse_number(body)
+        if pair[1] != 0 and pair[1] != 1:
+            _pyc_parse_error("invalid imaginary literal")
+        return [complex(0, pair[0]), 6]
     has_dot = 0
     has_exp = 0
     i = 0
@@ -235,7 +268,7 @@ def _pyc_parse_number(text):
         elif ch == "e" or ch == "E":
             has_exp = 1
         elif ch == "j" or ch == "J":
-            _pyc_parse_error("complex literals are not supported")
+            _pyc_parse_error("invalid imaginary literal")
         i = i + 1
     if n >= 2 and text[0] == "0":
         ch = text[1]
@@ -1702,6 +1735,9 @@ def _pyc_const_of(nid):
                 if u == ND["Invert"]:
                     return 1, ~nd_obj[kid]
             if nd_a[kid] == 1:
+                if u == ND["USub"]:
+                    return 1, 0 - nd_obj[kid]
+            if nd_a[kid] == 6:
                 if u == ND["USub"]:
                     return 1, 0 - nd_obj[kid]
     return 0, 0

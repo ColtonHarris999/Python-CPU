@@ -2318,8 +2318,10 @@ def _pyc_codegen_main():
     ops_obj = [0] * 8
     _pyc_symtab(root)
     # §11.3 constant folding: bottom-up rewrite of Constant BinOp / UnaryOp.
-    # Int + - * & | ^ and unary - ~ ; str Add. Skip / // % ** << >> (div0,
-    # float, shift/pow overflow). Nested if only — no extra _PYC_G helper.
+    # Int + - * & | ^ and unary - ~ ; str Add; complex (kind 6) unary -.
+    # Skip / // % ** << >> (div0, float, shift/pow overflow) and complex
+    # add/mul (those stay runtime ALU ops). Nested if only — no extra
+    # _PYC_G helper.
     folded = 1
     while folded:
         folded = 0
@@ -2399,6 +2401,14 @@ def _pyc_codegen_main():
                             nd_b[i] = 0
                             nd_c[i] = 0
                             nd_obj[i] = res
+                            folded = 1
+                    elif nd_a[kid] == 6:
+                        if u == ND["USub"]:
+                            nd_kind[i] = ND["Constant"]
+                            nd_a[i] = 6
+                            nd_b[i] = 0
+                            nd_c[i] = 0
+                            nd_obj[i] = 0 - nd_obj[kid]
                             folded = 1
             i = i + 1
     opnd_n = 0

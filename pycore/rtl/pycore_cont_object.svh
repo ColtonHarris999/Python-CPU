@@ -1078,6 +1078,32 @@
                                         container_tag_r <= container_rd_data_r[3:0];
                                         if (!pycore_dict_key_tag_ok(container_rd_data_r[3:0])) begin
                                             container_type_trap_r <= 1'b1;
+                                        end else if (cont_rs1_tag == PY_TAG_COMPLEX) begin
+                                            // Data attributes. lfb_lo[2] skips
+                                            // the staticmethod / bound-method
+                                            // writeback; method_flag still
+                                            // pushes [value, NULL].
+                                            if (pycore_attr_name_is_real(
+                                                    container_rd_data_r[3:0],
+                                                    container_val_r)) begin
+                                                container_tag_r    <= PY_TAG_FLOAT;
+                                                container_val_r    <=
+                                                    {64'b0, cont_rs1_val[63:0]};
+                                                container_lfb_hi_r <= 4'd0;
+                                                container_lfb_lo_r <= 4'b0100;
+                                                container_phase_r  <= CP_ATTR_WB;
+                                            end else if (pycore_attr_name_is_imag(
+                                                    container_rd_data_r[3:0],
+                                                    container_val_r)) begin
+                                                container_tag_r    <= PY_TAG_FLOAT;
+                                                container_val_r    <=
+                                                    {64'b0, cont_rs1_val[127:64]};
+                                                container_lfb_hi_r <= 4'd0;
+                                                container_lfb_lo_r <= 4'b0100;
+                                                container_phase_r  <= CP_ATTR_WB;
+                                            end else begin
+                                                container_type_trap_r <= 1'b1;
+                                            end
                                         end else begin
                                             begin
                                                 logic [6:0] nmeth;
