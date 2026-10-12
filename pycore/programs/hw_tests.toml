@@ -816,6 +816,7 @@ recipe_heap = [
     # Grow 200-entry containers among churn; at 2.5x peak live, first-fit
     # leaves no hole large enough for the next table or buffer (trap 7).
     "gen-barrier-loop", "gen-remset-overflow", "gen-unpack-loop", "gen-map-add-loop",
+    "gen-guard-selftest", "gen-guard-selftest-static",
     "gen-ca-loop", "gen-ca-loop-two-core", "gen-ca-loop-excore",
 ]
 # Shrinks the mark stack and rescan list so that its explicit collection
