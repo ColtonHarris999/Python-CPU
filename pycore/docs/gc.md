@@ -528,7 +528,7 @@ transactions; `bench_churn` 47 collections, max pause 38,443 (44,142).
 
 ## Generational collection (in progress)
 
-Status: Phase 2 of the plan, behind `+GC_GEN=1` (needs `+GC_EN=1`). The
+Status: Phase 6 of the plan, behind `+GC_GEN=1` (needs `+GC_EN=1`). The
 protocol is specified in [gc_gen_protocol.md](gc_gen_protocol.md). The design is a
 non-moving, sticky-mark-bit collector: a set bitmap bit survives the sweep
 and means "old", a minor collection marks from the roots plus a remembered
@@ -746,8 +746,51 @@ Phase 5 (`gc_gen_protocol.md` B7) refines list stores:
   | 97 | the store logs the next chunk | `gen-chunk-loop`, sim |
   | 99 | `L_DEL` permits instead of logging | `gen-chunk-loop`, sim |
 
-The nursery budget comes in a later phase; until then a minor runs where a
-full collection would.
+What Phase 6 built (major policy and minor fixed cost):
+
+- **Major policy** (`pycore_core.sv`, at the end of each collection). The
+  next collection is a major when any of these holds, and a minor otherwise:
+  free bytes are below twice the nursery; live bytes have grown past the live
+  bytes at the last major by more than `max(free_at_major/2, dyn/16)`; or the
+  last minor reclaimed less than half a nursery. The nursery is
+  `+GC_NURSERY_BYTES`, or an eighth of the dynamic heap by default. This
+  settles D3 for now. `+GC_GEN_POLICY=0` turns the policy off, so every
+  collection the trigger starts is a minor unless something forces a major;
+  GG2 runs that way so its minors stay comparable with the full arm. The
+  `GC-GEN` summary line counts the majors the policy chose (`policy_majors=`).
+- **Static roots skipped in minors** (`pycore_gc.sv`, `T_MEMROOT`). Root
+  ranges 0-3 and 7 (boot record, native table and the other image-static
+  ranges) only point at storage that a previous collection already marked
+  old, so a minor skips them. Before this, these reads were most of a
+  minor's fixed cost: the boot record took about 440 cycles and the native
+  table about 1100, nearly all memory misses.
+- **Profiling.** `[GC-PHASE]` now reports the remembered-set scan
+  (`remset=`), and `+GC_ROOT_PROF=1` prints a `[GC-ROOT]` line per root
+  range. `tools/gc_genbench.py` (GG7) runs the benches without
+  `+GC_ROOT_STASH`, whose debug writes inflated the register-root phase.
+
+D2 stays as recommended: an object is promoted at its first survival. On the
+bench set the policy's majors are a small share of collections, and no
+measurement so far shows tenured garbage driving them, so aging is not
+built.
+
+GG7 on `2152df3` (`CACHE_EN=1 MEM_LATENCY=4`, generational vs full-only):
+
+| Bench | Total cycles | Minors / majors | Median collection (full → gen) |
+| --- | ---: | ---: | ---: |
+| `gc-bench-churn` | -11.65% | 62 / 2 | 18513 → 759 |
+| `gc-steady-set` | -7.54% | 58 / 6 | 2359 → 320 |
+| `gc-steady-list` | -5.87% | 54 / 7 | 2439 → 319 |
+| `gc-steady-dict` | -4.97% | 81 / 11 | 2003 → 317 |
+| `gc-steady-exc` | -3.96% | 23 / 3 | 2388 → 224 |
+| `gc-steady-str` | -2.25% | 78 / 7 | 2391 → 285 |
+| `gc-bench-full`, `-deep`, `-wide`, `gc-compile-loop`, `gc-steady-closure`, `gc-steady-compile` | ±0.01% | all majors | unchanged |
+
+PG2 holds on churn (median minor 4.1% of the median full collection, GC
+share 11.0%), PG4 holds everywhere, and no bench overflowed the remembered
+set or hit the guard. In the unchanged benches every collection is a major:
+they collect through explicit `_bi_gc_collect()` calls, which are always
+majors, or through events that force one (a heap release, for example).
 
 Measured with `pycore/tools/gc_genstats.py` over dump sequences on
 `b14600b` (what a minor at each collection would have done if everything
