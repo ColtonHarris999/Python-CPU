@@ -87,6 +87,8 @@ def main() -> int:
     ap.add_argument("--mode", choices=["quick", "full"], default="quick")
     ap.add_argument("--only", default="", help="comma-separated gate ids (writes mode=partial)")
     ap.add_argument("--jobs", type=int, default=int(os.environ.get("TEST_JOBS", os.cpu_count() or 2)))
+    ap.add_argument("--fuzz-seeds", type=int, default=0,
+                    help="G8 and GG5 run seeds 0..N-1 instead of the gate's count (recorded in status.json)")
     ap.add_argument("--record-review", default="")
     ap.add_argument("--g1-ref", choices=["merge-base", "checked-in"], default="merge-base",
                     help="G1's reference: the merge base with origin/main, measured once and "
@@ -111,12 +113,15 @@ def main() -> int:
     started = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     ctx = gc_gates.Context(root=ROOT, out=OUT, mode=args.mode, jobs=args.jobs, head=head,
                            g1_ref=args.g1_ref)
+    if args.fuzz_seeds:
+        ctx.g8_seeds = f"0..{args.fuzz_seeds - 1}"
     status: dict = {
         "schema": 1,
         "mode": mode,
         "head": head,
         "dirty": bool(dirty_paths),
         "dirty_paths": dirty_paths[:40],
+        "fuzz_seeds": args.fuzz_seeds or None,
         "started": started,
         "finished": None,
         "gates": {},
