@@ -826,7 +826,9 @@ bump_cursor = [
 # dumps must pass gc_model.check_sequence.
 [gate.GG2]
 sets = [{ areas = ["gc", "gc-gen"] }]
-plusargs = "+GC_EN=1 +GC_GEN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_DUMP_EACH={out} +GC_DUMP_MAX=60"
+# The major policy is off: its majors would hide minors from the oracle.
+# GG7 (tools/gc_genbench.py) runs with it on.
+plusargs = "+GC_EN=1 +GC_GEN=1 +GC_GEN_POLICY=0 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_DUMP_EACH={out} +GC_DUMP_MAX=60"
 boundary_every = 400
 arms = { boundary = "", major_every = "+GC_MAJOR_EVERY=3" }
 # Too slow with a collection every 400 instructions (a large live heap), or

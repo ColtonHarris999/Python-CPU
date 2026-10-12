@@ -810,12 +810,13 @@ module tb_container #(
                      g_dut.dut.core.gc_epoch_r, g_dut.dut.core.gc_mark_xacts_total_r);
             gc_site_report();
             if (g_dut.dut.core.gc_gen_sim)
-                $display("GC-GEN minors=%0d majors=%0d guard_hits=%0d guard_cont=%0d guard_ex=%0d logs=%0d dups=%0d drops=%0d overflows=%0d",
+                $display("GC-GEN minors=%0d majors=%0d guard_hits=%0d guard_cont=%0d guard_ex=%0d logs=%0d dups=%0d drops=%0d overflows=%0d policy_majors=%0d",
                          g_dut.dut.core.gc_minors_r, g_dut.dut.core.gc_majors_r,
                          g_dut.dut.core.gc_guard_hits_r, g_dut.dut.core.gc_guard_hits_cont_r,
                          g_dut.dut.core.gc_guard_hits_ex_r,
                          g_dut.dut.core.bar_logs, g_dut.dut.core.bar_dups,
-                         g_dut.dut.core.bar_drops, g_dut.dut.core.bar_overflows);
+                         g_dut.dut.core.bar_drops, g_dut.dut.core.bar_overflows,
+                         g_dut.dut.core.gc_policy_majors_r);
         end
         $finish;
     end

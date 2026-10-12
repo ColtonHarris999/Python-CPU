@@ -427,6 +427,13 @@ module pycore_core #(
     logic         gc_minor_r;         // kind of the collection in progress (E3)
     logic [31:0]  gc_young_lo_r;      // heap_ptr_r when the last collection started
     logic [31:0]  gc_since_major_r;   // collections since the last major
+    // Major policy (plan §3.6): the next collection is a major when the
+    // last one left less than two nurseries free, or the heap's occupied
+    // bytes grew past the last major's by max(half its free bytes, 1/16 of
+    // the dynamic heap).
+    logic         gc_major_due_r;
+    logic [31:0]  gc_live_at_major_r, gc_free_at_major_r;
+    logic [31:0]  gc_policy_majors_r;  // majors the policy chose
     logic [31:0]  gc_minors_r, gc_majors_r, gc_guard_hits_r;
     logic [31:0]  gc_old_hi_w;
     logic         gc_sticky;
@@ -1800,6 +1807,8 @@ module pycore_core #(
     bit          gc_major_only_sim;    // +GC_MAJOR_ONLY=1: sticky bits, every collection a major
     logic [31:0] gc_major_every_sim;   // +GC_MAJOR_EVERY=M: every M-th collection is a major
     logic [31:0] gc_remset_limit_sim;  // +GC_REMSET_LIMIT=N: SSB entries (0: all)
+    bit          gc_gen_policy_sim;    // +GC_GEN_POLICY=0: no policy majors (plan §3.6)
+    logic [31:0] gc_nursery_sim;       // +GC_NURSERY_BYTES=N (0: an eighth of the dynamic heap)
     initial begin
         int v;
         gc_en_sim = 1'b0;
@@ -1807,6 +1816,8 @@ module pycore_core #(
         gc_major_only_sim = 1'b0;
         gc_major_every_sim = 32'd0;
         gc_remset_limit_sim = 32'd0;
+        gc_gen_policy_sim = 1'b1;
+        gc_nursery_sim = 32'd0;
         gc_verify_only_sim = 1'b0;
         gc_auto_sim = 1'b1;
         gc_at_exit_sim = 1'b0;
@@ -1840,6 +1851,8 @@ module pycore_core #(
         if ($value$plusargs("GC_MAJOR_ONLY=%d", v)) gc_major_only_sim = (v != 0);
         if ($value$plusargs("GC_MAJOR_EVERY=%d", v)) gc_major_every_sim = v;
         if ($value$plusargs("GC_REMSET_LIMIT=%d", v)) gc_remset_limit_sim = v;
+        if ($value$plusargs("GC_GEN_POLICY=%d", v)) gc_gen_policy_sim = (v != 0);
+        if ($value$plusargs("GC_NURSERY_BYTES=%d", v)) gc_nursery_sim = v;
         // +HEAP_DYN_BYTES=n: heap limit = HEAP_INIT_PTR + n (G7 shrinks each
         // fixture to its static image plus 2x its peak live bytes).
         gc_heap_dyn_bytes_sim = 32'd0;
@@ -2364,7 +2377,7 @@ module pycore_core #(
     );
     // Kind decision (E3). gc_start samples it.
     assign gc_minor_now = gc_gen_sim && !gc_force_major_r && !gc_explicit_r && !gc_exit_req_r &&
-                          !gc_major_only_sim &&
+                          !gc_major_only_sim && !gc_major_due_r &&
                           !((gc_major_every_sim != 32'd0) &&
                             (gc_since_major_r + 32'd1 >= gc_major_every_sim));
     logic [31:0] gc_hp_q;
@@ -2384,10 +2397,37 @@ module pycore_core #(
             gc_guard_hits_r  <= '0;
             gc_guard_hits_cont_r <= '0;
             gc_guard_hits_ex_r   <= '0;
+            gc_major_due_r       <= 1'b0;
+            gc_live_at_major_r   <= '0;
+            gc_free_at_major_r   <= '0;
+            gc_policy_majors_r   <= '0;
         end else if (gc_gen_sim) begin
             gc_hp_q    <= heap_ptr_r;
             gc_alloc_q <= (state_r == S_GC_ALLOC);
+            if ((state_r == S_GC_RUN) && gc_done) begin
+                logic [31:0] dyn, nur, la, fa, grow;
+                dyn  = gc_heap_limit_eff - heap_init_ptr_sim;
+                nur  = (gc_nursery_sim != 32'd0) ? gc_nursery_sim : (dyn >> 3);
+                la   = gc_minor_r ? gc_live_at_major_r : gc_live_bytes;
+                fa   = gc_minor_r ? gc_free_at_major_r : gc_free_bytes;
+                grow = ((fa >> 1) > (dyn >> 4)) ? (fa >> 1) : (dyn >> 4);
+                if (!gc_minor_r) begin
+                    gc_live_at_major_r <= gc_live_bytes;
+                    gc_free_at_major_r <= gc_free_bytes;
+                end
+                // A minor that reclaimed less than half a nursery found
+                // mostly survivors: the next collection is a major (plan
+                // §11, the fallback when minors reclaim little).
+                gc_major_due_r <= gc_gen_policy_sim &&
+                                  ((gc_free_bytes < (nur << 1)) || (gc_live_bytes > la + grow) ||
+                                   (gc_minor_r && (gc_free_bytes - gc_free_before_r < (nur >> 1))));
+            end
             if (gc_start) begin
+                if (gc_minor_now != (gc_gen_sim && !gc_force_major_r && !gc_explicit_r &&
+                                     !gc_exit_req_r && !gc_major_only_sim &&
+                                     !((gc_major_every_sim != 32'd0) &&
+                                       (gc_since_major_r + 32'd1 >= gc_major_every_sim))))
+                    gc_policy_majors_r <= gc_policy_majors_r + 32'd1;
                 gc_minor_r    <= gc_minor_now;
                 gc_young_lo_r <= heap_ptr_r;
                 if (gc_minor_now) begin

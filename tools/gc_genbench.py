@@ -39,7 +39,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BENCHES = ["gc-bench-full", "gc-bench-churn", "gc-bench-deep", "gc-bench-wide",
            "gc-compile-loop", "gc-steady-list", "gc-steady-dict", "gc-steady-set",
            "gc-steady-str", "gc-steady-exc", "gc-steady-closure", "gc-steady-compile"]
-BASE = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40 +GC_LOG=1 +GC_GEN_LOG=1"
+BASE = "+GC_EN=1 +MAX_CYCLES_SCALE=40 +GC_LOG=1 +GC_GEN_LOG=1"
 ARMS = {"full": "", "major": "+GC_GEN=1 +GC_MAJOR_ONLY=1", "gen": "+GC_GEN=1"}
 GEN_RE = re.compile(r"^\[GC-GEN\] n=\d+ kind=(\w+) .*?\bmark_cyc=(\d+) sweep_cyc=(\d+)", re.M)
 LOG_RE = re.compile(r"^\[GC-LOG\] .*?\bmark_cyc=(\d+) sweep_cyc=(\d+)", re.M)

@@ -967,7 +967,19 @@ module pycore_gc #(
                             phase_r <= P_MARK;
                         end
                     endcase
+                    // A minor skips the static root ranges (boot record,
+                    // sidecars, extra roots). Nothing writes them after the
+                    // image is built, and the first generational collection
+                    // is a major, so every target is old (plan §9 item 3).
+                    if (minor_r && ((t_range_r <= 4'd3) || (t_range_r == 4'd7)))
+                        t_left_r <= 32'd0;
                     t_range_r <= t_range_r + 4'd1;
+`ifndef SYNTHESIS
+                    if ($test$plusargs("GC_ROOT_PROF"))
+                        $display("[GC-ROOT] range=%0d cyc=%0d spill=%0d exc=%0d frames=%0d", t_range_r, prof_cyc[P_ROOTS_MEM],
+                                 (spill_sp_r - PYCORE_RF_SPILL_BASE) >> 5, (exc_sp_r - PYCORE_EXC_STACK_BASE) >> 5,
+                                 frame_depth_r);
+`endif
                 end
 
                 // Issue the read for the next element of the current scan.
@@ -2359,22 +2371,22 @@ module pycore_gc #(
 `ifndef SYNTHESIS
     // +GC_PHASE_PROF=1: cycles per engine phase, one [GC-PHASE] line per
     // collection (where a pause goes; not part of any gate).
-    int unsigned prof_cyc [0:8];
+    int unsigned prof_cyc [0:9];
     bit          prof_en;
     initial begin
         prof_en = $test$plusargs("GC_PHASE_PROF=1");
-        for (int i = 0; i < 9; i++) prof_cyc[i] = 0;
+        for (int i = 0; i < 10; i++) prof_cyc[i] = 0;
     end
     always @(posedge clk_i) begin
         if (rst_n_i && prof_en) begin
             if (phase_r != P_IDLE) prof_cyc[phase_r] <= prof_cyc[phase_r] + 1;
             if (done_r) begin
-                $display("[GC-PHASE] clear=%0d cleanup=%0d preload=%0d roots_reg=%0d roots_mem=%0d mark=%0d sweep=%0d finish=%0d objects=%0d xacts=%0d spill=%0d",
+                $display("[GC-PHASE] clear=%0d cleanup=%0d preload=%0d roots_reg=%0d roots_mem=%0d remset=%0d mark=%0d sweep=%0d finish=%0d objects=%0d xacts=%0d spill=%0d",
                          prof_cyc[P_CLEAR], prof_cyc[P_CLEANUP], prof_cyc[P_PRELOAD],
-                         prof_cyc[P_ROOTS_REG], prof_cyc[P_ROOTS_MEM], prof_cyc[P_MARK],
+                         prof_cyc[P_ROOTS_REG], prof_cyc[P_ROOTS_MEM], prof_cyc[P_REMSET], prof_cyc[P_MARK],
                          prof_cyc[P_SWEEP], prof_cyc[P_FINISH], objects_r, mark_xacts_r,
                          spill_xacts_r);
-                for (int i = 0; i < 9; i++) prof_cyc[i] <= 0;
+                for (int i = 0; i < 10; i++) prof_cyc[i] <= 0;
             end
         end
     end
