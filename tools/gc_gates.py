@@ -956,7 +956,9 @@ def fuzz(ctx: Context, gate: str) -> Result:
             mn = re.search(r"^GG5 minors=(\d+)", out, re.M)
             if not mn or int(mn.group(1)) == 0:
                 problems.append(f"{top}: no minor collection")
-        if ctx.g8_coverage and (not cov or "missing" in cov.group(1)):
+        # Kind and site coverage is G8's requirement; GG5 reports it.
+        need_cov = ctx.g8_coverage and gate == "G8"
+        if need_cov and (not cov or "missing" in cov.group(1)):
             problems.append(f"{top}: coverage incomplete: {cov.group(1) if cov else 'no report'}")
         elif not cov or "missing" in cov.group(1):
             lines.append(f"{top}: coverage of this seed subset (not required): "
@@ -964,7 +966,8 @@ def fuzz(ctx: Context, gate: str) -> Result:
     if problems:
         return Result("fail", "; ".join(problems[:4]), lines + problems)
     return Result("pass", f"{n} seeds per top ({', '.join(sp.get('tops', ['single']))}), 0 failures, "
-                  + ("coverage complete" if ctx.g8_coverage else "coverage not required"), lines)
+                  + ("coverage complete" if ctx.g8_coverage and gate == "G8" else "coverage not required"),
+                  lines)
 
 
 # --------------------------------------------------------------------------

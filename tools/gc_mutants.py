@@ -47,6 +47,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 MUTANTS = list(range(1, 50))
 NEEDS_PHASE3: set[int] = set()
 GATE_ORDER = ["G3", "G4", "G5", "G6", "G7", "G8", "G1"]
+PEAKS = ROOT / "pycore" / "tests" / "data" / "gc_fuzz_peaks.tsv"
 GEN_MUTANTS = [*range(60, 68), *range(70, 81), 82, 83, *range(85, 89), *range(90, 98), 99]
 # gc.md: every excore write to existing memory goes to E0, which the trap
 # logs, so the guard on the excore port is a backstop no fixture can reach.
@@ -68,8 +69,20 @@ def gates_available() -> list[str]:
 
 
 def run_mutant(n: int, out: pathlib.Path, jobs: int, head: str, gen: bool = False) -> tuple[str, str]:
+    if not gen:
+        return run_gates(n, out, jobs, head, gen)
+    # Generational runs dump every collection (hundreds of MB per mutant):
+    # keep only the gate logs.
+    try:
+        return run_gates(n, out, jobs, head, gen)
+    finally:
+        for sub in ("runs", "GG5"):
+            subprocess.run(["rm", "-rf", str(out / f"m{n}" / sub)])
+
+
+def run_gates(n: int, out: pathlib.Path, jobs: int, head: str, gen: bool) -> tuple[str, str]:
     ctx = gc_gates.Context(root=ROOT, out=out / f"m{n}", mode="quick", jobs=jobs, head=head,
-                           mutant=n)
+                           mutant=n, g8_peaks=str(PEAKS) if gen else "")
     subprocess.run(["rm", "-rf", str(ctx.out)])
     ctx.out.mkdir(parents=True, exist_ok=True)
     if gen and n in GEN_KILLERS:
@@ -77,6 +90,8 @@ def run_mutant(n: int, out: pathlib.Path, jobs: int, head: str, gen: bool = Fals
         print(f"[gc_mutants] mutant {n}: GG2 on {','.join(ctx.gg2_names)}", flush=True)
         res = gc_gates.gate_GG2(ctx)
         ctx.gg2_names = None
+        (ctx.out / "GG2_killers.log").write_text(
+            f"{res.status}: {res.summary}\n" + "\n".join(res.lines) + "\n", encoding="utf-8")
         if res.status != "pass":
             return "GG2", res.summary
     for g in (GEN_GATE_ORDER if gen else gates_available()):
