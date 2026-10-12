@@ -62,6 +62,9 @@ class Context:
     g8_seeds: str = ""
     g8_peaks: str = ""
     g8_coverage: bool = True
+    # GG6 (tools/gc_mutants.py --gen): restrict GG2 to these tests (the
+    # fixtures known to kill the mutant under test) when set.
+    gg2_names: list[str] | None = None
 
     @property
     def full(self) -> bool:
@@ -589,9 +592,78 @@ def scan_gc_problems(results: list[hw_tests.Result]) -> list[str]:
 
 
 def gate_G7(ctx: Context) -> Result:
+    return torture(ctx, "G7")
+
+
+def gate_GG1(ctx: Context) -> Result:
+    """GG1 (generational GC plan §5, PG1): the image tests of G13-p1 with the
+    collector on, once with +GC_GEN=0 and once with +GC_GEN=1. A run that
+    never collects must be identical in both arms, cycle for cycle (the
+    barrier costs the mutator nothing); one that collects must still give
+    the same results."""
+    lines: list[str] = []
+    problems: list[str] = []
+    sp = spec(ctx, "GG1")
+    plus = sp.get("plusargs", "")
+    arms = {}
+    for arm, more in (("off", "+GC_GEN=0"), ("on", f"+GC_GEN=1 {sp.get('gen_plusargs', '')}")):
+        res = gate_runs(ctx, "GG1", f"GG1_{arm}", plusargs=f"{plus} {more}")
+        arms[arm] = {(r.test.name, r.config.label): r for r in res}
+    if not arms["off"]:
+        return Result("fail", "GG1 selected no tests")
+    same = collected = 0
+    for key, off in sorted(arms["off"].items()):
+        on = arms["on"].get(key)
+        if on is None:
+            problems.append(f"{key[0]} [{key[1]}]: missing from the +GC_GEN=1 arm")
+            continue
+        if not off.passed or not on.passed:
+            problems.append(f"{key[0]} [{key[1]}]: off {'pass' if off.passed else off.detail}, "
+                            f"on {'pass' if on.passed else on.detail}")
+            continue
+        gc = parse_gc_line(off.text())
+        quiet = gc is None or gc["collections"] == 0
+        fields = ["kind", "code", "value"] + (["cycles"] if quiet else [])
+        a = gc_baseline.rows_for(off)
+        b = gc_baseline.rows_for(on)
+        if len(a) != len(b):
+            problems.append(f"{key[0]} [{key[1]}]: {len(a)} sims off, {len(b)} on")
+            continue
+        for ra, rb in zip(a, b):
+            for f in fields:
+                if ra[f] != rb[f]:
+                    problems.append(f"{key[0]} [{key[1]}] sim {ra['index']}: {f} off={ra[f]} on={rb[f]}")
+        if quiet:
+            same += 1
+        else:
+            collected += 1
+    lines.append(f"GG1: {len(arms['off'])} runs, {same} without a collection (cycle-exact), "
+                 f"{collected} with collections (results only), {len(problems)} differences")
+    lines += problems[:200]
+    if problems:
+        return Result("fail", f"{len(problems)} differences between +GC_GEN=0 and +GC_GEN=1", lines)
+    return Result("pass", f"{same} runs without a collection cycle-identical with +GC_GEN=1; "
+                  f"{collected} collecting runs give the same results", lines)
+
+
+def gate_GG4(ctx: Context) -> Result:
+    """GG4 (generational GC plan §5): G7's torture modes with +GC_GEN=1 and
+    the major policy off, so nearly every collection is a minor; mode c
+    (poison) also makes every third collection a major. Each run's dumps
+    are checked as a sequence, and a container-leg guard hit fails (GG3)."""
+    return torture(ctx, "GG4")
+
+
+def torture(ctx: Context, gate: str) -> Result:
+    """G7, or GG4 when `gate` is "GG4": the test set, recipe lists and G7's
+    plusargs come from [gate.G7]; GG4 takes its modes and generational
+    plusargs from [gate.GG4]."""
+    gen = gate == "GG4"
     lines: list[str] = []
     problems: list[str] = []
     sp = spec(ctx, "G7")
+    gsp = spec(ctx, gate)
+    gen_plus = gsp.get("gen_plusargs", "") if gen else ""
     tests = hw_tests.gate_tests(sp, all_tests())
     recipe_heap = sp.get("recipe_heap", [])
     bump_cursor = sp.get("bump_cursor", [])
@@ -625,9 +697,12 @@ def gate_G7(ctx: Context) -> Result:
         return prev_prime(instr[name] // 50)
 
     mode_b_logs: dict[str, str] = {}
-    for mode in sp.get("modes", ["a"]):
+    modes = gsp.get("modes", ["a"])
+    for mode in modes:
         extra: dict[str, str] = {}
         poison = " +GC_POISON=1" if mode == "c" else ""
+        if gen and mode == "c":
+            poison += " +GC_MAJOR_EVERY=3"
         for t in run_set:
             n = t.name
             if matches(n, bump_cursor) or (mode == "b" and matches(n, no_boundary)):
@@ -647,7 +722,9 @@ def gate_G7(ctx: Context) -> Result:
                 heap = (max(peak * 5 // 2, peak + 8192) + 63) & ~63
                 extra[n] = (f"+GC_EVERY_N_RUNS=1 +HEAP_DYN_BYTES={heap} "
                             f"+MAX_CYCLES_SCALE={TB_MAX_SCALE}{poison}")
-        name = f"G7_{mode}"
+        if gen:
+            extra = {n: f"{v} {gen_plus}" for n, v in extra.items()}
+        name = f"{gate}_{mode}"
         res = gate_runs(ctx, "G7", name, tests=run_set, configs=[DEFAULT], extra=extra)
         by_test = {r.test.name: r for r in res}
         if mode == "b":
@@ -657,7 +734,12 @@ def gate_G7(ctx: Context) -> Result:
         base_res = [r for r in res if r.test.name in base_names]
         diffs = compare_to_baseline(base_res, check_cycles=False)
         bad = failures([r for r in res if r.test.name not in base_names])
-        n_dumps, probs = check_dumps(ctx, dumps_of(res))
+        minors = 0
+        if gen:
+            n_dumps, minors, probs = check_sequences(ctx, res)
+            probs += gen_guard_problems(res)
+        else:
+            n_dumps, probs = check_dumps(ctx, dumps_of(res))
         gcp = scan_gc_problems(res)
         few = []
         if mode == "b":
@@ -672,14 +754,15 @@ def gate_G7(ctx: Context) -> Result:
                     few.append(f"{t.name}: {got} boundary collections (K={k_for(t.name)}, "
                                f"{instr[t.name]} instr)")
         lines.append(f"{name}: {len(res)} runs, {len(diffs)} golden diffs, {len(bad)} failing GC tests, "
-                     f"{n_dumps} dumps, {len(probs)} oracle problems, {len(gcp)} shadow/invariant, "
-                     f"{len(few)} under-collected")
+                     f"{n_dumps} dumps{f' ({minors} minors)' if gen else ''}, {len(probs)} oracle problems, "
+                     f"{len(gcp)} shadow/invariant, {len(few)} under-collected")
         problems += [f"{name}: {d}" for d in diffs + bad + probs + gcp + few]
     lines += problems[:300]
     if problems:
         return Result("fail", f"{len(problems)} torture problems", lines)
-    return Result("pass", f"modes {','.join(sp.get('modes', ['a']))} over {len(run_set)} tests: "
-                  "goldens equal, dumps exact, no shadow/invariant failure", lines)
+    return Result("pass", f"modes {','.join(modes)} over {len(run_set)} tests"
+                  f"{' with +GC_GEN=1' if gen else ''}: goldens equal, dumps exact, "
+                  "no shadow/invariant failure", lines)
 
 
 # --------------------------------------------------------------------------
@@ -698,6 +781,34 @@ def check_sequence_dir(path: str) -> tuple[str, int, int, list[str]]:
         return path, 0, 0, [f"unreadable dumps: {exc}"]
     probs = [f"{pathlib.Path(d.path).name}: {x}" for d, ps in res for x in ps[:4]]
     return path, len(ds), sum(1 for d in ds if d.minor), probs
+
+
+def check_sequences(ctx: Context, res: list[hw_tests.Result]) -> tuple[int, int, list[str]]:
+    """check_sequence_dir over every run with dumps: dumps, minors, problems."""
+    import concurrent.futures as cf
+    dirs = sorted({str(r.out) for r in res if r.out is not None and not r.expected_fail
+                   and any(r.out.glob("*.gcdump"))})
+    n = minors = 0
+    probs: list[str] = []
+    with cf.ProcessPoolExecutor(max_workers=max(1, ctx.jobs)) as ex:
+        for path, nd, nm, ps in ex.map(check_sequence_dir, dirs):
+            n += nd
+            minors += nm
+            rel = pathlib.Path(path)
+            rel = rel.relative_to(ctx.out) if rel.is_relative_to(ctx.out) else rel
+            probs += [f"{rel}/{x}" for x in ps]
+    return n, minors, probs
+
+
+def gen_guard_problems(res: list[hw_tests.Result]) -> list[str]:
+    """GG3: a guard hit by a container operation (every site declares the
+    windows it writes)."""
+    out = []
+    for r in res:
+        mm = GEN_SUMMARY.search(r.text())
+        if mm and int(mm.group(4)):
+            out.append(f"GG3: {r.test.name}: {mm.group(4)} guard hits on the container leg")
+    return out
 
 
 GEN_SUMMARY = re.compile(r"^GC-GEN minors=(\d+) majors=(\d+) guard_hits=(\d+) guard_cont=(\d+) "
@@ -720,6 +831,8 @@ def gate_GG2(ctx: Context) -> Result:
     problems: list[str] = []
     sp = spec(ctx, "GG2")
     tests = hw_tests.gate_tests(sp, all_tests())
+    if ctx.gg2_names is not None:
+        tests = [t for t in tests if t.name in ctx.gg2_names]
     skip = sp.get("no_boundary", [])
     k = int(sp.get("boundary_every", 400))
     minors_total = 0
@@ -766,14 +879,55 @@ def gate_GG2(ctx: Context) -> Result:
                   f"{minors_total} minors: goldens equal, dump sequences exact", lines)
 
 
+def gate_GG6(ctx: Context) -> Result:
+    """GG6 (generational GC plan §5): every generational mutant is killed by
+    GG2 or GG5 (tools/gc_mutants.py --gen), apart from the documented
+    survivors."""
+    cmd = [sys.executable, str(ROOT / "tools" / "gc_mutants.py"), "--gen", "--jobs", str(ctx.jobs),
+           "--out", str(ctx.out / "GG6")]
+    rc, out = run(cmd, timeout=48 * 3600)
+    (ctx.out / "GG6.log").write_text(out, encoding="utf-8")
+    m = re.search(r"^GG6 mutants=.*$", out, re.M)
+    lines = [ln for ln in out.splitlines() if ln.startswith(("[gc_mutants] ", "GG6 "))][-80:]
+    if rc != 0 or not m:
+        return Result("fail", m.group(0) if m else f"gc_mutants.py --gen produced no summary (rc={rc})", lines)
+    return Result("pass", m.group(0), lines)
+
+
+def gate_GG7(ctx: Context) -> Result:
+    """GG7 (generational GC plan §5): PG2, PG4, PG5 and PG6 on the collector
+    benches, generational against full-only (tools/gc_genbench.py)."""
+    cmd = [sys.executable, str(ROOT / "tools" / "gc_genbench.py"), "--arms", "full,gen",
+           "--jobs", str(ctx.jobs), "--out", str(ctx.out / "GG7")]
+    rc, out = run(cmd, timeout=6 * 3600)
+    (ctx.out / "GG7.log").write_text(out, encoding="utf-8")
+    lines = out.splitlines()[-60:]
+    missed = [ln for ln in out.splitlines() if ln.startswith("MISSED")]
+    pg2 = re.search(r"^PG2 .*$", out, re.M)
+    if rc != 0 or missed or not pg2:
+        return Result("fail", "; ".join(missed[:4]) or f"gc_genbench.py rc={rc}", lines)
+    return Result("pass", f"PG2, PG4-PG6 met; {pg2.group(0)}", lines)
+
+
 # --------------------------------------------------------------------------
 # G8 randomized differential fuzzing
 # --------------------------------------------------------------------------
 
 def gate_G8(ctx: Context) -> Result:
+    return fuzz(ctx, "G8")
+
+
+def gate_GG5(ctx: Context) -> Result:
+    """GG5 (generational GC plan §5): G8's fuzz corpus with `gc_fuzz.py
+    --gen` (+GC_GEN=1, major policy off): minors checked as a sequence and
+    no container-leg guard hit, on the same seed subset as G8."""
+    return fuzz(ctx, "GG5")
+
+
+def fuzz(ctx: Context, gate: str) -> Result:
     lines: list[str] = []
     problems: list[str] = []
-    sp = spec(ctx, "G8")
+    sp = spec(ctx, gate)
     n = int(sp.get("seeds", 50))
     seeds = ctx.g8_seeds or f"0..{n - 1}"
     if ctx.g8_seeds:
@@ -781,21 +935,27 @@ def gate_G8(ctx: Context) -> Result:
         n = len(gc_fuzz.parse_seeds(seeds))
     for top in sp.get("tops", ["single"]):
         cmd = [sys.executable, str(ROOT / "pycore" / "tools" / "gc_fuzz.py"), "--seeds", seeds,
-               "--top", top, "--jobs", str(ctx.jobs), "--out", str(ctx.out / "G8")]
+               "--top", top, "--jobs", str(ctx.jobs), "--out", str(ctx.out / gate)]
+        if gate == "GG5":
+            cmd.append("--gen")
         if ctx.mutant:
             cmd += ["--mutant", str(ctx.mutant)]
         if ctx.g8_peaks:
             cmd += ["--peaks", ctx.g8_peaks]
         rc, out = run(cmd, timeout=24 * 3600)
-        (ctx.out / f"G8_{top}.log").write_text(out, encoding="utf-8")
-        m = re.search(r"^G8 top=\S+ seeds=(\d+) failing=(\d+)", out, re.M)
-        cov = re.search(r"^G8 coverage (.*)$", out, re.M)
-        lines += [ln for ln in out.splitlines() if ln.startswith(("G8 ", "[gc_fuzz] FAIL"))][:60]
+        (ctx.out / f"{gate}_{top}.log").write_text(out, encoding="utf-8")
+        m = re.search(rf"^{gate} top=\S+ seeds=(\d+) failing=(\d+)", out, re.M)
+        cov = re.search(rf"^{gate} coverage (.*)$", out, re.M)
+        lines += [ln for ln in out.splitlines() if ln.startswith((f"{gate} ", "[gc_fuzz] FAIL"))][:60]
         if not m:
             problems.append(f"{top}: gc_fuzz.py produced no summary (rc={rc})")
             continue
         if int(m.group(1)) < n or int(m.group(2)) or rc != 0:
             problems.append(f"{top}: {m.group(0)}")
+        if gate == "GG5":
+            mn = re.search(r"^GG5 minors=(\d+)", out, re.M)
+            if not mn or int(mn.group(1)) == 0:
+                problems.append(f"{top}: no minor collection")
         if ctx.g8_coverage and (not cov or "missing" in cov.group(1)):
             problems.append(f"{top}: coverage incomplete: {cov.group(1) if cov else 'no report'}")
         elif not cov or "missing" in cov.group(1):

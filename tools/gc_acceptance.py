@@ -6,6 +6,13 @@ writes `build/gc_acceptance/status.json`, one log per gate
 (`build/gc_acceptance/G<n>.log`) and `build/gc_acceptance/report.md`.
 MODE=quick runs G0-G8; MODE=full runs every gate.
 
+After G16 come the generational gates (generational GC plan §5), which run
+with +GC_GEN=1: GG1 (no-collect runs cycle-identical), GG2 (minors exact,
+with GG3's guard check), GG4 (torture), GG5 (fuzz), GG6 (generational
+mutants) and GG7 (PG2-PG6 on the benches). MODE=quick runs GG1, GG2, GG4
+and GG5. GG8 (synthesis area and timing) needs Yosys and sv2v and is not
+part of the runner.
+
 The gates that run hardware tests take their test sets and plusargs from the
 `[gate.*]` tables of pycore/programs/hw_tests.toml and run them through
 pycore/tools/hw_tests.py; each run logs to
@@ -37,9 +44,10 @@ import gc_gates  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / "build" / "gc_acceptance"
-GATES = [f"G{i}" for i in range(17)]
+GEN_GATES = ["GG1", "GG2", "GG4", "GG5", "GG6", "GG7"]
+GATES = [f"G{i}" for i in range(17)] + GEN_GATES
 # §10.3 MODE=quick inner loop. MODE=full runs every gate.
-QUICK_GATES = ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"]
+QUICK_GATES = ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "GG1", "GG2", "GG4", "GG5"]
 SOURCE_SUFFIXES = {".sv", ".svh", ".py", ".s", ".md", ".json", ".yml"}
 REVIEWS = ROOT / "planning" / "gc_reviews.md"
 
@@ -90,7 +98,7 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     # G5/G6 scan every log under runs/; leftover G7_b INV logs from a killed
     # MODE=full made MODE=quick G6 fail (f326e22 for-iter wild_ptr).
-    for sub in ("runs", "G8"):
+    for sub in ("runs", "G8", "GG5", "GG6", "GG7"):
         p = OUT / sub
         if p.is_dir():
             subprocess.run(["rm", "-rf", str(p)], check=True)

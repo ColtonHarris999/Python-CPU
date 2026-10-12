@@ -244,6 +244,84 @@ check a wide list and a deep chain with tiny stacks and the abandon path.
   failing programs shrunk into permanent fixtures.
 - **Confirmed by.** G4, G5, G6, G11, and mutants 12-28 that violate each.
 
+Entries 11-15 are the generational collector's (§"Generational
+collection"). Further sources: Ungar, *Generation Scavenging*, SDE 1984;
+Appel, *Simple Generational Garbage Collection and Fast Allocation*, SP&E
+1989; Demers et al., *Combining Generational and Conservative Garbage
+Collection*, POPL 1990 (sticky mark bits); Hosking, Moss, Stefanović, *A
+Comparative Performance Evaluation of Write Barrier Implementations*,
+OOPSLA 1992.
+
+### 11. Non-moving generations with sticky mark bits (Demers et al.) — adopted
+
+- **Decision.** A mark bit that survives the sweep means "old". A minor
+  marks from the roots and the remembered set without clearing the bitmap,
+  so the marker's existing already-marked test stops at every old object.
+  A major clears the bitmap up to the highest marked word and runs as
+  before.
+- **Why.** A copying nursery would need forwarding, and three things rule
+  it out: `id()` and hashing use the address, tuples have no header to
+  hold a forwarding pointer, and RTL handlers keep raw header pointers
+  across operations. Sticky bits reuse the bitmap and the marker unchanged.
+- **Effect.** No new storage for ages; a minor's cost follows young
+  survivors plus remembered owners. Measured under §"Generational
+  collection": a churn minor costs 4.1% of a full collection.
+- **Confirmed by.** GG2, GG4, GG5 (the oracle's `trace_minor` and sequence
+  rules) and mutants 60, 61, 64.
+
+### 12. Owner logging into an on-chip store buffer — adopted
+
+- **Decision.** Each container write site pulses the owner's mark-stack
+  entry to a barrier unit that deduplicates it and appends it to a 256-entry
+  sequential store buffer (SSB). A minor pushes the logged old owners
+  straight onto the mark stack. Lists longer than one 128-slot scan chunk
+  log only the chunk they store into.
+- **Why.** Card marking or a logging write to memory would add a memory
+  transaction to the mutator's store path (Hosking et al. measure the
+  trade-off in software; here it is a bus cycle per store). The owner is
+  already in a register at every site, so logging it costs no mutator
+  cycle and never reads the bitmap.
+- **Effect.** Zero mutator cycles: GG1 finds 359 non-collecting runs
+  cycle-identical with the barrier on. An SSB overflow forces a major
+  instead of stalling.
+- **Confirmed by.** GG1, GG2, GG6 (mutants 70-99).
+
+### 13. An address-compare guard behind the barrier — adopted
+
+- **Decision.** Every operation declares the windows it writes. A
+  data-memory write into existing managed memory outside the current
+  operation's windows forces the next collection to be a major.
+- **Why.** The barrier must cover every write site in the RTL, the
+  container accelerator and the excore firmware; a missed one would free
+  live data. The guard turns a missed site into a slow collection instead
+  of an unsafe one, and GG3 requires that no container operation ever hits
+  it, so a hit is a bug report, not normal operation.
+- **Confirmed by.** GG3 on GG2, GG4 and GG5; mutants 63, 66, 83, 90-92, 94.
+
+### 14. Promotion at first survival (Ungar, Appel) — adopted; aging rejected for now
+
+- **Decision.** Every young object a collection reaches becomes old. There
+  is no survivor age.
+- **Why.** En-masse promotion empties the remembered set after every
+  collection, which keeps the SSB on chip and the protocol small. Aging
+  would need persistent remembered entries and a survivor map (plan
+  Phase 8, its own spec).
+- **Revisit when** majors are driven by tenured garbage. On the GG7 benches
+  majors are 3-12% of collections in the steady-state loops.
+
+### 15. A major policy from free space, growth and minor yield (Appel) — adopted
+
+- **Decision.** After each collection the core decides whether the next
+  one is a major: free space below two nurseries, live bytes grown past
+  the last major's by more than `max(free_at_major/2, dyn/16)`, or a minor
+  that reclaimed less than half a nursery. The nursery is an eighth of the
+  dynamic heap.
+- **Why.** Appel's rule (collect the old generation when what is left
+  after a minor gets small) adapted to a heap without a separate nursery
+  region. Without the policy `gc-steady-str` ran 3.8% slower than
+  full-only; with it, every bench is at or below full-only.
+- **Confirmed by.** GG7 (PG2, PG4-PG6).
+
 ## Architecture and interfaces
 
 The collector is precise, stop-the-world, and non-moving. `pycore_gc.sv` is a
@@ -526,22 +604,137 @@ prefetch in parentheses): `bench_full` mark 603,098 cycles (1,051,606);
 (568,952; 968,978 before chunked scans), 0 spills / 47,967 mark
 transactions; `bench_churn` 47 collections, max pause 38,443 (44,142).
 
-## Generational collection (in progress)
+## Generational collection
 
-Status: Phase 6 of the plan, behind `+GC_GEN=1` (needs `+GC_EN=1`). The
-protocol is specified in [gc_gen_protocol.md](gc_gen_protocol.md). The design is a
-non-moving, sticky-mark-bit collector: a set bitmap bit survives the sweep
-and means "old", a minor collection marks from the roots plus a remembered
-set of old owners the program wrote into, and the marker's existing
-already-marked test stops it at every old object. A hardware owner-logging
-barrier fills the remembered set at no mutator cycles and never reads the
-bitmap; an address-compare port guard turns a missed barrier site into a
-forced full collection, and so does a heap release. Precision changes on
-purpose: a minor frees exactly the unreachable storage allocated since the
-last collection; a full (major) collection frees everything unreachable, as
-today; unreachable old objects wait for the next major.
+Status: built through Phase 7 of the plan, behind `+GC_GEN=1` (needs
+`+GC_EN=1`), and off by default (D5). The protocol is specified in
+[gc_gen_protocol.md](gc_gen_protocol.md); decisions 11-15 under "Prior art
+and design decisions" give the reasoning.
 
-Decisions taken (the defaults the plan recommended):
+### Design
+
+The collector is non-moving and uses sticky mark bits. A bitmap bit that
+survives the sweep means "old"; the static image is always old. A **minor**
+collection marks from the roots plus a remembered set of old owners the
+program wrote into since the last collection, and the marker's existing
+already-marked test stops it at every old object. Its sweep keeps every
+bit, so every survivor becomes old (promotion at first survival). A
+**major** clears the bitmap up to the highest marked word and runs today's
+collection.
+
+A hardware barrier (`pycore_gc_barrier.sv`) fills the remembered set. Each
+container write site pulses its owner's mark-stack entry; the unit drops
+young owners, deduplicates the rest in a 32-entry filter and appends them
+to a 256-entry on-chip store buffer (SSB). It costs the mutator no cycle
+and never reads the bitmap. Each operation also declares the windows it
+writes, and an address-compare guard on the data-memory port forces the
+next collection to be a major when a write lands in existing managed
+memory outside them. A heap release, an abandoned collection, an SSB
+overflow, an explicit `gc.collect()` and the collection at exit are majors
+too.
+
+Collections start where they always did (allocation failure, the run and
+boundary triggers). After each one the major policy decides whether the
+next is a major: free bytes below two nurseries, live bytes grown past the
+last major's by more than `max(free_at_major/2, dyn/16)`, or a minor that
+reclaimed less than half a nursery. The nursery is an eighth of the
+dynamic heap.
+
+### Precision contract
+
+- No reachable object is ever freed.
+- A minor frees exactly the unreachable young storage: every granule
+  allocated since the previous collection that is reachable neither from
+  the roots nor from a logged owner (`gc_gen_protocol.md` P2; a young
+  object reachable only from a dead but logged old owner is kept).
+- A major frees all unreachable managed storage, as a full collection does.
+- Unreachable old objects that a minor keeps are freed by the next major.
+- A missed barrier site can only cost performance: the guard turns it into
+  a forced major. GG3 requires that no container operation ever hits the
+  guard, so a hit is a bug, not normal operation.
+
+Invariant 2 ("no floating garbage") holds for majors only; every other
+invariant in "Invariants" holds for both kinds. The oracle's "exact" means
+the minor rule for a minor dump and the major rule for a major dump.
+
+### Barrier sites
+
+| Site | Logs | Window |
+| --- | --- | --- |
+| `CONT_STORE_LIST` | the list, or the 128-slot chunk holding the slot when the list is longer than one chunk | the slot |
+| `CONT_LIST_APPEND` | the list | header, slot |
+| `CONT_STORE_DICT`, `CONT_MAP_ADD`, `CONT_STORE_NAME` | the dict | header, order array, table |
+| `CONT_STORE_ATTR` | the instance's `__dict__` | header, order array, table |
+| `CONT_SET_ADD`, `CONT_SET_UPDATE` | the set | header, table |
+| `CONT_DICT_UPDATE` | the dict | header, old order array and table |
+| `CONT_STORE_DEREF` | the cell | field 0 |
+| `CONT_DELETE_LIST` (last element), `CONT_DELETE_DICT`, `CONT_DELETE_ATTR` | nothing (permit) | what they clear |
+| CA `L_APPEND`, `L_EXTEND`, `L_DEL` | the list | header; the CA declares the old buffer |
+| CA `D_GROW`, `S_GROW` | the dict or set | header |
+| excore traps 9, 10, 12 / 11, 19 / 13, 14 | E0 as a list / dict / set | header |
+
+STRACC, the engine and the allocator write only memory the guard ignores.
+Every other CA and excore write goes to storage built at the bump pointer
+in the same operation.
+
+### Plusargs
+
+| Plusarg | Effect |
+| --- | --- |
+| `+GC_GEN=1` | generational collection |
+| `+GC_GEN_POLICY=0` | no policy majors: every collection is a minor unless something forces a major (GG2, GG4, GG5) |
+| `+GC_NURSERY_BYTES=N` | the policy's nursery (default: dynamic heap / 8) |
+| `+GC_MAJOR_ONLY=1` | sticky bookkeeping, every collection a major |
+| `+GC_MAJOR_EVERY=M` | every M-th collection is a major |
+| `+GC_REMSET_LIMIT=N` | shrink the SSB to N entries |
+| `+GC_GEN_LOG=1` | one `[GC-GEN]` line per collection |
+| `+GC_GUARD_LOG` | one line per guard hit |
+| `+GC_ROOT_PROF=1` | one `[GC-ROOT]` line per root range |
+| `+GC_DUMP_MAX=N` | stop dumping after N collections |
+
+The end-of-run `GC-GEN` line counts minors, majors, guard hits (all, the
+container leg and CA, the excore), logs, filter hits, young-owner drops,
+SSB overflows and the majors the policy chose.
+
+### Gates
+
+| Gate | What runs | Requires | Where |
+| --- | --- | --- | --- |
+| GG1 | G13-p1's image tests with the collector on, `+GC_GEN=0` and `+GC_GEN=1` | a run without a collection is identical cycle for cycle; one with collections gives the same results | acceptance |
+| GG2 | every `[gc]` and `[gc-gen]` test, a collection every 400 instructions, alone and with `+GC_MAJOR_EVERY=3` | goldens; every run's dumps pass the oracle as a sequence | `gc-dev`, `gc-check`, acceptance |
+| GG3 | on GG2, GG4 and GG5 | no guard hit by a container operation or the CA | with them |
+| GG4 | G7's torture modes with `+GC_GEN=1` (MODE=full: b, a, and c with poison and `+GC_MAJOR_EVERY=3`) | goldens; dump sequences exact | acceptance |
+| GG5 | G8's fuzz corpus with `gc_fuzz.py --gen` | no failure; dump sequences exact; at least one minor | acceptance; nightly (`GEN=1`) |
+| GG6 | the generational mutants (`make pycore-gc-gen-mutants`) against GG2, then GG5 | every mutant killed except 96 | acceptance (full) |
+| GG7 | `tools/gc_genbench.py`: the collector benches, generational against full-only | PG2, PG4, PG5, PG6 | acceptance (full) |
+
+GG8 (Yosys area and timing on both tops) is not built: it needs Yosys and
+sv2v (`tools/gc_timing.sh`), which this flow does not install.
+
+### Measured
+
+GG7 on `2152df3` (`CACHE_EN=1 MEM_LATENCY=4`, generational vs full-only):
+
+| Bench | Total cycles | Minors / majors | Median collection (full → gen) |
+| --- | ---: | ---: | ---: |
+| `gc-bench-churn` | -11.65% | 62 / 2 | 18513 → 759 |
+| `gc-steady-set` | -7.54% | 58 / 6 | 2359 → 320 |
+| `gc-steady-list` | -5.87% | 54 / 7 | 2439 → 319 |
+| `gc-steady-dict` | -4.97% | 81 / 11 | 2003 → 317 |
+| `gc-steady-exc` | -3.96% | 23 / 3 | 2388 → 224 |
+| `gc-steady-str` | -2.25% | 78 / 7 | 2391 → 285 |
+| `gc-bench-full`, `-deep`, `-wide`, `gc-compile-loop`, `gc-steady-closure`, `gc-steady-compile` | ±0.01% | all majors | unchanged |
+
+PG2 holds on churn (median minor 4.1% of the median full collection, GC
+share 11.0%), PG4 holds everywhere, PG5 holds (no generational collection
+is longer than the longest full-only one on the same bench), and no bench
+overflowed the remembered set or hit the guard (PG6). In the unchanged benches every collection is a major:
+they collect through explicit `_bi_gc_collect()` calls, which are always
+majors, or through events that force one (a heap release, for example).
+
+### How it was built
+
+The decisions taken before Phase 2 (the defaults the plan recommended):
 
 | # | Decision |
 | --- | --- |
@@ -774,23 +967,7 @@ bench set the policy's majors are a small share of collections, and no
 measurement so far shows tenured garbage driving them, so aging is not
 built.
 
-GG7 on `2152df3` (`CACHE_EN=1 MEM_LATENCY=4`, generational vs full-only):
-
-| Bench | Total cycles | Minors / majors | Median collection (full → gen) |
-| --- | ---: | ---: | ---: |
-| `gc-bench-churn` | -11.65% | 62 / 2 | 18513 → 759 |
-| `gc-steady-set` | -7.54% | 58 / 6 | 2359 → 320 |
-| `gc-steady-list` | -5.87% | 54 / 7 | 2439 → 319 |
-| `gc-steady-dict` | -4.97% | 81 / 11 | 2003 → 317 |
-| `gc-steady-exc` | -3.96% | 23 / 3 | 2388 → 224 |
-| `gc-steady-str` | -2.25% | 78 / 7 | 2391 → 285 |
-| `gc-bench-full`, `-deep`, `-wide`, `gc-compile-loop`, `gc-steady-closure`, `gc-steady-compile` | ±0.01% | all majors | unchanged |
-
-PG2 holds on churn (median minor 4.1% of the median full collection, GC
-share 11.0%), PG4 holds everywhere, and no bench overflowed the remembered
-set or hit the guard. In the unchanged benches every collection is a major:
-they collect through explicit `_bi_gc_collect()` calls, which are always
-majors, or through events that force one (a heap release, for example).
+The GG7 numbers are under "Measured" above.
 
 Measured with `pycore/tools/gc_genstats.py` over dump sequences on
 `b14600b` (what a minor at each collection would have done if everything

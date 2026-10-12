@@ -835,6 +835,31 @@ arms = { boundary = "", major_every = "+GC_MAJOR_EVERY=3" }
 # sized for its own explicit collection (see G7).
 no_boundary = ["gc-wide-live-list", "gc-mark-overflow-recover", "gen-abandon"]
 
+# GG1 (generational GC plan §5, PG1): G13-p1's image tests with the collector
+# on, +GC_GEN=0 against +GC_GEN=1. A run that never collects is identical
+# cycle for cycle; one that collects gives the same results.
+[gate.GG1]
+baseline = true
+images = true
+core = "single"
+plusargs = "+GC_EN=1 +GC_ROOT_STASH=1 +MAX_CYCLES_SCALE=40"
+gen_plusargs = "+GC_GEN_POLICY=0"
+full = { core = "", configs = ["1,4", "0,4"] }
+
+# GG4: G7's torture modes (test set and recipes from [gate.G7]) with
+# +GC_GEN=1 and the major policy off; mode c adds +GC_MAJOR_EVERY=3. Dumps
+# are checked as a sequence.
+[gate.GG4]
+modes = ["a"]
+gen_plusargs = "+GC_GEN=1 +GC_GEN_POLICY=0 +GC_DUMP_MAX=60"
+full = { modes = ["b", "a", "c"] }
+
+# GG5: G8's fuzz corpus with gc_fuzz.py --gen.
+[gate.GG5]
+seeds = 50
+tops = ["single"]
+full = { seeds = 1000, tops = ["single", "twocore"] }
+
 # G8: randomized differential fuzzing (pycore/tools/gc_fuzz.py).
 [gate.G8]
 seeds = 50

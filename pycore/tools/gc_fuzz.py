@@ -28,6 +28,11 @@ the file and cuts its measuring run off after the 20 dumps
 (`+GC_DUMP_STOP=1`), so the oracle still sees the same collections. The
 nightly full run refreshes the file with `--write-peaks FILE`.
 
+`--gen` is GG5 (generational GC plan §5): every run adds `+GC_GEN=1
++GC_GEN_POLICY=0`, so most collections are minors; each run's dumps are
+checked as a sequence (`gc_model.check_sequence`), and a guard hit by a
+container operation (GG3) fails the seed. The summary lines start with `GG5`.
+
     python3.14 pycore/tools/gc_fuzz.py --seeds 0..49 --top single --jobs 6
     python3.14 pycore/tools/gc_fuzz.py --seeds 0,4,9 --peaks pycore/tests/data/gc_fuzz_peaks.tsv
 """
@@ -499,14 +504,21 @@ def run_problems(text: str, truncated: bool = False) -> list[str]:
     return p
 
 
-def check_dumps(dump_dir: pathlib.Path) -> tuple[list[str], set[str], int]:
+GEN_SUM_RE = re.compile(r"^GC-GEN minors=(\d+) majors=(\d+) guard_hits=(\d+) guard_cont=(\d+)", re.M)
+
+
+def check_dumps(dump_dir: pathlib.Path, gen: bool = False) -> tuple[list[str], set[str], int]:
     import gc_model  # noqa: PLC0415
     problems: list[str] = []
     kinds: set[str] = set()
-    dumps = sorted(dump_dir.glob("*.gcdump"))
-    for path in dumps:
-        dump = gc_model.load_dump(path)
-        problems += [f"{path.name}: {x}" for x in gc_model.check_dump(dump)]
+    paths = sorted(dump_dir.glob("*.gcdump"), key=gc_model.dump_order)
+    dumps = [gc_model.load_dump(p) for p in paths]
+    if gen:
+        checked = gc_model.check_sequence(dumps)
+    else:
+        checked = [(d, gc_model.check_dump(d)) for d in dumps]
+    for path, (dump, probs) in zip(paths, checked):
+        problems += [f"{path.name}: {x}" for x in probs]
         m = dump.meta
         res = gc_model.trace(dump.mem, dump.roots, spill_sp=m.get("spill_sp", gc_model.RF_SPILL_BASE),
                              exc_sp=m.get("exc_sp", gc_model.EXC_STACK_BASE),
@@ -544,7 +556,7 @@ def write_peaks(path: pathlib.Path, recs: list[dict]) -> None:
 
 
 def one_seed(seed: int, top: str, out: str, mutant: int = 0,
-             cached: tuple[str, int] | None = None) -> dict:
+             cached: tuple[str, int] | None = None, gen: bool = False) -> dict:
     outp = pathlib.Path(out)
     rec: dict = {"seed": seed, "top": top, "problems": [], "kinds": [], "sites": [], "dumps": 0}
     try:
@@ -559,6 +571,9 @@ def one_seed(seed: int, top: str, out: str, mutant: int = 0,
     base = "+GC_EN=1 +GC_ROOT_STASH=1 +GC_POISON=1 +GC_LOG=1 +GC_SITE_STATS=1 +MAX_CYCLES_SCALE=40"
     if mutant:
         base += f" +GC_MUTANT={mutant}"
+    if gen:
+        base += " +GC_GEN=1 +GC_GEN_POLICY=0"
+        rec["minors"] = 0
     src_head = (d / f"img_gc_fuzz_{seed}.py").read_text(encoding="utf-8").splitlines()[0]
     uses_compile = "compile=True" in src_head
     rec["compile"] = uses_compile
@@ -597,7 +612,16 @@ def one_seed(seed: int, top: str, out: str, mutant: int = 0,
         m = re.search(r"^GC collections=(\d+)", text, re.M)
         rec[f"{run_name}_collections"] = int(m.group(1)) if m else 0
         rec["sites"] += SITE_RE.findall(text)
-        probs, kinds, n = check_dumps(dump_dir)
+        if gen:
+            g = GEN_SUM_RE.search(text)
+            if not g:
+                if not truncated:
+                    rec["problems"].append(f"{run_name}: no GC-GEN summary")
+            else:
+                rec["minors"] += int(g.group(1))
+                if int(g.group(4)):
+                    rec["problems"].append(f"{run_name}: {g.group(4)} guard hits on the container leg (GG3)")
+        probs, kinds, n = check_dumps(dump_dir, gen)
         rec["problems"] += [f"{run_name}: {x}" for x in probs[:5]]
         rec["kinds"] = sorted(set(rec["kinds"]) | kinds)
         rec["dumps"] += n
@@ -623,6 +647,7 @@ def main() -> int:
     ap.add_argument("--mutant", type=int, default=0, help="G10: +GC_MUTANT for every run")
     ap.add_argument("--peaks", help="cached peaks (TSV); seeds found there skip the full measuring run")
     ap.add_argument("--write-peaks", help="merge this run's measured peaks into this TSV")
+    ap.add_argument("--gen", action="store_true", help="GG5: generational collection, minors checked as a sequence")
     args = ap.parse_args()
     if args.emit is not None:
         print(generate(args.emit, growth=(args.top == "twocore")))
@@ -637,7 +662,7 @@ def main() -> int:
     recs = []
     peaks = load_peaks(pathlib.Path(args.peaks) if args.peaks else None)
     with cf.ProcessPoolExecutor(max_workers=max(1, args.jobs)) as ex:
-        futs = {ex.submit(one_seed, s, args.top, str(out), args.mutant, peaks.get((args.top, s))): s
+        futs = {ex.submit(one_seed, s, args.top, str(out), args.mutant, peaks.get((args.top, s)), args.gen): s
                 for s in seeds}
         for n, fut in enumerate(cf.as_completed(futs), 1):
             if fut.cancelled():
@@ -661,9 +686,12 @@ def main() -> int:
     cached_n = sum(1 for x in recs if not x.get("peak_measured", True))
     failing = [x["seed"] for x in recs if x["problems"]]
     kinds = sorted(set().union(*[set(x["kinds"]) for x in recs])) if recs else []
-    print(f"G8 top={args.top} seeds={len(recs)} failing={len(failing)} first_failures={failing[:10]}")
-    print(f"G8 cached_peaks={cached_n}")
-    print(f"G8 kinds={','.join(kinds)}")
+    tag = "GG5" if args.gen else "G8"
+    print(f"{tag} top={args.top} seeds={len(recs)} failing={len(failing)} first_failures={failing[:10]}")
+    print(f"{tag} cached_peaks={cached_n}")
+    print(f"{tag} kinds={','.join(kinds)}")
+    if args.gen:
+        print(f"{tag} minors={sum(x.get('minors', 0) for x in recs)}")
     # §4.1 kinds that a live program can produce. BYTEARRAY is image-only
     # (the builder rejects it) and is checked by G3, not the fuzz corpus.
     need_kinds = {
@@ -685,13 +713,13 @@ def main() -> int:
     miss_kinds = sorted(need_kinds - set(kinds))
     miss_rows = [r for r in wanted if rows.get(r, [0, 0, 0, 0])[0] < need_n]
     if miss_kinds or miss_rows:
-        print(f"G8 coverage missing kinds={miss_kinds} rows={miss_rows} "
+        print(f"{tag} coverage missing kinds={miss_kinds} rows={miss_rows} "
               f"(need {need_n} allocs)")
     else:
-        print(f"G8 coverage complete kinds={len(need_kinds)} rows={len(wanted)} "
+        print(f"{tag} coverage complete kinds={len(need_kinds)} rows={len(wanted)} "
               f"min_allocs={need_n}")
     for ln in gc_sites.table(rows, wanted):
-        print(f"G8 site {ln}")
+        print(f"{tag} site {ln}")
     return 1 if failing or miss_kinds or miss_rows else 0
 
 

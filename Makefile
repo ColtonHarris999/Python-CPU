@@ -132,7 +132,7 @@ EXCORE_RTL_SRCS := \
 	docker-lint-file docker-run-file docker-exec-file docker-shell \
 	docker-all-tests test-host test-rtl-modules test-hw test-caching \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
-	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
+	pycore-gc pycore-gc-mutants pycore-gc-gen-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
 	pycore-gc-bench gc-dev gc-check gc-perf pycore-gc-genstats pycore-gc-genreplay docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
 	research-compare research-compare-machines
 
@@ -313,9 +313,16 @@ pycore-gc: $(PYCORE_TB_GC_BIN)
 pycore-gc-mutants: $(PYCORE_TB_GC_BIN)
 	$(PYTHON) tools/gc_mutants.py --jobs $(TEST_JOBS) $(if $(MUTANTS),--only $(MUTANTS))
 
-# GC acceptance (planning/gc_plan.md §10.3): MODE=quick runs G0-G8, MODE=full
-# G0-G16; status in build/gc_acceptance/status.json and report.md. The gates'
-# test sets and plusargs are the [gate.*] tables of hw_tests.toml.
+# GG6: the generational mutants against GG2 and GG5. Results:
+# build/gc_mutants_gen/.
+pycore-gc-gen-mutants: $(PYCORE_TB_GC_BIN)
+	$(PYTHON) tools/gc_mutants.py --gen --jobs $(TEST_JOBS) $(if $(MUTANTS),--only $(MUTANTS))
+
+# GC acceptance (planning/gc_plan.md §10.3): MODE=quick runs G0-G8 and the
+# generational GG1, GG2, GG4 and GG5; MODE=full G0-G16 and GG1-GG7 (GG3 is
+# checked inside GG2, GG4 and GG5). Status in build/gc_acceptance/status.json
+# and report.md. The gates' test sets and plusargs are the [gate.*] tables of
+# hw_tests.toml.
 pycore-gc-acceptance: $(PYCORE_TB_GC_BIN)
 	$(PYTHON) tools/gc_acceptance.py --mode $(MODE) --jobs $(TEST_JOBS)
 
@@ -351,11 +358,13 @@ pycore-gc-baseline:
 	$(PYTHON) tools/gc_baseline.py --ref $(BASELINE_REF) --jobs $(TEST_JOBS)
 
 # G8 (planning/gc_plan.md §10.2): randomized differential fuzzing.
-# SEEDS=0..49 (quick) or 0..999 (full). TOP=single|twocore.
+# SEEDS=0..49 (quick) or 0..999 (full). TOP=single|twocore. GEN=1 is GG5:
+# the same corpus with generational collection.
 SEEDS ?= 0..49
 TOP ?= single
+GEN ?=
 pycore-gc-fuzz:
-	$(PYTHON) pycore/tools/gc_fuzz.py --seeds $(SEEDS) --top $(TOP) --jobs $(TEST_JOBS)
+	$(PYTHON) pycore/tools/gc_fuzz.py --seeds $(SEEDS) --top $(TOP) --jobs $(TEST_JOBS) $(if $(GEN),--gen)
 
 # G13 (planning/gc_plan.md §10.2): bench fixtures + counter table, P3-P7.
 # FUZZ_OUT=build/gc_fuzz also scores P8 over a pycore-gc-fuzz corpus.
@@ -872,7 +881,7 @@ docker-test-%: docker-build
 # Nightly GC fuzzing (.github/workflows/gc-nightly.yml): SEEDS and TOP as for
 # pycore-gc-fuzz.
 docker-pycore-gc-fuzz: docker-build
-	$(DOCKER_MAKE) make pycore-gc-fuzz SEEDS=$(SEEDS) TOP=$(TOP) TEST_JOBS=$(TEST_JOBS)
+	$(DOCKER_MAKE) make pycore-gc-fuzz SEEDS=$(SEEDS) TOP=$(TOP) GEN=$(GEN) TEST_JOBS=$(TEST_JOBS)
 
 clean:
 	rm -rf $(BUILD_DIR)
