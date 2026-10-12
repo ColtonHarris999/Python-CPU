@@ -32,28 +32,28 @@
       "program": "binary_trees.py",
       "series": {
         "pycore-hart": {
-          "cycles": 10774318,
-          "seconds": 0.010774318,
-          "mhz": 1000.0
-        },
-        "gem5_classic": {
-          "cycles": 40444691,
-          "seconds": 0.040444691,
+          "cycles": 10747022,
+          "seconds": 0.010747022,
           "mhz": 1000.0
         },
         "pycore": {
-          "cycles": 40068816,
-          "seconds": 0.40068816,
+          "cycles": 40146092,
+          "seconds": 0.40146092,
           "mhz": 100.0
         },
+        "gem5_classic": {
+          "cycles": 40432898,
+          "seconds": 0.040432898,
+          "mhz": 1000.0
+        },
         "romer": {
-          "cycles": 45316620,
-          "seconds": 0.4531662,
+          "cycles": 44769141,
+          "seconds": 0.44769141,
           "mhz": 100.0
         },
         "skylake": {
-          "cycles": 39423864,
-          "seconds": 0.011595254117647058,
+          "cycles": 39421600,
+          "seconds": 0.011594588235294117,
           "mhz": 3400.0
         }
       }
@@ -62,28 +62,28 @@
       "program": "fannkuch.py",
       "series": {
         "pycore-hart": {
-          "cycles": 120567458,
-          "seconds": 0.120567458,
-          "mhz": 1000.0
-        },
-        "gem5_classic": {
-          "cycles": 86807979,
-          "seconds": 0.086807979,
+          "cycles": 50604450,
+          "seconds": 0.05060445,
           "mhz": 1000.0
         },
         "pycore": {
-          "cycles": 81446404,
-          "seconds": 0.81446404,
+          "cycles": 81050672,
+          "seconds": 0.81050672,
           "mhz": 100.0
         },
+        "gem5_classic": {
+          "cycles": 86804250,
+          "seconds": 0.08680425,
+          "mhz": 1000.0
+        },
         "romer": {
-          "cycles": 80248113,
-          "seconds": 0.80248113,
+          "cycles": 82355086,
+          "seconds": 0.82355086,
           "mhz": 100.0
         },
         "skylake": {
-          "cycles": 80464755,
-          "seconds": 0.023666104411764706,
+          "cycles": 80463321,
+          "seconds": 0.023665682647058824,
           "mhz": 3400.0
         }
       }
@@ -92,28 +92,28 @@
       "program": "fasta.py",
       "series": {
         "pycore-hart": {
-          "cycles": 7279622,
-          "seconds": 0.007279622,
-          "mhz": 1000.0
-        },
-        "gem5_classic": {
-          "cycles": 30998059,
-          "seconds": 0.030998059,
+          "cycles": 7182614,
+          "seconds": 0.007182614,
           "mhz": 1000.0
         },
         "pycore": {
-          "cycles": 32177348,
-          "seconds": 0.32177348,
+          "cycles": 32138262,
+          "seconds": 0.32138262,
           "mhz": 100.0
         },
+        "gem5_classic": {
+          "cycles": 30980562,
+          "seconds": 0.030980562,
+          "mhz": 1000.0
+        },
         "romer": {
-          "cycles": 32183147,
-          "seconds": 0.32183147,
+          "cycles": 31982506,
+          "seconds": 0.31982506,
           "mhz": 100.0
         },
         "skylake": {
-          "cycles": 27776177,
-          "seconds": 0.008169463823529411,
+          "cycles": 27772520,
+          "seconds": 0.008168388235294118,
           "mhz": 3400.0
         }
       }
@@ -122,28 +122,28 @@
       "program": "knucleotide.py",
       "series": {
         "pycore-hart": {
-          "cycles": 39663444,
-          "seconds": 0.039663444,
-          "mhz": 1000.0
-        },
-        "gem5_classic": {
-          "cycles": 52498597,
-          "seconds": 0.052498597,
+          "cycles": 16434590,
+          "seconds": 0.01643459,
           "mhz": 1000.0
         },
         "pycore": {
-          "cycles": 52632216,
-          "seconds": 0.52632216,
+          "cycles": 52448196,
+          "seconds": 0.52448196,
           "mhz": 100.0
         },
+        "gem5_classic": {
+          "cycles": 52137579,
+          "seconds": 0.052137579,
+          "mhz": 1000.0
+        },
         "romer": {
-          "cycles": 60022486,
-          "seconds": 0.60022486,
+          "cycles": 58164229,
+          "seconds": 0.58164229,
           "mhz": 100.0
         },
         "skylake": {
-          "cycles": 46835072,
-          "seconds": 0.013775021176470588,
+          "cycles": 46914055,
+          "seconds": 0.013798251470588236,
           "mhz": 3400.0
         }
       }
@@ -152,28 +152,28 @@
       "program": "mandelbrot.py",
       "series": {
         "pycore-hart": {
-          "cycles": 7163734,
-          "seconds": 0.007163734,
-          "mhz": 1000.0
-        },
-        "gem5_classic": {
-          "cycles": 63252165,
-          "seconds": 0.063252165,
+          "cycles": 11176958,
+          "seconds": 0.011176958,
           "mhz": 1000.0
         },
         "pycore": {
-          "cycles": 62809316,
-          "seconds": 0.62809316,
+          "cycles": 64712633,
+          "seconds": 0.64712633,
           "mhz": 100.0
         },
+        "gem5_classic": {
+          "cycles": 57513590,
+          "seconds": 0.05751359,
+          "mhz": 1000.0
+        },
         "romer": {
-          "cycles": 70119841,
-          "seconds": 0.70119841,
+          "cycles": 72884240,
+          "seconds": 0.7288424,
           "mhz": 100.0
         },
         "skylake": {
-          "cycles": 59876517,
-          "seconds": 0.017610740294117647,
+          "cycles": 49273841,
+          "seconds": 0.014492306176470588,
           "mhz": 3400.0
         }
       }
@@ -182,28 +182,28 @@
       "program": "monte_carlo.py",
       "series": {
         "pycore-hart": {
-          "cycles": 9668276,
-          "seconds": 0.009668276,
-          "mhz": 1000.0
-        },
-        "gem5_classic": {
-          "cycles": 58638026,
-          "seconds": 0.058638026,
+          "cycles": 9554830,
+          "seconds": 0.00955483,
           "mhz": 1000.0
         },
         "pycore": {
-          "cycles": 61543467,
-          "seconds": 0.61543467,
+          "cycles": 61214933,
+          "seconds": 0.61214933,
           "mhz": 100.0
         },
+        "gem5_classic": {
+          "cycles": 58640581,
+          "seconds": 0.058640581,
+          "mhz": 1000.0
+        },
         "romer": {
-          "cycles": 62730644,
-          "seconds": 0.62730644,
+          "cycles": 62504171,
+          "seconds": 0.62504171,
           "mhz": 100.0
         },
         "skylake": {
-          "cycles": 48104231,
-          "seconds": 0.014148303235294118,
+          "cycles": 48103385,
+          "seconds": 0.014148054411764706,
           "mhz": 3400.0
         }
       }
@@ -212,28 +212,28 @@
       "program": "nbody.py",
       "series": {
         "pycore-hart": {
-          "cycles": 4462276,
-          "seconds": 0.004462276,
-          "mhz": 1000.0
-        },
-        "gem5_classic": {
-          "cycles": 21671252,
-          "seconds": 0.021671252,
+          "cycles": 4386404,
+          "seconds": 0.004386404,
           "mhz": 1000.0
         },
         "pycore": {
-          "cycles": 21788839,
-          "seconds": 0.21788839,
+          "cycles": 21672984,
+          "seconds": 0.21672984,
           "mhz": 100.0
         },
+        "gem5_classic": {
+          "cycles": 21496511,
+          "seconds": 0.021496511,
+          "mhz": 1000.0
+        },
         "romer": {
-          "cycles": 24568662,
-          "seconds": 0.24568662,
+          "cycles": 24820121,
+          "seconds": 0.24820121,
           "mhz": 100.0
         },
         "skylake": {
-          "cycles": 19992041,
-          "seconds": 0.00588001205882353,
+          "cycles": 19991958,
+          "seconds": 0.005879987647058824,
           "mhz": 3400.0
         }
       }
@@ -242,28 +242,28 @@
       "program": "nqueens.py",
       "series": {
         "pycore-hart": {
-          "cycles": 236701258,
-          "seconds": 0.236701258,
-          "mhz": 1000.0
-        },
-        "gem5_classic": {
-          "cycles": 84923095,
-          "seconds": 0.084923095,
+          "cycles": 55074898,
+          "seconds": 0.055074898,
           "mhz": 1000.0
         },
         "pycore": {
-          "cycles": 85037010,
-          "seconds": 0.8503701,
+          "cycles": 85067765,
+          "seconds": 0.85067765,
           "mhz": 100.0
         },
+        "gem5_classic": {
+          "cycles": 84777738,
+          "seconds": 0.084777738,
+          "mhz": 1000.0
+        },
         "romer": {
-          "cycles": 86609315,
-          "seconds": 0.86609315,
+          "cycles": 87828292,
+          "seconds": 0.87828292,
           "mhz": 100.0
         },
         "skylake": {
-          "cycles": 74462330,
-          "seconds": 0.021900685294117647,
+          "cycles": 74462313,
+          "seconds": 0.021900680294117646,
           "mhz": 3400.0
         }
       }
@@ -272,28 +272,28 @@
       "program": "sor.py",
       "series": {
         "pycore-hart": {
-          "cycles": 21153468,
-          "seconds": 0.021153468,
-          "mhz": 1000.0
-        },
-        "gem5_classic": {
-          "cycles": 42522592,
-          "seconds": 0.042522592,
+          "cycles": 15698642,
+          "seconds": 0.015698642,
           "mhz": 1000.0
         },
         "pycore": {
-          "cycles": 41675067,
-          "seconds": 0.41675067,
+          "cycles": 41595489,
+          "seconds": 0.41595489,
           "mhz": 100.0
         },
+        "gem5_classic": {
+          "cycles": 42511945,
+          "seconds": 0.042511945,
+          "mhz": 1000.0
+        },
         "romer": {
-          "cycles": 48372011,
-          "seconds": 0.48372011,
+          "cycles": 47324550,
+          "seconds": 0.4732455,
           "mhz": 100.0
         },
         "skylake": {
-          "cycles": 39758425,
-          "seconds": 0.011693654411764705,
+          "cycles": 39754371,
+          "seconds": 0.01169246205882353,
           "mhz": 3400.0
         }
       }
@@ -302,28 +302,28 @@
       "program": "spectral_norm.py",
       "series": {
         "pycore-hart": {
-          "cycles": 11456302,
-          "seconds": 0.011456302,
-          "mhz": 1000.0
-        },
-        "gem5_classic": {
-          "cycles": 47906070,
-          "seconds": 0.04790607,
+          "cycles": 8232062,
+          "seconds": 0.008232062,
           "mhz": 1000.0
         },
         "pycore": {
-          "cycles": 50305707,
-          "seconds": 0.50305707,
+          "cycles": 50468495,
+          "seconds": 0.50468495,
           "mhz": 100.0
         },
+        "gem5_classic": {
+          "cycles": 47897985,
+          "seconds": 0.047897985,
+          "mhz": 1000.0
+        },
         "romer": {
-          "cycles": 54148356,
-          "seconds": 0.54148356,
+          "cycles": 54392389,
+          "seconds": 0.54392389,
           "mhz": 100.0
         },
         "skylake": {
-          "cycles": 44810722,
-          "seconds": 0.01317962411764706,
+          "cycles": 44810431,
+          "seconds": 0.013179538529411765,
           "mhz": 3400.0
         }
       }
@@ -331,32 +331,32 @@
   ],
   "geomean": {
     "pycore-hart": {
-      "cycles": 19154863.7063028,
-      "seconds": 0.019154863706302826,
+      "cycles": 13584691.743544022,
+      "seconds": 0.01358469174354402,
       "mhz": 1000.0,
       "programs": 10
     },
     "romer": {
-      "cycles": 52918570.29909249,
-      "seconds": 0.5291857029909257,
+      "cycles": 53013237.10187784,
+      "seconds": 0.5301323710187801,
       "mhz": 100.0,
       "programs": 10
     },
     "pycore": {
-      "cycles": 49192874.258701235,
-      "seconds": 0.4919287425870124,
+      "cycles": 49257794.296413794,
+      "seconds": 0.4925779429641373,
       "mhz": 100.0,
       "programs": 10
     },
     "gem5_classic": {
-      "cycles": 48978763.75864532,
-      "seconds": 0.04897876375864544,
+      "cycles": 48427971.42148932,
+      "seconds": 0.04842797142148939,
       "mhz": 1000.0,
       "programs": 10
     },
     "skylake": {
-      "cycles": 44654509.35707089,
-      "seconds": 0.013133679222667932,
+      "cycles": 43798560.576595016,
+      "seconds": 0.012881929581351464,
       "mhz": 3400.0,
       "programs": 10
     }
