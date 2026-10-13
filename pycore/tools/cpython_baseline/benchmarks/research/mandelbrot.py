@@ -2,11 +2,10 @@
 # The published iteration is z = z*z + c with a bailout of abs(z) > 2.
 # This file does that computation: a complex literal, complex(), and abs().
 # The PBM writer (sys.argv, import, bytes) is still later. Official pictures
-# are 200 to 16000 on a side. SIZE=32 keeps the 50-iteration limit and
-# finishes under Callgrind. The inside-pixel count at this size is the same
-# 414 the old squared test printed.
+# are 200 to 16000 on a side. SIZE=200 is the smallest official picture.
+# The inside-pixel count at 32 was 414.
 
-SIZE = 32
+SIZE = 200
 LIMIT = 50
 
 

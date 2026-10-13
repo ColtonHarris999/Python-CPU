@@ -3,12 +3,12 @@
 #     G[x,y] = omega/4 * (four neighbors) + (1-omega) * G[x,y]
 # Official size is n=100 for 10 cycles, on a zero matrix (the checksum of a
 # zero matrix is zero). This grid is filled with a fixed pattern so the
-# reduction is nonzero, and N / CYCLES are lower so Callgrind finishes.
+# reduction is nonzero. N and CYCLES are the official counts.
 # The grid is a list of lists, not array.array and not a class.
 # Checksum: the sum of the interior after the cycles, scaled by 1e6.
 
-N = 48
-CYCLES = 6
+N = 100
+CYCLES = 10
 OMEGA = 1.25
 
 

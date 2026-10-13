@@ -1,11 +1,11 @@
 # pyperformance bm_nqueens. Brute-force N-queens, Collin Winter.
 # The published solver checks every permutation (itertools.permutations).
 # This is Heap's algorithm, which visits the same set once each, and counts
-# solutions instead of yielding them. Official queen_count is 8 (92 solutions).
-# N=7 (40 solutions) keeps the Callgrind run bounded.
+# solutions instead of yielding them. N is the official queen_count, 8
+# (92 solutions).
 # A solution is a permutation whose (col+row) and (col-row) diagonals are unique.
 
-N = 7
+N = 8
 
 
 def attacks(perm, n):

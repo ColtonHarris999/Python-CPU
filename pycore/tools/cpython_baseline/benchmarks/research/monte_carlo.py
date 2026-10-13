@@ -1,14 +1,13 @@
 # pyperformance scimark_monte_carlo, SciMark 2.0 (Roldan Pozo, NIST).
 # Estimate pi by the fraction of uniform points that fall in the unit quarter
-# circle. Official sample count is 100000, inside pyperf's outer loop.
-# SAMPLES=5000 keeps the same generator and test and finishes under Callgrind.
+# circle. SAMPLES is the official count, 100000, inside pyperf's outer loop.
 #
 # The generator is SciMark's 17-word lagged Fibonacci, seed 113. pyperformance
 # writes the recurrence with true division; the integer recurrence below is
 # the Java/C kernel (floor division), so the state stays integral.
 # Checksum: the pi estimate, scaled by 1e6 and truncated toward zero.
 
-SAMPLES = 5000
+SAMPLES = 100000
 
 M1 = (1 << (32 - 2)) + ((1 << (32 - 2)) - 1)
 M2 = 1 << (32 // 2)

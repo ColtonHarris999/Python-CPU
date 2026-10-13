@@ -16,16 +16,16 @@ _ROOT = Path(__file__).resolve().parents[1] / "tools" / "cpython_baseline" / "be
 
 # stdout of each program at the scale checked into the file.
 _STDOUT = {
-    "binary_trees.py": "25774\n",
-    "fannkuch.py": "16\n",
-    "fasta.py": "516277\n",
-    "knucleotide.py": "73307453\n",
-    "mandelbrot.py": "414\n",
-    "monte_carlo.py": "3132800\n",
-    "nbody.py": "-169075163\n-169026908\n",
-    "nqueens.py": "40\n",
-    "sor.py": "1047090603\n",
-    "spectral_norm.py": "1273839840\n",
+    "binary_trees.py": "135854\n",
+    "fannkuch.py": "22\n",
+    "fasta.py": "961628\n",
+    "knucleotide.py": "916380849\n",
+    "mandelbrot.py": "15899\n",
+    "monte_carlo.py": "3135320\n",
+    "nbody.py": "-169075163\n-169089262\n",
+    "nqueens.py": "92\n",
+    "sor.py": "4751196048\n",
+    "spectral_norm.py": "1274222209\n",
 }
 
 
@@ -79,7 +79,7 @@ class ResearchBenchmarkTest(unittest.TestCase):
 
     def test_fannkuch_matches_the_published_slice_version(self):
         fn = _load("fannkuch").fannkuch
-        for n in range(1, 8):
+        for n in range(1, 9):
             self.assertEqual(fn(n), _fannkuch_published(n), n)
 
     def test_nqueens_matches_the_published_counts(self):
@@ -100,7 +100,7 @@ class ResearchBenchmarkTest(unittest.TestCase):
                 depth += 2
             return total + (1 << (max_depth + 1)) - 1
 
-        for n in (4, 6, 8):
+        for n in (4, 6, 8, 10):
             self.assertEqual(fn(n), closed(n), n)
 
     def test_nbody_matches_the_published_tuples(self):

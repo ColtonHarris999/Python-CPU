@@ -25,20 +25,25 @@ dict, rather than an imported application.
 
 | Program | Origin | What it stresses | Official size | Size here |
 | --- | --- | --- | --- | --- |
-| `nbody.py` | pyperformance `bm_nbody`, Benchmarks Game | float pairs, the solar-system advance | 20,000 steps | 200 steps |
-| `spectral_norm.py` | pyperformance `bm_spectral_norm`, Benchmarks Game | nested float matvec, `eval_A` | n=130, 10 iterations | n=20, 10 iterations |
-| `fannkuch.py` | pyperformance `bm_fannkuch`, Benchmarks Game | integer permutation walk | n=9 (30 flips) | n=7 (16 flips) |
-| `nqueens.py` | pyperformance `bm_nqueens` | every permutation, diagonal sets | 8 queens (92) | 7 queens (40) |
-| `mandelbrot.py` | Benchmarks Game | `z*z+c`, `abs(z)`, early exit | 200–16,000 on a side, 50 iters | 32 on a side, 50 iters |
-| `binary_trees.py` | Benchmarks Game | recursive allocation and a tree walk | argument up to 21 | argument 8 |
-| `fasta.py` | Benchmarks Game | the benchmark's own LCG and a cumulative-probability pick | ALU 2n, IUB 3n, n≥1000 | ALU once, 5,000 IUB bases |
-| `knucleotide.py` | Benchmarks Game | dict updates on 1- and 2-mers | a multi-megabyte FASTA record | ALU repeated to 8,000 bases |
-| `monte_carlo.py` | pyperformance `scimark_monte_carlo` | SciMark's lagged-Fibonacci RNG, a circle test | 100,000 samples | 5,000 samples |
-| `sor.py` | pyperformance `scimark_sor` | successive over-relaxation on a grid | n=100, 10 cycles, zero grid | n=48, 6 cycles, a fixed pattern |
+| `nbody.py` | pyperformance `bm_nbody`, Benchmarks Game | float pairs, the solar-system advance | 20,000 steps | 20,000 steps |
+| `spectral_norm.py` | pyperformance `bm_spectral_norm`, Benchmarks Game | nested float matvec, `eval_A` | n=130, 10 iterations | n=130, 10 iterations |
+| `fannkuch.py` | pyperformance `bm_fannkuch`, Benchmarks Game | integer permutation walk | n=9 (30 flips) | n=8 (22 flips) |
+| `nqueens.py` | pyperformance `bm_nqueens` | every permutation, diagonal sets | 8 queens (92) | 8 queens (92) |
+| `mandelbrot.py` | Benchmarks Game | `z*z+c`, `abs(z)`, early exit | 200–16,000 on a side, 50 iters | 200 on a side, 50 iters |
+| `binary_trees.py` | Benchmarks Game | recursive allocation and a tree walk | argument up to 21 | argument 10 |
+| `fasta.py` | Benchmarks Game | the benchmark's own LCG and a cumulative-probability pick | ALU 2n, IUB 3n, Homo sapiens 5n, n≥1000 | n=1000, those three lengths |
+| `knucleotide.py` | Benchmarks Game | dict updates on 1- and 2-mers | a multi-megabyte FASTA record | ALU repeated to 100,000 bases |
+| `monte_carlo.py` | pyperformance `scimark_monte_carlo` | SciMark's lagged-Fibonacci RNG, a circle test | 100,000 samples | 100,000 samples |
+| `sor.py` | pyperformance `scimark_sor` | successive over-relaxation on a grid | n=100, 10 cycles, zero grid | n=100, 10 cycles, a fixed pattern |
 
-The formulas are the published ones. The cuts are the iteration count or
-the grid size, so a Callgrind run finishes. A later PyCore run should use
-these files at these sizes. A larger size is a different measurement.
+The formulas are the published ones. Six programs run at the official
+count. Three stay shorter because the hart cannot hold the official
+problem: `fannkuch` at n=9 is about nine times the n=8 walk and projects
+past the research cycle cap, `binary_trees` at 12 and above keeps every
+tree alive (the collector is off) and does not fit the heap, and
+`knucleotide` stops at 100,000 bases so the sequence list fits.
+`mandelbrot` uses the smallest official side length, 200, rather than
+16,000.
 
 Adaptations, so the file stays in the grammar. Each one is checked against
 the published behavior:
@@ -46,7 +51,7 @@ the published behavior:
 - `fannkuch` reverses a prefix with index swaps. The published line is
   `perm[:k+1] = perm[k::-1]`, and a slice step is not in the grammar.
   The rotate is the same move as `list.insert` / `list.pop`. Max-flips
-  for n=1..7 matches the slice version (0, 1, 2, 4, 7, 10, 16).
+  for n=1..8 matches the slice version (0, 1, 2, 4, 7, 10, 16, 22).
 - `nqueens` counts with Heap's algorithm instead of
   `itertools.permutations`. Both visit every permutation once. Counts for
   n=1..8 are 1, 0, 0, 2, 10, 4, 40, 92.
@@ -64,7 +69,7 @@ the published behavior:
   `-169075163`, which is the Benchmarks Game's `-0.169075164`.
 - `mandelbrot` iterates `z = z*z + c` and bails out on `abs(z) > 2`.
   The picture writer (`sys.argv`, `import`, bytes) is not in this file.
-  SIZE=32 still prints `414`.
+  SIZE=200 prints `15899`. SIZE=32 printed `414`.
 
 ## Not in this set
 
@@ -88,18 +93,18 @@ zero. The others print one line.
 
 | Program | stdout |
 | --- | --- |
-| `binary_trees.py` | `25774` |
-| `fannkuch.py` | `16` |
-| `fasta.py` | `516277` |
-| `knucleotide.py` | `73307453` |
-| `mandelbrot.py` | `414` |
-| `monte_carlo.py` | `3132800` |
-| `nbody.py` | `-169075163` then `-169026908` |
-| `nqueens.py` | `40` |
-| `sor.py` | `1047090603` |
-| `spectral_norm.py` | `1273839840` |
+| `binary_trees.py` | `135854` |
+| `fannkuch.py` | `22` |
+| `fasta.py` | `961628` |
+| `knucleotide.py` | `916380849` |
+| `mandelbrot.py` | `15899` |
+| `monte_carlo.py` | `3135320` |
+| `nbody.py` | `-169075163` then `-169089262` |
+| `nqueens.py` | `92` |
+| `sor.py` | `4751196048` |
+| `spectral_norm.py` | `1274222209` |
 
-`monte_carlo`'s line is `int(pi_estimate * 1e6)`, so `3132800` is 3.1328.
+`monte_carlo`'s line is `int(pi_estimate * 1e6)`, so `3135320` is 3.13532.
 `spectral_norm`'s line is `int(norm * 1e9)`. `fasta` and `knucleotide` are
 order-independent sums (`ord` of each base, and count weighted by the
 key's character codes). A PyCore run that prints a different integer is a
@@ -145,7 +150,11 @@ Machine: 8KB 4-way L1I, 8KB 4-way L1D, 128KB 8-way L2, 64B lines,
 seed 0. Cycles are the simple-core model on Callgrind's events, not host
 wall time.
 
-All ten programs printed the checksums above. Dispatch is the jump-table
+These cycles were recorded on 2026-10-08 at the previous sizes
+(nbody 200 steps, spectral n=20, fannkuch n=7, nqueens 7, mandelbrot
+32, binary_trees 8, fasta one ALU copy plus 5,000 IUB bases,
+knucleotide 8,000, monte_carlo 5,000, sor n=48 for 6 cycles). The
+current files use the sizes in the table above. Dispatch is the jump-table
 edge (263 sites in `_PyEval_EvalFrameDefault`), not the whole eval
 function. The instrumentation arm was 5,337 instructions, under the
 100,000-instruction leak ceiling.

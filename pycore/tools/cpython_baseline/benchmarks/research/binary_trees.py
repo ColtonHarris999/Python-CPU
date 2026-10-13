@@ -2,10 +2,11 @@
 # The published Python builds a Tree class and prints a check per depth.
 # A node here is a two-element list and a leaf is the int 0, so there is no
 # class. The check is the same: 1 + check(left) + check(right), and a leaf is 1.
-# Official arguments go to 21. N=8 keeps the allocation inside Callgrind.
+# Official arguments go to 21. The collector is off on the hart, so every
+# tree stays live. N=10 is the depth whose nodes fit the heap; N=12 does not.
 # The printed integer is stretch + long-lived + the sum of the per-depth checks.
 
-N = 8
+N = 10
 MIN_DEPTH = 4
 
 

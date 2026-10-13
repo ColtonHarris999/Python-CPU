@@ -1,13 +1,13 @@
 # pyperformance bm_fannkuch, from the Computer Language Benchmarks Game.
 # Sokolov Yura, modified by Tupteq.
 #
-# Official argument is 9 (max flips 30). N=7 (max flips 16) is the largest
-# argument whose permutation walk finishes under Callgrind in about a minute.
-# The permutation walk is the published one.
+# Official argument is 9 (max flips 30). N=8 (max flips 22) is the largest
+# argument that stays under the hart's research cycle cap; N=9 is about nine
+# times this walk. The permutation walk is the published one.
 # The pancake reverse is an index swap instead of perm[k::-1], which needs a
 # slice step. The rotate is an index move instead of list.insert / list.pop.
 
-N = 7
+N = 8
 
 
 def fannkuch(n):

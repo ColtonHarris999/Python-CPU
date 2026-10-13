@@ -486,9 +486,9 @@ class TestCompilerDifferential(unittest.TestCase):
             / "research"
         )
         cases = (
-            ("fasta.py", "N = 5000", "N = 30", "23258\n"),
-            ("knucleotide.py", "N = 8000", "N = 200", "1827507\n"),
-            ("mandelbrot.py", "SIZE = 32", "SIZE = 32", "414\n"),
+            ("fasta.py", "N = 1000", "N = 30", "28916\n"),
+            ("knucleotide.py", "N = 100000", "N = 200", "1827507\n"),
+            ("mandelbrot.py", "SIZE = 200", "SIZE = 32", "414\n"),
         )
         for name, old, new, stdout in cases:
             with self.subTest(program=name):

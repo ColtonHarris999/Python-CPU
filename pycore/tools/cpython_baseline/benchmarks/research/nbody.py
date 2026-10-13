@@ -2,14 +2,14 @@
 # Kevin Carson; modified by Tupteq, Fredrik Johansson, and Daniel Nanz.
 #
 # Official timed work is advance(0.01, 20000) on the five-body solar system.
-# ITERATIONS is lower so Callgrind finishes. The masses, the initial state,
-# and the advance/energy formulas are the published ones.
+# ITERATIONS is that count. The masses, the initial state, and the
+# advance/energy formulas are the published ones.
 #
 # No import and no class: pairs are index pairs, not slices. The checksum is
 # the two energies (before and after the advance) scaled by 1e9 and truncated
 # toward zero, one integer per line. PyCore print takes an int.
 
-ITERATIONS = 200
+ITERATIONS = 20000
 
 PI = 3.14159265358979323
 SOLAR_MASS = 4 * PI * PI

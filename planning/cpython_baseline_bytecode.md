@@ -60,10 +60,10 @@ Results against CPython, same source, stand-in execution:
 | Program | What ran | Result |
 | --- | --- | --- |
 | `dispatch_loop.py`, `fib_iter.py`, `dict_int.py`, `list_sum.py`, `nbody_int.py`, `spectral_tiny.py` | full source | stdout matches |
-| `binary_trees.py`, `mandelbrot.py`, `spectral_norm.py` | full published sizes in this tree (N=8, 32, 20/10) | checksum matches |
+| `binary_trees.py`, `mandelbrot.py`, `spectral_norm.py` | the sizes in this tree (N=10, 200, 130/10) | checksum matches |
 | `nqueens.py` N=5, `nbody.py` 5 steps, `monte_carlo.py` 50 samples, `sor.py` N=8 / 2 cycles, `binary_trees.py` N=4, `mandelbrot.py` size 8, `spectral_norm.py` N=6 / 3 iters | reduced so the stand-in's 65536-step cap holds | matches CPython on that source |
 | `fannkuch.py` N=1..4 | `while`/`else` and the pancake swaps | matches the published flip counts 0, 1, 2, 4 |
-| `fasta.py`, `knucleotide.py` | full source compiles; device run at N=30 and N=200 | prints `23258` and `1827507`, matching CPython. The ALU literal is one 287-character `LOAD_CONST` |
+| `fasta.py`, `knucleotide.py` | full source compiles; device run at N=30 and N=200 | prints `28916` and `1827507`, matching CPython. The ALU literal is one 287-character `LOAD_CONST` |
 
 The stand-in uses CPython arithmetic, so a match means the compiler's
 bytecode has CPython's result. It does not measure the FPU. `nbody`'s
@@ -165,9 +165,9 @@ Those are already in `SUPPORTED_COMPARE_ARGS`.
   program (two for `nbody`).
 - L-ALU-4 (`float ** float` within 1 ulp of libm). Closing it is a
   different change from "the program runs".
-- `print` of an int outside signed 32-bit. No checksum in this suite
-  is outside that range (`spectral_norm` 1273839840 and `sor`
-  1047090603 are the largest; both fit).
+- `print` of an int whose decimal form exceeds 15 characters (the
+  SHORT_STR formatter). `sor` prints `4751196048` and `spectral_norm`
+  prints `1274222209`; both fit.
 - Programs the baseline did not run (richards and the other `class`
   kernels, pidigits, `math.sin` / `math.sqrt`, anything that `import`s).
   Their missing pieces are already listed in

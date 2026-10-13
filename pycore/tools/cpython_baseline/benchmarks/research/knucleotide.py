@@ -5,9 +5,9 @@
 # frames of length 1 and 2. Keys are one- and two-character strings.
 # The checksum is order-independent: each count is weighted by the codes of
 # its key, so a wrong bucket changes the total. Official inputs are tens of
-# megabytes. N is a few thousand bases so Callgrind finishes.
+# megabytes. N=100000 bases keeps the sequence list inside the heap.
 
-N = 8000
+N = 100000
 
 ALU = (
     "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG"
