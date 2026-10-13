@@ -9,14 +9,22 @@ N = 8
 
 
 def attacks(perm, n):
-    diag1 = []
-    diag2 = []
+    # Two queens share a diagonal when the column distance equals the row
+    # distance. That is the same test as a set of (col + row) and
+    # (col - row). The sets would stay live for all 8! permutations,
+    # which exhausts the heap while the collector is off.
     i = 0
     while i < n:
-        diag1.append(perm[i] + i)
-        diag2.append(perm[i] - i)
+        j = i + 1
+        while j < n:
+            d = perm[i] - perm[j]
+            if d < 0:
+                d = -d
+            if d == (j - i):
+                return 1
+            j = j + 1
         i = i + 1
-    return len(set(diag1)) != n or len(set(diag2)) != n
+    return 0
 
 
 def nqueens(n):

@@ -53,8 +53,11 @@ the published behavior:
   The rotate is the same move as `list.insert` / `list.pop`. Max-flips
   for n=1..8 matches the slice version (0, 1, 2, 4, 7, 10, 16, 22).
 - `nqueens` counts with Heap's algorithm instead of
-  `itertools.permutations`. Both visit every permutation once. Counts for
-  n=1..8 are 1, 0, 0, 2, 10, 4, 40, 92.
+  `itertools.permutations`. Both visit every permutation once. Queens
+  attack when the column distance equals the row distance, the same
+  test as a set of `(col + row)` and `(col - row)`, without allocating
+  that set on every permutation. Counts for n=1..8 are 1, 0, 0, 2, 10,
+  4, 40, 92.
 - `monte_carlo` uses floor division in SciMark's 17-word generator.
   pyperformance writes `/`, which is true division in Python 3. The
   Java/C kernel is integral. The estimate at 2,000 samples is 3.106.
