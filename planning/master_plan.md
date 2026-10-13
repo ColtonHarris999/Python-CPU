@@ -1,13 +1,21 @@
 # Master plan
 
+> **Direction (2026-10-13).** New product work follows
+> [`micropython_mcu_plan.md`](micropython_mcu_plan.md): a MicroPython
+> bytecode core with microcontroller memory and peripherals. This file
+> stays the leftover list for the CPython 3.14 hart. Do not start a track
+> below unless that plan says the hart still needs it. Bugfixes that keep
+> this hart green still land here.
+
 PyCore is a CPython 3.14 bytecode CPU (hart) plus an RV32 companion
 (`excore`) that finishes recoverable container work. Programs boot from a
 host-built image, and the hart can now compile and run Python source
 itself (`compile()`, string `exec` / `eval`, `bios()`).
 
-This is the **only** living plan. It lists what is left to build, in the
-order that unblocks the next step. Engineering cleanup (dead code, build
-system, RTL structure) is tracked separately in
+This file lists what is left on the CPython hart, in the order that
+unblocks the next step. Product work is
+[`micropython_mcu_plan.md`](micropython_mcu_plan.md). Engineering cleanup
+(dead code, build system, RTL structure) is tracked separately in
 [`cleanup_report.md`](cleanup_report.md).
 
 Snapshot: `main` @ `939c8c7` (PR #131 merged), 2026-09-29.
@@ -15,7 +23,8 @@ Snapshot: `main` @ `939c8c7` (PR #131 merged), 2026-09-29.
 ## Where the truth lives
 
 ```text
-planning/master_plan.md          what is left to build (this file)
+planning/micropython_mcu_plan.md product direction (MicroPython MCU core)
+planning/master_plan.md          CPython hart leftovers (this file)
 planning/cleanup_report.md       simplification / dead-code backlog
 planning/old/                    archived designs (cited by section from code)
         │

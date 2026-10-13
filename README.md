@@ -218,7 +218,8 @@ call (16), dict update (19), and dict merge (20). See
 | On-device `compile()` | `pycore/docs/compiler.md` |
 | `run` / `exec` / `shell` (on-device compile and run) | `pycore/docs/exec_runner.md` |
 | Memory hierarchy / STRACC | `pycore/docs/memory_hierarchy.md`, `pycore/docs/string_accel.md` |
-| Roadmap (what is left to build) | `planning/master_plan.md` |
+| Roadmap (what is left to build on this hart) | `planning/master_plan.md` |
+| MicroPython microcontroller switch | `planning/micropython_mcu_plan.md` |
 | Cleanup backlog for agents | `planning/cleanup_report.md` |
 | Archived designs | `planning/old/` |
 | PyCPython vendor | `vendor/pycpython` (`git submodule update --init`) |
