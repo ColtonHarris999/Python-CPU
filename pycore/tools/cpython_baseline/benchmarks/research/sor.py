@@ -5,7 +5,9 @@
 # zero matrix is zero). This grid is filled with a fixed pattern so the
 # reduction is nonzero. N and CYCLES are the official counts.
 # The grid is a list of lists, not array.array and not a class.
-# Checksum: the sum of the interior after the cycles, scaled by 1e6.
+# Checksum: the sum of the interior after the cycles, scaled by 1e5.
+# int() of a float keeps 32 bits, so the 1e6 scale of this grid
+# (4751196048) wraps. 1e5 stays inside that range.
 
 N = 100
 CYCLES = 10
@@ -61,4 +63,4 @@ def sor(n, cycles):
 
 
 if __name__ == "__main__":
-    print(int(sor(N, CYCLES) * 1000000.0))
+    print(int(sor(N, CYCLES) * 100000.0))

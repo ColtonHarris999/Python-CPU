@@ -166,8 +166,9 @@ Those are already in `SUPPORTED_COMPARE_ARGS`.
 - L-ALU-4 (`float ** float` within 1 ulp of libm). Closing it is a
   different change from "the program runs".
 - `print` of an int whose decimal form exceeds 15 characters (the
-  SHORT_STR formatter). `sor` prints `4751196048` and `spectral_norm`
-  prints `1274222209`; both fit.
+  SHORT_STR formatter), and `int()` of a float outside 32 bits. `sor`
+  scales the interior sum by 1e5 so the printed value stays in range.
+  `spectral_norm` prints `1274222209`, which fits both limits.
 - Programs the baseline did not run (richards and the other `class`
   kernels, pidigits, `math.sin` / `math.sqrt`, anything that `import`s).
   Their missing pieces are already listed in

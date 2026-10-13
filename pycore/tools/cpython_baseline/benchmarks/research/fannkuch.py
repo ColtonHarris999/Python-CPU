@@ -18,6 +18,11 @@ def fannkuch(n):
         count.append(i + 1)
         perm1.append(i)
         i = i + 1
+    perm = []
+    i = 0
+    while i < n:
+        perm.append(0)
+        i = i + 1
     max_flips = 0
     m = n - 1
     r = n
@@ -26,10 +31,11 @@ def fannkuch(n):
             count[r - 1] = r
             r = r - 1
         if perm1[0] != 0 and perm1[m] != m:
-            perm = []
+            # Reuse one buffer. A fresh list per permutation stays live
+            # while the collector is off and exhausts the heap at n=8.
             i = 0
             while i < n:
-                perm.append(perm1[i])
+                perm[i] = perm1[i]
                 i = i + 1
             flips = 0
             k = perm[0]

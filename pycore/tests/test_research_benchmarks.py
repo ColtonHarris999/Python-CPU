@@ -24,7 +24,7 @@ _STDOUT = {
     "monte_carlo.py": "3135320\n",
     "nbody.py": "-169075163\n-169089262\n",
     "nqueens.py": "92\n",
-    "sor.py": "4751196048\n",
+    "sor.py": "475119604\n",
     "spectral_norm.py": "1274222209\n",
 }
 

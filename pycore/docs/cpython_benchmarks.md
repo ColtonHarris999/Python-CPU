@@ -63,7 +63,9 @@ the published behavior:
   Java/C kernel is integral. The estimate at 2,000 samples is 3.106.
 - `sor` fills the grid with `(13x + 7y) mod 100 / 100` instead of zeros.
   pyperformance's zero grid makes the reduction 0. The stencil is the
-  published `SOR_execute` with omega 1.25.
+  published `SOR_execute` with omega 1.25. The printed integer is the
+  interior sum times 1e5. `int()` of a float keeps 32 bits, and the 1e6
+  scale of this grid does not fit.
 - `binary_trees` uses a two-element list as a node and `0` as a leaf.
   The published program is a `Tree` class. The check value is the same
   closed form, `2^(d+1) - 1`.
@@ -104,7 +106,7 @@ zero. The others print one line.
 | `monte_carlo.py` | `3135320` |
 | `nbody.py` | `-169075163` then `-169089262` |
 | `nqueens.py` | `92` |
-| `sor.py` | `4751196048` |
+| `sor.py` | `475119604` |
 | `spectral_norm.py` | `1274222209` |
 
 `monte_carlo`'s line is `int(pi_estimate * 1e6)`, so `3135320` is 3.13532.
