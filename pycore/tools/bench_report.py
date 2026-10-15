@@ -28,6 +28,7 @@ def write_benchmark(
     elapsed_s: float,
     passed: int,
     failed: int,
+    note: str = "",
     out_dir: pathlib.Path | None = None,
 ) -> pathlib.Path:
     """Write this run's results and return the Markdown path."""
@@ -44,6 +45,7 @@ def write_benchmark(
         "elapsed_s": round(elapsed_s, 3),
         "passed": passed,
         "failed": failed,
+        "note": note,
         "rows": rows,
     }
     text = _markdown(payload)
@@ -101,6 +103,10 @@ def _markdown(payload: dict) -> str:
         f"Wall time {payload['elapsed_s']:.1f} s. "
         f"{payload['passed']} passed, {payload['failed']} failed.",
         "",
+    ]
+    if payload.get("note"):
+        lines += [payload["note"], ""]
+    lines += [
         "| " + " | ".join(_COLUMNS) + " |",
         "| " + " | ".join("---" if c not in ("cycles", "compile_cycles", "wall_s") else "---:" for c in _COLUMNS) + " |",
     ]

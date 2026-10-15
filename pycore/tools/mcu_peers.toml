@@ -1,0 +1,34 @@
+# Boards in the same class as a 32-bit microcontroller with a few hundred
+# kilobytes of SRAM. Each one has a C toolchain, a C++ toolchain, and a
+# MicroPython port. Numbers are the vendor's published clock and memory.
+# A later measurement drops a JSON file in pycore/tools/mcu_bench/peers/.
+
+[[board]]
+id = "rp2040"
+name = "Raspberry Pi Pico (RP2040)"
+cpu = "Cortex-M0+"
+clock_mhz = 133
+sram_kb = 264
+flash_kb = 2048
+languages = ["c", "cpp", "micropython"]
+note = "Official MicroPython port. C and C++ are the Pico SDK."
+
+[[board]]
+id = "stm32f411"
+name = "STM32F411"
+cpu = "Cortex-M4F"
+clock_mhz = 100
+sram_kb = 128
+flash_kb = 512
+languages = ["c", "cpp", "micropython"]
+note = "MicroPython stm32 port. C and C++ are the STM32 HAL."
+
+[[board]]
+id = "nrf52840"
+name = "nRF52840"
+cpu = "Cortex-M4F"
+clock_mhz = 64
+sram_kb = 256
+flash_kb = 1024
+languages = ["c", "cpp", "micropython"]
+note = "256 KB RAM, the same order as a small on-chip SRAM. C and C++ via Zephyr or the nRF SDK."

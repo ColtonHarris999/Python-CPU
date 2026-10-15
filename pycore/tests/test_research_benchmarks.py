@@ -1,7 +1,8 @@
 """The research benchmarks match the published algorithms and checksums.
 
-These run on CPython directly. Callgrind is the baseline tool's job and is
-not repeated here.
+These run on CPython directly. The same stdout is what MicroPython must
+print (`make mcu-bench`). Callgrind is the baseline tool's job and is not
+repeated here.
 """
 
 from __future__ import annotations

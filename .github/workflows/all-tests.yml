@@ -216,11 +216,35 @@ jobs:
           path: build/benchmarks/**
           if-no-files-found: ignore
 
+  # MicroPython is the research oracle. This job does not use the Verilator
+  # image: ubuntu's micropython package runs the kernels and writes the
+  # comparison. C / C++ / MicroPython on the peer MCUs stay empty until a
+  # board JSON is checked in.
+  mcu-bench:
+    name: mcu-bench
+    needs: changes
+    if: needs.changes.outputs.hw == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MicroPython
+        run: sudo apt-get update && sudo apt-get install -y micropython
+      - name: Compare the research kernels
+        run: make mcu-bench
+      - name: Save benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks-mcu-bench
+          path: build/benchmarks/**
+          if-no-files-found: ignore
+
   # Keep this job id/name so existing branch protection on "all-tests" still
   # matches. It is a gate over the path-filtered jobs, not a 3h monolith.
   all-tests:
     name: all-tests
-    needs: [changes, docs, host-tools, rtl-modules, hardware, compiler-vs-cpython, caching]
+    needs: [changes, docs, host-tools, rtl-modules, hardware, compiler-vs-cpython, caching, mcu-bench]
     # always() so a failed or skipped dependency still reaches this gate.
     # !cancelled() so a run superseded by concurrency is skipped instead of
     # failing the required check. A title or body edit has no new code; the
@@ -255,7 +279,7 @@ jobs:
           else
             for r in "${{ needs.host-tools.result }}" "${{ needs.rtl-modules.result }}" \
                      "${{ needs.hardware.result }}" "${{ needs.compiler-vs-cpython.result }}" \
-                     "${{ needs.caching.result }}"; do
+                     "${{ needs.caching.result }}" "${{ needs.mcu-bench.result }}"; do
               test "$r" = "success"
             done
           fi

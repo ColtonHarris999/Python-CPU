@@ -129,7 +129,7 @@ EXCORE_RTL_SRCS := \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
 	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
 	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
-	research-compare research-compare-machines
+	research-compare research-compare-machines mcu-bench
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -632,6 +632,14 @@ research-compare-machines:
 		--out build/research_compare \
 		--chart-doc pycore/docs/research_machines.md \
 		$(if $(FORCE),--force,)
+
+# Research kernels on MicroPython, plus the C / C++ / MicroPython columns
+# for the RP2040, STM32F411, and nRF52840. Needs `micropython` on PATH.
+# Board cells stay "not measured" until a JSON file lands in
+# pycore/tools/mcu_bench/peers/.
+mcu-bench:
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) pycore/tools/mcu_bench.py \
+		--doc pycore/docs/mcu_comparison.md
 
 pycore-compile-suite: test-compiler-vs-cpython
 
