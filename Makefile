@@ -230,6 +230,9 @@ pycore-sim-img-twocore: $(PYCORE_SIM_TWOCORE_BIN)
 #                              with CPython 3.14 (pycore/programs/compile_suite)
 #   test-all                   all of the above
 #
+# Each of those runs writes build/benchmarks/<timestamp>__<suite>.md
+# (history in build/benchmarks/index.md). CI uploads the directory.
+#
 # The old per-fixture names still work: `make pycore-img-smoke` runs the
 # `smoke` test. `python3.14 pycore/tools/hw_tests.py --list` lists them all.
 #   test-gc-long               long GC loops (nightly / on demand, not per PR)
@@ -589,7 +592,7 @@ pycore-img-allocator-bytes:
 	$(call PYCORE_IMAGE_RUN_SRC,img_allocator_bytes,allocator_bytes.py,400000)
 
 pycore-python-tests:
-	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
+	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) pycore/tools/timed_tests.py discover -s pycore/tests -p "test_*.py"
 
 # Simulated CPython 3.14 baseline (Callgrind + a simple-core cycle model).
 # CPYTHON_BASELINE_MACHINE is a preset (pycore, gem5_classic, skylake, romer)

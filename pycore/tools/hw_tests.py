@@ -16,6 +16,9 @@ Usage::
     python3.14 pycore/tools/hw_tests.py --gate G4             # one GC gate's runs
 
 ``make test-<area>``, ``make test-hw`` and ``make test-caching`` wrap it.
+Each finished run writes ``build/benchmarks/<timestamp>__<suite>.md``
+(and ``index.md``) so the cycle counts can be opened later. CI uploads
+that directory.
 
 The caching gate
 ----------------
@@ -56,6 +59,8 @@ import threading
 import time
 import tomllib
 from typing import Callable
+
+from bench_report import write_benchmark
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "pycore" / "programs" / "hw_tests.toml"
@@ -695,6 +700,17 @@ def _echo(line: str) -> None:
     print(line, flush=True)
 
 
+def _suite_label(args: argparse.Namespace, picked: list[Test]) -> str:
+    if args.caching:
+        return "caching"
+    if args.gate:
+        return f"gate-{args.gate}-{args.mode}"
+    names = areas_of(picked)
+    if len(names) == 1:
+        return f"hw-{names[0]}"
+    return "hw-" + "+".join(names)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("names", nargs="*", help="test names or globs (default: all selected)")
@@ -779,6 +795,24 @@ def main(argv: list[str] | None = None) -> int:
     print(f"hw_tests: {len(results) - len(failed) - len(xfailed)} of {len(results)} run(s) passed"
           + (f", {len(xfailed)} failed as expected (xfail)" if xfailed else "")
           + f" in {elapsed:.0f} s")
+    bench = write_benchmark(
+        _suite_label(args, picked),
+        [
+            {
+                "status": status_word(r),
+                "area": r.test.area,
+                "name": r.test.name,
+                "config": r.config.label,
+                "cycles": r.cycles,
+                "detail": "" if r.passed else r.detail,
+            }
+            for r in results
+        ],
+        elapsed_s=elapsed,
+        passed=len(results) - len(failed) - len(xfailed),
+        failed=len(failed),
+    )
+    print(f"benchmark: {bench}")
     if failed:
         for r in failed:
             why = "passed but is marked xfail; remove the marker" if r.passed else r.detail

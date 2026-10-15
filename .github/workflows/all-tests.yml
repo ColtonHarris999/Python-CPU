@@ -21,16 +21,20 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 # PR updates cancel the previous run for that PR. Push and workflow_dispatch
 # on main must not: the post-merge run of 4d62c75 was cancelled in three
 # seconds when a second refs/heads/main event shared this group.
-# A title or body edit is also pull_request (`edited`). It must not cancel
-# the run a push just started, or that run's all-tests gate fails the
-# required check. Retargeting still cancels: the base ref actually changed.
+# A title or body edit is also pull_request (`edited`). It must not share
+# this group. A second run that dies before any job starts becomes the
+# latest Actions check suite, and the main ruleset then treats the required
+# all-tests check as missing. Retargets still run the jobs (the classify
+# `if` lets a base-ref change through) but in their own group, so they
+# cannot cancel the run a push just started.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref.from) }}
+  group: ${{ github.event.action == 'edited' && format('ci-edit-{0}', github.event.pull_request.number) || format('ci-{0}', github.event.pull_request.number || github.ref) }}
+  cancel-in-progress: ${{ github.event.action == 'synchronize' || github.event.action == 'opened' || github.event.action == 'reopened' }}
 
 jobs:
   changes:
@@ -115,6 +119,13 @@ jobs:
           submodules: true
       - run: docker --version
       - run: make docker-test-host
+      - name: Save benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks-host-tools
+          path: build/benchmarks/**
+          if-no-files-found: ignore
 
   rtl-modules:
     name: rtl-modules
@@ -125,6 +136,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: make docker-test-rtl-modules
+      - name: Save benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks-rtl-modules
+          path: build/benchmarks/**
+          if-no-files-found: ignore
 
   # Hardware tests, one job per area of pycore/programs/hw_tests.toml. Each
   # runs the default memory config (CACHE_EN=1, MEM_LATENCY=4).
@@ -142,6 +160,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: make docker-test-${{ matrix.area }}
+      - name: Save benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks-${{ matrix.area }}
+          path: build/benchmarks/**
+          if-no-files-found: ignore
 
   # The on-device compiler's own output: each program in
   # pycore/programs/compile_suite/ is compiled on the hart, run on the hart,
@@ -159,6 +184,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: make docker-test-compiler-vs-cpython
+      - name: Save benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks-compiler-vs-cpython
+          path: build/benchmarks/**
+          if-no-files-found: ignore
 
   # The memory-system gate (memory_system_plan.md §6). The area jobs run one
   # configuration; this one runs the others: cache off at latency 1, 4 and
@@ -176,6 +208,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: make docker-test-caching
+      - name: Save benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks-caching
+          path: build/benchmarks/**
+          if-no-files-found: ignore
 
   # Keep this job id/name so existing branch protection on "all-tests" still
   # matches. It is a gate over the path-filtered jobs, not a 3h monolith.
@@ -220,3 +259,22 @@ jobs:
               test "$r" = "success"
             done
           fi
+
+      # Republish every job's benchmark file as one artifact. A missing
+      # upload (docs-only, or a title/body edit that skipped the jobs) must
+      # not fail this gate: the ruleset only accepts a successful all-tests.
+      - name: Publish benchmark results
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: benchmarks-*
+          path: bench-artifacts
+      - name: Upload the combined benchmark results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: bench-artifacts
+          if-no-files-found: ignore

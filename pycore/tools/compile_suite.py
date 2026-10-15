@@ -17,6 +17,8 @@ Usage::
     python3.14 pycore/tools/compile_suite.py            # all programs, 2 jobs
     python3.14 pycore/tools/compile_suite.py --jobs 4 cs_starred
     make test-compiler-vs-cpython TEST_JOBS=4
+
+A finished run also writes ``build/benchmarks/<timestamp>__compiler-vs-cpython.md``.
 """
 
 from __future__ import annotations
@@ -28,6 +30,8 @@ import pathlib
 import subprocess
 import sys
 import time
+
+from bench_report import write_benchmark
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 SUITE_DIR = REPO_ROOT / "pycore" / "programs" / "compile_suite"
@@ -153,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         build = REPO_ROOT / build
 
     print(f"compile_suite: {len(programs)} program(s), {args.jobs} job(s)", flush=True)
+    suite_started = time.monotonic()
     results: list[dict] = []
     # Largest first. Started in name order, cs_program (about twice the
     # cycles of anything else) waited for a free worker and finished last,
@@ -193,6 +198,25 @@ def main(argv: list[str] | None = None) -> int:
         print(line)
     summary = build / "results.json"
     summary.write_text(json.dumps(results, indent=1) + "\n", encoding="utf-8")
+    bench = write_benchmark(
+        "compiler-vs-cpython",
+        [
+            {
+                "status": r["verdict"],
+                "area": "compiler",
+                "name": r["name"],
+                "cycles": r.get("run_cycles"),
+                "compile_cycles": r.get("compile_cycles"),
+                "wall_s": r.get("wall_s"),
+                "detail": r.get("detail") or "",
+            }
+            for r in results
+        ],
+        elapsed_s=time.monotonic() - suite_started,
+        passed=len(results) - len(failed),
+        failed=len(failed),
+    )
+    print(f"benchmark: {bench}")
     print()
     if failed:
         for r in failed:
