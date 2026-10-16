@@ -216,22 +216,20 @@ jobs:
           path: build/benchmarks/**
           if-no-files-found: ignore
 
-  # MicroPython is the research oracle. This job does not use the Verilator
-  # image: ubuntu's micropython package runs the kernels and writes the
-  # comparison. C / C++ / MicroPython on the peer MCUs stay empty until a
-  # board JSON is checked in.
+  # MicroPython is the research oracle. The GitHub runner has no
+  # python3.14, so this uses the same Debian image as the other jobs
+  # (python3.14 and Debian's MicroPython 1.25). C / C++ / MicroPython on
+  # the peer MCUs stay empty until a board JSON is checked in.
   mcu-bench:
     name: mcu-bench
     needs: changes
     if: needs.changes.outputs.hw == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Install MicroPython
-        run: sudo apt-get update && sudo apt-get install -y micropython
       - name: Compare the research kernels
-        run: make mcu-bench
+        run: make docker-test-mcu-bench
       - name: Save benchmark results
         if: always()
         uses: actions/upload-artifact@v4

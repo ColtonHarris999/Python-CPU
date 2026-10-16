@@ -129,7 +129,7 @@ EXCORE_RTL_SRCS := \
 	test-compiler-vs-cpython test-compiler-gc test-all test-gc-long $(addprefix test-,$(HW_AREAS)) \
 	pycore-gc pycore-gc-mutants pycore-gc-acceptance pycore-gc-baseline pycore-gc-fuzz \
 	pycore-gc-bench docker-pycore-gc-fuzz cpython-baseline cpython-baseline-research \
-	research-compare research-compare-machines mcu-bench
+	research-compare research-compare-machines mcu-bench test-mcu-bench
 
 pycore-preprocess:
 	$(PYTHON) pycore/tools/preprocess.py \
@@ -640,6 +640,9 @@ research-compare-machines:
 mcu-bench:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) pycore/tools/mcu_bench.py \
 		--doc pycore/docs/mcu_comparison.md
+
+# CI name. The runner image has python3.14 and Debian's MicroPython.
+test-mcu-bench: mcu-bench
 
 pycore-compile-suite: test-compiler-vs-cpython
 
