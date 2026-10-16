@@ -1,0 +1,833 @@
+{
+  "name": "mpycore",
+  "micropython": {
+    "tag": "v1.29.0",
+    "commit": "0fd6c573ea815774668bbb16b8e197c8822368b2",
+    "version": [
+      1,
+      29,
+      0
+    ],
+    "mpy_version": 6,
+    "mpy_sub_version": 3,
+    "small_int_bits": 31,
+    "obj_repr": "A"
+  },
+  "sources": [
+    "py/bc0.h",
+    "py/bc.h",
+    "py/obj.h",
+    "py/persistentcode.h",
+    "py/runtime0.h",
+    "py/mpconfig.h"
+  ],
+  "object_word": {
+    "width": 32,
+    "repr": "A",
+    "small_int": {
+      "tag_mask": 1,
+      "tag": 1,
+      "shift": 1,
+      "or": 1
+    },
+    "qstr": {
+      "tag_mask": 7,
+      "tag": 2,
+      "shift": 3,
+      "or": 2
+    },
+    "immediate": {
+      "tag_mask": 7,
+      "tag": 6,
+      "shift": 3,
+      "or": 6
+    },
+    "obj": {
+      "tag_mask": 3,
+      "tag": 0
+    }
+  },
+  "sentinels": {
+    "null": 0,
+    "stop_iteration": 0,
+    "sentinel": 4
+  },
+  "immediates": {
+    "none": 0,
+    "false": 1,
+    "true": 3
+  },
+  "scope_flags": {
+    "MP_SCOPE_FLAG_ALL_SIG": 15,
+    "MP_SCOPE_FLAG_GENERATOR": 1,
+    "MP_SCOPE_FLAG_VARKEYWORDS": 2,
+    "MP_SCOPE_FLAG_VARARGS": 4,
+    "MP_SCOPE_FLAG_DEFKWARGS": 8
+  },
+  "prelude_fields": [
+    "n_state",
+    "n_exc_stack",
+    "scope_flags",
+    "n_pos_args",
+    "n_kwonly_args",
+    "n_def_pos_args",
+    "n_info",
+    "n_cells"
+  ],
+  "persistent_obj": {
+    "MP_PERSISTENT_OBJ_FUN_TABLE": 0,
+    "MP_PERSISTENT_OBJ_NONE": 1,
+    "MP_PERSISTENT_OBJ_FALSE": 2,
+    "MP_PERSISTENT_OBJ_TRUE": 3,
+    "MP_PERSISTENT_OBJ_ELLIPSIS": 4,
+    "MP_PERSISTENT_OBJ_STR": 5,
+    "MP_PERSISTENT_OBJ_BYTES": 6,
+    "MP_PERSISTENT_OBJ_INT": 7,
+    "MP_PERSISTENT_OBJ_FLOAT": 8,
+    "MP_PERSISTENT_OBJ_COMPLEX": 9,
+    "MP_PERSISTENT_OBJ_TUPLE": 10
+  },
+  "unary_ops": [
+    {
+      "name": "MP_UNARY_OP_POSITIVE",
+      "value": 0,
+      "phase": 2
+    },
+    {
+      "name": "MP_UNARY_OP_NEGATIVE",
+      "value": 1,
+      "phase": 2
+    },
+    {
+      "name": "MP_UNARY_OP_INVERT",
+      "value": 2,
+      "phase": 2
+    },
+    {
+      "name": "MP_UNARY_OP_NOT",
+      "value": 3,
+      "phase": 2
+    }
+  ],
+  "binary_ops": [
+    {
+      "name": "MP_BINARY_OP_LESS",
+      "value": 0,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_MORE",
+      "value": 1,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_EQUAL",
+      "value": 2,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_LESS_EQUAL",
+      "value": 3,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_MORE_EQUAL",
+      "value": 4,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_NOT_EQUAL",
+      "value": 5,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_IN",
+      "value": 6,
+      "phase": 4
+    },
+    {
+      "name": "MP_BINARY_OP_IS",
+      "value": 7,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_EXCEPTION_MATCH",
+      "value": 8,
+      "phase": 4
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_OR",
+      "value": 9,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_XOR",
+      "value": 10,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_AND",
+      "value": 11,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_LSHIFT",
+      "value": 12,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_RSHIFT",
+      "value": 13,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_ADD",
+      "value": 14,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_SUBTRACT",
+      "value": 15,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_MULTIPLY",
+      "value": 16,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_MAT_MULTIPLY",
+      "value": 17,
+      "phase": 6
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_FLOOR_DIVIDE",
+      "value": 18,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_TRUE_DIVIDE",
+      "value": 19,
+      "phase": 6
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_MODULO",
+      "value": 20,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_INPLACE_POWER",
+      "value": 21,
+      "phase": 6
+    },
+    {
+      "name": "MP_BINARY_OP_OR",
+      "value": 22,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_XOR",
+      "value": 23,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_AND",
+      "value": 24,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_LSHIFT",
+      "value": 25,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_RSHIFT",
+      "value": 26,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_ADD",
+      "value": 27,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_SUBTRACT",
+      "value": 28,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_MULTIPLY",
+      "value": 29,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_MAT_MULTIPLY",
+      "value": 30,
+      "phase": 6
+    },
+    {
+      "name": "MP_BINARY_OP_FLOOR_DIVIDE",
+      "value": 31,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_TRUE_DIVIDE",
+      "value": 32,
+      "phase": 6
+    },
+    {
+      "name": "MP_BINARY_OP_MODULO",
+      "value": 33,
+      "phase": 2
+    },
+    {
+      "name": "MP_BINARY_OP_POWER",
+      "value": 34,
+      "phase": 6
+    }
+  ],
+  "opcodes": [
+    {
+      "name": "MP_BC_LOAD_CONST_STRING",
+      "value": 16,
+      "phase": 3,
+      "family": "load_const",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_LOAD_NAME",
+      "value": 17,
+      "phase": 2,
+      "family": "load_global",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_LOAD_GLOBAL",
+      "value": 18,
+      "phase": 2,
+      "family": "load_global",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_LOAD_ATTR",
+      "value": 19,
+      "phase": 4,
+      "family": "attribute",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_LOAD_METHOD",
+      "value": 20,
+      "phase": 4,
+      "family": "call",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_LOAD_SUPER_METHOD",
+      "value": 21,
+      "phase": 4,
+      "family": "call",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_STORE_NAME",
+      "value": 22,
+      "phase": 2,
+      "family": "store_global",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_STORE_GLOBAL",
+      "value": 23,
+      "phase": 2,
+      "family": "store_global",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_STORE_ATTR",
+      "value": 24,
+      "phase": 4,
+      "family": "attribute",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_DELETE_NAME",
+      "value": 25,
+      "phase": 6,
+      "family": "delete",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_DELETE_GLOBAL",
+      "value": 26,
+      "phase": 6,
+      "family": "delete",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_IMPORT_NAME",
+      "value": 27,
+      "phase": 4,
+      "family": "import",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_IMPORT_FROM",
+      "value": 28,
+      "phase": 4,
+      "family": "import",
+      "operand": "qstr"
+    },
+    {
+      "name": "MP_BC_MAKE_CLOSURE",
+      "value": 32,
+      "phase": 6,
+      "family": "closure",
+      "operand": "uint_byte"
+    },
+    {
+      "name": "MP_BC_MAKE_CLOSURE_DEFARGS",
+      "value": 33,
+      "phase": 6,
+      "family": "closure",
+      "operand": "uint_byte"
+    },
+    {
+      "name": "MP_BC_LOAD_CONST_SMALL_INT",
+      "value": 34,
+      "phase": 2,
+      "family": "load_const",
+      "operand": "svarint"
+    },
+    {
+      "name": "MP_BC_LOAD_CONST_OBJ",
+      "value": 35,
+      "phase": 3,
+      "family": "load_const",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_LOAD_FAST_N",
+      "value": 36,
+      "phase": 2,
+      "family": "load_local",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_LOAD_DEREF",
+      "value": 37,
+      "phase": 6,
+      "family": "closure",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_STORE_FAST_N",
+      "value": 38,
+      "phase": 2,
+      "family": "store_local",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_STORE_DEREF",
+      "value": 39,
+      "phase": 6,
+      "family": "closure",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_DELETE_FAST",
+      "value": 40,
+      "phase": 6,
+      "family": "delete",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_DELETE_DEREF",
+      "value": 41,
+      "phase": 6,
+      "family": "closure",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_BUILD_TUPLE",
+      "value": 42,
+      "phase": 3,
+      "family": "container",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_BUILD_LIST",
+      "value": 43,
+      "phase": 3,
+      "family": "container",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_BUILD_MAP",
+      "value": 44,
+      "phase": 3,
+      "family": "container",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_BUILD_SET",
+      "value": 45,
+      "phase": 3,
+      "family": "container",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_BUILD_SLICE",
+      "value": 46,
+      "phase": 6,
+      "family": "container",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_STORE_COMP",
+      "value": 47,
+      "phase": 6,
+      "family": "container",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_UNPACK_SEQUENCE",
+      "value": 48,
+      "phase": 3,
+      "family": "container",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_UNPACK_EX",
+      "value": 49,
+      "phase": 6,
+      "family": "container",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_MAKE_FUNCTION",
+      "value": 50,
+      "phase": 2,
+      "family": "call",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_MAKE_FUNCTION_DEFARGS",
+      "value": 51,
+      "phase": 4,
+      "family": "call",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_CALL_FUNCTION",
+      "value": 52,
+      "phase": 2,
+      "family": "call",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_CALL_FUNCTION_VAR_KW",
+      "value": 53,
+      "phase": 6,
+      "family": "call",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_CALL_METHOD",
+      "value": 54,
+      "phase": 4,
+      "family": "call",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_CALL_METHOD_VAR_KW",
+      "value": 55,
+      "phase": 6,
+      "family": "call",
+      "operand": "uint"
+    },
+    {
+      "name": "MP_BC_UNWIND_JUMP",
+      "value": 64,
+      "phase": 4,
+      "family": "exception",
+      "operand": "slabel_byte"
+    },
+    {
+      "name": "MP_BC_JUMP",
+      "value": 66,
+      "phase": 2,
+      "family": "jump",
+      "operand": "slabel"
+    },
+    {
+      "name": "MP_BC_POP_JUMP_IF_TRUE",
+      "value": 67,
+      "phase": 2,
+      "family": "jump",
+      "operand": "slabel"
+    },
+    {
+      "name": "MP_BC_POP_JUMP_IF_FALSE",
+      "value": 68,
+      "phase": 2,
+      "family": "jump",
+      "operand": "slabel"
+    },
+    {
+      "name": "MP_BC_JUMP_IF_TRUE_OR_POP",
+      "value": 69,
+      "phase": 2,
+      "family": "jump",
+      "operand": "ulabel"
+    },
+    {
+      "name": "MP_BC_JUMP_IF_FALSE_OR_POP",
+      "value": 70,
+      "phase": 2,
+      "family": "jump",
+      "operand": "ulabel"
+    },
+    {
+      "name": "MP_BC_SETUP_WITH",
+      "value": 71,
+      "phase": 4,
+      "family": "with",
+      "operand": "ulabel"
+    },
+    {
+      "name": "MP_BC_SETUP_EXCEPT",
+      "value": 72,
+      "phase": 4,
+      "family": "exception",
+      "operand": "ulabel"
+    },
+    {
+      "name": "MP_BC_SETUP_FINALLY",
+      "value": 73,
+      "phase": 4,
+      "family": "exception",
+      "operand": "ulabel"
+    },
+    {
+      "name": "MP_BC_POP_EXCEPT_JUMP",
+      "value": 74,
+      "phase": 4,
+      "family": "exception",
+      "operand": "ulabel"
+    },
+    {
+      "name": "MP_BC_FOR_ITER",
+      "value": 75,
+      "phase": 3,
+      "family": "iterate",
+      "operand": "ulabel"
+    },
+    {
+      "name": "MP_BC_LOAD_CONST_FALSE",
+      "value": 80,
+      "phase": 2,
+      "family": "load_const",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_LOAD_CONST_NONE",
+      "value": 81,
+      "phase": 2,
+      "family": "load_const",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_LOAD_CONST_TRUE",
+      "value": 82,
+      "phase": 2,
+      "family": "load_const",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_LOAD_NULL",
+      "value": 83,
+      "phase": 2,
+      "family": "load_const",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_LOAD_BUILD_CLASS",
+      "value": 84,
+      "phase": 4,
+      "family": "class",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_LOAD_SUBSCR",
+      "value": 85,
+      "phase": 3,
+      "family": "container",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_STORE_SUBSCR",
+      "value": 86,
+      "phase": 3,
+      "family": "container",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_DUP_TOP",
+      "value": 87,
+      "phase": 2,
+      "family": "stack",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_DUP_TOP_TWO",
+      "value": 88,
+      "phase": 2,
+      "family": "stack",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_POP_TOP",
+      "value": 89,
+      "phase": 2,
+      "family": "stack",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_ROT_TWO",
+      "value": 90,
+      "phase": 2,
+      "family": "stack",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_ROT_THREE",
+      "value": 91,
+      "phase": 2,
+      "family": "stack",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_WITH_CLEANUP",
+      "value": 92,
+      "phase": 4,
+      "family": "with",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_END_FINALLY",
+      "value": 93,
+      "phase": 4,
+      "family": "exception",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_GET_ITER",
+      "value": 94,
+      "phase": 3,
+      "family": "iterate",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_GET_ITER_STACK",
+      "value": 95,
+      "phase": 6,
+      "family": "iterate",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_STORE_MAP",
+      "value": 98,
+      "phase": 3,
+      "family": "container",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_RETURN_VALUE",
+      "value": 99,
+      "phase": 2,
+      "family": "return",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_RAISE_LAST",
+      "value": 100,
+      "phase": 4,
+      "family": "exception",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_RAISE_OBJ",
+      "value": 101,
+      "phase": 4,
+      "family": "exception",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_RAISE_FROM",
+      "value": 102,
+      "phase": 4,
+      "family": "exception",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_YIELD_VALUE",
+      "value": 103,
+      "phase": 6,
+      "family": "yield",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_YIELD_FROM",
+      "value": 104,
+      "phase": 6,
+      "family": "yield",
+      "operand": "none"
+    },
+    {
+      "name": "MP_BC_IMPORT_STAR",
+      "value": 105,
+      "phase": 4,
+      "family": "import",
+      "operand": "none"
+    }
+  ],
+  "opcode_ranges": [
+    {
+      "name": "MP_BC_LOAD_CONST_SMALL_INT_MULTI",
+      "base": 112,
+      "count": 64,
+      "phase": 2,
+      "family": "load_const",
+      "excess": 16
+    },
+    {
+      "name": "MP_BC_LOAD_FAST_MULTI",
+      "base": 176,
+      "count": 16,
+      "phase": 2,
+      "family": "load_local"
+    },
+    {
+      "name": "MP_BC_STORE_FAST_MULTI",
+      "base": 192,
+      "count": 16,
+      "phase": 2,
+      "family": "store_local"
+    },
+    {
+      "name": "MP_BC_UNARY_OP_MULTI",
+      "base": 208,
+      "count": 4,
+      "phase": 2,
+      "family": "unary"
+    },
+    {
+      "name": "MP_BC_BINARY_OP_MULTI",
+      "base": 215,
+      "count": 35,
+      "phase": 2,
+      "family": "binary"
+    }
+  ]
+}

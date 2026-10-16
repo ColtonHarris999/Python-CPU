@@ -1,7 +1,14 @@
 # PyCore
 
-A research CPU whose native ISA is a **CPython 3.14 bytecode subset**. The
-prototype is portable SystemVerilog, simulated with Verilator.
+Product work is a MicroPython bytecode hart in `mpycore/`. Its instruction
+stream is the pinned MicroPython release in `vendor/micropython` (v1.29.0,
+`.mpy` version 6), not CPython 3.14 wordcode. The CPython hart stays in the
+tree. The switch is
+[`planning/micropython_mcu_plan.md`](planning/micropython_mcu_plan.md).
+
+The CPython hart in this repository is a research CPU whose native ISA is a
+**CPython 3.14 bytecode subset**. The prototype is portable SystemVerilog,
+simulated with Verilator.
 
 This repository is a **two-core** system:
 
@@ -218,7 +225,8 @@ call (16), dict update (19), and dict merge (20). See
 | On-device `compile()` | `pycore/docs/compiler.md` |
 | `run` / `exec` / `shell` (on-device compile and run) | `pycore/docs/exec_runner.md` |
 | Memory hierarchy / STRACC | `pycore/docs/memory_hierarchy.md`, `pycore/docs/string_accel.md` |
-| Roadmap (what is left to build) | `planning/master_plan.md` |
+| Roadmap (what is left to build on the CPython hart) | `planning/master_plan.md` |
+| MicroPython microcontroller hart | `planning/micropython_mcu_plan.md`, `mpycore/targets/mpycore.json` |
 | Cleanup backlog for agents | `planning/cleanup_report.md` |
 | Archived designs | `planning/old/` |
 | PyCPython vendor | `vendor/pycpython` (`git submodule update --init`) |

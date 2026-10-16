@@ -113,7 +113,8 @@ EXCORE_RTL_SRCS := \
 
 .PHONY: help lint-file pycore-preprocess run-file pycore-run-file exec-file \
 	shell all-tests pycore-tag-decode pycore-exec pycore-type-pairs \
-	pycore-python-tests pycore-size-report pycore-compile-suite pycore-mem \
+	pycore-python-tests mpycore-mpy-cross mpycore-host-tests \
+	pycore-size-report pycore-compile-suite pycore-mem \
 	pycore-cache-lru pycore-cache pycore-ram pycore-l1d-handoff pycore-fetch \
 	pycore-frame pycore-frame-fib pycore-regfile pycore-codc pycore-gic \
 	pycore-img-container-call-spike \
@@ -239,7 +240,7 @@ HW_TESTS = $(PYTHON) pycore/tools/hw_tests.py --jobs $(TEST_JOBS) \
 	$(if $(HW_PLUSARGS),--plusargs "$(HW_PLUSARGS)")
 
 test-host: pycore-python-tests pycore-size-report excore-asm-tests \
-	pycore-allocator-host
+	pycore-allocator-host mpycore-host-tests
 
 test-rtl-modules: pycore-rtl-unit
 
@@ -590,6 +591,14 @@ pycore-img-allocator-bytes:
 
 pycore-python-tests:
 	PYTHONPATH=pycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s pycore/tests -p "test_*.py"
+
+# MicroPython bytecode hart. The catalog is checked against the pinned
+# submodule headers, and mpy-cross feeds the flash-image decoder.
+mpycore-mpy-cross:
+	$(MAKE) -C vendor/micropython/mpy-cross BUILD=$(CURDIR)/build/mpy-cross
+
+mpycore-host-tests: mpycore-mpy-cross
+	PYTHONPATH=mpycore/tools:$(PYTHONPATH) $(PYTHON) -m unittest discover -s mpycore/tests -p "test_*.py"
 
 # Simulated CPython 3.14 baseline (Callgrind + a simple-core cycle model).
 # CPYTHON_BASELINE_MACHINE is a preset (pycore, gem5_classic, skylake, romer)
