@@ -20,4 +20,5 @@ RUN apt-get update \
         curl \
         ca-certificates \
         valgrind \
+        micropython \
  && rm -rf /var/lib/apt/lists/*
